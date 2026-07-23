@@ -19,7 +19,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        match &self.input_ui.composer {
+        match self.input_ui.composer() {
             ComposerMode::Input => Ok(false),
             ComposerMode::OAuthPending(_) => self.handle_oauth_pending_key(key),
             ComposerMode::InlineChoice(_) => {
@@ -87,8 +87,9 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.clear_submitted_input();
-                    self.input_ui.submission_mode = InputSubmissionMode::ParseCommands;
-                    self.input_ui.pending_images.clear();
+                    self.input_ui
+                        .set_submission_mode(InputSubmissionMode::ParseCommands);
+                    self.input_ui.clear_pending_images();
                     self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -114,13 +115,17 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
-                self.input_ui.cursor =
-                    previous_word_boundary(&self.input_ui.text, self.input_ui.cursor);
+                self.input_ui.set_cursor(previous_word_boundary(
+                    self.input_ui.text(),
+                    self.input_ui.cursor(),
+                ));
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
-                self.input_ui.cursor =
-                    next_word_boundary(&self.input_ui.text, self.input_ui.cursor);
+                self.input_ui.set_cursor(next_word_boundary(
+                    self.input_ui.text(),
+                    self.input_ui.cursor(),
+                ));
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {
@@ -143,22 +148,22 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 self.reset_input_history_navigation();
-                self.input_ui.cursor = 0;
+                self.input_ui.set_cursor(0);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
                 self.reset_input_history_navigation();
-                self.input_ui.cursor = self.input_char_len();
+                self.input_ui.set_cursor(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
                 self.insert_input_char('\n');
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
                 self.insert_input_char('\n');
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
@@ -172,7 +177,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             _ => {
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
         }
@@ -195,33 +200,36 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Up) => {
                 let matches = self.command_matches();
                 if !matches.is_empty() {
-                    self.input_ui.command_selection = if self.input_ui.command_selection == 0 {
-                        matches.len() - 1
-                    } else {
-                        self.input_ui.command_selection - 1
-                    };
+                    self.input_ui.set_command_selection(
+                        if self.input_ui.command_selection() == 0 {
+                            matches.len() - 1
+                        } else {
+                            self.input_ui.command_selection() - 1
+                        },
+                    );
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
                 let matches = self.command_matches();
                 if !matches.is_empty() {
-                    self.input_ui.command_selection =
-                        (self.input_ui.command_selection + 1) % matches.len();
+                    self.input_ui.set_command_selection(
+                        (self.input_ui.command_selection() + 1) % matches.len(),
+                    );
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
                 if let Some(choice) = self.selected_command() {
                     self.complete_command_choice(&choice);
-                    self.input_ui.command_palette_dismissed = false;
+                    self.input_ui.set_command_palette_dismissed(false);
                     self.clamp_command_selection();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -230,15 +238,15 @@ impl App {
                     self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 self.submit(terminal, agent).await?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Esc) => {
-                self.input_ui.command_palette_dismissed = true;
-                self.input_ui.command_selection = 0;
-                self.input_ui.paste_burst.clear();
+                self.input_ui.set_command_palette_dismissed(true);
+                self.input_ui.set_command_selection(0);
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -253,17 +261,17 @@ impl App {
     ) -> anyhow::Result<()> {
         let mut turn = TurnPrompt::standard(
             self.expanded_input().trim().to_string(),
-            self.input_ui.text.trim().to_string(),
+            self.input_ui.text().trim().to_string(),
         );
         if turn.model.is_empty()
-            && self.input_ui.pending_images.is_empty()
-            && self.input_ui.shell_mode.is_none()
+            && self.input_ui.pending_images().is_empty()
+            && self.input_ui.shell_mode().is_none()
         {
             self.clear_submitted_input();
             return Ok(());
         }
         if let Some((mode, command)) = self.shell_submission() {
-            if !self.input_ui.paste_segments.is_empty() {
+            if !self.input_ui.paste_segments().is_empty() {
                 return self.block_pasted_inline_shell();
             }
             self.clear_submitted_input();
@@ -317,7 +325,7 @@ impl App {
             }
         }
 
-        let images = std::mem::take(&mut self.input_ui.pending_images);
+        let images = std::mem::take(self.input_ui.pending_images_mut());
         self.clear_submitted_input();
         let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
@@ -340,11 +348,11 @@ impl App {
                 goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
             if self.should_quit
                 || !should_drain_queue
-                || self.input_ui.composer.blocks_auto_continue()
+                || self.input_ui.composer().blocks_auto_continue()
             {
                 break outcome_kind;
             }
-            let Some(prompt) = self.pending.queued_prompts.pop_front() else {
+            let Some(prompt) = self.pending.pop_follow_up() else {
                 break outcome_kind;
             };
             self.pending_input_changed();
@@ -358,7 +366,7 @@ impl App {
                 )
                 .await?;
         };
-        if !self.input_ui.composer.blocks_auto_continue()
+        if !self.input_ui.composer().blocks_auto_continue()
             && goal_command::should_resume_goal_after_turn(
                 final_outcome,
                 self.goal.as_ref().map(GoalState::loop_state),

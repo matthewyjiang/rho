@@ -226,12 +226,14 @@ impl App {
         }
         let mut target = None;
         let entries = self
-            .tool_calls
+            .turn
+            .tool_calls()
             .previews
             .iter()
             .map(|(index, entry)| (PendingToolKey::Preview(*index), entry))
             .chain(
-                self.tool_calls
+                self.turn
+                    .tool_calls()
                     .running
                     .iter()
                     .map(|(call_id, entry)| (PendingToolKey::Running(call_id.clone()), entry)),
@@ -254,8 +256,12 @@ impl App {
         }
         if let Some(target) = target {
             let pending = match target {
-                PendingToolKey::Preview(index) => self.tool_calls.previews.get_mut(&index),
-                PendingToolKey::Running(call_id) => self.tool_calls.running.get_mut(&call_id),
+                PendingToolKey::Preview(index) => {
+                    self.turn.tool_calls_mut().previews.get_mut(&index)
+                }
+                PendingToolKey::Running(call_id) => {
+                    self.turn.tool_calls_mut().running.get_mut(&call_id)
+                }
             }
             .expect("pending tool exists");
             pending.expanded = !pending.expanded;

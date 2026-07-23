@@ -48,36 +48,44 @@ impl App {
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::CompactThresholdPercent,
-                    config.compact_threshold_percent as usize,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::CompactThresholdPercent,
+                        config.compact_threshold_percent as usize,
+                    ),
                 ));
                 self.status = "edit compact threshold percent".into();
                 Ok(())
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::CompactTargetPercent,
-                    config.compact_target_percent as usize,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::CompactTargetPercent,
+                        config.compact_target_percent as usize,
+                    ),
                 ));
                 self.status = "edit compact target percent".into();
                 Ok(())
             }
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::MaxOutputBytes,
-                    config.max_output_bytes,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::MaxOutputBytes,
+                        config.max_output_bytes,
+                    ),
                 ));
                 self.status = "edit max output bytes".into();
                 Ok(())
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::MaxToolOutputLines,
-                    config.max_tool_output_lines,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::MaxToolOutputLines,
+                        config.max_tool_output_lines,
+                    ),
                 ));
                 self.status = "edit max tool output lines".into();
                 Ok(())
@@ -136,19 +144,19 @@ impl App {
                 key.label()
             )));
         }
-        let return_picker =
-            match std::mem::replace(&mut self.input_ui.composer, ComposerMode::Input) {
-                ComposerMode::Picker(picker) => Some(picker),
-                composer => {
-                    self.input_ui.composer = composer;
-                    None
-                }
-            };
+        let return_picker = match self.input_ui.take_composer() {
+            ComposerMode::Picker(picker) => Some(picker),
+            composer => {
+                self.input_ui.set_composer(composer);
+                None
+            }
+        };
         let mut input = ConfigTextInput::new(key, value);
         if let Some(picker) = return_picker {
             input = input.with_return_picker(picker);
         }
-        self.input_ui.composer = ComposerMode::ConfigTextInput(input);
+        self.input_ui
+            .set_composer(ComposerMode::ConfigTextInput(input));
         self.status = format!("edit {}", key.label());
         Ok(())
     }
@@ -157,7 +165,7 @@ impl App {
         &mut self,
         selected_value: &str,
     ) -> anyhow::Result<()> {
-        let filter = match &self.input_ui.composer {
+        let filter = match self.input_ui.composer() {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
@@ -180,7 +188,7 @@ impl App {
         let mut root = config_picker::config_picker(&self.info.runtime, &config);
         let Some(category) = config_picker::category_for_setting(selected_value) else {
             Self::restore_picker_position(&mut root, selected_value, filter);
-            self.input_ui.composer = ComposerMode::Picker(root);
+            self.input_ui.set_composer(ComposerMode::Picker(root));
             self.status = "config".into();
             return Ok(());
         };
@@ -191,7 +199,7 @@ impl App {
             .with_parent(root);
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.status = picker.title.clone();
-        self.input_ui.composer = ComposerMode::Picker(picker);
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
         Ok(())
     }
 
@@ -210,7 +218,7 @@ impl App {
         selected_value: &str,
     ) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        let (filter, parent) = match &mut self.input_ui.composer {
+        let (filter, parent) = match self.input_ui.composer_mut() {
             ComposerMode::Picker(picker) => (picker.filter.clone(), picker.take_parent()),
             ComposerMode::ConfigTextInput(input) => match input.take_return_picker() {
                 Some(mut picker) => (picker.filter.clone(), picker.take_parent()),
@@ -224,7 +232,7 @@ impl App {
         if let Some(parent) = parent {
             picker = picker.with_parent(parent);
         }
-        self.input_ui.composer = ComposerMode::Picker(picker);
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
         Ok(())
     }
 
@@ -261,7 +269,7 @@ impl App {
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
-            &self.input_ui.composer,
+            self.input_ui.composer(),
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
@@ -295,7 +303,7 @@ impl App {
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
-            &self.input_ui.composer,
+            self.input_ui.composer(),
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             self.refresh_main_config_picker(config_picker::ENABLE_SUBAGENTS_VALUE)?;
@@ -329,7 +337,7 @@ impl App {
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
-            &self.input_ui.composer,
+            self.input_ui.composer(),
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             self.refresh_main_config_picker(config_picker::AUTO_COMPACT_VALUE)?;
@@ -365,7 +373,7 @@ impl App {
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         if matches!(
-            &self.input_ui.composer,
+            self.input_ui.composer(),
             ComposerMode::Picker(picker) if picker.action == PickerAction::Config
         ) {
             let config = self

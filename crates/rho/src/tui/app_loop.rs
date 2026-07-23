@@ -130,7 +130,7 @@ impl App {
                 self.flush_pending_paste_burst();
                 let text = normalize_paste(&text);
                 self.insert_paste(&text);
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
@@ -156,7 +156,7 @@ impl App {
 
     pub(super) fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {
         let now = Instant::now();
-        let timeout = self.input_ui.paste_burst.poll_timeout(now, idle_timeout);
+        let timeout = self.input_ui.paste_burst().poll_timeout(now, idle_timeout);
         let timeout = self
             .history
             .copy_notice()
@@ -224,10 +224,10 @@ impl App {
     }
 
     pub(super) fn activity_status(&self) -> Option<ActivityStatus> {
-        let phase = match self.input_ui.composer {
+        let phase = match self.input_ui.composer() {
             ComposerMode::Approval(_) => ActivityPhase::WaitingForApproval,
             ComposerMode::Questionnaire(_) => ActivityPhase::WaitingForInput,
-            _ => self.activity_phase,
+            _ => self.turn.activity_phase(),
         };
         ActivityStatus::from_parent_and_subagents(
             self.loading_active().then_some(phase),
@@ -238,7 +238,7 @@ impl App {
     pub(super) fn update_subagent_panel(&mut self, agent: &InteractiveRuntime) -> bool {
         let changed = self.subagent_panel.update(agent.subagents());
         if self.subagent_panel.is_active() {
-            self.loading_spinner.start_if_needed();
+            self.turn.start_loading_if_needed();
         }
         changed
     }

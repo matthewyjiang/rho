@@ -8,7 +8,7 @@ use super::{App, ComposerMode};
 
 impl App {
     pub(super) fn external_editor_shortcut_matches(&self, key: crossterm::event::KeyEvent) -> bool {
-        matches!(self.input_ui.composer, ComposerMode::Input)
+        matches!(self.input_ui.composer(), ComposerMode::Input)
             && self.info.runtime.keybindings.open_editor.matches(key)
     }
 

@@ -11,14 +11,12 @@ use std::{
 
 use history_cache::CachedCodeBlock;
 use questionnaire::QuestionnaireCancelReason;
-#[cfg(test)]
-use std::sync::Mutex;
-use tokio::sync::oneshot;
-use tool_call_batch::ToolCallBatch;
-
 use ratatui::DefaultTerminal;
 #[cfg(test)]
 use ratatui::{layout::Rect, style::Modifier, text::Line};
+#[cfg(test)]
+use std::sync::Mutex;
+use tokio::sync::oneshot;
 mod activity;
 mod agent_picker;
 mod app_construct;
@@ -119,7 +117,7 @@ mod types;
 use types::*;
 
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
-use app_state::{HistoryUi, InputUi, PendingWorkUi};
+use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
 use clipboard::ClipboardWriter;
 use config_editor::{
@@ -147,7 +145,6 @@ use picker::{
     PickerItem, PickerLayout, UiPicker,
 };
 use prompt_turn::FailedTurn;
-use provider_attempt::ProviderAttempt;
 #[cfg(test)]
 use questionnaire::QuestionnaireComposer;
 use questionnaire::{
@@ -294,13 +291,7 @@ struct App {
     should_quit: bool,
     ctrl_c_streak: u8,
     streams: StreamUi,
-    current_turn_start: Option<usize>,
-    provider_attempt: ProviderAttempt,
-    reasoning_phase: reasoning_phase::ReasoningPhase,
-    session_ui: run_lifecycle::SessionUiPhase,
-    activity_phase: ActivityPhase,
-    loading_spinner: LoadingSpinner,
-    tool_calls: ToolCallBatch,
+    turn: TurnUi,
     image_picker: Option<ratatui_image::picker::Picker>,
     pending: PendingWorkUi,
     pending_inline_shells: Vec<inline_shell::PendingShellTask>,

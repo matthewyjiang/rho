@@ -119,8 +119,8 @@ fn pagedown_moves_manual_scroll_toward_bottom() {
 #[test]
 fn jump_button_renders_above_composer_only_when_scrolled_up() {
     let mut app = test_app();
-    app.input_ui.text = "draft".into();
-    app.input_ui.cursor = app.input_char_len();
+    app.input_ui.set_text("draft".to_string());
+    app.input_ui.set_cursor(app.input_char_len());
     for index in 0..20 {
         app.push_transcript_entry(Entry::User(format!("message {index}")));
     }
@@ -727,7 +727,7 @@ fn hidden_reasoning_shows_thinking_placeholder() {
     assert_eq!(thinking.spans[1].style, StreamKind::Reasoning.style());
 
     app.reset_streams();
-    assert!(!app.reasoning_phase.hidden_placeholder());
+    assert!(!app.turn.reasoning_phase().hidden_placeholder());
 }
 
 #[test]
@@ -742,7 +742,7 @@ fn hidden_reasoning_replaces_thinking_with_thought_summary() {
         &mut terminal,
     )
     .unwrap();
-    assert!(app.reasoning_phase.hidden_placeholder());
+    assert!(app.turn.reasoning_phase().hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
@@ -752,7 +752,7 @@ fn hidden_reasoning_replaces_thinking_with_thought_summary() {
         .unwrap();
     app.finish_streams();
 
-    assert!(!app.reasoning_phase.hidden_placeholder());
+    assert!(!app.turn.reasoning_phase().hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
@@ -849,7 +849,7 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
 
     app.info.runtime.show_reasoning_output = false;
     app.apply_reasoning_output_visibility();
-    assert!(app.reasoning_phase.hidden_placeholder());
+    assert!(app.turn.reasoning_phase().hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
@@ -895,11 +895,11 @@ fn toggling_reasoning_output_on_mid_turn_shows_later_deltas() {
         &mut terminal,
     )
     .unwrap();
-    assert!(app.reasoning_phase.hidden_placeholder());
+    assert!(app.turn.reasoning_phase().hidden_placeholder());
 
     app.info.runtime.show_reasoning_output = true;
     app.apply_reasoning_output_visibility();
-    assert!(!app.reasoning_phase.hidden_placeholder());
+    assert!(!app.turn.reasoning_phase().hidden_placeholder());
     assert!(app
         .history_live_lines(60, Instant::now())
         .iter()
@@ -951,7 +951,8 @@ fn started_tool_display_ignores_late_argument_previews() {
     });
 
     assert_eq!(
-        app.tool_calls
+        app.turn
+            .tool_calls()
             .running
             .values()
             .next()
@@ -981,7 +982,7 @@ fn web_search_api_key_editor_preserves_parent_picker() {
     .unwrap()
     .with_parent(root);
     App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
-    app.input_ui.composer = ComposerMode::Picker(parent);
+    app.input_ui.set_composer(ComposerMode::Picker(parent));
     let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
     app.open_child_picker(child);
 
@@ -991,7 +992,7 @@ fn web_search_api_key_editor_preserves_parent_picker() {
         .unwrap();
     app.handle_picker_escape(/*running*/ false).unwrap();
 
-    let ComposerMode::Picker(picker) = &app.input_ui.composer else {
+    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
         panic!("expected parent picker after API-key editor escape");
     };
     assert_eq!(
@@ -1019,7 +1020,7 @@ fn config_toggle_keeps_its_category_open() {
         .unwrap();
     app.toggle_check_for_updates().unwrap();
 
-    let ComposerMode::Picker(picker) = &app.input_ui.composer else {
+    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
         panic!("expected config category picker");
     };
     assert_eq!(picker.title, "Config / Updates");

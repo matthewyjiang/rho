@@ -110,7 +110,7 @@ impl App {
         if let Some(activity) = layout.activity {
             frame.render_widget(
                 Paragraph::new(
-                    self.loading_spinner.line(
+                    self.turn.loading_spinner().line(
                         now,
                         activity.width as usize,
                         self.activity_status()
@@ -202,7 +202,7 @@ impl App {
             render_copy_notice(frame, area, notice, now);
         }
 
-        let popup_cursor = if let ComposerMode::Picker(picker) = &self.input_ui.composer {
+        let popup_cursor = if let ComposerMode::Picker(picker) = self.input_ui.composer() {
             picker_overlay_frame(picker, area).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
                 frame.render_widget(
@@ -284,7 +284,7 @@ impl App {
         lines.resize(layout.history.height as usize, Line::default());
         if let Some(activity) = layout.activity {
             lines[activity.y.saturating_sub(layout.history.y) as usize] =
-                self.loading_spinner.line(
+                self.turn.loading_spinner().line(
                     now,
                     activity.width as usize,
                     self.activity_status()
@@ -490,7 +490,7 @@ impl App {
                 self.info.runtime.max_tool_output_lines,
             ));
         }
-        for pending in self.tool_calls.live_entries() {
+        for pending in self.turn.tool_calls().live_entries() {
             if self.history.last_inserted_was_tool()
                 || self.history.last().is_some_and(is_tool_entry)
             {
@@ -505,7 +505,7 @@ impl App {
         if let Some(preview) = &self.streams.live_stream_preview {
             lines.extend(self.render_stream_preview_lines(preview, width));
         }
-        if self.reasoning_phase.hidden_placeholder() {
+        if self.turn.reasoning_phase().hidden_placeholder() {
             lines.push(Line::raw(""));
             lines.push(pad_display_line(styled_line(
                 "Thinking...".into(),
@@ -678,7 +678,7 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
         if matches!(
-            &self.input_ui.composer,
+            self.input_ui.composer(),
             ComposerMode::Picker(picker) if picker.is_overlay()
         ) {
             return Ok(false);
@@ -692,7 +692,7 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_up(width, height, now);
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -700,13 +700,13 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_down(width, height, now);
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             _ if self.info.runtime.keybindings.jump_to_bottom.matches(key) => {
                 self.scroll_history_to_bottom();
-                self.input_ui.paste_burst.clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }

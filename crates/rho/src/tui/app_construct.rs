@@ -7,15 +7,11 @@ use rho_providers::credentials::{available_auth_modes, CredentialStore};
 use crate::credential_store::AppCredentialStore;
 
 use super::{
-    activity::{ActivityPhase, LoadingSpinner},
-    app_state::{HistoryUi, InputUi, PendingWorkUi},
+    app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi},
     clipboard::SystemClipboard,
     feed_image::picker_from_environment,
-    provider_attempt::ProviderAttempt,
-    reasoning_phase,
     statusline::StatusLine,
     subagent_panel::SubagentPanel,
-    tool_call_batch::ToolCallBatch,
     App, StreamUi, TuiBootstrap, UsageUi,
 };
 
@@ -65,13 +61,7 @@ impl App {
             should_quit: false,
             ctrl_c_streak: 0,
             streams: StreamUi::default(),
-            current_turn_start: None,
-            provider_attempt: ProviderAttempt::default(),
-            reasoning_phase: reasoning_phase::ReasoningPhase::default(),
-            session_ui: Default::default(),
-            activity_phase: ActivityPhase::default(),
-            loading_spinner: LoadingSpinner::default(),
-            tool_calls: ToolCallBatch::default(),
+            turn: TurnUi::default(),
             image_picker: picker_from_environment(herdr_graphics),
             pending: PendingWorkUi::default(),
             pending_inline_shells: Vec::new(),

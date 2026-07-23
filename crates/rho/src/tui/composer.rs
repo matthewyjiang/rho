@@ -12,7 +12,7 @@ use super::{
 
 impl App {
     pub(super) fn flush_due_paste_burst(&mut self) -> bool {
-        if self.input_ui.paste_burst.is_due(Instant::now()) {
+        if self.input_ui.paste_burst().is_due(Instant::now()) {
             self.flush_pending_paste_burst();
             true
         } else {
@@ -21,7 +21,7 @@ impl App {
     }
 
     pub(super) fn flush_pending_paste_burst(&mut self) {
-        let Some(text) = self.input_ui.paste_burst.take_pending() else {
+        let Some(text) = self.input_ui.paste_burst_mut().take_pending() else {
             return;
         };
         let text = normalize_paste(&text);
@@ -40,33 +40,35 @@ impl App {
 
         match burst_key {
             PasteBurstKey::Char(ch) => {
-                if !self.input_ui.paste_burst.can_continue(now) {
+                if !self.input_ui.paste_burst().can_continue(now) {
                     self.flush_pending_paste_burst();
                 }
-                self.input_ui.paste_burst.push_plain_char(ch, now);
+                self.input_ui.paste_burst_mut().push_plain_char(ch, now);
                 self.ctrl_c_streak = 0;
                 true
             }
-            PasteBurstKey::Enter => match self.input_ui.paste_burst.push_enter_if_paste(now) {
-                PasteBurstEnter::Buffered => {
-                    self.ctrl_c_streak = 0;
-                    true
+            PasteBurstKey::Enter => {
+                match self.input_ui.paste_burst_mut().push_enter_if_paste(now) {
+                    PasteBurstEnter::Buffered => {
+                        self.ctrl_c_streak = 0;
+                        true
+                    }
+                    PasteBurstEnter::InsertNewline => {
+                        self.insert_paste_burst_newline();
+                        self.ctrl_c_streak = 0;
+                        true
+                    }
+                    PasteBurstEnter::NotPaste => {
+                        self.flush_pending_paste_burst();
+                        false
+                    }
                 }
-                PasteBurstEnter::InsertNewline => {
-                    self.insert_paste_burst_newline();
-                    self.ctrl_c_streak = 0;
-                    true
-                }
-                PasteBurstEnter::NotPaste => {
-                    self.flush_pending_paste_burst();
-                    false
-                }
-            },
+            }
         }
     }
 
     fn insert_paste_burst_newline(&mut self) {
-        match &mut self.input_ui.composer {
+        match self.input_ui.composer_mut() {
             ComposerMode::Input => self.insert_input_char('\n'),
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_char('\n');
@@ -97,7 +99,7 @@ impl App {
     }
 
     fn composer_accepts_paste_burst_char(&self, ch: char) -> bool {
-        match &self.input_ui.composer {
+        match self.input_ui.composer() {
             ComposerMode::Input => true,
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.accepts_paste_burst_char(ch)
@@ -113,11 +115,11 @@ impl App {
     }
 
     fn composer_accepts_paste_burst_enter(&self) -> bool {
-        match &self.input_ui.composer {
+        match self.input_ui.composer() {
             ComposerMode::Input => true,
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.active_text_entry_active()
-                    || (self.input_ui.paste_burst.has_pending()
+                    || (self.input_ui.paste_burst().has_pending()
                         && questionnaire.accepts_pending_paste_burst_enter())
             }
             ComposerMode::Approval(_)
@@ -131,16 +133,16 @@ impl App {
     }
 
     pub(super) fn input_char_len(&self) -> usize {
-        self.input_ui.text.chars().count()
+        self.input_ui.char_len()
     }
 
     fn input_byte_index(&self, char_index: usize) -> usize {
         self.input_ui
-            .text
+            .text()
             .char_indices()
             .nth(char_index)
             .map(|(index, _)| index)
-            .unwrap_or(self.input_ui.text.len())
+            .unwrap_or(self.input_ui.text().len())
     }
 
     pub(super) fn reset_input_history_navigation(&mut self) {
@@ -149,63 +151,55 @@ impl App {
 
     pub(super) fn push_input_history(&mut self, prompt: &str) {
         self.reset_input_history_navigation();
-        if prompt.is_empty()
-            || self
-                .input_ui
-                .history
-                .last()
-                .is_some_and(|last| last == prompt)
-        {
+        if prompt.is_empty() {
             return;
         }
-        self.input_ui.history.push(prompt.to_string());
+        self.input_ui.push_history_if_new(prompt);
     }
 
     fn recall_input_history(&mut self, direction: HistoryDirection) -> bool {
-        if self.input_ui.history.is_empty() {
+        if self.input_ui.history().is_empty() {
             return false;
         }
 
-        let next_cursor = match (direction, self.input_ui.history_cursor) {
+        let next_cursor = match (direction, self.input_ui.history_cursor()) {
             (HistoryDirection::Previous, None) => {
-                self.input_ui.history_draft = Some(InputDraft {
-                    input: self.input_ui.text.clone(),
-                    paste_segments: self.input_ui.paste_segments.clone(),
-                    submission_mode: self.input_ui.submission_mode,
-                    shell_mode: self.input_ui.shell_mode,
-                });
-                self.input_ui.history.len() - 1
+                self.input_ui.set_history_draft(Some(InputDraft {
+                    input: self.input_ui.text().to_string(),
+                    paste_segments: self.input_ui.paste_segments().to_vec(),
+                    submission_mode: self.input_ui.submission_mode(),
+                    shell_mode: self.input_ui.shell_mode(),
+                }));
+                self.input_ui.history().len() - 1
             }
             (HistoryDirection::Previous, Some(0)) => 0,
             (HistoryDirection::Previous, Some(cursor)) => cursor - 1,
             (HistoryDirection::Next, None) => return false,
-            (HistoryDirection::Next, Some(cursor)) if cursor + 1 < self.input_ui.history.len() => {
+            (HistoryDirection::Next, Some(cursor))
+                if cursor + 1 < self.input_ui.history().len() =>
+            {
                 cursor + 1
             }
             (HistoryDirection::Next, Some(_)) => {
-                let draft = self.input_ui.history_draft.take().unwrap_or(InputDraft {
+                let draft = self.input_ui.take_history_draft().unwrap_or(InputDraft {
                     input: String::new(),
                     paste_segments: Vec::new(),
                     submission_mode: InputSubmissionMode::ParseCommands,
                     shell_mode: None,
                 });
-                self.input_ui.shell_mode = draft.shell_mode;
-                self.input_ui.text = draft.input;
-                self.input_ui.paste_segments = draft.paste_segments;
-                self.input_ui.submission_mode = draft.submission_mode;
-                self.input_ui.cursor = self.input_char_len();
-                self.input_ui.history_cursor = None;
+                self.input_ui.apply_input_draft(draft);
+                self.input_ui.set_history_cursor(None);
                 self.input_changed();
                 return true;
             }
         };
 
         self.apply_composer_text(
-            self.input_ui.history[next_cursor].clone(),
+            self.input_ui.history()[next_cursor].clone(),
             Vec::new(),
             InputSubmissionMode::ParseCommands,
         );
-        self.input_ui.history_cursor = Some(next_cursor);
+        self.input_ui.set_history_cursor(Some(next_cursor));
         true
     }
 
@@ -214,9 +208,9 @@ impl App {
         direction: HistoryDirection,
         terminal_width: usize,
     ) {
-        let visual_lines = input_visual_lines(&self.input_ui.text, terminal_width);
+        let visual_lines = input_visual_lines(self.input_ui.text(), terminal_width);
         let cursor_position =
-            input_cursor_position(&self.input_ui.text, self.input_ui.cursor, terminal_width);
+            input_cursor_position(self.input_ui.text(), self.input_ui.cursor(), terminal_width);
         let can_recall = match direction {
             HistoryDirection::Previous => cursor_position.y == 0,
             HistoryDirection::Next => cursor_position.y as usize + 1 >= visual_lines.len(),
@@ -230,48 +224,50 @@ impl App {
             HistoryDirection::Previous => cursor_position.y.saturating_sub(1) as usize,
             HistoryDirection::Next => cursor_position.y as usize + 1,
         };
-        self.input_ui.cursor = input_cursor_index_on_visual_line(
-            &self.input_ui.text,
+        self.input_ui.set_cursor(input_cursor_index_on_visual_line(
+            self.input_ui.text(),
             &visual_lines,
             target_row,
             cursor_position.x as usize,
-        );
+        ));
         self.focus_paste_segment_at_cursor();
     }
 
     pub(super) fn move_input_cursor_left(&mut self) {
-        if let Some(segment) = self.input_ui.paste_segments.iter().find(|segment| {
-            segment.start < self.input_ui.cursor && self.input_ui.cursor <= segment.end()
+        if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
+            segment.start < self.input_ui.cursor() && self.input_ui.cursor() <= segment.end()
         }) {
-            self.input_ui.cursor = segment.start;
+            self.input_ui.set_cursor(segment.start);
         } else {
-            self.input_ui.cursor = self.input_ui.cursor.saturating_sub(1);
+            self.input_ui
+                .set_cursor(self.input_ui.cursor().saturating_sub(1));
         }
     }
 
     pub(super) fn move_input_cursor_right(&mut self) {
-        if let Some(segment) = self.input_ui.paste_segments.iter().find(|segment| {
-            segment.start <= self.input_ui.cursor && self.input_ui.cursor < segment.end()
+        if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
+            segment.start <= self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
         }) {
-            self.input_ui.cursor = segment.end();
+            self.input_ui.set_cursor(segment.end());
         } else {
-            self.input_ui.cursor = (self.input_ui.cursor + 1).min(self.input_char_len());
+            self.input_ui
+                .set_cursor((self.input_ui.cursor() + 1).min(self.input_char_len()));
         }
     }
 
     fn focus_paste_segment_at_cursor(&mut self) {
-        if let Some(segment) = self.input_ui.paste_segments.iter().find(|segment| {
-            segment.start < self.input_ui.cursor && self.input_ui.cursor < segment.end()
+        if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
+            segment.start < self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
         }) {
-            self.input_ui.cursor = segment.start;
+            self.input_ui.set_cursor(segment.start);
         }
     }
 
     pub(super) fn focused_paste_segment(&self) -> Option<&PasteSegment> {
         self.input_ui
-            .paste_segments
+            .paste_segments()
             .iter()
-            .find(|segment| segment.start == self.input_ui.cursor)
+            .find(|segment| segment.start == self.input_ui.cursor())
     }
 
     pub(super) fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
@@ -279,8 +275,9 @@ impl App {
         self.adjust_paste_segments_for_edit(start, end.saturating_sub(start), text.chars().count());
         let start_byte = self.input_byte_index(start);
         let end_byte = self.input_byte_index(end);
-        self.input_ui.text.replace_range(start_byte..end_byte, text);
-        self.input_ui.cursor = start + text.chars().count();
+        self.input_ui
+            .with_text_mut(|value| value.replace_range(start_byte..end_byte, text));
+        self.input_ui.set_cursor(start + text.chars().count());
         self.input_changed();
     }
 
@@ -289,15 +286,21 @@ impl App {
             return;
         }
         self.reset_input_history_navigation();
-        self.adjust_paste_segments_for_edit(self.input_ui.cursor, 0, 1);
-        let byte_index = self.input_byte_index(self.input_ui.cursor);
-        self.input_ui.text.insert(byte_index, ch);
-        self.input_ui.cursor += 1;
+        self.adjust_paste_segments_for_edit(self.input_ui.cursor(), 0, 1);
+        let byte_index = self.input_byte_index(self.input_ui.cursor());
+        self.input_ui
+            .with_text_mut(|value| value.insert(byte_index, ch));
+        self.input_ui.set_cursor(self.input_ui.cursor() + (1));
         self.input_changed();
     }
 
+    /// Insert plain composer text through the char path so rules like shell-mode
+    /// bang handling stay single-sourced. Paste-burst flushes land here; collapsed
+    /// paste markers use [`Self::insert_pasted_input_text`] instead.
     pub(super) fn insert_input_text(&mut self, text: &str) {
-        self.insert_input_text_with_paste_content(text, None);
+        for ch in text.chars() {
+            self.insert_input_char(ch);
+        }
     }
 
     pub(super) fn insert_pasted_input_text(&mut self, text: &str) {
@@ -310,20 +313,22 @@ impl App {
 
     fn insert_input_text_with_paste_content(&mut self, text: &str, paste_content: Option<String>) {
         self.reset_input_history_navigation();
-        let start = self.input_ui.cursor;
+        let start = self.input_ui.cursor();
         let inserted_len = text.chars().count();
         self.adjust_paste_segments_for_edit(start, 0, inserted_len);
         let byte_index = self.input_byte_index(start);
-        self.input_ui.text.insert_str(byte_index, text);
-        self.input_ui.cursor += inserted_len;
+        self.input_ui
+            .with_text_mut(|value| value.insert_str(byte_index, text));
+        self.input_ui
+            .set_cursor(self.input_ui.cursor() + (inserted_len));
         if let Some(content) = paste_content {
-            self.input_ui.paste_segments.push(PasteSegment {
+            self.input_ui.paste_segments_mut().push(PasteSegment {
                 start,
                 marker_len: inserted_len,
                 content,
             });
             self.input_ui
-                .paste_segments
+                .paste_segments_mut()
                 .sort_by_key(|segment| segment.start);
         }
         self.input_changed();
@@ -341,7 +346,7 @@ impl App {
     ) {
         let end = start + deleted_len;
         let shift = inserted_len as isize - deleted_len as isize;
-        self.input_ui.paste_segments.retain_mut(|segment| {
+        self.input_ui.paste_segments_mut().retain_mut(|segment| {
             if start < segment.end() && end > segment.start {
                 return false;
             }
@@ -355,78 +360,82 @@ impl App {
     pub(super) fn backspace_input(&mut self) {
         if let Some(segment) = self
             .input_ui
-            .paste_segments
+            .paste_segments()
             .iter()
             .find(|segment| {
-                segment.start < self.input_ui.cursor && self.input_ui.cursor <= segment.end()
+                segment.start < self.input_ui.cursor() && self.input_ui.cursor() <= segment.end()
             })
             .cloned()
         {
             self.replace_input_range(segment.start, segment.end(), "");
             return;
         }
-        if self.input_ui.cursor == 0 {
-            if self.input_ui.text.is_empty() && self.input_ui.pending_images.pop().is_some() {
-                self.status = format!("attached images: {}", self.input_ui.pending_images.len());
+        if self.input_ui.cursor() == 0 {
+            if self.input_ui.text().is_empty() && self.input_ui.pending_images_mut().pop().is_some()
+            {
+                self.status = format!("attached images: {}", self.input_ui.pending_images().len());
             }
             return;
         }
         self.reset_input_history_navigation();
-        let edit_start = self.input_ui.cursor - 1;
+        let edit_start = self.input_ui.cursor() - 1;
         self.adjust_paste_segments_for_edit(edit_start, 1, 0);
         let start = self.input_byte_index(edit_start);
-        let end = self.input_byte_index(self.input_ui.cursor);
-        self.input_ui.text.replace_range(start..end, "");
-        self.input_ui.cursor -= 1;
+        let end = self.input_byte_index(self.input_ui.cursor());
+        self.input_ui
+            .with_text_mut(|value| value.replace_range(start..end, ""));
+        self.input_ui.set_cursor(self.input_ui.cursor() - (1));
         self.input_changed();
     }
 
     pub(super) fn delete_input(&mut self) {
         if let Some(segment) = self
             .input_ui
-            .paste_segments
+            .paste_segments()
             .iter()
             .find(|segment| {
-                segment.start <= self.input_ui.cursor && self.input_ui.cursor < segment.end()
+                segment.start <= self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
             })
             .cloned()
         {
             self.replace_input_range(segment.start, segment.end(), "");
             return;
         }
-        if self.input_ui.cursor >= self.input_char_len() {
+        if self.input_ui.cursor() >= self.input_char_len() {
             return;
         }
         self.reset_input_history_navigation();
-        self.adjust_paste_segments_for_edit(self.input_ui.cursor, 1, 0);
-        let start = self.input_byte_index(self.input_ui.cursor);
-        let end = self.input_byte_index(self.input_ui.cursor + 1);
-        self.input_ui.text.replace_range(start..end, "");
+        self.adjust_paste_segments_for_edit(self.input_ui.cursor(), 1, 0);
+        let start = self.input_byte_index(self.input_ui.cursor());
+        let end = self.input_byte_index(self.input_ui.cursor() + 1);
+        self.input_ui
+            .with_text_mut(|value| value.replace_range(start..end, ""));
         self.input_changed();
     }
 
     pub(super) fn delete_word_before_cursor(&mut self) {
         self.reset_input_history_navigation();
-        let start_cursor = previous_word_boundary(&self.input_ui.text, self.input_ui.cursor);
-        self.adjust_paste_segments_for_edit(start_cursor, self.input_ui.cursor - start_cursor, 0);
+        let start_cursor = previous_word_boundary(self.input_ui.text(), self.input_ui.cursor());
+        self.adjust_paste_segments_for_edit(start_cursor, self.input_ui.cursor() - start_cursor, 0);
         let start = self.input_byte_index(start_cursor);
-        let end = self.input_byte_index(self.input_ui.cursor);
-        self.input_ui.text.replace_range(start..end, "");
-        self.input_ui.cursor = start_cursor;
+        let end = self.input_byte_index(self.input_ui.cursor());
+        self.input_ui
+            .with_text_mut(|value| value.replace_range(start..end, ""));
+        self.input_ui.set_cursor(start_cursor);
         self.input_changed();
     }
 
     pub(super) fn replace_composer_from_editor(&mut self, text: String) {
         self.reset_input_history_navigation();
-        self.input_ui.text = text;
-        self.input_ui.paste_segments.clear();
-        self.input_ui.cursor = self.input_char_len();
+        let cursor = text.chars().count();
+        self.input_ui.set_text_and_cursor(text, cursor);
+        self.input_ui.clear_paste_segments();
         self.input_changed();
     }
 
     pub(super) fn input_changed(&mut self) {
-        self.input_ui.command_palette_dismissed = false;
-        self.input_ui.file_palette_dismissed = false;
+        self.input_ui.set_command_palette_dismissed(false);
+        self.input_ui.set_file_palette_dismissed(false);
         self.clamp_command_selection();
         self.clamp_file_selection();
     }
@@ -434,11 +443,11 @@ impl App {
     pub(super) fn parse_input_command(
         &mut self,
     ) -> Result<Option<CommandInvocation>, commands::CommandParseError> {
-        match std::mem::take(&mut self.input_ui.submission_mode) {
+        match self.input_ui.take_submission_mode() {
             InputSubmissionMode::ParseCommands => {
-                let result = commands::parse_command(&self.input_ui.text);
+                let result = commands::parse_command(self.input_ui.text());
                 if matches!(result, Ok(Some(_))) {
-                    let command = self.input_ui.text.trim_end().to_string();
+                    let command = self.input_ui.text().trim_end().to_string();
                     self.push_input_history(&command);
                 }
                 result
@@ -448,47 +457,47 @@ impl App {
     }
 
     pub(super) fn command_palette_visible(&self) -> bool {
-        matches!(self.input_ui.composer, ComposerMode::Input)
-            && self.input_ui.shell_mode.is_none()
-            && !self.input_ui.command_palette_dismissed
+        matches!(self.input_ui.composer(), ComposerMode::Input)
+            && self.input_ui.shell_mode().is_none()
+            && !self.input_ui.command_palette_dismissed()
             && (self.cursor_in_command_token()
-                || !commands::argument_choices(&self.input_ui.text, self.input_ui.cursor)
+                || !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor())
                     .is_empty())
             && !self.command_matches().is_empty()
     }
 
     fn cursor_in_command_token(&self) -> bool {
-        if !self.input_ui.text.starts_with('/') {
+        if !self.input_ui.text().starts_with('/') {
             return false;
         }
 
         let token_len = self
             .input_ui
-            .text
+            .text()
             .chars()
             .position(char::is_whitespace)
             .unwrap_or_else(|| self.input_char_len());
-        self.input_ui.cursor <= token_len
+        self.input_ui.cursor() <= token_len
     }
 
     pub(super) fn clamp_command_selection(&mut self) {
         let prefix = self
             .cursor_in_command_token()
-            .then(|| commands::command_prefix(&self.input_ui.text).map(str::to_ascii_lowercase))
+            .then(|| commands::command_prefix(self.input_ui.text()).map(str::to_ascii_lowercase))
             .flatten();
-        if self.input_ui.command_prefix != prefix {
-            self.input_ui.command_prefix = prefix;
-            self.input_ui.command_selection = 0;
+        if self.input_ui.command_prefix() != prefix.as_deref() {
+            self.input_ui.set_command_prefix(prefix);
+            self.input_ui.set_command_selection(0);
         }
-        if self.input_ui.command_prefix.is_some() {
+        if self.input_ui.command_prefix().is_some() {
             self.refresh_skill_match_cache();
         }
 
         let match_count = self.command_matches().len();
         if match_count == 0 {
-            self.input_ui.command_selection = 0;
-        } else if self.input_ui.command_selection >= match_count {
-            self.input_ui.command_selection = match_count - 1;
+            self.input_ui.set_command_selection(0);
+        } else if self.input_ui.command_selection() >= match_count {
+            self.input_ui.set_command_selection(match_count - 1);
         }
     }
 
@@ -496,7 +505,7 @@ impl App {
         if self.try_attach_pasted_image_path(text) {
             return;
         }
-        match &mut self.input_ui.composer {
+        match self.input_ui.composer_mut() {
             ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),

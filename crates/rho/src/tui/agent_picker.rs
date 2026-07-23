@@ -193,7 +193,8 @@ impl super::App {
         if let Some(id) = self.internal_agent_model_target.as_deref() {
             Self::restore_picker_position(&mut picker, id, String::new());
         }
-        self.input_ui.composer = super::ComposerMode::Picker(picker);
+        self.input_ui
+            .set_composer(super::ComposerMode::Picker(picker));
         self.status = "loaded agents".into();
         Ok(())
     }

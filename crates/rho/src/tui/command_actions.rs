@@ -65,12 +65,12 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        self.pending.steering_prompts.clear();
+        self.pending.steering_prompts_mut().clear();
         self.pending_input_changed();
         self.status = "compacting context".into();
         self.begin_compact_ui();
-        self.activity_phase = ActivityPhase::Compacting;
-        self.loading_spinner.start();
+        self.turn.set_activity_phase(ActivityPhase::Compacting);
+        self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
 
         let interrupt_requested = AtomicBool::new(false);
@@ -110,7 +110,7 @@ impl App {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
         self.end_busy_ui();
-        self.loading_spinner.stop();
+        self.turn.stop_loading();
 
         let succeeded = match compacted {
             Ok(true) => {
@@ -151,25 +151,26 @@ impl App {
     ) -> anyhow::Result<()> {
         agent.reset()?;
         self.info.session.session_id = None;
-        self.input_ui.composer = ComposerMode::Input;
-        self.input_ui.text.clear();
-        self.input_ui.paste_segments.clear();
-        self.input_ui.shell_mode = None;
-        self.input_ui.cursor = 0;
-        self.input_ui.pending_images.clear();
-        self.input_ui.command_palette_dismissed = false;
+        self.input_ui.set_composer(ComposerMode::Input);
+        self.input_ui.clear_text();
+        self.input_ui.clear_paste_segments();
+        self.input_ui.set_shell_mode(None);
+        self.input_ui.set_cursor(0);
+        self.input_ui.clear_pending_images();
+        self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
-        self.pending.queued_prompts.clear();
+        self.pending.clear_follow_ups();
         self.goal = None;
-        self.pending.steering_prompts.clear();
-        self.clear_accepted_steering();
+        self.pending.clear_steering();
+        self.pending.clear_input_action();
+        self.pending_input_changed();
         self.reset_streams();
         self.end_busy_ui();
-        self.tool_calls.clear();
+        self.turn.clear_tool_calls();
         self.reset_usage();
         self.usage.current_context = None;
         self.pending_session_title = None;
-        self.current_turn_start = None;
+        self.turn.set_current_turn_start(None);
         self.history.clear_entries();
         self.history.images_mut().clear();
         self.history.set_images_dirty_from(None);
