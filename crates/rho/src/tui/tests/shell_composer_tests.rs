@@ -251,3 +251,75 @@ fn labeled_divider_falls_back_to_shortest_shell_label() {
     assert!(text.contains("shell"), "{text}");
     assert!(!text.contains("included"), "{text}");
 }
+
+#[test]
+fn paste_burst_flushed_bang_enters_shell_mode_like_typed_char() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::time::Duration;
+
+    let mut app = test_app();
+    let start = Instant::now();
+    assert!(
+        app.handle_paste_burst_key_at(KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE), start)
+    );
+    // Non-burst key flushes pending text through insert_paste -> insert_input_text.
+    assert!(!app.handle_paste_burst_key_at(
+        KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+        start + Duration::from_millis(20),
+    ));
+    assert_eq!(
+        app.input_ui.shell_mode(),
+        Some(InlineShellMode::IncludeInContext)
+    );
+    assert_eq!(app.input_ui.text(), "");
+    assert_eq!(app.input_ui.cursor(), 0);
+}
+
+#[test]
+fn paste_burst_flushed_double_bang_enters_local_shell_mode() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::time::Duration;
+
+    let mut app = test_app();
+    let start = Instant::now();
+    assert!(
+        app.handle_paste_burst_key_at(KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE), start)
+    );
+    assert!(app.handle_paste_burst_key_at(
+        KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE),
+        start + Duration::from_millis(1),
+    ));
+    assert!(!app.handle_paste_burst_key_at(
+        KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+        start + Duration::from_millis(20),
+    ));
+    assert_eq!(
+        app.input_ui.shell_mode(),
+        Some(InlineShellMode::ExcludeFromContext)
+    );
+    assert_eq!(app.input_ui.text(), "");
+}
+
+#[test]
+fn paste_burst_flushed_bang_command_keeps_body_without_prefix() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::time::Duration;
+
+    let mut app = test_app();
+    let start = Instant::now();
+    for (i, ch) in ['!', 'e', 'c', 'h', 'o'].into_iter().enumerate() {
+        assert!(app.handle_paste_burst_key_at(
+            KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+            start + Duration::from_millis(i as u64),
+        ));
+    }
+    assert!(!app.handle_paste_burst_key_at(
+        KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+        start + Duration::from_millis(20),
+    ));
+    assert_eq!(
+        app.input_ui.shell_mode(),
+        Some(InlineShellMode::IncludeInContext)
+    );
+    assert_eq!(app.input_ui.text(), "echo");
+}

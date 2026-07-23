@@ -294,8 +294,13 @@ impl App {
         self.input_changed();
     }
 
+    /// Insert plain composer text through the char path so rules like shell-mode
+    /// bang handling stay single-sourced. Paste-burst flushes land here; collapsed
+    /// paste markers use [`Self::insert_pasted_input_text`] instead.
     pub(super) fn insert_input_text(&mut self, text: &str) {
-        self.insert_input_text_with_paste_content(text, None);
+        for ch in text.chars() {
+            self.insert_input_char(ch);
+        }
     }
 
     pub(super) fn insert_pasted_input_text(&mut self, text: &str) {
