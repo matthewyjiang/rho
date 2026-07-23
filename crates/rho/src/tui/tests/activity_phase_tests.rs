@@ -10,7 +10,8 @@ use super::*;
 
 fn rendered_activity(app: &App) -> String {
     let status = app.activity_status().expect("activity is visible");
-    app.loading_spinner
+    app.turn
+        .loading_spinner()
         .line(Instant::now(), 80, status)
         .spans
         .iter()
@@ -56,12 +57,12 @@ fn provider_stream_reset_clears_attempt_owned_tool_previews() {
         &mut terminal,
     )
     .unwrap();
-    assert_eq!(app.tool_calls.live_entries().count(), 1);
+    assert_eq!(app.turn.tool_calls().live_entries().count(), 1);
 
     app.handle_agent_event(ViewModelEvent::ProviderStreamReset, &mut terminal)
         .unwrap();
 
-    assert_eq!(app.tool_calls.live_entries().count(), 0);
+    assert_eq!(app.turn.tool_calls().live_entries().count(), 0);
 }
 
 #[test]
@@ -69,32 +70,33 @@ fn questionnaire_phase_is_a_temporary_overlay_on_tool_activity() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut app = test_app();
     app.begin_provider_turn_ui();
-    app.activity_phase = ActivityPhase::RunningTool;
-    app.input_ui.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
-        QuestionnaireRequest {
-            title: None,
-            reason: None,
-            questions: vec![QuestionnaireQuestion {
-                id: "continue".into(),
-                question: "Continue?".into(),
-                header: None,
-                help: None,
-                default: None,
-                kind: QuestionnaireQuestionKind::Confirm,
-                required: true,
-                choices: Vec::new(),
-                allow_other: false,
-            }],
-        },
-        QuestionnaireResponseChannel::new(reply_tx),
-    ));
+    app.turn.set_activity_phase(ActivityPhase::RunningTool);
+    app.input_ui
+        .set_composer(ComposerMode::Questionnaire(QuestionnaireComposer::new(
+            QuestionnaireRequest {
+                title: None,
+                reason: None,
+                questions: vec![QuestionnaireQuestion {
+                    id: "continue".into(),
+                    question: "Continue?".into(),
+                    header: None,
+                    help: None,
+                    default: None,
+                    kind: QuestionnaireQuestionKind::Confirm,
+                    required: true,
+                    choices: Vec::new(),
+                    allow_other: false,
+                }],
+            },
+            QuestionnaireResponseChannel::new(reply_tx),
+        )));
 
     assert!(rendered_activity(&app).contains("waiting for input"));
 
     app.handle_questionnaire_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
 
-    assert!(matches!(app.input_ui.composer, ComposerMode::Input));
+    assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
     assert!(reply_rx.try_recv().is_ok());
     assert!(rendered_activity(&app).contains("running tool"));
 }

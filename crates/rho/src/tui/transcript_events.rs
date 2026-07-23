@@ -59,7 +59,7 @@ impl App {
         self.streams.reset();
         // Discard an unfinished reasoning phase. Callers that should keep a
         // summary must finalize before reset (for example `finish_streams`).
-        self.reasoning_phase.reset();
+        self.turn.reasoning_phase_mut().reset();
     }
 
     pub(super) fn handle_agent_event<B: Backend>(
@@ -68,7 +68,7 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
         if let Some(phase) = event.activity_phase() {
-            self.activity_phase = phase;
+            self.turn.set_activity_phase(phase);
         }
         match event {
             ViewModelEvent::ProviderStreamReset => {
@@ -84,7 +84,9 @@ impl App {
             }
             ViewModelEvent::ReasoningDelta(text) => {
                 let show_reasoning = self.info.runtime.show_reasoning_output;
-                self.reasoning_phase.on_reasoning_delta(show_reasoning);
+                self.turn
+                    .reasoning_phase_mut()
+                    .on_reasoning_delta(show_reasoning);
                 if !show_reasoning {
                     return Ok(true);
                 }
@@ -228,12 +230,13 @@ impl App {
                 self.usage.usage_before_current_step = self.usage.current_run_usage.clone();
                 self.usage.usage_before_current_attempt = None;
                 self.reset_streams();
-                self.provider_attempt.begin(self.history.len());
-                self.reasoning_phase
+                self.turn.provider_attempt_mut().begin(self.history.len());
+                self.turn
+                    .reasoning_phase_mut()
                     .begin_step(self.info.runtime.show_reasoning_output);
                 self.begin_provider_turn_ui();
-                self.tool_calls.clear();
-                self.loading_spinner.start_if_needed();
+                self.turn.clear_tool_calls();
+                self.turn.start_loading_if_needed();
                 self.status = format!("running step {step}");
                 None
             }
@@ -245,14 +248,14 @@ impl App {
                 call_id,
                 display_lines,
             } => {
-                self.tool_calls.started(call_id, display_lines);
+                self.turn.tool_started(call_id, display_lines);
                 None
             }
             ViewModelEvent::ToolUpdated {
                 call_id,
                 display_lines,
             } => {
-                self.tool_calls.updated(call_id, display_lines);
+                self.turn.tool_updated(call_id, display_lines);
                 None
             }
             ViewModelEvent::ToolCallUpdated {
@@ -260,7 +263,7 @@ impl App {
                 call_id,
                 display_lines,
             } => {
-                self.tool_calls.preview(index, call_id, display_lines);
+                self.turn.tool_call_preview(index, call_id, display_lines);
                 None
             }
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
@@ -329,12 +332,13 @@ impl App {
                 image_asset,
             } => {
                 self.statusline.refresh_git_branch();
-                let expanded = self.tool_calls.finished(&call_id);
-                self.activity_phase = if self.tool_calls.is_running() {
-                    ActivityPhase::RunningTool
-                } else {
-                    ActivityPhase::Starting
-                };
+                let expanded = self.turn.tool_finished(&call_id);
+                self.turn
+                    .set_activity_phase(if self.turn.tool_calls().is_running() {
+                        ActivityPhase::RunningTool
+                    } else {
+                        ActivityPhase::Starting
+                    });
                 let image =
                     image_asset
                         .as_ref()
@@ -413,7 +417,7 @@ impl App {
 
     /// Ends the current reasoning stretch, attaching or inserting a thought duration.
     pub(super) fn close_reasoning_phase(&mut self) -> bool {
-        let Some(elapsed) = self.reasoning_phase.finalize() else {
+        let Some(elapsed) = self.turn.reasoning_phase_mut().finalize() else {
             return false;
         };
         match self.history.last_mut() {
@@ -487,7 +491,7 @@ impl App {
     }
 
     pub(super) fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
-        let start = self.current_turn_start.unwrap_or(0);
+        let start = self.turn.current_turn_start().unwrap_or(0);
         let assistant_indices = self
             .history
             .entries()
@@ -544,7 +548,9 @@ impl App {
     /// Apply the live `show_reasoning_output` setting to in-flight turn UI.
     pub(super) fn apply_reasoning_output_visibility(&mut self) {
         if self.info.runtime.show_reasoning_output {
-            self.reasoning_phase.set_hidden_placeholder(false);
+            self.turn
+                .reasoning_phase_mut()
+                .set_hidden_placeholder(false);
             return;
         }
 
@@ -552,17 +558,18 @@ impl App {
 
         // Keep the Thinking... placeholder while this step is still waiting for
         // or streaming reasoning. Later phases (response, tools) stay clear.
-        self.reasoning_phase.set_hidden_placeholder(
-            self.is_ui_busy()
-                && (self.reasoning_phase.has_started()
-                    || matches!(
-                        self.activity_phase,
-                        ActivityPhase::Starting
-                            | ActivityPhase::WaitingForProvider
-                            | ActivityPhase::Thinking
-                            | ActivityPhase::RetryingProvider
-                    )),
-        );
+        let hide_placeholder = self.is_ui_busy()
+            && (self.turn.reasoning_phase().has_started()
+                || matches!(
+                    self.turn.activity_phase(),
+                    ActivityPhase::Starting
+                        | ActivityPhase::WaitingForProvider
+                        | ActivityPhase::Thinking
+                        | ActivityPhase::RetryingProvider
+                ));
+        self.turn
+            .reasoning_phase_mut()
+            .set_hidden_placeholder(hide_placeholder);
     }
 
     pub(super) fn discard_live_reasoning_output(&mut self) {
@@ -591,9 +598,10 @@ impl App {
 
     pub(super) fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
-        self.tool_calls.clear();
+        self.turn.clear_tool_calls();
         if let Some(start) = self
-            .provider_attempt
+            .turn
+            .provider_attempt_mut()
             .reset_output(self.history.entries_mut())
         {
             self.history.images_mut().clear();

@@ -171,7 +171,7 @@ impl App {
         if invocation.args.is_empty() {
             match provider_picker::logout_provider_picker(self.credential_store.as_ref()) {
                 Ok(picker) => {
-                    self.input_ui.composer = ComposerMode::Picker(picker);
+                    self.input_ui.set_composer(ComposerMode::Picker(picker));
                     self.status = "select provider to logout".into();
                 }
                 Err(err) => {
@@ -188,7 +188,8 @@ impl App {
         if self.begin_store_choice_if_needed(StoreChoiceNext::OpenPicker) {
             return;
         }
-        self.input_ui.composer = ComposerMode::Picker(provider_picker::login_group_picker());
+        self.input_ui
+            .set_composer(ComposerMode::Picker(provider_picker::login_group_picker()));
         self.status = "select provider to login".into();
     }
 
@@ -208,10 +209,11 @@ impl App {
         };
         match credential_store_inline_choice(request) {
             Ok(choice) => {
-                self.input_ui.composer = ComposerMode::InlineChoice(InlineChoiceModal {
-                    choice,
-                    pending: InlineChoicePending::CredentialStore { next },
-                });
+                self.input_ui
+                    .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                        choice,
+                        pending: InlineChoicePending::CredentialStore { next },
+                    }));
                 self.status = "choose credential store before login".into();
             }
             Err(err) => {
@@ -314,7 +316,8 @@ impl App {
                 Ok(())
             }
             AuthenticationMethod::ApiKey { entry_label } => {
-                self.input_ui.composer = ComposerMode::SecretInput(SecretInput::new(target));
+                self.input_ui
+                    .set_composer(ComposerMode::SecretInput(SecretInput::new(target)));
                 self.status = format!("enter {entry_label}");
                 Ok(())
             }
@@ -416,7 +419,8 @@ impl App {
         }
         let flow = if device_flow { " device" } else { "" };
         self.status = format!("waiting for {provider_label}{flow} login; press esc to cancel");
-        self.input_ui.composer = ComposerMode::OAuthPending(target.clone());
+        self.input_ui
+            .set_composer(ComposerMode::OAuthPending(target.clone()));
         self.pending_oauth_login = Some(PendingOAuthLogin {
             target,
             handle: tokio::spawn(
@@ -446,11 +450,11 @@ impl App {
                 let saved = result.save(self.credential_store.as_ref());
                 match saved {
                     Ok(()) => {
-                        self.input_ui.composer = ComposerMode::Input;
+                        self.input_ui.set_composer(ComposerMode::Input);
                         self.finish_login(target, terminal, agent).await
                     }
                     Err(err) => {
-                        self.input_ui.composer = ComposerMode::Input;
+                        self.input_ui.set_composer(ComposerMode::Input);
                         self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "login failed".into();
                         Ok(())
@@ -458,18 +462,18 @@ impl App {
                 }
             }
             Ok(Err(err)) => {
-                self.input_ui.composer = ComposerMode::Input;
+                self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Error(err));
                 self.status = "login failed".into();
                 Ok(())
             }
             Err(err) if err.is_cancelled() => {
-                self.input_ui.composer = ComposerMode::Input;
+                self.input_ui.set_composer(ComposerMode::Input);
                 self.status = "login cancelled".into();
                 Ok(())
             }
             Err(err) => {
-                self.input_ui.composer = ComposerMode::Input;
+                self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Error(format!("OAuth login task failed: {err}")));
                 self.status = "login failed".into();
                 Ok(())

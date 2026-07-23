@@ -157,19 +157,20 @@ impl App {
             failed_turn.attach_notification_context(batch_model);
         }
         let model_input = failed_turn.model_input()?;
-        self.current_turn_start = Some(self.history.len());
+        self.turn.set_current_turn_start(Some(self.history.len()));
         self.reset_streams();
-        self.reasoning_phase
+        self.turn
+            .reasoning_phase_mut()
             .begin_step(self.info.runtime.show_reasoning_output);
         self.status = "running".into();
         self.begin_provider_turn_ui();
-        self.activity_phase = ActivityPhase::Starting;
+        self.turn.set_activity_phase(ActivityPhase::Starting);
         self.report_herdr_working().await;
-        self.loading_spinner.start();
+        self.turn.start_loading();
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        self.tool_calls.clear();
+        self.turn.clear_tool_calls();
         let start_result = match failed_turn.initial_tool_call.clone() {
             Some(call) => {
                 agent
@@ -184,9 +185,9 @@ impl App {
         };
         if let Err(error) = start_result {
             self.end_busy_ui();
-            self.loading_spinner.stop();
-            self.current_turn_start = None;
-            self.activity_phase = ActivityPhase::default();
+            self.turn.stop_loading();
+            self.turn.set_current_turn_start(None);
+            self.turn.set_activity_phase(ActivityPhase::default());
             self.status = "ready".into();
             return Err(error.into());
         }
@@ -223,7 +224,7 @@ impl App {
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
             let interaction_available = interaction_slot_available(
                 /*approval_active*/
-                matches!(self.input_ui.composer, ComposerMode::Approval(_)),
+                matches!(self.input_ui.composer(), ComposerMode::Approval(_)),
                 /*questionnaire_active*/ pending_questionnaire.is_some(),
             );
             let approval_ready = approval_receiver_open && interaction_available;
@@ -326,12 +327,12 @@ impl App {
                     match adapter.translate(event) {
                         ViewEvent::Update(event) => {
                             changed |= self.handle_queued_agent_event(event, terminal)?;
-                            tool_call_active.store(self.tool_calls.is_running(), Ordering::SeqCst);
+                            tool_call_active.store(self.turn.tool_calls().is_running(), Ordering::SeqCst);
                         }
                         ViewEvent::Questionnaire { call_id, request } => {
                             let interaction_available = interaction_slot_available(
                                 /*approval_active*/ matches!(
-                                    self.input_ui.composer,
+                                    self.input_ui.composer(),
                                     ComposerMode::Approval(_)
                                 ),
                                 /*questionnaire_active*/ pending_questionnaire.is_some(),
@@ -369,7 +370,7 @@ impl App {
                 && sdk_failure.is_none()
                 && interaction_slot_available(
                     /*approval_active*/
-                    matches!(self.input_ui.composer, ComposerMode::Approval(_)),
+                    matches!(self.input_ui.composer(), ComposerMode::Approval(_)),
                     /*questionnaire_active*/ pending_questionnaire.is_some(),
                 )
             {
@@ -381,7 +382,7 @@ impl App {
             }
             if pending_input_request.is_none()
                 && sdk_failure.is_none()
-                && !self.pending.steering_prompts.is_empty()
+                && !self.pending.steering_prompts().is_empty()
             {
                 pending_input_request = self.start_pending_input_request(agent);
                 self.pending_input_changed();
@@ -405,7 +406,7 @@ impl App {
         }
 
         self.cancel_approval();
-        self.tool_calls.clear();
+        self.turn.clear_tool_calls();
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
         let inline_shell_error = match self.finish_all_inline_shells().await {
@@ -429,11 +430,11 @@ impl App {
             Ok(outcome) if sdk_failure.is_none() => {
                 self.end_busy_ui();
                 self.debug_assert_provider_turn_sync(agent);
-                self.loading_spinner.stop();
+                self.turn.stop_loading();
                 self.finish_streams();
                 self.insert_final_answer_suffix(outcome.text());
                 self.reset_streams();
-                self.current_turn_start = None;
+                self.turn.set_current_turn_start(None);
                 self.status = if !self.pending.has_follow_ups() {
                     "ready".into()
                 } else {
@@ -447,7 +448,7 @@ impl App {
             _ if questionnaire_cancelled_by_user => {
                 self.end_busy_ui();
                 self.debug_assert_provider_turn_sync(agent);
-                self.loading_spinner.stop();
+                self.turn.stop_loading();
                 self.finish_streams();
                 let notice = if self.goal.is_some() {
                     "questionnaire cancelled; goal left active"
@@ -456,7 +457,7 @@ impl App {
                 };
                 self.insert_entry(&Entry::Notice(notice.into()));
                 self.reset_streams();
-                self.current_turn_start = None;
+                self.turn.set_current_turn_start(None);
                 self.status = "questionnaire cancelled".into();
                 TurnOutcome::Cancelled
             }
@@ -469,11 +470,11 @@ impl App {
                 self.restore_pending_work_to_input();
                 self.end_busy_ui();
                 self.debug_assert_provider_turn_sync(agent);
-                self.loading_spinner.stop();
+                self.turn.stop_loading();
                 self.finish_streams();
                 self.insert_entry(&Entry::Notice("model interrupted".into()));
                 self.reset_streams();
-                self.current_turn_start = None;
+                self.turn.set_current_turn_start(None);
                 self.status = "interrupted".into();
                 TurnOutcome::Interrupted
             }
@@ -534,9 +535,9 @@ impl App {
     fn finalize_failed_turn(&mut self, message: String, failed_turn: FailedTurn) -> TurnOutcome {
         self.finish_streams();
         self.reset_streams();
-        self.current_turn_start = None;
+        self.turn.set_current_turn_start(None);
         self.end_busy_ui();
-        self.loading_spinner.stop();
+        self.turn.stop_loading();
         self.insert_entry(&Entry::Error(message));
         self.status = "error".into();
         TurnOutcome::Failed(failed_turn)

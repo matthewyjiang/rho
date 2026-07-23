@@ -95,7 +95,8 @@ impl App {
             self.status = "empty session tree".into();
             return Ok(());
         }
-        self.input_ui.composer = ComposerMode::Picker(tree_picker(items));
+        self.input_ui
+            .set_composer(ComposerMode::Picker(tree_picker(items)));
         self.status = "select conversation state".into();
         Ok(())
     }
@@ -122,12 +123,12 @@ impl App {
         agent.select_tree_node(storage, &target_id).await?;
 
         self.info.session.recovered_messages = histories.display.clone();
-        self.input_ui.composer = ComposerMode::Input;
-        self.input_ui.text.clear();
-        self.input_ui.paste_segments.clear();
-        self.input_ui.shell_mode = None;
-        self.input_ui.cursor = 0;
-        self.input_ui.command_palette_dismissed = false;
+        self.input_ui.set_composer(ComposerMode::Input);
+        self.input_ui.clear_text();
+        self.input_ui.clear_paste_segments();
+        self.input_ui.set_shell_mode(None);
+        self.input_ui.set_cursor(0);
+        self.input_ui.set_command_palette_dismissed(false);
         self.reset_streams();
         self.goal = None;
         self.reset_usage();

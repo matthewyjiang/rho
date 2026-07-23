@@ -9,16 +9,14 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        let outcome = match &mut self.input_ui.composer {
+        let outcome = match self.input_ui.composer_mut() {
             ComposerMode::InlineChoice(modal) => modal.choice.handle_key(key),
             _ => return Ok(false),
         };
 
         match outcome {
             InlineChoiceKeyOutcome::Selected(value) => {
-                let ComposerMode::InlineChoice(modal) =
-                    std::mem::replace(&mut self.input_ui.composer, ComposerMode::Input)
-                else {
+                let ComposerMode::InlineChoice(modal) = self.input_ui.take_composer() else {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
@@ -33,9 +31,7 @@ impl App {
                 }
             }
             InlineChoiceKeyOutcome::Cancelled => {
-                let ComposerMode::InlineChoice(modal) =
-                    std::mem::replace(&mut self.input_ui.composer, ComposerMode::Input)
-                else {
+                let ComposerMode::InlineChoice(modal) = self.input_ui.take_composer() else {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
@@ -50,7 +46,7 @@ impl App {
             }
             InlineChoiceKeyOutcome::Handled => {}
         }
-        self.input_ui.paste_burst.clear();
+        self.input_ui.clear_paste_burst();
         self.ctrl_c_streak = 0;
         Ok(true)
     }
