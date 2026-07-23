@@ -107,7 +107,71 @@ jump_to_bottom = "alt+g"
     );
     assert_eq!(config.max_tool_output_lines, 24);
     assert_eq!(config.keybindings.jump_to_bottom.to_string(), "alt+g");
+    assert_eq!(config.keybindings.open_editor.to_string(), "ctrl+g");
     assert_eq!(config.keybindings.reset_conversation.to_string(), "ctrl+r");
+}
+
+#[test]
+fn migrates_the_legacy_ctrl_g_shortcut_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[keybindings]
+jump_to_bottom = "ctrl+g"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(path)).unwrap();
+
+    assert_eq!(config.keybindings.open_editor.to_string(), "ctrl+g");
+    assert_eq!(config.keybindings.jump_to_bottom.to_string(), "ctrl+end");
+}
+
+#[test]
+fn preserves_explicit_distinct_editor_and_jump_shortcuts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[keybindings]
+open_editor = "alt+e"
+jump_to_bottom = "ctrl+g"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(path)).unwrap();
+
+    assert_eq!(config.keybindings.open_editor.to_string(), "alt+e");
+    assert_eq!(config.keybindings.jump_to_bottom.to_string(), "ctrl+g");
+}
+
+#[test]
+fn rejects_explicit_editor_and_jump_shortcut_collisions() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[keybindings]
+open_editor = "ctrl+g"
+jump_to_bottom = "ctrl+g"
+"#,
+    )
+    .unwrap();
+
+    let error = Config::load(Some(path)).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("open_editor and jump_to_bottom must use different keys"),
+        "{error:#}"
+    );
 }
 
 #[test]

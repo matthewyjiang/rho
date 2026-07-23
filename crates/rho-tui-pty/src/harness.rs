@@ -230,6 +230,50 @@ impl PtyHarness {
         }
     }
 
+    pub fn raw_sequence_occurrences(&self, sequence: &[u8]) -> usize {
+        if sequence.is_empty() {
+            return 0;
+        }
+        self.raw_output
+            .windows(sequence.len())
+            .filter(|bytes| *bytes == sequence)
+            .count()
+    }
+
+    pub fn wait_for_raw_sequence_occurrences(
+        &mut self,
+        sequence: &[u8],
+        expected: usize,
+        timeout: WaitTimeout,
+    ) -> Result<()> {
+        self.set_phase(format!("wait_for_raw_sequence:{expected}"));
+        let deadline = Instant::now() + timeout.duration;
+        loop {
+            self.poll(Duration::from_millis(25));
+            if self.raw_sequence_occurrences(sequence) >= expected {
+                self.log(format!("observed raw sequence {expected} times"));
+                return Ok(());
+            }
+            if !self.pty.is_running() {
+                self.poll(Duration::from_millis(50));
+                if self.raw_sequence_occurrences(sequence) >= expected {
+                    self.log(format!("observed raw sequence {expected} times"));
+                    return Ok(());
+                }
+                return self.fail_unit(format!(
+                    "child exited before raw sequence appeared {expected} times during {}",
+                    timeout.label
+                ));
+            }
+            if Instant::now() >= deadline {
+                return self.fail_unit(format!(
+                    "timeout waiting for raw sequence to appear {expected} times ({})",
+                    timeout.label
+                ));
+            }
+        }
+    }
+
     pub fn wait_for_text(&mut self, needle: &str, timeout: WaitTimeout) -> Result<()> {
         self.set_phase(format!("wait_for_text:{needle}"));
         let started = Instant::now();
@@ -401,6 +445,11 @@ impl PtyHarness {
 
     pub fn is_running(&mut self) -> bool {
         self.pty.is_running()
+    }
+
+    #[cfg(unix)]
+    pub fn child_pid(&self) -> Option<u32> {
+        self.pty.child_pid()
     }
 
     pub fn kill(&mut self) -> Result<()> {

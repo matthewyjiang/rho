@@ -155,14 +155,17 @@ Most editing keys work the way they do in a normal terminal input.
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |
 | `pageup` / `pagedown` | Scroll the transcript viewport |
-| `ctrl-g` | Jump the transcript viewport back to the bottom |
+| `ctrl-g` | Open the current composer text in `$EDITOR` |
+| `ctrl-end` | Jump the transcript viewport back to the bottom |
 | mouse wheel | Scroll the transcript viewport |
 | left-click and drag | Select transcript text and copy it on release |
 | code block `COPY` | Copy the full code block contents |
 | `ctrl-c` | Clear input, then quit if pressed again |
 
+`ctrl-g` opens the current composer text in `$EDITOR`, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `EDITOR` to an executable path or a platform-native command line with arguments.
+
 Copied text is sent to the terminal clipboard, and Rho briefly shows how many characters were copied. Code block copy buttons are shown in the top-right border and highlight on hover.
 
-When the transcript is scrolled away from the bottom, Rho overlays a right-aligned `↓ jump to bottom  ctrl+g` button on the last transcript row and obscures only the button's own cells. During generation, the spinner is similarly overlaid on the left. At the live bottom, transcript content stops one row above the spinner; while manually scrolled, the complete last row remains visible wherever neither control is drawn. Press `ctrl-g` or click the button to resume following live output.
+When the transcript is scrolled away from the bottom, Rho overlays a right-aligned `↓ jump to bottom  ctrl+end` button on the last transcript row and obscures only the button's own cells. During generation, the spinner is similarly overlaid on the left. At the live bottom, transcript content stops one row above the spinner; while manually scrolled, the complete last row remains visible wherever neither control is drawn. Press `ctrl-end` or click the button to resume following live output.
 
 Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.

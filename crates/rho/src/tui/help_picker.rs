@@ -24,6 +24,7 @@ pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
 
 fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     let reset = keybindings.reset_conversation.to_string();
+    let editor = keybindings.open_editor.to_string();
     let jump = keybindings.jump_to_bottom.to_string();
     let toggle_tools = keybindings.toggle_tool_output.to_string();
     let newline = keybindings.insert_newline.to_string();
@@ -96,6 +97,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             reset,
             "Reset conversation",
             "Clear conversation history so the next message starts a new session. Unavailable while a model turn is running.",
+        ),
+        entry(
+            editor,
+            "Edit composer in $EDITOR",
+            "Open the composer contents in the program set by EDITOR. Rho restores its screen when the editor exits.",
         ),
         entry(
             jump,

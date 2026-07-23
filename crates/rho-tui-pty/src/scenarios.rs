@@ -235,7 +235,7 @@ const SCROLL_DURING_STREAM_STEPS: &[Step] = &[
         timeout: WaitTimeout::millis(500, "scroll during stream"),
     },
     Step::Phase("return_bottom"),
-    Step::Key(Key::Ctrl('g')),
+    Step::Key(Key::CtrlEnd),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "model interrupted",

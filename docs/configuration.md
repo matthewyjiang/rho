@@ -55,7 +55,8 @@ review = "Review this code for correctness, security, and maintainability."
 
 [keybindings]
 reset_conversation = "ctrl+r"
-jump_to_bottom = "ctrl+g"
+open_editor = "ctrl+g"
+jump_to_bottom = "ctrl+end"
 toggle_tool_output = "ctrl+o"
 insert_newline = "ctrl+j"
 paste_image = "ctrl+v"

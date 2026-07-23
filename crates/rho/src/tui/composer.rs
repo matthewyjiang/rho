@@ -425,6 +425,14 @@ impl App {
         self.input_changed();
     }
 
+    pub(super) fn replace_composer_from_editor(&mut self, text: String) {
+        self.reset_input_history_navigation();
+        let cursor = text.chars().count();
+        self.input_ui.set_text_and_cursor(text, cursor);
+        self.input_ui.clear_paste_segments();
+        self.input_changed();
+    }
+
     pub(super) fn input_changed(&mut self) {
         self.input_ui.set_command_palette_dismissed(false);
         self.input_ui.set_file_palette_dismissed(false);

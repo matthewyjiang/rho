@@ -230,22 +230,22 @@ impl App {
             let approval_ready = approval_receiver_open && interaction_available;
             tokio::select! {
                 biased;
-                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     match self.handle_running_terminal_events(
                         terminal_event?,
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
                         RunningInputMode::Turn,
-                    ) {
+                    ).await {
                         Ok(StreamControl::Interrupt) => agent.cancel(),
                         Ok(StreamControl::ApprovalResolved) => {
                             self.report_herdr_working().await;
                         }
                         Ok(StreamControl::Continue | StreamControl::Resize) => {}
                         Err(error) => {
-                            sdk_failure = Some(error.to_string());
                             agent.cancel();
+                            sdk_failure = Some(sdk_failure_from_running_terminal_error(error)?);
                         }
                     }
                     if pending_input_request.is_none() && sdk_failure.is_none() {
@@ -552,6 +552,15 @@ enum RuntimeEvent {
     Approval(rho_sdk::PendingApproval),
     ApprovalReceiverClosed,
     Agent(Option<rho_sdk::RunEvent>),
+}
+
+fn sdk_failure_from_running_terminal_error(
+    error: super::during_turn::RunningTerminalError,
+) -> anyhow::Result<String> {
+    match error {
+        super::during_turn::RunningTerminalError::Recoverable(error) => Ok(error.to_string()),
+        super::during_turn::RunningTerminalError::Terminal(error) => Err(error),
+    }
 }
 
 async fn next_runtime_event(

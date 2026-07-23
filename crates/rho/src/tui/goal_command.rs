@@ -333,14 +333,16 @@ impl App {
                             let _ = evaluation.await;
                             break Some(Err(anyhow::anyhow!("goal evaluation timed out")));
                         }
-                        terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                        terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                             let control = self.handle_running_terminal_events(
                                 terminal_event?,
                                 terminal,
                                 &interrupt_requested,
                                 &tool_call_active,
                                 RunningInputMode::Turn,
-                            )?;
+                            )
+                    .await
+                    .map_err(super::during_turn::RunningTerminalError::into_anyhow)?;
                             if matches!(control, StreamControl::Interrupt) {
                                 cancellation.cancel();
                                 let _ = evaluation.await;
@@ -464,14 +466,16 @@ impl App {
             && !self.should_quit
         {
             tokio::select! {
-                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     let control = self.handle_running_terminal_events(
                         terminal_event?,
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
                         RunningInputMode::Turn,
-                    )?;
+                    )
+                    .await
+                    .map_err(super::during_turn::RunningTerminalError::into_anyhow)?;
                     if matches!(control, StreamControl::Interrupt) {
                         self.clear_goal();
                         break;
@@ -533,14 +537,16 @@ impl App {
             }
             tokio::select! {
                 _ = tokio::time::sleep_until(deadline) => break true,
-                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     let control = self.handle_running_terminal_events(
                         terminal_event?,
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
                         RunningInputMode::Turn,
-                    )?;
+                    )
+                    .await
+                    .map_err(super::during_turn::RunningTerminalError::into_anyhow)?;
                     if matches!(control, StreamControl::Interrupt) {
                         self.clear_goal();
                         break false;
