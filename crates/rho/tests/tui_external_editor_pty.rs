@@ -93,15 +93,15 @@ printf '%s\n' "$replacement" > "$3"
         "editor inherited non-canonical terminal state: {state}"
     );
     let raw = harness.raw_output();
-    assert!(raw.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
-    assert!(
-        raw.windows(4).any(|bytes| bytes == b"\x1b[2J"),
-        "main screen was not cleared before the editor"
-    );
     let leave_at = raw
         .windows(8)
         .position(|bytes| bytes == b"\x1b[?1049l")
         .expect("leave alternate screen");
+    let clear_at = raw[leave_at..]
+        .windows(4)
+        .position(|bytes| bytes == b"\x1b[2J")
+        .map(|offset| leave_at + offset)
+        .expect("main screen clear after leaving alternate screen");
     let opening_at = raw
         .windows(b"Opening editor".len())
         .position(|bytes| bytes == b"Opening editor")
@@ -111,8 +111,8 @@ printf '%s\n' "$replacement" > "$3"
         .position(|bytes| bytes == b"EXTERNAL_EDITOR_READY")
         .expect("external editor ready marker");
     assert!(
-        leave_at < opening_at && opening_at < ready_at,
-        "handoff status should appear after leaving the alternate screen and before the editor starts"
+        leave_at < clear_at && clear_at < opening_at && opening_at < ready_at,
+        "handoff should leave alternate screen, clear main buffer, show status, then start the editor"
     );
     assert!(
         raw.windows(8)

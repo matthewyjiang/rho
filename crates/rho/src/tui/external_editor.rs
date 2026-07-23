@@ -31,7 +31,7 @@ impl App {
             .take()
             .context("terminal session is unavailable")?;
         let suspended_run = terminal_session
-            .run_suspended(terminal, || async move {
+            .run_suspended(terminal, "Opening editor…", || async move {
                 #[cfg(unix)]
                 let _signal_guard = unix_editor_signals::EditorSignalGuard::install(&mut command)
                     .context("could not prepare editor signal handling")?;
@@ -75,9 +75,6 @@ impl App {
             Err(error) => self.notify_status(format!("editor failed: {error}")),
         }
         self.ctrl_c_streak = 0;
-        // Paint immediately after re-entering the alternate screen so resume
-        // does not sit on an empty frame until the next event-loop tick.
-        terminal.draw(|frame| self.draw(frame))?;
         Ok(())
     }
 }
