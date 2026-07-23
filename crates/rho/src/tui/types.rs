@@ -54,6 +54,7 @@ pub(super) struct InteractiveModelSelection {
 }
 
 /// Live assistant/reasoning stream UI state owned by [`super::App`].
+#[derive(Default)]
 pub(super) struct StreamUi {
     pub(in crate::tui) assistant_stream: AppendOnlyStream,
     pub(in crate::tui) assistant_stream_code_fence: CodeFenceState,
@@ -62,20 +63,6 @@ pub(super) struct StreamUi {
     pub(in crate::tui) current_stream_kind: Option<StreamKind>,
     pub(in crate::tui) stream_preview_deadline: Option<Instant>,
     pub(in crate::tui) live_stream_preview: Option<LiveStreamPreview>,
-}
-
-impl Default for StreamUi {
-    fn default() -> Self {
-        Self {
-            assistant_stream: AppendOnlyStream::default(),
-            assistant_stream_code_fence: CodeFenceState::default(),
-            reasoning_stream: AppendOnlyStream::default(),
-            reasoning_stream_code_fence: CodeFenceState::default(),
-            current_stream_kind: None,
-            stream_preview_deadline: None,
-            live_stream_preview: None,
-        }
-    }
 }
 
 impl StreamUi {
@@ -95,6 +82,7 @@ impl StreamUi {
 }
 
 /// Cumulative and in-flight usage snapshots shown by the TUI.
+#[derive(Default)]
 pub(super) struct UsageUi {
     pub(in crate::tui) cumulative_usage: Option<ModelUsage>,
     pub(in crate::tui) usage_cost_tracker: UsageCostTracker,
@@ -106,21 +94,6 @@ pub(super) struct UsageUi {
     pub(in crate::tui) current_run_usage: Option<ModelUsage>,
     pub(in crate::tui) latest_usage: Option<ModelUsage>,
     pub(in crate::tui) current_context: Option<ContextUsage>,
-}
-
-impl Default for UsageUi {
-    fn default() -> Self {
-        Self {
-            cumulative_usage: None,
-            usage_cost_tracker: UsageCostTracker::default(),
-            usage_before_current_run: None,
-            usage_before_current_step: None,
-            usage_before_current_attempt: None,
-            current_run_usage: None,
-            latest_usage: None,
-            current_context: None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
