@@ -562,7 +562,7 @@ fn create_and_compact_body_builders_diverge_on_tools() {
     let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
     let request = ModelRequest {
         messages: &[Message::user_text("hello")],
-        tools: &[rho_tools::tool::ToolSpec {
+        tools: &[crate::model::ToolSpec {
             name: "bash".into(),
             description: "run".into(),
             input_schema: json!({"type":"object"}),

@@ -62,12 +62,11 @@ fn continuation_retains_tool_result_after_server_function_call() {
         json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}),
         json!({"type":"function_call_output","call_id":"call_1","output":"contents"}),
     ]);
-    let response =
-        ModelResponse::Assistant(vec![ContentBlock::ToolCall(rho_tools::tool::ToolCall {
-            id: "call_1".into(),
-            name: "read".into(),
-            arguments: json!({}),
-        })]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
+        id: "call_1".into(),
+        name: "read".into(),
+        arguments: json!({}),
+    })]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         &first,
@@ -97,12 +96,11 @@ fn continuation_accepts_semantically_equivalent_function_call_arguments() {
         json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{\"line_end\":10,\"path\":\"README.md\"}"}),
         json!({"type":"function_call_output","call_id":"call_1","output":"contents"}),
     ]);
-    let response =
-        ModelResponse::Assistant(vec![ContentBlock::ToolCall(rho_tools::tool::ToolCall {
-            id: "call_1".into(),
-            name: "read".into(),
-            arguments: json!({"line_end": 10, "path": "README.md"}),
-        })]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
+        id: "call_1".into(),
+        name: "read".into(),
+        arguments: json!({"line_end": 10, "path": "README.md"}),
+    })]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         &first,

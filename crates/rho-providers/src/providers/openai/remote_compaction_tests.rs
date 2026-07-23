@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::ContentBlock;
+use crate::model::ToolSpec;
 use pretty_assertions::assert_eq;
-use rho_tools::tool::ToolSpec;
 use serde_json::json;
 
 use super::super::auth::Auth;

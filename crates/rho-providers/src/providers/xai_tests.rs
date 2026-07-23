@@ -8,6 +8,7 @@ use tokio::{
 };
 
 use super::*;
+use crate::model::ToolSpec;
 use crate::{
     credentials::{save_xai_tokens, MemoryCredentialStore, XaiTokens},
     model::{
@@ -16,7 +17,6 @@ use crate::{
     },
     reasoning::ReasoningLevel,
 };
-use rho_tools::tool::ToolSpec;
 
 #[test]
 fn empty_cache_construction_preserves_static_wire_semantics_for_both_identities() {

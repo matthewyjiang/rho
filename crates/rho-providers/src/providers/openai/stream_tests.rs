@@ -10,7 +10,7 @@ use crate::{
     model::{ContentBlock, Message, ModelError, ModelEvent, ModelRequest, ModelResponse},
 };
 use futures_util::{SinkExt, StreamExt};
-use rho_tools::cancellation::RunCancellation;
+use rho_sdk::CancellationToken;
 use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -134,7 +134,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     );
     provider.codex_ws = CodexWsTransport::new_with_url(ws_url);
 
-    let cancellation = RunCancellation::default();
+    let cancellation = CancellationToken::new();
     let cancel_after_request = {
         let cancellation = cancellation.clone();
         async move {

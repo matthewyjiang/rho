@@ -196,3 +196,32 @@ async fn diagnostics_and_response_store_prepare_as_safe_reads() {
         (ToolResourceKind::ResponseStore, ToolAccessMode::Shared)
     );
 }
+
+#[tokio::test]
+async fn web_search_prepares_tool_managed_network() {
+    use rho_sdk::{CapabilityKind, CapabilityOperation, CapabilitySource, NetworkTarget};
+
+    let tool = web::SdkWebSearch::new(web::access_tools(&crate::config::Config::default()), 12_000);
+    let prepared = tool
+        .prepare(
+            invocation(json!({"queries": ["rho web search"]})),
+            preparation_context(None),
+        )
+        .await
+        .unwrap();
+    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy() else {
+        panic!("expected resource-aware web_search");
+    };
+    assert!(accesses.is_empty());
+    assert_eq!(prepared.capabilities().len(), 1);
+    let capability = &prepared.capabilities()[0];
+    assert_eq!(capability.kind(), CapabilityKind::Network);
+    assert!(matches!(
+        capability.operation(),
+        CapabilityOperation::NetworkAccess(NetworkTarget::ToolManaged)
+    ));
+    assert_eq!(
+        capability.source(),
+        &CapabilitySource::built_in_tool("web_search")
+    );
+}

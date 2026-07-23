@@ -292,7 +292,6 @@ pub struct PreparedToolInvocation<'a> {
     execution: ToolExecutionPolicy,
     capabilities: Vec<CapabilityRequest>,
     metadata: ToolMetadata,
-    #[allow(dead_code)]
     executor: ToolExecutor<'a>,
 }
 
@@ -338,7 +337,6 @@ impl<'a> PreparedToolInvocation<'a> {
         &self.metadata
     }
 
-    #[allow(dead_code)]
     pub(crate) fn execute(self, execution: ToolContext) -> ToolFuture<'a> {
         match self.executor {
             ToolExecutor::Exclusive(executor) => executor(execution),

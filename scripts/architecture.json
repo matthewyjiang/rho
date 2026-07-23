@@ -1,8 +1,7 @@
 {
   "default_production_line_budget": 1000,
   "legacy_file_budgets": {
-    "crates/rho-providers/src/providers/openai/codex_ws.rs": 1036,
-    "crates/rho/src/tui.rs": 5400
+    "crates/rho/src/tui.rs": 5050
   },
   "generated_files": {},
   "thin_binary_budgets": {
@@ -28,8 +27,8 @@
     },
     {
       "manifest": "crates/rho-providers/Cargo.toml",
-      "packages": ["rho-coding-agent"],
-      "reason": "provider infrastructure must not depend on the application"
+      "packages": ["rho-coding-agent", "rho-agent-tools"],
+      "reason": "provider infrastructure must not depend on the application or tools crate; use rho-sdk contracts"
     },
     {
       "manifest": "crates/rho-tools/Cargo.toml",

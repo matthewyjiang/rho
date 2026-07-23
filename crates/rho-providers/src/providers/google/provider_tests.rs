@@ -1,11 +1,22 @@
-use rho_tools::Tool as _;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::*;
 use crate::{
-    model::{ContentBlock, Message, ModelEvent, ToolCall},
+    model::{ContentBlock, Message, ModelEvent, ToolCall, ToolSpec},
     reasoning::ReasoningLevel,
 };
+
+fn sample_tool() -> ToolSpec {
+    ToolSpec {
+        name: "edit_file".into(),
+        description: "test tool".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+        }),
+    }
+}
 
 #[tokio::test]
 async fn complete_turn_uses_google_header_and_generate_content_endpoint() {
@@ -46,7 +57,7 @@ async fn complete_turn_uses_google_header_and_generate_content_endpoint() {
         format!("http://{address}/v1beta"),
     );
     let messages = [Message::user_text("hi")];
-    let tools = [rho_tools::edit_file::EditFile.spec()];
+    let tools = [sample_tool()];
     let response = provider
         .complete_turn(ModelRequest {
             messages: &messages,

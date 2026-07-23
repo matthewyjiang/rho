@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::{
     AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall, ReasoningCapabilities,
-    ReasoningLevelSet,
+    ReasoningLevelSet, ToolCall, ToolResult, ToolSpec,
 };
 use crate::protocol::openai_chat::{
     convert_streamed_response, handle_openai_stream_line, to_openai_message_for_target,
@@ -11,7 +11,6 @@ use crate::protocol::openai_responses::{
     CodexSseState,
 };
 use crate::reasoning::ReasoningLevel;
-use rho_tools::tool::{ToolCall, ToolResult, ToolSpec};
 use serde_json::json;
 
 #[test]

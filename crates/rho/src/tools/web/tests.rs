@@ -149,9 +149,11 @@ fn search_provider_parses_tool_and_config_values() {
 
 #[test]
 fn tool_specs_and_fetch_security_preserve_public_contract() {
+    let web_search = super::SdkWebSearch::new(super::access_tools(&Config::default()), 12_000);
+    assert_eq!(rho_sdk::tool::Tool::spec(&web_search).name, "web_search");
     assert_eq!(
-        super::access_tools(&Config::default()).spec().name,
-        "web_search"
+        rho_sdk::tool::Tool::security(&web_search).capabilities(),
+        [rho_sdk::CapabilityKind::Network]
     );
     let fetch_content =
         super::SdkFetchContent::new(12_000, rho_sdk::ProcessEnvironment::InheritAll);

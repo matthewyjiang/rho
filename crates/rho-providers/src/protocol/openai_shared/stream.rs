@@ -4,7 +4,7 @@ use crate::{
     model::{ContentBlock, ModelError, ModelEvent, ModelResponse, ModelUsage},
     protocol::cost::parse_usd_micros,
 };
-use rho_tools::tool::ToolCall;
+use rho_sdk::model::ToolCall;
 
 use super::convert::{extract_response_text, ResponsesResponse};
 use crate::provider_backend::line_decoder::LineDecoder;
