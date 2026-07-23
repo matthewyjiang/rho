@@ -119,19 +119,38 @@ impl OpenAiCompatibleProvider {
         let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
-        loop {
-            let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
-                break;
+        let buffer_usage_until_stream_end = self.dialect == OpenAiCompatibleDialect::Poolside;
+        let mut buffered_usage = None;
+        {
+            let mut handle_event = |event| match event {
+                ModelEvent::Usage(usage) if buffer_usage_until_stream_end => {
+                    buffered_usage = Some(usage);
+                    Ok(())
+                }
+                event => on_event(event),
             };
-            decoder.push(&chunk?);
-            while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
-                if handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)? {
-                    idle_deadline.record_activity();
+            loop {
+                let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
+                    break;
+                };
+                decoder.push(&chunk?);
+                while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
+                    if handle_openai_stream_line(
+                        line,
+                        &mut text,
+                        &mut tool_calls,
+                        &mut handle_event,
+                    )? {
+                        idle_deadline.record_activity();
+                    }
                 }
             }
+            if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
+                handle_openai_stream_line(line, &mut text, &mut tool_calls, &mut handle_event)?;
+            }
         }
-        if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
-            handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)?;
+        if let Some(usage) = buffered_usage {
+            on_event(ModelEvent::Usage(usage))?;
         }
         convert_streamed_response(text, tool_calls)
     }

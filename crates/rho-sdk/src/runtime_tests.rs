@@ -462,7 +462,11 @@ async fn stream_usage_events_merge_within_a_turn() {
                 }),
                 ModelEvent::OutputDelta("hi".into()),
                 ModelEvent::Usage(ModelUsage {
-                    output_tokens: Some(5),
+                    output_tokens: Some(2),
+                    ..ModelUsage::default()
+                }),
+                ModelEvent::Usage(ModelUsage {
+                    output_tokens: Some(3),
                     ..ModelUsage::default()
                 }),
             ],

@@ -472,6 +472,75 @@ fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
 }
 
 #[tokio::test]
+async fn poolside_publishes_only_final_stream_usage_snapshot() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 8192];
+        let request_size = stream.read(&mut request).await.unwrap();
+        assert!(request_size > 0);
+        let body = concat!(
+            "data: {\"usage\":{\"prompt_tokens\":6900,\"completion_tokens\":1,\"total_tokens\":6901},\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n",
+            "data: {\"usage\":{\"prompt_tokens\":7200,\"completion_tokens\":2,\"total_tokens\":7202},\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n",
+            "data: {\"usage\":{\"prompt_tokens\":6900,\"completion_tokens\":2,\"total_tokens\":6902},\"choices\":[]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "poolside",
+        "laguna-m.1".into(),
+        OpenAiCompatibleDialect::Poolside,
+        CompatibleAuth::ApiKey("secret".into()),
+        api_base,
+    );
+    let messages = [Message::user_text("hello")];
+    let mut events = Vec::new();
+    let response = provider
+        .stream_turn(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Max,
+                prompt_cache_key: None,
+            },
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        events,
+        vec![
+            ModelEvent::OutputDelta("hel".into()),
+            ModelEvent::OutputDelta("lo".into()),
+            ModelEvent::Usage(ModelUsage {
+                input_tokens: Some(6_900),
+                output_tokens: Some(2),
+                total_tokens: Some(6_902),
+                ..ModelUsage::default()
+            }),
+        ]
+    );
+    assert_eq!(
+        response,
+        ModelResponse::Assistant(vec![ContentBlock::Text("hello".into())])
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn standard_dialect_streams_without_auth_or_usage() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
