@@ -587,6 +587,7 @@ impl App {
         self.input_ui.paste_segments.clear();
         self.input_ui.shell_mode = None;
         self.input_ui.cursor = 0;
+        self.input_ui.pending_images.clear();
         self.input_ui.command_palette_dismissed = false;
         self.clamp_command_selection();
         self.reset_streams();

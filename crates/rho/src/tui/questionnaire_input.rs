@@ -14,8 +14,7 @@ impl App {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
-                    if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer
-                    {
+                    if let Some(questionnaire) = self.questionnaire_mut() {
                         questionnaire.clear_active_answer();
                     }
                     self.status = "answer cleared; press ctrl-c again to cancel".into();
@@ -27,7 +26,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::ALT, KeyCode::Up) | (_, KeyCode::BackTab) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_to_previous_field();
                 }
                 self.input_ui.paste_burst.clear();
@@ -35,7 +34,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::ALT, KeyCode::Down) | (_, KeyCode::Tab) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_to_next_field();
                 }
                 self.input_ui.paste_burst.clear();
@@ -43,7 +42,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.delete_previous_word();
                 }
                 self.input_ui.paste_burst.clear();
@@ -51,11 +50,9 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                let action = match &mut self.input_ui.composer {
-                    ComposerMode::Questionnaire(questionnaire) => {
-                        questionnaire.confirm_active_question()
-                    }
-                    _ => unreachable!("questionnaire mode checked before key handling"),
+                let action = match self.questionnaire_mut() {
+                    Some(questionnaire) => questionnaire.confirm_active_question(),
+                    None => unreachable!("questionnaire mode checked before key handling"),
                 };
                 match action {
                     QuestionnaireEnterAction::Advance => {}
@@ -72,7 +69,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Up) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_up();
                 }
                 self.input_ui.paste_burst.clear();
@@ -80,7 +77,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Down) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_down();
                 }
                 self.input_ui.paste_burst.clear();
@@ -88,7 +85,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Backspace) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.backspace();
                 }
                 self.input_ui.paste_burst.clear();
@@ -96,7 +93,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Delete) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.delete();
                 }
                 self.input_ui.paste_burst.clear();
@@ -104,7 +101,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_text_cursor_previous_word();
                 }
                 self.input_ui.paste_burst.clear();
@@ -112,7 +109,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_text_cursor_next_word();
                 }
                 self.input_ui.paste_burst.clear();
@@ -120,7 +117,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Left) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_left();
                 }
                 self.input_ui.paste_burst.clear();
@@ -128,7 +125,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Right) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_right();
                 }
                 self.input_ui.paste_burst.clear();
@@ -136,7 +133,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Home) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_home();
                 }
                 self.input_ui.paste_burst.clear();
@@ -144,7 +141,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::End) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_end();
                 }
                 self.input_ui.paste_burst.clear();
@@ -152,7 +149,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::CONTROL, KeyCode::Char('j')) | (KeyModifiers::ALT, KeyCode::Enter) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.insert_char('\n');
                 }
                 self.input_ui.paste_burst.clear();
@@ -160,7 +157,7 @@ impl App {
                 Ok(true)
             }
             (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.insert_char('\n');
                 }
                 self.input_ui.paste_burst.clear();
@@ -168,7 +165,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Char(' ')) => {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     if questionnaire.active_text_entry_active() {
                         questionnaire.insert_char(' ');
                     } else {
@@ -182,7 +179,7 @@ impl App {
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
-                if let ComposerMode::Questionnaire(questionnaire) = &mut self.input_ui.composer {
+                if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.insert_char(ch);
                 }
                 self.ctrl_c_streak = 0;
@@ -193,6 +190,13 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
+        }
+    }
+
+    fn questionnaire_mut(&mut self) -> Option<&mut QuestionnaireComposer> {
+        match &mut self.input_ui.composer {
+            ComposerMode::Questionnaire(questionnaire) => Some(questionnaire),
+            _ => None,
         }
     }
 
