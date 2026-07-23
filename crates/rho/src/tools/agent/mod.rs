@@ -26,6 +26,9 @@ use super::agent_output::{
     format_snapshot, SnapshotFormat,
 };
 
+mod sdk_agent;
+mod sdk_agents;
+
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -717,22 +720,16 @@ pub(super) fn sdk_bundle(
     ));
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     if options.tools.launches() {
-        tools.push(
-            rho_tools::legacy_sdk_adapter::agent(
-                AgentTool::new(manager.clone(), &options.cwd, options.background),
-                config.max_output_bytes,
-            )
-            .expect("agent is a supported legacy tool"),
-        );
+        tools.push(sdk_agent::tool(
+            AgentTool::new(manager.clone(), &options.cwd, options.background),
+            config.max_output_bytes,
+        ));
     }
     if options.tools.manages() {
-        tools.push(
-            rho_tools::legacy_sdk_adapter::agents(
-                AgentsTool::new(manager.clone()),
-                config.max_output_bytes,
-            )
-            .expect("agents is a supported legacy tool"),
-        );
+        tools.push(sdk_agents::tool(
+            AgentsTool::new(manager.clone()),
+            config.max_output_bytes,
+        ));
     }
     SdkDelegationBundle { tools, manager }
 }
