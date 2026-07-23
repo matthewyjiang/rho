@@ -246,6 +246,14 @@ impl InteractiveRuntime {
         self.permission_mode
     }
 
+    /// Returns whether a model run is active on the interactive run controller.
+    ///
+    /// This is the authoritative lifecycle signal for provider turns. TUI
+    /// `App.running` can also be true for UI-only work such as compaction.
+    pub(crate) fn is_run_active(&self) -> bool {
+        self.runs.is_active()
+    }
+
     /// Rebuilds the SDK runtime so the requested permission mode applies to the next turn.
     pub(crate) async fn set_permission_mode(&mut self, mode: PermissionMode) -> anyhow::Result<()> {
         if self.runs.is_active() {

@@ -1,6 +1,19 @@
-use super::{App, InputSubmissionMode};
+use super::{App, InputSubmissionMode, InteractiveRuntime};
 
 impl App {
+    /// Debug-only check that TUI turn UI state matches the runtime run controller
+    /// after a model turn starts or ends. Compaction sets `running` without an
+    /// active run, so callers must only use this around real start/finish paths.
+    pub(super) fn debug_assert_turn_run_sync(&self, agent: &InteractiveRuntime) {
+        debug_assert_eq!(
+            self.running,
+            agent.is_run_active(),
+            "App.running={} but InteractiveRuntime.is_run_active()={}",
+            self.running,
+            agent.is_run_active()
+        );
+    }
+
     pub(super) fn preserve_unapplied_steering_as_follow_ups(&mut self) {
         let mut pending = self
             .accepted_steering

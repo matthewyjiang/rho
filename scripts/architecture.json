@@ -1,7 +1,7 @@
 {
   "default_production_line_budget": 1000,
   "legacy_file_budgets": {
-    "crates/rho/src/tui.rs": 4090
+    "crates/rho/src/tui.rs": 3350
   },
   "generated_files": {},
   "thin_binary_budgets": {

@@ -160,6 +160,7 @@ impl App {
                     .await?;
             }
         }
+        self.debug_assert_turn_run_sync(agent);
         self.insert_runtime_notices(agent);
         if let Some(context) = agent.take_context_usage() {
             self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
@@ -383,14 +384,19 @@ impl App {
             self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
         }
         let outcome = match result {
-            _ if inline_shell_error.is_some() => self.finalize_failed_turn(
-                inline_shell_error
-                    .expect("inline shell error checked above")
-                    .to_string(),
-                failed_turn,
-            ),
+            _ if inline_shell_error.is_some() => {
+                let outcome = self.finalize_failed_turn(
+                    inline_shell_error
+                        .expect("inline shell error checked above")
+                        .to_string(),
+                    failed_turn,
+                );
+                self.debug_assert_turn_run_sync(agent);
+                outcome
+            }
             Ok(outcome) if sdk_failure.is_none() => {
                 self.running = false;
+                self.debug_assert_turn_run_sync(agent);
                 self.loading_spinner.stop();
                 self.finish_streams();
                 self.insert_final_answer_suffix(outcome.text());
@@ -408,6 +414,7 @@ impl App {
             }
             _ if questionnaire_cancelled_by_user => {
                 self.running = false;
+                self.debug_assert_turn_run_sync(agent);
                 self.loading_spinner.stop();
                 self.finish_streams();
                 let notice = if self.goal.is_some() {
@@ -429,6 +436,7 @@ impl App {
             {
                 self.restore_pending_work_to_input();
                 self.running = false;
+                self.debug_assert_turn_run_sync(agent);
                 self.loading_spinner.stop();
                 self.finish_streams();
                 self.insert_entry(&Entry::Notice("model interrupted".into()));
@@ -442,7 +450,9 @@ impl App {
                     Ok(_) => "model run failed".into(),
                     Err(error) => error.to_string(),
                 });
-                self.finalize_failed_turn(message, failed_turn)
+                let outcome = self.finalize_failed_turn(message, failed_turn);
+                self.debug_assert_turn_run_sync(agent);
+                outcome
             }
         };
         let completed = matches!(outcome, TurnOutcome::Completed);
