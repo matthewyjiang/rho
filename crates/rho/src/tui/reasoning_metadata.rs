@@ -1,6 +1,5 @@
-use super::{
-    build_provider, config_picker, App, ComposerMode, Entry, InteractiveRuntime, PickerAction,
-};
+use super::{config_picker, App, ComposerMode, Entry, InteractiveRuntime, PickerAction};
+use crate::credential_store::build_provider;
 use rho_providers::{
     model::{
         models_dev, ModelMetadata, ReasoningCapabilities, ReasoningRequestSource,

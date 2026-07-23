@@ -587,7 +587,7 @@ impl App {
         self.command_palette_dismissed = false;
         self.clamp_command_selection();
         self.reset_streams();
-        self.running = false;
+        self.end_busy_ui();
         self.goal = None;
         self.reset_usage();
         self.current_context = None;

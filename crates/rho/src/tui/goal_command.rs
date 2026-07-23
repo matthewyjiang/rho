@@ -86,7 +86,7 @@ impl App {
     pub(super) fn clear_goal(&mut self) {
         if self.goal.take().is_some() {
             self.insert_entry(&Entry::Notice("goal cleared".into()));
-            self.status = if self.running {
+            self.status = if self.is_ui_busy() {
                 "running"
             } else {
                 "goal cleared"
@@ -94,7 +94,12 @@ impl App {
             .into();
         } else {
             self.insert_entry(&Entry::Notice("no active goal".into()));
-            self.status = if self.running { "running" } else { "ready" }.into();
+            self.status = if self.is_ui_busy() {
+                "running"
+            } else {
+                "ready"
+            }
+            .into();
         }
     }
 
@@ -303,9 +308,9 @@ impl App {
 
             let (condition, provider, model) = {
                 let goal = self.goal.as_ref().expect("goal checked above");
-                let (provider, model, _auth) =
+                let selection =
                     self.internal_agent_model_selection(crate::agent::GOAL_JUDGE_AGENT_ID);
-                (goal.condition.clone(), provider, model)
+                (goal.condition.clone(), selection.provider, selection.model)
             };
             let history = agent.history();
             let evaluation = {

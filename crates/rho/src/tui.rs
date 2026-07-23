@@ -10,7 +10,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures_util::FutureExt;
 use history_cache::{CachedCodeBlock, HistoryLineCache};
 use questionnaire::QuestionnaireCancelReason;
 #[cfg(test)]
@@ -28,8 +27,10 @@ use ratatui::{
 };
 mod activity;
 mod agent_picker;
+mod app_construct;
 mod approval;
 mod attachment;
+mod background_polls;
 mod clipboard;
 mod command_actions;
 mod command_block;
@@ -37,6 +38,7 @@ mod command_palette;
 mod composer;
 mod config_actions;
 mod config_editor;
+mod config_input;
 mod config_picker;
 mod context_handoff;
 mod copy_interaction;
@@ -114,15 +116,15 @@ mod workspace;
 
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use approval::{approval_lines, ApprovalComposer, ApprovalKeyOutcome};
-use clipboard::{ClipboardWriter, SystemClipboard};
+use clipboard::ClipboardWriter;
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
-    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigNumberSave, ConfigTextInput,
-    ConfigTextKey, ConfigToggle,
+    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigTextInput, ConfigTextKey,
+    ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
-use feed_image::{picker_from_environment, FeedImage};
+use feed_image::FeedImage;
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_choice::{
@@ -149,7 +151,6 @@ use render::{
     input_cursor_position, input_lines_with_images, input_visual_lines, labeled_divider_line,
     picker_lines, session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
-use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
@@ -165,16 +166,14 @@ use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
     crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
-    crate::credential_store::{build_provider, AppCredentialStore},
     crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
     crate::permission::PermissionMode,
     crate::session::Session,
-    rho_providers::credentials::{available_auth_modes, CredentialStore},
+    rho_providers::credentials::CredentialStore,
     rho_providers::model::{
         catalog::{self, LoginTarget, ModelSelection},
         favorites, image_summary,
-        models_dev::fetch_model_metadata,
         provider_models::refresh_provider_models_with_store,
         ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelUsage,
         ReasoningRequestSource, UnavailableProvider,
@@ -326,7 +325,7 @@ struct App {
     current_turn_start: Option<usize>,
     provider_attempt: ProviderAttempt,
     reasoning_phase: reasoning_phase::ReasoningPhase,
-    running: bool,
+    session_ui: run_lifecycle::SessionUiPhase,
     activity_phase: ActivityPhase,
     loading_spinner: LoadingSpinner,
     tool_calls: ToolCallBatch,
@@ -675,126 +674,6 @@ impl StreamKind {
 }
 
 impl App {
-    fn new(info: TuiBootstrap, herdr_graphics: crate::herdr::HerdrGraphicsCapability) -> Self {
-        #[cfg(debug_assertions)]
-        if smoke_injection::matrix_enabled() {
-            return Self::new_with_credentials(
-                info,
-                Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
-                herdr_graphics,
-            );
-        }
-        Self::new_with_credentials(info, Arc::new(AppCredentialStore), herdr_graphics)
-    }
-
-    fn new_with_credentials(
-        info: TuiBootstrap,
-        credential_store: Arc<dyn CredentialStore>,
-        herdr_graphics: crate::herdr::HerdrGraphicsCapability,
-    ) -> Self {
-        let available_auths = available_auth_modes(credential_store.as_ref());
-        let using_unavailable_provider = info.services.auth_unavailable.is_some();
-        let mut info = info;
-        info.runtime.max_tool_output_lines = info.runtime.max_tool_output_lines.max(1);
-        let status = info
-            .services
-            .auth_unavailable
-            .as_ref()
-            .map(|_| "no providers configured; run /login to sign in".into())
-            .unwrap_or_else(|| "ready".into());
-        let pending_update_notice = info.services.pending_update_notice.take();
-        let statusline = StatusLine::new(&info.runtime);
-        Self {
-            info,
-            terminal_events: None,
-            statusline,
-            subagent_panel: SubagentPanel::default(),
-            input: String::new(),
-            input_cursor: 0,
-            shell_mode: None,
-            status,
-            should_quit: false,
-            ctrl_c_streak: 0,
-            assistant_stream: AppendOnlyStream::default(),
-            assistant_stream_code_fence: CodeFenceState::default(),
-            reasoning_stream: AppendOnlyStream::default(),
-            reasoning_stream_code_fence: CodeFenceState::default(),
-            current_stream_kind: None,
-            stream_preview_deadline: None,
-            live_stream_preview: None,
-            current_turn_start: None,
-            provider_attempt: ProviderAttempt::default(),
-            reasoning_phase: reasoning_phase::ReasoningPhase::default(),
-            running: false,
-            activity_phase: ActivityPhase::default(),
-            loading_spinner: LoadingSpinner::default(),
-            tool_calls: ToolCallBatch::default(),
-            image_picker: picker_from_environment(herdr_graphics),
-            steering_prompts: VecDeque::new(),
-            accepted_steering: VecDeque::new(),
-            retracting_steering: None,
-            pending_input_panel: PendingInputPanel::default(),
-            pending_input_action: None,
-            queued_prompts: VecDeque::new(),
-            pending_inline_shells: Vec::new(),
-            deferred_inline_shell_context: Vec::new(),
-            goal: None,
-            pending_images: Vec::new(),
-            input_history: Vec::new(),
-            input_history_cursor: None,
-            input_history_draft: None,
-            paste_burst: PasteBurst::default(),
-            paste_segments: Vec::new(),
-            input_submission_mode: InputSubmissionMode::default(),
-            transcript: Vec::new(),
-            history_lines: HistoryLineCache::default(),
-            last_status_notice: None,
-            last_inserted_was_tool: false,
-            command_selection: 0,
-            command_prefix: None,
-            command_palette_dismissed: false,
-            file_selection: 0,
-            file_query: None,
-            file_palette_dismissed: false,
-            file_match_cache: None,
-            skill_match_cache: None,
-            composer: ComposerMode::Input,
-            credential_store,
-            available_auths,
-            using_unavailable_provider,
-            pending_oauth_login: None,
-            pending_usage_limits: None,
-            usage_limits_client: reqwest::Client::new(),
-            cumulative_usage: None,
-            usage_cost_tracker: UsageCostTracker::default(),
-            usage_before_current_run: None,
-            usage_before_current_step: None,
-            usage_before_current_attempt: None,
-            current_run_usage: None,
-            latest_usage: None,
-            current_context: None,
-            model_metadata: None,
-            pending_model_metadata: None,
-            pending_model_metadata_reasoning: None,
-            pending_update_notice,
-            pending_model_selection: None,
-            internal_agent_model_target: None,
-            pending_session_title: None,
-            markdown_images: markdown_image::MarkdownImageCache::default(),
-            markdown_images_dirty_from: None,
-            history_scroll: HistoryScroll::Bottom,
-            history_scrollbar_drag: None,
-            history_scrollbar_visible_until: None,
-            history_scrollbar_hovered: false,
-            hovered_code_block_copy: None,
-            text_selection: None,
-            copy_notice: None,
-            clipboard: Box::new(SystemClipboard::default()),
-            session_header_cache: None,
-            last_mouse_position: None,
-        }
-    }
-
     async fn run(
         mut self,
         terminal: &mut DefaultTerminal,
@@ -838,7 +717,7 @@ impl App {
             needs_redraw |= self.poll_limits_command().await?;
             needs_redraw |= self.poll_markdown_images();
             let shell_changed = self.finish_completed_inline_shells().await?;
-            if !self.running {
+            if !self.is_ui_busy() {
                 self.insert_deferred_inline_shell_context(agent)?;
             }
             needs_redraw |= shell_changed;
@@ -1156,469 +1035,6 @@ impl App {
         Ok(())
     }
 
-    fn poll_update_notice(&mut self) {
-        let Some(handle) = self.pending_update_notice.as_mut() else {
-            return;
-        };
-        let Some(result) = handle.now_or_never() else {
-            return;
-        };
-        self.pending_update_notice = None;
-        if let Ok(Some(notice)) = result {
-            self.info.services.update_notice = Some(notice);
-        }
-    }
-
-    /// Wakes an idle session with a turn for finished background subagents.
-    /// Real prompt turns drain these notifications themselves, while active
-    /// goals deliver them before evaluating the goal again.
-    async fn poll_subagent_completions(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        if !self.should_deliver_idle_subagent_completions() {
-            return Ok(false);
-        }
-        Ok(self
-            .run_subagent_completion_turn(terminal, agent)
-            .await?
-            .is_some())
-    }
-
-    async fn run_subagent_completion_turn(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<Option<TurnOutcome>> {
-        let Some(manager) = agent.subagents().cloned() else {
-            return Ok(None);
-        };
-        let notifications = manager.take_notifications(agent.session_id().as_str());
-        if notifications.is_empty() {
-            return Ok(None);
-        }
-        // The whole drained batch is one message and one model request, no
-        // matter how many runs finished while the parent was busy.
-        let (model_prompt, display_prompt) =
-            crate::tools::agent::notification_prompts(&notifications);
-        self.run_prompt_turn(
-            TurnPrompt::standard(model_prompt, display_prompt),
-            Vec::new(),
-            terminal,
-            agent,
-        )
-        .await
-        .map(Some)
-    }
-
-    fn should_deliver_idle_subagent_completions(&self) -> bool {
-        !self.running && self.goal.is_none() && self.queued_prompts.is_empty()
-    }
-
-    fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
-        if let Some(handle) = self.pending_model_metadata.take() {
-            handle.abort();
-        }
-        self.pending_model_metadata_reasoning = None;
-        if let Some((metadata, metadata_is_current)) = reasoning_metadata::cached_metadata(
-            &self.info.runtime.provider,
-            &self.info.runtime.model,
-        ) {
-            agent.set_context_window(metadata.display_context_window());
-            let reasoning_metadata_complete = metadata.reasoning_metadata_complete;
-            self.model_metadata = Some(metadata);
-            if reasoning_metadata_complete && metadata_is_current {
-                return;
-            }
-        } else {
-            agent.set_context_window(None);
-            self.model_metadata = None;
-        }
-        let provider = self.info.runtime.provider.clone();
-        let model = self.info.runtime.model.clone();
-        self.pending_model_metadata_reasoning = Some((
-            self.info.runtime.reasoning,
-            self.info.runtime.reasoning_source,
-        ));
-        self.pending_model_metadata = Some(tokio::spawn(async move {
-            fetch_model_metadata(&provider, &model).await
-        }));
-    }
-
-    fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
-        let Some(handle) = self.pending_model_metadata.as_mut() else {
-            return;
-        };
-        if !handle.is_finished() {
-            return;
-        }
-        if let Some(handle) = self.pending_model_metadata.take() {
-            let reasoning_at_fetch_start = self.pending_model_metadata_reasoning.take();
-            if let Some(Ok(Some(metadata))) = handle.now_or_never() {
-                agent.set_context_window(metadata.display_context_window());
-                let capabilities = metadata.reasoning_capabilities();
-                let resolved = reasoning_metadata::resolve_fetched_reasoning(
-                    &capabilities,
-                    self.info.runtime.reasoning,
-                    reasoning_at_fetch_start,
-                );
-                let reasoning = resolved.effective;
-                if let Some(requested) = resolved.rejected {
-                    self.insert_entry(&Entry::Error(format!(
-                        "reasoning level '{requested}' is not supported by {}/{}; restored '{reasoning}'",
-                        self.info.runtime.provider, self.info.runtime.model
-                    )));
-                }
-                let provider_updated = match build_provider(
-                    &self.info.runtime.provider,
-                    &self.info.runtime.model,
-                    reasoning,
-                ) {
-                    Ok(provider) => match agent.replace_provider(provider, reasoning) {
-                        Ok(_) => true,
-                        Err(err) => {
-                            self.insert_entry(&Entry::Error(format!(
-                                "could not apply model reasoning metadata: {err}"
-                            )));
-                            false
-                        }
-                    },
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not apply model reasoning metadata: {err}"
-                        )));
-                        false
-                    }
-                };
-                if provider_updated && reasoning != self.info.runtime.reasoning {
-                    self.info.set_reasoning(reasoning, PersistedOrDefault);
-                    if let Err(err) = self.info.services.config_repository.update(|config| {
-                        config.reasoning = reasoning;
-                    }) {
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not save normalized reasoning: {err}"
-                        )));
-                    }
-                }
-                self.model_metadata = Some(metadata);
-            }
-        }
-    }
-
-    fn handle_oauth_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.composer, ComposerMode::OAuthPending(_)) {
-            return Ok(false);
-        }
-
-        match key.code {
-            KeyCode::Esc => {
-                let provider = if let Some(pending) = self.pending_oauth_login.take() {
-                    let provider = pending.target.provider;
-                    pending.handle.abort();
-                    provider
-                } else {
-                    "OAuth".into()
-                };
-                self.composer = ComposerMode::Input;
-                self.status = "login cancelled".into();
-                self.insert_entry(&Entry::Notice(format!("{provider} login cancelled")));
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ => Ok(true),
-        }
-    }
-
-    async fn handle_secret_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let ComposerMode::SecretInput(secret) = &mut self.composer else {
-            return Ok(false);
-        };
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                let target = secret.target.clone();
-                let value = secret.value.trim().to_string();
-                self.composer = ComposerMode::Input;
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                self.submit_api_key_login(target, value, terminal, agent)
-                    .await?;
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                self.composer = ComposerMode::Input;
-                self.status = "login cancelled".into();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Backspace) => {
-                secret.backspace();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Delete) => {
-                secret.delete();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Left) => {
-                secret.cursor = secret.cursor.saturating_sub(1);
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Right) => {
-                secret.cursor = (secret.cursor + 1).min(secret.char_len());
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Home) => {
-                secret.cursor = 0;
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::End) => {
-                secret.cursor = secret.char_len();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (modifiers, KeyCode::Char(ch))
-                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                secret.insert_char(ch);
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ => Ok(true),
-        }
-    }
-
-    fn handle_config_number_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
-        if !matches!(self.composer, ComposerMode::ConfigNumberInput(_)) {
-            return Ok(false);
-        }
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                let ComposerMode::ConfigNumberInput(input) = &self.composer else {
-                    return Ok(true);
-                };
-                let saved = match input.save(&self.info.services.config_repository) {
-                    Ok(saved) => saved,
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(err.to_string()));
-                        self.status = "config save failed".into();
-                        return Ok(true);
-                    }
-                };
-                match saved {
-                    ConfigNumberSave::MaxOutputBytes(value) => {
-                        self.open_main_config_picker_selected(
-                            config_picker::MAX_OUTPUT_BYTES_VALUE,
-                        )?;
-                        self.insert_entry(&Entry::Notice(format!(
-                            "max output bytes set to {value}; applies next session"
-                        )));
-                    }
-                    ConfigNumberSave::MaxToolOutputLines(value) => {
-                        self.info.runtime.max_tool_output_lines = value;
-                        self.info
-                            .services
-                            .diagnostics
-                            .update_max_tool_output_lines(value);
-                        self.open_main_config_picker_selected(
-                            config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
-                        )?;
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                        self.insert_entry(&Entry::Notice(format!(
-                            "max tool output lines set to {value}"
-                        )));
-                    }
-                    ConfigNumberSave::CompactThresholdPercent(value) => {
-                        self.open_main_config_picker_selected(
-                            config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
-                        )?;
-                        self.insert_entry(&Entry::Notice(format!(
-                            "compact threshold set to {value}%"
-                        )));
-                    }
-                    ConfigNumberSave::CompactTargetPercent(value) => {
-                        self.open_main_config_picker_selected(
-                            config_picker::COMPACT_TARGET_PERCENT_VALUE,
-                        )?;
-                        self.insert_entry(&Entry::Notice(format!(
-                            "compact target set to {value}%"
-                        )));
-                    }
-                }
-                self.status = "config saved".into();
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.backspace();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.insert_char(ch);
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Left) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_left();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Right) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_right();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Home) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_home();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::End) => {
-                if let ComposerMode::ConfigNumberInput(input) = &mut self.composer {
-                    input.move_cursor_end();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                let ComposerMode::ConfigNumberInput(input) = &self.composer else {
-                    return Ok(true);
-                };
-                let selected_value = input.key.picker_value();
-                let config = self.info.services.config_repository.load()?;
-                self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-                self.open_main_config_picker_selected(selected_value)?;
-                Ok(true)
-            }
-            _ => Ok(true),
-        }
-    }
-
-    fn handle_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.composer, ComposerMode::ConfigTextInput(_)) {
-            return Ok(false);
-        }
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                let ComposerMode::ConfigTextInput(input) = &self.composer else {
-                    return Ok(true);
-                };
-                let key = input.key;
-                let save_result = input.save(self.credential_store.as_ref());
-                match save_result {
-                    Ok(()) => {
-                        self.refresh_web_search_config_picker(key.picker_value())?;
-                        self.status = format!("{} saved", key.label());
-                    }
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not save {}: {err}",
-                            key.label()
-                        )));
-                        self.status = "config save failed".into();
-                    }
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.backspace();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Delete) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.delete();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.insert_char(ch);
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Left) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_left();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Right) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_right();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Home) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_home();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::End) => {
-                if let ComposerMode::ConfigTextInput(input) = &mut self.composer {
-                    input.move_cursor_end();
-                }
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                let ComposerMode::ConfigTextInput(input) = &self.composer else {
-                    return Ok(true);
-                };
-                self.refresh_web_search_config_picker(input.key.picker_value())?;
-                self.status = "web search config".into();
-                Ok(true)
-            }
-            _ => Ok(true),
-        }
-    }
-
-    fn handle_reasoning_cycle_key(
-        &mut self,
-        key: KeyEvent,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let is_shift_tab = matches!(key.code, KeyCode::BackTab)
-            || (matches!(key.code, KeyCode::Tab) && key.modifiers.contains(KeyModifiers::SHIFT));
-        if !is_shift_tab {
-            return Ok(false);
-        }
-
-        self.cycle_reasoning(agent)?;
-        self.paste_burst.clear();
-        self.ctrl_c_streak = 0;
-        Ok(true)
-    }
-
     async fn handle_command_palette_key(
         &mut self,
         key: KeyEvent,
@@ -1697,27 +1113,6 @@ impl App {
             agent.attach_storage(session);
         }
         Ok(())
-    }
-
-    fn internal_agent_model_selection(&self, id: &str) -> (String, String, String) {
-        self.info
-            .runtime
-            .internal_agents
-            .get(id)
-            .map(|selection| {
-                (
-                    selection.provider.clone(),
-                    selection.model.clone(),
-                    selection.auth.clone(),
-                )
-            })
-            .unwrap_or_else(|| {
-                (
-                    self.info.runtime.provider.clone(),
-                    self.info.runtime.model.clone(),
-                    self.info.runtime.auth.clone(),
-                )
-            })
     }
 
     async fn submit(
@@ -1876,78 +1271,6 @@ impl App {
         self.report_herdr_state(state, message).await;
     }
 
-    fn insert_paste(&mut self, text: &str) {
-        if self.try_attach_pasted_image_path(text) {
-            return;
-        }
-        match &mut self.composer {
-            ComposerMode::Input => self.insert_pasted_input_text(text),
-            ComposerMode::SecretInput(secret) => secret.insert_text(text),
-            ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
-            ComposerMode::ConfigTextInput(input) => input.insert_text(text),
-            ComposerMode::Questionnaire(questionnaire) => {
-                questionnaire.insert_text(text);
-            }
-            ComposerMode::Approval(_)
-            | ComposerMode::Picker(_)
-            | ComposerMode::OAuthPending(_)
-            | ComposerMode::InlineChoice(_) => {}
-        }
-    }
-
-    /// Apply the live `show_reasoning_output` setting to in-flight turn UI.
-    pub(super) fn apply_reasoning_output_visibility(&mut self) {
-        if self.info.runtime.show_reasoning_output {
-            self.reasoning_phase.set_hidden_placeholder(false);
-            return;
-        }
-
-        self.discard_live_reasoning_output();
-
-        // Keep the Thinking... placeholder while this step is still waiting for
-        // or streaming reasoning. Later phases (response, tools) stay clear.
-        self.reasoning_phase.set_hidden_placeholder(
-            self.running
-                && (self.reasoning_phase.has_started()
-                    || matches!(
-                        self.activity_phase,
-                        ActivityPhase::Starting
-                            | ActivityPhase::WaitingForProvider
-                            | ActivityPhase::Thinking
-                            | ActivityPhase::RetryingProvider
-                    )),
-        );
-    }
-
-    fn discard_live_reasoning_output(&mut self) {
-        let clearing_reasoning = matches!(self.current_stream_kind, Some(StreamKind::Reasoning))
-            || self
-                .live_stream_preview
-                .as_ref()
-                .is_some_and(|preview| preview.kind == StreamKind::Reasoning);
-        if !clearing_reasoning {
-            return;
-        }
-        if matches!(self.current_stream_kind, Some(StreamKind::Reasoning)) {
-            self.reasoning_stream.reset();
-            self.reasoning_stream_code_fence = CodeFenceState::default();
-            self.current_stream_kind = None;
-        }
-        self.stream_preview_deadline = None;
-        self.live_stream_preview = None;
-    }
-
-    fn reset_provider_attempt_stream(&mut self) {
-        self.reset_streams();
-        self.tool_calls.clear();
-        if let Some(start) = self.provider_attempt.reset_output(&mut self.transcript) {
-            self.markdown_images.clear();
-            self.mark_markdown_images_dirty_from(start);
-            self.history_lines.invalidate_from(start);
-        }
-        self.status = "retrying provider response".into();
-    }
-
     fn activity_status(&self) -> Option<ActivityStatus> {
         let phase = match self.composer {
             ComposerMode::Approval(_) => ActivityPhase::WaitingForApproval,
@@ -1969,7 +1292,7 @@ impl App {
     }
 
     fn loading_active(&self) -> bool {
-        self.running || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
+        self.is_ui_busy() || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
     }
 
     fn handle_queued_agent_event(
@@ -1984,72 +1307,6 @@ impl App {
         for notice in agent.take_notices() {
             self.insert_entry(&Entry::Notice(notice));
         }
-    }
-
-    fn execute_config_command(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
-        self.info.runtime.max_tool_output_lines = config.max_tool_output_lines.max(1);
-        self.info
-            .services
-            .diagnostics
-            .update_max_tool_output_lines(self.info.runtime.max_tool_output_lines);
-        self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-        self.composer =
-            ComposerMode::Picker(config_picker::config_picker(&self.info.runtime, &config));
-        self.status = "config".into();
-        terminal.draw(|frame| self.draw(frame))?;
-        Ok(())
-    }
-
-    fn toggle_latest_tool_output(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
-        if let Some(pending) = self.tool_calls.latest_mut() {
-            if tool_display_line_count(&pending.display_lines)
-                <= self.info.runtime.max_tool_output_lines
-            {
-                self.status = "no truncated tool output".into();
-                return Ok(());
-            }
-            pending.expanded = !pending.expanded;
-            self.status = if pending.expanded {
-                "tool output expanded".into()
-            } else {
-                "tool output collapsed".into()
-            };
-            return Ok(());
-        }
-
-        let Some(index) = self.transcript.iter().rposition(|entry| {
-            expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
-        }) else {
-            self.status = "no truncated tool output".into();
-            return Ok(());
-        };
-
-        self.toggle_transcript_tool_output(index);
-        self.clamp_history_scroll_for_terminal(terminal)
-    }
-
-    fn toggle_transcript_tool_output(&mut self, index: usize) {
-        let expand =
-            !matches!(self.transcript.get(index), Some(Entry::Tool(tool)) if tool.expanded);
-        let mut dirty_from = index;
-        for (entry_index, entry) in self.transcript.iter_mut().enumerate() {
-            if let Entry::Tool(tool) = entry {
-                if tool.expanded {
-                    dirty_from = dirty_from.min(entry_index);
-                }
-                tool.expanded = false;
-            }
-        }
-        if let Some(Entry::Tool(tool)) = self.transcript.get_mut(index) {
-            tool.expanded = expand;
-            self.history_lines.invalidate_from(dirty_from);
-        }
-        self.status = if expand {
-            "tool output expanded".into()
-        } else {
-            "tool output collapsed".into()
-        };
     }
 
     fn reset_usage(&mut self) {
@@ -2555,7 +1812,11 @@ mod tests {
 
         assert_eq!(
             app.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID),
-            ("openai".into(), "gpt-5.5".into(), "api-key".into())
+            crate::config::InternalAgentModelConfig::new(
+                "openai".into(),
+                "gpt-5.5".into(),
+                "api-key".into()
+            )
         );
     }
 
@@ -3032,7 +2293,7 @@ mod tests {
     #[test]
     fn active_lines_do_not_render_pending_stream_text() {
         let mut app = test_app();
-        app.running = true;
+        app.begin_provider_turn_ui();
         app.assistant_stream.push_delta("hello");
         app.reasoning_stream.push_delta("thinking");
         let lines = app.active_lines(40);
@@ -3100,7 +2361,7 @@ mod tests {
     #[test]
     fn active_lines_for_height_uses_actual_viewport_height() {
         let mut app = test_app();
-        app.running = true;
+        app.begin_provider_turn_ui();
 
         let small_lines = app.active_lines_for_height(40, 4);
         let default_lines = app.active_lines_for_height(40, DEFAULT_TUI_HEIGHT as usize);
@@ -3124,7 +2385,7 @@ mod tests {
     #[test]
     fn spinner_is_anchored_immediately_above_composer_divider() {
         let mut app = test_app();
-        app.running = true;
+        app.begin_provider_turn_ui();
         app.tool_calls
             .preview(0, None, vec!["bash".into(), "cargo test".into()]);
         let width = 40;
@@ -3959,7 +3220,7 @@ mod tests {
             text: "partial answer".into(),
             include_leading_blank: true,
         });
-        app.running = true;
+        app.begin_provider_turn_ui();
         app.loading_spinner.start();
 
         let rendered = app

@@ -31,7 +31,7 @@ fn active_goal_keeps_subagent_notifications_for_the_goal_turn() {
 #[test]
 fn running_turn_cannot_start_synthetic_notification_delivery() {
     let mut app = test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
 
     assert!(!app.should_deliver_idle_subagent_completions());
 }

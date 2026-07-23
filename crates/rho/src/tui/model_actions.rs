@@ -213,8 +213,8 @@ impl App {
                     self.select_internal_agent_model(&id, None)?;
                 } else {
                     self.refresh_available_auths();
-                    let (provider, _model, auth) = self.internal_agent_model_selection(&id);
-                    match self.resolve_model_selection(&value, &provider, &auth) {
+                    let current = self.internal_agent_model_selection(&id);
+                    match self.resolve_model_selection(&value, &current.provider, &current.auth) {
                         Ok(selection) => {
                             self.select_internal_agent_model(&id, Some(selection.selection))?
                         }
@@ -341,13 +341,15 @@ impl App {
 
         self.refresh_available_auths();
         let mut picker = match action {
-            PickerAction::SelectModel if self.running => model_picker::model_picker_during_run(
-                &self.info.runtime,
-                self.pending_model_selection
-                    .as_ref()
-                    .map(|pending| &pending.selection),
-                &self.available_auths,
-            ),
+            PickerAction::SelectModel if self.is_ui_busy() => {
+                model_picker::model_picker_during_run(
+                    &self.info.runtime,
+                    self.pending_model_selection
+                        .as_ref()
+                        .map(|pending| &pending.selection),
+                    &self.available_auths,
+                )
+            }
             PickerAction::SelectModel => {
                 model_picker::model_picker(&self.info.runtime, &self.available_auths)
             }
@@ -355,11 +357,11 @@ impl App {
                 let Some(id) = self.internal_agent_model_target.as_deref() else {
                     return Ok(());
                 };
-                let (provider, model, _auth) = self.internal_agent_model_selection(id);
+                let selection = self.internal_agent_model_selection(id);
                 model_picker::internal_agent_model_picker(
                     id,
-                    &provider,
-                    &model,
+                    &selection.provider,
+                    &selection.model,
                     !self.info.runtime.internal_agents.contains_key(id),
                     &self.info.runtime.favorite_models,
                     &self.available_auths,
@@ -591,6 +593,24 @@ impl App {
 
     pub(super) fn refresh_available_auths(&mut self) {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
+    }
+
+    pub(super) fn internal_agent_model_selection(
+        &self,
+        id: &str,
+    ) -> crate::config::InternalAgentModelConfig {
+        self.info
+            .runtime
+            .internal_agents
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| {
+                crate::config::InternalAgentModelConfig::new(
+                    self.info.runtime.provider.clone(),
+                    self.info.runtime.model.clone(),
+                    self.info.runtime.auth.clone(),
+                )
+            })
     }
 }
 

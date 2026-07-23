@@ -470,4 +470,23 @@ impl App {
             self.command_selection = match_count - 1;
         }
     }
+
+    pub(super) fn insert_paste(&mut self, text: &str) {
+        if self.try_attach_pasted_image_path(text) {
+            return;
+        }
+        match &mut self.composer {
+            ComposerMode::Input => self.insert_pasted_input_text(text),
+            ComposerMode::SecretInput(secret) => secret.insert_text(text),
+            ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
+            ComposerMode::ConfigTextInput(input) => input.insert_text(text),
+            ComposerMode::Questionnaire(questionnaire) => {
+                questionnaire.insert_text(text);
+            }
+            ComposerMode::Approval(_)
+            | ComposerMode::Picker(_)
+            | ComposerMode::OAuthPending(_)
+            | ComposerMode::InlineChoice(_) => {}
+        }
+    }
 }

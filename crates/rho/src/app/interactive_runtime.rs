@@ -246,6 +246,15 @@ impl InteractiveRuntime {
         self.permission_mode
     }
 
+    /// Returns whether a model run is active on the interactive run controller.
+    ///
+    /// Prefer this for provider-lifecycle decisions. TUI busy UI uses
+    /// `SessionUiPhase` (`App::is_ui_busy`) because compaction blocks the UI
+    /// without an active provider run.
+    pub(crate) fn is_run_active(&self) -> bool {
+        self.runs.is_active()
+    }
+
     /// Rebuilds the SDK runtime so the requested permission mode applies to the next turn.
     pub(crate) async fn set_permission_mode(&mut self, mode: PermissionMode) -> anyhow::Result<()> {
         if self.runs.is_active() {

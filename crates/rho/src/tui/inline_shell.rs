@@ -309,7 +309,12 @@ impl super::App {
         if self.shell_mode.take().is_none() {
             return false;
         }
-        self.status = if self.running { "running" } else { "ready" }.into();
+        self.status = if self.is_ui_busy() {
+            "running"
+        } else {
+            "ready"
+        }
+        .into();
         true
     }
 
@@ -468,7 +473,7 @@ impl super::App {
         for deferred in std::mem::take(&mut self.deferred_inline_shell_context) {
             agent.append_user_context_with_display(deferred.context, deferred.persisted_display)?;
         }
-        if inserted && !self.running {
+        if inserted && !self.is_ui_busy() {
             self.status = "shell output included in context".into();
         }
         Ok(())

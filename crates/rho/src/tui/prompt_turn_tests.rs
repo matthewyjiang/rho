@@ -96,7 +96,7 @@ fn retry_attachment_keeps_prior_batches_and_adds_each_new_batch_once() {
 #[test]
 fn failed_turn_keeps_live_partial_assistant_text_before_error() {
     let mut app = test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
     app.current_turn_start = Some(0);
     app.assistant_stream
         .push_delta("partial assistant before stream failure");
@@ -110,7 +110,7 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
             if text == "partial assistant before stream failure"
                 && error == "provider stream failed"
     ));
-    assert!(!app.running);
+    assert!(!app.is_ui_busy());
     assert!(app.assistant_stream.is_empty());
     assert_eq!(app.status, "error");
 }

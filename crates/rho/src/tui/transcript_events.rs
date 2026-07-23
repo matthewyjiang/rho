@@ -15,10 +15,11 @@ use super::{
     activity::ActivityPhase,
     add_optional,
     event_adapter::{self, ViewModelEvent},
-    final_answer_delta, is_tool_entry,
+    expandable_tool_entry, final_answer_delta, is_tool_entry,
     markdown::{update_code_block_state, CodeFenceState},
     merge_usage, padded_content_width,
     stream::StreamFragment,
+    tool_display_line_count,
     usage_cost::CostSource,
     usage_difference, usage_with_estimated_cost, App, Entry, FinalAnswerDelta, LiveStreamPreview,
     ReasoningEntry, StreamKind, ToolEntry, ToolEntryState, STREAM_PREVIEW_DELAY,
@@ -221,7 +222,7 @@ impl App {
                 self.provider_attempt.begin(self.transcript.len());
                 self.reasoning_phase
                     .begin_step(self.info.runtime.show_reasoning_output);
-                self.running = true;
+                self.begin_provider_turn_ui();
                 self.tool_calls.clear();
                 self.loading_spinner.start_if_needed();
                 self.status = format!("running step {step}");
@@ -525,6 +526,113 @@ impl App {
         };
         self.last_inserted_was_tool = is_tool_entry(&entry);
         self.push_transcript_entry(entry);
+    }
+
+    /// Apply the live `show_reasoning_output` setting to in-flight turn UI.
+    pub(super) fn apply_reasoning_output_visibility(&mut self) {
+        if self.info.runtime.show_reasoning_output {
+            self.reasoning_phase.set_hidden_placeholder(false);
+            return;
+        }
+
+        self.discard_live_reasoning_output();
+
+        // Keep the Thinking... placeholder while this step is still waiting for
+        // or streaming reasoning. Later phases (response, tools) stay clear.
+        self.reasoning_phase.set_hidden_placeholder(
+            self.is_ui_busy()
+                && (self.reasoning_phase.has_started()
+                    || matches!(
+                        self.activity_phase,
+                        ActivityPhase::Starting
+                            | ActivityPhase::WaitingForProvider
+                            | ActivityPhase::Thinking
+                            | ActivityPhase::RetryingProvider
+                    )),
+        );
+    }
+
+    pub(super) fn discard_live_reasoning_output(&mut self) {
+        let clearing_reasoning = matches!(self.current_stream_kind, Some(StreamKind::Reasoning))
+            || self
+                .live_stream_preview
+                .as_ref()
+                .is_some_and(|preview| preview.kind == StreamKind::Reasoning);
+        if !clearing_reasoning {
+            return;
+        }
+        if matches!(self.current_stream_kind, Some(StreamKind::Reasoning)) {
+            self.reasoning_stream.reset();
+            self.reasoning_stream_code_fence = CodeFenceState::default();
+            self.current_stream_kind = None;
+        }
+        self.stream_preview_deadline = None;
+        self.live_stream_preview = None;
+    }
+
+    pub(super) fn reset_provider_attempt_stream(&mut self) {
+        self.reset_streams();
+        self.tool_calls.clear();
+        if let Some(start) = self.provider_attempt.reset_output(&mut self.transcript) {
+            self.markdown_images.clear();
+            self.mark_markdown_images_dirty_from(start);
+            self.history_lines.invalidate_from(start);
+        }
+        self.status = "retrying provider response".into();
+    }
+
+    pub(super) fn toggle_latest_tool_output(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> std::io::Result<()> {
+        if let Some(pending) = self.tool_calls.latest_mut() {
+            if tool_display_line_count(&pending.display_lines)
+                <= self.info.runtime.max_tool_output_lines
+            {
+                self.status = "no truncated tool output".into();
+                return Ok(());
+            }
+            pending.expanded = !pending.expanded;
+            self.status = if pending.expanded {
+                "tool output expanded".into()
+            } else {
+                "tool output collapsed".into()
+            };
+            return Ok(());
+        }
+
+        let Some(index) = self.transcript.iter().rposition(|entry| {
+            expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
+        }) else {
+            self.status = "no truncated tool output".into();
+            return Ok(());
+        };
+
+        self.toggle_transcript_tool_output(index);
+        self.clamp_history_scroll_for_terminal(terminal)
+    }
+
+    pub(super) fn toggle_transcript_tool_output(&mut self, index: usize) {
+        let expand =
+            !matches!(self.transcript.get(index), Some(Entry::Tool(tool)) if tool.expanded);
+        let mut dirty_from = index;
+        for (entry_index, entry) in self.transcript.iter_mut().enumerate() {
+            if let Entry::Tool(tool) = entry {
+                if tool.expanded {
+                    dirty_from = dirty_from.min(entry_index);
+                }
+                tool.expanded = false;
+            }
+        }
+        if let Some(Entry::Tool(tool)) = self.transcript.get_mut(index) {
+            tool.expanded = expand;
+            self.history_lines.invalidate_from(dirty_from);
+        }
+        self.status = if expand {
+            "tool output expanded".into()
+        } else {
+            "tool output collapsed".into()
+        };
     }
 }
 

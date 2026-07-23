@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn running_limits_query_does_not_queue_model_context() {
     let mut app = super::super::tests::test_app();
-    app.running = true;
+    app.begin_provider_turn_ui();
 
     app.render_limits_result(Ok((
         ProviderLimits {
