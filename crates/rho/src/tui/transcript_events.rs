@@ -235,8 +235,8 @@ impl App {
                     .reasoning_phase_mut()
                     .begin_step(self.info.runtime.show_reasoning_output);
                 self.begin_provider_turn_ui();
-                self.turn.tool_calls_mut().clear();
-                self.turn.loading_spinner_mut().start_if_needed();
+                self.turn.clear_tool_calls();
+                self.turn.start_loading_if_needed();
                 self.status = format!("running step {step}");
                 None
             }
@@ -248,14 +248,14 @@ impl App {
                 call_id,
                 display_lines,
             } => {
-                self.turn.tool_calls_mut().started(call_id, display_lines);
+                self.turn.tool_started(call_id, display_lines);
                 None
             }
             ViewModelEvent::ToolUpdated {
                 call_id,
                 display_lines,
             } => {
-                self.turn.tool_calls_mut().updated(call_id, display_lines);
+                self.turn.tool_updated(call_id, display_lines);
                 None
             }
             ViewModelEvent::ToolCallUpdated {
@@ -263,9 +263,7 @@ impl App {
                 call_id,
                 display_lines,
             } => {
-                self.turn
-                    .tool_calls_mut()
-                    .preview(index, call_id, display_lines);
+                self.turn.tool_call_preview(index, call_id, display_lines);
                 None
             }
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
@@ -334,7 +332,7 @@ impl App {
                 image_asset,
             } => {
                 self.statusline.refresh_git_branch();
-                let expanded = self.turn.tool_calls_mut().finished(&call_id);
+                let expanded = self.turn.tool_finished(&call_id);
                 self.turn
                     .set_activity_phase(if self.turn.tool_calls().is_running() {
                         ActivityPhase::RunningTool
@@ -600,7 +598,7 @@ impl App {
 
     pub(super) fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
-        self.turn.tool_calls_mut().clear();
+        self.turn.clear_tool_calls();
         if let Some(start) = self
             .turn
             .provider_attempt_mut()

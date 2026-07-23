@@ -70,7 +70,7 @@ impl App {
         self.status = "compacting context".into();
         self.begin_compact_ui();
         self.turn.set_activity_phase(ActivityPhase::Compacting);
-        self.turn.loading_spinner_mut().start();
+        self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
 
         let interrupt_requested = AtomicBool::new(false);
@@ -107,7 +107,7 @@ impl App {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
         self.end_busy_ui();
-        self.turn.loading_spinner_mut().stop();
+        self.turn.stop_loading();
 
         let succeeded = match compacted {
             Ok(true) => {
@@ -156,14 +156,14 @@ impl App {
         self.input_ui.clear_pending_images();
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
-        self.pending.queued_prompts_mut().clear();
+        self.pending.clear_follow_ups();
         self.goal = None;
         self.pending.clear_steering();
         self.pending.clear_input_action();
         self.pending_input_changed();
         self.reset_streams();
         self.end_busy_ui();
-        self.turn.tool_calls_mut().clear();
+        self.turn.clear_tool_calls();
         self.reset_usage();
         self.usage.current_context = None;
         self.pending_session_title = None;

@@ -1,21 +1,13 @@
-use super::{app_state::SessionUiPhase, App, Entry, InputSubmissionMode, InteractiveRuntime};
+use super::{App, Entry, InputSubmissionMode, InteractiveRuntime};
 
 impl App {
     pub(super) fn is_ui_busy(&self) -> bool {
-        self.turn.session_ui().is_busy()
+        self.turn.is_busy()
     }
 
     /// True only during an active provider turn, not compaction UI.
     pub(super) fn is_provider_turn_ui(&self) -> bool {
-        self.turn.session_ui().is_provider_turn()
-    }
-
-    pub(super) fn uses_during_run_model_picker(&self) -> bool {
-        debug_assert_eq!(
-            self.is_provider_turn_ui(),
-            self.turn.session_ui().uses_during_run_model_picker()
-        );
-        self.turn.session_ui().uses_during_run_model_picker()
+        self.turn.is_provider_turn()
     }
 
     pub(super) fn busy_status_label(&self) -> &'static str {
@@ -27,15 +19,15 @@ impl App {
     }
 
     pub(super) fn begin_provider_turn_ui(&mut self) {
-        self.turn.set_session_ui(SessionUiPhase::ProviderTurn);
+        self.turn.enter_provider_turn();
     }
 
     pub(super) fn begin_compact_ui(&mut self) {
-        self.turn.set_session_ui(SessionUiPhase::Compacting);
+        self.turn.enter_compact();
     }
 
     pub(super) fn end_busy_ui(&mut self) {
-        self.turn.set_session_ui(SessionUiPhase::Idle);
+        self.turn.end_busy();
     }
 
     /// After a successful provider start or terminal finish, provider-turn UI
@@ -43,7 +35,7 @@ impl App {
     /// and must not call this.
     pub(super) fn debug_assert_provider_turn_sync(&self, agent: &InteractiveRuntime) {
         debug_assert_eq!(
-            self.turn.session_ui().is_provider_turn(),
+            self.turn.is_provider_turn(),
             agent.is_run_active(),
             "session_ui={:?} but InteractiveRuntime.is_run_active()={}",
             self.turn.session_ui(),
@@ -83,7 +75,7 @@ impl App {
     }
 
     pub(super) fn clear_transient_key_state(&mut self) {
-        self.input_ui.paste_burst_mut().clear();
+        self.input_ui.clear_transient_edit_state();
         self.ctrl_c_streak = 0;
     }
 

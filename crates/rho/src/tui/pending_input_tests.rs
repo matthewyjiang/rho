@@ -27,9 +27,7 @@ fn line_text(line: &Line<'_>) -> String {
 #[test]
 fn panel_distinguishes_steering_from_follow_ups_and_marks_recall_target() {
     let mut app = test_app();
-    app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("run all tests"));
+    app.pending.push_follow_up(prompt("run all tests"));
     app.pending
         .accepted_steering_mut()
         .push_back(AcceptedSteering {
@@ -51,9 +49,7 @@ fn panel_distinguishes_steering_from_follow_ups_and_marks_recall_target() {
 #[test]
 fn alt_up_prioritizes_latest_local_steer_over_follow_up() {
     let mut app = test_app();
-    app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("future turn"));
+    app.pending.push_follow_up(prompt("future turn"));
     app.pending
         .steering_prompts_mut()
         .push_back(prompt("first steer"));
@@ -103,9 +99,7 @@ fn alt_up_preserves_nonempty_composer() {
     let mut app = test_app();
     app.input_ui.set_text("draft".to_string());
     app.input_ui.set_cursor(app.input_char_len());
-    app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("future turn"));
+    app.pending.push_follow_up(prompt("future turn"));
 
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT));
 
@@ -136,9 +130,7 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
             id: rho_sdk::SteeringId::new(),
             prompt: prompt("second steer"),
         });
-    app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("future turn"));
+    app.pending.push_follow_up(prompt("future turn"));
     app.pending.input_panel_mut().selected = 2;
 
     app.mark_steering_applied(&[applied]);
@@ -151,8 +143,8 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
 #[test]
 fn backspace_removes_the_selected_follow_up() {
     let mut app = test_app();
-    app.pending.queued_prompts_mut().push_back(prompt("first"));
-    app.pending.queued_prompts_mut().push_back(prompt("second"));
+    app.pending.push_follow_up(prompt("first"));
+    app.pending.push_follow_up(prompt("second"));
     app.select_pending_recall_target();
 
     app.handle_pending_input_key(key(KeyCode::Char('q'), KeyModifiers::ALT));
@@ -219,9 +211,7 @@ fn panel_reserves_space_immediately_above_composer() {
     let mut app = test_app();
     app.input_ui.set_text("draft".to_string());
     app.input_ui.set_cursor(app.input_char_len());
-    app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("future turn"));
+    app.pending.push_follow_up(prompt("future turn"));
     app.select_pending_recall_target();
 
     let layout = app.screen_layout(
@@ -243,9 +233,7 @@ fn focused_panel_stays_visible_with_a_tall_composer_in_a_short_terminal() {
         "a long draft that wraps across many composer lines in a narrow terminal".to_string(),
     );
     app.input_ui.set_cursor(app.input_char_len());
-    app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("future turn"));
+    app.pending.push_follow_up(prompt("future turn"));
     app.pending.input_panel_mut().focused = true;
     app.select_pending_recall_target();
 

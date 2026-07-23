@@ -166,11 +166,11 @@ impl App {
         self.begin_provider_turn_ui();
         self.turn.set_activity_phase(ActivityPhase::Starting);
         self.report_herdr_working().await;
-        self.turn.loading_spinner_mut().start();
+        self.turn.start_loading();
         self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
 
-        self.turn.tool_calls_mut().clear();
+        self.turn.clear_tool_calls();
         let start_result = match failed_turn.initial_tool_call.clone() {
             Some(call) => {
                 agent
@@ -185,7 +185,7 @@ impl App {
         };
         if let Err(error) = start_result {
             self.end_busy_ui();
-            self.turn.loading_spinner_mut().stop();
+            self.turn.stop_loading();
             self.turn.set_current_turn_start(None);
             self.turn.set_activity_phase(ActivityPhase::default());
             self.status = "ready".into();
@@ -406,7 +406,7 @@ impl App {
         }
 
         self.cancel_approval();
-        self.turn.tool_calls_mut().clear();
+        self.turn.clear_tool_calls();
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
         let inline_shell_error = match self.finish_all_inline_shells().await {
@@ -430,7 +430,7 @@ impl App {
             Ok(outcome) if sdk_failure.is_none() => {
                 self.end_busy_ui();
                 self.debug_assert_provider_turn_sync(agent);
-                self.turn.loading_spinner_mut().stop();
+                self.turn.stop_loading();
                 self.finish_streams();
                 self.insert_final_answer_suffix(outcome.text());
                 self.reset_streams();
@@ -448,7 +448,7 @@ impl App {
             _ if questionnaire_cancelled_by_user => {
                 self.end_busy_ui();
                 self.debug_assert_provider_turn_sync(agent);
-                self.turn.loading_spinner_mut().stop();
+                self.turn.stop_loading();
                 self.finish_streams();
                 let notice = if self.goal.is_some() {
                     "questionnaire cancelled; goal left active"
@@ -470,7 +470,7 @@ impl App {
                 self.restore_pending_work_to_input();
                 self.end_busy_ui();
                 self.debug_assert_provider_turn_sync(agent);
-                self.turn.loading_spinner_mut().stop();
+                self.turn.stop_loading();
                 self.finish_streams();
                 self.insert_entry(&Entry::Notice("model interrupted".into()));
                 self.reset_streams();
@@ -537,7 +537,7 @@ impl App {
         self.reset_streams();
         self.turn.set_current_turn_start(None);
         self.end_busy_ui();
-        self.turn.loading_spinner_mut().stop();
+        self.turn.stop_loading();
         self.insert_entry(&Entry::Error(message));
         self.status = "error".into();
         TurnOutcome::Failed(failed_turn)

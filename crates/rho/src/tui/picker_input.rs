@@ -145,24 +145,24 @@ impl App {
         match effect {
             PickerKeyEffect::None => Ok(true),
             PickerKeyEffect::Handled => {
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             PickerKeyEffect::Submit => {
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 self.submit_picker_selection(terminal, agent).await?;
                 Ok(true)
             }
             PickerKeyEffect::Escape => {
                 self.handle_picker_escape(/*running*/ false)?;
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             PickerKeyEffect::ToggleFavorite => {
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 self.toggle_selected_model_favorite()?;
                 Ok(true)

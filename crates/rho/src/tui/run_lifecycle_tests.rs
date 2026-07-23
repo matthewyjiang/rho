@@ -23,8 +23,7 @@ fn interrupt_restores_accepted_local_and_follow_up_input() {
         .steering_prompts_mut()
         .push_back(prompt("local steer", "local steer"));
     app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("expanded next turn", "next turn"));
+        .push_follow_up(prompt("expanded next turn", "next turn"));
 
     app.restore_pending_work_to_input();
 
@@ -51,8 +50,7 @@ fn failed_run_preserves_unapplied_steering_as_follow_ups() {
         .steering_prompts_mut()
         .push_back(prompt("local model", "local display"));
     app.pending
-        .queued_prompts_mut()
-        .push_back(prompt("existing model", "existing display"));
+        .push_follow_up(prompt("existing model", "existing display"));
 
     app.preserve_unapplied_steering_as_follow_ups();
 

@@ -24,7 +24,7 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
-        if let Some(pending) = self.turn.tool_calls_mut().latest_mut() {
+        if let Some(pending) = self.turn.latest_tool_mut() {
             if tool_display_line_count(&pending.display_lines)
                 <= self.info.runtime.max_tool_output_lines
             {

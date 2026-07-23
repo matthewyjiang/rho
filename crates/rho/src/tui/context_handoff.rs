@@ -652,7 +652,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if let Some(prompt) = self.pending.queued_prompts_mut().pop_front() {
+        if let Some(prompt) = self.pending.pop_follow_up() {
             self.restore_pending_prompt(prompt);
             return self.submit(terminal, agent).await;
         }

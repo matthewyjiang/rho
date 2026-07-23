@@ -189,7 +189,7 @@ impl App {
                 PendingInputRequest::Accept { prompt, .. },
                 PendingInputCompletion::Accepted(Err(error)),
             ) => {
-                self.pending.queued_prompts_mut().push_front(prompt);
+                self.pending.push_follow_up_front(prompt);
                 self.select_pending_recall_target();
                 self.notify_status(format!("steer queued as follow-up: {error}"));
                 None
@@ -385,7 +385,7 @@ impl App {
                 }
             }
             PendingInputRef::FollowUp(index) => {
-                if let Some(prompt) = self.pending.queued_prompts_mut().remove(index) {
+                if let Some(prompt) = self.pending.remove_follow_up(index) {
                     self.restore_pending_prompt(prompt);
                     self.notify_status("editing queued follow-up");
                 }
@@ -418,7 +418,7 @@ impl App {
                 self.notify_status("queued steer discarded");
             }
             PendingInputRef::FollowUp(index) => {
-                self.pending.queued_prompts_mut().remove(index);
+                self.pending.remove_follow_up(index);
                 self.notify_status("queued follow-up discarded");
             }
         }

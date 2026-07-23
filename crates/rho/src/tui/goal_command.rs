@@ -298,7 +298,7 @@ impl App {
                 continue;
             }
             self.status = "evaluating goal".into();
-            self.turn.loading_spinner_mut().start();
+            self.turn.start_loading();
             terminal.draw(|frame| self.draw(frame))?;
 
             let (condition, provider, model) = {
@@ -366,7 +366,7 @@ impl App {
             };
             self.finish_all_inline_shells().await?;
             self.insert_deferred_inline_shell_context(agent)?;
-            self.turn.loading_spinner_mut().stop();
+            self.turn.stop_loading();
             let Some(evaluation) = evaluation else {
                 break;
             };
@@ -455,7 +455,7 @@ impl App {
         }
 
         self.status = "waiting for delegated agents".into();
-        self.turn.loading_spinner_mut().start();
+        self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
@@ -487,7 +487,7 @@ impl App {
         }
         self.finish_all_inline_shells().await?;
         self.insert_deferred_inline_shell_context(agent)?;
-        self.turn.loading_spinner_mut().stop();
+        self.turn.stop_loading();
         Ok(self.goal.is_some() && !self.should_quit)
     }
 
@@ -519,7 +519,7 @@ impl App {
             return Ok(false);
         }
 
-        self.turn.loading_spinner_mut().start();
+        self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
@@ -561,7 +561,7 @@ impl App {
         };
         self.finish_all_inline_shells().await?;
         self.insert_deferred_inline_shell_context(agent)?;
-        self.turn.loading_spinner_mut().stop();
+        self.turn.stop_loading();
         Ok(should_retry && self.goal.is_some() && !self.should_quit)
     }
 }

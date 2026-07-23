@@ -21,7 +21,7 @@ impl App {
                             self.input_ui.file_selection() - 1
                         });
                 }
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -31,7 +31,7 @@ impl App {
                     self.input_ui
                         .set_file_selection((self.input_ui.file_selection() + 1) % matches.len());
                 }
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -39,14 +39,14 @@ impl App {
                 if let Some(path) = self.selected_file_path() {
                     self.insert_selected_file_path(&path);
                 }
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Esc) => {
                 self.input_ui.set_file_palette_dismissed(true);
                 self.input_ui.set_file_selection(0);
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }

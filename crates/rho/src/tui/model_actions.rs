@@ -343,7 +343,7 @@ impl App {
         let mut picker = match action {
             // During-run picker queues a model for after the provider turn.
             // Compaction is busy UI without a live run, so keep the idle picker.
-            PickerAction::SelectModel if self.uses_during_run_model_picker() => {
+            PickerAction::SelectModel if self.is_provider_turn_ui() => {
                 model_picker::model_picker_during_run(
                     &self.info.runtime,
                     self.pending_model_selection

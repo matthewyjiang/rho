@@ -153,12 +153,12 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
                 self.insert_input_char('\n');
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
                 self.insert_input_char('\n');
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
@@ -172,7 +172,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             _ => {
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
         }
@@ -203,7 +203,7 @@ impl App {
                         },
                     );
                 }
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -214,7 +214,7 @@ impl App {
                         (self.input_ui.command_selection() + 1) % matches.len(),
                     );
                 }
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -224,7 +224,7 @@ impl App {
                     self.input_ui.set_command_palette_dismissed(false);
                     self.clamp_command_selection();
                 }
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -233,7 +233,7 @@ impl App {
                     self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 self.submit(terminal, agent).await?;
                 Ok(true)
@@ -241,7 +241,7 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Esc) => {
                 self.input_ui.set_command_palette_dismissed(true);
                 self.input_ui.set_command_selection(0);
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -347,7 +347,7 @@ impl App {
             {
                 break outcome_kind;
             }
-            let Some(prompt) = self.pending.queued_prompts_mut().pop_front() else {
+            let Some(prompt) = self.pending.pop_follow_up() else {
                 break outcome_kind;
             };
             self.pending_input_changed();

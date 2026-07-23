@@ -136,12 +136,12 @@ impl App {
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
                 self.queue_prompt_after_turn()?;
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
                 self.insert_input_char('\n');
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
@@ -155,7 +155,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             _ => {
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
         }
@@ -719,7 +719,7 @@ impl App {
                     let text = normalize_paste(&text);
                     self.flush_pending_paste_burst();
                     self.insert_paste(&text);
-                    self.input_ui.paste_burst_mut().clear();
+                    self.input_ui.clear_paste_burst();
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();

@@ -187,11 +187,7 @@ impl App {
                     submission_mode: InputSubmissionMode::ParseCommands,
                     shell_mode: None,
                 });
-                self.input_ui.set_shell_mode(draft.shell_mode);
-                self.input_ui.set_text(draft.input);
-                self.input_ui.set_paste_segments(draft.paste_segments);
-                self.input_ui.set_submission_mode(draft.submission_mode);
-                self.input_ui.set_cursor(self.input_char_len());
+                self.input_ui.apply_input_draft(draft);
                 self.input_ui.set_history_cursor(None);
                 self.input_changed();
                 return true;
@@ -280,8 +276,7 @@ impl App {
         let start_byte = self.input_byte_index(start);
         let end_byte = self.input_byte_index(end);
         self.input_ui
-            .text_mut()
-            .replace_range(start_byte..end_byte, text);
+            .with_text_mut(|value| value.replace_range(start_byte..end_byte, text));
         self.input_ui.set_cursor(start + text.chars().count());
         self.input_changed();
     }
@@ -293,7 +288,8 @@ impl App {
         self.reset_input_history_navigation();
         self.adjust_paste_segments_for_edit(self.input_ui.cursor(), 0, 1);
         let byte_index = self.input_byte_index(self.input_ui.cursor());
-        self.input_ui.text_mut().insert(byte_index, ch);
+        self.input_ui
+            .with_text_mut(|value| value.insert(byte_index, ch));
         self.input_ui.set_cursor(self.input_ui.cursor() + (1));
         self.input_changed();
     }
@@ -316,7 +312,8 @@ impl App {
         let inserted_len = text.chars().count();
         self.adjust_paste_segments_for_edit(start, 0, inserted_len);
         let byte_index = self.input_byte_index(start);
-        self.input_ui.text_mut().insert_str(byte_index, text);
+        self.input_ui
+            .with_text_mut(|value| value.insert_str(byte_index, text));
         self.input_ui
             .set_cursor(self.input_ui.cursor() + (inserted_len));
         if let Some(content) = paste_content {
@@ -380,7 +377,8 @@ impl App {
         self.adjust_paste_segments_for_edit(edit_start, 1, 0);
         let start = self.input_byte_index(edit_start);
         let end = self.input_byte_index(self.input_ui.cursor());
-        self.input_ui.text_mut().replace_range(start..end, "");
+        self.input_ui
+            .with_text_mut(|value| value.replace_range(start..end, ""));
         self.input_ui.set_cursor(self.input_ui.cursor() - (1));
         self.input_changed();
     }
@@ -405,7 +403,8 @@ impl App {
         self.adjust_paste_segments_for_edit(self.input_ui.cursor(), 1, 0);
         let start = self.input_byte_index(self.input_ui.cursor());
         let end = self.input_byte_index(self.input_ui.cursor() + 1);
-        self.input_ui.text_mut().replace_range(start..end, "");
+        self.input_ui
+            .with_text_mut(|value| value.replace_range(start..end, ""));
         self.input_changed();
     }
 
@@ -415,7 +414,8 @@ impl App {
         self.adjust_paste_segments_for_edit(start_cursor, self.input_ui.cursor() - start_cursor, 0);
         let start = self.input_byte_index(start_cursor);
         let end = self.input_byte_index(self.input_ui.cursor());
-        self.input_ui.text_mut().replace_range(start..end, "");
+        self.input_ui
+            .with_text_mut(|value| value.replace_range(start..end, ""));
         self.input_ui.set_cursor(start_cursor);
         self.input_changed();
     }

@@ -692,7 +692,7 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_up(width, height, now);
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -700,13 +700,13 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_down(width, height, now);
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             _ if self.info.runtime.keybindings.jump_to_bottom.matches(key) => {
                 self.scroll_history_to_bottom();
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }

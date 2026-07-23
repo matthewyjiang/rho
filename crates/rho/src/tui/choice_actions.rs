@@ -46,7 +46,7 @@ impl App {
             }
             InlineChoiceKeyOutcome::Handled => {}
         }
-        self.input_ui.paste_burst_mut().clear();
+        self.input_ui.clear_paste_burst();
         self.ctrl_c_streak = 0;
         Ok(true)
     }

@@ -321,7 +321,7 @@ fn queued_pasted_prompt_keeps_marker_when_recalled_for_editing() {
     };
     app.input_ui.clear_text();
     app.input_ui.clear_paste_segments();
-    app.pending.queued_prompts_mut().push_back(queued);
+    app.pending.push_follow_up(queued);
 
     assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
     assert_eq!(app.input_ui.text(), "[ pasted: 2 lines ]");
@@ -340,7 +340,7 @@ fn queued_pasted_prompt_preserves_leading_space_segment_offsets() {
     };
     app.input_ui.clear_text();
     app.input_ui.clear_paste_segments();
-    app.pending.queued_prompts_mut().push_back(queued);
+    app.pending.push_follow_up(queued);
 
     assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
     assert_eq!(app.input_ui.text(), " [ pasted: 2 lines ]");
@@ -1581,7 +1581,7 @@ fn history_lines_include_header_transcript_pending_preview_but_not_activity_row(
         include_leading_blank: true,
     });
     app.begin_provider_turn_ui();
-    app.turn.loading_spinner_mut().start();
+    app.turn.start_loading();
 
     let rendered = app
         .history_lines(60, Instant::now())

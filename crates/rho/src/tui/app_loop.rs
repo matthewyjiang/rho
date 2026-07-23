@@ -166,7 +166,7 @@ impl App {
                 self.flush_pending_paste_burst();
                 let text = normalize_paste(&text);
                 self.insert_paste(&text);
-                self.input_ui.paste_burst_mut().clear();
+                self.input_ui.clear_paste_burst();
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
@@ -274,7 +274,7 @@ impl App {
     pub(super) fn update_subagent_panel(&mut self, agent: &InteractiveRuntime) -> bool {
         let changed = self.subagent_panel.update(agent.subagents());
         if self.subagent_panel.is_active() {
-            self.turn.loading_spinner_mut().start_if_needed();
+            self.turn.start_loading_if_needed();
         }
         changed
     }
