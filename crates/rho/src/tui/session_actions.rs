@@ -93,6 +93,7 @@ impl App {
 
         let display_history = histories.display;
         agent.resume(session, histories.model).await?;
+        self.model_cache_warm = false;
         self.info.session.session_id = Some(full_id);
         self.info.session.recovered_messages = display_history.clone();
         self.composer = ComposerMode::Input;

@@ -76,6 +76,7 @@ impl App {
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::CredentialStoreChoice(_)
+            | ComposerMode::ModelHandoffChoice(_)
             | ComposerMode::OAuthPending(_) => {}
         }
     }
@@ -107,6 +108,7 @@ impl App {
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::CredentialStoreChoice(_)
+            | ComposerMode::ModelHandoffChoice(_)
             | ComposerMode::OAuthPending(_) => false,
         }
     }
@@ -125,6 +127,7 @@ impl App {
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::CredentialStoreChoice(_)
+            | ComposerMode::ModelHandoffChoice(_)
             | ComposerMode::OAuthPending(_) => false,
         }
     }

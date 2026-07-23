@@ -74,7 +74,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | --- | --- |
 | `/login [provider]` | Log in with a provider. No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
 | `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
-| `/model [provider/model]` | Open a picker for models with available auth, or switch directly to a provider/model and save it to [configuration](/configuration). Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
+| `/model [provider/model]` | Open a picker for models with available auth, or choose a provider/model and save it to [configuration](/configuration). When the current model has completed a live turn and older context can be compacted, Rho asks whether to compact with it before switching or switch directly. Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. |
 | `/tree` | Navigate completed turns and compaction states in the current session. Continuing from an older state creates a branch. |
 | `/config` | Open the [config](/configuration) category browser for models and reasoning, agent behavior, context limits, tools, providers, and updates. |
@@ -122,7 +122,9 @@ Use `/model provider/model` to switch explicitly, including to a provider outsid
 
 A bare model id works when it uniquely matches the catalog. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-`/model` remains available while an agent run is active. You can browse the picker or select a model directly, but the current run continues using its existing model through all remaining model steps and tool calls. The queued model change is applied only after the full agent loop ends, before the next queued message starts. Selecting another model before then replaces the pending choice.
+`/model` remains available while an agent run is active. You can browse the picker or select a model directly, but the current run continues using its existing model through all remaining model steps and tool calls. Rho handles the queued model change only after the full agent loop ends, before the next queued message starts. Selecting another model before then replaces the pending choice. If the finished conversation has reusable live context and older history that can be compacted, Rho then asks whether to compact with the old model before switching or switch directly.
+
+Rho does not show the handoff choice for a new session, a session just resumed from disk, or a model that has not yet completed a live turn in the current session. This avoids treating saved history as proof that a provider cache is warm. Compaction can still miss a provider cache, so the choice does not claim a fixed cost saving. If handoff compaction fails or produces no reduction, Rho keeps the old model active.
 
 Run `/agents` to inspect reserved internal agents. The detail pane shows the effective provider/model and whether it follows the conversation or uses an override. Press Enter on `session-title` or `goal-judge` to choose a model. Select **Use conversation model** to remove that role's override. Each role resolves its own setting when invoked, so changing one does not affect the other.
 

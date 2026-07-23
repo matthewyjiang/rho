@@ -419,7 +419,7 @@ impl App {
             && self.pending_images.is_empty()
     }
 
-    fn restore_pending_prompt(&mut self, prompt: QueuedPrompt) {
+    pub(super) fn restore_pending_prompt(&mut self, prompt: QueuedPrompt) {
         self.input = prompt.display_prompt;
         self.paste_segments = prompt.paste_segments;
         self.input_submission_mode = InputSubmissionMode::ParseCommands;

@@ -52,6 +52,7 @@ pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod goal_command;
 mod history_cache;
 mod info_command;
+mod inline_choice;
 mod inline_shell;
 mod keybindings;
 mod keyboard_modes;
@@ -121,9 +122,11 @@ use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use feed_image::{picker_from_environment, FeedImage};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
+use inline_choice::{InlineChoice, InlineChoiceKeyOutcome, InlineChoiceOption};
 use inline_shell::InlineShellMode;
 use login::{CredentialStoreChoice, PendingOAuthLogin, SecretInput};
 use markdown::{update_code_block_state, CodeFenceState};
+use model_actions::ModelHandoffChoice;
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
 use picker::{
@@ -371,6 +374,7 @@ struct App {
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<InteractiveModelSelection>,
+    model_cache_warm: bool,
     internal_agent_model_target: Option<String>,
     pending_session_title: Option<PendingSessionTitle>,
     markdown_images: markdown_image::MarkdownImageCache,
@@ -403,6 +407,7 @@ enum ComposerMode {
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
     CredentialStoreChoice(CredentialStoreChoice),
+    ModelHandoffChoice(ModelHandoffChoice),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
 }
@@ -757,6 +762,7 @@ impl App {
             pending_model_metadata_reasoning: None,
             pending_update_notice,
             pending_model_selection: None,
+            model_cache_warm: false,
             internal_agent_model_target: None,
             pending_session_title: None,
             markdown_images: markdown_image::MarkdownImageCache::default(),
@@ -997,6 +1003,13 @@ impl App {
 
         if self
             .handle_credential_store_choice_key(key, terminal, agent)
+            .await?
+        {
+            return Ok(());
+        }
+
+        if self
+            .handle_model_handoff_choice_key(key, terminal, agent)
             .await?
         {
             return Ok(());
@@ -1863,7 +1876,10 @@ impl App {
 
             let should_drain_queue =
                 goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
-            if self.should_quit || !should_drain_queue {
+            if self.should_quit
+                || !should_drain_queue
+                || matches!(self.composer, ComposerMode::ModelHandoffChoice(_))
+            {
                 break outcome_kind;
             }
             let Some(prompt) = self.queued_prompts.pop_front() else {
@@ -1880,11 +1896,13 @@ impl App {
                 )
                 .await?;
         };
-        if goal_command::should_resume_goal_after_turn(
-            final_outcome,
-            self.goal.as_ref().map(GoalState::loop_state),
-            self.should_quit,
-        ) {
+        if !matches!(self.composer, ComposerMode::ModelHandoffChoice(_))
+            && goal_command::should_resume_goal_after_turn(
+                final_outcome,
+                self.goal.as_ref().map(GoalState::loop_state),
+                self.should_quit,
+            )
+        {
             self.continue_goal(terminal, agent, pending_goal_retries)
                 .await?;
         }
@@ -1943,7 +1961,8 @@ impl App {
             ComposerMode::Approval(_)
             | ComposerMode::Picker(_)
             | ComposerMode::OAuthPending(_)
-            | ComposerMode::CredentialStoreChoice(_) => {}
+            | ComposerMode::CredentialStoreChoice(_)
+            | ComposerMode::ModelHandoffChoice(_) => {}
         }
     }
 
@@ -2257,11 +2276,16 @@ impl App {
     fn apply_pending_model_selection(
         &mut self,
         agent: &mut InteractiveRuntime,
+        after_successful_turn: bool,
     ) -> anyhow::Result<()> {
         let Some(pending) = self.pending_model_selection.take() else {
             return Ok(());
         };
-        self.select_model(pending, agent)
+        if after_successful_turn {
+            self.request_model_selection_after_turn(pending, agent)
+        } else {
+            self.select_model(pending, agent)
+        }
     }
 
     fn execute_command_during_turn(

@@ -119,28 +119,32 @@ fn credential_store_choice_defaults_to_first_available_and_skips_unavailable() {
         "default should land on first available backend"
     );
 
-    choice.move_previous();
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    choice
+        .choice
+        .handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     assert_eq!(
         choice.selected_backend(),
         CredentialStoreBackend::File,
         "navigation must not land on unavailable OS backend"
     );
-    choice.move_next();
+    choice
+        .choice
+        .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(choice.selected_backend(), CredentialStoreBackend::File);
 
-    assert_eq!(
-        choice.select_shortcut('1'),
-        None,
-        "unavailable OS shortcut should be ignored"
-    );
-    assert_eq!(
-        choice.select_shortcut('2'),
-        Some(CredentialStoreBackend::File)
-    );
-    assert_eq!(
-        choice.select_shortcut('f'),
-        Some(CredentialStoreBackend::File)
-    );
+    choice
+        .choice
+        .handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+    assert_eq!(choice.selected_backend(), CredentialStoreBackend::File);
+    choice
+        .choice
+        .handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+    assert_eq!(choice.selected_backend(), CredentialStoreBackend::File);
+    choice
+        .choice
+        .handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+    assert_eq!(choice.selected_backend(), CredentialStoreBackend::File);
 }
 
 #[test]
@@ -165,11 +169,13 @@ fn credential_store_choice_os_shortcut_when_available() {
     let mut choice =
         CredentialStoreChoice::new(request, StoreChoiceNext::OpenPicker).expect("backends");
     assert_eq!(choice.selected_backend(), CredentialStoreBackend::Os);
-    choice.move_next();
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    choice
+        .choice
+        .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(choice.selected_backend(), CredentialStoreBackend::File);
-    assert_eq!(
-        choice.select_shortcut('o'),
-        Some(CredentialStoreBackend::Os)
-    );
+    choice
+        .choice
+        .handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
     assert_eq!(choice.selected_backend(), CredentialStoreBackend::Os);
 }

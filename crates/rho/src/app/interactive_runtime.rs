@@ -292,6 +292,19 @@ impl InteractiveRuntime {
         self.sessions.history()
     }
 
+    pub(crate) fn can_compact(&self) -> bool {
+        let target_tokens = self
+            .context_window
+            .map(|window| self.compaction.target_tokens(window))
+            .unwrap_or(u64::MAX / 2);
+        crate::compaction::partition_messages_for_compaction(
+            &self.sessions.history(),
+            &self.tools.specs(),
+            target_tokens,
+        )
+        .is_some()
+    }
+
     pub(crate) fn session_id(&self) -> &SessionId {
         self.sessions.id()
     }
