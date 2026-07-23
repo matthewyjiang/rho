@@ -354,12 +354,12 @@ fn streams_partial_codex_tool_call_arguments() {
 }
 
 #[test]
-fn chat_stream_usage_normalizes_prompt_cached_tokens() {
+fn chat_stream_usage_normalizes_prompt_cache_tokens() {
     let mut text = String::new();
     let mut tool_calls = Vec::new();
     let mut usage = None;
     handle_openai_stream_line(
-        r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":700}},"choices":[{"delta":{}}]}"#,
+        r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"choices":[{"delta":{}}]}"#,
         &mut text,
         &mut tool_calls,
         &mut |event| {
@@ -378,18 +378,20 @@ fn chat_stream_usage_normalizes_prompt_cached_tokens() {
     .unwrap();
 
     let usage = usage.unwrap();
-    assert_eq!(usage.input_tokens, Some(300));
+    assert_eq!(usage.input_tokens, Some(100));
     assert_eq!(usage.cache_read_tokens, Some(700));
+    assert_eq!(usage.cache_write_tokens, Some(200));
     assert_eq!(usage.output_tokens, Some(20));
     assert_eq!(usage.total_input_tokens(), Some(1000));
+    assert_eq!(usage.total_tokens, Some(1020));
 }
 
 #[test]
-fn codex_response_usage_normalizes_input_cached_tokens() {
+fn codex_response_usage_normalizes_input_cache_tokens() {
     let mut state = CodexSseState::default();
     let mut usage = None;
     handle_codex_sse_line(
-        r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":1000,"output_tokens":25,"input_tokens_details":{"cached_tokens":700}},"output_text":"done","output":[]}}"#,
+        r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":1000,"output_tokens":25,"total_tokens":1025,"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"output_text":"done","output":[]}}"#,
         &mut state,
         &mut Some(&mut |event| {
             match event {
@@ -407,10 +409,12 @@ fn codex_response_usage_normalizes_input_cached_tokens() {
     .unwrap();
 
     let usage = usage.unwrap();
-    assert_eq!(usage.input_tokens, Some(300));
+    assert_eq!(usage.input_tokens, Some(100));
     assert_eq!(usage.cache_read_tokens, Some(700));
+    assert_eq!(usage.cache_write_tokens, Some(200));
     assert_eq!(usage.output_tokens, Some(25));
     assert_eq!(usage.total_input_tokens(), Some(1000));
+    assert_eq!(usage.total_tokens, Some(1025));
 }
 
 #[test]

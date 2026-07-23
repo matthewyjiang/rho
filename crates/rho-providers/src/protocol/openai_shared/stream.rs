@@ -574,11 +574,13 @@ fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
         (None, None) => None,
     };
 
-    let input_tokens = match (raw_input_tokens, cache_read_tokens) {
-        (Some(input), Some(cached)) => Some(input.saturating_sub(cached)),
-        (input, None) => input,
-        (None, Some(_)) => None,
-    };
+    // OpenAI reports cache reads and writes as subsets of the raw input count,
+    // while ModelUsage keeps the three input buckets disjoint.
+    let input_tokens = raw_input_tokens.map(|input| {
+        input
+            .saturating_sub(cache_read_tokens.unwrap_or_default())
+            .saturating_sub(cache_write_tokens.unwrap_or_default())
+    });
 
     Some(ModelUsage {
         input_tokens,

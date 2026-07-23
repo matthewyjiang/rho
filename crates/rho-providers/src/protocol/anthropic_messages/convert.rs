@@ -16,11 +16,18 @@ fn resolved_cache_read_tokens(usage: &AnthropicUsage) -> Option<u64> {
 
 fn resolved_cache_write_tokens(usage: &AnthropicUsage) -> Option<u64> {
     usage.cache_creation_input_tokens.or_else(|| {
-        usage.cache_creation.as_ref().and_then(|cache| {
-            cache
-                .ephemeral_1h_input_tokens
-                .or(cache.ephemeral_5m_input_tokens)
-        })
+        let cache = usage.cache_creation.as_ref()?;
+        match (
+            cache.ephemeral_1h_input_tokens,
+            cache.ephemeral_5m_input_tokens,
+        ) {
+            (None, None) => None,
+            (one_hour, five_minutes) => Some(
+                one_hour
+                    .unwrap_or_default()
+                    .saturating_add(five_minutes.unwrap_or_default()),
+            ),
+        }
     })
 }
 
@@ -526,7 +533,10 @@ mod tests {
             output_tokens: Some(4),
             cache_read_input_tokens: Some(3),
             cache_creation_input_tokens: Some(2),
-            cache_creation: None,
+            cache_creation: Some(AnthropicCacheCreation {
+                ephemeral_1h_input_tokens: Some(2),
+                ephemeral_5m_input_tokens: Some(5),
+            }),
         });
 
         assert_eq!(usage.input_tokens, Some(10));
@@ -545,12 +555,12 @@ mod tests {
             cache_creation_input_tokens: None,
             cache_creation: Some(AnthropicCacheCreation {
                 ephemeral_1h_input_tokens: Some(2),
-                ephemeral_5m_input_tokens: None,
+                ephemeral_5m_input_tokens: Some(5),
             }),
         });
 
         assert_eq!(usage.cache_read_tokens, Some(3));
-        assert_eq!(usage.cache_write_tokens, Some(2));
-        assert_eq!(usage.total_tokens, Some(19));
+        assert_eq!(usage.cache_write_tokens, Some(7));
+        assert_eq!(usage.total_tokens, Some(24));
     }
 }
