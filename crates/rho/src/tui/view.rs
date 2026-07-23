@@ -13,15 +13,14 @@ use ratatui::{
 use super::{
     activity, file_picker, history_cache::HistoryLineSlice, inline_shell, App, CachedCodeBlock,
     CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, HistoryScroll, HistoryScrollbar,
-    InlineShellMode, LineFill, SessionHeaderCache, StreamKind, Theme,
-    HISTORY_SCROLLBAR_REVEAL_DURATION, MAX_COMMAND_SUGGESTIONS, MIN_COMMAND_DESCRIPTION_WIDTH,
-    RECOVERED_HISTORY_LINE_LIMIT,
+    LineFill, SessionHeaderCache, StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
+    MAX_COMMAND_SUGGESTIONS, MIN_COMMAND_DESCRIPTION_WIDTH, RECOVERED_HISTORY_LINE_LIMIT,
 };
 use super::{
     approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
     display_width, highlight_selection, inline_choice::inline_choice_lines, input_cursor_position,
-    input_lines_with_images, is_tool_entry, oauth_pending_lines, pad_display_line,
-    padded_content_width, picker_lines, picker_overlay::picker_overlay_frame,
+    input_lines_with_images, is_tool_entry, labeled_divider_line, oauth_pending_lines,
+    pad_display_line, padded_content_width, picker_lines, picker_overlay::picker_overlay_frame,
     questionnaire_cursor_position, questionnaire_lines, recovered_history_tail, render_copy_notice,
     scroll_state_for_top_line, secret_input_lines, session_header_lines, styled_line,
     tool_entry_lines, transcript_entries_from_messages, truncate_one_line,
@@ -153,7 +152,8 @@ impl App {
         }
         if layout.top_divider.height > 0 {
             frame.render_widget(
-                Paragraph::new(vec![self.divider_line(width)]).style(Style::default()),
+                Paragraph::new(vec![self.divider_line(width, /*shell_label*/ true)])
+                    .style(Style::default()),
                 layout.top_divider,
             );
         }
@@ -169,7 +169,8 @@ impl App {
         );
         if layout.bottom_divider.height > 0 {
             frame.render_widget(
-                Paragraph::new(vec![self.divider_line(width)]).style(Style::default()),
+                Paragraph::new(vec![self.divider_line(width, /*shell_label*/ false)])
+                    .style(Style::default()),
                 layout.bottom_divider,
             );
         }
@@ -309,7 +310,7 @@ impl App {
             );
         }
         if layout.top_divider.height > 0 {
-            lines.push(self.divider_line(width));
+            lines.push(self.divider_line(width, /*shell_label*/ true));
         }
         lines.extend(
             composer_lines
@@ -318,7 +319,7 @@ impl App {
                 .take(layout.composer.height as usize),
         );
         if layout.bottom_divider.height > 0 {
-            lines.push(self.divider_line(width));
+            lines.push(self.divider_line(width, /*shell_label*/ false));
         }
         lines.extend(
             self.statusline_lines(width)
@@ -335,23 +336,34 @@ impl App {
         ActiveFrame { lines }
     }
 
-    fn divider_line(&self, width: usize) -> Line<'static> {
-        let divider_style = match &self.composer {
-            ComposerMode::Input => match inline_shell::mode_when_idle(self.running, &self.input) {
-                Some(InlineShellMode::IncludeInContext) => Theme::shell_context(),
-                Some(InlineShellMode::ExcludeFromContext) => Theme::shell_local(),
-                None => Theme::reasoning_input_border(self.info.runtime.reasoning),
-            },
+    fn divider_line(&self, width: usize, shell_label: bool) -> Line<'static> {
+        let width = width.max(1);
+        let (style, labels) = match &self.composer {
+            ComposerMode::Input => {
+                let labels = shell_label
+                    .then_some(self.shell_mode)
+                    .flatten()
+                    .map(inline_shell::mode_divider_labels);
+                (
+                    Theme::reasoning_input_border(self.info.runtime.reasoning),
+                    labels,
+                )
+            }
             ComposerMode::Picker(_)
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
-            | ComposerMode::InlineChoice(_) => Theme::input_prompt(),
+            | ComposerMode::InlineChoice(_) => (Theme::input_prompt(), None),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
-            | ComposerMode::OAuthPending(_) => Theme::dim(),
+            | ComposerMode::OAuthPending(_) => (Theme::dim(), None),
         };
-        Line::styled("─".repeat(width.max(1)), divider_style)
+        if let Some(labels) = labels {
+            if let Some(line) = labeled_divider_line(labels, style, width) {
+                return line;
+            }
+        }
+        Line::styled("─".repeat(width), style)
     }
 
     #[cfg(test)]
@@ -723,22 +735,7 @@ impl App {
                 let focused_paste = self
                     .focused_paste_segment()
                     .map(|segment| segment.start..segment.end());
-                let mut lines = input_lines_with_images(
-                    &self.input,
-                    &self.pending_images,
-                    width,
-                    focused_paste,
-                );
-                if let Some(mode) = inline_shell::mode_when_idle(self.running, &self.input) {
-                    let style = match mode {
-                        InlineShellMode::IncludeInContext => Theme::shell_context(),
-                        InlineShellMode::ExcludeFromContext => Theme::shell_local(),
-                    };
-                    for line in &mut lines {
-                        *line = line.clone().style(style);
-                    }
-                }
-                lines
+                input_lines_with_images(&self.input, &self.pending_images, width, focused_paste)
             }
             ComposerMode::Picker(picker) if picker.is_overlay() => Vec::new(),
             ComposerMode::Picker(picker) => picker_lines(picker, width),
@@ -811,14 +808,6 @@ impl App {
     }
 
     pub(super) fn command_suggestion_lines(&self, width: usize) -> Vec<Line<'static>> {
-        if let Some((text, style)) = inline_shell::mode_hint_when_idle(self.running, &self.input) {
-            return vec![styled_line(
-                truncate_one_line(text, width.max(1)),
-                width.max(1),
-                style,
-                LineFill::Natural,
-            )];
-        }
         if self.command_palette_visible() {
             let matches = self.command_matches();
             let selected_index = self.command_selection.min(matches.len().saturating_sub(1));

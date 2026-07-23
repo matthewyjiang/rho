@@ -10,6 +10,7 @@ pub enum CommandId {
     Tree,
     Config,
     Info,
+    Help,
     Compact,
     Goal,
     Skills,
@@ -121,6 +122,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/goal [condition|resume|clear]",
         description: "show status or work until a condition is met",
         argument_choices: GOAL_ARGUMENT_CHOICES,
+    },
+    CommandSpec {
+        id: CommandId::Help,
+        name: "help",
+        usage: "/help",
+        description: "show keyboard shortcuts",
+        argument_choices: &[],
     },
     CommandSpec {
         id: CommandId::Info,

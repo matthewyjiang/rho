@@ -72,6 +72,7 @@ pub(super) fn internal_agent_model_picker(
     picker.items.insert(
         0,
         PickerItem {
+            section: None,
             label: "Use conversation model".into(),
             detail: Some("Follow the active conversation provider, model, and auth.".into()),
             preview: None,
@@ -138,6 +139,7 @@ fn model_picker_for_current(
             (false, false) => None,
         };
         PickerItem {
+            section: None,
             label: value.clone(),
             detail: Some(if pinned {
                 "Press Ctrl-P to unpin this model.".into()

@@ -47,6 +47,7 @@ pub(super) struct UiPicker {
     pub(super) filter: String,
     pub(super) action: PickerAction,
     pub(super) layout: PickerLayout,
+    pub(super) badge_placement: PickerBadgePlacement,
     /// Top visible detail line for overlay pickers.
     pub(super) detail_scroll: usize,
     pub(super) confirm_verb: Option<String>,
@@ -59,6 +60,7 @@ pub(super) struct UiPicker {
 #[derive(Clone, Debug)]
 pub(super) struct PickerItem {
     pub(super) label: String,
+    pub(super) section: Option<String>,
     pub(super) detail: Option<String>,
     pub(super) preview: Option<String>,
     pub(super) badge: Option<PickerBadge>,
@@ -78,6 +80,13 @@ pub(super) enum PickerBadgeTone {
     Favorite,
     Healthy,
     Warning,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum PickerBadgePlacement {
+    #[default]
+    Navigation,
+    Detail,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -107,14 +116,16 @@ pub(super) enum PickerAction {
     ResumeSession,
     SelectTreeNode,
     Config,
-    Doctor,
+    Dismiss,
 }
 
 impl PickerAction {
     pub(super) fn space_confirms_selection(self) -> bool {
         match self {
-            PickerAction::Config | PickerAction::Doctor => true,
-            PickerAction::SelectModel
+            PickerAction::Config => true,
+            // Dismiss overlays accept regex filters, so space must type into the filter.
+            PickerAction::Dismiss
+            | PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
@@ -124,6 +135,23 @@ impl PickerAction {
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode => false,
+        }
+    }
+
+    /// Whether the filter uses regex matching instead of fuzzy ranking.
+    pub(super) fn uses_regex_filter(self) -> bool {
+        match self {
+            PickerAction::Config
+            | PickerAction::Dismiss
+            | PickerAction::ViewAgent
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ResumeSession
+            | PickerAction::SelectTreeNode
+            | PickerAction::LoginGroup
+            | PickerAction::LoginProvider
+            | PickerAction::LogoutProvider
+            | PickerAction::RefreshModelList => true,
+            PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => false,
         }
     }
 }
@@ -154,6 +182,7 @@ impl UiPicker {
             filter: String::new(),
             action,
             layout: PickerLayout::List,
+            badge_placement: PickerBadgePlacement::Navigation,
             detail_scroll: 0,
             confirm_verb: None,
             overlay_chrome: None,
@@ -165,6 +194,11 @@ impl UiPicker {
 
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
         self.layout = layout;
+        self
+    }
+
+    pub(super) fn with_badge_placement(mut self, placement: PickerBadgePlacement) -> Self {
+        self.badge_placement = placement;
         self
     }
 
@@ -274,7 +308,10 @@ impl UiPicker {
     }
 
     pub(super) fn detail_line_count(&self, detail_width: usize) -> usize {
-        self.wrapped_detail_lines(detail_width).len()
+        super::picker_overlay::detail_content_line_count(
+            self.wrapped_detail_lines(detail_width).len(),
+            self.selected_detail_badge().is_some(),
+        )
     }
 
     pub(super) fn wrapped_detail_lines(&self, detail_width: usize) -> Ref<'_, Vec<String>> {
@@ -303,6 +340,13 @@ impl UiPicker {
         Ref::map(self.detail_wrap_cache.borrow(), |cache| &cache.lines)
     }
 
+    pub(super) fn selected_detail_badge(&self) -> Option<&PickerBadge> {
+        if self.badge_placement != PickerBadgePlacement::Detail {
+            return None;
+        }
+        self.selected_item()?.badge.as_ref()
+    }
+
     pub(super) fn selected_detail(&self) -> &str {
         self.selected_item()
             .and_then(|item| item.detail.as_deref())
@@ -315,7 +359,7 @@ impl UiPicker {
         }
         match self.action {
             PickerAction::Config => "change",
-            PickerAction::Doctor => "close",
+            PickerAction::Dismiss => "close",
             PickerAction::ViewAgent
                 if self
                     .selected_item()
@@ -408,20 +452,10 @@ impl UiPicker {
 
     pub(super) fn complete_filter(&mut self) {
         if let Some(item) = self.selected_item() {
-            self.filter = match self.action {
-                PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => {
-                    item.value.clone()
-                }
-                PickerAction::LoginGroup
-                | PickerAction::LoginProvider
-                | PickerAction::LogoutProvider
-                | PickerAction::RefreshModelList
-                | PickerAction::InsertSkillCommand
-                | PickerAction::ViewAgent
-                | PickerAction::ResumeSession
-                | PickerAction::SelectTreeNode
-                | PickerAction::Config
-                | PickerAction::Doctor => regex::escape(&item.value),
+            self.filter = if self.action.uses_regex_filter() {
+                regex::escape(&item.value)
+            } else {
+                item.value.clone()
             };
         }
     }
@@ -449,42 +483,18 @@ impl UiPicker {
         };
         if stale {
             let filter = self.filter.trim();
-            let regex = match self.action {
-                PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => None,
-                PickerAction::LoginGroup
-                | PickerAction::LoginProvider
-                | PickerAction::LogoutProvider
-                | PickerAction::RefreshModelList
-                | PickerAction::InsertSkillCommand
-                | PickerAction::ViewAgent
-                | PickerAction::ResumeSession
-                | PickerAction::SelectTreeNode
-                | PickerAction::Config
-                | PickerAction::Doctor => (!filter.is_empty())
-                    .then(|| {
-                        RegexBuilder::new(filter)
-                            .case_insensitive(true)
-                            .build()
-                            .ok()
-                    })
-                    .flatten(),
+            let regex = if self.action.uses_regex_filter() && !filter.is_empty() {
+                RegexBuilder::new(filter)
+                    .case_insensitive(true)
+                    .build()
+                    .ok()
+            } else {
+                None
             };
-            let indices = match self.action {
-                PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => {
-                    fuzzy_picker_matching_indices(&self.items, filter)
-                }
-                PickerAction::LoginGroup
-                | PickerAction::LoginProvider
-                | PickerAction::LogoutProvider
-                | PickerAction::RefreshModelList
-                | PickerAction::InsertSkillCommand
-                | PickerAction::ViewAgent
-                | PickerAction::ResumeSession
-                | PickerAction::SelectTreeNode
-                | PickerAction::Config
-                | PickerAction::Doctor => {
-                    picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
-                }
+            let indices = if self.action.uses_regex_filter() {
+                picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
+            } else {
+                fuzzy_picker_matching_indices(&self.items, filter)
             };
             *self.matches.borrow_mut() = PickerMatchCache {
                 initialized: true,
@@ -549,6 +559,7 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
 }
 
 fn picker_haystack(item: &PickerItem) -> String {
+    let section = item.section.as_deref().unwrap_or_default();
     let detail = item.detail.as_deref().unwrap_or_default();
     let preview = item.preview.as_deref().unwrap_or_default();
     let badge = item
@@ -557,8 +568,8 @@ fn picker_haystack(item: &PickerItem) -> String {
         .map(|badge| badge.text.as_str())
         .unwrap_or_default();
     format!(
-        "{} {} {} {} {}",
-        item.label, item.value, detail, preview, badge
+        "{} {} {} {} {} {}",
+        item.label, item.value, section, detail, preview, badge
     )
 }
 

@@ -11,7 +11,10 @@ use ratatui::{
 };
 
 use super::render::wrap_line_at_whitespace;
-use super::{display_width, styled_line, truncate_one_line, LineFill, PickerItem, Theme, UiPicker};
+use super::{
+    display_width, styled_line, truncate_one_line, LineFill, PickerBadge, PickerBadgePlacement,
+    PickerItem, Theme, UiPicker,
+};
 
 const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
 const MIN_NAV_WIDTH: usize = 14;
@@ -150,6 +153,8 @@ struct OverlayContent<'a> {
     selected_position: usize,
     match_count: usize,
     detail: &'a [String],
+    detail_badge: Option<&'a PickerBadge>,
+    show_nav_badges: bool,
     detail_scroll: usize,
     footer: &'a str,
     chrome: OverlayChromeView<'a>,
@@ -192,6 +197,8 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         selected_position,
         match_count: matching.len(),
         detail,
+        detail_badge: picker.selected_detail_badge(),
+        show_nav_badges: picker.badge_placement == PickerBadgePlacement::Navigation,
         detail_scroll: picker.detail_scroll,
         footer: &footer,
         chrome,
@@ -385,12 +392,13 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
         content.items,
         content.matching,
         content.selected,
-        content.selected_position,
         nav_width,
         nav_viewport_rows,
+        content.show_nav_badges,
     );
     let detail_rows = detail_viewport_rows(
         content.detail,
+        content.detail_badge,
         content.detail_scroll,
         detail_width,
         detail_rows_budget,
@@ -424,6 +432,7 @@ fn stacked_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line
     let mut rows = Vec::with_capacity(layout.body_rows);
     rows.extend(detail_viewport_rows(
         content.detail,
+        content.detail_badge,
         content.detail_scroll,
         detail_width,
         detail_rows_budget,
@@ -432,9 +441,9 @@ fn stacked_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line
         content.items,
         content.matching,
         content.selected,
-        content.selected_position,
         nav_width,
         nav_viewport_rows,
+        content.show_nav_badges,
     ));
     rows.truncate(layout.body_rows);
     while rows.len() < layout.body_rows {
@@ -448,9 +457,9 @@ fn nav_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Lin
         content.items,
         content.matching,
         content.selected,
-        content.selected_position,
         layout.nav_width(),
         layout.nav_viewport_rows(),
+        content.show_nav_badges,
     );
     rows.truncate(layout.body_rows);
     while rows.len() < layout.body_rows {
@@ -463,30 +472,59 @@ fn nav_item_rows(
     items: &[PickerItem],
     matching: &[usize],
     selected: usize,
-    selected_position: usize,
     width: usize,
     viewport_rows: usize,
+    show_badges: bool,
 ) -> Vec<Line<'static>> {
     if matching.is_empty() || viewport_rows == 0 {
         return (0..viewport_rows).map(|_| Line::raw("")).collect();
     }
 
-    let start = selected_position
-        .saturating_add(1)
-        .saturating_sub(viewport_rows);
-    let mut rows = matching
-        .iter()
-        .copied()
+    let mut rows = Vec::with_capacity(matching.len());
+    let mut current_section = None;
+    let mut selected_row = 0;
+    for index in matching.iter().copied() {
+        let Some(item) = items.get(index) else {
+            continue;
+        };
+        if item.section.as_deref() != current_section {
+            current_section = item.section.as_deref();
+            if let Some(section) = current_section {
+                rows.push(section_header_line(section, width));
+            }
+        }
+        if index == selected {
+            selected_row = rows.len();
+        }
+        rows.push(nav_item_line(item, index == selected, width, show_badges));
+    }
+
+    let start = selected_row.saturating_add(1).saturating_sub(viewport_rows);
+    let mut visible = rows
+        .into_iter()
         .skip(start)
         .take(viewport_rows)
-        .filter_map(|index| items.get(index).map(|item| (index, item)))
-        .map(|(index, item)| nav_item_line(item, index == selected, width))
         .collect::<Vec<_>>();
-    rows.resize_with(viewport_rows, || padded_plain("", width));
-    rows
+    visible.resize_with(viewport_rows, || padded_plain("", width));
+    visible
 }
 
-fn nav_item_line(item: &PickerItem, selected: bool, width: usize) -> Line<'static> {
+fn section_header_line(section: &str, width: usize) -> Line<'static> {
+    let label = truncate_one_line(section, width.saturating_sub(2));
+    styled_line(
+        format!("  {label}"),
+        width,
+        Theme::dim(),
+        LineFill::PadToWidth,
+    )
+}
+
+fn nav_item_line(
+    item: &PickerItem,
+    selected: bool,
+    width: usize,
+    show_badge: bool,
+) -> Line<'static> {
     if width == 0 {
         return Line::raw("");
     }
@@ -501,7 +539,12 @@ fn nav_item_line(item: &PickerItem, selected: bool, width: usize) -> Line<'stati
     }
 
     let available = width.saturating_sub(2);
-    let badge = item.badge.as_ref().and_then(|badge| {
+    let badge = if show_badge {
+        item.badge.as_ref()
+    } else {
+        None
+    }
+    .and_then(|badge| {
         let budget = display_width(&badge.text)
             .min(16)
             .min(available.saturating_sub(2));
@@ -526,8 +569,36 @@ fn nav_item_line(item: &PickerItem, selected: bool, width: usize) -> Line<'stati
     Line::from(spans)
 }
 
+const DETAIL_BADGE_ROWS: usize = 2;
+
+pub(super) fn detail_content_line_count(detail_lines: usize, has_badge: bool) -> usize {
+    detail_lines.saturating_add(usize::from(has_badge) * DETAIL_BADGE_ROWS)
+}
+
+fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
+    let width = width.max(1);
+    let label = "Status  ";
+    let label_width = display_width(label);
+    if label_width >= width {
+        // Extremely narrow panes: drop the label and keep a truncated badge.
+        return Line::from(Span::styled(
+            pad_text(&badge.text, width),
+            super::render::picker_badge_style(badge.tone),
+        ));
+    }
+    let badge_budget = width.saturating_sub(label_width);
+    let badge_text = truncate_one_line(&badge.text, badge_budget);
+    let used_width = label_width.saturating_add(display_width(&badge_text));
+    Line::from(vec![
+        Span::styled(label.to_string(), Theme::dim()),
+        Span::styled(badge_text, super::render::picker_badge_style(badge.tone)),
+        Span::raw(" ".repeat(width.saturating_sub(used_width))),
+    ])
+}
+
 fn detail_viewport_rows(
     detail: &[String],
+    badge: Option<&PickerBadge>,
     detail_scroll: usize,
     width: usize,
     viewport_rows: usize,
@@ -535,12 +606,21 @@ fn detail_viewport_rows(
     if viewport_rows == 0 {
         return Vec::new();
     }
-    let scroll = clamp_detail_scroll(detail_scroll, detail.len(), viewport_rows);
-    let mut rows = detail
-        .iter()
-        .skip(scroll)
+    let badge_rows = usize::from(badge.is_some()) * DETAIL_BADGE_ROWS;
+    let line_count = detail_content_line_count(detail.len(), badge.is_some());
+    let scroll = clamp_detail_scroll(detail_scroll, line_count, viewport_rows);
+    let mut rows = (scroll..line_count)
         .take(viewport_rows)
-        .map(|line| Line::from(Span::styled(pad_text(line, width), Theme::dim())))
+        .map(|index| {
+            if let Some(badge) = badge.filter(|_| index == 0) {
+                return detail_badge_row(badge, width);
+            }
+            let text = index
+                .checked_sub(badge_rows)
+                .and_then(|detail_index| detail.get(detail_index))
+                .map_or("", String::as_str);
+            Line::from(Span::styled(pad_text(text, width), Theme::dim()))
+        })
         .collect::<Vec<_>>();
     rows.resize_with(viewport_rows, || {
         Line::from(Span::styled(" ".repeat(width.max(1)), Theme::dim()))
@@ -584,7 +664,8 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             detail_viewport_rows,
             ..
         } => {
-            let detail_lines = content.detail.len();
+            let detail_lines =
+                detail_content_line_count(content.detail.len(), content.detail_badge.is_some());
             let scroll =
                 clamp_detail_scroll(content.detail_scroll, detail_lines, detail_viewport_rows);
             let visible_end = if detail_lines == 0 {

@@ -2,7 +2,8 @@ use pretty_assertions::assert_eq;
 use ratatui::{layout::Rect, text::Line};
 
 use super::super::{
-    PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+    PickerAction, PickerBadge, PickerBadgePlacement, PickerBadgeTone, PickerItem, PickerLayout,
+    UiPicker,
 };
 use super::*;
 
@@ -19,6 +20,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
         "help",
         vec![
             PickerItem {
+                section: None,
                 label: "explorer".into(),
                 detail: Some(detail_a.into()),
                 preview: None,
@@ -29,6 +31,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 value: "explorer".into(),
             },
             PickerItem {
+                section: None,
                 label: "worker".into(),
                 detail: Some(detail_b.into()),
                 preview: None,
@@ -52,6 +55,7 @@ fn tree_like_picker() -> UiPicker {
         "help",
         vec![
             PickerItem {
+                section: None,
                 label: "◆ root turn".into(),
                 detail: None,
                 preview: None,
@@ -59,6 +63,7 @@ fn tree_like_picker() -> UiPicker {
                 value: "root".into(),
             },
             PickerItem {
+                section: None,
                 label: "└─ ◆ branch turn".into(),
                 detail: None,
                 preview: None,
@@ -90,6 +95,73 @@ fn nav_and_detail_panes(layout: &OverlayLayout) -> OverlayPanes {
     match layout.panes {
         panes @ OverlayPanes::NavAndDetail { .. } => panes,
         OverlayPanes::NavOnly { .. } => panic!("expected nav+detail panes, got nav-only"),
+    }
+}
+
+#[test]
+fn section_headers_follow_filtered_items_without_becoming_selectable() {
+    let mut picker = sample_picker("agent detail", "worker detail");
+    picker.items[0].section = Some("INTERNAL".into());
+    picker.items[1].section = Some("CUSTOM".into());
+    picker.filter = "custom".into();
+    picker.select_first_match();
+
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 100, 30));
+    let rendered = frame.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(rendered.iter().any(|line| line.contains("CUSTOM")));
+    assert!(rendered.iter().all(|line| !line.contains("INTERNAL")));
+    assert_eq!(picker.selected_item().unwrap().label, "worker");
+}
+
+#[test]
+fn detail_badges_move_status_out_of_navigation_rows() {
+    let picker = sample_picker("agent detail", "worker detail")
+        .with_badge_placement(PickerBadgePlacement::Detail);
+
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 100, 30));
+    let selected_row = frame
+        .lines
+        .iter()
+        .map(line_text)
+        .find(|line| line.contains("→ explorer"))
+        .unwrap();
+    let (navigation, detail) = selected_row.split_once(SEPARATOR).unwrap();
+
+    assert!(!navigation.contains("internal"), "{selected_row}");
+    assert!(detail.contains("Status  internal"), "{selected_row}");
+}
+
+#[test]
+fn detail_badge_rows_never_exceed_narrow_overlay_widths() {
+    let picker = sample_picker("agent detail", "worker detail")
+        .with_badge_placement(PickerBadgePlacement::Detail);
+    let mut long_badge = picker;
+    long_badge.items[0].badge = Some(PickerBadge {
+        text: "healthy-and-also-very-long-status-label".into(),
+        tone: PickerBadgeTone::Healthy,
+    });
+
+    for width in [8_u16, 12, 18, 24, 36, 48] {
+        let frame = render_picker_overlay(&long_badge, Rect::new(0, 0, width, 20));
+        for line in &frame.lines {
+            let text = line_text(line);
+            let measured = super::super::display_width(&text);
+            assert!(
+                measured <= width as usize,
+                "width {width}: measured {measured} for {text:?}"
+            );
+        }
+        assert!(
+            frame
+                .lines
+                .iter()
+                .map(line_text)
+                .any(|line| line.contains("Status")
+                    || line.contains("…")
+                    || line.contains("healthy")),
+            "expected a detail badge row at width {width}"
+        );
     }
 }
 

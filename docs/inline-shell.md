@@ -18,10 +18,12 @@ Use `!!` when you want to see the result without sending it to the model:
 !!git diff --stat
 ```
 
-Rho still displays the command and output in the transcript, but it excludes them from model context. The composer shows a different label and color for each mode:
+Rho still displays the command and output in the transcript, but it excludes them from model context. Typing `!` or `!!` at an empty composer enters shell mode as explicit state: the composer stores only the command body, and the top border shows the mode label:
 
-- `!`: shell output will be included in model context.
-- `!!`: local shell output will stay out of model context.
+- `!`: top border labeled `shell · included in context`
+- `!!`: top border labeled `shell · excluded from context`
+
+Press `esc` to leave shell mode and return to the normal composer. The command text stays in the composer.
 
 Rho runs inline commands asynchronously, so you can continue working while a command runs. Press `esc` to cancel a running command. Rho stops commands that run longer than 60 seconds.
 

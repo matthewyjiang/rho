@@ -582,6 +582,7 @@ impl App {
         self.composer = ComposerMode::Input;
         self.input.clear();
         self.paste_segments.clear();
+        self.shell_mode = None;
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.clamp_command_selection();

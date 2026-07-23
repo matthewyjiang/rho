@@ -33,6 +33,7 @@ impl App {
             CommandId::Tree => self.execute_tree_command(agent),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command(),
+            CommandId::Help => self.execute_help_command(),
             CommandId::Compact => self
                 .execute_compact_command(terminal, agent)
                 .await
@@ -150,6 +151,7 @@ impl App {
         self.composer = ComposerMode::Input;
         self.input.clear();
         self.paste_segments.clear();
+        self.shell_mode = None;
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.clamp_command_selection();

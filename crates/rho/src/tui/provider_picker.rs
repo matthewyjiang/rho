@@ -10,6 +10,7 @@ pub(super) fn login_group_picker() -> UiPicker {
     let items = catalog::login_groups()
         .into_iter()
         .map(|group| PickerItem {
+            section: None,
             label: group.prompt,
             detail: None,
             preview: None,
@@ -31,6 +32,7 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
         .methods
         .into_iter()
         .map(|method| PickerItem {
+            section: None,
             label: method.prompt,
             detail: None,
             preview: None,
@@ -48,6 +50,7 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
 
 pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker {
     let mut items = vec![PickerItem {
+        section: None,
         label: "All configured providers".into(),
         detail: Some("Refresh every available provider with model discovery support.".into()),
         preview: None,
@@ -59,6 +62,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         .filter(|descriptor| descriptor.model_refresh.is_some())
         .filter(|descriptor| available_auths.iter().any(|auth| auth == descriptor.auth))
         .map(|descriptor| PickerItem {
+            section: None,
             label: descriptor.display_name.into(),
             detail: Some(format!(
                 "Refresh cached {} models with {}.",
@@ -103,6 +107,7 @@ fn provider_picker_for_targets(
     let mut items = targets
         .into_iter()
         .map(|target| PickerItem {
+            section: None,
             label: target.provider.clone(),
             detail: Some(target.label),
             preview: None,

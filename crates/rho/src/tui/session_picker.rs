@@ -42,6 +42,7 @@ fn session_item(session: SessionSummary) -> PickerItem {
         Some(_) | None => format!("updated {} · id {short_id}", session.updated_at),
     };
     PickerItem {
+        section: None,
         label: title,
         detail: Some(detail),
         preview,

@@ -165,6 +165,7 @@ impl App {
                     input: self.input.clone(),
                     paste_segments: self.paste_segments.clone(),
                     submission_mode: self.input_submission_mode,
+                    shell_mode: self.shell_mode,
                 });
                 self.input_history.len() - 1
             }
@@ -179,7 +180,9 @@ impl App {
                     input: String::new(),
                     paste_segments: Vec::new(),
                     submission_mode: InputSubmissionMode::ParseCommands,
+                    shell_mode: None,
                 });
+                self.shell_mode = draft.shell_mode;
                 self.input = draft.input;
                 self.paste_segments = draft.paste_segments;
                 self.input_submission_mode = draft.submission_mode;
@@ -190,12 +193,12 @@ impl App {
             }
         };
 
-        self.input = self.input_history[next_cursor].clone();
-        self.paste_segments.clear();
-        self.input_submission_mode = InputSubmissionMode::ParseCommands;
-        self.input_cursor = self.input_char_len();
+        self.apply_composer_text(
+            self.input_history[next_cursor].clone(),
+            Vec::new(),
+            InputSubmissionMode::ParseCommands,
+        );
         self.input_history_cursor = Some(next_cursor);
-        self.input_changed();
         true
     }
 
@@ -279,6 +282,9 @@ impl App {
     }
 
     pub(super) fn insert_input_char(&mut self, ch: char) {
+        if ch == '!' && self.try_enter_shell_mode_from_bang() {
+            return;
+        }
         self.reset_input_history_navigation();
         self.adjust_paste_segments_for_edit(self.input_cursor, 0, 1);
         let byte_index = self.input_byte_index(self.input_cursor);
@@ -424,6 +430,7 @@ impl App {
 
     pub(super) fn command_palette_visible(&self) -> bool {
         matches!(self.composer, ComposerMode::Input)
+            && self.shell_mode.is_none()
             && !self.command_palette_dismissed
             && (self.cursor_in_command_token()
                 || !commands::argument_choices(&self.input, self.input_cursor).is_empty())

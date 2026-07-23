@@ -52,6 +52,7 @@ mod goal;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod choice_actions;
 mod goal_command;
+mod help_picker;
 mod history_cache;
 mod info_command;
 mod inline_choice;
@@ -134,8 +135,8 @@ use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
 use picker::{
-    sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
-    PickerLayout, UiPicker,
+    sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgePlacement, PickerBadgeTone,
+    PickerItem, PickerLayout, UiPicker,
 };
 use prompt_turn::FailedTurn;
 use provider_attempt::ProviderAttempt;
@@ -145,8 +146,8 @@ use questionnaire::{
 };
 use render::{
     char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
-    input_cursor_position, input_lines_with_images, input_visual_lines, picker_lines,
-    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
+    input_cursor_position, input_lines_with_images, input_visual_lines, labeled_divider_line,
+    picker_lines, session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
@@ -310,6 +311,8 @@ struct App {
     subagent_panel: SubagentPanel,
     input: String,
     input_cursor: usize,
+    /// Explicit shell-mode state. Composer text stores only the command body.
+    shell_mode: Option<InlineShellMode>,
     status: String,
     should_quit: bool,
     ctrl_c_streak: u8,
@@ -442,6 +445,7 @@ struct InputDraft {
     input: String,
     paste_segments: Vec<PasteSegment>,
     submission_mode: InputSubmissionMode,
+    shell_mode: Option<InlineShellMode>,
 }
 
 #[derive(Clone, Debug)]
@@ -707,6 +711,7 @@ impl App {
             subagent_panel: SubagentPanel::default(),
             input: String::new(),
             input_cursor: 0,
+            shell_mode: None,
             status,
             should_quit: false,
             ctrl_c_streak: 0,
@@ -1058,12 +1063,9 @@ impl App {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
-                    self.input.clear();
-                    self.paste_segments.clear();
+                    self.clear_submitted_input();
                     self.input_submission_mode = InputSubmissionMode::ParseCommands;
                     self.pending_images.clear();
-                    self.input_cursor = 0;
-                    self.clamp_command_selection();
                     self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -1071,7 +1073,9 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                self.cancel_inline_shells();
+                if !self.cancel_inline_shells() {
+                    let _ = self.exit_shell_mode();
+                }
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Backspace) => {
@@ -1787,15 +1791,14 @@ impl App {
             self.expanded_input().trim().to_string(),
             self.input.trim().to_string(),
         );
-        if turn.model.is_empty() && self.pending_images.is_empty() {
+        if turn.model.is_empty() && self.pending_images.is_empty() && self.shell_mode.is_none() {
             self.clear_submitted_input();
             return Ok(());
         }
-        if let Some((mode, command)) = InlineShellMode::parse(self.input.trim()) {
+        if let Some((mode, command)) = self.shell_submission() {
             if !self.paste_segments.is_empty() {
                 return self.block_pasted_inline_shell();
             }
-            let command = command.to_string();
             self.clear_submitted_input();
             self.ensure_session(agent)?;
             self.start_inline_shell(mode, command)?;
@@ -1808,20 +1811,14 @@ impl App {
                     invocation.raw_args = slash_command_args(&turn.model).to_string();
                     invocation.args = invocation.raw_args.trim().to_string();
                 }
-                self.input.clear();
-                self.paste_segments.clear();
-                self.input_cursor = 0;
-                self.clamp_command_selection();
+                self.clear_submitted_input();
                 self.execute_command(invocation, terminal, agent).await?;
                 return Ok(());
             }
             Ok(None) => {}
             Err(commands::CommandParseError::Unknown(name)) => {
                 let trailing_prompt = slash_command_args(&turn.model).trim().to_string();
-                self.input.clear();
-                self.paste_segments.clear();
-                self.input_cursor = 0;
-                self.clamp_command_selection();
+                self.clear_submitted_input();
                 let template = name
                     .get(.."prompt:".len())
                     .filter(|prefix| prefix.eq_ignore_ascii_case("prompt:"))
@@ -1854,10 +1851,7 @@ impl App {
         }
 
         let images = std::mem::take(&mut self.pending_images);
-        self.input.clear();
-        self.paste_segments.clear();
-        self.input_cursor = 0;
-        self.clamp_command_selection();
+        self.clear_submitted_input();
         let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());
@@ -2011,12 +2005,9 @@ impl App {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
-                    self.input.clear();
-                    self.paste_segments.clear();
+                    self.clear_submitted_input();
                     self.input_submission_mode = InputSubmissionMode::ParseCommands;
                     self.pending_images.clear();
-                    self.input_cursor = 0;
-                    self.clamp_command_selection();
                     self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -2105,18 +2096,14 @@ impl App {
         let prompt = self.expanded_input().trim().to_string();
         let display_prompt = self.input.clone();
         let paste_segments = self.paste_segments.clone();
-        if prompt.is_empty() {
-            self.input.clear();
-            self.paste_segments.clear();
-            self.input_cursor = 0;
-            self.clamp_command_selection();
+        if prompt.is_empty() && self.shell_mode.is_none() {
+            self.clear_submitted_input();
             return Ok(());
         }
-        if let Some((mode, command)) = InlineShellMode::parse(self.input.trim()) {
+        if let Some((mode, command)) = self.shell_submission() {
             if !self.paste_segments.is_empty() {
                 return self.block_pasted_inline_shell();
             }
-            let command = command.to_string();
             self.clear_submitted_input();
             self.start_inline_shell(mode, command)?;
             return Ok(());
@@ -2124,20 +2111,14 @@ impl App {
 
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
-                self.input.clear();
-                self.paste_segments.clear();
-                self.input_cursor = 0;
-                self.clamp_command_selection();
+                self.clear_submitted_input();
                 self.execute_command_during_turn(invocation, terminal)?;
             }
             Ok(None) => {
                 self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
-                self.input.clear();
-                self.paste_segments.clear();
-                self.input_cursor = 0;
-                self.clamp_command_selection();
+                self.clear_submitted_input();
                 self.insert_entry(&Entry::Error(format!(
                     "unknown or unavailable command '/{name}' while a model turn is running"
                 )));
@@ -2154,10 +2135,7 @@ impl App {
         paste_segments: Vec<PasteSegment>,
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
-        self.input.clear();
-        self.paste_segments.clear();
-        self.input_cursor = 0;
-        self.clamp_command_selection();
+        self.clear_submitted_input();
         self.steering_prompts.push_back(QueuedPrompt {
             prompt,
             display_prompt,
@@ -2177,10 +2155,7 @@ impl App {
         let display_prompt = self.input.clone();
         let paste_segments = self.paste_segments.clone();
         if prompt.is_empty() {
-            self.input.clear();
-            self.paste_segments.clear();
-            self.input_cursor = 0;
-            self.clamp_command_selection();
+            self.clear_submitted_input();
             return Ok(());
         }
         self.queue_prompt(prompt, display_prompt, paste_segments)
@@ -2193,10 +2168,7 @@ impl App {
         paste_segments: Vec<PasteSegment>,
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
-        self.input.clear();
-        self.paste_segments.clear();
-        self.input_cursor = 0;
-        self.clamp_command_selection();
+        self.clear_submitted_input();
         self.queued_prompts.push_back(QueuedPrompt {
             prompt,
             display_prompt,
@@ -2294,6 +2266,7 @@ impl App {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command(),
+            CommandId::Help => self.execute_help_command(),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
             CommandId::Diff => self.execute_diff_command(),
@@ -2399,7 +2372,7 @@ impl App {
                 self.status = "session navigation unavailable while running".into();
             }
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
-            PickerAction::Doctor | PickerAction::ViewAgent => {
+            PickerAction::Dismiss | PickerAction::ViewAgent => {
                 self.status = "running".into();
             }
             PickerAction::SelectInternalAgentModel => {
@@ -2722,6 +2695,9 @@ impl App {
                         );
                     }
                     if key.code == KeyCode::Esc && self.cancel_inline_shells() {
+                        continue;
+                    }
+                    if key.code == KeyCode::Esc && self.exit_shell_mode() {
                         continue;
                     }
                     if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
@@ -3711,6 +3687,8 @@ mod tests {
     mod mouse_tests;
     #[path = "questionnaire_interaction_tests.rs"]
     mod questionnaire_interaction_tests;
+    #[path = "shell_composer_tests.rs"]
+    mod shell_composer_tests;
     #[path = "subagent_notification_tests.rs"]
     mod subagent_notification_tests;
     #[path = "usage_tests.rs"]
@@ -4562,6 +4540,7 @@ mod tests {
             "models",
             "enter select",
             vec![PickerItem {
+                section: None,
                 label: "gpt-5.5".into(),
                 detail: None,
                 preview: None,
@@ -4767,6 +4746,7 @@ mod tests {
             "enter confirm",
             vec![
                 PickerItem {
+                    section: None,
                     label: "model-a".into(),
                     detail: None,
                     preview: None,
@@ -4777,6 +4757,7 @@ mod tests {
                     value: "model-a".into(),
                 },
                 PickerItem {
+                    section: None,
                     label: "model-b".into(),
                     detail: None,
                     preview: None,
@@ -4929,6 +4910,7 @@ mod tests {
             "enter confirm",
             vec![
                 PickerItem {
+                    section: None,
                     label: "openai/gpt-5.5".into(),
                     detail: None,
                     preview: None,
@@ -4936,6 +4918,7 @@ mod tests {
                     value: "openai/gpt-5.5".into(),
                 },
                 PickerItem {
+                    section: None,
                     label: "openai-codex/gpt-5.4-mini".into(),
                     detail: None,
                     preview: None,
@@ -4965,6 +4948,7 @@ mod tests {
             "loaded skills",
             "enter inserts command",
             vec![PickerItem {
+                section: None,
                 label: "test-skill".into(),
                 detail: Some("this detail is much too long for the available width".into()),
                 preview: None,
@@ -4993,6 +4977,7 @@ mod tests {
             "select model",
             "enter confirm",
             vec![PickerItem {
+                section: None,
                 label: "openai-codex/gpt-5.3-codex-max".into(),
                 detail: None,
                 preview: None,
@@ -5024,6 +5009,7 @@ mod tests {
             "enter confirm",
             vec![
                 PickerItem {
+                    section: None,
                     label: "model-a".into(),
                     detail: None,
                     preview: None,
@@ -5031,6 +5017,7 @@ mod tests {
                     value: "model-a".into(),
                 },
                 PickerItem {
+                    section: None,
                     label: "model-b".into(),
                     detail: None,
                     preview: None,
@@ -5058,6 +5045,7 @@ mod tests {
             "select model",
             "ctrl-p pin/unpin",
             vec![PickerItem {
+                section: None,
                 label: selected_value.into(),
                 detail: None,
                 preview: None,

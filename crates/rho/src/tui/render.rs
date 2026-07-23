@@ -44,7 +44,9 @@ impl LineFill {
 
 const SESSION_HEADER_HINTS: &[&str] = &[
     " shift+tab    Cycle reasoning level",
+    " ctrl+c       Clear the composer",
     " /            Show available commands",
+    " !            Run a shell command",
 ];
 
 pub(super) fn session_header_lines(
@@ -182,7 +184,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         super::PickerAction::SelectModel | super::PickerAction::SelectInternalAgentModel => 60,
         super::PickerAction::ResumeSession | super::PickerAction::SelectTreeNode => 60,
         super::PickerAction::Config
-        | super::PickerAction::Doctor
+        | super::PickerAction::Dismiss
         | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
@@ -841,6 +843,36 @@ pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
         chunks.push(current);
     }
     chunks
+}
+
+pub(super) fn labeled_divider_line(
+    labels: &[&str],
+    style: Style,
+    width: usize,
+) -> Option<Line<'static>> {
+    const PREFIX: &str = "─ ";
+    const MIN_SUFFIX: usize = 2;
+    let prefix_width = display_width(PREFIX);
+    for label in labels {
+        let label_width = display_width(label);
+        let needed = prefix_width
+            .saturating_add(label_width)
+            .saturating_add(1)
+            .saturating_add(MIN_SUFFIX);
+        if needed > width {
+            continue;
+        }
+        let suffix_width = width
+            .saturating_sub(prefix_width)
+            .saturating_sub(label_width)
+            .saturating_sub(1);
+        return Some(Line::from(vec![
+            Span::styled(PREFIX.to_string(), style),
+            Span::styled(format!("{label} "), style),
+            Span::styled("─".repeat(suffix_width), style),
+        ]));
+    }
+    None
 }
 
 #[cfg(test)]

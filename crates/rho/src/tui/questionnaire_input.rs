@@ -211,11 +211,7 @@ impl App {
         match questionnaire.submit() {
             Ok(submitted) => {
                 let display = submitted.display;
-                self.input.clear();
-                self.paste_segments.clear();
-                self.input_cursor = 0;
-                self.command_palette_dismissed = false;
-                self.clamp_command_selection();
+                self.clear_submitted_input();
                 self.status = "answers submitted".into();
                 Ok(Some(display))
             }
@@ -235,11 +231,7 @@ impl App {
         };
         questionnaire.cancel_by_user();
         self.ctrl_c_streak = 0;
-        self.input.clear();
-        self.paste_segments.clear();
-        self.input_cursor = 0;
-        self.command_palette_dismissed = false;
-        self.clamp_command_selection();
+        self.clear_submitted_input();
         self.status = "answer cancelled".into();
     }
 
@@ -248,11 +240,7 @@ impl App {
         request: QuestionAnswerRequest,
     ) -> std::io::Result<()> {
         self.finish_streams();
-        self.input.clear();
-        self.paste_segments.clear();
-        self.input_cursor = 0;
-        self.command_palette_dismissed = false;
-        self.clamp_command_selection();
+        self.clear_submitted_input();
         self.insert_entry(&Entry::Notice(questionnaire_notice_text(&request.request)));
         self.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
             request.request,

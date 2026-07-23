@@ -52,6 +52,7 @@ fn item(
     value: &str,
 ) -> PickerItem {
     PickerItem {
+        section: None,
         label: label.into(),
         detail: Some(detail.into()),
         preview: None,
@@ -334,6 +335,7 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
         ]
         .into_iter()
         .map(|candidate| PickerItem {
+            section: None,
             label: candidate.label().into(),
             detail: Some(permission_mode_description(candidate).into()),
             preview: None,
@@ -363,6 +365,7 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
         super::inline_shell::available_shells(&config.inline_shell)
             .into_iter()
             .map(|shell| PickerItem {
+                section: None,
                 label: shell.clone(),
                 detail: Some("Use this shell for inline ! and !! commands.".into()),
                 preview: None,
@@ -386,6 +389,7 @@ pub(super) fn web_search_config_picker(
         "type regex filter, enter change, esc back",
         vec![
             PickerItem {
+                section: None,
                 label: "Provider".into(),
                 detail: Some(format!(
                     "Backend for web_search. Current: {}; Enter cycles to {}.",
@@ -400,6 +404,7 @@ pub(super) fn web_search_config_picker(
                 value: WEB_SEARCH_PROVIDER_VALUE.into(),
             },
             PickerItem {
+                section: None,
                 label: "OpenAI API key".into(),
                 detail: Some("Optional key for OpenAI web search. Codex login is used automatically when available.".into()),
                 preview: None,
@@ -411,6 +416,7 @@ pub(super) fn web_search_config_picker(
                 value: WEB_SEARCH_OPENAI_KEY_VALUE.into(),
             },
             PickerItem {
+                section: None,
                 label: "Exa API key".into(),
                 detail: Some("Optional Exa API key. Without one, Exa hosted MCP is used.".into()),
                 preview: None,
@@ -422,6 +428,7 @@ pub(super) fn web_search_config_picker(
                 value: WEB_SEARCH_EXA_KEY_VALUE.into(),
             },
             PickerItem {
+                section: None,
                 label: "Brave API key".into(),
                 detail: Some("Optional Brave Search API key used by the brave backend.".into()),
                 preview: None,

@@ -32,6 +32,7 @@ impl App {
         }
         self.input = messages.join("\n\n");
         self.paste_segments.clear();
+        self.shell_mode = None;
         self.input_cursor = self.input_char_len();
         self.input_submission_mode = InputSubmissionMode::ParseCommands;
         self.reset_input_history_navigation();
