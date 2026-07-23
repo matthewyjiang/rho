@@ -75,6 +75,8 @@ pub(crate) struct InteractiveRuntime {
     agent_fingerprint: String,
     pending_persistence_error: Option<anyhow::Error>,
     pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
+    /// True after the current provider completes a live turn on the current history.
+    live_context_warm: bool,
 }
 
 enum TurnPrelude {
@@ -236,6 +238,7 @@ impl InteractiveRuntime {
             agent_fingerprint,
             pending_persistence_error: None,
             pending_persistence_checkpoint: None,
+            live_context_warm: false,
         })
     }
 
@@ -290,6 +293,52 @@ impl InteractiveRuntime {
 
     pub(crate) fn history(&self) -> Vec<Message> {
         self.sessions.history()
+    }
+
+    pub(crate) fn can_compact(&self) -> bool {
+        self.can_compact_messages(&self.sessions.history())
+    }
+
+    pub(crate) fn can_compact_messages(&self, messages: &[Message]) -> bool {
+        let target_tokens = self
+            .context_window
+            .map(|window| self.compaction.target_tokens(window))
+            .unwrap_or(u64::MAX / 2);
+        crate::compaction::partition_messages_for_compaction(
+            messages,
+            &self.tools.specs(),
+            target_tokens,
+        )
+        .is_some()
+    }
+
+    pub(crate) fn provider_identity(&self) -> rho_sdk::model::ModelIdentity {
+        self.provider.provider().identity()
+    }
+
+    pub(crate) fn provider_context_omissions(
+        &self,
+        target: &rho_sdk::model::ModelIdentity,
+    ) -> rho_sdk::model::handoff::HandoffReport {
+        rho_sdk::model::handoff::report_message_omissions(&self.sessions.history(), target)
+    }
+
+    pub(crate) fn live_context_warm(&self) -> bool {
+        self.live_context_warm
+    }
+
+    pub(crate) fn mark_live_context_warm(&mut self) {
+        self.live_context_warm = true;
+    }
+
+    fn invalidate_live_context(&mut self) {
+        self.live_context_warm = false;
+    }
+
+    pub(crate) fn take_pending_omission(
+        &mut self,
+    ) -> Option<rho_sdk::model::handoff::HandoffReport> {
+        self.sessions.take_pending_omission()
     }
 
     pub(crate) fn session_id(&self) -> &SessionId {
@@ -496,10 +545,12 @@ impl InteractiveRuntime {
                 )),
             };
         }
-        if outcome.current_messages() < outcome.previous_messages() {
+        let reduced = outcome.current_messages() < outcome.previous_messages();
+        if reduced {
             self.runs.note_manual_compaction(self.context_window);
+            self.invalidate_live_context();
         }
-        Ok(outcome.current_messages() < outcome.previous_messages())
+        Ok(reduced)
     }
 
     pub(crate) fn reset(&mut self) -> anyhow::Result<()> {
@@ -510,6 +561,7 @@ impl InteractiveRuntime {
         if let Some(manager) = self.tools.subagents() {
             manager.set_session(session_id.to_string());
         }
+        self.invalidate_live_context();
         Ok(())
     }
 
@@ -535,6 +587,7 @@ impl InteractiveRuntime {
             manager.set_session(self.sessions.session().id().to_string());
         }
         self.sessions.set_resumed_storage(storage);
+        self.invalidate_live_context();
         Ok(())
     }
 
@@ -554,7 +607,7 @@ impl InteractiveRuntime {
         let id = storage.id().to_string();
         let snapshot =
             storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
-        let resume_notice = resume_omissions_notice(&snapshot, &identity);
+        let resume_omission = resume_omissions_report(&snapshot, &identity);
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
@@ -580,9 +633,10 @@ impl InteractiveRuntime {
         }
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
-            .replace_session(replacement_session, resume_notice);
+            .replace_session(replacement_session, resume_omission);
         self.sessions.set_resumed_storage(storage);
         previous_runtime.shutdown();
+        self.invalidate_live_context();
         self.refresh_context_usage();
         Ok(())
     }
@@ -618,6 +672,7 @@ impl InteractiveRuntime {
         if let Some(manager) = self.tools.subagents() {
             manager.update_model(&identity.provider, &identity.model, reasoning);
         }
+        self.invalidate_live_context();
         self.runs.finish_transition();
         Ok(report)
     }
@@ -726,16 +781,16 @@ impl InteractiveRuntime {
 
     async fn rebuild_session(&mut self, source: ReplacementSessionSource) -> anyhow::Result<()> {
         let identity = self.provider.provider().identity();
-        let (options, resume_notice) = match source {
+        let (options, resume_omission) = match source {
             ReplacementSessionSource::DurableSnapshot { snapshot } => {
-                let notice = resume_omissions_notice(&snapshot, &identity);
-                (SessionOptions::from_snapshot(snapshot), notice)
+                let omission = resume_omissions_report(&snapshot, &identity);
+                (SessionOptions::from_snapshot(snapshot), omission)
             }
             ReplacementSessionSource::Snapshot { storage, id } => {
                 let snapshot =
                     storage.snapshot_for_resume(identity.clone(), prompt_cache_key(&id))?;
-                let notice = resume_omissions_notice(&snapshot, &identity);
-                (SessionOptions::from_snapshot(snapshot), notice)
+                let omission = resume_omissions_report(&snapshot, &identity);
+                (SessionOptions::from_snapshot(snapshot), omission)
             }
             ReplacementSessionSource::History { history, id } => {
                 let mut options = SessionOptions::new().history(history);
@@ -764,7 +819,7 @@ impl InteractiveRuntime {
         let replacement_session = replacement_runtime.session(options).await?;
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
-            .replace_session(replacement_session, resume_notice);
+            .replace_session(replacement_session, resume_omission);
         previous_runtime.shutdown();
         Ok(())
     }
@@ -791,12 +846,19 @@ fn prompt_cache_key(id: &str) -> String {
         .unwrap_or_else(|| format!("rho:{id}"))
 }
 
+fn resume_omissions_report(
+    snapshot: &rho_sdk::SessionSnapshot,
+    target: &rho_sdk::model::ModelIdentity,
+) -> Option<rho_sdk::model::handoff::HandoffReport> {
+    let report = snapshot.provider_context_omissions(target);
+    report.has_omissions().then_some(report)
+}
+
 fn resume_omissions_notice(
     snapshot: &rho_sdk::SessionSnapshot,
     target: &rho_sdk::model::ModelIdentity,
 ) -> Option<String> {
-    let report = snapshot.provider_context_omissions(target);
-    report.has_omissions().then(|| {
+    resume_omissions_report(snapshot, target).map(|report| {
         format!(
             "omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
             report.omitted_provider_context,

@@ -33,7 +33,10 @@ impl App {
             CommandId::Tree => self.execute_tree_command(agent),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command(),
-            CommandId::Compact => self.execute_compact_command(terminal, agent).await,
+            CommandId::Compact => self
+                .execute_compact_command(terminal, agent)
+                .await
+                .map(|_| ()),
             CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
@@ -56,11 +59,11 @@ impl App {
         self.status = "unknown command".into();
     }
 
-    async fn execute_compact_command(
+    pub(super) async fn execute_compact_command(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         self.steering_prompts.clear();
         self.pending_input_changed();
         self.status = "compacting context".into();
@@ -105,10 +108,11 @@ impl App {
         self.running = false;
         self.loading_spinner.stop();
 
-        match compacted {
+        let succeeded = match compacted {
             Ok(true) => {
                 self.insert_entry(&Entry::Notice("compacted conversation context".into()));
                 self.status = "context compacted".into();
+                true
             }
             Ok(false) => {
                 self.insert_entry(&Entry::Notice(
@@ -116,15 +120,17 @@ impl App {
                         .into(),
                 ));
                 self.status = "context not compacted".into();
+                false
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "failed to compact conversation context: {err}"
                 )));
                 self.status = "context compaction failed".into();
+                false
             }
-        }
-        Ok(())
+        };
+        Ok(succeeded)
     }
 
     pub(super) fn execute_exit_command(&mut self) -> anyhow::Result<()> {

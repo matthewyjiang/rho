@@ -40,6 +40,7 @@ mod composer;
 mod config_actions;
 mod config_editor;
 mod config_picker;
+mod context_handoff;
 mod copy_interaction;
 mod doctor;
 mod event_adapter;
@@ -49,9 +50,11 @@ mod file_picker;
 mod frame_scheduler;
 mod goal;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
+mod choice_actions;
 mod goal_command;
 mod history_cache;
 mod info_command;
+mod inline_choice;
 mod inline_shell;
 mod keybindings;
 mod keyboard_modes;
@@ -121,8 +124,12 @@ use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use feed_image::{picker_from_environment, FeedImage};
 use frame_scheduler::FrameScheduler;
 use goal::GoalState;
+use inline_choice::{
+    InlineChoice, InlineChoiceKeyOutcome, InlineChoiceModal, InlineChoiceOption,
+    InlineChoicePending,
+};
 use inline_shell::InlineShellMode;
-use login::{CredentialStoreChoice, PendingOAuthLogin, SecretInput};
+use login::{PendingOAuthLogin, SecretInput};
 use markdown::{update_code_block_state, CodeFenceState};
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
@@ -402,9 +409,18 @@ enum ComposerMode {
     ConfigNumberInput(ConfigNumberInput),
     ConfigTextInput(ConfigTextInput),
     OAuthPending(LoginTarget),
-    CredentialStoreChoice(CredentialStoreChoice),
+    InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
+}
+
+impl ComposerMode {
+    fn blocks_auto_continue(&self) -> bool {
+        match self {
+            Self::InlineChoice(modal) => modal.blocks_auto_continue(),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -783,6 +799,7 @@ impl App {
         self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal)?;
+        self.maybe_offer_loaded_session_context_handoff(agent)?;
         if self.info.session.open_resume_picker {
             self.open_resume_picker()?;
         }
@@ -995,10 +1012,7 @@ impl App {
             return Ok(());
         }
 
-        if self
-            .handle_credential_store_choice_key(key, terminal, agent)
-            .await?
-        {
+        if self.handle_inline_choice_key(key, terminal, agent).await? {
             return Ok(());
         }
 
@@ -1863,7 +1877,7 @@ impl App {
 
             let should_drain_queue =
                 goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
-            if self.should_quit || !should_drain_queue {
+            if self.should_quit || !should_drain_queue || self.composer.blocks_auto_continue() {
                 break outcome_kind;
             }
             let Some(prompt) = self.queued_prompts.pop_front() else {
@@ -1880,11 +1894,13 @@ impl App {
                 )
                 .await?;
         };
-        if goal_command::should_resume_goal_after_turn(
-            final_outcome,
-            self.goal.as_ref().map(GoalState::loop_state),
-            self.should_quit,
-        ) {
+        if !self.composer.blocks_auto_continue()
+            && goal_command::should_resume_goal_after_turn(
+                final_outcome,
+                self.goal.as_ref().map(GoalState::loop_state),
+                self.should_quit,
+            )
+        {
             self.continue_goal(terminal, agent, pending_goal_retries)
                 .await?;
         }
@@ -1943,7 +1959,7 @@ impl App {
             ComposerMode::Approval(_)
             | ComposerMode::Picker(_)
             | ComposerMode::OAuthPending(_)
-            | ComposerMode::CredentialStoreChoice(_) => {}
+            | ComposerMode::InlineChoice(_) => {}
         }
     }
 
@@ -2257,11 +2273,16 @@ impl App {
     fn apply_pending_model_selection(
         &mut self,
         agent: &mut InteractiveRuntime,
+        after_successful_turn: bool,
     ) -> anyhow::Result<()> {
         let Some(pending) = self.pending_model_selection.take() else {
             return Ok(());
         };
-        self.select_model(pending, agent)
+        if after_successful_turn {
+            self.request_model_selection_after_turn(pending, agent)
+        } else {
+            self.select_model_with_omission_notice(pending, agent)
+        }
     }
 
     fn execute_command_during_turn(
@@ -3032,7 +3053,7 @@ impl App {
         }
     }
 
-    fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
+    pub(super) fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
         for notice in agent.take_notices() {
             self.insert_entry(&Entry::Notice(notice));
         }

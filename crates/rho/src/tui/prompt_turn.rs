@@ -445,11 +445,15 @@ impl App {
                 self.finalize_failed_turn(message, failed_turn)
             }
         };
+        let completed = matches!(outcome, TurnOutcome::Completed);
+        if completed {
+            agent.mark_live_context_warm();
+        }
         if matches!(&outcome, TurnOutcome::Failed(_) | TurnOutcome::Cancelled) {
             self.preserve_unapplied_steering_as_follow_ups();
         }
         self.clear_accepted_steering();
-        self.apply_pending_model_selection(agent)?;
+        self.apply_pending_model_selection(agent, completed)?;
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(outcome)

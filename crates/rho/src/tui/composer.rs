@@ -75,7 +75,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
-            | ComposerMode::CredentialStoreChoice(_)
+            | ComposerMode::InlineChoice(_)
             | ComposerMode::OAuthPending(_) => {}
         }
     }
@@ -106,7 +106,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
-            | ComposerMode::CredentialStoreChoice(_)
+            | ComposerMode::InlineChoice(_)
             | ComposerMode::OAuthPending(_) => false,
         }
     }
@@ -124,7 +124,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
             | ComposerMode::Picker(_)
-            | ComposerMode::CredentialStoreChoice(_)
+            | ComposerMode::InlineChoice(_)
             | ComposerMode::OAuthPending(_) => false,
         }
     }

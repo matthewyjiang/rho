@@ -121,7 +121,7 @@ impl App {
             &self.info.runtime.provider,
             &self.info.runtime.auth,
         ) {
-            Ok(selection) => self.select_model(selection, agent),
+            Ok(selection) => self.request_model_selection(selection, agent),
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
                 self.status = "model switch failed".into();
@@ -165,6 +165,12 @@ impl App {
         };
 
         let return_picker = self.take_picker_parent_after_selection(action);
+        let (model_return_picker, other_return_picker) =
+            if matches!(action, PickerAction::SelectModel) {
+                (return_picker, None)
+            } else {
+                (None, return_picker)
+            };
         if !matches!(
             action,
             PickerAction::Config | PickerAction::LoginGroup | PickerAction::ViewAgent
@@ -179,7 +185,18 @@ impl App {
                     &self.info.runtime.provider,
                     &self.info.runtime.auth,
                 ) {
-                    Ok(selection) => self.select_model(selection, agent),
+                    Ok(selection) => {
+                        if let Some((picker, selected_value)) = model_return_picker {
+                            self.request_model_selection_from_config_picker(
+                                selection,
+                                picker,
+                                selected_value,
+                                agent,
+                            )
+                        } else {
+                            self.request_model_selection(selection, agent)
+                        }
+                    }
                     Err(err) => {
                         self.insert_entry(&Entry::Error(err.to_string()));
                         self.status = "model switch failed".into();
@@ -258,7 +275,7 @@ impl App {
             }
             PickerAction::Doctor => Ok(()),
         };
-        if let (true, Some((picker, selected_value))) = (result.is_ok(), return_picker) {
+        if let (true, Some((picker, selected_value))) = (result.is_ok(), other_return_picker) {
             self.open_main_config_picker(selected_value, picker.filter)?;
         }
         result
@@ -441,6 +458,15 @@ impl App {
         resolved: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        let _ = self.select_model_report(resolved, agent)?;
+        Ok(())
+    }
+
+    pub(super) fn select_model_report(
+        &mut self,
+        resolved: InteractiveModelSelection,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<Option<rho_sdk::model::handoff::HandoffReport>> {
         let InteractiveModelSelection { selection, alias } = resolved;
         let provider = selection.provider;
         let model = selection.model;
@@ -459,7 +485,7 @@ impl App {
                     "could not switch to {provider_model}: reasoning level '{requested}' is not supported"
                 )));
                 self.status = "model switch rejected".into();
-                return Ok(());
+                return Ok(None);
             }
         };
         let new_provider = match build_provider(&provider, &model, reasoning.effective) {
@@ -469,18 +495,11 @@ impl App {
                     "could not switch to {provider_model}: {err}"
                 )));
                 self.status = "model switch failed".into();
-                return Ok(());
+                return Ok(None);
             }
         };
 
         let handoff = agent.replace_provider(new_provider, reasoning.effective)?;
-        if handoff.has_omissions() {
-            let kinds = handoff.omitted_kinds.join(", ");
-            self.insert_entry(&Entry::Notice(format!(
-                "model handoff omitted {} nonportable provider context block(s): {kinds}; assistant text, tool history, and reasoning summaries were preserved",
-                handoff.omitted_provider_context
-            )));
-        }
         self.info.runtime.provider = provider.clone();
         self.info.runtime.model = model.clone();
         self.info
@@ -511,7 +530,7 @@ impl App {
                 self.status = "config save failed".into();
             }
         }
-        Ok(())
+        Ok(Some(handoff))
     }
 
     pub(super) fn select_internal_agent_model(

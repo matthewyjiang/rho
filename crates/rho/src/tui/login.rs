@@ -1,4 +1,4 @@
-use super::*;
+use super::{InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *};
 use {
     crate::credential_store::build_provider,
     rho_providers::auth::login_dispatch::{
@@ -82,85 +82,70 @@ pub(super) enum StoreChoiceNext {
     Provider(String),
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct CredentialStoreChoice {
-    pub(super) request: crate::credential_store::StoreChoiceRequest,
-    /// Index into `request.options()`; always points at an available backend.
-    pub(super) active: usize,
-    pub(super) next: StoreChoiceNext,
+fn credential_store_inline_choice(
+    request: crate::credential_store::StoreChoiceRequest,
+) -> anyhow::Result<InlineChoice> {
+    use rho_providers::credentials::CredentialStoreBackend;
+
+    let options = request
+        .options()
+        .into_iter()
+        .enumerate()
+        .map(|(index, option)| {
+            let (label, detail) = match option.backend {
+                CredentialStoreBackend::Os => (
+                    "OS credential store",
+                    if option.available {
+                        "Recommended · system keychain / secret service".to_string()
+                    } else {
+                        format!("Unavailable · {}", request.detail_for(option.backend))
+                    },
+                ),
+                CredentialStoreBackend::File => (
+                    "Local file",
+                    if option.available {
+                        "Owner-only under ~/.rho/credentials · not encrypted at rest".to_string()
+                    } else {
+                        format!("Unavailable · {}", request.detail_for(option.backend))
+                    },
+                ),
+            };
+            let build = if option.available {
+                InlineChoiceOption::available
+            } else {
+                InlineChoiceOption::unavailable
+            };
+            build(
+                option.backend.as_str(),
+                char::from(b'1' + index as u8),
+                label,
+                detail,
+            )
+            .with_alternate_shortcut(match option.backend {
+                CredentialStoreBackend::Os => 'o',
+                CredentialStoreBackend::File => 'f',
+            })
+        })
+        .collect();
+    InlineChoice::new(
+        "Where should Rho store provider credentials?",
+        "This is saved to config and used for future logins on this machine.",
+        options,
+    )
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "no credential store backend is available (os: {}; file: {})",
+            request.os.detail,
+            request.file.detail
+        )
+    })
 }
 
-impl CredentialStoreChoice {
-    fn new(
-        request: crate::credential_store::StoreChoiceRequest,
-        next: StoreChoiceNext,
-    ) -> anyhow::Result<Self> {
-        let active = request
-            .options()
-            .into_iter()
-            .position(|option| option.available)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no credential store backend is available (os: {}; file: {})",
-                    request.os.detail,
-                    request.file.detail
-                )
-            })?;
-        Ok(Self {
-            request,
-            active,
-            next,
-        })
-    }
-
-    fn selected_backend(&self) -> rho_providers::credentials::CredentialStoreBackend {
-        self.request.options()[self.active.min(1)].backend
-    }
-
-    fn move_previous(&mut self) {
-        let options = self.request.options();
-        let mut index = self.active;
-        while index > 0 {
-            index -= 1;
-            if options[index].available {
-                self.active = index;
-                return;
-            }
-        }
-    }
-
-    fn move_next(&mut self) {
-        let options = self.request.options();
-        let mut index = self.active;
-        while index + 1 < options.len() {
-            index += 1;
-            if options[index].available {
-                self.active = index;
-                return;
-            }
-        }
-    }
-
-    /// Select backend by stable shortcut: 1/o = OS, 2/f = file.
-    fn select_shortcut(
-        &mut self,
-        key: char,
-    ) -> Option<rho_providers::credentials::CredentialStoreBackend> {
-        use rho_providers::credentials::CredentialStoreBackend;
-
-        let backend = match key.to_ascii_lowercase() {
-            '1' | 'o' => CredentialStoreBackend::Os,
-            '2' | 'f' => CredentialStoreBackend::File,
-            _ => return None,
-        };
-        let index = self
-            .request
-            .options()
-            .into_iter()
-            .position(|option| option.backend == backend && option.available)?;
-        self.active = index;
-        Some(backend)
-    }
+fn selected_credential_store_backend(
+    choice: &InlineChoice,
+) -> rho_providers::credentials::CredentialStoreBackend {
+    rho_providers::credentials::CredentialStoreBackend::parse(choice.selected_value())
+        .expect("credential store choices contain valid backends")
 }
 
 impl App {
@@ -221,9 +206,12 @@ impl App {
         let Some(request) = crate::credential_store::choice_request(&config) else {
             return false;
         };
-        match CredentialStoreChoice::new(request, next) {
+        match credential_store_inline_choice(request) {
             Ok(choice) => {
-                self.composer = ComposerMode::CredentialStoreChoice(choice);
+                self.composer = ComposerMode::InlineChoice(InlineChoiceModal {
+                    choice,
+                    pending: InlineChoicePending::CredentialStore { next },
+                });
                 self.status = "choose credential store before login".into();
             }
             Err(err) => {
@@ -239,80 +227,14 @@ impl App {
         crate::config::Config::load_settings_only(path)
     }
 
-    pub(super) async fn handle_credential_store_choice_key(
+    pub(super) async fn submit_credential_store_choice(
         &mut self,
-        key: crossterm::event::KeyEvent,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        use crossterm::event::{KeyCode, KeyModifiers};
-
-        if !matches!(self.composer, ComposerMode::CredentialStoreChoice(_)) {
-            return Ok(false);
-        }
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter | KeyCode::Char(' ')) => {
-                self.submit_credential_store_choice(terminal, agent).await?;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Char(key @ ('1' | '2' | 'o' | 'O' | 'f' | 'F'))) => {
-                let selected =
-                    if let ComposerMode::CredentialStoreChoice(choice) = &mut self.composer {
-                        choice.select_shortcut(key)
-                    } else {
-                        None
-                    };
-                if selected.is_some() {
-                    self.submit_credential_store_choice(terminal, agent).await?;
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                self.composer = ComposerMode::Input;
-                self.status = if self.running { "running" } else { "ready" }.into();
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Up | KeyCode::Left) => {
-                if let ComposerMode::CredentialStoreChoice(choice) = &mut self.composer {
-                    choice.move_previous();
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::Down | KeyCode::Right) => {
-                if let ComposerMode::CredentialStoreChoice(choice) = &mut self.composer {
-                    choice.move_next();
-                }
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ => {
-                self.paste_burst.clear();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-        }
-    }
-
-    async fn submit_credential_store_choice(
-        &mut self,
+        choice: InlineChoice,
+        next: StoreChoiceNext,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let ComposerMode::CredentialStoreChoice(choice) =
-            std::mem::replace(&mut self.composer, ComposerMode::Input)
-        else {
-            return Ok(());
-        };
-        let backend = choice.selected_backend();
-        let next = choice.next;
+        let backend = selected_credential_store_backend(&choice);
         let config_path = match self.info.services.config_repository.configured_path() {
             Ok(path) => Some(path),
             Err(err) => {
@@ -844,99 +766,6 @@ impl App {
         self.status = "no providers configured; run /login".into();
         true
     }
-}
-
-pub(super) fn credential_store_choice_lines(
-    choice: &CredentialStoreChoice,
-    width: usize,
-) -> Vec<Line<'static>> {
-    use rho_providers::credentials::CredentialStoreBackend;
-
-    let width = width.max(1);
-    let mut lines = vec![
-        styled_line(
-            truncate_one_line("Where should Rho store provider credentials?", width),
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(
-                "This is saved to config and used for future logins on this machine.",
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-    ];
-
-    for (index, option) in choice.request.options().into_iter().enumerate() {
-        let selected = index == choice.active && option.available;
-        let (number, label, detail) = match option.backend {
-            CredentialStoreBackend::Os => (
-                "1",
-                "OS credential store",
-                if option.available {
-                    "Recommended · system keychain / secret service".to_string()
-                } else {
-                    format!(
-                        "Unavailable · {}",
-                        choice.request.detail_for(option.backend)
-                    )
-                },
-            ),
-            CredentialStoreBackend::File => (
-                "2",
-                "Local file",
-                if option.available {
-                    "Owner-only under ~/.rho/credentials · not encrypted at rest".to_string()
-                } else {
-                    format!(
-                        "Unavailable · {}",
-                        choice.request.detail_for(option.backend)
-                    )
-                },
-            ),
-        };
-        let marker = if selected {
-            ">"
-        } else if option.available {
-            " "
-        } else {
-            "·"
-        };
-        let style = if selected {
-            Theme::input_prompt()
-        } else if option.available {
-            Theme::text()
-        } else {
-            Theme::dim()
-        };
-        lines.push(styled_line(
-            truncate_one_line(&format!("{marker} [{number}] {label}"), width),
-            width,
-            style,
-            LineFill::Natural,
-        ));
-        lines.push(styled_line(
-            truncate_one_line(&format!("      {detail}"), width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ));
-    }
-
-    lines.push(styled_line(
-        truncate_one_line(
-            "enter/space choose · 1/2 or o/f jump · arrows move · esc cancel",
-            width,
-        ),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
-    lines
 }
 
 #[cfg(test)]

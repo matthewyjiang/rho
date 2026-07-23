@@ -246,6 +246,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         agent_fingerprint: "test-fingerprint".into(),
         pending_persistence_error: None,
         pending_persistence_checkpoint: None,
+        live_context_warm: false,
     }
 }
 
@@ -452,6 +453,36 @@ async fn finished_run_reports_context_from_committed_history() {
             Some(10_000)
         ))
     );
+}
+
+#[tokio::test]
+async fn handoff_compactability_requires_history_that_can_be_reduced() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive.context_window = Some(100);
+    interactive.compaction.target_percent = 50;
+
+    assert!(!interactive.can_compact());
+
+    for index in 0..2 {
+        interactive
+            .sessions
+            .session()
+            .append_message(Message::user_text(format!(
+                "turn {index}: {}",
+                "context ".repeat(80)
+            )))
+            .unwrap();
+        interactive
+            .sessions
+            .session()
+            .append_message(Message::assistant_text(format!(
+                "answer {index}: {}",
+                "detail ".repeat(80)
+            )))
+            .unwrap();
+    }
+
+    assert!(interactive.can_compact());
 }
 
 #[tokio::test]
