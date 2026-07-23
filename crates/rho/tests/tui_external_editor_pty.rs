@@ -122,6 +122,7 @@ printf '%s\n' "$replacement" > "$3"
         "alternate screen was not re-entered after the editor"
     );
 
+    harness.settle_input();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
@@ -177,6 +178,7 @@ fn external_editor_errors_preserve_the_composer() {
         harness
             .wait_for_text(expected_error, WaitTimeout::secs(10, "editor error status"))
             .unwrap();
+        harness.settle_input();
         harness.inject_key(&Key::Enter).unwrap();
         harness
             .wait_for_text(
@@ -256,6 +258,7 @@ while :; do sleep 1; done
             WaitTimeout::secs(10, "rho resumed after editor interrupt"),
         )
         .unwrap();
+    harness.settle_input();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
@@ -330,6 +333,7 @@ printf '%s\n' "$replacement" > "$1"
             WaitTimeout::secs(10, "running editor return"),
         )
         .unwrap();
+    harness.settle_input();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(

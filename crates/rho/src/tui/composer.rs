@@ -430,6 +430,7 @@ impl App {
         let cursor = text.chars().count();
         self.input_ui.set_text_and_cursor(text, cursor);
         self.input_ui.clear_paste_segments();
+        self.input_ui.clear_paste_burst();
         self.input_changed();
     }
 
