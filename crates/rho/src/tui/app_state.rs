@@ -1,4 +1,5 @@
-//! Cohesive App-owned UI state groups for history, composer input, and pending work.
+//! Cohesive App-owned UI state groups for history, composer input, pending work,
+//! and the live turn.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -6,16 +7,59 @@ use std::time::{Duration, Instant};
 use rho_providers::model::ImageContent;
 
 use super::{
+    activity::{ActivityPhase, LoadingSpinner},
     history_cache::HistoryLineCache,
     inline_shell::InlineShellMode,
     markdown_image,
     paste_burst::{expand_paste_segments, PasteBurst},
     pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel},
+    provider_attempt::ProviderAttempt,
+    reasoning_phase::ReasoningPhase,
     scrollbar::HistoryScrollbarDrag,
     text_selection::{CopyNotice, TextSelection},
+    tool_call_batch::ToolCallBatch,
     ComposerMode, Entry, FileMatchCache, HistoryScroll, InputDraft, InputSubmissionMode,
     PasteSegment, QueuedPrompt, SessionHeaderCache, SkillMatchCache,
 };
+
+/// TUI session phase distinct from provider run controller state.
+///
+/// `ProviderTurn` should stay aligned with `InteractiveRuntime::is_run_active`
+/// except for brief setup before `start` succeeds. `Compacting` is UI-only busy
+/// work with no active provider run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum SessionUiPhase {
+    #[default]
+    Idle,
+    ProviderTurn,
+    Compacting,
+}
+
+impl SessionUiPhase {
+    pub(super) const fn is_busy(self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+
+    pub(super) const fn is_provider_turn(self) -> bool {
+        matches!(self, Self::ProviderTurn)
+    }
+
+    pub(super) const fn allows_idle_subagent_delivery(self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    pub(super) const fn uses_during_run_model_picker(self) -> bool {
+        matches!(self, Self::ProviderTurn)
+    }
+
+    pub(super) const fn busy_status_label(self) -> &'static str {
+        if self.is_busy() {
+            "running"
+        } else {
+            "ready"
+        }
+    }
+}
 
 /// Transcript history, scroll, selection, and related render caches.
 ///
@@ -228,25 +272,25 @@ impl HistoryUi {
 /// Composer text, paste handling, command/file palettes, and input history.
 #[derive(Default)]
 pub(super) struct InputUi {
-    pub(in crate::tui) text: String,
-    pub(in crate::tui) cursor: usize,
-    pub(in crate::tui) shell_mode: Option<InlineShellMode>,
-    pub(in crate::tui) pending_images: Vec<ImageContent>,
-    pub(in crate::tui) history: Vec<String>,
-    pub(in crate::tui) history_cursor: Option<usize>,
-    pub(in crate::tui) history_draft: Option<InputDraft>,
-    pub(in crate::tui) paste_burst: PasteBurst,
-    pub(in crate::tui) paste_segments: Vec<PasteSegment>,
-    pub(in crate::tui) submission_mode: InputSubmissionMode,
-    pub(in crate::tui) command_selection: usize,
-    pub(in crate::tui) command_prefix: Option<String>,
-    pub(in crate::tui) command_palette_dismissed: bool,
-    pub(in crate::tui) file_selection: usize,
-    pub(in crate::tui) file_query: Option<String>,
-    pub(in crate::tui) file_palette_dismissed: bool,
-    pub(in crate::tui) file_match_cache: Option<FileMatchCache>,
-    pub(in crate::tui) skill_match_cache: Option<SkillMatchCache>,
-    pub(in crate::tui) composer: ComposerMode,
+    text: String,
+    cursor: usize,
+    shell_mode: Option<InlineShellMode>,
+    pending_images: Vec<ImageContent>,
+    history: Vec<String>,
+    history_cursor: Option<usize>,
+    history_draft: Option<InputDraft>,
+    paste_burst: PasteBurst,
+    paste_segments: Vec<PasteSegment>,
+    submission_mode: InputSubmissionMode,
+    command_selection: usize,
+    command_prefix: Option<String>,
+    command_palette_dismissed: bool,
+    file_selection: usize,
+    file_query: Option<String>,
+    file_palette_dismissed: bool,
+    file_match_cache: Option<FileMatchCache>,
+    skill_match_cache: Option<SkillMatchCache>,
+    composer: ComposerMode,
 }
 
 impl InputUi {
@@ -268,21 +312,224 @@ impl InputUi {
         self.history_draft = None;
     }
 
-    pub(super) fn set_text_and_cursor(&mut self, text: impl Into<String>, cursor: usize) {
-        self.text = text.into();
+    pub(super) fn set_text_and_cursor(&mut self, text: String, cursor: usize) {
+        self.text = text;
         self.cursor = cursor;
+    }
+
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub(super) fn text_mut(&mut self) -> &mut String {
+        &mut self.text
+    }
+
+    pub(super) fn set_text(&mut self, text: String) {
+        self.text = text;
+    }
+
+    pub(super) fn clear_text(&mut self) {
+        self.text.clear();
+    }
+
+    pub(super) fn char_len(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    pub(super) fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub(super) fn set_cursor(&mut self, cursor: usize) {
+        self.cursor = cursor;
+    }
+
+    pub(super) fn composer(&self) -> &ComposerMode {
+        &self.composer
+    }
+
+    pub(super) fn composer_mut(&mut self) -> &mut ComposerMode {
+        &mut self.composer
+    }
+
+    pub(super) fn set_composer(&mut self, composer: ComposerMode) {
+        self.composer = composer;
+    }
+
+    pub(super) fn take_composer(&mut self) -> ComposerMode {
+        std::mem::replace(&mut self.composer, ComposerMode::Input)
+    }
+
+    pub(super) fn paste_burst(&self) -> &PasteBurst {
+        &self.paste_burst
+    }
+
+    pub(super) fn paste_burst_mut(&mut self) -> &mut PasteBurst {
+        &mut self.paste_burst
+    }
+
+    pub(super) fn paste_segments(&self) -> &[PasteSegment] {
+        &self.paste_segments
+    }
+
+    pub(super) fn paste_segments_mut(&mut self) -> &mut Vec<PasteSegment> {
+        &mut self.paste_segments
+    }
+
+    pub(super) fn set_paste_segments(&mut self, segments: Vec<PasteSegment>) {
+        self.paste_segments = segments;
+    }
+
+    pub(super) fn clear_paste_segments(&mut self) {
+        self.paste_segments.clear();
+    }
+
+    pub(super) fn shell_mode(&self) -> Option<InlineShellMode> {
+        self.shell_mode
+    }
+
+    pub(super) fn shell_mode_mut(&mut self) -> &mut Option<InlineShellMode> {
+        &mut self.shell_mode
+    }
+
+    pub(super) fn set_shell_mode(&mut self, mode: Option<InlineShellMode>) {
+        self.shell_mode = mode;
+    }
+
+    pub(super) fn take_shell_mode(&mut self) -> Option<InlineShellMode> {
+        self.shell_mode.take()
+    }
+
+    pub(super) fn pending_images(&self) -> &[ImageContent] {
+        &self.pending_images
+    }
+
+    pub(super) fn pending_images_mut(&mut self) -> &mut Vec<ImageContent> {
+        &mut self.pending_images
+    }
+
+    pub(super) fn clear_pending_images(&mut self) {
+        self.pending_images.clear();
+    }
+
+    pub(super) fn history(&self) -> &[String] {
+        &self.history
+    }
+
+    pub(super) fn push_history_if_new(&mut self, prompt: &str) {
+        if self.history.last().is_some_and(|last| last == prompt) {
+            return;
+        }
+        self.history.push(prompt.to_string());
+    }
+
+    pub(super) fn history_cursor(&self) -> Option<usize> {
+        self.history_cursor
+    }
+
+    pub(super) fn set_history_cursor(&mut self, cursor: Option<usize>) {
+        self.history_cursor = cursor;
+    }
+
+    pub(super) fn set_history_draft(&mut self, draft: Option<InputDraft>) {
+        self.history_draft = draft;
+    }
+
+    pub(super) fn take_history_draft(&mut self) -> Option<InputDraft> {
+        self.history_draft.take()
+    }
+
+    pub(super) fn submission_mode(&self) -> InputSubmissionMode {
+        self.submission_mode
+    }
+
+    pub(super) fn set_submission_mode(&mut self, mode: InputSubmissionMode) {
+        self.submission_mode = mode;
+    }
+
+    pub(super) fn take_submission_mode(&mut self) -> InputSubmissionMode {
+        std::mem::take(&mut self.submission_mode)
+    }
+
+    pub(super) fn command_selection(&self) -> usize {
+        self.command_selection
+    }
+
+    pub(super) fn set_command_selection(&mut self, selection: usize) {
+        self.command_selection = selection;
+    }
+
+    pub(super) fn command_prefix(&self) -> Option<&str> {
+        self.command_prefix.as_deref()
+    }
+
+    pub(super) fn set_command_prefix(&mut self, prefix: Option<String>) {
+        self.command_prefix = prefix;
+    }
+
+    pub(super) fn command_palette_dismissed(&self) -> bool {
+        self.command_palette_dismissed
+    }
+
+    pub(super) fn set_command_palette_dismissed(&mut self, dismissed: bool) {
+        self.command_palette_dismissed = dismissed;
+    }
+
+    pub(super) fn file_selection(&self) -> usize {
+        self.file_selection
+    }
+
+    pub(super) fn set_file_selection(&mut self, selection: usize) {
+        self.file_selection = selection;
+    }
+
+    pub(super) fn file_query(&self) -> Option<&str> {
+        self.file_query.as_deref()
+    }
+
+    pub(super) fn set_file_query(&mut self, query: Option<String>) {
+        self.file_query = query;
+    }
+
+    pub(super) fn file_palette_dismissed(&self) -> bool {
+        self.file_palette_dismissed
+    }
+
+    pub(super) fn set_file_palette_dismissed(&mut self, dismissed: bool) {
+        self.file_palette_dismissed = dismissed;
+    }
+
+    pub(super) fn file_match_cache(&self) -> Option<&FileMatchCache> {
+        self.file_match_cache.as_ref()
+    }
+
+    pub(super) fn file_match_cache_mut(&mut self) -> &mut Option<FileMatchCache> {
+        &mut self.file_match_cache
+    }
+
+    pub(super) fn set_file_match_cache(&mut self, cache: Option<FileMatchCache>) {
+        self.file_match_cache = cache;
+    }
+
+    pub(super) fn skill_match_cache(&self) -> Option<&SkillMatchCache> {
+        self.skill_match_cache.as_ref()
+    }
+
+    pub(super) fn set_skill_match_cache(&mut self, cache: Option<SkillMatchCache>) {
+        self.skill_match_cache = cache;
     }
 }
 
 /// Queued prompts, steering, and the pending-input panel.
 #[derive(Default)]
 pub(super) struct PendingWorkUi {
-    pub(in crate::tui) steering_prompts: VecDeque<QueuedPrompt>,
-    pub(in crate::tui) accepted_steering: VecDeque<AcceptedSteering>,
-    pub(in crate::tui) retracting_steering: Option<rho_sdk::SteeringId>,
-    pub(in crate::tui) input_panel: PendingInputPanel,
-    pub(in crate::tui) input_action: Option<PendingInputAction>,
-    pub(in crate::tui) queued_prompts: VecDeque<QueuedPrompt>,
+    steering_prompts: VecDeque<QueuedPrompt>,
+    accepted_steering: VecDeque<AcceptedSteering>,
+    retracting_steering: Option<rho_sdk::SteeringId>,
+    input_panel: PendingInputPanel,
+    input_action: Option<PendingInputAction>,
+    queued_prompts: VecDeque<QueuedPrompt>,
 }
 
 impl PendingWorkUi {
@@ -306,5 +553,151 @@ impl PendingWorkUi {
         self.queued_prompts = pending;
         self.retracting_steering = None;
         self.input_action = None;
+    }
+
+    pub(super) fn steering_prompts(&self) -> &VecDeque<QueuedPrompt> {
+        &self.steering_prompts
+    }
+
+    pub(super) fn steering_prompts_mut(&mut self) -> &mut VecDeque<QueuedPrompt> {
+        &mut self.steering_prompts
+    }
+
+    pub(super) fn accepted_steering(&self) -> &VecDeque<AcceptedSteering> {
+        &self.accepted_steering
+    }
+
+    pub(super) fn accepted_steering_mut(&mut self) -> &mut VecDeque<AcceptedSteering> {
+        &mut self.accepted_steering
+    }
+
+    pub(super) fn queued_prompts(&self) -> &VecDeque<QueuedPrompt> {
+        &self.queued_prompts
+    }
+
+    pub(super) fn queued_prompts_mut(&mut self) -> &mut VecDeque<QueuedPrompt> {
+        &mut self.queued_prompts
+    }
+
+    pub(super) fn push_follow_up(&mut self, prompt: QueuedPrompt) {
+        self.queued_prompts.push_back(prompt);
+    }
+
+    pub(super) fn clear_steering(&mut self) {
+        self.steering_prompts.clear();
+        self.accepted_steering.clear();
+        self.retracting_steering = None;
+    }
+
+    pub(super) fn retracting_steering(&self) -> Option<&rho_sdk::SteeringId> {
+        self.retracting_steering.as_ref()
+    }
+
+    pub(super) fn set_retracting_steering(&mut self, id: Option<rho_sdk::SteeringId>) {
+        self.retracting_steering = id;
+    }
+
+    pub(super) fn input_panel(&self) -> &PendingInputPanel {
+        &self.input_panel
+    }
+
+    pub(super) fn input_panel_mut(&mut self) -> &mut PendingInputPanel {
+        &mut self.input_panel
+    }
+
+    pub(super) fn input_action(&self) -> Option<&PendingInputAction> {
+        self.input_action.as_ref()
+    }
+
+    pub(super) fn set_input_action(&mut self, action: Option<PendingInputAction>) {
+        self.input_action = action;
+    }
+
+    pub(super) fn take_input_action(&mut self) -> Option<PendingInputAction> {
+        self.input_action.take()
+    }
+
+    pub(super) fn clear_input_action(&mut self) {
+        self.input_action = None;
+    }
+
+    pub(super) fn drain_accepted_steering_prompts(&mut self) -> impl Iterator<Item = String> + '_ {
+        self.accepted_steering
+            .drain(..)
+            .map(|entry| entry.prompt.prompt)
+    }
+
+    pub(super) fn drain_steering_prompt_texts(&mut self) -> impl Iterator<Item = String> + '_ {
+        self.steering_prompts.drain(..).map(|prompt| prompt.prompt)
+    }
+
+    pub(super) fn drain_queued_prompt_texts(&mut self) -> impl Iterator<Item = String> + '_ {
+        self.queued_prompts.drain(..).map(|prompt| prompt.prompt)
+    }
+}
+
+/// Live-turn UI: provider attempt, activity, spinner, and in-flight tools.
+#[derive(Default)]
+pub(super) struct TurnUi {
+    current_turn_start: Option<usize>,
+    provider_attempt: ProviderAttempt,
+    reasoning_phase: ReasoningPhase,
+    session_ui: SessionUiPhase,
+    activity_phase: ActivityPhase,
+    loading_spinner: LoadingSpinner,
+    tool_calls: ToolCallBatch,
+}
+
+impl TurnUi {
+    pub(super) fn current_turn_start(&self) -> Option<usize> {
+        self.current_turn_start
+    }
+
+    pub(super) fn set_current_turn_start(&mut self, start: Option<usize>) {
+        self.current_turn_start = start;
+    }
+
+    pub(super) fn provider_attempt_mut(&mut self) -> &mut ProviderAttempt {
+        &mut self.provider_attempt
+    }
+
+    pub(super) fn reasoning_phase(&self) -> &ReasoningPhase {
+        &self.reasoning_phase
+    }
+
+    pub(super) fn reasoning_phase_mut(&mut self) -> &mut ReasoningPhase {
+        &mut self.reasoning_phase
+    }
+
+    pub(super) fn session_ui(&self) -> SessionUiPhase {
+        self.session_ui
+    }
+
+    pub(super) fn set_session_ui(&mut self, phase: SessionUiPhase) {
+        self.session_ui = phase;
+    }
+
+    pub(super) fn activity_phase(&self) -> ActivityPhase {
+        self.activity_phase
+    }
+
+    pub(super) fn set_activity_phase(&mut self, phase: ActivityPhase) {
+        self.activity_phase = phase;
+    }
+
+    pub(super) fn loading_spinner(&self) -> &LoadingSpinner {
+        &self.loading_spinner
+    }
+
+    pub(super) fn loading_spinner_mut(&mut self) -> &mut LoadingSpinner {
+        &mut self.loading_spinner
+    }
+
+    pub(super) fn tool_calls(&self) -> &ToolCallBatch {
+        &self.tool_calls
+    }
+
+    pub(super) fn tool_calls_mut(&mut self) -> &mut ToolCallBatch {
+        &mut self.tool_calls
     }
 }

@@ -143,7 +143,7 @@ impl App {
             "goal set: {condition}\nrho will keep working until the goal is met. use /goal clear to cancel."
         )));
         self.status = "goal active".into();
-        let images = std::mem::take(&mut self.input_ui.pending_images);
+        let images = std::mem::take(self.input_ui.pending_images_mut());
         let outcome = self
             .run_prompt_turn(
                 TurnPrompt::command(initial_goal_prompt(condition), format!("/goal {condition}")),
@@ -264,7 +264,7 @@ impl App {
     ) -> anyhow::Result<()> {
         while !self.should_quit
             && self.goal.as_ref().is_some_and(|goal| !goal.is_blocked())
-            && !self.input_ui.composer.blocks_auto_continue()
+            && !self.input_ui.composer().blocks_auto_continue()
         {
             if !self.wait_for_goal_subagents(terminal, agent).await? {
                 break;
@@ -298,7 +298,7 @@ impl App {
                 continue;
             }
             self.status = "evaluating goal".into();
-            self.loading_spinner.start();
+            self.turn.loading_spinner_mut().start();
             terminal.draw(|frame| self.draw(frame))?;
 
             let (condition, provider, model) = {
@@ -366,7 +366,7 @@ impl App {
             };
             self.finish_all_inline_shells().await?;
             self.insert_deferred_inline_shell_context(agent)?;
-            self.loading_spinner.stop();
+            self.turn.loading_spinner_mut().stop();
             let Some(evaluation) = evaluation else {
                 break;
             };
@@ -455,7 +455,7 @@ impl App {
         }
 
         self.status = "waiting for delegated agents".into();
-        self.loading_spinner.start();
+        self.turn.loading_spinner_mut().start();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
@@ -487,7 +487,7 @@ impl App {
         }
         self.finish_all_inline_shells().await?;
         self.insert_deferred_inline_shell_context(agent)?;
-        self.loading_spinner.stop();
+        self.turn.loading_spinner_mut().stop();
         Ok(self.goal.is_some() && !self.should_quit)
     }
 
@@ -519,7 +519,7 @@ impl App {
             return Ok(false);
         }
 
-        self.loading_spinner.start();
+        self.turn.loading_spinner_mut().start();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
@@ -561,7 +561,7 @@ impl App {
         };
         self.finish_all_inline_shells().await?;
         self.insert_deferred_inline_shell_context(agent)?;
-        self.loading_spinner.stop();
+        self.turn.loading_spinner_mut().stop();
         Ok(should_retry && self.goal.is_some() && !self.should_quit)
     }
 }

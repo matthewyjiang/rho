@@ -618,7 +618,7 @@ impl super::App {
         let Ok(size) = terminal.size() else {
             return;
         };
-        let super::ComposerMode::Picker(picker) = &mut self.input_ui.composer else {
+        let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
             return;
         };
         if !picker.has_scrollable_detail() {
@@ -634,16 +634,17 @@ impl super::App {
     }
 
     pub(super) fn open_child_picker(&mut self, child: UiPicker) {
-        let previous = std::mem::replace(&mut self.input_ui.composer, super::ComposerMode::Input);
+        let previous = self.input_ui.take_composer();
         let super::ComposerMode::Picker(parent) = previous else {
             unreachable!("child picker requires an active parent picker")
         };
         self.status = child.title.clone();
-        self.input_ui.composer = super::ComposerMode::Picker(child.with_parent(parent));
+        self.input_ui
+            .set_composer(super::ComposerMode::Picker(child.with_parent(parent)));
     }
 
     pub(super) fn pop_picker_level(&mut self) -> bool {
-        let parent = match &mut self.input_ui.composer {
+        let parent = match self.input_ui.composer_mut() {
             super::ComposerMode::Picker(picker) => picker.take_parent(),
             _ => None,
         };
@@ -651,7 +652,8 @@ impl super::App {
             return false;
         };
         self.status = parent.title.clone();
-        self.input_ui.composer = super::ComposerMode::Picker(parent);
+        self.input_ui
+            .set_composer(super::ComposerMode::Picker(parent));
         true
     }
 }

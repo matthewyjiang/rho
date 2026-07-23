@@ -16,10 +16,10 @@ use super::{
 impl App {
     pub(super) fn divider_line(&self, width: usize, shell_label: bool) -> Line<'static> {
         let width = width.max(1);
-        let (style, labels) = match &self.input_ui.composer {
+        let (style, labels) = match self.input_ui.composer() {
             ComposerMode::Input => {
                 let labels = shell_label
-                    .then_some(self.input_ui.shell_mode)
+                    .then_some(self.input_ui.shell_mode())
                     .flatten()
                     .map(inline_shell::mode_divider_labels);
                 (
@@ -45,14 +45,14 @@ impl App {
     }
 
     pub(super) fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
-        match &self.input_ui.composer {
+        match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self
                     .focused_paste_segment()
                     .map(|segment| segment.start..segment.end());
                 input_lines_with_images(
-                    &self.input_ui.text,
-                    &self.input_ui.pending_images,
+                    self.input_ui.text(),
+                    self.input_ui.pending_images(),
                     width,
                     focused_paste,
                 )
@@ -70,13 +70,13 @@ impl App {
     }
 
     pub(super) fn composer_cursor_position(&self, width: usize) -> Position {
-        match &self.input_ui.composer {
+        match self.input_ui.composer() {
             ComposerMode::Input => {
                 let mut position =
-                    input_cursor_position(&self.input_ui.text, self.input_ui.cursor, width);
+                    input_cursor_position(self.input_ui.text(), self.input_ui.cursor(), width);
                 position.y = position
                     .y
-                    .saturating_add(self.input_ui.pending_images.len() as u16);
+                    .saturating_add(self.input_ui.pending_images().len() as u16);
                 position
             }
             ComposerMode::SecretInput(secret) => Position {
@@ -111,7 +111,7 @@ impl App {
             let matches = self.command_matches();
             let selected_index = self
                 .input_ui
-                .command_selection
+                .command_selection()
                 .min(matches.len().saturating_sub(1));
             let start = selected_index
                 .saturating_add(1)
@@ -161,7 +161,7 @@ impl App {
         let matches = self.file_matches();
         let selected_index = self
             .input_ui
-            .file_selection
+            .file_selection()
             .min(matches.len().saturating_sub(1));
         let (start, above, below) = file_picker::file_palette_scroll_counts(
             matches.len(),

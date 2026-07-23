@@ -169,7 +169,7 @@ fn subagent_only_activity_reserves_bottom_follow_inset() {
     app.subagent_panel = SubagentPanel {
         agents: vec![agent("a1b2c3", "explorer", RunState::Running, None, 3)],
     };
-    app.loading_spinner.start();
+    app.turn.loading_spinner_mut().start();
 
     let layout = app.screen_layout(Rect::new(0, 0, 40, 12), std::time::Instant::now());
     assert!(layout.activity.is_some());

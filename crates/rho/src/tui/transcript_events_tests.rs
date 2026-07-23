@@ -1,6 +1,6 @@
 use rho_sdk::model::{ContextUsage, ModelUsage};
 
-use crate::tui::{event_adapter::ViewModelEvent, run_lifecycle::SessionUiPhase, tests::test_app};
+use crate::tui::{app_state::SessionUiPhase, event_adapter::ViewModelEvent, tests::test_app};
 
 #[test]
 fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
@@ -43,6 +43,6 @@ fn step_started_clears_stream_state() {
 
     assert!(app.streams.assistant_stream.is_empty());
     assert!(app.streams.reasoning_stream.is_empty());
-    assert_eq!(app.session_ui, SessionUiPhase::ProviderTurn);
+    assert_eq!(app.turn.session_ui(), SessionUiPhase::ProviderTurn);
     assert_eq!(app.status, "running step 2");
 }

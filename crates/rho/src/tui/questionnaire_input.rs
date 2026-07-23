@@ -7,7 +7,7 @@ use super::{
 
 impl App {
     pub(super) fn handle_questionnaire_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, ComposerMode::Questionnaire(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::Questionnaire(_)) {
             return Ok(false);
         }
 
@@ -22,14 +22,14 @@ impl App {
                 } else {
                     self.cancel_questionnaire_answer();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 Ok(true)
             }
             (KeyModifiers::ALT, KeyCode::Up) | (_, KeyCode::BackTab) => {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_to_previous_field();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -37,7 +37,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_to_next_field();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -45,7 +45,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.delete_previous_word();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -58,13 +58,13 @@ impl App {
                     QuestionnaireEnterAction::Advance => {}
                     QuestionnaireEnterAction::Submit => self.submit_questionnaire_answer()?,
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
                 self.cancel_questionnaire_answer();
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -72,7 +72,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_up();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -80,7 +80,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_down();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -88,7 +88,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.backspace();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -96,7 +96,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.delete();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -104,7 +104,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_text_cursor_previous_word();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -112,7 +112,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_text_cursor_next_word();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -120,7 +120,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_left();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -128,7 +128,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_right();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -136,7 +136,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_home();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -144,7 +144,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.move_cursor_end();
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -152,7 +152,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.insert_char('\n');
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -160,7 +160,7 @@ impl App {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.insert_char('\n');
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -172,7 +172,7 @@ impl App {
                         questionnaire.toggle_active_choice();
                     }
                 }
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -186,7 +186,7 @@ impl App {
                 Ok(true)
             }
             _ => {
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
@@ -194,7 +194,7 @@ impl App {
     }
 
     fn questionnaire_mut(&mut self) -> Option<&mut QuestionnaireComposer> {
-        match &mut self.input_ui.composer {
+        match self.input_ui.composer_mut() {
             ComposerMode::Questionnaire(questionnaire) => Some(questionnaire),
             _ => None,
         }
@@ -208,9 +208,7 @@ impl App {
     }
 
     fn prepare_questionnaire_answer(&mut self) -> anyhow::Result<Option<String>> {
-        let ComposerMode::Questionnaire(mut questionnaire) =
-            std::mem::replace(&mut self.input_ui.composer, ComposerMode::Input)
-        else {
+        let ComposerMode::Questionnaire(mut questionnaire) = self.input_ui.take_composer() else {
             return Ok(None);
         };
         match questionnaire.submit() {
@@ -221,7 +219,8 @@ impl App {
                 Ok(Some(display))
             }
             Err(error) => {
-                self.input_ui.composer = ComposerMode::Questionnaire(questionnaire);
+                self.input_ui
+                    .set_composer(ComposerMode::Questionnaire(questionnaire));
                 self.status = error;
                 Ok(None)
             }
@@ -229,9 +228,7 @@ impl App {
     }
 
     fn cancel_questionnaire_answer(&mut self) {
-        let ComposerMode::Questionnaire(mut questionnaire) =
-            std::mem::replace(&mut self.input_ui.composer, ComposerMode::Input)
-        else {
+        let ComposerMode::Questionnaire(mut questionnaire) = self.input_ui.take_composer() else {
             return;
         };
         questionnaire.cancel_by_user();
@@ -247,10 +244,11 @@ impl App {
         self.finish_streams();
         self.clear_submitted_input();
         self.insert_entry(&Entry::Notice(questionnaire_notice_text(&request.request)));
-        self.input_ui.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
-            request.request,
-            request.response,
-        ));
+        self.input_ui
+            .set_composer(ComposerMode::Questionnaire(QuestionnaireComposer::new(
+                request.request,
+                request.response,
+            )));
         self.status = HerdrUserWait::Questionnaire.message().into();
         self.report_herdr_waiting_for_user(HerdrUserWait::Questionnaire)
             .await;

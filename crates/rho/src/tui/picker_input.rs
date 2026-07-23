@@ -128,14 +128,14 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, super::ComposerMode::Picker(_)) {
+        if !matches!(self.input_ui.composer(), super::ComposerMode::Picker(_)) {
             return Ok(false);
         }
 
         let model_picker_open = self.model_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
         let effect = {
-            let super::ComposerMode::Picker(picker) = &mut self.input_ui.composer else {
+            let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let page_target = overlay_page_target(picker, terminal);
@@ -145,24 +145,24 @@ impl App {
         match effect {
             PickerKeyEffect::None => Ok(true),
             PickerKeyEffect::Handled => {
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             PickerKeyEffect::Submit => {
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 self.submit_picker_selection(terminal, agent).await?;
                 Ok(true)
             }
             PickerKeyEffect::Escape => {
                 self.handle_picker_escape(/*running*/ false)?;
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
             PickerKeyEffect::ToggleFavorite => {
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
                 self.toggle_selected_model_favorite()?;
                 Ok(true)
@@ -175,14 +175,14 @@ impl App {
         key: KeyEvent,
         terminal: &DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, super::ComposerMode::Picker(_)) {
+        if !matches!(self.input_ui.composer(), super::ComposerMode::Picker(_)) {
             return Ok(false);
         }
 
         let model_picker_open = self.model_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
         let effect = {
-            let super::ComposerMode::Picker(picker) = &mut self.input_ui.composer else {
+            let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let page_target = overlay_page_target(picker, terminal);

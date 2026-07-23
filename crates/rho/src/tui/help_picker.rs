@@ -154,7 +154,9 @@ fn entry(keys: impl Into<String>, summary: &str, detail: &str) -> PickerItem {
 
 impl App {
     pub(super) fn execute_help_command(&mut self) -> anyhow::Result<()> {
-        self.input_ui.composer = ComposerMode::Picker(help_picker(&self.info.runtime.keybindings));
+        self.input_ui.set_composer(ComposerMode::Picker(help_picker(
+            &self.info.runtime.keybindings,
+        )));
         self.status = "keyboard shortcuts".into();
         Ok(())
     }

@@ -10,7 +10,7 @@ use super::{
 
 impl App {
     pub(super) fn handle_oauth_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, ComposerMode::OAuthPending(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::OAuthPending(_)) {
             return Ok(false);
         }
 
@@ -22,7 +22,7 @@ impl App {
             } else {
                 "OAuth".into()
             };
-            self.input_ui.composer = ComposerMode::Input;
+            self.input_ui.set_composer(ComposerMode::Input);
             self.status = "login cancelled".into();
             self.insert_entry(&Entry::Notice(format!("{provider} login cancelled")));
             self.clear_transient_key_state();
@@ -36,7 +36,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        let ComposerMode::SecretInput(secret) = &mut self.input_ui.composer else {
+        let ComposerMode::SecretInput(secret) = self.input_ui.composer_mut() else {
             return Ok(false);
         };
 
@@ -44,11 +44,11 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 let target = secret.target.clone();
                 let value = secret.value.trim().to_string();
-                self.input_ui.composer = ComposerMode::Input;
+                self.input_ui.set_composer(ComposerMode::Input);
                 Some((target, value))
             }
             (_, KeyCode::Esc) => {
-                self.input_ui.composer = ComposerMode::Input;
+                self.input_ui.set_composer(ComposerMode::Input);
                 self.status = "login cancelled".into();
                 None
             }
@@ -97,13 +97,13 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, ComposerMode::ConfigNumberInput(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::ConfigNumberInput(_)) {
             return Ok(false);
         }
 
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                let ComposerMode::ConfigNumberInput(input) = &self.input_ui.composer else {
+                let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer() else {
                     return Ok(true);
                 };
                 let saved = match input.save(&self.info.services.config_repository) {
@@ -182,7 +182,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                let ComposerMode::ConfigNumberInput(input) = &self.input_ui.composer else {
+                let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer() else {
                     return Ok(true);
                 };
                 let selected_value = input.key.picker_value();
@@ -196,13 +196,13 @@ impl App {
     }
 
     pub(super) fn handle_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, ComposerMode::ConfigTextInput(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::ConfigTextInput(_)) {
             return Ok(false);
         }
 
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                let ComposerMode::ConfigTextInput(input) = &self.input_ui.composer else {
+                let ComposerMode::ConfigTextInput(input) = self.input_ui.composer() else {
                     return Ok(true);
                 };
                 let key = input.key;
@@ -251,7 +251,7 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                let ComposerMode::ConfigTextInput(input) = &self.input_ui.composer else {
+                let ComposerMode::ConfigTextInput(input) = self.input_ui.composer() else {
                     return Ok(true);
                 };
                 self.refresh_web_search_config_picker(input.key.picker_value())?;
@@ -289,21 +289,24 @@ impl App {
             .diagnostics
             .update_max_tool_output_lines(self.info.runtime.max_tool_output_lines);
         self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-        self.input_ui.composer =
-            ComposerMode::Picker(config_picker::config_picker(&self.info.runtime, &config));
+        self.input_ui
+            .set_composer(ComposerMode::Picker(config_picker::config_picker(
+                &self.info.runtime,
+                &config,
+            )));
         self.status = "config".into();
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
     }
 
     fn with_config_number_mut(&mut self, f: impl FnOnce(&mut ConfigNumberInput)) {
-        if let ComposerMode::ConfigNumberInput(input) = &mut self.input_ui.composer {
+        if let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer_mut() {
             f(input);
         }
     }
 
     fn with_config_text_mut(&mut self, f: impl FnOnce(&mut ConfigTextInput)) {
-        if let ComposerMode::ConfigTextInput(input) = &mut self.input_ui.composer {
+        if let ComposerMode::ConfigTextInput(input) = self.input_ui.composer_mut() {
             f(input);
         }
     }

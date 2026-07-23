@@ -71,8 +71,9 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.clear_submitted_input();
-                    self.input_ui.submission_mode = InputSubmissionMode::ParseCommands;
-                    self.input_ui.pending_images.clear();
+                    self.input_ui
+                        .set_submission_mode(InputSubmissionMode::ParseCommands);
+                    self.input_ui.clear_pending_images();
                     self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -92,13 +93,17 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
-                self.input_ui.cursor =
-                    previous_word_boundary(&self.input_ui.text, self.input_ui.cursor);
+                self.input_ui.set_cursor(previous_word_boundary(
+                    self.input_ui.text(),
+                    self.input_ui.cursor(),
+                ));
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
-                self.input_ui.cursor =
-                    next_word_boundary(&self.input_ui.text, self.input_ui.cursor);
+                self.input_ui.set_cursor(next_word_boundary(
+                    self.input_ui.text(),
+                    self.input_ui.cursor(),
+                ));
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {
@@ -121,22 +126,22 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 self.reset_input_history_navigation();
-                self.input_ui.cursor = 0;
+                self.input_ui.set_cursor(0);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
                 self.reset_input_history_navigation();
-                self.input_ui.cursor = self.input_char_len();
+                self.input_ui.set_cursor(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
                 self.queue_prompt_after_turn()?;
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
                 self.insert_input_char('\n');
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
@@ -150,7 +155,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             _ => {
-                self.input_ui.paste_burst.clear();
+                self.input_ui.paste_burst_mut().clear();
                 self.ctrl_c_streak = 0;
             }
         }
@@ -164,14 +169,14 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let prompt = self.expanded_input().trim().to_string();
-        let display_prompt = self.input_ui.text.clone();
-        let paste_segments = self.input_ui.paste_segments.clone();
-        if prompt.is_empty() && self.input_ui.shell_mode.is_none() {
+        let display_prompt = self.input_ui.text().to_string();
+        let paste_segments = self.input_ui.paste_segments().to_vec();
+        if prompt.is_empty() && self.input_ui.shell_mode().is_none() {
             self.clear_submitted_input();
             return Ok(());
         }
         if let Some((mode, command)) = self.shell_submission() {
-            if !self.input_ui.paste_segments.is_empty() {
+            if !self.input_ui.paste_segments().is_empty() {
                 return self.block_pasted_inline_shell();
             }
             self.clear_submitted_input();
@@ -206,7 +211,7 @@ impl App {
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.clear_submitted_input();
-        self.pending.steering_prompts.push_back(QueuedPrompt {
+        self.pending.steering_prompts_mut().push_back(QueuedPrompt {
             prompt,
             display_prompt,
             paste_segments,
@@ -214,16 +219,16 @@ impl App {
         self.select_pending_recall_target();
         self.insert_entry(&Entry::Notice(format!(
             "queued steer {} for after the current assistant turn",
-            self.pending.steering_prompts.len()
+            self.pending.steering_prompts().len()
         )));
-        self.status = format!("queued {} steer(s)", self.pending.steering_prompts.len());
+        self.status = format!("queued {} steer(s)", self.pending.steering_prompts().len());
         Ok(())
     }
 
     pub(super) fn queue_prompt_after_turn(&mut self) -> anyhow::Result<()> {
         let prompt = self.expanded_input().trim().to_string();
-        let display_prompt = self.input_ui.text.clone();
-        let paste_segments = self.input_ui.paste_segments.clone();
+        let display_prompt = self.input_ui.text().to_string();
+        let paste_segments = self.input_ui.paste_segments().to_vec();
         if prompt.is_empty() {
             self.clear_submitted_input();
             return Ok(());
@@ -239,7 +244,7 @@ impl App {
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.clear_submitted_input();
-        self.pending.queued_prompts.push_back(QueuedPrompt {
+        self.pending.push_follow_up(QueuedPrompt {
             prompt,
             display_prompt,
             paste_segments,
@@ -247,9 +252,9 @@ impl App {
         self.select_pending_recall_target();
         self.insert_entry(&Entry::Notice(format!(
             "queued message {} for after the current turn",
-            self.pending.queued_prompts.len()
+            self.pending.queued_prompts().len()
         )));
-        self.status = format!("queued {} message(s)", self.pending.queued_prompts.len());
+        self.status = format!("queued {} message(s)", self.pending.queued_prompts().len());
         Ok(())
     }
 
@@ -274,7 +279,7 @@ impl App {
                 ));
                 self.status = "running".into();
             } else {
-                self.input_ui.composer = ComposerMode::Picker(picker);
+                self.input_ui.set_composer(ComposerMode::Picker(picker));
                 self.status = "select model for next turn".into();
             }
             return Ok(());
@@ -377,26 +382,29 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Up) => {
                 let matches = self.command_matches();
                 if !matches.is_empty() {
-                    self.input_ui.command_selection = if self.input_ui.command_selection == 0 {
-                        matches.len() - 1
-                    } else {
-                        self.input_ui.command_selection - 1
-                    };
+                    self.input_ui.set_command_selection(
+                        if self.input_ui.command_selection() == 0 {
+                            matches.len() - 1
+                        } else {
+                            self.input_ui.command_selection() - 1
+                        },
+                    );
                 }
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
                 let matches = self.command_matches();
                 if !matches.is_empty() {
-                    self.input_ui.command_selection =
-                        (self.input_ui.command_selection + 1) % matches.len();
+                    self.input_ui.set_command_selection(
+                        (self.input_ui.command_selection() + 1) % matches.len(),
+                    );
                 }
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
                 if let Some(choice) = self.selected_command() {
                     self.complete_command_choice(&choice);
-                    self.input_ui.command_palette_dismissed = false;
+                    self.input_ui.set_command_palette_dismissed(false);
                     self.clamp_command_selection();
                 }
                 Ok(true)
@@ -410,8 +418,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Esc) => {
-                self.input_ui.command_palette_dismissed = true;
-                self.input_ui.command_selection = 0;
+                self.input_ui.set_command_palette_dismissed(true);
+                self.input_ui.set_command_selection(0);
                 Ok(true)
             }
             _ => Ok(false),
@@ -420,20 +428,20 @@ impl App {
 
     pub(super) fn submit_picker_selection_during_turn(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
-            self.input_ui.composer = ComposerMode::Input;
+            self.input_ui.set_composer(ComposerMode::Input);
             self.status = "running".into();
             return Ok(());
         };
 
         let return_picker = self.take_picker_parent_after_selection(action);
         if !matches!(action, PickerAction::Config) {
-            self.input_ui.composer = ComposerMode::Input;
+            self.input_ui.set_composer(ComposerMode::Input);
         }
         match action {
             PickerAction::InsertSkillCommand => {
                 self.input_ui
                     .set_text_and_cursor(format!("/skill:{value}"), self.input_char_len());
-                self.input_ui.command_palette_dismissed = true;
+                self.input_ui.set_command_palette_dismissed(true);
                 self.status = "skill command inserted".into();
             }
             PickerAction::ResumeSession | PickerAction::SelectTreeNode => {
@@ -510,17 +518,21 @@ impl App {
             }
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::MaxOutputBytes,
-                    config.max_output_bytes,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::MaxOutputBytes,
+                        config.max_output_bytes,
+                    ),
                 ));
                 self.status = "edit max output bytes".into();
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::MaxToolOutputLines,
-                    config.max_tool_output_lines,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::MaxToolOutputLines,
+                        config.max_tool_output_lines,
+                    ),
                 ));
                 self.status = "edit max tool output lines".into();
             }
@@ -544,17 +556,21 @@ impl App {
             }
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::CompactThresholdPercent,
-                    config.compact_threshold_percent as usize,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::CompactThresholdPercent,
+                        config.compact_threshold_percent as usize,
+                    ),
                 ));
                 self.status = "edit compact threshold percent".into();
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.composer = ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                    ConfigNumberKey::CompactTargetPercent,
-                    config.compact_target_percent as usize,
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::new(
+                        ConfigNumberKey::CompactTargetPercent,
+                        config.compact_target_percent as usize,
+                    ),
                 ));
                 self.status = "edit compact target percent".into();
             }
@@ -599,14 +615,14 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, ComposerMode::ConfigNumberInput(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::ConfigNumberInput(_)) {
             return Ok(false);
         }
         self.handle_config_number_key(key, terminal)
     }
 
     pub(super) fn handle_running_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer, ComposerMode::ConfigTextInput(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::ConfigTextInput(_)) {
             return Ok(false);
         }
         self.handle_config_text_key(key)
@@ -626,7 +642,7 @@ impl App {
             .map_or(deadline, |stream_deadline| stream_deadline.min(deadline));
         let deadline = self
             .input_ui
-            .paste_burst
+            .paste_burst()
             .deadline()
             .map_or(deadline, |paste_deadline| paste_deadline.min(deadline));
         tokio::time::Instant::from_std(deadline)
@@ -662,7 +678,7 @@ impl App {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.history.clear_text_selection();
                     if key.code == KeyCode::Esc
-                        && matches!(self.input_ui.composer, ComposerMode::Approval(_))
+                        && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
                     {
                         self.handle_approval_key(key, 1).map_err(|error| {
                             rho_providers::model::ModelError::InvalidResponse(error.to_string())
@@ -689,7 +705,7 @@ impl App {
                                 rho_providers::model::ModelError::InvalidResponse(err.to_string())
                             })?;
                         approval_resolved |= resolved;
-                        if self.pending.input_action.is_some() {
+                        if self.pending.input_action().is_some() {
                             break;
                         }
                     }
@@ -703,7 +719,7 @@ impl App {
                     let text = normalize_paste(&text);
                     self.flush_pending_paste_burst();
                     self.insert_paste(&text);
-                    self.input_ui.paste_burst.clear();
+                    self.input_ui.paste_burst_mut().clear();
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
@@ -737,7 +753,7 @@ impl App {
         self.command_palette_visible()
             || self.file_palette_visible()
             || self.pending_input_focused()
-            || !matches!(self.input_ui.composer, ComposerMode::Input)
+            || !matches!(self.input_ui.composer(), ComposerMode::Input)
     }
 
     pub(super) fn request_running_interrupt(

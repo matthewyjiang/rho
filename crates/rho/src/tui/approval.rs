@@ -92,7 +92,8 @@ pub(super) fn approval_decision(active: usize) -> ApprovalDecision {
 
 impl App {
     pub(super) async fn open_approval(&mut self, pending: PendingApproval) {
-        self.input_ui.composer = ComposerMode::Approval(ApprovalComposer::new(pending));
+        self.input_ui
+            .set_composer(ComposerMode::Approval(ApprovalComposer::new(pending)));
         self.status = "approval requested".into();
         self.report_herdr_waiting_for_user(HerdrUserWait::Approval)
             .await;
@@ -103,31 +104,31 @@ impl App {
         key: KeyEvent,
         width: usize,
     ) -> anyhow::Result<ApprovalKeyOutcome> {
-        if !matches!(self.input_ui.composer, ComposerMode::Approval(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
             return Ok(ApprovalKeyOutcome::Ignored);
         }
 
         let outcome = match key.code {
             KeyCode::Left | KeyCode::Up => {
-                if let ComposerMode::Approval(approval) = &mut self.input_ui.composer {
+                if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
                     approval.move_previous();
                 }
                 ApprovalKeyOutcome::Handled
             }
             KeyCode::Right | KeyCode::Down => {
-                if let ComposerMode::Approval(approval) = &mut self.input_ui.composer {
+                if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
                     approval.move_next();
                 }
                 ApprovalKeyOutcome::Handled
             }
             KeyCode::PageUp => {
-                if let ComposerMode::Approval(approval) = &mut self.input_ui.composer {
+                if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
                     approval.scroll_details_up(width);
                 }
                 ApprovalKeyOutcome::Handled
             }
             KeyCode::PageDown => {
-                if let ComposerMode::Approval(approval) = &mut self.input_ui.composer {
+                if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
                     approval.scroll_details_down();
                 }
                 ApprovalKeyOutcome::Handled
@@ -144,13 +145,13 @@ impl App {
             }
             _ => ApprovalKeyOutcome::Handled,
         };
-        self.input_ui.paste_burst.clear();
+        self.input_ui.paste_burst_mut().clear();
         self.ctrl_c_streak = 0;
         Ok(outcome)
     }
 
     pub(super) fn cancel_approval(&mut self) {
-        if matches!(self.input_ui.composer, ComposerMode::Approval(_)) {
+        if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
             self.finish_approval(Some(ApprovalDecision::Deny {
                 reason: DENIED_BY_USER_REASON.into(),
             }));
@@ -158,7 +159,7 @@ impl App {
     }
 
     fn finish_approval(&mut self, decision: Option<ApprovalDecision>) {
-        let composer = std::mem::replace(&mut self.input_ui.composer, ComposerMode::Input);
+        let composer = self.input_ui.take_composer();
         if let ComposerMode::Approval(mut approval) = composer {
             let decision = decision.unwrap_or_else(|| approval_decision(approval.active));
             approval.respond(decision);

@@ -352,7 +352,7 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if !matches!(self.input_ui.composer, ComposerMode::Input) {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return Ok(());
         }
         if self.info.session.recovered_messages.is_empty() {
@@ -415,10 +415,11 @@ impl App {
             ContextHandoffKind::Resume => "choose resume handoff",
             ContextHandoffKind::LoadedSession => "choose loaded-session handoff",
         };
-        self.input_ui.composer = ComposerMode::InlineChoice(InlineChoiceModal {
-            choice,
-            pending: InlineChoicePending::ContextHandoff(Box::new(pending)),
-        });
+        self.input_ui
+            .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                choice,
+                pending: InlineChoicePending::ContextHandoff(Box::new(pending)),
+            }));
         self.status = status.into();
     }
 
@@ -582,13 +583,13 @@ impl App {
         let _ = agent.take_pending_omission();
         self.info.session.session_id = Some(full_id);
         self.info.session.recovered_messages = display_history.clone();
-        self.input_ui.composer = ComposerMode::Input;
-        self.input_ui.text.clear();
-        self.input_ui.paste_segments.clear();
-        self.input_ui.shell_mode = None;
-        self.input_ui.cursor = 0;
-        self.input_ui.pending_images.clear();
-        self.input_ui.command_palette_dismissed = false;
+        self.input_ui.set_composer(ComposerMode::Input);
+        self.input_ui.clear_text();
+        self.input_ui.clear_paste_segments();
+        self.input_ui.set_shell_mode(None);
+        self.input_ui.set_cursor(0);
+        self.input_ui.clear_pending_images();
+        self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
         self.reset_streams();
         self.end_busy_ui();
@@ -651,7 +652,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if let Some(prompt) = self.pending.queued_prompts.pop_front() {
+        if let Some(prompt) = self.pending.queued_prompts_mut().pop_front() {
             self.restore_pending_prompt(prompt);
             return self.submit(terminal, agent).await;
         }

@@ -28,12 +28,14 @@ fn line_text(line: &Line<'_>) -> String {
 fn panel_distinguishes_steering_from_follow_ups_and_marks_recall_target() {
     let mut app = test_app();
     app.pending
-        .queued_prompts
+        .queued_prompts_mut()
         .push_back(prompt("run all tests"));
-    app.pending.accepted_steering.push_back(AcceptedSteering {
-        id: rho_sdk::SteeringId::new(),
-        prompt: prompt("keep the API stable"),
-    });
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: rho_sdk::SteeringId::new(),
+            prompt: prompt("keep the API stable"),
+        });
     app.select_pending_recall_target();
 
     let lines = app.pending_input_lines(80);
@@ -49,23 +51,25 @@ fn panel_distinguishes_steering_from_follow_ups_and_marks_recall_target() {
 #[test]
 fn alt_up_prioritizes_latest_local_steer_over_follow_up() {
     let mut app = test_app();
-    app.pending.queued_prompts.push_back(prompt("future turn"));
     app.pending
-        .steering_prompts
+        .queued_prompts_mut()
+        .push_back(prompt("future turn"));
+    app.pending
+        .steering_prompts_mut()
         .push_back(prompt("first steer"));
     app.pending
-        .steering_prompts
+        .steering_prompts_mut()
         .push_back(prompt("latest steer"));
 
     assert!(app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT)));
 
-    assert_eq!(app.input_ui.text, "latest steer");
+    assert_eq!(app.input_ui.text(), "latest steer");
     assert_eq!(
-        app.pending.steering_prompts,
+        *app.pending.steering_prompts(),
         VecDeque::from([prompt("first steer")])
     );
     assert_eq!(
-        app.pending.queued_prompts,
+        *app.pending.queued_prompts(),
         VecDeque::from([prompt("future turn")])
     );
 }
@@ -74,36 +78,40 @@ fn alt_up_prioritizes_latest_local_steer_over_follow_up() {
 fn alt_up_requests_retraction_for_accepted_steer() {
     let mut app = test_app();
     let id = rho_sdk::SteeringId::new();
-    app.pending.accepted_steering.push_back(AcceptedSteering {
-        id: id.clone(),
-        prompt: prompt("retract me"),
-    });
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: id.clone(),
+            prompt: prompt("retract me"),
+        });
 
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT));
 
     assert!(matches!(
-        app.pending.input_action,
+        app.pending.input_action(),
         Some(PendingInputAction::EditAccepted {
             id: ref action_id,
             ..
         }) if action_id == &id
     ));
-    assert!(app.input_ui.text.is_empty());
-    assert_eq!(app.pending.accepted_steering.len(), 1);
+    assert!(app.input_ui.text().is_empty());
+    assert_eq!(app.pending.accepted_steering().len(), 1);
 }
 
 #[test]
 fn alt_up_preserves_nonempty_composer() {
     let mut app = test_app();
-    app.input_ui.text = "draft".into();
-    app.input_ui.cursor = app.input_char_len();
-    app.pending.queued_prompts.push_back(prompt("future turn"));
+    app.input_ui.set_text("draft".to_string());
+    app.input_ui.set_cursor(app.input_char_len());
+    app.pending
+        .queued_prompts_mut()
+        .push_back(prompt("future turn"));
 
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT));
 
-    assert_eq!(app.input_ui.text, "draft");
+    assert_eq!(app.input_ui.text(), "draft");
     assert_eq!(
-        app.pending.queued_prompts,
+        *app.pending.queued_prompts(),
         VecDeque::from([prompt("future turn")])
     );
     assert_eq!(
@@ -116,20 +124,26 @@ fn alt_up_preserves_nonempty_composer() {
 fn applied_event_preserves_selection_of_a_later_pending_item() {
     let mut app = test_app();
     let applied = rho_sdk::SteeringId::new();
-    app.pending.accepted_steering.push_back(AcceptedSteering {
-        id: applied.clone(),
-        prompt: prompt("first steer"),
-    });
-    app.pending.accepted_steering.push_back(AcceptedSteering {
-        id: rho_sdk::SteeringId::new(),
-        prompt: prompt("second steer"),
-    });
-    app.pending.queued_prompts.push_back(prompt("future turn"));
-    app.pending.input_panel.selected = 2;
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: applied.clone(),
+            prompt: prompt("first steer"),
+        });
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: rho_sdk::SteeringId::new(),
+            prompt: prompt("second steer"),
+        });
+    app.pending
+        .queued_prompts_mut()
+        .push_back(prompt("future turn"));
+    app.pending.input_panel_mut().selected = 2;
 
     app.mark_steering_applied(&[applied]);
 
-    assert_eq!(app.pending.input_panel.selected, 1);
+    assert_eq!(app.pending.input_panel().selected, 1);
     let lines = app.pending_input_lines(80);
     assert!(line_text(&lines[2]).contains("▸ NEXT"));
 }
@@ -137,8 +151,8 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
 #[test]
 fn backspace_removes_the_selected_follow_up() {
     let mut app = test_app();
-    app.pending.queued_prompts.push_back(prompt("first"));
-    app.pending.queued_prompts.push_back(prompt("second"));
+    app.pending.queued_prompts_mut().push_back(prompt("first"));
+    app.pending.queued_prompts_mut().push_back(prompt("second"));
     app.select_pending_recall_target();
 
     app.handle_pending_input_key(key(KeyCode::Char('q'), KeyModifiers::ALT));
@@ -146,7 +160,7 @@ fn backspace_removes_the_selected_follow_up() {
     app.handle_pending_input_key(key(KeyCode::Backspace, KeyModifiers::NONE));
 
     assert_eq!(
-        app.pending.queued_prompts,
+        *app.pending.queued_prompts(),
         VecDeque::from([prompt("second")])
     );
 }
@@ -166,8 +180,8 @@ fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
     let failure = app.finish_pending_input_request(request, completion);
 
     assert_eq!(failure, None);
-    assert!(app.pending.steering_prompts.is_empty());
-    assert_eq!(app.pending.queued_prompts, VecDeque::from([queued]));
+    assert!(app.pending.steering_prompts().is_empty());
+    assert_eq!(*app.pending.queued_prompts(), VecDeque::from([queued]));
     assert_eq!(
         app.history.last_status_notice(),
         Some(
@@ -181,27 +195,33 @@ fn applied_event_removes_only_matching_steering() {
     let mut app = test_app();
     let applied = rho_sdk::SteeringId::new();
     let pending = rho_sdk::SteeringId::new();
-    app.pending.accepted_steering.push_back(AcceptedSteering {
-        id: applied.clone(),
-        prompt: prompt("applied"),
-    });
-    app.pending.accepted_steering.push_back(AcceptedSteering {
-        id: pending.clone(),
-        prompt: prompt("pending"),
-    });
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: applied.clone(),
+            prompt: prompt("applied"),
+        });
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: pending.clone(),
+            prompt: prompt("pending"),
+        });
 
     app.mark_steering_applied(&[applied]);
 
-    assert_eq!(app.pending.accepted_steering.len(), 1);
-    assert_eq!(app.pending.accepted_steering[0].id, pending);
+    assert_eq!(app.pending.accepted_steering().len(), 1);
+    assert_eq!(app.pending.accepted_steering()[0].id, pending);
 }
 
 #[test]
 fn panel_reserves_space_immediately_above_composer() {
     let mut app = test_app();
-    app.input_ui.text = "draft".into();
-    app.input_ui.cursor = app.input_char_len();
-    app.pending.queued_prompts.push_back(prompt("future turn"));
+    app.input_ui.set_text("draft".to_string());
+    app.input_ui.set_cursor(app.input_char_len());
+    app.pending
+        .queued_prompts_mut()
+        .push_back(prompt("future turn"));
     app.select_pending_recall_target();
 
     let layout = app.screen_layout(
@@ -219,11 +239,14 @@ fn panel_reserves_space_immediately_above_composer() {
 #[test]
 fn focused_panel_stays_visible_with_a_tall_composer_in_a_short_terminal() {
     let mut app = test_app();
-    app.input_ui.text =
-        "a long draft that wraps across many composer lines in a narrow terminal".into();
-    app.input_ui.cursor = app.input_char_len();
-    app.pending.queued_prompts.push_back(prompt("future turn"));
-    app.pending.input_panel.focused = true;
+    app.input_ui.set_text(
+        "a long draft that wraps across many composer lines in a narrow terminal".to_string(),
+    );
+    app.input_ui.set_cursor(app.input_char_len());
+    app.pending
+        .queued_prompts_mut()
+        .push_back(prompt("future turn"));
+    app.pending.input_panel_mut().focused = true;
     app.select_pending_recall_target();
 
     let layout = app.screen_layout(
@@ -238,10 +261,12 @@ fn focused_panel_stays_visible_with_a_tall_composer_in_a_short_terminal() {
 #[test]
 fn panel_lines_fit_narrow_terminal() {
     let mut app = test_app();
-    app.pending.accepted_steering.push_back(AcceptedSteering {
-        id: rho_sdk::SteeringId::new(),
-        prompt: prompt("a long steering prompt that must be truncated"),
-    });
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: rho_sdk::SteeringId::new(),
+            prompt: prompt("a long steering prompt that must be truncated"),
+        });
     app.select_pending_recall_target();
 
     for width in 1..40 {

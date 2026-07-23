@@ -41,7 +41,7 @@ impl App {
                     self.status = "no sessions".into();
                     return Ok(());
                 }
-                self.input_ui.composer = ComposerMode::Picker(picker);
+                self.input_ui.set_composer(ComposerMode::Picker(picker));
                 self.status = "select session".into();
             }
             Err(err) => {
@@ -61,7 +61,7 @@ impl App {
         match self.resume_session_by_id(session_id, terminal, agent).await {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.input_ui.composer = ComposerMode::Input;
+                self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Error(format!("could not resume session: {err}")));
                 self.status = "resume failed".into();
                 Ok(())

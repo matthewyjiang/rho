@@ -11,12 +11,12 @@ fn queued_prompt() -> QueuedPrompt {
 #[test]
 fn waiting_user_prompt_keeps_subagent_notifications_out_of_the_editable_queue() {
     let mut app = test_app();
-    app.pending.queued_prompts.push_back(queued_prompt());
+    app.pending.queued_prompts_mut().push_back(queued_prompt());
 
     assert!(!app.should_deliver_idle_subagent_completions());
-    assert_eq!(app.pending.queued_prompts.len(), 1);
+    assert_eq!(app.pending.queued_prompts().len(), 1);
 
-    app.pending.queued_prompts.clear();
+    app.pending.queued_prompts_mut().clear();
     assert!(app.should_deliver_idle_subagent_completions());
 }
 

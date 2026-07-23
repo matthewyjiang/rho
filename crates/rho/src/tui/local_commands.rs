@@ -109,7 +109,8 @@ impl App {
             herdr_socket_reachable: self.info.services.herdr.socket_is_reachable(),
             provider_health,
         });
-        self.input_ui.composer = super::ComposerMode::Picker(picker);
+        self.input_ui
+            .set_composer(super::ComposerMode::Picker(picker));
         self.status = "doctor diagnostics".into();
         Ok(())
     }

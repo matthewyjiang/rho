@@ -14,8 +14,8 @@ fn running_limits_query_does_not_queue_model_context() {
         Vec::new(),
     )));
 
-    assert!(app.pending.steering_prompts.is_empty());
-    assert!(app.pending.queued_prompts.is_empty());
+    assert!(app.pending.steering_prompts().is_empty());
+    assert!(app.pending.queued_prompts().is_empty());
     assert!(matches!(
         app.history.last(),
         Some(Entry::Notice(notice))
