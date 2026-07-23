@@ -122,8 +122,8 @@ pub(super) enum PickerAction {
 impl PickerAction {
     pub(super) fn space_confirms_selection(self) -> bool {
         match self {
-            // Dismiss overlays accept regex filters, so space must type into the filter.
             PickerAction::Config => true,
+            // Dismiss overlays accept regex filters, so space must type into the filter.
             PickerAction::Dismiss
             | PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel

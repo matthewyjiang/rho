@@ -569,8 +569,10 @@ fn nav_item_line(
     Line::from(spans)
 }
 
+const DETAIL_BADGE_ROWS: usize = 2;
+
 pub(super) fn detail_content_line_count(detail_lines: usize, has_badge: bool) -> usize {
-    detail_lines.saturating_add(usize::from(has_badge) * 2)
+    detail_lines.saturating_add(usize::from(has_badge) * DETAIL_BADGE_ROWS)
 }
 
 fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
@@ -604,7 +606,7 @@ fn detail_viewport_rows(
     if viewport_rows == 0 {
         return Vec::new();
     }
-    let badge_rows = usize::from(badge.is_some()) * 2;
+    let badge_rows = usize::from(badge.is_some()) * DETAIL_BADGE_ROWS;
     let line_count = detail_content_line_count(detail.len(), badge.is_some());
     let scroll = clamp_detail_scroll(detail_scroll, line_count, viewport_rows);
     let mut rows = (scroll..line_count)

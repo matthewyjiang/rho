@@ -142,7 +142,7 @@ fn detail_badge_rows_never_exceed_narrow_overlay_widths() {
         tone: PickerBadgeTone::Healthy,
     });
 
-    for width in [12_u16, 18, 24, 36, 48] {
+    for width in [8_u16, 12, 18, 24, 36, 48] {
         let frame = render_picker_overlay(&long_badge, Rect::new(0, 0, width, 20));
         for line in &frame.lines {
             let text = line_text(line);

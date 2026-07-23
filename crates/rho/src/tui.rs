@@ -1063,13 +1063,9 @@ impl App {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
-                    self.input.clear();
-                    self.paste_segments.clear();
-                    self.shell_mode = None;
+                    self.clear_submitted_input();
                     self.input_submission_mode = InputSubmissionMode::ParseCommands;
                     self.pending_images.clear();
-                    self.input_cursor = 0;
-                    self.clamp_command_selection();
                     self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -2009,13 +2005,9 @@ impl App {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
-                    self.input.clear();
-                    self.paste_segments.clear();
-                    self.shell_mode = None;
+                    self.clear_submitted_input();
                     self.input_submission_mode = InputSubmissionMode::ParseCommands;
                     self.pending_images.clear();
-                    self.input_cursor = 0;
-                    self.clamp_command_selection();
                     self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {
