@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.7.2...rho-sdk-v1.8.0) (2026-07-23)
+
+
+### Features
+
+* **providers:** use OpenAI server-side compaction for codex and api-key ([#514](https://github.com/matthewyjiang/rho/issues/514)) ([b18eadd](https://github.com/matthewyjiang/rho/commit/b18eadd6752de2945361cd59a60ffc4cc7b807ad))
+* **questionnaire:** support choice descriptions ([#510](https://github.com/matthewyjiang/rho/issues/510)) ([066899c](https://github.com/matthewyjiang/rho/commit/066899c2ad12ca23c2b7772de4b0a6a3c6161497))
+
+
+### Bug Fixes
+
+* **poolside:** publish final stream usage snapshot ([#516](https://github.com/matthewyjiang/rho/issues/516)) ([d51ebab](https://github.com/matthewyjiang/rho/commit/d51ebabcc4823ef11b21b8fadecd6625956146d2))
+
 ## [1.7.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.7.1...rho-sdk-v1.7.2) (2026-07-22)
 
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.8.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.7.1...rho-providers-v0.8.0) (2026-07-23)
+
+
+### Features
+
+* **providers:** use OpenAI server-side compaction for codex and api-key ([#514](https://github.com/matthewyjiang/rho/issues/514)) ([b18eadd](https://github.com/matthewyjiang/rho/commit/b18eadd6752de2945361cd59a60ffc4cc7b807ad))
+* **questionnaire:** support choice descriptions ([#510](https://github.com/matthewyjiang/rho/issues/510)) ([066899c](https://github.com/matthewyjiang/rho/commit/066899c2ad12ca23c2b7772de4b0a6a3c6161497))
+
+
+### Bug Fixes
+
+* **poolside:** publish final stream usage snapshot ([#516](https://github.com/matthewyjiang/rho/issues/516)) ([d51ebab](https://github.com/matthewyjiang/rho/commit/d51ebabcc4823ef11b21b8fadecd6625956146d2))
+* **usage:** normalize cache write token accounting ([#511](https://github.com/matthewyjiang/rho/issues/511)) ([4e15982](https://github.com/matthewyjiang/rho/commit/4e15982a1e6f4738d40611d77c721ac26051bfda))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.7.2 to 1.8.0
+
 ## [0.7.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.7.0...rho-providers-v0.7.1) (2026-07-22)
 
 

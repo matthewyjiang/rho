@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.13.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.12.2...rho-coding-agent-v1.13.0) (2026-07-23)
+
+
+### Features
+
+* **providers:** use OpenAI server-side compaction for codex and api-key ([#514](https://github.com/matthewyjiang/rho/issues/514)) ([b18eadd](https://github.com/matthewyjiang/rho/commit/b18eadd6752de2945361cd59a60ffc4cc7b807ad))
+* **questionnaire:** support choice descriptions ([#510](https://github.com/matthewyjiang/rho/issues/510)) ([066899c](https://github.com/matthewyjiang/rho/commit/066899c2ad12ca23c2b7772de4b0a6a3c6161497))
+* **tui:** add help overlay and clarify shell mode ([#515](https://github.com/matthewyjiang/rho/issues/515)) ([f1e4d20](https://github.com/matthewyjiang/rho/commit/f1e4d201ee559c385413d50b8b7eb451fb298815))
+* **tui:** add model handoff compaction choice ([#513](https://github.com/matthewyjiang/rho/issues/513)) ([c7bdf84](https://github.com/matthewyjiang/rho/commit/c7bdf8439672dc4f741db3ab505accad1ff2dac1))
+* **tui:** edit composer in external editor ([#523](https://github.com/matthewyjiang/rho/issues/523)) ([113e8c4](https://github.com/matthewyjiang/rho/commit/113e8c43929b1981d9d9a00ed97873c1db4628cd))
+
+
+### Bug Fixes
+
+* **usage:** normalize cache write token accounting ([#511](https://github.com/matthewyjiang/rho/issues/511)) ([4e15982](https://github.com/matthewyjiang/rho/commit/4e15982a1e6f4738d40611d77c721ac26051bfda))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.7.2 to 1.8.0
+    * rho-providers bumped from 0.7.1 to 0.8.0
+
 ## [1.12.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.12.1...rho-coding-agent-v1.12.2) (2026-07-22)
 
 
