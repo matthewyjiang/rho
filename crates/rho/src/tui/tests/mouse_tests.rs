@@ -41,7 +41,7 @@ fn terminal_clipboard_request_is_not_reported_as_a_confirmed_copy() {
     app.copy_text("hello", Instant::now());
 
     assert_eq!(
-        app.copy_notice.as_ref().unwrap().message(),
+        app.history.copy_notice.as_ref().unwrap().message(),
         "5 chars sent to terminal"
     );
 }
@@ -54,7 +54,7 @@ fn clipboard_write_failure_is_reported() {
     app.copy_text("hello", Instant::now());
 
     assert_eq!(
-        app.copy_notice.as_ref().unwrap().message(),
+        app.history.copy_notice.as_ref().unwrap().message(),
         "copy failed: terminal closed"
     );
 }
@@ -91,11 +91,11 @@ fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
         .unwrap();
 
     assert!(matches!(
-        app.transcript.first(),
+        app.history.transcript.first(),
         Some(Entry::Tool(ToolEntry { expanded: true, .. }))
     ));
     assert!(matches!(
-        app.transcript.last(),
+        app.history.transcript.last(),
         Some(Entry::Tool(ToolEntry {
             expanded: false,
             ..
@@ -124,14 +124,14 @@ fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
         .unwrap();
 
     assert!(matches!(
-        app.transcript.first(),
+        app.history.transcript.first(),
         Some(Entry::Tool(ToolEntry {
             expanded: false,
             ..
         }))
     ));
     assert!(matches!(
-        app.transcript.last(),
+        app.history.transcript.last(),
         Some(Entry::Tool(ToolEntry { expanded: true, .. }))
     ));
     assert_eq!(
@@ -163,14 +163,14 @@ fn clicking_expandable_tool_output_toggles_the_clicked_entry() {
         .unwrap();
 
     assert!(matches!(
-        app.transcript.first(),
+        app.history.transcript.first(),
         Some(Entry::Tool(ToolEntry {
             expanded: false,
             ..
         }))
     ));
     assert!(matches!(
-        app.transcript.last(),
+        app.history.transcript.last(),
         Some(Entry::Tool(ToolEntry {
             expanded: false,
             ..
@@ -253,10 +253,10 @@ fn dragging_transcript_text_copies_on_mouse_release() {
 
     assert_eq!(*copied.lock().unwrap(), vec!["hello".to_string()]);
     assert_eq!(
-        app.copy_notice.as_ref().unwrap().message(),
+        app.history.copy_notice.as_ref().unwrap().message(),
         "5 chars copied"
     );
-    assert!(app.text_selection.is_some());
+    assert!(app.history.text_selection.is_some());
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn scrolling_during_drag_extends_selection_beyond_the_original_viewport() {
     .unwrap();
     app.handle_mouse_event(MouseEventKind::ScrollUp, 0, layout.history.y, &mut terminal)
         .unwrap();
-    assert!(app.text_selection.is_some());
+    assert!(app.history.text_selection.is_some());
 
     let scrolled_layout = app.screen_layout(Rect::new(0, 0, 40, 12), Instant::now());
     let scrolled_start =
@@ -353,7 +353,7 @@ fn mermaid_copy_button_copies_source_instead_of_rendered_art() {
     .unwrap();
 
     assert_eq!(*copied.lock().unwrap(), vec![source.to_string()]);
-    assert!(app.text_selection.is_none());
+    assert!(app.history.text_selection.is_none());
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn code_block_copy_button_hovers_and_copies_raw_contents() {
 
     app.handle_mouse_event(MouseEventKind::Moved, column, row, &mut terminal)
         .unwrap();
-    assert_eq!(app.hovered_code_block_copy, Some(target.line));
+    assert_eq!(app.history.hovered_code_block_copy, Some(target.line));
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let hovered_style = terminal.backend().buffer()[(column, row)].style();
     let expected_hovered_style = Theme::markdown_code_copy_button(/*hovered*/ true);
@@ -397,8 +397,8 @@ fn code_block_copy_button_hovers_and_copies_raw_contents() {
         vec!["let x = 1;\nprintln!(\"{x}\");".to_string()]
     );
     assert_eq!(
-        app.copy_notice.as_ref().unwrap().message(),
+        app.history.copy_notice.as_ref().unwrap().message(),
         "27 chars copied"
     );
-    assert!(app.text_selection.is_none());
+    assert!(app.history.text_selection.is_none());
 }

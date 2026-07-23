@@ -148,7 +148,7 @@ impl App {
             return Ok(());
         }
 
-        self.composer = ComposerMode::Picker(picker);
+        self.input_ui.composer = ComposerMode::Picker(picker);
         self.status = "select model".into();
         Ok(())
     }
@@ -159,7 +159,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
-            self.composer = ComposerMode::Input;
+            self.input_ui.composer = ComposerMode::Input;
             self.status = "ready".into();
             return Ok(());
         };
@@ -175,7 +175,7 @@ impl App {
             action,
             PickerAction::Config | PickerAction::LoginGroup | PickerAction::ViewAgent
         ) {
-            self.composer = ComposerMode::Input;
+            self.input_ui.composer = ComposerMode::Input;
         }
         let result = match action {
             PickerAction::SelectModel => {
@@ -253,10 +253,10 @@ impl App {
             PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
-                self.shell_mode = None;
-                self.input = format!("/skill:{value}");
-                self.input_cursor = self.input_char_len();
-                self.command_palette_dismissed = true;
+                self.input_ui.shell_mode = None;
+                self.input_ui.input = format!("/skill:{value}");
+                self.input_ui.input_cursor = self.input_char_len();
+                self.input_ui.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
                 Ok(())
             }
@@ -269,7 +269,7 @@ impl App {
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
             PickerAction::ViewAgent => {
                 if !self.open_selected_internal_agent_model_picker(&value) {
-                    self.composer = ComposerMode::Input;
+                    self.input_ui.composer = ComposerMode::Input;
                     self.status = "ready".into();
                 }
                 Ok(())
@@ -284,7 +284,7 @@ impl App {
 
     pub(super) fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
         if !self.pop_picker_level() {
-            self.composer = ComposerMode::Input;
+            self.input_ui.composer = ComposerMode::Input;
             self.status = if running { "running" } else { "ready" }.into();
         }
         Ok(())
@@ -292,7 +292,7 @@ impl App {
 
     pub(super) fn model_picker_is_open(&self) -> bool {
         matches!(
-            &self.composer,
+            &self.input_ui.composer,
             ComposerMode::Picker(picker)
                 if matches!(
                     picker.action,
@@ -315,7 +315,7 @@ impl App {
             return Ok(());
         };
 
-        let filter = match &self.composer {
+        let filter = match &self.input_ui.composer {
             ComposerMode::Picker(picker) => picker.filter.clone(),
             _ => String::new(),
         };
@@ -381,7 +381,7 @@ impl App {
             | PickerAction::Dismiss => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
-        self.composer = ComposerMode::Picker(picker);
+        self.input_ui.composer = ComposerMode::Picker(picker);
         let action = if pinned { "pinned" } else { "unpinned" };
         self.insert_entry(&Entry::Notice(format!("{action} {value}")));
         self.status = format!("{action} model");
@@ -390,7 +390,7 @@ impl App {
 
     pub(super) fn picker_space_confirms_selection(&self) -> bool {
         matches!(
-            &self.composer,
+            &self.input_ui.composer,
             ComposerMode::Picker(picker) if picker.action.space_confirms_selection()
         )
     }
@@ -441,7 +441,7 @@ impl App {
             | PickerAction::Config
             | PickerAction::Dismiss => return None,
         };
-        match &mut self.composer {
+        match &mut self.input_ui.composer {
             ComposerMode::Picker(picker) => {
                 picker.take_parent().map(|parent| (parent, selected_value))
             }
@@ -450,7 +450,7 @@ impl App {
     }
 
     pub(super) fn active_picker_selection(&self) -> Option<(PickerAction, String)> {
-        let ComposerMode::Picker(picker) = &self.composer else {
+        let ComposerMode::Picker(picker) = &self.input_ui.composer else {
             return None;
         };
         picker

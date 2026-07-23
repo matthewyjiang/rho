@@ -17,20 +17,21 @@ impl App {
         if count == 0 {
             return 0;
         }
-        1 + count.min(MAX_VISIBLE_ITEMS) + usize::from(self.pending_input_panel.focused)
+        1 + count.min(MAX_VISIBLE_ITEMS) + usize::from(self.pending.pending_input_panel.focused)
     }
 
     pub(in crate::tui) fn pending_input_lines(&mut self, width: usize) -> Vec<Line<'static>> {
         let items = self.pending_input_refs();
         if items.is_empty() {
-            self.pending_input_panel.focused = false;
+            self.pending.pending_input_panel.focused = false;
             return Vec::new();
         }
         self.clamp_pending_input_selection(items.len());
-        let selected = self.pending_input_panel.selected;
+        let selected = self.pending.pending_input_panel.selected;
         let start = visible_start(selected, items.len(), MAX_VISIBLE_ITEMS);
-        let steering_count = self.accepted_steering.len() + self.steering_prompts.len();
-        let hint = if self.pending_input_panel.focused {
+        let steering_count =
+            self.pending.accepted_steering.len() + self.pending.steering_prompts.len();
+        let hint = if self.pending.pending_input_panel.focused {
             "↑↓ select · enter edit · backspace discard · esc close".to_string()
         } else {
             format!(
@@ -42,7 +43,7 @@ impl App {
         let mut lines = vec![pending_header_line(
             width,
             steering_count,
-            self.queued_prompts.len(),
+            self.pending.queued_prompts.len(),
             &hint,
         )];
         lines.extend(
@@ -55,7 +56,7 @@ impl App {
                     self.pending_item_line(width, *item, start + visible_index == selected)
                 }),
         );
-        if self.pending_input_panel.focused {
+        if self.pending.pending_input_panel.focused {
             lines.push(Line::styled(
                 truncate_one_line(
                     "  steer affects this run · next starts after this turn",
@@ -76,8 +77,8 @@ impl App {
         let marker = if selected { "▸ " } else { "  " };
         let (label, context, prompt, label_style) = match item {
             PendingInputRef::AcceptedSteering(index) => {
-                let entry = &self.accepted_steering[index];
-                let context = if self.retracting_steering.as_ref() == Some(&entry.id) {
+                let entry = &self.pending.accepted_steering[index];
+                let context = if self.pending.retracting_steering.as_ref() == Some(&entry.id) {
                     "retracting"
                 } else {
                     "current run"
@@ -92,13 +93,13 @@ impl App {
             PendingInputRef::LocalSteering(index) => (
                 "STEER",
                 "sending",
-                &self.steering_prompts[index].display_prompt,
+                &self.pending.steering_prompts[index].display_prompt,
                 Theme::warning(),
             ),
             PendingInputRef::FollowUp(index) => (
                 "NEXT",
                 "after turn",
-                &self.queued_prompts[index].display_prompt,
+                &self.pending.queued_prompts[index].display_prompt,
                 Theme::accent(),
             ),
         };

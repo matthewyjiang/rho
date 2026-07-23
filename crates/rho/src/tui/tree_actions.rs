@@ -95,7 +95,7 @@ impl App {
             self.status = "empty session tree".into();
             return Ok(());
         }
-        self.composer = ComposerMode::Picker(tree_picker(items));
+        self.input_ui.composer = ComposerMode::Picker(tree_picker(items));
         self.status = "select conversation state".into();
         Ok(())
     }
@@ -122,21 +122,21 @@ impl App {
         agent.select_tree_node(storage, &target_id).await?;
 
         self.info.session.recovered_messages = histories.display.clone();
-        self.composer = ComposerMode::Input;
-        self.input.clear();
-        self.paste_segments.clear();
-        self.shell_mode = None;
-        self.input_cursor = 0;
-        self.command_palette_dismissed = false;
+        self.input_ui.composer = ComposerMode::Input;
+        self.input_ui.input.clear();
+        self.input_ui.paste_segments.clear();
+        self.input_ui.shell_mode = None;
+        self.input_ui.input_cursor = 0;
+        self.input_ui.command_palette_dismissed = false;
         self.reset_streams();
         self.goal = None;
         self.reset_usage();
         self.usage.current_context = None;
-        self.transcript = visible_entries;
-        self.markdown_images.clear();
-        self.mark_markdown_images_dirty_from(0);
-        self.history_lines.invalidate_from(0);
-        self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
+        self.history.transcript = visible_entries;
+        self.history.markdown_images.clear();
+        self.history.invalidate_from(0);
+        self.history.last_inserted_was_tool =
+            self.history.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));

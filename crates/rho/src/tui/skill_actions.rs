@@ -15,7 +15,7 @@ impl App {
             return Ok(());
         }
 
-        self.composer = ComposerMode::Picker(picker);
+        self.input_ui.composer = ComposerMode::Picker(picker);
         self.status = "select skill".into();
         Ok(())
     }

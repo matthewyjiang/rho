@@ -56,7 +56,7 @@ pub(super) enum PendingInputAction {
 
 impl App {
     pub(super) fn pending_input_focused(&self) -> bool {
-        self.pending_input_panel.focused
+        self.pending.pending_input_panel.focused
     }
 
     pub(super) fn handle_pending_input_key(&mut self, key: KeyEvent) -> bool {
@@ -70,8 +70,9 @@ impl App {
             if self.pending_input_count() == 0 {
                 self.notify_status("no pending input");
             } else {
-                self.pending_input_panel.focused = !self.pending_input_panel.focused;
-                if self.pending_input_panel.focused {
+                self.pending.pending_input_panel.focused =
+                    !self.pending.pending_input_panel.focused;
+                if self.pending.pending_input_panel.focused {
                     self.select_pending_recall_target();
                 }
             }
@@ -79,7 +80,7 @@ impl App {
             return true;
         }
 
-        if !self.pending_input_panel.focused {
+        if !self.pending.pending_input_panel.focused {
             if self
                 .info
                 .runtime
@@ -109,18 +110,20 @@ impl App {
         let count = self.pending_input_count();
         match (key.modifiers, key.code) {
             (_, KeyCode::Esc) => {
-                self.pending_input_panel.focused = false;
+                self.pending.pending_input_panel.focused = false;
             }
             (_, KeyCode::Up) => {
-                self.pending_input_panel.selected =
-                    self.pending_input_panel.selected.saturating_sub(1);
+                self.pending.pending_input_panel.selected =
+                    self.pending.pending_input_panel.selected.saturating_sub(1);
             }
             (_, KeyCode::Down) => {
-                self.pending_input_panel.selected =
-                    (self.pending_input_panel.selected + 1).min(count.saturating_sub(1));
+                self.pending.pending_input_panel.selected =
+                    (self.pending.pending_input_panel.selected + 1).min(count.saturating_sub(1));
             }
-            (_, KeyCode::Home) => self.pending_input_panel.selected = 0,
-            (_, KeyCode::End) => self.pending_input_panel.selected = count.saturating_sub(1),
+            (_, KeyCode::Home) => self.pending.pending_input_panel.selected = 0,
+            (_, KeyCode::End) => {
+                self.pending.pending_input_panel.selected = count.saturating_sub(1)
+            }
             (_, KeyCode::Enter) => self.edit_selected_pending_input(),
             (_, KeyCode::Backspace | KeyCode::Delete) => {
                 self.discard_selected_pending_input();
@@ -128,7 +131,7 @@ impl App {
             (modifiers, KeyCode::Char(_))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
-                self.pending_input_panel.focused = false;
+                self.pending.pending_input_panel.focused = false;
                 return false;
             }
             _ => {}
@@ -141,14 +144,14 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> Option<PendingInputRequest> {
-        if let Some(action) = self.pending_input_action.take() {
+        if let Some(action) = self.pending.pending_input_action.take() {
             let id = match &action {
                 PendingInputAction::EditAccepted { id, .. }
                 | PendingInputAction::DiscardAccepted { id } => id.clone(),
             };
             return match agent.request_steering_retraction(id.clone()) {
                 Ok(receipt) => {
-                    self.retracting_steering = Some(id);
+                    self.pending.retracting_steering = Some(id);
                     Some(PendingInputRequest::Retract { action, receipt })
                 }
                 Err(error) => {
@@ -158,11 +161,11 @@ impl App {
             };
         }
 
-        let prompt = self.steering_prompts.pop_front()?;
+        let prompt = self.pending.steering_prompts.pop_front()?;
         match agent.request_steer(rho_sdk::UserInput::text(prompt.prompt.clone())) {
             Ok(receipt) => Some(PendingInputRequest::Accept { prompt, receipt }),
             Err(error) => {
-                self.steering_prompts.push_front(prompt);
+                self.pending.steering_prompts.push_front(prompt);
                 self.notify_status(format!("could not submit steer: {error}"));
                 None
             }
@@ -179,7 +182,8 @@ impl App {
                 PendingInputRequest::Accept { prompt, .. },
                 PendingInputCompletion::Accepted(Ok(id)),
             ) => {
-                self.accepted_steering
+                self.pending
+                    .accepted_steering
                     .push_back(AcceptedSteering { id, prompt });
                 self.select_pending_recall_target();
                 None
@@ -188,7 +192,7 @@ impl App {
                 PendingInputRequest::Accept { prompt, .. },
                 PendingInputCompletion::Accepted(Err(error)),
             ) => {
-                self.queued_prompts.push_front(prompt);
+                self.pending.queued_prompts.push_front(prompt);
                 self.select_pending_recall_target();
                 self.notify_status(format!("steer queued as follow-up: {error}"));
                 None
@@ -197,7 +201,7 @@ impl App {
                 PendingInputRequest::Retract { action, .. },
                 PendingInputCompletion::Retracted(result),
             ) => {
-                self.retracting_steering = None;
+                self.pending.retracting_steering = None;
                 self.finish_steering_retraction(action, result);
                 None
             }
@@ -242,29 +246,30 @@ impl App {
 
     pub(super) fn mark_steering_applied(&mut self, ids: &[rho_sdk::SteeringId]) {
         let selection = self.pending_selection_anchor();
-        self.accepted_steering
+        self.pending
+            .accepted_steering
             .retain(|entry| !ids.contains(&entry.id));
         self.restore_pending_selection(selection);
         self.pending_input_changed();
     }
 
     pub(super) fn clear_accepted_steering(&mut self) {
-        self.accepted_steering.clear();
-        self.retracting_steering = None;
-        self.pending_input_action = None;
+        self.pending.accepted_steering.clear();
+        self.pending.retracting_steering = None;
+        self.pending.pending_input_action = None;
         self.pending_input_changed();
     }
 
     pub(super) fn select_pending_recall_target(&mut self) {
-        let accepted = self.accepted_steering.len();
-        let local = self.steering_prompts.len();
-        let follow_up = self.queued_prompts.len();
+        let accepted = self.pending.accepted_steering.len();
+        let local = self.pending.steering_prompts.len();
+        let follow_up = self.pending.queued_prompts.len();
         if accepted + local + follow_up == 0 {
-            self.pending_input_panel.focused = false;
-            self.pending_input_panel.selected = 0;
+            self.pending.pending_input_panel.focused = false;
+            self.pending.pending_input_panel.selected = 0;
             return;
         }
-        self.pending_input_panel.selected = if local > 0 {
+        self.pending.pending_input_panel.selected = if local > 0 {
             accepted + local - 1
         } else if accepted > 0 {
             accepted - 1
@@ -277,28 +282,31 @@ impl App {
         let count = self.pending_input_count();
         self.clamp_pending_input_selection(count);
         if count == 0 {
-            self.pending_input_panel.focused = false;
+            self.pending.pending_input_panel.focused = false;
         }
     }
 
     fn pending_input_count(&self) -> usize {
-        self.accepted_steering.len() + self.steering_prompts.len() + self.queued_prompts.len()
+        self.pending.accepted_steering.len()
+            + self.pending.steering_prompts.len()
+            + self.pending.queued_prompts.len()
     }
 
     fn pending_input_refs(&self) -> Vec<PendingInputRef> {
-        (0..self.accepted_steering.len())
+        (0..self.pending.accepted_steering.len())
             .map(PendingInputRef::AcceptedSteering)
-            .chain((0..self.steering_prompts.len()).map(PendingInputRef::LocalSteering))
-            .chain((0..self.queued_prompts.len()).map(PendingInputRef::FollowUp))
+            .chain((0..self.pending.steering_prompts.len()).map(PendingInputRef::LocalSteering))
+            .chain((0..self.pending.queued_prompts.len()).map(PendingInputRef::FollowUp))
             .collect()
     }
 
     fn pending_selection_anchor(&self) -> Option<PendingSelectionAnchor> {
         match self
             .pending_input_refs()
-            .get(self.pending_input_panel.selected)?
+            .get(self.pending.pending_input_panel.selected)?
         {
             PendingInputRef::AcceptedSteering(index) => self
+                .pending
                 .accepted_steering
                 .get(*index)
                 .map(|entry| PendingSelectionAnchor::Accepted(entry.id.clone())),
@@ -313,21 +321,25 @@ impl App {
         };
         let selected = match selection {
             PendingSelectionAnchor::Accepted(id) => self
+                .pending
                 .accepted_steering
                 .iter()
                 .position(|entry| entry.id == id),
-            PendingSelectionAnchor::Local(index) => Some(self.accepted_steering.len() + index),
-            PendingSelectionAnchor::FollowUp(index) => {
-                Some(self.accepted_steering.len() + self.steering_prompts.len() + index)
+            PendingSelectionAnchor::Local(index) => {
+                Some(self.pending.accepted_steering.len() + index)
             }
+            PendingSelectionAnchor::FollowUp(index) => Some(
+                self.pending.accepted_steering.len() + self.pending.steering_prompts.len() + index,
+            ),
         };
         if let Some(selected) = selected {
-            self.pending_input_panel.selected = selected;
+            self.pending.pending_input_panel.selected = selected;
         }
     }
 
     fn clamp_pending_input_selection(&mut self, count: usize) {
-        self.pending_input_panel.selected = self
+        self.pending.pending_input_panel.selected = self
+            .pending
             .pending_input_panel
             .selected
             .min(count.saturating_sub(1));
@@ -349,63 +361,64 @@ impl App {
         }
         let Some(item) = self
             .pending_input_refs()
-            .get(self.pending_input_panel.selected)
+            .get(self.pending.pending_input_panel.selected)
             .copied()
         else {
             return;
         };
         match item {
             PendingInputRef::AcceptedSteering(index) => {
-                let entry = &self.accepted_steering[index];
-                if self.retracting_steering.as_ref() == Some(&entry.id) {
+                let entry = &self.pending.accepted_steering[index];
+                if self.pending.retracting_steering.as_ref() == Some(&entry.id) {
                     self.notify_status("steer retraction is already in progress");
                     return;
                 }
-                self.pending_input_action = Some(PendingInputAction::EditAccepted {
+                self.pending.pending_input_action = Some(PendingInputAction::EditAccepted {
                     id: entry.id.clone(),
                     prompt: entry.prompt.clone(),
                 });
             }
             PendingInputRef::LocalSteering(index) => {
-                if let Some(prompt) = self.steering_prompts.remove(index) {
+                if let Some(prompt) = self.pending.steering_prompts.remove(index) {
                     self.restore_pending_prompt(prompt);
                     self.notify_status("editing queued steer");
                 }
             }
             PendingInputRef::FollowUp(index) => {
-                if let Some(prompt) = self.queued_prompts.remove(index) {
+                if let Some(prompt) = self.pending.queued_prompts.remove(index) {
                     self.restore_pending_prompt(prompt);
                     self.notify_status("editing queued follow-up");
                 }
             }
         }
-        self.pending_input_panel.focused = false;
+        self.pending.pending_input_panel.focused = false;
         self.pending_input_changed();
     }
 
     fn discard_selected_pending_input(&mut self) {
         let Some(item) = self
             .pending_input_refs()
-            .get(self.pending_input_panel.selected)
+            .get(self.pending.pending_input_panel.selected)
             .copied()
         else {
             return;
         };
         match item {
             PendingInputRef::AcceptedSteering(index) => {
-                let id = self.accepted_steering[index].id.clone();
-                if self.retracting_steering.as_ref() == Some(&id) {
+                let id = self.pending.accepted_steering[index].id.clone();
+                if self.pending.retracting_steering.as_ref() == Some(&id) {
                     self.notify_status("steer retraction is already in progress");
                     return;
                 }
-                self.pending_input_action = Some(PendingInputAction::DiscardAccepted { id });
+                self.pending.pending_input_action =
+                    Some(PendingInputAction::DiscardAccepted { id });
             }
             PendingInputRef::LocalSteering(index) => {
-                self.steering_prompts.remove(index);
+                self.pending.steering_prompts.remove(index);
                 self.notify_status("queued steer discarded");
             }
             PendingInputRef::FollowUp(index) => {
-                self.queued_prompts.remove(index);
+                self.pending.queued_prompts.remove(index);
                 self.notify_status("queued follow-up discarded");
             }
         }
@@ -413,25 +426,27 @@ impl App {
     }
 
     fn composer_available_for_pending_edit(&self) -> bool {
-        matches!(self.composer, ComposerMode::Input)
-            && self.input.is_empty()
-            && self.paste_segments.is_empty()
-            && self.pending_images.is_empty()
-            && self.shell_mode.is_none()
+        matches!(self.input_ui.composer, ComposerMode::Input)
+            && self.input_ui.input.is_empty()
+            && self.input_ui.paste_segments.is_empty()
+            && self.input_ui.pending_images.is_empty()
+            && self.input_ui.shell_mode.is_none()
     }
 
     pub(super) fn restore_pending_prompt(&mut self, prompt: QueuedPrompt) {
-        self.shell_mode = None;
-        self.input = prompt.display_prompt;
-        self.paste_segments = prompt.paste_segments;
-        self.input_submission_mode = InputSubmissionMode::ParseCommands;
-        self.input_cursor = self.input_char_len();
+        self.input_ui.shell_mode = None;
+        self.input_ui.input = prompt.display_prompt;
+        self.input_ui.paste_segments = prompt.paste_segments;
+        self.input_ui.input_submission_mode = InputSubmissionMode::ParseCommands;
+        self.input_ui.input_cursor = self.input_char_len();
         self.reset_input_history_navigation();
         self.input_changed();
     }
 
     fn remove_accepted_steering(&mut self, id: &rho_sdk::SteeringId) {
-        self.accepted_steering.retain(|entry| &entry.id != id);
+        self.pending
+            .accepted_steering
+            .retain(|entry| &entry.id != id);
         self.pending_input_changed();
     }
 }

@@ -8,7 +8,8 @@ const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl App {
     pub(super) fn command_matches(&self) -> Vec<CommandChoice> {
-        let argument_choices = commands::argument_choices(&self.input, self.input_cursor);
+        let argument_choices =
+            commands::argument_choices(&self.input_ui.input, self.input_ui.input_cursor);
         if !argument_choices.is_empty() {
             return argument_choices
                 .iter()
@@ -16,7 +17,7 @@ impl App {
                 .collect();
         }
 
-        let Some(prefix) = commands::command_prefix(&self.input) else {
+        let Some(prefix) = commands::command_prefix(&self.input_ui.input) else {
             return Vec::new();
         };
         let prefix = prefix
@@ -91,7 +92,7 @@ impl App {
     /// Skills for palette matching, served from the timed cache when fresh so
     /// repeated per-keystroke queries skip the filesystem walk.
     fn discovered_skills(&self) -> Arc<Vec<crate::skills::Skill>> {
-        if let Some(cache) = &self.skill_match_cache {
+        if let Some(cache) = &self.input_ui.skill_match_cache {
             if cache.refreshed_at.elapsed() < SKILL_CACHE_TTL {
                 return Arc::clone(&cache.skills);
             }
@@ -101,13 +102,14 @@ impl App {
 
     pub(super) fn refresh_skill_match_cache(&mut self) {
         if self
+            .input_ui
             .skill_match_cache
             .as_ref()
             .is_some_and(|cache| cache.refreshed_at.elapsed() < SKILL_CACHE_TTL)
         {
             return;
         }
-        self.skill_match_cache = Some(SkillMatchCache {
+        self.input_ui.skill_match_cache = Some(SkillMatchCache {
             skills: Arc::new(crate::skills::discover(&self.info.runtime.cwd)),
             refreshed_at: std::time::Instant::now(),
         });
@@ -116,18 +118,22 @@ impl App {
     pub(super) fn selected_command(&self) -> Option<CommandChoice> {
         let matches = self.command_matches();
         matches
-            .get(self.command_selection.min(matches.len().saturating_sub(1)))
+            .get(
+                self.input_ui
+                    .command_selection
+                    .min(matches.len().saturating_sub(1)),
+            )
             .cloned()
     }
 
     pub(super) fn complete_command_choice(&mut self, choice: &CommandChoice) {
         let (input, cursor) = match &choice.kind {
             CommandChoiceKind::Builtin(spec) => {
-                self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
-                commands::complete_command(&self.input, self.input_cursor, spec)
+                self.input_ui.input_submission_mode = super::InputSubmissionMode::ParseCommands;
+                commands::complete_command(&self.input_ui.input, self.input_ui.input_cursor, spec)
             }
             CommandChoiceKind::BuiltinArgument(choice) => {
-                self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
+                self.input_ui.input_submission_mode = super::InputSubmissionMode::ParseCommands;
                 commands::complete_argument_choice(choice)
             }
             CommandChoiceKind::PromptTemplate(template) => {
@@ -136,18 +142,22 @@ impl App {
                     crate::prompt_templates::expand(template, slash_command_args(&expanded_input));
                 input.push(' ');
                 let cursor = input.chars().count();
-                self.paste_segments.clear();
-                self.input_submission_mode = super::InputSubmissionMode::Prompt;
+                self.input_ui.paste_segments.clear();
+                self.input_ui.input_submission_mode = super::InputSubmissionMode::Prompt;
                 (input, cursor)
             }
             CommandChoiceKind::Skill => {
-                self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
-                complete_slash_command(&self.input, self.input_cursor, &choice.name)
+                self.input_ui.input_submission_mode = super::InputSubmissionMode::ParseCommands;
+                complete_slash_command(
+                    &self.input_ui.input,
+                    self.input_ui.input_cursor,
+                    &choice.name,
+                )
             }
         };
-        self.input = input;
-        self.input_cursor = cursor;
-        self.shell_mode = None;
+        self.input_ui.input = input;
+        self.input_ui.input_cursor = cursor;
+        self.input_ui.shell_mode = None;
     }
 }
 

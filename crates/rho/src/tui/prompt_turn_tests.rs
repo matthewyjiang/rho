@@ -106,7 +106,7 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
 
     assert_eq!(outcome.kind(), TurnOutcomeKind::Failed);
     assert!(matches!(
-        app.transcript.as_slice(),
+        app.history.transcript.as_slice(),
         [Entry::Assistant(text), Entry::Error(error)]
             if text == "partial assistant before stream failure"
                 && error == "provider stream failed"

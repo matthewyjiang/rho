@@ -39,7 +39,7 @@ fn confirm_question(id: &str) -> QuestionnaireQuestion {
 fn enter_advances_questions_and_submits_only_on_the_last() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut app = test_app();
-    app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+    app.input_ui.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
         QuestionnaireRequest {
             title: None,
             reason: None,
@@ -51,13 +51,13 @@ fn enter_advances_questions_and_submits_only_on_the_last() {
 
     assert!(app.handle_questionnaire_key(enter).unwrap());
     assert!(
-        matches!(app.composer, ComposerMode::Questionnaire(_)),
+        matches!(app.input_ui.composer, ComposerMode::Questionnaire(_)),
         "enter on the first question must not submit the form"
     );
     assert!(reply_rx.try_recv().is_err());
 
     assert!(app.handle_questionnaire_key(enter).unwrap());
-    assert!(matches!(app.composer, ComposerMode::Input));
+    assert!(matches!(app.input_ui.composer, ComposerMode::Input));
     assert_eq!(
         reply_rx.try_recv(),
         Ok(QuestionnaireReply::Answer(QuestionnaireResponse {
@@ -80,8 +80,8 @@ fn resolving_questionnaire_clears_preexisting_shell_mode() {
     for submit in [true, false] {
         let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
         let mut app = test_app();
-        app.shell_mode = Some(InlineShellMode::ExcludeFromContext);
-        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+        app.input_ui.shell_mode = Some(InlineShellMode::ExcludeFromContext);
+        app.input_ui.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
             QuestionnaireRequest {
                 title: None,
                 reason: None,
@@ -97,9 +97,9 @@ fn resolving_questionnaire_clears_preexisting_shell_mode() {
         };
         app.handle_questionnaire_key(key).unwrap();
 
-        assert_eq!(app.shell_mode, None);
-        assert!(app.input.is_empty());
-        assert!(matches!(app.composer, ComposerMode::Input));
+        assert_eq!(app.input_ui.shell_mode, None);
+        assert!(app.input_ui.input.is_empty());
+        assert!(matches!(app.input_ui.composer, ComposerMode::Input));
     }
 }
 
@@ -107,7 +107,7 @@ fn resolving_questionnaire_clears_preexisting_shell_mode() {
 fn second_ctrl_c_cancels_questionnaire_without_exiting_tui() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut app = test_app();
-    app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+    app.input_ui.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
         QuestionnaireRequest {
             title: None,
             reason: None,
@@ -131,7 +131,7 @@ fn second_ctrl_c_cancels_questionnaire_without_exiting_tui() {
     assert_eq!(app.status, "answer cleared; press ctrl-c again to cancel");
     assert!(app.handle_questionnaire_key(ctrl_c).unwrap());
 
-    assert!(matches!(app.composer, ComposerMode::Input));
+    assert!(matches!(app.input_ui.composer, ComposerMode::Input));
     assert!(!app.should_quit);
     assert_eq!(app.ctrl_c_streak, 0);
     assert_eq!(app.status, "answer cancelled");

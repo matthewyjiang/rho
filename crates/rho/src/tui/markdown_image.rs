@@ -332,8 +332,9 @@ async fn read_image_bytes(path: &Path) -> Option<Vec<u8>> {
 
 impl super::App {
     pub(super) fn mark_markdown_images_dirty_from(&mut self, entry_index: usize) {
-        self.markdown_images_dirty_from = Some(
-            self.markdown_images_dirty_from
+        self.history.markdown_images_dirty_from = Some(
+            self.history
+                .markdown_images_dirty_from
                 .map_or(entry_index, |dirty| dirty.min(entry_index)),
         );
     }
@@ -344,8 +345,8 @@ impl super::App {
         let picker = self.image_picker.clone();
         let cwd = self.info.runtime.cwd.clone();
         let mut changed = false;
-        if let Some(dirty_from) = self.markdown_images_dirty_from.take() {
-            for (index, entry) in self.transcript.iter().enumerate().skip(dirty_from) {
+        if let Some(dirty_from) = self.history.markdown_images_dirty_from.take() {
+            for (index, entry) in self.history.transcript.iter().enumerate().skip(dirty_from) {
                 let Entry::Assistant(text) = entry else {
                     continue;
                 };
@@ -353,14 +354,17 @@ impl super::App {
                 if sources.is_empty() {
                     continue;
                 }
-                changed |=
-                    self.markdown_images
-                        .ensure_loads(index, &sources, &cwd, picker.as_ref());
+                changed |= self.history.markdown_images.ensure_loads(
+                    index,
+                    &sources,
+                    &cwd,
+                    picker.as_ref(),
+                );
             }
         }
-        changed |= self.markdown_images.poll();
+        changed |= self.history.markdown_images.poll();
         if changed {
-            self.history_lines.invalidate_from(0);
+            self.history.history_lines.invalidate_from(0);
         }
         changed
     }

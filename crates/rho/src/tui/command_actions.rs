@@ -65,7 +65,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        self.steering_prompts.clear();
+        self.pending.steering_prompts.clear();
         self.pending_input_changed();
         self.status = "compacting context".into();
         self.begin_compact_ui();
@@ -148,16 +148,16 @@ impl App {
     ) -> anyhow::Result<()> {
         agent.reset()?;
         self.info.session.session_id = None;
-        self.composer = ComposerMode::Input;
-        self.input.clear();
-        self.paste_segments.clear();
-        self.shell_mode = None;
-        self.input_cursor = 0;
-        self.command_palette_dismissed = false;
+        self.input_ui.composer = ComposerMode::Input;
+        self.input_ui.input.clear();
+        self.input_ui.paste_segments.clear();
+        self.input_ui.shell_mode = None;
+        self.input_ui.input_cursor = 0;
+        self.input_ui.command_palette_dismissed = false;
         self.clamp_command_selection();
-        self.queued_prompts.clear();
+        self.pending.queued_prompts.clear();
         self.goal = None;
-        self.steering_prompts.clear();
+        self.pending.steering_prompts.clear();
         self.clear_accepted_steering();
         self.reset_streams();
         self.end_busy_ui();
@@ -166,11 +166,11 @@ impl App {
         self.usage.current_context = None;
         self.pending_session_title = None;
         self.current_turn_start = None;
-        self.transcript.clear();
-        self.markdown_images.clear();
-        self.markdown_images_dirty_from = None;
-        self.history_lines.invalidate_from(0);
-        self.last_inserted_was_tool = false;
+        self.history.transcript.clear();
+        self.history.markdown_images.clear();
+        self.history.markdown_images_dirty_from = None;
+        self.history.history_lines.invalidate_from(0);
+        self.history.last_inserted_was_tool = false;
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.status = "new session".into();

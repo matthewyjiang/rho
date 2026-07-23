@@ -352,7 +352,7 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if !matches!(self.composer, ComposerMode::Input) {
+        if !matches!(self.input_ui.composer, ComposerMode::Input) {
             return Ok(());
         }
         if self.info.session.recovered_messages.is_empty() {
@@ -415,7 +415,7 @@ impl App {
             ContextHandoffKind::Resume => "choose resume handoff",
             ContextHandoffKind::LoadedSession => "choose loaded-session handoff",
         };
-        self.composer = ComposerMode::InlineChoice(InlineChoiceModal {
+        self.input_ui.composer = ComposerMode::InlineChoice(InlineChoiceModal {
             choice,
             pending: InlineChoicePending::ContextHandoff(Box::new(pending)),
         });
@@ -582,12 +582,12 @@ impl App {
         let _ = agent.take_pending_omission();
         self.info.session.session_id = Some(full_id);
         self.info.session.recovered_messages = display_history.clone();
-        self.composer = ComposerMode::Input;
-        self.input.clear();
-        self.paste_segments.clear();
-        self.shell_mode = None;
-        self.input_cursor = 0;
-        self.command_palette_dismissed = false;
+        self.input_ui.composer = ComposerMode::Input;
+        self.input_ui.input.clear();
+        self.input_ui.paste_segments.clear();
+        self.input_ui.shell_mode = None;
+        self.input_ui.input_cursor = 0;
+        self.input_ui.command_palette_dismissed = false;
         self.clamp_command_selection();
         self.reset_streams();
         self.end_busy_ui();
@@ -602,11 +602,11 @@ impl App {
             RECOVERED_HISTORY_LINE_LIMIT,
             self.info.runtime.max_tool_output_lines,
         );
-        self.transcript = visible_entries;
-        self.markdown_images.clear();
-        self.mark_markdown_images_dirty_from(0);
-        self.history_lines.invalidate_from(0);
-        self.last_inserted_was_tool = self.transcript.last().is_some_and(is_tool_entry);
+        self.history.transcript = visible_entries;
+        self.history.markdown_images.clear();
+        self.history.invalidate_from(0);
+        self.history.last_inserted_was_tool =
+            self.history.transcript.last().is_some_and(is_tool_entry);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));
@@ -650,7 +650,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if let Some(prompt) = self.queued_prompts.pop_front() {
+        if let Some(prompt) = self.pending.queued_prompts.pop_front() {
             self.restore_pending_prompt(prompt);
             return self.submit(terminal, agent).await;
         }

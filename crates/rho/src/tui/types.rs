@@ -116,6 +116,12 @@ pub(super) enum ComposerMode {
     Approval(ApprovalComposer),
 }
 
+impl Default for ComposerMode {
+    fn default() -> Self {
+        Self::Input
+    }
+}
+
 impl ComposerMode {
     pub(super) fn blocks_auto_continue(&self) -> bool {
         match self {
@@ -219,10 +225,13 @@ impl TurnOutcome {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum HistoryScroll {
+    #[default]
     Bottom,
-    Manual { top_line: usize },
+    Manual {
+        top_line: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use history_cache::{CachedCodeBlock, HistoryLineCache};
+use history_cache::CachedCodeBlock;
 use questionnaire::QuestionnaireCancelReason;
 #[cfg(test)]
 use std::sync::Mutex;
@@ -22,6 +22,7 @@ use ratatui::{layout::Rect, style::Modifier, text::Line};
 mod activity;
 mod agent_picker;
 mod app_construct;
+mod app_state;
 mod approval;
 mod attachment;
 mod background_polls;
@@ -109,12 +110,14 @@ mod tree_actions;
 mod turn_prompt;
 mod usage_cost;
 mod view;
+mod view_composer;
 mod workspace;
 
 mod types;
 use types::*;
 
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
+use app_state::{HistoryUi, InputUi, PendingWorkUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
 use clipboard::ClipboardWriter;
 use config_editor::{
@@ -131,12 +134,12 @@ use inline_choice::{
     InlineChoice, InlineChoiceKeyOutcome, InlineChoiceModal, InlineChoiceOption,
     InlineChoicePending,
 };
+#[cfg(test)]
 use inline_shell::InlineShellMode;
 use login::PendingOAuthLogin;
 #[cfg(test)]
 use login::SecretInput;
-use paste_burst::{PasteBurst, PasteBurstEnter};
-use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
+use paste_burst::PasteBurstEnter;
 use picker::{
     sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgePlacement, PickerBadgeTone,
     PickerItem, PickerLayout, UiPicker,
@@ -154,12 +157,14 @@ use render::{
     labeled_divider_line, picker_lines, session_header_lines, styled_line, tool_entry_lines,
     truncate_one_line, LineFill,
 };
-use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
+#[cfg(test)]
+use scrollbar::HistoryScrollbarDrag;
+use scrollbar::{scroll_state_for_top_line, HistoryScrollbar};
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
 use subagent_panel::SubagentPanel;
 use terminal_events::TerminalEvents;
-use text_selection::{highlight_selection, render_copy_notice, CopyNotice, TextSelection};
+use text_selection::{highlight_selection, render_copy_notice};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
 
@@ -289,10 +294,7 @@ struct App {
     terminal_events: Option<TerminalEvents>,
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
-    input: String,
-    input_cursor: usize,
-    /// Explicit shell-mode state. Composer text stores only the command body.
-    shell_mode: Option<InlineShellMode>,
+    input_ui: InputUi,
     status: String,
     should_quit: bool,
     ctrl_c_streak: u8,
@@ -305,35 +307,11 @@ struct App {
     loading_spinner: LoadingSpinner,
     tool_calls: ToolCallBatch,
     image_picker: Option<ratatui_image::picker::Picker>,
-    steering_prompts: VecDeque<QueuedPrompt>,
-    accepted_steering: VecDeque<AcceptedSteering>,
-    retracting_steering: Option<rho_sdk::SteeringId>,
-    pending_input_panel: PendingInputPanel,
-    pending_input_action: Option<PendingInputAction>,
-    queued_prompts: VecDeque<QueuedPrompt>,
+    pending: PendingWorkUi,
     pending_inline_shells: Vec<inline_shell::PendingShellTask>,
     deferred_inline_shell_context: Vec<inline_shell::DeferredShellContext>,
     goal: Option<GoalState>,
-    pending_images: Vec<ImageContent>,
-    input_history: Vec<String>,
-    input_history_cursor: Option<usize>,
-    input_history_draft: Option<InputDraft>,
-    paste_burst: PasteBurst,
-    paste_segments: Vec<PasteSegment>,
-    input_submission_mode: InputSubmissionMode,
-    transcript: Vec<Entry>,
-    history_lines: HistoryLineCache,
-    last_status_notice: Option<String>,
-    last_inserted_was_tool: bool,
-    command_selection: usize,
-    command_prefix: Option<String>,
-    command_palette_dismissed: bool,
-    file_selection: usize,
-    file_query: Option<String>,
-    file_palette_dismissed: bool,
-    file_match_cache: Option<FileMatchCache>,
-    skill_match_cache: Option<SkillMatchCache>,
-    composer: ComposerMode,
+    history: HistoryUi,
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
@@ -348,17 +326,7 @@ struct App {
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<String>,
     pending_session_title: Option<PendingSessionTitle>,
-    markdown_images: markdown_image::MarkdownImageCache,
-    markdown_images_dirty_from: Option<usize>,
-    history_scroll: HistoryScroll,
-    history_scrollbar_drag: Option<HistoryScrollbarDrag>,
-    history_scrollbar_visible_until: Option<Instant>,
-    history_scrollbar_hovered: bool,
-    hovered_code_block_copy: Option<usize>,
-    text_selection: Option<TextSelection>,
-    copy_notice: Option<CopyNotice>,
     clipboard: Box<dyn ClipboardWriter + Send>,
-    session_header_cache: Option<SessionHeaderCache>,
     last_mouse_position: Option<(u16, u16)>,
 }
 

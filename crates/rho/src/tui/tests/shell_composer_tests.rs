@@ -8,7 +8,10 @@ fn shell_mode_labels_top_divider_hides_prefix_without_extra_command_row() {
     let empty_height = app.history_height_for_screen(80, 24, Instant::now());
 
     assert!(app.try_enter_shell_mode_from_bang());
-    assert_eq!(app.shell_mode, Some(InlineShellMode::IncludeInContext));
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::IncludeInContext)
+    );
     app.insert_input_text("echo hi");
 
     assert!(app.command_suggestion_lines(80).is_empty());
@@ -36,10 +39,13 @@ fn shell_mode_labels_top_divider_hides_prefix_without_extra_command_row() {
     );
 
     // Second bang upgrades to local shell mode without leaving a prefix in the buffer.
-    app.input.clear();
-    app.input_cursor = 0;
+    app.input_ui.input.clear();
+    app.input_ui.input_cursor = 0;
     assert!(app.try_enter_shell_mode_from_bang());
-    assert_eq!(app.shell_mode, Some(InlineShellMode::ExcludeFromContext));
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::ExcludeFromContext)
+    );
     app.insert_input_text("echo hi");
     let local_lines = app.active_lines_for_height(80, 24);
     let local_texts = local_lines.iter().map(line_text).collect::<Vec<_>>();
@@ -78,23 +84,23 @@ fn escape_exits_shell_mode_and_keeps_command_text() {
     let mut app = test_app();
     assert!(app.try_enter_shell_mode_from_bang());
     app.insert_input_text("echo hi");
-    app.input_cursor = app.input.chars().count();
+    app.input_ui.input_cursor = app.input_ui.input.chars().count();
 
     assert!(app.exit_shell_mode());
-    assert_eq!(app.shell_mode, None);
-    assert_eq!(app.input, "echo hi");
-    assert_eq!(app.input_cursor, "echo hi".chars().count());
+    assert_eq!(app.input_ui.shell_mode, None);
+    assert_eq!(app.input_ui.input, "echo hi");
+    assert_eq!(app.input_ui.input_cursor, "echo hi".chars().count());
 
     // Re-enter local shell mode after clearing back to an empty composer.
-    app.input.clear();
-    app.input_cursor = 0;
+    app.input_ui.input.clear();
+    app.input_ui.input_cursor = 0;
     assert!(app.try_enter_shell_mode_from_bang());
     assert!(app.try_enter_shell_mode_from_bang());
     app.insert_input_text("printf ok");
-    app.input_cursor = 2; // inside the visible command
+    app.input_ui.input_cursor = 2; // inside the visible command
     assert!(app.exit_shell_mode());
-    assert_eq!(app.input, "printf ok");
-    assert_eq!(app.input_cursor, 2);
+    assert_eq!(app.input_ui.input, "printf ok");
+    assert_eq!(app.input_ui.input_cursor, 2);
     assert!(!app.exit_shell_mode());
 }
 
@@ -105,48 +111,67 @@ fn shell_mode_home_left_right_delete_backspace_word_and_paste_are_coherent() {
     app.insert_input_text("echo hello world");
 
     // Home and left stay on the command body, not a hidden prefix.
-    app.input_cursor = app.input_char_len();
-    app.input_cursor = 0;
-    assert_eq!(app.input_cursor, 0);
+    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.input_cursor = 0;
+    assert_eq!(app.input_ui.input_cursor, 0);
     app.move_input_cursor_right();
-    assert_eq!(app.input_cursor, 1);
+    assert_eq!(app.input_ui.input_cursor, 1);
     app.move_input_cursor_left();
-    assert_eq!(app.input_cursor, 0);
+    assert_eq!(app.input_ui.input_cursor, 0);
 
     // Delete/backspace edit only the command text and leave shell mode intact.
-    app.input_cursor = 5; // after "echo "
+    app.input_ui.input_cursor = 5; // after "echo "
     app.delete_input();
-    assert_eq!(app.input, "echo ello world");
-    assert_eq!(app.shell_mode, Some(InlineShellMode::IncludeInContext));
+    assert_eq!(app.input_ui.input, "echo ello world");
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::IncludeInContext)
+    );
     app.backspace_input();
-    assert_eq!(app.input, "echoello world");
-    assert_eq!(app.shell_mode, Some(InlineShellMode::IncludeInContext));
+    assert_eq!(app.input_ui.input, "echoello world");
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::IncludeInContext)
+    );
 
     // Word motion and paste operate in ordinary composer coordinates.
-    app.input = "one two".into();
-    app.input_cursor = app.input_char_len();
-    app.input_cursor = previous_word_boundary(&app.input, app.input_cursor);
-    assert_eq!(app.input_cursor, 4);
+    app.input_ui.input = "one two".into();
+    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.input_cursor =
+        previous_word_boundary(&app.input_ui.input, app.input_ui.input_cursor);
+    assert_eq!(app.input_ui.input_cursor, 4);
     app.insert_input_text("pasted ");
-    assert_eq!(app.input, "one pasted two");
-    assert_eq!(app.shell_mode, Some(InlineShellMode::IncludeInContext));
+    assert_eq!(app.input_ui.input, "one pasted two");
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::IncludeInContext)
+    );
 }
 
 #[test]
 fn bang_key_enters_and_upgrades_shell_mode_without_buffer_prefix() {
     let mut app = test_app();
     app.insert_input_char('!');
-    assert_eq!(app.shell_mode, Some(InlineShellMode::IncludeInContext));
-    assert_eq!(app.input, "");
-    assert_eq!(app.input_cursor, 0);
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::IncludeInContext)
+    );
+    assert_eq!(app.input_ui.input, "");
+    assert_eq!(app.input_ui.input_cursor, 0);
 
     app.insert_input_char('!');
-    assert_eq!(app.shell_mode, Some(InlineShellMode::ExcludeFromContext));
-    assert_eq!(app.input, "");
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::ExcludeFromContext)
+    );
+    assert_eq!(app.input_ui.input, "");
 
     app.insert_input_char('l');
-    assert_eq!(app.input, "l");
-    assert_eq!(app.shell_mode, Some(InlineShellMode::ExcludeFromContext));
+    assert_eq!(app.input_ui.input, "l");
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::ExcludeFromContext)
+    );
 }
 
 #[test]
@@ -176,12 +201,18 @@ fn history_recall_restores_shell_mode_from_prefixed_entries() {
     app.push_input_history("!!ls -la");
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
-    assert_eq!(app.shell_mode, Some(InlineShellMode::ExcludeFromContext));
-    assert_eq!(app.input, "ls -la");
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::ExcludeFromContext)
+    );
+    assert_eq!(app.input_ui.input, "ls -la");
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
-    assert_eq!(app.shell_mode, Some(InlineShellMode::IncludeInContext));
-    assert_eq!(app.input, "echo hi");
+    assert_eq!(
+        app.input_ui.shell_mode,
+        Some(InlineShellMode::IncludeInContext)
+    );
+    assert_eq!(app.input_ui.input, "echo hi");
 }
 
 #[test]
