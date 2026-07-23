@@ -6,6 +6,8 @@ use std::{path::PathBuf, time::Duration};
 
 use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 
+const ALTERNATE_SCREEN_ENTER: &[u8] = b"\x1b[?1049h";
+
 #[test]
 fn composer_round_trips_through_interactive_external_editor() {
     use std::os::unix::fs::PermissionsExt;
@@ -54,6 +56,7 @@ printf '%s\n' "$replacement" > "$3"
 
     harness.paste("alpha\nbeta").unwrap();
     harness.settle_input();
+    let expected_screen_entries = harness.raw_sequence_occurrences(ALTERNATE_SCREEN_ENTER) + 1;
     harness.inject_key(&Key::Ctrl('g')).unwrap();
     harness
         .wait_for_text(
@@ -63,6 +66,13 @@ printf '%s\n' "$replacement" > "$3"
         .unwrap();
     harness.type_text("edited in external editor").unwrap();
     harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_raw_sequence_occurrences(
+            ALTERNATE_SCREEN_ENTER,
+            expected_screen_entries,
+            WaitTimeout::secs(10, "TUI resumed after editor"),
+        )
+        .unwrap();
     harness
         .wait_for_text(
             "edited in external editor",
@@ -192,6 +202,7 @@ while :; do sleep 1; done
     harness
         .type_text("draft survives editor interrupt")
         .unwrap();
+    let expected_screen_entries = harness.raw_sequence_occurrences(ALTERNATE_SCREEN_ENTER) + 1;
     harness.inject_key(&Key::Ctrl('g')).unwrap();
     harness
         .wait_for_text(
@@ -212,6 +223,13 @@ while :; do sleep 1; done
         .unwrap();
 
     harness.inject_key(&Key::Ctrl('c')).unwrap();
+    harness
+        .wait_for_raw_sequence_occurrences(
+            ALTERNATE_SCREEN_ENTER,
+            expected_screen_entries,
+            WaitTimeout::secs(10, "TUI resumed after editor interrupt"),
+        )
+        .unwrap();
     harness
         .wait_for_text(
             "draft survives editor interrupt",
@@ -269,6 +287,7 @@ printf '%s\n' "$replacement" > "$1"
         .unwrap();
 
     harness.type_text("draft during turn").unwrap();
+    let expected_screen_entries = harness.raw_sequence_occurrences(ALTERNATE_SCREEN_ENTER) + 1;
     harness.inject_key(&Key::Ctrl('g')).unwrap();
     harness
         .wait_for_text(
@@ -278,6 +297,13 @@ printf '%s\n' "$replacement" > "$1"
         .unwrap();
     harness.type_text("edited steering prompt").unwrap();
     harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_raw_sequence_occurrences(
+            ALTERNATE_SCREEN_ENTER,
+            expected_screen_entries,
+            WaitTimeout::secs(10, "TUI resumed during active turn"),
+        )
+        .unwrap();
     harness
         .wait_for_text(
             "edited steering prompt",
