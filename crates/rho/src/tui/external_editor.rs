@@ -16,7 +16,10 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        // Flush any buffered burst text, then drop enter-suppression so a later
+        // submit Enter cannot be treated as a paste newline after resume.
         self.flush_pending_paste_burst();
+        self.input_ui.clear_paste_burst();
         let composer_text = self.expanded_input();
         let (mut command, path) = match prepare_editor(&composer_text) {
             Ok(prepared) => prepared,
@@ -31,7 +34,7 @@ impl App {
             .take()
             .context("terminal session is unavailable")?;
         let suspended_run = terminal_session
-            .run_suspended(terminal, || async move {
+            .run_suspended(terminal, "Opening editor…", || async move {
                 #[cfg(unix)]
                 let _signal_guard = unix_editor_signals::EditorSignalGuard::install(&mut command)
                     .context("could not prepare editor signal handling")?;
@@ -75,6 +78,7 @@ impl App {
             Err(error) => self.notify_status(format!("editor failed: {error}")),
         }
         self.ctrl_c_streak = 0;
+        self.input_ui.clear_paste_burst();
         Ok(())
     }
 }

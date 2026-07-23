@@ -93,7 +93,27 @@ printf '%s\n' "$replacement" > "$3"
         "editor inherited non-canonical terminal state: {state}"
     );
     let raw = harness.raw_output();
-    assert!(raw.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
+    let leave_at = raw
+        .windows(8)
+        .position(|bytes| bytes == b"\x1b[?1049l")
+        .expect("leave alternate screen");
+    let clear_at = raw[leave_at..]
+        .windows(4)
+        .position(|bytes| bytes == b"\x1b[2J")
+        .map(|offset| leave_at + offset)
+        .expect("main screen clear after leaving alternate screen");
+    let opening_at = raw
+        .windows(b"Opening editor".len())
+        .position(|bytes| bytes == b"Opening editor")
+        .expect("opening editor status");
+    let ready_at = raw
+        .windows(b"EXTERNAL_EDITOR_READY".len())
+        .position(|bytes| bytes == b"EXTERNAL_EDITOR_READY")
+        .expect("external editor ready marker");
+    assert!(
+        leave_at < clear_at && clear_at < opening_at && opening_at < ready_at,
+        "handoff should leave alternate screen, clear main buffer, show status, then start the editor"
+    );
     assert!(
         raw.windows(8)
             .filter(|bytes| *bytes == b"\x1b[?1049h")
@@ -102,6 +122,7 @@ printf '%s\n' "$replacement" > "$3"
         "alternate screen was not re-entered after the editor"
     );
 
+    harness.settle_input();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
@@ -157,6 +178,7 @@ fn external_editor_errors_preserve_the_composer() {
         harness
             .wait_for_text(expected_error, WaitTimeout::secs(10, "editor error status"))
             .unwrap();
+        harness.settle_input();
         harness.inject_key(&Key::Enter).unwrap();
         harness
             .wait_for_text(
@@ -236,6 +258,7 @@ while :; do sleep 1; done
             WaitTimeout::secs(10, "rho resumed after editor interrupt"),
         )
         .unwrap();
+    harness.settle_input();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
@@ -310,6 +333,7 @@ printf '%s\n' "$replacement" > "$1"
             WaitTimeout::secs(10, "running editor return"),
         )
         .unwrap();
+    harness.settle_input();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(

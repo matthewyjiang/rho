@@ -1,7 +1,13 @@
-use std::future::Future;
+use std::{future::Future, io};
 
 use anyhow::{anyhow, Context};
-use crossterm::event::Event;
+use crossterm::{
+    cursor::{MoveTo, Show},
+    event::Event,
+    execute,
+    style::Print,
+    terminal::{disable_raw_mode, Clear, ClearType, LeaveAlternateScreen},
+};
 use ratatui::DefaultTerminal;
 
 use super::{keyboard_modes, mouse_capture, terminal_events::TerminalEvents};
@@ -36,12 +42,16 @@ impl TerminalSession {
 
     /// Run work with exclusive ownership of the user's terminal.
     ///
+    /// `handoff_status` is printed on the main screen after leaving the
+    /// alternate buffer so the caller can show what the terminal is waiting on.
+    ///
     /// The outer result reports terminal lifecycle failures. The inner result
     /// belongs to the suspended operation and is safe to present in the TUI
     /// because the terminal has resumed before this method returns it.
     pub(super) async fn run_suspended<T, F, Fut>(
         &mut self,
         terminal: &mut DefaultTerminal,
+        handoff_status: &str,
         operation: F,
     ) -> SuspendedRun<T>
     where
@@ -49,9 +59,9 @@ impl TerminalSession {
         Fut: Future<Output = anyhow::Result<T>>,
     {
         self.stop_events();
-        if let Err(suspend_error) = self.suspend() {
+        if let Err(suspend_error) = self.suspend(handoff_status) {
             return SuspendedRun {
-                operation_result: Err(suspend_error.context("external editor was not started")),
+                operation_result: Err(suspend_error.context("suspended operation was not started")),
                 resume_result: self
                     .resume(terminal)
                     .context("failed to recover Rho after terminal suspension failed"),
@@ -61,7 +71,7 @@ impl TerminalSession {
         let operation_result = operation().await;
         let resume_result = self
             .resume(terminal)
-            .context("failed to resume Rho after external editor");
+            .context("failed to resume Rho after suspended operation");
         SuspendedRun {
             operation_result,
             resume_result,
@@ -72,7 +82,7 @@ impl TerminalSession {
         self.events = None;
     }
 
-    fn suspend(&mut self) -> anyhow::Result<()> {
+    fn suspend(&mut self, handoff_status: &str) -> anyhow::Result<()> {
         let mut failures = Vec::new();
         if self.mouse_capture_enabled {
             if let Err(error) = mouse_capture::disable() {
@@ -85,7 +95,9 @@ impl TerminalSession {
                 failures.push(format!("disable keyboard modes: {error}"));
             }
         }
-        if let Err(error) = ratatui::try_restore() {
+        // Leave the alternate screen, clear the revealed main buffer, and print
+        // the caller status in one flush so handoff does not flash scrollback.
+        if let Err(error) = hand_off_terminal(handoff_status) {
             failures.push(format!("restore terminal: {error}"));
         }
         if failures.is_empty() {
@@ -103,6 +115,22 @@ impl TerminalSession {
         self.events = Some(TerminalEvents::new());
         Ok(())
     }
+}
+
+fn hand_off_terminal(handoff_status: &str) -> io::Result<()> {
+    // Disable raw mode before leaving the alternate screen. Raw mode has more
+    // side effects, matching ratatui::try_restore's ordering.
+    disable_raw_mode()?;
+    execute!(
+        io::stdout(),
+        LeaveAlternateScreen,
+        Clear(ClearType::All),
+        MoveTo(0, 0),
+        Show,
+        Print(handoff_status),
+        Print("\r\n"),
+    )?;
+    Ok(())
 }
 
 impl Drop for TerminalSession {
