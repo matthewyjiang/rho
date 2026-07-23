@@ -154,15 +154,14 @@ impl App {
         let workspace_path = agent.workspace_path().to_path_buf();
         let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
-        let (provider, model, _auth) =
-            self.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID);
+        let selection = self.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID);
         let cancellation = rho_sdk::CancellationToken::new();
         let task_cancellation = cancellation.clone();
         let task_session_id = session_id.clone();
         let handle = tokio::spawn(async move {
             let title = generate_session_title(
-                provider,
-                model,
+                selection.provider,
+                selection.model,
                 first_user_message,
                 task_session_id.clone(),
                 workspace_path,

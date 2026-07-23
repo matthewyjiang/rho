@@ -155,11 +155,11 @@ impl super::App {
     pub(super) fn open_internal_agent_model_picker(&mut self, id: &str) {
         self.refresh_available_auths();
         let uses_conversation_model = !self.info.runtime.internal_agents.contains_key(id);
-        let (provider, model, _auth) = self.internal_agent_model_selection(id);
+        let selection = self.internal_agent_model_selection(id);
         let picker = super::model_picker::internal_agent_model_picker(
             id,
-            &provider,
-            &model,
+            &selection.provider,
+            &selection.model,
             uses_conversation_model,
             &self.info.runtime.favorite_models,
             &self.available_auths,

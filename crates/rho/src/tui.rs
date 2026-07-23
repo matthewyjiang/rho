@@ -1812,7 +1812,11 @@ mod tests {
 
         assert_eq!(
             app.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID),
-            ("openai".into(), "gpt-5.5".into(), "api-key".into())
+            crate::config::InternalAgentModelConfig::new(
+                "openai".into(),
+                "gpt-5.5".into(),
+                "api-key".into()
+            )
         );
     }
 

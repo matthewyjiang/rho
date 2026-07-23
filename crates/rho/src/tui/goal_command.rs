@@ -308,9 +308,9 @@ impl App {
 
             let (condition, provider, model) = {
                 let goal = self.goal.as_ref().expect("goal checked above");
-                let (provider, model, _auth) =
+                let selection =
                     self.internal_agent_model_selection(crate::agent::GOAL_JUDGE_AGENT_ID);
-                (goal.condition.clone(), provider, model)
+                (goal.condition.clone(), selection.provider, selection.model)
             };
             let history = agent.history();
             let evaluation = {

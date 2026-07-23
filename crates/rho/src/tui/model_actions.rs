@@ -213,8 +213,8 @@ impl App {
                     self.select_internal_agent_model(&id, None)?;
                 } else {
                     self.refresh_available_auths();
-                    let (provider, _model, auth) = self.internal_agent_model_selection(&id);
-                    match self.resolve_model_selection(&value, &provider, &auth) {
+                    let current = self.internal_agent_model_selection(&id);
+                    match self.resolve_model_selection(&value, &current.provider, &current.auth) {
                         Ok(selection) => {
                             self.select_internal_agent_model(&id, Some(selection.selection))?
                         }
@@ -357,11 +357,11 @@ impl App {
                 let Some(id) = self.internal_agent_model_target.as_deref() else {
                     return Ok(());
                 };
-                let (provider, model, _auth) = self.internal_agent_model_selection(id);
+                let selection = self.internal_agent_model_selection(id);
                 model_picker::internal_agent_model_picker(
                     id,
-                    &provider,
-                    &model,
+                    &selection.provider,
+                    &selection.model,
                     !self.info.runtime.internal_agents.contains_key(id),
                     &self.info.runtime.favorite_models,
                     &self.available_auths,
@@ -595,20 +595,17 @@ impl App {
         self.available_auths = available_auth_modes(self.credential_store.as_ref());
     }
 
-    pub(super) fn internal_agent_model_selection(&self, id: &str) -> (String, String, String) {
+    pub(super) fn internal_agent_model_selection(
+        &self,
+        id: &str,
+    ) -> crate::config::InternalAgentModelConfig {
         self.info
             .runtime
             .internal_agents
             .get(id)
-            .map(|selection| {
-                (
-                    selection.provider.clone(),
-                    selection.model.clone(),
-                    selection.auth.clone(),
-                )
-            })
+            .cloned()
             .unwrap_or_else(|| {
-                (
+                crate::config::InternalAgentModelConfig::new(
                     self.info.runtime.provider.clone(),
                     self.info.runtime.model.clone(),
                     self.info.runtime.auth.clone(),
