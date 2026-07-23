@@ -112,6 +112,7 @@ impl App {
             Ok(true) => {
                 self.insert_entry(&Entry::Notice("compacted conversation context".into()));
                 self.status = "context compacted".into();
+                self.model_cache_warm = false;
                 true
             }
             Ok(false) => {

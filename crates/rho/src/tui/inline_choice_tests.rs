@@ -55,3 +55,22 @@ fn shortcut_selects_and_submits_option() {
         InlineChoiceKeyOutcome::Cancelled
     );
 }
+
+#[test]
+fn shortcut_accepts_shift_modifier() {
+    let mut choice = InlineChoice::new(
+        "choose",
+        "details",
+        vec![
+            InlineChoiceOption::available("compact", '1', "compact", "first"),
+            InlineChoiceOption::available("direct", '2', "direct", "second"),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        choice.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::SHIFT)),
+        InlineChoiceKeyOutcome::Selected("direct".into())
+    );
+    assert_eq!(choice.selected_value(), "direct");
+}

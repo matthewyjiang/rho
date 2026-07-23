@@ -484,8 +484,8 @@ impl App {
         if !should_offer_model_handoff(
             &self.info.runtime,
             target,
-            self.model_cache_warm,
-            agent.can_compact(),
+            /*cache_warm*/ self.model_cache_warm,
+            /*history_compactable*/ agent.can_compact(),
         ) {
             return self.select_model(selection, agent);
         }

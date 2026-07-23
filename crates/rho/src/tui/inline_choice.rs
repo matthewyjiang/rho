@@ -90,7 +90,7 @@ impl InlineChoice {
             (KeyModifiers::NONE, KeyCode::Enter | KeyCode::Char(' ')) => {
                 InlineChoiceKeyOutcome::Selected(self.selected_value().to_string())
             }
-            (KeyModifiers::NONE, KeyCode::Char(key)) => {
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(key)) => {
                 let normalized = key.to_ascii_lowercase();
                 let Some(index) = self.options.iter().position(|option| {
                     option.available
