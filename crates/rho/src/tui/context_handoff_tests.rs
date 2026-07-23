@@ -2,14 +2,14 @@ use pretty_assertions::assert_eq;
 use rho_sdk::model::handoff::HandoffReport;
 
 use super::{
-    decision_from_value, is_omission_notice, ContextHandoffDecision, ContextHandoffImpact,
-    ContextHandoffKind, ACTION_COMPACT, ACTION_CONTINUE, ACTION_USE_SOURCE,
+    decision_from_value, ContextHandoffDecision, ContextHandoffImpact, ContextHandoffKind,
+    ACTION_COMPACT, ACTION_CONTINUE, ACTION_USE_SOURCE,
 };
 
 fn impact(
     omissions: usize,
     can_compact: bool,
-    source_available: bool,
+    offer_use_source: bool,
     cache_warm: bool,
 ) -> ContextHandoffImpact {
     ContextHandoffImpact {
@@ -24,7 +24,7 @@ fn impact(
             },
         },
         can_compact,
-        source_model_available: source_available,
+        offer_use_source,
         cache_warm,
     }
 }
@@ -99,12 +99,21 @@ fn parses_decisions() {
 }
 
 #[test]
-fn omission_notices_are_recognized() {
-    assert!(is_omission_notice(
-        "omitted 115 incompatible provider-native context block(s) while resuming session (kinds: openai_response_output_item)"
-    ));
-    assert!(is_omission_notice(
-        "model handoff omitted 2 nonportable provider context block(s): openai_response_output_item; assistant text, tool history, and reasoning summaries were preserved"
-    ));
-    assert!(!is_omission_notice("resumed session abc123"));
+fn compact_then_continue_pipeline_order() {
+    // Decision mapping for the unified executor:
+    // UseSource => source -> materialize
+    // CompactThenContinue => source? -> materialize -> compact -> target?
+    // ContinueDirect => materialize -> target?
+    assert_eq!(
+        decision_from_value(ACTION_COMPACT),
+        Some(ContextHandoffDecision::CompactThenContinue)
+    );
+    assert_eq!(
+        decision_from_value(ACTION_USE_SOURCE),
+        Some(ContextHandoffDecision::UseSourceModel)
+    );
+    assert_eq!(
+        decision_from_value(ACTION_CONTINUE),
+        Some(ContextHandoffDecision::ContinueDirect)
+    );
 }

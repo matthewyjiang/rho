@@ -118,7 +118,6 @@ impl App {
             self.info.runtime.max_tool_output_lines,
         );
         agent.select_tree_node(storage, &target_id).await?;
-        self.model_cache_warm = false;
 
         self.info.session.recovered_messages = histories.display.clone();
         self.composer = ComposerMode::Input;

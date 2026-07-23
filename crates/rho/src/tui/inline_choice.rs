@@ -63,6 +63,24 @@ pub(super) enum InlineChoiceKeyOutcome {
     Selected(String),
 }
 
+#[derive(Debug)]
+pub(super) struct InlineChoiceModal {
+    pub(super) choice: InlineChoice,
+    pub(super) pending: InlineChoicePending,
+}
+
+#[derive(Debug)]
+pub(super) enum InlineChoicePending {
+    CredentialStore { next: super::login::StoreChoiceNext },
+    ContextHandoff(Box<super::context_handoff::PendingContextHandoff>),
+}
+
+impl InlineChoiceModal {
+    pub(super) fn blocks_auto_continue(&self) -> bool {
+        matches!(self.pending, InlineChoicePending::ContextHandoff(_))
+    }
+}
+
 impl InlineChoice {
     pub(super) fn new(
         title: impl Into<String>,

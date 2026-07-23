@@ -81,9 +81,9 @@ impl App {
         session.validate_agent_identity(agent_id, agent_fingerprint)?;
 
         if self.offer_resume_context_handoff(
-            session.clone(),
-            histories.model.clone(),
-            histories.display.clone(),
+            &session,
+            &histories.model,
+            &histories.display,
             agent,
         )? {
             return Ok(());

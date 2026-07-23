@@ -1,4 +1,7 @@
-use rho_sdk::{model::Message, RunOutcome, Session, SessionId};
+use rho_sdk::{
+    model::{handoff::HandoffReport, Message},
+    RunOutcome, Session, SessionId,
+};
 
 use crate::session::Session as StoredSession;
 
@@ -22,7 +25,7 @@ pub(crate) struct InteractiveSessionController {
     session: Session,
     storage: Option<StoredSession>,
     pending_session_id: Option<SessionId>,
-    pending_notices: Vec<String>,
+    pending_omission: Option<HandoffReport>,
     persisted_pending_user: bool,
 }
 
@@ -32,7 +35,7 @@ impl InteractiveSessionController {
             session,
             storage,
             pending_session_id: None,
-            pending_notices: Vec::new(),
+            pending_omission: None,
             persisted_pending_user: false,
         }
     }
@@ -45,13 +48,11 @@ impl InteractiveSessionController {
         &mut self.session
     }
 
-    pub(crate) fn replace_session(&mut self, session: Session, notice: Option<String>) {
+    pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
         self.session = session;
         self.pending_session_id = None;
         self.persisted_pending_user = false;
-        if let Some(notice) = notice {
-            self.pending_notices.push(notice);
-        }
+        self.pending_omission = omission.filter(HandoffReport::has_omissions);
     }
 
     /// Replaces only the SDK session used by the current runtime policy.
@@ -81,8 +82,21 @@ impl InteractiveSessionController {
         self.storage.as_ref()
     }
 
+    pub(crate) fn take_pending_omission(&mut self) -> Option<HandoffReport> {
+        self.pending_omission.take()
+    }
+
     pub(crate) fn take_notices(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.pending_notices)
+        self.take_pending_omission()
+            .map(|report| {
+                format!(
+                    "omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
+                    report.omitted_provider_context,
+                    report.omitted_kinds.join(", ")
+                )
+            })
+            .into_iter()
+            .collect()
     }
 
     pub(crate) fn pending_replacement(&self) -> Option<ReplacementSessionSource> {

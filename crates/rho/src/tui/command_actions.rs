@@ -112,7 +112,6 @@ impl App {
             Ok(true) => {
                 self.insert_entry(&Entry::Notice("compacted conversation context".into()));
                 self.status = "context compacted".into();
-                self.model_cache_warm = false;
                 true
             }
             Ok(false) => {
@@ -164,7 +163,6 @@ impl App {
         self.reset_usage();
         self.current_context = None;
         self.pending_session_title = None;
-        self.model_cache_warm = false;
         self.current_turn_start = None;
         self.transcript.clear();
         self.markdown_images.clear();

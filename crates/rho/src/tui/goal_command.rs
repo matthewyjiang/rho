@@ -264,7 +264,7 @@ impl App {
     ) -> anyhow::Result<()> {
         while !self.should_quit
             && self.goal.as_ref().is_some_and(|goal| !goal.is_blocked())
-            && !matches!(self.composer, ComposerMode::ModelHandoffChoice(_))
+            && !self.composer.blocks_auto_continue()
         {
             if !self.wait_for_goal_subagents(terminal, agent).await? {
                 break;
