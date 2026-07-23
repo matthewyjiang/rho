@@ -60,6 +60,7 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
 fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {
     let definition = &entry.definition;
     PickerItem {
+        section: None,
         label: definition.id.to_string(),
         detail: Some(agent_detail(entry, models)),
         preview: None,

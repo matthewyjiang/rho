@@ -87,6 +87,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
 | `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth, Kimi Code OAuth, and xAI OAuth are supported when logged in; absent windows are omitted. |
 | `/export [path]` | Export the current session to a self-contained HTML transcript. Assistant Markdown, including inline `$...$` or `\(...\)` and display `$$...$$` or `\[...\]` LaTeX math, is rendered in the exported file. |
+| `/help` | Show keyboard shortcuts and composer controls in a searchable overlay. |
 | `/exit` | Quit the TUI. |
 
 Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/configuration#prompt-templates) also appear in the command palette. Completing one inserts its prompt into the composer so you can add or edit text before sending.
@@ -146,6 +147,7 @@ Most editing keys work the way they do in a normal terminal input.
 | --- | --- |
 | `esc` | Abort the current response and restore queued work, or hide the command palette when it is open |
 | `/` at start | Open the command palette |
+| `/help` | Open the keyboard shortcuts overlay |
 | `@` | Open workspace file path autocomplete |
 | `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
 | `tab` | Complete the selected command or file path |

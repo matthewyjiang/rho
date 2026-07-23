@@ -120,6 +120,7 @@ fn narrow_picker_rows_do_not_exceed_width() {
         "models",
         "enter confirm",
         vec![PickerItem {
+            section: None,
             label: "very-wide-model-name".into(),
             detail: Some("very wide detail".into()),
             preview: Some("wide preview".into()),
@@ -150,6 +151,7 @@ fn list_picker_height_stays_stable_when_selected_detail_is_missing() {
         "enter confirm",
         vec![
             PickerItem {
+                section: None,
                 label: "plain".into(),
                 detail: None,
                 preview: None,
@@ -157,6 +159,7 @@ fn list_picker_height_stays_stable_when_selected_detail_is_missing() {
                 value: "plain".into(),
             },
             PickerItem {
+                section: None,
                 label: "detailed".into(),
                 detail: Some("extra context".into()),
                 preview: None,
@@ -408,7 +411,9 @@ fn session_header_lists_dim_control_hints() {
     let version = env!("CARGO_PKG_VERSION");
     let hint_lines = [
         " shift+tab    Cycle reasoning level",
+        " ctrl+c       Clear the composer",
         " /            Show available commands",
+        " !            Run a shell command",
     ];
 
     assert_eq!(
@@ -419,6 +424,8 @@ fn session_header_lists_dim_control_hints() {
             String::new(),
             hint_lines[0].into(),
             hint_lines[1].into(),
+            hint_lines[2].into(),
+            hint_lines[3].into(),
             String::new(),
         ]
     );
@@ -448,7 +455,9 @@ fn session_header_update_notice_aligns_under_brand_without_label() {
             format!(" {notice}"),
             String::new(),
             " shift+tab    Cycle reasoning level".into(),
+            " ctrl+c       Clear the composer".into(),
             " /            Show available commands".into(),
+            " !            Run a shell command".into(),
             String::new(),
         ]
     );

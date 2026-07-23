@@ -14,6 +14,24 @@ fn parses_context_and_local_prefixes_distinctly() {
 }
 
 #[test]
+fn divider_labels_keep_shell_with_context_state() {
+    assert_eq!(
+        mode_divider_labels(InlineShellMode::IncludeInContext)[0],
+        "shell · included in context"
+    );
+    assert_eq!(
+        mode_divider_labels(InlineShellMode::ExcludeFromContext)[0],
+        "shell · excluded from context"
+    );
+}
+
+#[test]
+fn history_prefix_matches_mode() {
+    assert_eq!(InlineShellMode::IncludeInContext.history_prefix(), "!");
+    assert_eq!(InlineShellMode::ExcludeFromContext.history_prefix(), "!!");
+}
+
+#[test]
 fn formats_context_with_command_and_both_streams() {
     let output = ShellOutput {
         shell: "bash".into(),

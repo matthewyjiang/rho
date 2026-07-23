@@ -32,6 +32,7 @@ pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
 fn tree_item(item: SessionTreeItem) -> PickerItem {
     let preview = tree_preview(&item);
     PickerItem {
+        section: None,
         label: tree_label(&item, &preview),
         detail: None,
         preview: None,
@@ -123,6 +124,7 @@ impl App {
         self.composer = ComposerMode::Input;
         self.input.clear();
         self.paste_segments.clear();
+        self.shell_mode = None;
         self.input_cursor = 0;
         self.command_palette_dismissed = false;
         self.reset_streams();

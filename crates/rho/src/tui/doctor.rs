@@ -6,7 +6,10 @@ use {
     rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore},
 };
 
-use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use super::{
+    picker_overlay::OverlayChrome, PickerAction, PickerBadge, PickerBadgePlacement,
+    PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+};
 use crate::clipboard::doctor_report as clipboard_doctor_report;
 
 pub(super) struct DoctorContext<'a> {
@@ -23,7 +26,13 @@ pub(super) struct DoctorContext<'a> {
 }
 
 pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
-    let mut items = Vec::new();
+    const AUTHENTICATION: &str = "AUTHENTICATION";
+    const CACHE: &str = "CACHE";
+    const MISC: &str = "MISC";
+
+    let mut authentication_items = Vec::new();
+    let mut cache_items = Vec::new();
+    let mut misc_items = Vec::new();
     for descriptor in provider::providers() {
         let (healthy, status, detail) = if descriptor.auth_kind == ProviderAuthKind::None {
             (
@@ -58,8 +67,13 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
                 ),
             }
         };
-        items.push(item(
-            format!("{} authentication", descriptor.display_name),
+        authentication_items.push(item(
+            AUTHENTICATION,
+            if descriptor.auth_kind == ProviderAuthKind::None {
+                format!("{} authentication", descriptor.display_name)
+            } else {
+                descriptor.login_label.to_string()
+            },
             status,
             healthy,
             detail.into(),
@@ -105,7 +119,8 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
                 "Run /doctor after the current model turn to check this endpoint.".into(),
             ),
         };
-        items.push(item(
+        misc_items.push(item(
+            MISC,
             format!("{} connection", descriptor.display_name),
             status,
             healthy,
@@ -120,7 +135,8 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
         context.available_auths,
     )
     .is_ok();
-    items.push(item(
+    misc_items.push(item(
+        MISC,
         "Selected model",
         if model_available {
             "available"
@@ -136,14 +152,16 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     ));
 
     let config_writable = probe_writable(context.config_path, PathKind::File);
-    items.push(item(
+    misc_items.push(item(
+        MISC,
         "Configuration",
         writable_status(config_writable),
         config_writable,
         context.config_path.display().to_string(),
     ));
     let sessions_writable = probe_writable(context.session_root, PathKind::Directory);
-    items.push(item(
+    misc_items.push(item(
+        MISC,
         "Sessions",
         writable_status(sessions_writable),
         sessions_writable,
@@ -155,8 +173,16 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
             let count =
                 rho_providers::model::provider_models::cached_provider_models(descriptor.name)
                     .len();
-            items.push(item(
-                format!("{} model cache", descriptor.display_name),
+            cache_items.push(item(
+                CACHE,
+                format!(
+                    "{} model cache",
+                    if descriptor.auth_kind == ProviderAuthKind::None {
+                        descriptor.display_name
+                    } else {
+                        descriptor.login_label
+                    }
+                ),
                 if count > 0 { "populated" } else { "empty" },
                 count > 0,
                 format!("{count} cached model{}", if count == 1 { "" } else { "s" }),
@@ -165,7 +191,8 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     }
 
     let clipboard = clipboard_doctor_report();
-    items.push(item(
+    misc_items.push(item(
+        MISC,
         "Clipboard text write",
         clipboard.text_write_status,
         clipboard.text_write_healthy,
@@ -174,14 +201,16 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
             clipboard.session_label, clipboard.text_write_detail
         ),
     ));
-    items.push(item(
+    misc_items.push(item(
+        MISC,
         "Clipboard image helper",
         clipboard.image_status(),
         clipboard.image_healthy(),
         clipboard.image_detail(),
     ));
     let rtk = rho_tools::rtk::is_available();
-    items.push(item(
+    misc_items.push(item(
+        MISC,
         "rtk",
         if rtk { "available" } else { "unavailable" },
         rtk,
@@ -206,22 +235,38 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
                 "Herdr is configured, but socket reachability could not be determined.",
             ),
         };
-    items.push(item(
+    misc_items.push(item(
+        MISC,
         "Herdr",
         herdr_status,
         herdr_healthy,
         herdr_detail.into(),
     ));
 
+    let items = authentication_items
+        .into_iter()
+        .chain(cache_items)
+        .chain(misc_items)
+        .collect();
+
     UiPicker::new(
         "Doctor diagnostics",
-        "up/down inspect, type to filter, enter or esc close",
+        "type regex filter, enter or esc closes",
         items,
-        PickerAction::Doctor,
+        PickerAction::Dismiss,
     )
+    .with_layout(PickerLayout::Overlay)
+    .with_badge_placement(PickerBadgePlacement::Detail)
+    .with_overlay_chrome(OverlayChrome {
+        nav_label: " CHECKS".into(),
+        detail_label: Some(" DETAILS".into()),
+        nav_keys_hint: "↑↓ checks".into(),
+    })
+    .with_confirm_verb("close")
 }
 
 fn item(
+    section: &str,
     label: impl Into<String>,
     status: impl Into<String>,
     healthy: bool,
@@ -231,6 +276,7 @@ fn item(
     PickerItem {
         value: label.clone(),
         label,
+        section: Some(section.into()),
         detail: Some(detail),
         preview: None,
         badge: Some(PickerBadge {

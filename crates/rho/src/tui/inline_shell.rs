@@ -17,6 +17,7 @@ pub(super) enum InlineShellMode {
 }
 
 impl InlineShellMode {
+    /// Parse a history or pasted entry that still uses the `!` / `!!` prefix form.
     pub(super) fn parse(input: &str) -> Option<(Self, &str)> {
         if let Some(command) = input.strip_prefix("!!") {
             Some((Self::ExcludeFromContext, command.trim()))
@@ -30,33 +31,26 @@ impl InlineShellMode {
     pub(super) const fn included_in_context(self) -> bool {
         matches!(self, Self::IncludeInContext)
     }
+
+    pub(super) const fn history_prefix(self) -> &'static str {
+        match self {
+            Self::IncludeInContext => "!",
+            Self::ExcludeFromContext => "!!",
+        }
+    }
 }
 
-pub(super) fn mode(input: &str) -> Option<InlineShellMode> {
-    InlineShellMode::parse(input).map(|(mode, _)| mode)
-}
-
-pub(super) fn mode_when_idle(_running: bool, input: &str) -> Option<InlineShellMode> {
-    mode(input)
-}
-
-pub(super) fn mode_hint_when_idle(
-    _running: bool,
-    input: &str,
-) -> Option<(&'static str, ratatui::style::Style)> {
-    mode_hint(input)
-}
-
-pub(super) fn mode_hint(input: &str) -> Option<(&'static str, ratatui::style::Style)> {
-    match mode(input)? {
-        InlineShellMode::IncludeInContext => Some((
-            "SHELL - output will be included in model context",
-            super::Theme::shell_context(),
-        )),
-        InlineShellMode::ExcludeFromContext => Some((
-            "LOCAL SHELL - output will not be included in model context",
-            super::Theme::shell_local(),
-        )),
+/// Compact top-divider labels for shell mode, longest first for width fitting.
+pub(super) fn mode_divider_labels(mode: InlineShellMode) -> &'static [&'static str] {
+    match mode {
+        InlineShellMode::IncludeInContext => {
+            &["shell · included in context", "shell · in context", "shell"]
+        }
+        InlineShellMode::ExcludeFromContext => &[
+            "shell · excluded from context",
+            "shell · not in context",
+            "shell",
+        ],
     }
 }
 
@@ -260,15 +254,7 @@ impl super::App {
         } else {
             config.inline_shell
         };
-        self.push_input_history(&format!(
-            "{}{}",
-            if mode.included_in_context() {
-                "!"
-            } else {
-                "!!"
-            },
-            command
-        ));
+        self.push_input_history(&format!("{}{command}", mode.history_prefix()));
         let cwd = self.info.runtime.cwd.clone();
         let task_shell = shell.clone();
         let task_command = command.clone();
@@ -316,6 +302,73 @@ impl super::App {
         }
         self.status = "inline shell cancelled".into();
         true
+    }
+
+    /// Leave shell mode and restore a normal composer, keeping the typed command text.
+    pub(super) fn exit_shell_mode(&mut self) -> bool {
+        if self.shell_mode.take().is_none() {
+            return false;
+        }
+        self.status = if self.running { "running" } else { "ready" }.into();
+        true
+    }
+
+    /// Enter or upgrade shell mode from a leading `!` keypress.
+    ///
+    /// Shell mode is explicit App state. The composer stores only the command
+    /// text, so cursor/home/delete/word/paste coordinates stay ordinary.
+    pub(super) fn try_enter_shell_mode_from_bang(&mut self) -> bool {
+        if !matches!(self.composer, super::ComposerMode::Input)
+            || self.input_cursor != 0
+            || !self.input.is_empty()
+            || !self.paste_segments.is_empty()
+        {
+            return false;
+        }
+        match self.shell_mode {
+            None => {
+                self.shell_mode = Some(InlineShellMode::IncludeInContext);
+                true
+            }
+            Some(InlineShellMode::IncludeInContext) => {
+                self.shell_mode = Some(InlineShellMode::ExcludeFromContext);
+                true
+            }
+            Some(InlineShellMode::ExcludeFromContext) => true,
+        }
+    }
+
+    pub(super) fn shell_submission(&self) -> Option<(InlineShellMode, String)> {
+        if let Some(mode) = self.shell_mode {
+            return Some((mode, self.input.trim().to_string()));
+        }
+        InlineShellMode::parse(self.input.trim()).map(|(mode, command)| (mode, command.to_string()))
+    }
+
+    /// Restore composer text that may still use the historical `!` / `!!` prefix form.
+    pub(super) fn apply_composer_text(
+        &mut self,
+        text: String,
+        paste_segments: Vec<super::PasteSegment>,
+        submission_mode: super::InputSubmissionMode,
+    ) {
+        if paste_segments.is_empty() {
+            if let Some((mode, command)) = InlineShellMode::parse(text.trim_end()) {
+                self.shell_mode = Some(mode);
+                self.input = command.to_string();
+                self.paste_segments.clear();
+                self.input_submission_mode = submission_mode;
+                self.input_cursor = self.input_char_len();
+                self.input_changed();
+                return;
+            }
+        }
+        self.shell_mode = None;
+        self.input = text;
+        self.paste_segments = paste_segments;
+        self.input_submission_mode = submission_mode;
+        self.input_cursor = self.input_char_len();
+        self.input_changed();
     }
 
     pub(super) async fn finish_completed_inline_shells(&mut self) -> anyhow::Result<bool> {
@@ -432,6 +485,7 @@ impl super::App {
     pub(super) fn clear_submitted_input(&mut self) {
         self.input.clear();
         self.paste_segments.clear();
+        self.shell_mode = None;
         self.input_cursor = 0;
         self.clamp_command_selection();
     }

@@ -60,6 +60,40 @@ fn ollama_diagnostics_show_no_auth_and_each_connection_state() {
             herdr_socket_reachable: None,
             provider_health: &health,
         });
+        assert_eq!(picker.layout, PickerLayout::Overlay);
+        assert_eq!(picker.badge_placement, PickerBadgePlacement::Detail);
+        let chrome = picker.overlay_chrome.as_ref().unwrap();
+        assert_eq!(chrome.nav_label, " CHECKS");
+        assert_eq!(chrome.detail_label.as_deref(), Some(" DETAILS"));
+        assert_eq!(chrome.nav_keys_hint, "↑↓ checks");
+        assert_eq!(picker.confirm_action_label(), "close");
+        let labels = picker
+            .items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+        for label in [
+            "OpenRouter API key",
+            "OpenRouter OAuth",
+            "xAI API key",
+            "xAI OAuth",
+            "OpenRouter API key model cache",
+            "OpenRouter OAuth model cache",
+        ] {
+            assert!(labels.contains(&label), "missing {label} in {labels:?}");
+        }
+        let sections = picker
+            .items
+            .iter()
+            .filter_map(|item| item.section.as_deref())
+            .fold(Vec::new(), |mut sections, section| {
+                if sections.last().copied() != Some(section) {
+                    sections.push(section);
+                }
+                sections
+            });
+        assert_eq!(sections, ["AUTHENTICATION", "CACHE", "MISC"]);
+
         let auth = picker
             .items
             .iter()

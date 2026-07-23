@@ -76,6 +76,34 @@ fn enter_advances_questions_and_submits_only_on_the_last() {
 }
 
 #[test]
+fn resolving_questionnaire_clears_preexisting_shell_mode() {
+    for submit in [true, false] {
+        let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
+        let mut app = test_app();
+        app.shell_mode = Some(InlineShellMode::ExcludeFromContext);
+        app.composer = ComposerMode::Questionnaire(QuestionnaireComposer::new(
+            QuestionnaireRequest {
+                title: None,
+                reason: None,
+                questions: vec![choice_question("choice")],
+            },
+            QuestionnaireResponseChannel::new(reply_tx),
+        ));
+
+        let key = if submit {
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+        } else {
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+        };
+        app.handle_questionnaire_key(key).unwrap();
+
+        assert_eq!(app.shell_mode, None);
+        assert!(app.input.is_empty());
+        assert!(matches!(app.composer, ComposerMode::Input));
+    }
+}
+
+#[test]
 fn second_ctrl_c_cancels_questionnaire_without_exiting_tui() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut app = test_app();

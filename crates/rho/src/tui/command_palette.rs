@@ -149,6 +149,7 @@ impl App {
         };
         self.input = input;
         self.input_cursor = cursor;
+        self.shell_mode = None;
     }
 }
 

@@ -253,6 +253,7 @@ impl App {
             PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
+                self.shell_mode = None;
                 self.input = format!("/skill:{value}");
                 self.input_cursor = self.input_char_len();
                 self.command_palette_dismissed = true;
@@ -273,7 +274,7 @@ impl App {
                 }
                 Ok(())
             }
-            PickerAction::Doctor => Ok(()),
+            PickerAction::Dismiss => Ok(()),
         };
         if let (true, Some((picker, selected_value))) = (result.is_ok(), other_return_picker) {
             self.open_main_config_picker(selected_value, picker.filter)?;
@@ -373,7 +374,7 @@ impl App {
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::Config
-            | PickerAction::Doctor => return Ok(()),
+            | PickerAction::Dismiss => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
         self.composer = ComposerMode::Picker(picker);
@@ -434,7 +435,7 @@ impl App {
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::Config
-            | PickerAction::Doctor => return None,
+            | PickerAction::Dismiss => return None,
         };
         match &mut self.composer {
             ComposerMode::Picker(picker) => {
