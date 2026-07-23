@@ -9,6 +9,7 @@ mod codex_continuation;
 mod codex_request;
 mod codex_ws;
 mod reasoning;
+mod remote_compaction;
 
 pub use cache::prompt_cache_key_from_session_id;
 
@@ -104,7 +105,16 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         match &self.auth {
-            Auth::ApiKey(key) => self.send_chat_completions(request, key).await,
+            Auth::ApiKey(key) => {
+                if remote_compaction::history_has_remote_compaction(
+                    request.messages,
+                    &self.model_identity(),
+                ) {
+                    self.send_openai_api_responses_complete(request, key).await
+                } else {
+                    self.send_chat_completions(request, key).await
+                }
+            }
             Auth::Codex { tokens, source } => {
                 let tokens = self.codex_turn_tokens(tokens, *source);
                 self.send_codex_responses_complete(request, tokens, *source)
@@ -126,7 +136,15 @@ impl OpenAiProvider {
             result = async {
                 match &self.auth {
                     Auth::ApiKey(key) => {
-                        self.send_chat_completions_stream(request, key, on_event).await
+                        if remote_compaction::history_has_remote_compaction(
+                            request.messages,
+                            &self.model_identity(),
+                        ) {
+                            self.send_openai_api_responses_stream(request, key, on_event)
+                                .await
+                        } else {
+                            self.send_chat_completions_stream(request, key, on_event).await
+                        }
                     }
                     Auth::Codex { tokens, source } => {
                         let tokens = self.codex_turn_tokens(tokens, *source);
@@ -170,7 +188,7 @@ impl OpenAiProvider {
     }
 }
 
-crate::impl_sdk_model_provider!(OpenAiProvider);
+crate::impl_sdk_model_provider!(OpenAiProvider, native_compact);
 
 impl OpenAiProvider {
     fn chat_completions_request(
@@ -512,6 +530,248 @@ impl OpenAiProvider {
             }
         }
     }
+
+    pub(crate) fn try_native_compact<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+    ) -> Option<rho_sdk::provider::NativeCompactionFuture<'a>> {
+        if !remote_compaction::supports_remote_compaction(&self.model_identity()) {
+            return None;
+        }
+        match &self.auth {
+            Auth::ApiKey(_) | Auth::Codex { .. } => Some(Box::pin(async move {
+                self.native_compact_turn(request)
+                    .await
+                    .map_err(crate::providers::sdk_contract::provider_error_from_model_error)
+            })),
+        }
+    }
+
+    async fn native_compact_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<rho_sdk::provider::NativeCompactionOutput, ModelError> {
+        let cancellation = request.cancellation.clone();
+        let identity = self.model_identity();
+        let source_messages = request.messages.to_vec();
+        let body =
+            remote_compaction::build_remote_compaction_body(&identity, &self.reasoning, request)?;
+
+        let response = match &self.auth {
+            Auth::ApiKey(key) => {
+                self.post_responses_json(key, None, &body, /*codex*/ false, &cancellation)
+                    .await?
+            }
+            Auth::Codex { tokens, source } => {
+                let tokens = self.codex_turn_tokens(tokens, *source);
+                let response = self
+                    .post_responses_json(
+                        &tokens.access_token,
+                        tokens.account_id.as_deref(),
+                        &body,
+                        /*codex*/ true,
+                        &cancellation,
+                    )
+                    .await;
+                let response = match response {
+                    Ok(response)
+                        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                            && tokens.refresh_token.is_some() =>
+                    {
+                        let refreshed = refresh_codex_token(
+                            &self.client,
+                            self.credential_store.as_ref(),
+                            tokens.refresh_token.as_deref().expect("checked above"),
+                            *source,
+                            &tokens,
+                        )
+                        .await?;
+                        self.remember_refreshed_codex_tokens(refreshed.clone());
+                        self.post_responses_json(
+                            &refreshed.access_token,
+                            refreshed.account_id.as_deref(),
+                            &body,
+                            /*codex*/ true,
+                            &cancellation,
+                        )
+                        .await?
+                    }
+                    Ok(response) => response,
+                    Err(error) => return Err(error),
+                };
+                response
+            }
+        };
+
+        if !response.status().is_success() {
+            return Err(crate::provider_backend::http_error::from_response(response).await);
+        }
+
+        let (compaction_item, usage) = tokio::select! {
+            result = collect_remote_compaction_sse(response) => result?,
+            () = cancellation.cancelled() => return Err(ModelError::Interrupted),
+        };
+
+        // History shape changed; drop any live previous_response_id baseline.
+        if matches!(self.auth, Auth::Codex { .. }) {
+            self.codex_ws.reset().await;
+        }
+
+        let messages = remote_compaction::build_remote_compaction_replacement(
+            identity,
+            &source_messages,
+            compaction_item,
+            None,
+        )?;
+        rho_sdk::provider::NativeCompactionOutput::new(messages, usage)
+            .map_err(|error| ModelError::InvalidResponse(error.to_string()))
+    }
+
+    async fn send_openai_api_responses_complete(
+        &self,
+        request: ModelRequest<'_>,
+        key: &str,
+    ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        let body = self.openai_api_responses_body(request)?;
+        let response = self
+            .post_responses_json(key, None, &body, /*codex*/ false, &cancellation)
+            .await?;
+        if !response.status().is_success() {
+            return Err(crate::provider_backend::http_error::from_response(response).await);
+        }
+        crate::providers::send_stream::collect_codex_model_response_silent(response).await
+    }
+
+    async fn send_openai_api_responses_stream(
+        &self,
+        request: ModelRequest<'_>,
+        key: &str,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        let cancellation = request.cancellation.clone();
+        let body = self.openai_api_responses_body(request)?;
+        let response = self
+            .post_responses_json(key, None, &body, /*codex*/ false, &cancellation)
+            .await?;
+        if !response.status().is_success() {
+            return Err(crate::provider_backend::http_error::from_response(response).await);
+        }
+        let mut on_event = Some(on_event);
+        collect_codex_sse_response(response, &mut on_event)
+            .await
+            .map(|output| output.response)
+    }
+
+    fn openai_api_responses_body(&self, request: ModelRequest<'_>) -> Result<Value, ModelError> {
+        let identity = self.model_identity();
+        let mut body = codex_request::build_responses_body_with_profile(
+            "openai",
+            &self.model,
+            &identity,
+            &self.reasoning,
+            request,
+            CodexRequestMode::Standard,
+        )?;
+        body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
+        Ok(body)
+    }
+
+    async fn post_responses_json(
+        &self,
+        access_token: &str,
+        account_id: Option<&str>,
+        body: &Value,
+        codex: bool,
+        cancellation: &rho_sdk::CancellationToken,
+    ) -> Result<reqwest::Response, ModelError> {
+        let url = format!("{}/responses", self.api_base.trim_end_matches('/'));
+        let mut request = self
+            .client
+            .post(url)
+            .bearer_auth(access_token)
+            .header("User-Agent", if codex { "codex-cli" } else { "rho" })
+            .json(body);
+        if codex {
+            request = request
+                .header("originator", "codex_cli_rs")
+                .header("x-codex-beta-features", "remote_compaction_v2")
+                .header("OpenAI-Beta", "responses=experimental");
+            if CodexRequestMode::for_model(&self.model).uses_responses_lite() {
+                request = request.header("x-openai-internal-codex-responses-lite", "true");
+            }
+            if let Some(account_id) = account_id {
+                request = request.header("ChatGPT-Account-ID", account_id);
+            }
+        }
+        tokio::select! {
+            response = request.send() => Ok(response?),
+            () = cancellation.cancelled() => Err(ModelError::Interrupted),
+        }
+    }
+}
+
+async fn collect_remote_compaction_sse(
+    response: reqwest::Response,
+) -> Result<(Value, ModelUsage), ModelError> {
+    use std::sync::{Arc, Mutex};
+
+    use crate::protocol::openai_chat::invalid_stream_utf8;
+    use crate::protocol::openai_responses::{handle_codex_sse_line, CodexSseState};
+    use crate::provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline};
+    use futures_util::StreamExt;
+
+    let mut state = CodexSseState::default();
+    let usage = Arc::new(Mutex::new(ModelUsage::default()));
+    let mut decoder = LineDecoder::default();
+    let mut stream = response.bytes_stream();
+    let mut idle_deadline = StreamIdleDeadline::new();
+
+    loop {
+        let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
+            break;
+        };
+        decoder.push(&chunk?);
+        while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
+            let usage = Arc::clone(&usage);
+            let mut on_event = move |event: ModelEvent| -> Result<(), ModelError> {
+                if let ModelEvent::Usage(event_usage) = event {
+                    if let Ok(mut guard) = usage.lock() {
+                        *guard = event_usage;
+                    }
+                }
+                Ok(())
+            };
+            let mut callback: Option<
+                &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+            > = Some(&mut on_event);
+            if handle_codex_sse_line(line, &mut state, &mut callback)? {
+                idle_deadline.record_activity();
+            }
+        }
+    }
+    if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
+        let usage = Arc::clone(&usage);
+        let mut on_event = move |event: ModelEvent| -> Result<(), ModelError> {
+            if let ModelEvent::Usage(event_usage) = event {
+                if let Ok(mut guard) = usage.lock() {
+                    *guard = event_usage;
+                }
+            }
+            Ok(())
+        };
+        let mut callback: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> =
+            Some(&mut on_event);
+        handle_codex_sse_line(line, &mut state, &mut callback)?;
+    }
+    if state.response_id.is_none() {
+        return Err(ModelError::InvalidResponse(
+            "remote compaction v2 stream ended before response.completed".into(),
+        ));
+    }
+    let compaction_item = remote_compaction::extract_compaction_item(&state.output_items)?;
+    let usage = usage.lock().map(|guard| guard.clone()).unwrap_or_default();
+    Ok((compaction_item, usage))
 }
 
 #[cfg(test)]

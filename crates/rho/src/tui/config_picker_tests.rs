@@ -179,3 +179,12 @@ fn badge_uses_legacy_web_search_key_when_store_is_unavailable() {
 fn badge_is_unset_without_stored_or_legacy_web_search_key() {
     assert!(!web_search_api_key_is_set(Ok(None), None));
 }
+
+#[test]
+fn compact_target_description_notes_server_side_budget() {
+    assert!(super::compact_target_description("openai-codex").contains("server-side"));
+    assert!(super::compact_target_description("openai-codex").contains("does not apply"));
+    assert!(super::compact_target_description("openai").contains("server-side"));
+    assert!(!super::compact_target_description("anthropic").contains("server-side"));
+    assert!(super::compact_target_description("anthropic").contains("verbatim tail"));
+}

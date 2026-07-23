@@ -44,12 +44,30 @@ pub(super) fn build_codex_responses_body_with_profile(
     reasoning_profile: &super::reasoning::OpenAiReasoningProfile,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
-    let reasoning = reasoning_profile.config("openai-codex", model, request.reasoning_level)?;
-    let mode = CodexRequestMode::for_model(model);
-    let mut instructions = Vec::new();
     let target = crate::model::ModelIdentity::new("openai-codex", "openai-responses", model);
+    build_responses_body_with_profile(
+        "openai-codex",
+        model,
+        &target,
+        reasoning_profile,
+        request,
+        CodexRequestMode::for_model(model),
+    )
+}
+
+/// Builds a Responses API body for Codex or direct OpenAI API-key turns.
+pub(super) fn build_responses_body_with_profile(
+    provider: &'static str,
+    model: &str,
+    target: &crate::model::ModelIdentity,
+    reasoning_profile: &super::reasoning::OpenAiReasoningProfile,
+    request: ModelRequest<'_>,
+    mode: CodexRequestMode,
+) -> Result<Value, ModelError> {
+    let reasoning = reasoning_profile.config(provider, model, request.reasoning_level)?;
+    let mut instructions = Vec::new();
     let mut input =
-        codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(&target))?;
+        codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(target))?;
     let tools = request
         .tools
         .iter()

@@ -165,6 +165,22 @@ impl Compactor for ModelCompactor {
             }
             let cancellation = request.cancellation().clone();
             let messages = request.messages().to_vec();
+
+            if let Some(native) = try_native_compaction(
+                self.provider.as_ref(),
+                &messages,
+                &self.tool_specs,
+                self.reasoning,
+                cancellation.clone(),
+                request.session_id().map(|id| id.to_string()),
+                usage_context.clone(),
+                self.usage_recording.clone(),
+            )
+            .await
+            {
+                return native;
+            }
+
             let target_tokens = self
                 .context_window
                 .map(|window| self.config.target_tokens(window))
@@ -218,4 +234,50 @@ impl Compactor for ModelCompactor {
     fn cancellation_mode(&self) -> rho_sdk::CompactorCancellationMode {
         rho_sdk::CompactorCancellationMode::Cooperative
     }
+}
+
+async fn try_native_compaction(
+    provider: &dyn ModelProvider,
+    messages: &[rho_sdk::model::Message],
+    tools: &[rho_sdk::model::ToolSpec],
+    reasoning: rho_sdk::ReasoningLevel,
+    cancellation: rho_sdk::CancellationToken,
+    prompt_cache_key: Option<String>,
+    usage_context: rho_sdk::ProviderRequestUsageContext,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
+) -> Option<Result<CompactionOutput, Error>> {
+    let model_request = ModelRequest {
+        messages,
+        tools,
+        cancellation: cancellation.clone(),
+        reasoning_level: reasoning,
+        prompt_cache_key: prompt_cache_key.as_deref(),
+    };
+    let future = provider.native_compact(model_request)?;
+    let result = future.await;
+    let outcome = match &result {
+        Ok(_) => rho_sdk::ProviderRequestOutcome::Completed,
+        Err(_) if cancellation.is_cancelled() => rho_sdk::ProviderRequestOutcome::Cancelled,
+        Err(error) => rho_sdk::ProviderRequestOutcome::Failed(error.kind()),
+    };
+    let usage = result
+        .as_ref()
+        .map(|output| output.usage().clone())
+        .unwrap_or_default();
+    usage_recording
+        .record(rho_sdk::ProviderRequestUsageEvent::observed(
+            usage_context.with_attempt_index(1),
+            usage,
+            outcome,
+        ))
+        .await;
+    Some(match result {
+        Ok(output) => {
+            let (messages, usage) = output.into_parts();
+            CompactionOutput::with_usage(messages, usage)
+        }
+        Err(_) if cancellation.is_cancelled() => Err(Error::Cancelled),
+        // Fall back to the portable text summary path.
+        Err(_) => return None,
+    })
 }

@@ -162,7 +162,15 @@ fn append_codex_prepared_assistant(
     prepared: PreparedAssistant,
 ) -> Result<(), ModelError> {
     let mut assistant_items = Vec::new();
-    append_codex_assistant(&mut assistant_items, prepared.content)?;
+    // Portable summary text on a remote-compaction marker is for non-Codex
+    // handoff only. Compatible Codex turns replay the opaque compaction item.
+    let has_remote_compaction = prepared.replay_context.iter().any(|block| {
+        block.kind == "openai_response_output_item"
+            && block.data.get("type").and_then(|value| value.as_str()) == Some("compaction")
+    });
+    if !has_remote_compaction {
+        append_codex_assistant(&mut assistant_items, prepared.content)?;
+    }
     insert_replay_items(&mut assistant_items, prepared.replay_context);
     input.extend(assistant_items);
     Ok(())
@@ -517,6 +525,47 @@ mod handoff_tests {
         assert_eq!(input[0]["type"], "reasoning");
         assert_eq!(input[1]["role"], "assistant");
         assert_eq!(input[2]["type"], "function_call");
+    }
+
+    #[test]
+    fn codex_remote_compaction_marker_replays_item_without_portable_text() {
+        let source =
+            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
+        let message = Message::assistant(crate::model::AssistantMessage {
+            content: vec![ContentBlock::Text("portable summary".into())],
+            provenance: Some(source.clone()),
+            reasoning_summary: None,
+            provider_context: vec![crate::model::ProviderContextBlock {
+                identity: source.clone(),
+                kind: "openai_response_output_item".into(),
+                position: Some(0),
+                data: json!({"type": "compaction", "encrypted_content": "blob"}),
+            }],
+        });
+
+        let exact =
+            codex_input_items_for_target(vec![message.clone()], &mut Vec::new(), Some(&source))
+                .unwrap();
+        let foreign = codex_input_items_for_target(
+            vec![message],
+            &mut Vec::new(),
+            Some(&crate::model::ModelIdentity::new(
+                "anthropic",
+                "anthropic-messages",
+                "claude-test",
+            )),
+        )
+        .unwrap();
+
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0]["type"], "compaction");
+        assert_eq!(exact[0]["encrypted_content"], "blob");
+        assert_eq!(foreign.len(), 1);
+        assert_eq!(foreign[0]["role"], "assistant");
+        assert!(foreign[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("portable summary"));
     }
 
     #[test]

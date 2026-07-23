@@ -214,7 +214,7 @@ pub(super) fn category_picker(
                 ),
                 item(
                     "Compact target",
-                    "Post-compaction target percent. The recent verbatim tail uses the remaining token budget.",
+                    compact_target_description(&info.provider),
                     Some(format!("{}%", config.compact_target_percent)),
                     COMPACT_TARGET_PERCENT_VALUE,
                 ),
@@ -354,6 +354,18 @@ fn permission_mode_description(mode: PermissionMode) -> &'static str {
         PermissionMode::Plan => "Investigate only; writes and processes are denied.",
         PermissionMode::Supervised => "Ask before writes and processes.",
     }
+}
+
+fn compact_target_description(provider: &str) -> &'static str {
+    if uses_server_side_compaction_budget(provider) {
+        "Post-compaction target percent for text-summary compaction. This provider uses server-side compaction, so this budget does not apply unless that path falls back."
+    } else {
+        "Post-compaction target percent. The recent verbatim tail uses the remaining token budget."
+    }
+}
+
+fn uses_server_side_compaction_budget(provider: &str) -> bool {
+    matches!(provider, "openai-codex" | "openai")
 }
 
 pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {

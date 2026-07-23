@@ -297,9 +297,18 @@ where
 ///
 /// Streaming buffers same-poll callback bursts, then applies the SDK event
 /// channel's async backpressure before polling the provider again.
+///
+/// Pass `native_compact` as a second argument when the transport also exposes
+/// `native_compact_turn`.
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
+        $crate::impl_sdk_model_provider!($provider,);
+    };
+    ($provider:ty, native_compact) => {
+        $crate::impl_sdk_model_provider!($provider, @native_compact);
+    };
+    ($provider:ty, $($native:tt)*) => {
         impl ::rho_sdk::provider::ModelProvider for $provider {
             fn cancellation_mode(&self) -> ::rho_sdk::provider::ProviderCancellationMode {
                 ::rho_sdk::provider::ProviderCancellationMode::Cooperative
@@ -319,6 +328,8 @@ macro_rules! impl_sdk_model_provider {
                         .map_err($crate::providers::sdk_contract::provider_error_from_model_error)
                 })
             }
+
+            $crate::impl_sdk_model_provider!(@native_compact_method $($native)*);
 
             fn send_turn_stream<'a>(
                 &'a self,
@@ -353,6 +364,15 @@ macro_rules! impl_sdk_model_provider {
                     .await
                 })
             }
+        }
+    };
+    (@native_compact_method) => {};
+    (@native_compact_method @native_compact) => {
+        fn native_compact<'a>(
+            &'a self,
+            request: ::rho_sdk::model::ModelRequest<'a>,
+        ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
+            self.try_native_compact(request)
         }
     };
 }

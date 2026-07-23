@@ -10,13 +10,49 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    model::{ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     ProviderError, ProviderErrorKind, Retryability,
 };
 
 /// Future returned by [`ModelProvider`] operations.
 pub type ProviderFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ModelResponse, ProviderError>> + Send + 'a>>;
+
+/// Future returned by optional provider-native compaction.
+pub type NativeCompactionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<NativeCompactionOutput, ProviderError>> + Send + 'a>>;
+
+/// Replacement history produced by a provider-native compaction path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeCompactionOutput {
+    messages: Vec<Message>,
+    usage: ModelUsage,
+}
+
+impl NativeCompactionOutput {
+    pub fn new(messages: Vec<Message>, usage: ModelUsage) -> Result<Self, ProviderError> {
+        if messages.is_empty() {
+            return Err(ProviderError::new(
+                ProviderErrorKind::InvalidResponse,
+                "native compaction replacement history must not be empty",
+                Retryability::Permanent,
+            ));
+        }
+        Ok(Self { messages, usage })
+    }
+
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
+    }
+
+    pub fn usage(&self) -> &ModelUsage {
+        &self.usage
+    }
+
+    pub fn into_parts(self) -> (Vec<Message>, ModelUsage) {
+        (self.messages, self.usage)
+    }
+}
 
 /// Sending side of a bounded provider-event channel.
 #[derive(Clone, Debug)]
@@ -166,6 +202,18 @@ pub trait ModelProvider: Send + Sync {
 
     /// Completes one model turn without streaming intermediate events.
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a>;
+
+    /// Optional provider-native history compaction.
+    ///
+    /// Returns `None` when the provider has no native compaction path. When
+    /// `Some`, the future must return complete replacement history suitable for
+    /// session commit, and must cooperate with the request cancellation token.
+    fn native_compact<'a>(
+        &'a self,
+        _request: ModelRequest<'a>,
+    ) -> Option<NativeCompactionFuture<'a>> {
+        None
+    }
 
     /// Completes one model turn while sending semantic events in order.
     fn send_turn_stream<'a>(
