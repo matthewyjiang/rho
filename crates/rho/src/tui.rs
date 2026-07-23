@@ -16,13 +16,9 @@ use std::sync::Mutex;
 use tokio::sync::oneshot;
 use tool_call_batch::ToolCallBatch;
 
+use ratatui::DefaultTerminal;
 #[cfg(test)]
-use ratatui::layout::Rect;
-use ratatui::{
-    style::{Modifier, Style},
-    text::Line,
-    DefaultTerminal,
-};
+use ratatui::{layout::Rect, style::Modifier, text::Line};
 mod activity;
 mod agent_picker;
 mod app_construct;
@@ -93,7 +89,6 @@ mod session_title;
 mod transcript_events;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;
 mod app_loop;
-mod helpers;
 mod idle_input;
 mod reasoning_phase;
 mod skill_actions;
@@ -116,8 +111,11 @@ mod usage_cost;
 mod view;
 mod workspace;
 
+mod types;
+use types::*;
+
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
-use approval::{approval_lines, ApprovalComposer, ApprovalKeyOutcome};
+use approval::{approval_lines, ApprovalKeyOutcome};
 use clipboard::ClipboardWriter;
 use config_editor::{
     config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
@@ -134,8 +132,9 @@ use inline_choice::{
     InlineChoicePending,
 };
 use inline_shell::InlineShellMode;
-use login::{PendingOAuthLogin, SecretInput};
-use markdown::CodeFenceState;
+use login::PendingOAuthLogin;
+#[cfg(test)]
+use login::SecretInput;
 use paste_burst::{PasteBurst, PasteBurstEnter};
 use pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel};
 use picker::{
@@ -144,41 +143,30 @@ use picker::{
 };
 use prompt_turn::FailedTurn;
 use provider_attempt::ProviderAttempt;
+#[cfg(test)]
+use questionnaire::QuestionnaireComposer;
 use questionnaire::{
     questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
-    QuestionAnswerRequest, QuestionnaireComposer, QuestionnaireReply, QuestionnaireResponseChannel,
+    QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, entry_lines, input_cursor_index_on_visual_line,
-    input_cursor_position, input_lines_with_images, input_visual_lines, labeled_divider_line,
-    picker_lines, session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
+    char_prefix_display_width, display_width, input_cursor_position, input_lines_with_images,
+    labeled_divider_line, picker_lines, session_header_lines, styled_line, tool_entry_lines,
+    truncate_one_line, LineFill,
 };
 use scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag};
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
-use stream::AppendOnlyStream;
 use subagent_panel::SubagentPanel;
 use terminal_events::TerminalEvents;
 use text_selection::{highlight_selection, render_copy_notice, CopyNotice, TextSelection};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
-use usage_cost::{estimated_cost_usd_micros, UsageCostTracker};
-
-use helpers::{
-    add_optional, complete_slash_command, expand_paste_segments, expandable_tool_entry,
-    final_answer_delta, is_tool_entry, merge_usage, next_word_boundary, normalize_paste,
-    oauth_pending_lines, pad_display_line, padded_content_width, paste_marker_for,
-    previous_word_boundary, print_exit_summary, questionnaire_reply, recovered_history_tail,
-    render_message_blocks, render_user_entry, secret_input_lines, short_session_id,
-    slash_command_args, text_blocks, tool_display_line_count, usage_difference,
-    usage_with_estimated_cost, visible_composer_start,
-};
-use message_history::transcript_entries_from_messages;
 
 use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
-    crate::commands::{self, CommandId, CommandInvocation, CommandSpec},
+    crate::commands::{self, CommandId, CommandInvocation},
     crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
     crate::permission::PermissionMode,
@@ -188,13 +176,14 @@ use {
         catalog::{self, LoginTarget, ModelSelection},
         favorites,
         provider_models::refresh_provider_models_with_store,
-        ContentBlock, ContextUsage, ImageContent, Message, ModelMetadata, ModelUsage,
-        ReasoningRequestSource, UnavailableProvider,
+        ContentBlock, ImageContent, Message, ModelMetadata, ReasoningRequestSource,
+        UnavailableProvider,
     },
     rho_providers::provider,
     rho_providers::reasoning::ReasoningLevel,
-    rho_tools::tool::ToolDisplayStyle,
 };
+#[cfg(test)]
+use {rho_providers::model::ModelUsage, rho_tools::tool::ToolDisplayStyle};
 const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
@@ -290,30 +279,9 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
     }
     ratatui::restore();
     if let Ok(result) = &result {
-        print_exit_summary(result.exit_summary.as_deref())?;
+        app_loop::print_exit_summary(result.exit_summary.as_deref())?;
     }
     result
-}
-
-#[cfg(test)]
-struct ActiveFrame {
-    lines: Vec<Line<'static>>,
-}
-struct LiveStreamPreview {
-    kind: StreamKind,
-    text: String,
-    include_leading_blank: bool,
-}
-struct SessionHeaderCache {
-    width: usize,
-    update_notice: Option<String>,
-    lines: Vec<Line<'static>>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct InteractiveModelSelection {
-    selection: ModelSelection,
-    alias: Option<String>,
 }
 
 struct App {
@@ -328,13 +296,7 @@ struct App {
     status: String,
     should_quit: bool,
     ctrl_c_streak: u8,
-    assistant_stream: AppendOnlyStream,
-    assistant_stream_code_fence: CodeFenceState,
-    reasoning_stream: AppendOnlyStream,
-    reasoning_stream_code_fence: CodeFenceState,
-    current_stream_kind: Option<StreamKind>,
-    stream_preview_deadline: Option<Instant>,
-    live_stream_preview: Option<LiveStreamPreview>,
+    streams: StreamUi,
     current_turn_start: Option<usize>,
     provider_attempt: ProviderAttempt,
     reasoning_phase: reasoning_phase::ReasoningPhase,
@@ -378,16 +340,7 @@ struct App {
     pending_oauth_login: Option<PendingOAuthLogin>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     usage_limits_client: reqwest::Client,
-    cumulative_usage: Option<ModelUsage>,
-    usage_cost_tracker: UsageCostTracker,
-    // SDK usage updates are cumulative within a run. These snapshots let the TUI
-    // replace active usage while preserving totals from prior runs and steps.
-    usage_before_current_run: Option<ModelUsage>,
-    usage_before_current_step: Option<ModelUsage>,
-    usage_before_current_attempt: Option<ModelUsage>,
-    current_run_usage: Option<ModelUsage>,
-    latest_usage: Option<ModelUsage>,
-    current_context: Option<ContextUsage>,
+    usage: UsageUi,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
@@ -407,283 +360,6 @@ struct App {
     clipboard: Box<dyn ClipboardWriter + Send>,
     session_header_cache: Option<SessionHeaderCache>,
     last_mouse_position: Option<(u16, u16)>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum InputSubmissionMode {
-    #[default]
-    ParseCommands,
-    Prompt,
-}
-
-#[derive(Debug)]
-enum ComposerMode {
-    Input,
-    Picker(UiPicker),
-    SecretInput(SecretInput),
-    ConfigNumberInput(ConfigNumberInput),
-    ConfigTextInput(ConfigTextInput),
-    OAuthPending(LoginTarget),
-    InlineChoice(InlineChoiceModal),
-    Questionnaire(QuestionnaireComposer),
-    Approval(ApprovalComposer),
-}
-
-impl ComposerMode {
-    fn blocks_auto_continue(&self) -> bool {
-        match self {
-            Self::InlineChoice(modal) => modal.blocks_auto_continue(),
-            _ => false,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PasteSegment {
-    start: usize,
-    marker_len: usize,
-    content: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct QueuedPrompt {
-    prompt: String,
-    display_prompt: String,
-    paste_segments: Vec<PasteSegment>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct InputDraft {
-    input: String,
-    paste_segments: Vec<PasteSegment>,
-    submission_mode: InputSubmissionMode,
-    shell_mode: Option<InlineShellMode>,
-}
-
-#[derive(Clone, Debug)]
-struct FileMatchCache {
-    query: String,
-    matches: std::sync::Arc<Vec<String>>,
-    refreshed_at: Instant,
-}
-
-/// Discovered skills reused across command palette queries, so typing a slash
-/// command does not re-walk skill directories on every keystroke.
-struct SkillMatchCache {
-    skills: std::sync::Arc<Vec<crate::skills::Skill>>,
-    refreshed_at: Instant,
-}
-
-impl From<&str> for QueuedPrompt {
-    fn from(prompt: &str) -> Self {
-        Self {
-            prompt: prompt.to_string(),
-            display_prompt: prompt.to_string(),
-            paste_segments: Vec::new(),
-        }
-    }
-}
-
-impl PasteSegment {
-    fn end(&self) -> usize {
-        self.start + self.marker_len
-    }
-}
-
-#[derive(Debug)]
-struct SessionTitleResult {
-    session_id: String,
-    title: anyhow::Result<String>,
-}
-
-#[derive(Clone, Debug)]
-struct CommandChoice {
-    name: String,
-    usage: String,
-    description: String,
-    kind: CommandChoiceKind,
-}
-
-#[derive(Debug, PartialEq)]
-enum TurnOutcome {
-    Completed,
-    Interrupted,
-    /// User cancelled interactive work such as a questionnaire.
-    Cancelled,
-    Failed(FailedTurn),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TurnOutcomeKind {
-    Completed,
-    Interrupted,
-    Cancelled,
-    Failed,
-}
-
-impl TurnOutcome {
-    fn kind(&self) -> TurnOutcomeKind {
-        match self {
-            Self::Completed => TurnOutcomeKind::Completed,
-            Self::Interrupted => TurnOutcomeKind::Interrupted,
-            Self::Cancelled => TurnOutcomeKind::Cancelled,
-            Self::Failed(_) => TurnOutcomeKind::Failed,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HistoryScroll {
-    Bottom,
-    Manual { top_line: usize },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum CommandChoiceKind {
-    Builtin(&'static CommandSpec),
-    BuiltinArgument(&'static commands::CommandArgumentChoice),
-    PromptTemplate(String),
-    Skill,
-}
-
-#[derive(Clone, Debug)]
-struct ToolEntry {
-    state: ToolEntryState,
-    display_lines: Vec<String>,
-    expanded: bool,
-    image: Option<FeedImage>,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum ToolEntryState {
-    Running,
-    Finished {
-        ok: bool,
-        display_style: ToolDisplayStyle,
-    },
-}
-
-#[derive(Clone, Debug)]
-enum Entry {
-    User(String),
-    Assistant(String),
-    Reasoning(ReasoningEntry),
-    Tool(ToolEntry),
-    Notice(String),
-    RuntimeInfo(Box<info_command::RuntimeInfo>),
-    UsageLimits(crate::usage_limits::ProviderLimits),
-    Error(String),
-}
-
-/// Streamed reasoning text plus optional post-phase thought duration.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ReasoningEntry {
-    text: String,
-    thought_for: Option<Duration>,
-}
-
-impl ReasoningEntry {
-    fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            thought_for: None,
-        }
-    }
-
-    fn summary_only(thought_for: Duration) -> Self {
-        Self {
-            text: String::new(),
-            thought_for: Some(thought_for),
-        }
-    }
-}
-
-impl From<&str> for ReasoningEntry {
-    fn from(text: &str) -> Self {
-        Self::new(text)
-    }
-}
-
-impl From<String> for ReasoningEntry {
-    fn from(text: String) -> Self {
-        Self::new(text)
-    }
-}
-
-impl Entry {
-    fn is_provider_replaceable(&self) -> bool {
-        matches!(self, Self::Assistant(_) | Self::Reasoning(_))
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StreamKind {
-    Assistant,
-    Reasoning,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PasteBurstKey {
-    Char(char),
-    Enter,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum FinalAnswerDelta<'a> {
-    None,
-    Append(&'a str),
-    Mismatch,
-}
-
-impl StreamKind {
-    fn style(self) -> Style {
-        match self {
-            Self::Assistant => Theme::text(),
-            Self::Reasoning => Theme::dim().add_modifier(Modifier::DIM),
-        }
-    }
-
-    fn entry(self, text: String) -> Entry {
-        match self {
-            Self::Assistant => Entry::Assistant(text),
-            Self::Reasoning => Entry::Reasoning(ReasoningEntry::new(text)),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StreamControl {
-    Continue,
-    Interrupt,
-    Resize,
-    ApprovalResolved,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HerdrUserWait {
-    Approval,
-    Questionnaire,
-}
-
-impl HerdrUserWait {
-    const fn message(self) -> &'static str {
-        match self {
-            Self::Approval => "waiting for approval",
-            Self::Questionnaire => "waiting for your answers",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RunningInputMode {
-    Turn,
-    Compacting,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum HistoryDirection {
-    Previous,
-    Next,
 }
 
 #[cfg(test)]

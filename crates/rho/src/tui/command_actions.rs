@@ -163,7 +163,7 @@ impl App {
         self.end_busy_ui();
         self.tool_calls.clear();
         self.reset_usage();
-        self.current_context = None;
+        self.usage.current_context = None;
         self.pending_session_title = None;
         self.current_turn_start = None;
         self.transcript.clear();

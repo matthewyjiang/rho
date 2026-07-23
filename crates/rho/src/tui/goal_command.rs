@@ -94,12 +94,7 @@ impl App {
             .into();
         } else {
             self.insert_entry(&Entry::Notice("no active goal".into()));
-            self.status = if self.is_ui_busy() {
-                "running"
-            } else {
-                "ready"
-            }
-            .into();
+            self.status = self.busy_status_label().into();
         }
     }
 

@@ -1,8 +1,10 @@
 use ratatui::text::Line;
 
 use super::{
-    markdown::push_wrapped_markdown_without_copy_button_from_fence_state, pad_display_line,
-    padded_content_width, theme::Theme, App, StreamKind,
+    markdown::push_wrapped_markdown_without_copy_button_from_fence_state,
+    render::{pad_display_line, padded_content_width},
+    theme::Theme,
+    App, StreamKind,
 };
 
 impl App {
@@ -17,8 +19,8 @@ impl App {
         }
         let mut text_lines = Vec::new();
         let mut code_fence = match preview.kind {
-            StreamKind::Assistant => self.assistant_stream_code_fence,
-            StreamKind::Reasoning => self.reasoning_stream_code_fence,
+            StreamKind::Assistant => self.streams.assistant_stream_code_fence,
+            StreamKind::Reasoning => self.streams.reasoning_stream_code_fence,
         };
         push_wrapped_markdown_without_copy_button_from_fence_state(
             &mut text_lines,

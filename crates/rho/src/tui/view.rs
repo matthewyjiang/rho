@@ -18,12 +18,19 @@ use super::{
 };
 use super::{
     approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
-    display_width, highlight_selection, inline_choice::inline_choice_lines, input_cursor_position,
-    input_lines_with_images, is_tool_entry, labeled_divider_line, oauth_pending_lines,
-    pad_display_line, padded_content_width, picker_lines, picker_overlay::picker_overlay_frame,
-    questionnaire_cursor_position, questionnaire_lines, recovered_history_tail, render_copy_notice,
-    scroll_state_for_top_line, secret_input_lines, session_header_lines, styled_line,
-    tool_entry_lines, transcript_entries_from_messages, truncate_one_line,
+    display_width, highlight_selection,
+    inline_choice::inline_choice_lines,
+    input_cursor_position, input_lines_with_images, labeled_divider_line,
+    login::{oauth_pending_lines, secret_input_lines},
+    message_history::{recovered_history_tail, transcript_entries_from_messages},
+    picker_lines,
+    picker_overlay::picker_overlay_frame,
+    questionnaire_cursor_position, questionnaire_lines,
+    render::{pad_display_line, padded_content_width},
+    render_copy_notice, scroll_state_for_top_line, session_header_lines, styled_line,
+    tool_entry_lines,
+    tool_output_ui::is_tool_entry,
+    truncate_one_line,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -516,7 +523,7 @@ impl App {
                 self.info.runtime.max_tool_output_lines,
             ));
         }
-        if let Some(preview) = &self.live_stream_preview {
+        if let Some(preview) = &self.streams.live_stream_preview {
             lines.extend(self.render_stream_preview_lines(preview, width));
         }
         if self.reasoning_phase.hidden_placeholder() {
@@ -760,8 +767,8 @@ impl App {
     fn refresh_statusline_state(&mut self) {
         self.statusline.update_model(&self.info.runtime);
         self.statusline.update_usage(
-            self.cumulative_usage.as_ref(),
-            self.current_context.as_ref(),
+            self.usage.cumulative_usage.as_ref(),
+            self.usage.current_context.as_ref(),
         );
         self.statusline
             .update_model_metadata(self.model_metadata.as_ref());

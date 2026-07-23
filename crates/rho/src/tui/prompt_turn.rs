@@ -55,6 +55,25 @@ enum PromptTurnRequest {
     Retry(FailedTurn),
 }
 
+async fn questionnaire_reply(
+    pending: &mut Option<(
+        rho_sdk::ToolCallId,
+        rho_sdk::HostInputId,
+        tokio::sync::oneshot::Receiver<QuestionnaireReply>,
+    )>,
+) -> Option<(
+    rho_sdk::ToolCallId,
+    rho_sdk::HostInputId,
+    QuestionnaireReply,
+)> {
+    let (call_id, request_id, receiver) = pending.as_mut()?;
+    let call_id = call_id.clone();
+    let request_id = request_id.clone();
+    let reply = receiver.await.ok();
+    pending.take();
+    reply.map(|reply| (call_id, request_id, reply))
+}
+
 impl App {
     pub(super) async fn run_prompt_turn(
         &mut self,
@@ -102,7 +121,10 @@ impl App {
                 {
                     self.start_session_title_generation(prompt.history.clone(), agent);
                 }
-                self.insert_entry(&Entry::User(render_user_entry(&prompt.display, &images)));
+                self.insert_entry(&Entry::User(super::message_history::render_user_entry(
+                    &prompt.display,
+                    &images,
+                )));
                 FailedTurn::from_prompt(prompt, images)?
             }
             PromptTurnRequest::Retry(failed_turn) => {

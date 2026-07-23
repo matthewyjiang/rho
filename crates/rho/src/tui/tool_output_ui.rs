@@ -2,7 +2,22 @@
 
 use ratatui::DefaultTerminal;
 
-use super::{expandable_tool_entry, tool_display_line_count, App, Entry};
+use super::{App, Entry};
+
+pub(super) fn is_tool_entry(entry: &Entry) -> bool {
+    matches!(entry, Entry::Tool(_))
+}
+
+pub(super) fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize) -> bool {
+    matches!(entry, Entry::Tool(tool) if tool_display_line_count(&tool.display_lines) > max_tool_output_lines)
+}
+
+pub(super) fn tool_display_line_count(display_lines: &[String]) -> usize {
+    display_lines
+        .iter()
+        .map(|line| line.lines().count().max(1))
+        .sum()
+}
 
 impl App {
     pub(super) fn toggle_latest_tool_output(

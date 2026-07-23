@@ -875,6 +875,23 @@ pub(super) fn labeled_divider_line(
     None
 }
 
+pub(super) fn padded_content_width(width: usize) -> usize {
+    width.saturating_sub(2).max(1)
+}
+
+pub(super) fn pad_display_line(line: Line<'static>) -> Line<'static> {
+    let edge_style = line
+        .spans
+        .first()
+        .map(|span| span.style)
+        .unwrap_or_default();
+    let mut spans = Vec::with_capacity(line.spans.len() + 2);
+    spans.push(Span::styled(" ", edge_style));
+    spans.extend(line.spans);
+    spans.push(Span::styled(" ", edge_style));
+    Line::from(spans)
+}
+
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;

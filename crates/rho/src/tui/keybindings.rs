@@ -73,7 +73,7 @@ impl App {
             let _ = agent.reset();
             self.info.session.session_id = None;
             self.reset_usage();
-            self.current_context = None;
+            self.usage.current_context = None;
             self.insert_entry(&Entry::Notice(
                 "conversation reset; next message starts a new session".into(),
             ));

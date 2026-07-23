@@ -3,10 +3,11 @@ use ratatui::DefaultTerminal;
 use crate::session::tree::{NodeId, SessionTreeItem};
 
 use super::{
-    is_tool_entry, picker_overlay::OverlayChrome, recovered_history_tail,
-    transcript_entries_from_messages, App, ComposerMode, Entry, InteractiveRuntime, PickerAction,
-    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker, ViewModelEvent,
-    RECOVERED_HISTORY_LINE_LIMIT,
+    message_history::{recovered_history_tail, transcript_entries_from_messages},
+    picker_overlay::OverlayChrome,
+    tool_output_ui::is_tool_entry,
+    App, ComposerMode, Entry, InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone,
+    PickerItem, PickerLayout, UiPicker, ViewModelEvent, RECOVERED_HISTORY_LINE_LIMIT,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
@@ -130,7 +131,7 @@ impl App {
         self.reset_streams();
         self.goal = None;
         self.reset_usage();
-        self.current_context = None;
+        self.usage.current_context = None;
         self.transcript = visible_entries;
         self.markdown_images.clear();
         self.mark_markdown_images_dirty_from(0);

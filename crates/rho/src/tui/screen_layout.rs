@@ -2,10 +2,21 @@ use std::time::Instant;
 
 use ratatui::{layout::Rect, text::Line};
 
-use super::{
-    activity, render::display_width, scrollbar::HistoryScrollbar, visible_composer_start, App,
-    HistoryScroll,
-};
+use super::{activity, render::display_width, scrollbar::HistoryScrollbar, App, HistoryScroll};
+
+pub(super) fn visible_composer_start(
+    cursor_line: usize,
+    line_count: usize,
+    visible_count: usize,
+) -> usize {
+    if visible_count == 0 || visible_count >= line_count {
+        return 0;
+    }
+    cursor_line
+        .saturating_add(1)
+        .saturating_sub(visible_count)
+        .min(line_count.saturating_sub(visible_count))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ScreenLayout {

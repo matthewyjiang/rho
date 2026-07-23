@@ -17,6 +17,26 @@ impl SessionUiPhase {
     pub(super) const fn is_busy(self) -> bool {
         !matches!(self, Self::Idle)
     }
+
+    pub(super) const fn is_provider_turn(self) -> bool {
+        matches!(self, Self::ProviderTurn)
+    }
+
+    pub(super) const fn allows_idle_subagent_delivery(self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    pub(super) const fn uses_during_run_model_picker(self) -> bool {
+        matches!(self, Self::ProviderTurn)
+    }
+
+    pub(super) const fn busy_status_label(self) -> &'static str {
+        if self.is_busy() {
+            "running"
+        } else {
+            "ready"
+        }
+    }
 }
 
 impl App {
@@ -26,7 +46,23 @@ impl App {
 
     /// True only during an active provider turn, not compaction UI.
     pub(super) fn is_provider_turn_ui(&self) -> bool {
-        matches!(self.session_ui, SessionUiPhase::ProviderTurn)
+        self.session_ui.is_provider_turn()
+    }
+
+    pub(super) fn uses_during_run_model_picker(&self) -> bool {
+        debug_assert_eq!(
+            self.is_provider_turn_ui(),
+            self.session_ui.uses_during_run_model_picker()
+        );
+        self.session_ui.uses_during_run_model_picker()
+    }
+
+    pub(super) fn busy_status_label(&self) -> &'static str {
+        self.session_ui.busy_status_label()
+    }
+
+    pub(super) fn allows_idle_subagent_delivery(&self) -> bool {
+        self.session_ui.allows_idle_subagent_delivery()
     }
 
     pub(super) fn begin_provider_turn_ui(&mut self) {
@@ -46,7 +82,7 @@ impl App {
     /// and must not call this.
     pub(super) fn debug_assert_provider_turn_sync(&self, agent: &InteractiveRuntime) {
         debug_assert_eq!(
-            self.session_ui == SessionUiPhase::ProviderTurn,
+            self.session_ui.is_provider_turn(),
             agent.is_run_active(),
             "session_ui={:?} but InteractiveRuntime.is_run_active()={}",
             self.session_ui,
@@ -97,16 +133,14 @@ impl App {
         self.paste_burst.clear();
         self.ctrl_c_streak = 0;
     }
-}
 
-#[cfg(test)]
-#[path = "run_lifecycle_tests.rs"]
-mod tests;
-
-impl App {
     pub(super) fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
         for notice in agent.take_notices() {
             self.insert_entry(&Entry::Notice(notice));
         }
     }
 }
+
+#[cfg(test)]
+#[path = "run_lifecycle_tests.rs"]
+mod tests;

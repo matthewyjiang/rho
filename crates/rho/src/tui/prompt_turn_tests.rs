@@ -98,7 +98,8 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
     app.current_turn_start = Some(0);
-    app.assistant_stream
+    app.streams
+        .assistant_stream
         .push_delta("partial assistant before stream failure");
 
     let outcome = app.finalize_failed_turn("provider stream failed".into(), failed_turn());
@@ -111,6 +112,6 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
                 && error == "provider stream failed"
     ));
     assert!(!app.is_ui_busy());
-    assert!(app.assistant_stream.is_empty());
+    assert!(app.streams.assistant_stream.is_empty());
     assert_eq!(app.status, "error");
 }

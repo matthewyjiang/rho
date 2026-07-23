@@ -4,12 +4,37 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
-    commands, goal_command, next_word_boundary, previous_word_boundary, skill_actions,
-    slash_command_args, App, CommandId, GoalState, HistoryDirection, InputSubmissionMode,
+    command_palette::slash_command_args,
+    commands, goal_command,
+    paste_burst::{next_word_boundary, previous_word_boundary},
+    skill_actions, App, CommandId, ComposerMode, GoalState, HistoryDirection, InputSubmissionMode,
     InteractiveRuntime, TurnOutcome, TurnPrompt,
 };
 
 impl App {
+    /// Route keys owned by modal/overlay composers. Returns true when handled.
+    async fn handle_composer_mode_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        match &self.composer {
+            ComposerMode::Input => Ok(false),
+            ComposerMode::OAuthPending(_) => self.handle_oauth_pending_key(key),
+            ComposerMode::InlineChoice(_) => {
+                self.handle_inline_choice_key(key, terminal, agent).await
+            }
+            ComposerMode::Questionnaire(_) => self.handle_questionnaire_key(key),
+            ComposerMode::SecretInput(_) => self.handle_secret_key(key, terminal, agent).await,
+            ComposerMode::ConfigNumberInput(_) => self.handle_config_number_key(key, terminal),
+            ComposerMode::ConfigTextInput(_) => self.handle_config_text_key(key),
+            ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
+            // Approvals are handled on the during-turn path, not idle input.
+            ComposerMode::Approval(_) => Ok(false),
+        }
+    }
+
     pub(super) async fn handle_key(
         &mut self,
         key: KeyEvent,
@@ -28,35 +53,13 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_oauth_pending_key(key)? {
-            return Ok(());
-        }
-
-        if self.handle_inline_choice_key(key, terminal, agent).await? {
-            return Ok(());
-        }
-
-        if self.handle_questionnaire_key(key)? {
-            return Ok(());
-        }
-
-        if self.handle_secret_key(key, terminal, agent).await? {
-            return Ok(());
-        }
-
-        if self.handle_config_number_key(key, terminal)? {
-            return Ok(());
-        }
-
-        if self.handle_config_text_key(key)? {
+        // Overlay / modal composers own keys first. Dispatch by mode so the
+        // shared free-text path below only runs for ComposerMode::Input.
+        if self.handle_composer_mode_key(key, terminal, agent).await? {
             return Ok(());
         }
 
         if self.handle_reasoning_cycle_key(key, agent)? {
-            return Ok(());
-        }
-
-        if self.handle_picker_key(key, terminal, agent).await? {
             return Ok(());
         }
 

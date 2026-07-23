@@ -309,12 +309,7 @@ impl super::App {
         if self.shell_mode.take().is_none() {
             return false;
         }
-        self.status = if self.is_ui_busy() {
-            "running"
-        } else {
-            "ready"
-        }
-        .into();
+        self.status = self.busy_status_label().into();
         true
     }
 

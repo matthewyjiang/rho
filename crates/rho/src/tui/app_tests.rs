@@ -1,4 +1,12 @@
-use super::*;
+use super::{
+    command_palette::{complete_slash_command, slash_command_args},
+    message_history::{recovered_history_tail, transcript_entries_from_messages},
+    paste_burst::{normalize_paste, previous_word_boundary},
+    render::entry_lines,
+    tool_output_ui::expandable_tool_entry,
+    transcript_events::final_answer_delta,
+    *,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{backend::TestBackend, style::Color, Terminal};
 use rho_providers::credentials::{
@@ -628,8 +636,8 @@ fn final_answer_mismatch_replaces_interleaved_current_turn_assistant_fragments()
 fn active_lines_do_not_render_pending_stream_text() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
-    app.assistant_stream.push_delta("hello");
-    app.reasoning_stream.push_delta("thinking");
+    app.streams.assistant_stream.push_delta("hello");
+    app.streams.reasoning_stream.push_delta("thinking");
     let lines = app.active_lines(40);
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
@@ -1546,7 +1554,7 @@ fn history_lines_include_header_transcript_pending_preview_but_not_activity_row(
     app.push_transcript_entry(Entry::User("hello".into()));
     app.tool_calls
         .preview(0, None, vec!["bash".into(), "cargo test".into()]);
-    app.live_stream_preview = Some(LiveStreamPreview {
+    app.streams.live_stream_preview = Some(LiveStreamPreview {
         kind: StreamKind::Assistant,
         text: "partial answer".into(),
         include_leading_blank: true,

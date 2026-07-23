@@ -51,7 +51,7 @@ fn session_item(session: SessionSummary) -> PickerItem {
     }
 }
 
-fn short_session_id(id: &str) -> String {
+pub(super) fn short_session_id(id: &str) -> String {
     id.chars().take(8).collect()
 }
 

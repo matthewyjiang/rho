@@ -10,10 +10,13 @@ use rho_sdk::model::handoff::HandoffReport;
 use rho_sdk::model::ModelIdentity;
 
 use super::{
-    catalog, is_tool_entry, recovered_history_tail, short_session_id,
-    transcript_entries_from_messages, App, ComposerMode, Entry, InlineChoice, InlineChoiceModal,
-    InlineChoiceOption, InlineChoicePending, InteractiveModelSelection, InteractiveRuntime,
-    UiPicker, RECOVERED_HISTORY_LINE_LIMIT,
+    catalog,
+    message_history::{recovered_history_tail, transcript_entries_from_messages},
+    session_picker::short_session_id,
+    tool_output_ui::is_tool_entry,
+    App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
+    InlineChoicePending, InteractiveModelSelection, InteractiveRuntime, UiPicker,
+    RECOVERED_HISTORY_LINE_LIMIT,
 };
 
 pub(super) const ACTION_USE_SOURCE: &str = "use-source";
@@ -590,7 +593,7 @@ impl App {
         self.end_busy_ui();
         self.goal = None;
         self.reset_usage();
-        self.current_context = None;
+        self.usage.current_context = None;
         let entries = transcript_entries_from_messages(&display_history, &self.info.runtime.cwd);
         let width = terminal.size()?.width as usize;
         let (_omitted, visible_entries) = recovered_history_tail(

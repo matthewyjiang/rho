@@ -1,13 +1,23 @@
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use super::{
-    mouse_capture, normalize_paste, ActivityPhase, ActivityStatus, App, ComposerMode, Entry,
-    HerdrState, HerdrUserWait, InteractiveRuntime, TerminalEvents, TuiResult, ViewModelEvent,
-    MAX_TERMINAL_EVENTS_PER_TICK,
+    mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App, ComposerMode,
+    Entry, HerdrState, HerdrUserWait, InteractiveRuntime, TerminalEvents, TuiResult,
+    ViewModelEvent, MAX_TERMINAL_EVENTS_PER_TICK,
 };
+
+pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
+    let Some(summary) = summary else {
+        return Ok(());
+    };
+    let mut stdout = std::io::stdout();
+    writeln!(stdout, "{summary}")?;
+    stdout.flush()
+}
 
 impl App {
     pub(super) async fn run(
@@ -268,7 +278,7 @@ impl App {
     }
 
     pub(super) fn loading_active(&self) -> bool {
-        self.is_ui_busy() || !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
+        self.is_ui_busy() || self.streams.loading_streams_active()
     }
 
     pub(super) fn handle_queued_agent_event(
@@ -280,13 +290,13 @@ impl App {
     }
 
     pub(super) fn reset_usage(&mut self) {
-        self.cumulative_usage = None;
-        self.usage_cost_tracker.reset();
-        self.usage_before_current_run = None;
-        self.usage_before_current_step = None;
-        self.usage_before_current_attempt = None;
-        self.current_run_usage = None;
-        self.latest_usage = None;
+        self.usage.cumulative_usage = None;
+        self.usage.usage_cost_tracker.reset();
+        self.usage.usage_before_current_run = None;
+        self.usage.usage_before_current_step = None;
+        self.usage.usage_before_current_attempt = None;
+        self.usage.current_run_usage = None;
+        self.usage.latest_usage = None;
     }
 
     pub(super) fn exit_summary(&self) -> Option<String> {

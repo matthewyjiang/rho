@@ -69,7 +69,9 @@ impl App {
     }
 
     pub(super) fn should_deliver_idle_subagent_completions(&self) -> bool {
-        !self.is_ui_busy() && self.goal.is_none() && self.queued_prompts.is_empty()
+        self.allows_idle_subagent_delivery()
+            && self.goal.is_none()
+            && self.queued_prompts.is_empty()
     }
 
     pub(super) fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {

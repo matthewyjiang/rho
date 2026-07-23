@@ -14,10 +14,11 @@ use super::{
     activity::LoadingSpinner,
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
-    config_picker, model_picker, mouse_capture, next_word_boundary, normalize_paste,
-    previous_word_boundary, App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection,
-    InputSubmissionMode, InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction,
-    QueuedPrompt, RunningInputMode, StreamControl, MAX_TERMINAL_EVENTS_PER_TICK,
+    config_picker, model_picker, mouse_capture,
+    paste_burst::{next_word_boundary, normalize_paste, previous_word_boundary},
+    App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
+    InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
+    RunningInputMode, StreamControl, MAX_TERMINAL_EVENTS_PER_TICK,
 };
 
 impl App {
@@ -617,6 +618,7 @@ impl App {
             deferred_deadline.min(spinner_deadline)
         });
         let deadline = self
+            .streams
             .stream_preview_deadline
             .map_or(deadline, |stream_deadline| stream_deadline.min(deadline));
         let deadline = self

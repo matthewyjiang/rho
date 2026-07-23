@@ -5,10 +5,10 @@ use ratatui::{backend::Backend, layout::Rect, Terminal};
 
 use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
-    expandable_tool_entry, is_tool_entry,
     render::tool_entry_lines,
     text_selection::{CopyNotice, TextSelection},
-    tool_display_line_count, App,
+    tool_output_ui::{expandable_tool_entry, is_tool_entry, tool_display_line_count},
+    App,
 };
 
 impl App {

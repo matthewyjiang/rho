@@ -132,10 +132,8 @@ impl App {
             }
             CommandChoiceKind::PromptTemplate(template) => {
                 let expanded_input = self.expanded_input();
-                let mut input = crate::prompt_templates::expand(
-                    template,
-                    super::slash_command_args(&expanded_input),
-                );
+                let mut input =
+                    crate::prompt_templates::expand(template, slash_command_args(&expanded_input));
                 input.push(' ');
                 let cursor = input.chars().count();
                 self.paste_segments.clear();
@@ -144,7 +142,7 @@ impl App {
             }
             CommandChoiceKind::Skill => {
                 self.input_submission_mode = super::InputSubmissionMode::ParseCommands;
-                super::complete_slash_command(&self.input, self.input_cursor, &choice.name)
+                complete_slash_command(&self.input, self.input_cursor, &choice.name)
             }
         };
         self.input = input;
@@ -160,6 +158,38 @@ fn argument_command_choice(choice: &'static commands::CommandArgumentChoice) -> 
         description: choice.description.to_string(),
         kind: CommandChoiceKind::BuiltinArgument(choice),
     }
+}
+
+pub(super) fn slash_command_args(input: &str) -> &str {
+    let token_end = input
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(input.len());
+    input[token_end..].trim_start()
+}
+
+pub(super) fn complete_slash_command(input: &str, cursor: usize, name: &str) -> (String, usize) {
+    let token_end = input
+        .char_indices()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .unwrap_or(input.len());
+    let token_len = input[..token_end].chars().count();
+    let args = slash_command_args(input);
+    let completed = if args.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("/{name} {args}")
+    };
+    let completed_token_len = name.chars().count() + 1;
+    let new_cursor = if cursor <= token_len {
+        completed_token_len
+    } else {
+        completed
+            .chars()
+            .count()
+            .min(completed_token_len.saturating_add(cursor.saturating_sub(token_len)))
+    };
+    (completed, new_cursor)
 }
 
 #[cfg(test)]
