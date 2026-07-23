@@ -1,4 +1,4 @@
-use super::{App, InputSubmissionMode, InteractiveRuntime};
+use super::{App, Entry, InputSubmissionMode, InteractiveRuntime};
 
 /// TUI session phase distinct from provider run controller state.
 ///
@@ -22,6 +22,11 @@ impl SessionUiPhase {
 impl App {
     pub(super) fn is_ui_busy(&self) -> bool {
         self.session_ui.is_busy()
+    }
+
+    /// True only during an active provider turn, not compaction UI.
+    pub(super) fn is_provider_turn_ui(&self) -> bool {
+        matches!(self.session_ui, SessionUiPhase::ProviderTurn)
     }
 
     pub(super) fn begin_provider_turn_ui(&mut self) {
@@ -97,3 +102,11 @@ impl App {
 #[cfg(test)]
 #[path = "run_lifecycle_tests.rs"]
 mod tests;
+
+impl App {
+    pub(super) fn insert_runtime_notices(&mut self, agent: &mut InteractiveRuntime) {
+        for notice in agent.take_notices() {
+            self.insert_entry(&Entry::Notice(notice));
+        }
+    }
+}

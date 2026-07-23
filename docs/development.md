@@ -97,10 +97,6 @@ The script uses only the Python standard library and reads policy from `scripts/
 - `crates/rho/src/main.rs` has a 50-line thin-binary budget so application orchestration remains in the library (`thin_binary_budgets`).
 - Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering.
 
-Current legacy file budgets are:
-
-| File | Maximum lines |
-| --- | ---: |
-| `crates/rho/src/tui.rs` | 3,350 |
+Current legacy file budgets are: none.
 
 Do not raise a budget just to make a check pass. Prefer extracting a cohesive module and reducing the recorded ceiling. If a generated file must be added, list its exact repository-relative path with a non-empty reason so the exclusion remains reviewable. When changing the scanner or policy, update its self-tests and this documentation together.
