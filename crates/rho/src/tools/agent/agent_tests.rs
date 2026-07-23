@@ -1,3 +1,14 @@
+use std::num::NonZeroUsize;
+
+use pretty_assertions::assert_eq;
+use rho_sdk::{
+    tool::{
+        tool_progress_channel, Tool, ToolAccessMode, ToolContext, ToolExecutionPolicy,
+        ToolInvocation, ToolPreparationContext, ToolResourceKind,
+    },
+    CancellationToken, ToolCallId, Workspace,
+};
+
 use super::*;
 use crate::{
     app::agent_executor::AgentExecutor, config::Config, diagnostics::test_diagnostics,
@@ -10,6 +21,25 @@ fn manager(root: &Path) -> SubagentManager {
         root.join("rho.toml"),
         root.to_path_buf(),
     ))
+}
+
+fn invocation(arguments: serde_json::Value) -> ToolInvocation {
+    ToolInvocation::new(ToolCallId::from_string("call-1").unwrap(), arguments)
+}
+
+fn tool_context(root: &Path) -> ToolContext {
+    let (progress, _receiver) = tool_progress_channel(NonZeroUsize::new(4).unwrap());
+    ToolContext::new(
+        Some(Workspace::new(root).unwrap()),
+        CancellationToken::new(),
+        progress,
+    )
+}
+
+async fn call_agent(tool: &AgentTool, root: &Path, arguments: serde_json::Value) -> ToolOutput {
+    tool.call(invocation(arguments), tool_context(root))
+        .await
+        .expect("agent tool call")
 }
 
 #[test]
@@ -50,29 +80,23 @@ async fn background_start_receipt_is_the_registration() {
     let root = tempfile::tempdir().unwrap();
     let manager = manager(root.path());
     let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
-    let result = tool
-        .call(
-            serde_json::json!({
-                "agent_id": "default",
-                "prompt": "background task",
-                "background": true,
-            }),
-            ToolContext {
-                cwd: root.path().to_path_buf(),
-                max_output_bytes: 16 * 1024,
-            },
-            "call-1".into(),
-        )
-        .await
-        .unwrap();
+    let result = call_agent(
+        &tool,
+        root.path(),
+        serde_json::json!({
+            "agent_id": "default",
+            "prompt": "background task",
+            "background": true,
+        }),
+    )
+    .await;
     // The start receipt reports registration only: no live run state, no
     // activity lines, nothing that depends on how far the spawned task got.
     let runs = manager.list();
     assert_eq!(runs.len(), 1);
     let run_id = &runs[0].id;
-    assert!(result.ok);
     assert_eq!(
-        result.content,
+        result.content(),
         format!("agent {run_id} (default) started in background\nattach: rho attach {run_id}")
     );
 }
@@ -188,20 +212,16 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
     let tool = AgentTool::new(manager.clone(), root, BackgroundSubagents::Enabled);
-    tool.call(
+    call_agent(
+        &tool,
+        root,
         serde_json::json!({
             "agent_id": "default",
             "prompt": "background task",
             "background": true,
         }),
-        ToolContext {
-            cwd: root.to_path_buf(),
-            max_output_bytes: 16 * 1024,
-        },
-        "call".into(),
     )
-    .await
-    .unwrap();
+    .await;
     manager.list().last().unwrap().id.clone()
 }
 
@@ -264,4 +284,80 @@ fn lifecycle_tool_schema_is_stable() {
         serde_json::json!(["list", "status", "stop"])
     );
     let _ = test_diagnostics("test", "test");
+}
+
+fn one_access(
+    prepared: &rho_sdk::tool::PreparedToolInvocation<'_>,
+) -> (ToolResourceKind, ToolAccessMode) {
+    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy() else {
+        panic!("expected a resource-aware invocation");
+    };
+    assert_eq!(accesses.len(), 1);
+    (accesses[0].resource().kind(), accesses[0].mode())
+}
+
+fn preparation_context(root: &Path) -> ToolPreparationContext {
+    ToolPreparationContext::new(
+        Some(Workspace::new(root).unwrap()),
+        CancellationToken::new(),
+    )
+}
+
+#[tokio::test]
+async fn agent_and_agents_prepare_subagent_manager_resources() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    let agent = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let agents = AgentsTool::new(manager);
+
+    let launch = agent
+        .prepare(
+            invocation(serde_json::json!({
+                "agent_id": "default",
+                "prompt": "task",
+            })),
+            preparation_context(root.path()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        one_access(&launch),
+        (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
+    );
+
+    let list = agents
+        .prepare(
+            invocation(serde_json::json!({"action": "list"})),
+            preparation_context(root.path()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        one_access(&list),
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
+    );
+
+    let status = agents
+        .prepare(
+            invocation(serde_json::json!({"action": "status", "id": "run-1"})),
+            preparation_context(root.path()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        one_access(&status),
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
+    );
+
+    let stop = agents
+        .prepare(
+            invocation(serde_json::json!({"action": "stop", "id": "run-1"})),
+            preparation_context(root.path()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        one_access(&stop),
+        (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
+    );
 }

@@ -15,11 +15,14 @@ use super::{
     activity::ActivityPhase,
     add_optional,
     event_adapter::{self, ViewModelEvent},
-    markdown::CodeFenceState,
+    final_answer_delta, is_tool_entry,
+    markdown::{update_code_block_state, CodeFenceState},
     merge_usage, padded_content_width,
+    stream::StreamFragment,
     usage_cost::CostSource,
-    usage_difference, usage_with_estimated_cost, App, Entry, LiveStreamPreview, StreamKind,
-    ToolEntry, ToolEntryState,
+    usage_difference, usage_with_estimated_cost, App, Entry, FinalAnswerDelta, LiveStreamPreview,
+    ReasoningEntry, StreamKind, ToolEntry, ToolEntryState, STREAM_PREVIEW_DELAY,
+    STREAM_PREVIEW_MIN_CHARS,
 };
 
 fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
@@ -384,6 +387,144 @@ impl App {
                 self.transcript.push(other);
             }
         }
+    }
+    pub(super) fn finish_streams(&mut self) -> bool {
+        let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
+        let assistant_finished = self.finish_stream(StreamKind::Assistant);
+        self.current_stream_kind = None;
+        self.stream_preview_deadline = None;
+        self.live_stream_preview = None;
+        let thought = self.close_reasoning_phase();
+        reasoning_finished || assistant_finished || thought
+    }
+
+    /// Ends the current reasoning stretch, attaching or inserting a thought duration.
+    pub(super) fn close_reasoning_phase(&mut self) -> bool {
+        let Some(elapsed) = self.reasoning_phase.finalize() else {
+            return false;
+        };
+        match self.transcript.last_mut() {
+            Some(Entry::Reasoning(reasoning)) if reasoning.thought_for.is_none() => {
+                reasoning.thought_for = Some(elapsed);
+                self.history_lines
+                    .invalidate_from(self.transcript.len().saturating_sub(1));
+                true
+            }
+            _ => {
+                self.insert_entry(&Entry::Reasoning(ReasoningEntry::summary_only(elapsed)));
+                true
+            }
+        }
+    }
+
+    pub(super) fn finish_stream(&mut self, kind: StreamKind) -> bool {
+        let fragment = match kind {
+            StreamKind::Assistant => self.assistant_stream.finish(),
+            StreamKind::Reasoning => self.reasoning_stream.finish(),
+        };
+        self.update_stream_preview_deadline(kind);
+        if let Some(fragment) = fragment {
+            self.live_stream_preview = None;
+            self.insert_stream_fragment(fragment, kind);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn update_stream_preview_deadline(&mut self, kind: StreamKind) {
+        let pending_chars = match kind {
+            StreamKind::Assistant => self.assistant_stream.pending_text().chars().count(),
+            StreamKind::Reasoning => self.reasoning_stream.pending_text().chars().count(),
+        };
+        if pending_chars < STREAM_PREVIEW_MIN_CHARS {
+            self.stream_preview_deadline = None;
+        } else if self.stream_preview_deadline.is_none() {
+            self.stream_preview_deadline = Some(Instant::now() + STREAM_PREVIEW_DELAY);
+        }
+    }
+
+    pub(super) fn insert_final_answer_suffix(&mut self, answer: &str) {
+        match final_answer_delta(self.assistant_stream.emitted_text(), answer) {
+            FinalAnswerDelta::None => {}
+            FinalAnswerDelta::Append(suffix) => {
+                self.assistant_stream.push_delta(suffix);
+                if let Some(fragment) = self.assistant_stream.finish() {
+                    self.insert_stream_fragment(fragment, StreamKind::Assistant);
+                }
+            }
+            FinalAnswerDelta::Mismatch => {
+                self.replace_current_turn_assistant_transcript(answer);
+            }
+        }
+    }
+
+    pub(super) fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
+        let render_text = fragment.render_text();
+        if !render_text.is_empty() {
+            let code_fence = match kind {
+                StreamKind::Assistant => &mut self.assistant_stream_code_fence,
+                StreamKind::Reasoning => &mut self.reasoning_stream_code_fence,
+            };
+            update_code_block_state(render_text, code_fence);
+            self.last_inserted_was_tool = false;
+        }
+        let text = fragment.into_text();
+        self.push_transcript_entry(kind.entry(text));
+    }
+
+    pub(super) fn replace_current_turn_assistant_transcript(&mut self, answer: &str) {
+        let start = self.current_turn_start.unwrap_or(0);
+        let assistant_indices = self
+            .transcript
+            .iter()
+            .enumerate()
+            .skip(start)
+            .filter_map(|(index, entry)| matches!(entry, Entry::Assistant(_)).then_some(index))
+            .collect::<Vec<_>>();
+
+        let Some((first, stale)) = assistant_indices.split_first() else {
+            self.push_transcript_entry(Entry::Assistant(answer.to_string()));
+            return;
+        };
+
+        if let Entry::Assistant(text) = &mut self.transcript[*first] {
+            *text = answer.to_string();
+        }
+        self.markdown_images.clear();
+        self.mark_markdown_images_dirty_from(*first);
+        self.history_lines.invalidate_from(*first);
+        for index in stale.iter().rev() {
+            self.transcript.remove(*index);
+        }
+    }
+
+    pub(super) fn insert_entry(&mut self, entry: &Entry) {
+        self.record_inserted_entry(entry.clone());
+    }
+
+    pub(super) fn notify_status(&mut self, status: impl Into<String>) {
+        let status = status.into();
+        self.status = status.clone();
+        if self.last_status_notice.as_deref() == Some(status.as_str()) {
+            return;
+        }
+        self.insert_entry(&Entry::Notice(status));
+    }
+
+    pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
+        self.last_status_notice = match &entry {
+            Entry::Notice(text) => Some(text.clone()),
+            Entry::User(_)
+            | Entry::Assistant(_)
+            | Entry::Reasoning(_)
+            | Entry::RuntimeInfo(_)
+            | Entry::UsageLimits(_)
+            | Entry::Tool(_)
+            | Entry::Error(_) => None,
+        };
+        self.last_inserted_was_tool = is_tool_entry(&entry);
+        self.push_transcript_entry(entry);
     }
 }
 

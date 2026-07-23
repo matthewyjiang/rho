@@ -9,7 +9,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -17,8 +16,11 @@ use {
     crate::agent::{AgentCatalog, AgentDefinition},
     crate::app::agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
     crate::subagent::{self, RunState, RunStatus},
-    rho_tools::cancellation::RunCancellation,
-    rho_tools::tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+    rho_sdk::tool::{
+        OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
+        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
+        ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
+    },
 };
 
 use super::agent_output::{
@@ -28,6 +30,9 @@ use super::agent_output::{
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const SUBAGENT_MANAGER: &str = "subagents";
+const AGENT_TOOL: &str = "agent";
+const AGENTS_TOOL: &str = "agents";
 
 #[derive(Clone, Debug)]
 pub struct SubagentSnapshot {
@@ -366,6 +371,107 @@ impl AgentTool {
             background_subagents,
         }
     }
+
+    async fn execute(
+        &self,
+        args: AgentArgs,
+        context: &rho_sdk::tool::AuthorizedToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        if args.background && !self.background_subagents.is_enabled() {
+            return Err(ToolError::new(
+                ToolErrorKind::InvalidArguments,
+                "background agents are unavailable in non-interactive runs",
+            ));
+        }
+
+        let definition = self
+            .catalog
+            .find(&args.agent_id)
+            .map_err(|error| ToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))?
+            .definition
+            .clone();
+        let definition_id = definition.id.to_string();
+        let cwd = context
+            .workspace_root()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+
+        let spawn = self
+            .manager
+            .spawn(&definition, &args.prompt, args.background, &cwd);
+        tokio::pin!(spawn);
+        let (run_id, _log_file) = tokio::select! {
+            result = &mut spawn => result.map_err(|error| {
+                ToolError::new(
+                    ToolErrorKind::Execution,
+                    format!("failed to start delegated agent: {error}"),
+                )
+            })?,
+            () = context.cancellation().cancelled() => {
+                if args.background {
+                    // Let an in-flight spawn finish registration so the manager
+                    // retains ownership of the delegated task.
+                    let _ = spawn.await;
+                }
+                return Err(ToolError::cancelled());
+            }
+        };
+
+        if args.background {
+            // Registration is the start receipt; instant failures still reach
+            // the parent through automatic completion delivery.
+            return Ok(
+                ToolOutput::text(format_background_start(&run_id, &definition_id))
+                    .metadata(agent_metadata()),
+            );
+        }
+
+        let _ = context
+            .progress()
+            .send(ToolProgress::message(format_running(&run_id)))
+            .await;
+
+        let wait = self.manager.wait_done(&run_id);
+        tokio::pin!(wait);
+        let snapshot = tokio::select! {
+            snapshot = &mut wait => snapshot.ok_or_else(|| {
+                ToolError::new(
+                    ToolErrorKind::Execution,
+                    format!("delegated run '{run_id}' disappeared"),
+                )
+            })?,
+            () = context.cancellation().cancelled() => {
+                // Foreground delegated runs must stop when the parent run is
+                // interrupted instead of leaving an orphan behind.
+                loop {
+                    let running: Vec<String> = self
+                        .manager
+                        .list()
+                        .into_iter()
+                        .filter(|snapshot| !snapshot.done && !snapshot.background)
+                        .map(|snapshot| snapshot.id)
+                        .collect();
+                    if !running.is_empty() {
+                        for id in running {
+                            let _ = self.manager.stop(&id).await;
+                        }
+                        break;
+                    }
+                    tokio::select! {
+                        _ = &mut wait => break,
+                        () = tokio::time::sleep(POLL_INTERVAL) => {}
+                    }
+                }
+                return Err(ToolError::cancelled());
+            }
+        };
+
+        let content = format_snapshot(&snapshot, SnapshotFormat::Completion);
+        if snapshot.status.state != RunState::Ok {
+            return Err(ToolError::new(ToolErrorKind::Execution, content));
+        }
+        Ok(ToolOutput::text(content).metadata(agent_metadata()))
+    }
 }
 
 #[derive(Deserialize)]
@@ -376,9 +482,8 @@ struct AgentArgs {
     background: bool,
 }
 
-#[async_trait]
 impl Tool for AgentTool {
-    fn spec(&self) -> ToolSpec {
+    fn spec(&self) -> rho_sdk::model::ToolSpec {
         let names: Vec<&str> = self
             .agent_summaries
             .iter()
@@ -414,8 +519,8 @@ impl Tool for AgentTool {
         } else {
             ""
         };
-        ToolSpec {
-            name: "agent".into(),
+        rho_sdk::model::ToolSpec {
+            name: AGENT_TOOL.into(),
             description: format!(
                 "Delegate a substantial, self-contained task to a fresh agent.{background_guidance}\n\nAgents:\n{summaries}"
             ),
@@ -428,113 +533,32 @@ impl Tool for AgentTool {
         }
     }
 
-    async fn call(
-        &self,
-        args: Value,
-        ctx: ToolContext,
-        id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let mut on_update = |_: Vec<String>| {};
-        self.call_with_updates(args, ctx, id, &mut on_update).await
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([])
     }
 
-    async fn call_with_updates(
-        &self,
-        args: Value,
-        ctx: ToolContext,
-        id: String,
-        on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
-        let args: AgentArgs = serde_json::from_value(args)?;
-        if args.background && !self.background_subagents.is_enabled() {
-            return Err(ToolError::Message(
-                "background agents are unavailable in non-interactive runs".into(),
-            ));
-        }
-        let definition = self
-            .catalog
-            .find(&args.agent_id)
-            .map_err(|error| ToolError::Message(error.to_string()))?
-            .definition
-            .clone();
-        let definition_id = definition.id.to_string();
-        let (run_id, _log_file) = self
-            .manager
-            .spawn(&definition, &args.prompt, args.background, &ctx.cwd)
-            .await
-            .map_err(|error| {
-                ToolError::Message(format!("failed to start delegated agent: {error}"))
-            })?;
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        rho_sdk::tool::call_prepared(self, invocation, context)
+    }
 
-        if args.background {
-            // Registration is the start receipt; instant failures still reach
-            // the parent through automatic completion delivery.
-            return Ok(ToolResult {
-                id,
-                ok: true,
-                content: format_background_start(&run_id, &definition_id),
-            });
-        }
-
-        on_update(vec![format_running(&run_id)]);
-        let snapshot =
-            self.manager.wait_done(&run_id).await.ok_or_else(|| {
-                ToolError::Message(format!("delegated run '{run_id}' disappeared"))
-            })?;
-        Ok(ToolResult {
-            id,
-            ok: snapshot.status.state == RunState::Ok,
-            content: format_snapshot(&snapshot, SnapshotFormat::Completion),
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        let args = parse_agent_args(invocation.into_arguments());
+        Box::pin(async move {
+            let args = args?;
+            // Launch and wait mutate the shared subagent registry.
+            let access =
+                ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER));
+            Ok(PreparedToolInvocation::resource_aware(
+                [access],
+                [],
+                agent_metadata(),
+                move |context| Box::pin(async move { self.execute(args, &context).await }),
+            ))
         })
-    }
-
-    async fn call_with_updates_and_cancellation(
-        &self,
-        args: Value,
-        ctx: ToolContext,
-        id: String,
-        cancellation: RunCancellation,
-        on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
-        // Foreground delegated runs must stop when the parent run is
-        // interrupted instead of leaving an orphan behind.
-        let background = args
-            .get("background")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let call = self.call_with_updates(args, ctx, id, on_update);
-        tokio::pin!(call);
-        tokio::select! {
-            result = &mut call => result,
-            () = cancellation.cancelled() => {
-                if background {
-                    // Let an in-flight spawn finish registration so the
-                    // manager retains ownership of the delegated task.
-                    let _ = call.await;
-                } else {
-                    loop {
-                        let running: Vec<String> = self
-                            .manager
-                            .list()
-                            .into_iter()
-                            .filter(|snapshot| !snapshot.done && !snapshot.background)
-                            .map(|snapshot| snapshot.id)
-                            .collect();
-                        if !running.is_empty() {
-                            for id in running {
-                                let _ = self.manager.stop(&id).await;
-                            }
-                            break;
-                        }
-                        tokio::select! {
-                            _ = &mut call => break,
-                            () = tokio::time::sleep(POLL_INTERVAL) => {}
-                        }
-                    }
-                }
-                Err(ToolError::Message("tool interrupted".into()))
-            }
-        }
     }
 }
 
@@ -546,6 +570,55 @@ impl AgentsTool {
     pub fn new(manager: SubagentManager) -> Self {
         Self { manager }
     }
+
+    async fn execute(&self, args: AgentsArgs) -> Result<ToolOutput, ToolError> {
+        let content = match args.action.as_str() {
+            "list" => {
+                let agents = self.manager.list();
+                if agents.is_empty() {
+                    "no delegated agents".to_string()
+                } else {
+                    agents
+                        .iter()
+                        .map(format_list_entry)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }
+            "status" => {
+                let id = required_id(&args)?;
+                let snapshot = self.manager.observe(id).ok_or_else(|| {
+                    ToolError::new(
+                        ToolErrorKind::InvalidArguments,
+                        format!("unknown delegated run '{id}'"),
+                    )
+                })?;
+                // A finished run hands over its full result here and counts
+                // as delivered; a running run reports progress only.
+                let format = if snapshot.done {
+                    SnapshotFormat::Completion
+                } else {
+                    SnapshotFormat::Status
+                };
+                format_snapshot(&snapshot, format)
+            }
+            "stop" => {
+                let id = required_id(&args)?;
+                let snapshot =
+                    self.manager.stop(id).await.map_err(|error| {
+                        ToolError::new(ToolErrorKind::Execution, error.to_string())
+                    })?;
+                format_snapshot(&snapshot, SnapshotFormat::Completion)
+            }
+            other => {
+                return Err(ToolError::new(
+                    ToolErrorKind::InvalidArguments,
+                    format!("unknown action '{other}': expected list, status, or stop"),
+                ))
+            }
+        };
+        Ok(ToolOutput::text(content).metadata(agents_metadata()))
+    }
 }
 
 #[derive(Deserialize)]
@@ -555,11 +628,10 @@ struct AgentsArgs {
     id: Option<String>,
 }
 
-#[async_trait]
 impl Tool for AgentsTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "agents".into(),
+    fn spec(&self) -> rho_sdk::model::ToolSpec {
+        rho_sdk::model::ToolSpec {
+            name: AGENTS_TOOL.into(),
             description: "Check on or stop a delegated background run. Completions are delivered automatically at the next turn boundary (batched into one notification when several finish), so waiting for a result means ending your turn, not calling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result and counts as delivery, so it will not be redelivered automatically.".into(),
             input_schema: json!({
                 "type": "object",
@@ -580,69 +652,67 @@ impl Tool for AgentsTool {
         }
     }
 
-    async fn call(
-        &self,
-        args: Value,
-        _ctx: ToolContext,
-        id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: AgentsArgs = serde_json::from_value(args)?;
-        let content = match args.action.as_str() {
-            "list" => {
-                let agents = self.manager.list();
-                if agents.is_empty() {
-                    "no delegated agents".to_string()
-                } else {
-                    agents
-                        .iter()
-                        .map(format_list_entry)
-                        .collect::<Vec<_>>()
-                        .join("\n")
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([])
+    }
+
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        rho_sdk::tool::call_prepared(self, invocation, context)
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        let args = parse_agents_args(invocation.into_arguments());
+        Box::pin(async move {
+            let args = args?;
+            let access = match args.action.as_str() {
+                // Stop mutates registry ownership; list/status only observe.
+                "stop" => {
+                    ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER))
                 }
-            }
-            "status" => {
-                let id = required_id(&args)?;
-                let snapshot = self
-                    .manager
-                    .observe(id)
-                    .ok_or_else(|| ToolError::Message(format!("unknown delegated run '{id}'")))?;
-                // A finished run hands over its full result here and counts
-                // as delivered; a running run reports progress only.
-                let format = if snapshot.done {
-                    SnapshotFormat::Completion
-                } else {
-                    SnapshotFormat::Status
-                };
-                format_snapshot(&snapshot, format)
-            }
-            "stop" => {
-                let id = required_id(&args)?;
-                let snapshot = self
-                    .manager
-                    .stop(id)
-                    .await
-                    .map_err(|error| ToolError::Message(error.to_string()))?;
-                format_snapshot(&snapshot, SnapshotFormat::Completion)
-            }
-            other => {
-                return Err(ToolError::Message(format!(
-                    "unknown action '{other}': expected list, status, or stop"
-                )))
-            }
-        };
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content,
+                _ => ToolResourceAccess::shared(ToolResource::manager_state(SUBAGENT_MANAGER)),
+            };
+            Ok(PreparedToolInvocation::resource_aware(
+                [access],
+                [],
+                agents_metadata(),
+                move |_context| Box::pin(async move { self.execute(args).await }),
+            ))
         })
     }
+}
+
+fn parse_agent_args(arguments: Value) -> Result<AgentArgs, ToolError> {
+    serde_json::from_value(arguments)
+        .map_err(|error| ToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))
+}
+
+fn parse_agents_args(arguments: Value) -> Result<AgentsArgs, ToolError> {
+    serde_json::from_value(arguments)
+        .map_err(|error| ToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))
+}
+
+fn agent_metadata() -> ToolMetadata {
+    ToolMetadata::new().operation(OperationKind::Other(AGENT_TOOL.into()))
+}
+
+fn agents_metadata() -> ToolMetadata {
+    ToolMetadata::new().operation(OperationKind::Other(AGENTS_TOOL.into()))
 }
 
 fn required_id(args: &AgentsArgs) -> Result<&str, ToolError> {
     args.id
         .as_deref()
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| ToolError::Message("this action requires a delegated run id".into()))
+        .ok_or_else(|| {
+            ToolError::new(
+                ToolErrorKind::InvalidArguments,
+                "this action requires a delegated run id",
+            )
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -717,22 +787,14 @@ pub(super) fn sdk_bundle(
     ));
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     if options.tools.launches() {
-        tools.push(
-            rho_tools::legacy_sdk_adapter::agent(
-                AgentTool::new(manager.clone(), &options.cwd, options.background),
-                config.max_output_bytes,
-            )
-            .expect("agent is a supported legacy tool"),
-        );
+        tools.push(Arc::new(AgentTool::new(
+            manager.clone(),
+            &options.cwd,
+            options.background,
+        )));
     }
     if options.tools.manages() {
-        tools.push(
-            rho_tools::legacy_sdk_adapter::agents(
-                AgentsTool::new(manager.clone()),
-                config.max_output_bytes,
-            )
-            .expect("agents is a supported legacy tool"),
-        );
+        tools.push(Arc::new(AgentsTool::new(manager.clone())));
     }
     SdkDelegationBundle { tools, manager }
 }
