@@ -3,9 +3,12 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    commands, expand_paste_segments, input_cursor_index_on_visual_line, input_cursor_position,
-    input_visual_lines, normalize_paste, paste_marker_for, previous_word_boundary, App,
-    CommandInvocation, ComposerMode, HistoryDirection, InputDraft, InputSubmissionMode,
+    commands,
+    paste_burst::{
+        expand_paste_segments, normalize_paste, paste_marker_for, previous_word_boundary,
+    },
+    render::{input_cursor_index_on_visual_line, input_cursor_position, input_visual_lines},
+    App, CommandInvocation, ComposerMode, HistoryDirection, InputDraft, InputSubmissionMode,
     PasteBurstEnter, PasteBurstKey, PasteSegment,
 };
 

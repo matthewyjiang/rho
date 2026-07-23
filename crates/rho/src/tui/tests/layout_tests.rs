@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn reasoning_stream_preview_renders_markdown() {
     let mut app = test_app();
-    app.live_stream_preview = Some(LiveStreamPreview {
+    app.streams.live_stream_preview = Some(LiveStreamPreview {
         kind: StreamKind::Reasoning,
         text: "considering **boldly**".into(),
         include_leading_blank: false,

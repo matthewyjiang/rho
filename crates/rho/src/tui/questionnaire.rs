@@ -6,6 +6,7 @@ mod render;
 use render::questionnaire_frame;
 pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 
+use super::paste_burst::{next_word_boundary, previous_word_boundary};
 use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -882,30 +883,6 @@ pub(super) fn questionnaire_notice_text(request: &QuestionnaireRequest) -> Strin
         (None, [question]) => format!("agent asks: {}", question.question),
         (None, questions) => format!("agent asks {} questions", questions.len()),
     }
-}
-
-fn previous_word_boundary(input: &str, cursor: usize) -> usize {
-    let chars: Vec<char> = input.chars().collect();
-    let mut index = cursor.min(chars.len());
-    while index > 0 && chars[index - 1].is_whitespace() {
-        index -= 1;
-    }
-    while index > 0 && !chars[index - 1].is_whitespace() {
-        index -= 1;
-    }
-    index
-}
-
-fn next_word_boundary(input: &str, cursor: usize) -> usize {
-    let chars: Vec<char> = input.chars().collect();
-    let mut index = cursor.min(chars.len());
-    while index < chars.len() && chars[index].is_whitespace() {
-        index += 1;
-    }
-    while index < chars.len() && !chars[index].is_whitespace() {
-        index += 1;
-    }
-    index
 }
 
 #[cfg(test)]

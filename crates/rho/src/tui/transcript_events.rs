@@ -3,8 +3,9 @@
 //! This module owns App methods that switch and drain assistant/reasoning
 //! streams, schedule stream previews, record usage and cost from view-model
 //! events, drive tool-call lifecycle display state, and merge finished text
-//! into the transcript. Stream finalization that must happen before recording
-//! a lifecycle event is classified exhaustively via
+//! into the transcript. Expand/collapse of truncated tool output lives in
+//! `tool_output_ui`. Stream finalization that must happen before recording a
+//! lifecycle event is classified exhaustively via
 //! [`should_finish_streams_before_recording`].
 
 use std::time::Instant;
@@ -13,18 +14,25 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
 use super::{
     activity::ActivityPhase,
-    add_optional,
     event_adapter::{self, ViewModelEvent},
-    expandable_tool_entry, final_answer_delta, is_tool_entry,
     markdown::{update_code_block_state, CodeFenceState},
-    merge_usage, padded_content_width,
+    render::padded_content_width,
     stream::StreamFragment,
-    tool_display_line_count,
-    usage_cost::CostSource,
-    usage_difference, usage_with_estimated_cost, App, Entry, FinalAnswerDelta, LiveStreamPreview,
-    ReasoningEntry, StreamKind, ToolEntry, ToolEntryState, STREAM_PREVIEW_DELAY,
-    STREAM_PREVIEW_MIN_CHARS,
+    tool_output_ui::is_tool_entry,
+    usage_cost::{
+        add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
+    },
+    App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
+    ToolEntryState, STREAM_PREVIEW_DELAY, STREAM_PREVIEW_MIN_CHARS,
 };
+
+pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
+    match answer.strip_prefix(emitted_text) {
+        Some("") => FinalAnswerDelta::None,
+        Some(suffix) => FinalAnswerDelta::Append(suffix),
+        None => FinalAnswerDelta::Mismatch,
+    }
+}
 
 fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
     match event {
@@ -48,13 +56,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
 
 impl App {
     pub(super) fn reset_streams(&mut self) {
-        self.assistant_stream.reset();
-        self.assistant_stream_code_fence = CodeFenceState::default();
-        self.reasoning_stream.reset();
-        self.reasoning_stream_code_fence = CodeFenceState::default();
-        self.current_stream_kind = None;
-        self.stream_preview_deadline = None;
-        self.live_stream_preview = None;
+        self.streams.reset();
         // Discard an unfinished reasoning phase. Callers that should keep a
         // summary must finalize before reset (for example `finish_streams`).
         self.reasoning_phase.reset();
@@ -75,7 +77,7 @@ impl App {
             }
             ViewModelEvent::OutputDelta(text) => {
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
-                self.assistant_stream.push_delta(&text);
+                self.streams.assistant_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
                 self.update_stream_preview_deadline(StreamKind::Assistant);
                 Ok(switched || drained)
@@ -87,7 +89,7 @@ impl App {
                     return Ok(true);
                 }
                 let switched = self.switch_stream_kind(StreamKind::Reasoning);
-                self.reasoning_stream.push_delta(&text);
+                self.streams.reasoning_stream.push_delta(&text);
                 let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
                 self.update_stream_preview_deadline(StreamKind::Reasoning);
                 Ok(switched || drained)
@@ -107,6 +109,7 @@ impl App {
 
     pub(super) fn switch_stream_kind(&mut self, kind: StreamKind) -> bool {
         let inserted = if self
+            .streams
             .current_stream_kind
             .is_some_and(|current| current != kind)
         {
@@ -117,13 +120,13 @@ impl App {
         // Closing into assistant ends the reasoning phase so the thought
         // footer lands after any finished reasoning text.
         let thought = if kind == StreamKind::Assistant
-            && self.current_stream_kind != Some(StreamKind::Assistant)
+            && self.streams.current_stream_kind != Some(StreamKind::Assistant)
         {
             self.close_reasoning_phase()
         } else {
             false
         };
-        self.current_stream_kind = Some(kind);
+        self.streams.current_stream_kind = Some(kind);
         self.update_stream_preview_deadline(kind);
         inserted || thought
     }
@@ -145,15 +148,17 @@ impl App {
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
         let fragment = match kind {
-            StreamKind::Assistant => self
-                .assistant_stream
-                .drain_renderable_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
-            StreamKind::Reasoning => self
-                .reasoning_stream
-                .drain_renderable_markdown(inner_width, self.reasoning_stream_code_fence.is_open()),
+            StreamKind::Assistant => self.streams.assistant_stream.drain_renderable_markdown(
+                inner_width,
+                self.streams.assistant_stream_code_fence.is_open(),
+            ),
+            StreamKind::Reasoning => self.streams.reasoning_stream.drain_renderable_markdown(
+                inner_width,
+                self.streams.reasoning_stream_code_fence.is_open(),
+            ),
         };
         if let Some(fragment) = fragment {
-            self.live_stream_preview = None;
+            self.streams.live_stream_preview = None;
             self.insert_stream_fragment(fragment, kind);
             Ok(true)
         } else {
@@ -162,7 +167,8 @@ impl App {
     }
 
     pub(super) fn finish_current_stream(&mut self) -> bool {
-        self.current_stream_kind
+        self.streams
+            .current_stream_kind
             .is_some_and(|kind| self.finish_stream(kind))
     }
 
@@ -171,29 +177,32 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<bool> {
         if self
+            .streams
             .stream_preview_deadline
             .is_none_or(|deadline| Instant::now() < deadline)
         {
             return Ok(false);
         }
-        let Some(kind) = self.current_stream_kind else {
-            self.stream_preview_deadline = None;
+        let Some(kind) = self.streams.current_stream_kind else {
+            self.streams.stream_preview_deadline = None;
             return Ok(false);
         };
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
         let preview = match kind {
-            StreamKind::Assistant => self
-                .assistant_stream
-                .drain_preview_markdown(inner_width, self.assistant_stream_code_fence.is_open()),
-            StreamKind::Reasoning => self
-                .reasoning_stream
-                .drain_preview_markdown(inner_width, self.reasoning_stream_code_fence.is_open()),
+            StreamKind::Assistant => self.streams.assistant_stream.drain_preview_markdown(
+                inner_width,
+                self.streams.assistant_stream_code_fence.is_open(),
+            ),
+            StreamKind::Reasoning => self.streams.reasoning_stream.drain_preview_markdown(
+                inner_width,
+                self.streams.reasoning_stream_code_fence.is_open(),
+            ),
         };
-        self.stream_preview_deadline = None;
+        self.streams.stream_preview_deadline = None;
         self.update_stream_preview_deadline(kind);
         if let Some(preview) = preview {
-            self.live_stream_preview = Some(LiveStreamPreview {
+            self.streams.live_stream_preview = Some(LiveStreamPreview {
                 kind,
                 text: preview.render_text().to_string(),
                 include_leading_blank: preview.include_leading_blank(),
@@ -207,17 +216,17 @@ impl App {
     pub(super) fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         match event {
             ViewModelEvent::RunStarted => {
-                self.usage_cost_tracker.run_started();
-                self.usage_before_current_run = self.cumulative_usage.clone();
-                self.usage_before_current_step = None;
-                self.usage_before_current_attempt = None;
-                self.current_run_usage = None;
+                self.usage.usage_cost_tracker.run_started();
+                self.usage.usage_before_current_run = self.usage.cumulative_usage.clone();
+                self.usage.usage_before_current_step = None;
+                self.usage.usage_before_current_attempt = None;
+                self.usage.current_run_usage = None;
                 None
             }
             ViewModelEvent::StepStarted(step) => {
-                self.usage_cost_tracker.step_started();
-                self.usage_before_current_step = self.current_run_usage.clone();
-                self.usage_before_current_attempt = None;
+                self.usage.usage_cost_tracker.step_started();
+                self.usage.usage_before_current_step = self.usage.current_run_usage.clone();
+                self.usage.usage_before_current_attempt = None;
                 self.reset_streams();
                 self.provider_attempt.begin(self.transcript.len());
                 self.reasoning_phase
@@ -255,11 +264,11 @@ impl App {
                 None
             }
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
-                self.usage_cost_tracker.attempt_restarted();
-                self.usage_before_current_attempt = self
-                    .current_run_usage
-                    .as_ref()
-                    .map(|usage| usage_difference(usage, self.usage_before_current_step.as_ref()));
+                self.usage.usage_cost_tracker.attempt_restarted();
+                self.usage.usage_before_current_attempt =
+                    self.usage.current_run_usage.as_ref().map(|usage| {
+                        usage_difference(usage, self.usage.usage_before_current_step.as_ref())
+                    });
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
@@ -275,13 +284,13 @@ impl App {
             ))),
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
-                self.current_context = Some(usage);
+                self.usage.current_context = Some(usage);
                 None
             }
             ViewModelEvent::Usage(usage) => {
-                let current_cost_source = self.usage_cost_tracker.record_usage(&usage);
+                let current_cost_source = self.usage.usage_cost_tracker.record_usage(&usage);
                 let mut current_run_usage = usage;
-                if let Some(attempt_baseline) = &self.usage_before_current_attempt {
+                if let Some(attempt_baseline) = &self.usage.usage_before_current_attempt {
                     current_run_usage =
                         usage_with_estimated_cost(current_run_usage, self.model_metadata.as_ref());
                     let mut combined = None;
@@ -289,10 +298,10 @@ impl App {
                     merge_usage(&mut combined, current_run_usage);
                     current_run_usage = combined.expect("attempt baseline is present");
                 }
-                let step_baseline = self
-                    .usage_before_current_step
-                    .clone()
-                    .map(|usage| usage_with_estimated_cost(usage, self.model_metadata.as_ref()));
+                let step_baseline =
+                    self.usage.usage_before_current_step.clone().map(|usage| {
+                        usage_with_estimated_cost(usage, self.model_metadata.as_ref())
+                    });
                 let mut latest_usage = usage_difference(&current_run_usage, step_baseline.as_ref());
                 latest_usage =
                     usage_with_estimated_cost(latest_usage, self.model_metadata.as_ref());
@@ -304,11 +313,12 @@ impl App {
                         latest_usage.cost_usd_micros,
                     );
                 }
-                self.current_run_usage = Some(current_run_usage.clone());
-                self.latest_usage = Some(latest_usage);
-                self.cumulative_usage
-                    .clone_from(&self.usage_before_current_run);
-                merge_usage(&mut self.cumulative_usage, current_run_usage);
+                self.usage.current_run_usage = Some(current_run_usage.clone());
+                self.usage.latest_usage = Some(latest_usage);
+                self.usage
+                    .cumulative_usage
+                    .clone_from(&self.usage.usage_before_current_run);
+                merge_usage(&mut self.usage.cumulative_usage, current_run_usage);
                 None
             }
             ViewModelEvent::ToolFinished {
@@ -392,9 +402,9 @@ impl App {
     pub(super) fn finish_streams(&mut self) -> bool {
         let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
         let assistant_finished = self.finish_stream(StreamKind::Assistant);
-        self.current_stream_kind = None;
-        self.stream_preview_deadline = None;
-        self.live_stream_preview = None;
+        self.streams.current_stream_kind = None;
+        self.streams.stream_preview_deadline = None;
+        self.streams.live_stream_preview = None;
         let thought = self.close_reasoning_phase();
         reasoning_finished || assistant_finished || thought
     }
@@ -420,12 +430,12 @@ impl App {
 
     pub(super) fn finish_stream(&mut self, kind: StreamKind) -> bool {
         let fragment = match kind {
-            StreamKind::Assistant => self.assistant_stream.finish(),
-            StreamKind::Reasoning => self.reasoning_stream.finish(),
+            StreamKind::Assistant => self.streams.assistant_stream.finish(),
+            StreamKind::Reasoning => self.streams.reasoning_stream.finish(),
         };
         self.update_stream_preview_deadline(kind);
         if let Some(fragment) = fragment {
-            self.live_stream_preview = None;
+            self.streams.live_stream_preview = None;
             self.insert_stream_fragment(fragment, kind);
             true
         } else {
@@ -435,22 +445,22 @@ impl App {
 
     pub(super) fn update_stream_preview_deadline(&mut self, kind: StreamKind) {
         let pending_chars = match kind {
-            StreamKind::Assistant => self.assistant_stream.pending_text().chars().count(),
-            StreamKind::Reasoning => self.reasoning_stream.pending_text().chars().count(),
+            StreamKind::Assistant => self.streams.assistant_stream.pending_text().chars().count(),
+            StreamKind::Reasoning => self.streams.reasoning_stream.pending_text().chars().count(),
         };
         if pending_chars < STREAM_PREVIEW_MIN_CHARS {
-            self.stream_preview_deadline = None;
-        } else if self.stream_preview_deadline.is_none() {
-            self.stream_preview_deadline = Some(Instant::now() + STREAM_PREVIEW_DELAY);
+            self.streams.stream_preview_deadline = None;
+        } else if self.streams.stream_preview_deadline.is_none() {
+            self.streams.stream_preview_deadline = Some(Instant::now() + STREAM_PREVIEW_DELAY);
         }
     }
 
     pub(super) fn insert_final_answer_suffix(&mut self, answer: &str) {
-        match final_answer_delta(self.assistant_stream.emitted_text(), answer) {
+        match final_answer_delta(self.streams.assistant_stream.emitted_text(), answer) {
             FinalAnswerDelta::None => {}
             FinalAnswerDelta::Append(suffix) => {
-                self.assistant_stream.push_delta(suffix);
-                if let Some(fragment) = self.assistant_stream.finish() {
+                self.streams.assistant_stream.push_delta(suffix);
+                if let Some(fragment) = self.streams.assistant_stream.finish() {
                     self.insert_stream_fragment(fragment, StreamKind::Assistant);
                 }
             }
@@ -464,8 +474,8 @@ impl App {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
             let code_fence = match kind {
-                StreamKind::Assistant => &mut self.assistant_stream_code_fence,
-                StreamKind::Reasoning => &mut self.reasoning_stream_code_fence,
+                StreamKind::Assistant => &mut self.streams.assistant_stream_code_fence,
+                StreamKind::Reasoning => &mut self.streams.reasoning_stream_code_fence,
             };
             update_code_block_state(render_text, code_fence);
             self.last_inserted_was_tool = false;
@@ -553,21 +563,27 @@ impl App {
     }
 
     pub(super) fn discard_live_reasoning_output(&mut self) {
-        let clearing_reasoning = matches!(self.current_stream_kind, Some(StreamKind::Reasoning))
-            || self
-                .live_stream_preview
-                .as_ref()
-                .is_some_and(|preview| preview.kind == StreamKind::Reasoning);
+        let clearing_reasoning = matches!(
+            self.streams.current_stream_kind,
+            Some(StreamKind::Reasoning)
+        ) || self
+            .streams
+            .live_stream_preview
+            .as_ref()
+            .is_some_and(|preview| preview.kind == StreamKind::Reasoning);
         if !clearing_reasoning {
             return;
         }
-        if matches!(self.current_stream_kind, Some(StreamKind::Reasoning)) {
-            self.reasoning_stream.reset();
-            self.reasoning_stream_code_fence = CodeFenceState::default();
-            self.current_stream_kind = None;
+        if matches!(
+            self.streams.current_stream_kind,
+            Some(StreamKind::Reasoning)
+        ) {
+            self.streams.reasoning_stream.reset();
+            self.streams.reasoning_stream_code_fence = CodeFenceState::default();
+            self.streams.current_stream_kind = None;
         }
-        self.stream_preview_deadline = None;
-        self.live_stream_preview = None;
+        self.streams.stream_preview_deadline = None;
+        self.streams.live_stream_preview = None;
     }
 
     pub(super) fn reset_provider_attempt_stream(&mut self) {
@@ -579,60 +595,6 @@ impl App {
             self.history_lines.invalidate_from(start);
         }
         self.status = "retrying provider response".into();
-    }
-
-    pub(super) fn toggle_latest_tool_output(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<()> {
-        if let Some(pending) = self.tool_calls.latest_mut() {
-            if tool_display_line_count(&pending.display_lines)
-                <= self.info.runtime.max_tool_output_lines
-            {
-                self.status = "no truncated tool output".into();
-                return Ok(());
-            }
-            pending.expanded = !pending.expanded;
-            self.status = if pending.expanded {
-                "tool output expanded".into()
-            } else {
-                "tool output collapsed".into()
-            };
-            return Ok(());
-        }
-
-        let Some(index) = self.transcript.iter().rposition(|entry| {
-            expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
-        }) else {
-            self.status = "no truncated tool output".into();
-            return Ok(());
-        };
-
-        self.toggle_transcript_tool_output(index);
-        self.clamp_history_scroll_for_terminal(terminal)
-    }
-
-    pub(super) fn toggle_transcript_tool_output(&mut self, index: usize) {
-        let expand =
-            !matches!(self.transcript.get(index), Some(Entry::Tool(tool)) if tool.expanded);
-        let mut dirty_from = index;
-        for (entry_index, entry) in self.transcript.iter_mut().enumerate() {
-            if let Entry::Tool(tool) = entry {
-                if tool.expanded {
-                    dirty_from = dirty_from.min(entry_index);
-                }
-                tool.expanded = false;
-            }
-        }
-        if let Some(Entry::Tool(tool)) = self.transcript.get_mut(index) {
-            tool.expanded = expand;
-            self.history_lines.invalidate_from(dirty_from);
-        }
-        self.status = if expand {
-            "tool output expanded".into()
-        } else {
-            "tool output collapsed".into()
-        };
     }
 }
 

@@ -5,7 +5,7 @@ use crate::tui::{event_adapter::ViewModelEvent, run_lifecycle::SessionUiPhase, t
 #[test]
 fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
     let mut app = test_app();
-    app.cumulative_usage = Some(ModelUsage {
+    app.usage.cumulative_usage = Some(ModelUsage {
         input_tokens: Some(1_000),
         output_tokens: Some(500),
         ..ModelUsage::default()
@@ -19,11 +19,12 @@ fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
         .is_none());
 
     assert_eq!(
-        app.current_context,
+        app.usage.current_context,
         Some(ContextUsage::estimated(250, Some(10_000)))
     );
     assert_eq!(
-        app.cumulative_usage
+        app.usage
+            .cumulative_usage
             .as_ref()
             .and_then(|usage| usage.input_tokens),
         Some(1_000)
@@ -33,15 +34,15 @@ fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
 #[test]
 fn step_started_clears_stream_state() {
     let mut app = test_app();
-    app.assistant_stream.push_delta("current");
-    app.reasoning_stream.push_delta("reasoning");
+    app.streams.assistant_stream.push_delta("current");
+    app.streams.reasoning_stream.push_delta("reasoning");
 
     assert!(app
         .record_agent_event(ViewModelEvent::StepStarted(2))
         .is_none());
 
-    assert!(app.assistant_stream.is_empty());
-    assert!(app.reasoning_stream.is_empty());
+    assert!(app.streams.assistant_stream.is_empty());
+    assert!(app.streams.reasoning_stream.is_empty());
     assert_eq!(app.session_ui, SessionUiPhase::ProviderTurn);
     assert_eq!(app.status, "running step 2");
 }

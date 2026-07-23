@@ -768,6 +768,45 @@ impl App {
     }
 }
 
+pub(super) fn secret_input_lines(
+    secret: &SecretInput,
+    width: usize,
+) -> Vec<ratatui::text::Line<'static>> {
+    let masked = "•".repeat(secret.value.chars().count());
+    vec![
+        styled_line(
+            truncate_one_line(
+                &format!("enter {}  enter save, esc cancel", secret.target.label),
+                width,
+            ),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        ),
+        styled_line(
+            truncate_one_line(&masked, width),
+            width,
+            Theme::text(),
+            LineFill::Natural,
+        ),
+    ]
+}
+
+pub(super) fn oauth_pending_lines(
+    target: &LoginTarget,
+    width: usize,
+) -> Vec<ratatui::text::Line<'static>> {
+    vec![styled_line(
+        truncate_one_line(
+            &format!("waiting for {} OAuth login  esc cancel", target.provider),
+            width,
+        ),
+        width,
+        Theme::dim(),
+        LineFill::Natural,
+    )]
+}
+
 #[cfg(test)]
 #[path = "login_tests.rs"]
 mod tests;

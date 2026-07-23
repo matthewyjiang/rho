@@ -117,6 +117,65 @@ impl PasteBurst {
     }
 }
 
+pub(super) fn previous_word_boundary(input: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = input.chars().collect();
+    let mut index = cursor.min(chars.len());
+    while index > 0 && chars[index - 1].is_whitespace() {
+        index -= 1;
+    }
+    while index > 0 && !chars[index - 1].is_whitespace() {
+        index -= 1;
+    }
+    index
+}
+
+pub(super) fn next_word_boundary(input: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = input.chars().collect();
+    let mut index = cursor.min(chars.len());
+    while index < chars.len() && chars[index].is_whitespace() {
+        index += 1;
+    }
+    while index < chars.len() && !chars[index].is_whitespace() {
+        index += 1;
+    }
+    index
+}
+
+pub(super) fn normalize_paste(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+pub(super) fn paste_marker_for(text: &str) -> Option<String> {
+    let line_count = text.split('\n').count();
+    let char_count = text.chars().count();
+    if line_count >= super::PASTE_COLLAPSE_MIN_LINES {
+        Some(format!("[ pasted: {line_count} lines ]"))
+    } else if char_count > super::PASTE_COLLAPSE_MIN_CHARS {
+        Some(format!("[ pasted: {char_count} chars ]"))
+    } else {
+        None
+    }
+}
+
+pub(super) fn expand_paste_segments(input: &str, segments: &[super::PasteSegment]) -> String {
+    if segments.is_empty() {
+        return input.to_string();
+    }
+
+    let mut result = String::new();
+    let mut cursor = 0;
+    for segment in segments {
+        if cursor > segment.start || segment.end() > input.chars().count() {
+            continue;
+        }
+        result.extend(input.chars().skip(cursor).take(segment.start - cursor));
+        result.push_str(&segment.content);
+        cursor = segment.end();
+    }
+    result.extend(input.chars().skip(cursor));
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

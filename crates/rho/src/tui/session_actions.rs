@@ -93,3 +93,21 @@ impl App {
             .await
     }
 }
+
+impl App {
+    pub(super) fn ensure_session(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
+        if self.info.session.session_id.is_none() {
+            let session_id = agent.session_id().to_string();
+            let (agent_id, agent_fingerprint) = agent.agent_identity();
+            let session = Session::create_with_id(
+                &self.info.runtime.cwd,
+                &session_id,
+                agent_id,
+                agent_fingerprint,
+            )?;
+            self.info.session.session_id = Some(session_id);
+            agent.attach_storage(session);
+        }
+        Ok(())
+    }
+}

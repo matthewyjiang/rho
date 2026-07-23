@@ -4,11 +4,11 @@ use ratatui::text::Line;
 
 use super::{
     feed_image::{FeedImage, RenderedImagePlacements},
-    is_tool_entry,
     markdown::incremental_markdown_tail_start,
     markdown_image::MarkdownImageSource,
     message_render::render_assistant_content,
     render::{apply_markdown_images, pad_entry_line, render_entry},
+    tool_output_ui::is_tool_entry,
     Entry,
 };
 
