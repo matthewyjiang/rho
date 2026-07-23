@@ -95,6 +95,26 @@ printf '%s\n' "$replacement" > "$3"
     let raw = harness.raw_output();
     assert!(raw.windows(8).any(|bytes| bytes == b"\x1b[?1049l"));
     assert!(
+        raw.windows(4).any(|bytes| bytes == b"\x1b[2J"),
+        "main screen was not cleared before the editor"
+    );
+    let leave_at = raw
+        .windows(8)
+        .position(|bytes| bytes == b"\x1b[?1049l")
+        .expect("leave alternate screen");
+    let opening_at = raw
+        .windows(b"Opening editor".len())
+        .position(|bytes| bytes == b"Opening editor")
+        .expect("opening editor status");
+    let ready_at = raw
+        .windows(b"EXTERNAL_EDITOR_READY".len())
+        .position(|bytes| bytes == b"EXTERNAL_EDITOR_READY")
+        .expect("external editor ready marker");
+    assert!(
+        leave_at < opening_at && opening_at < ready_at,
+        "handoff status should appear after leaving the alternate screen and before the editor starts"
+    );
+    assert!(
         raw.windows(8)
             .filter(|bytes| *bytes == b"\x1b[?1049h")
             .count()

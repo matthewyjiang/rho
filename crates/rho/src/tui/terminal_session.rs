@@ -1,7 +1,15 @@
-use std::future::Future;
+use std::{
+    future::Future,
+    io::{self, Write},
+};
 
 use anyhow::{anyhow, Context};
-use crossterm::event::Event;
+use crossterm::{
+    cursor::{MoveTo, Show},
+    event::Event,
+    execute,
+    terminal::{disable_raw_mode, Clear, ClearType, LeaveAlternateScreen},
+};
 use ratatui::DefaultTerminal;
 
 use super::{keyboard_modes, mouse_capture, terminal_events::TerminalEvents};
@@ -85,7 +93,10 @@ impl TerminalSession {
                 failures.push(format!("disable keyboard modes: {error}"));
             }
         }
-        if let Err(error) = ratatui::try_restore() {
+        // Hand the terminal to $EDITOR in one flush: leave the alternate
+        // screen, clear the revealed main buffer, and show a short waiting
+        // line so the handoff does not flash shell scrollback.
+        if let Err(error) = hand_off_terminal() {
             failures.push(format!("restore terminal: {error}"));
         }
         if failures.is_empty() {
@@ -103,6 +114,23 @@ impl TerminalSession {
         self.events = Some(TerminalEvents::new());
         Ok(())
     }
+}
+
+fn hand_off_terminal() -> io::Result<()> {
+    // Disable raw mode before leaving the alternate screen. Raw mode has more
+    // side effects, matching ratatui::try_restore's ordering.
+    disable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(
+        stdout,
+        LeaveAlternateScreen,
+        Clear(ClearType::All),
+        MoveTo(0, 0),
+        Show
+    )?;
+    writeln!(stdout, "Opening editor…")?;
+    stdout.flush()?;
+    Ok(())
 }
 
 impl Drop for TerminalSession {

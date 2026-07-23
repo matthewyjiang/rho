@@ -75,6 +75,9 @@ impl App {
             Err(error) => self.notify_status(format!("editor failed: {error}")),
         }
         self.ctrl_c_streak = 0;
+        // Paint immediately after re-entering the alternate screen so resume
+        // does not sit on an empty frame until the next event-loop tick.
+        terminal.draw(|frame| self.draw(frame))?;
         Ok(())
     }
 }
