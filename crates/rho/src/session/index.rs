@@ -67,8 +67,10 @@ pub(super) fn matching_session_paths(
 /// Resolves a session by id prefix across every workspace, returning each
 /// match's file path and the workspace it belongs to, so a session can be
 /// recovered by id from any directory and resumed under its own workspace.
-/// `distinct` collapses the rows a session accrues when it is indexed under more
-/// than one `(workspace_key, id)`, so an unambiguous id resolves to one match.
+///
+/// A session file can accrue multiple index rows when it is recorded under more
+/// than one `(workspace_key, id)`. Collapse those to one row per `path` (newest
+/// `updated_at`, then stable `cwd`) so an unambiguous id still resolves once.
 pub(super) fn matching_sessions_any_workspace(
     session_root: &Path,
     id_prefix: &str,
@@ -77,10 +79,21 @@ pub(super) fn matching_sessions_any_workspace(
     let connection = connection
         .lock()
         .expect("session index connection poisoned");
+    // One row per path: `distinct path, cwd` still returns multiple rows when
+    // the same file was indexed under different workspaces with different cwds.
     let mut statement = connection.prepare(
-        "select distinct path, cwd
-         from sessions
-         where substr(id, 1, length(?1)) = ?1
+        "select path, cwd
+         from (
+             select path,
+                    cwd,
+                    row_number() over (
+                        partition by path
+                        order by updated_at desc, cwd asc
+                    ) as rn
+             from sessions
+             where substr(id, 1, length(?1)) = ?1
+         )
+         where rn = 1
          order by path asc",
     )?;
     let rows = statement.query_map(params![id_prefix], |row| {
@@ -647,5 +660,40 @@ mod tests {
             .unwrap();
         assert_eq!(version, INDEX_SCHEMA_VERSION);
         assert!(root.path().join("index.sqlite3").exists());
+    }
+
+    #[test]
+    fn matching_sessions_any_workspace_dedupes_same_path_across_cwds() {
+        let root = TempDir::new().unwrap();
+        let session_path = root.path().join("session.jsonl");
+        fs::write(&session_path, "").unwrap();
+        let path = session_path.to_string_lossy().to_string();
+        let id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+        {
+            let connection = open_index(root.path()).unwrap();
+            let connection = connection.lock().unwrap();
+            // Same session file indexed under two workspace keys with different cwds.
+            for (workspace_key, cwd, updated_at) in [
+                ("ws-stale", "/tmp/old-workspace", 10_i64),
+                ("ws-fresh", "/tmp/new-workspace", 20_i64),
+            ] {
+                connection
+                    .execute(
+                        "insert into sessions (
+                            workspace_key, cwd, id, path, created_at, updated_at, message_count
+                         ) values (?1, ?2, ?3, ?4, 1, ?5, 0)",
+                        params![workspace_key, cwd, id, path.as_str(), updated_at],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let matches = matching_sessions_any_workspace(root.path(), "aaaaaaaa").unwrap();
+        assert_eq!(
+            matches,
+            vec![(session_path, PathBuf::from("/tmp/new-workspace"))],
+            "one path with differing indexed cwds must resolve as a single match"
+        );
     }
 }
