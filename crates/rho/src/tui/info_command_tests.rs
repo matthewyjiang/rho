@@ -127,6 +127,18 @@ fn cache_hit_percentage_uses_latest_request_prompt_tokens() {
 }
 
 #[test]
+fn cache_hit_percentage_includes_latest_cache_writes() {
+    let latest = ModelUsage {
+        input_tokens: Some(100_000),
+        cache_read_tokens: Some(600_000),
+        cache_write_tokens: Some(300_000),
+        ..ModelUsage::default()
+    };
+
+    assert_eq!(cache_hit_percent(Some(&latest)), Some(60.0));
+}
+
+#[test]
 fn precomputed_estimated_cost_keeps_its_qualifier() {
     let mut info = test_info();
     info.cost_source = CostSource::Estimated;

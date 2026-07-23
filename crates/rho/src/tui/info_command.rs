@@ -182,10 +182,7 @@ fn push_optional_number(block: &mut CommandBlock, label: &str, value: Option<u64
 fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
     let usage = usage?;
     let cache_read = usage.cache_read_tokens?;
-    let prompt_tokens = usage
-        .input_tokens
-        .unwrap_or_default()
-        .saturating_add(cache_read);
+    let prompt_tokens = usage.total_input_tokens()?;
     (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
 }
 
