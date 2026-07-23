@@ -57,7 +57,7 @@ impl App {
         let statusline = StatusLine::new(&info.runtime);
         Self {
             info,
-            terminal_events: None,
+            terminal_session: None,
             statusline,
             subagent_panel: SubagentPanel::default(),
             input_ui: InputUi::default(),

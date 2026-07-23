@@ -39,7 +39,7 @@ fn fullscreen_history_starts_at_bottom() {
 }
 
 #[test]
-fn pageup_enters_manual_scroll_and_ctrl_g_returns_to_bottom() {
+fn pageup_enters_manual_scroll_and_ctrl_end_returns_to_bottom() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
     for index in 0..20 {
@@ -57,7 +57,7 @@ fn pageup_enters_manual_scroll_and_ctrl_g_returns_to_bottom() {
 
     assert!(app
         .handle_history_key(
-            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL),
             &mut terminal,
         )
         .unwrap());
@@ -317,7 +317,7 @@ fn jump_button_preserves_uncovered_content_on_last_scrolled_row() {
     );
     assert_eq!(&rendered[..preserved_width], &expected[..preserved_width]);
     assert!(
-        rendered.ends_with("↓ jump to bottom  ctrl+g"),
+        rendered.ends_with("↓ jump to bottom  ctrl+end"),
         "{rendered:?}"
     );
 }
@@ -455,8 +455,8 @@ fn jump_button_uses_activity_rail_background() {
 fn compact_jump_button_renders_on_narrow_terminals() {
     let app = test_app();
 
-    assert!(line_text(&app.jump_to_bottom_line(16)).contains("bottom ctrl+g"));
-    assert!(line_text(&app.jump_to_bottom_line(40)).contains("ctrl+g"));
+    assert!(line_text(&app.jump_to_bottom_line(16)).contains("ctrl+end"));
+    assert!(line_text(&app.jump_to_bottom_line(40)).contains("ctrl+end"));
 }
 
 #[test]

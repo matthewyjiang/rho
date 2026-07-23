@@ -4,10 +4,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Configurable keyboard shortcuts used by the main TUI composer.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(default)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Keybindings {
     pub reset_conversation: KeyBinding,
+    pub open_editor: KeyBinding,
     pub jump_to_bottom: KeyBinding,
     pub toggle_tool_output: KeyBinding,
     pub insert_newline: KeyBinding,
@@ -20,13 +20,67 @@ impl Default for Keybindings {
     fn default() -> Self {
         Self {
             reset_conversation: KeyBinding::control('r'),
-            jump_to_bottom: KeyBinding::control('g'),
+            open_editor: KeyBinding::control('g'),
+            jump_to_bottom: KeyBinding::control_code(KeyCode::End),
             toggle_tool_output: KeyBinding::control('o'),
             insert_newline: KeyBinding::control('j'),
             paste_image: KeyBinding::control('v'),
             edit_pending_input: KeyBinding::alt(KeyCode::Up),
             manage_pending_input: KeyBinding::alt(KeyCode::Char('q')),
         }
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct PartialKeybindings {
+    reset_conversation: Option<KeyBinding>,
+    open_editor: Option<KeyBinding>,
+    jump_to_bottom: Option<KeyBinding>,
+    toggle_tool_output: Option<KeyBinding>,
+    insert_newline: Option<KeyBinding>,
+    paste_image: Option<KeyBinding>,
+    edit_pending_input: Option<KeyBinding>,
+    manage_pending_input: Option<KeyBinding>,
+}
+
+impl<'de> Deserialize<'de> for Keybindings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let partial = PartialKeybindings::deserialize(deserializer)?;
+        let legacy_jump_shortcut = KeyBinding::control('g');
+        let migrate_legacy_jump = partial.open_editor.is_none()
+            && partial.jump_to_bottom.as_ref() == Some(&legacy_jump_shortcut);
+        let defaults = Self::default();
+        let keybindings = Self {
+            reset_conversation: partial
+                .reset_conversation
+                .unwrap_or(defaults.reset_conversation),
+            open_editor: partial.open_editor.unwrap_or(defaults.open_editor),
+            jump_to_bottom: if migrate_legacy_jump {
+                defaults.jump_to_bottom
+            } else {
+                partial.jump_to_bottom.unwrap_or(defaults.jump_to_bottom)
+            },
+            toggle_tool_output: partial
+                .toggle_tool_output
+                .unwrap_or(defaults.toggle_tool_output),
+            insert_newline: partial.insert_newline.unwrap_or(defaults.insert_newline),
+            paste_image: partial.paste_image.unwrap_or(defaults.paste_image),
+            edit_pending_input: partial
+                .edit_pending_input
+                .unwrap_or(defaults.edit_pending_input),
+            manage_pending_input: partial
+                .manage_pending_input
+                .unwrap_or(defaults.manage_pending_input),
+        };
+        if keybindings.open_editor == keybindings.jump_to_bottom {
+            return Err(serde::de::Error::custom(
+                "open_editor and jump_to_bottom must use different keys",
+            ));
+        }
+        Ok(keybindings)
     }
 }
 
@@ -41,6 +95,13 @@ impl KeyBinding {
         Self {
             modifiers: KeyModifiers::CONTROL,
             code: KeyCode::Char(ch),
+        }
+    }
+
+    const fn control_code(code: KeyCode) -> Self {
+        Self {
+            modifiers: KeyModifiers::CONTROL,
+            code,
         }
     }
 

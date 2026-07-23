@@ -1,6 +1,16 @@
 use super::*;
 use crate::tui::tests::test_app;
 
+#[test]
+fn terminal_lifecycle_errors_bypass_sdk_failure_handling() {
+    let error = sdk_failure_from_running_terminal_error(
+        super::during_turn::RunningTerminalError::Terminal(anyhow::anyhow!("resume failed")),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.to_string(), "resume failed");
+}
+
 fn failed_turn() -> FailedTurn {
     FailedTurn {
         input: rho_sdk::UserInput::text("continue the existing goal turn"),

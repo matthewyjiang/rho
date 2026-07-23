@@ -6,8 +6,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App, ComposerMode,
-    Entry, HerdrState, HerdrUserWait, InteractiveRuntime, TerminalEvents, TuiResult,
-    ViewModelEvent, MAX_TERMINAL_EVENTS_PER_TICK,
+    Entry, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
 };
 
 pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
@@ -25,7 +24,6 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
-        self.terminal_events = Some(TerminalEvents::new());
         self.start_model_metadata_fetch(agent);
         self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal)?;
@@ -69,16 +67,7 @@ impl App {
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_subagent_panel(agent);
-            let terminal_input_ready = self.drain_ready_terminal_events(terminal, agent).await?;
-            if self.should_quit {
-                break;
-            }
-            if terminal_input_ready {
-                needs_redraw = true;
-                needs_redraw |= self.flush_due_paste_burst();
-            } else {
-                needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
-            }
+            needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
                 needs_redraw = false;
@@ -104,10 +93,9 @@ impl App {
             let timeout = self.event_poll_timeout(idle_timeout);
             tokio::select! {
                 biased;
-                event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     self.handle_terminal_event(event?, terminal, agent).await?;
                     needs_redraw = true;
-                    self.drain_ready_terminal_events(terminal, agent).await?;
                     needs_redraw |= self.flush_due_paste_burst();
                 }
                 _ = tokio::time::sleep(timeout) => {
@@ -125,30 +113,6 @@ impl App {
             resume_session_id: self.info.session.session_id.clone(),
             exit_summary: self.exit_summary(),
         })
-    }
-
-    pub(super) async fn drain_ready_terminal_events(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let mut handled = false;
-        for _ in 1..MAX_TERMINAL_EVENTS_PER_TICK {
-            let event = self
-                .terminal_events
-                .as_mut()
-                .expect("terminal events initialized")
-                .try_next();
-            let Some(event) = event else {
-                break;
-            };
-            self.handle_terminal_event(event?, terminal, agent).await?;
-            handled = true;
-            if self.should_quit {
-                break;
-            }
-        }
-        Ok(handled)
     }
 
     pub(super) async fn handle_terminal_event(

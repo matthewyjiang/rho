@@ -1,7 +1,7 @@
 //! Input and command handling while a model turn is running.
 //!
 //! Owns key routing, steering/follow-up queues, during-turn slash commands,
-//! running picker/config overlays, and terminal event draining for the live
+//! running picker/config overlays, and terminal event routing for the live
 //! turn loop.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,8 +18,34 @@ use super::{
     paste_burst::{next_word_boundary, normalize_paste, previous_word_boundary},
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
-    RunningInputMode, StreamControl, MAX_TERMINAL_EVENTS_PER_TICK,
+    RunningInputMode, StreamControl,
 };
+
+pub(super) enum RunningTerminalError {
+    Recoverable(rho_providers::model::ModelError),
+    Terminal(anyhow::Error),
+}
+
+impl RunningTerminalError {
+    pub(super) fn into_anyhow(self) -> anyhow::Error {
+        match self {
+            Self::Recoverable(error) => error.into(),
+            Self::Terminal(error) => error,
+        }
+    }
+}
+
+impl From<std::io::Error> for RunningTerminalError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Terminal(error.into())
+    }
+}
+
+impl From<rho_providers::model::ModelError> for RunningTerminalError {
+    fn from(error: rho_providers::model::ModelError) -> Self {
+        Self::Recoverable(error)
+    }
+}
 
 impl App {
     pub(super) fn handle_key_during_turn(
@@ -632,40 +658,29 @@ impl App {
         tokio::time::Instant::from_std(deadline)
     }
 
-    pub(super) fn handle_running_terminal_events(
+    pub(super) async fn handle_running_terminal_events(
         &mut self,
         first_event: Event,
         terminal: &mut DefaultTerminal,
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
         input_mode: RunningInputMode,
-    ) -> Result<StreamControl, rho_providers::model::ModelError> {
+    ) -> Result<StreamControl, RunningTerminalError> {
         let mut control = StreamControl::Continue;
         let mut approval_resolved = false;
-        let mut next_event = Some(first_event);
-        for _ in 0..MAX_TERMINAL_EVENTS_PER_TICK {
-            let event = match next_event.take() {
-                Some(event) => event,
-                None => {
-                    let event = self
-                        .terminal_events
-                        .as_mut()
-                        .expect("terminal events initialized")
-                        .try_next();
-                    let Some(event) = event else {
-                        break;
-                    };
-                    event?
-                }
-            };
-            match event {
+        'event: {
+            match first_event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.history.clear_text_selection();
                     if key.code == KeyCode::Esc
                         && matches!(self.input_ui.composer, ComposerMode::Approval(_))
                     {
                         self.handle_approval_key(key, 1).map_err(|error| {
-                            rho_providers::model::ModelError::InvalidResponse(error.to_string())
+                            RunningTerminalError::Recoverable(
+                                rho_providers::model::ModelError::InvalidResponse(
+                                    error.to_string(),
+                                ),
+                            )
                         })?;
                         self.cancel_inline_shells();
                         return Ok(
@@ -673,24 +688,37 @@ impl App {
                         );
                     }
                     if key.code == KeyCode::Esc && self.cancel_inline_shells() {
-                        continue;
+                        break 'event;
                     }
                     if key.code == KeyCode::Esc && self.exit_shell_mode() {
-                        continue;
+                        break 'event;
                     }
                     if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
                         return Ok(
                             self.request_running_interrupt(interrupt_requested, tool_call_active)
                         );
                     }
+                    if input_mode == RunningInputMode::Turn
+                        && self.external_editor_shortcut_matches(key)
+                    {
+                        self.open_composer_in_editor(terminal)
+                            .await
+                            .map_err(RunningTerminalError::Terminal)?;
+                        control = StreamControl::Resize;
+                        break 'event;
+                    }
                     if input_mode == RunningInputMode::Turn {
                         let resolved =
                             self.handle_key_during_turn(key, terminal).map_err(|err| {
-                                rho_providers::model::ModelError::InvalidResponse(err.to_string())
+                                RunningTerminalError::Recoverable(
+                                    rho_providers::model::ModelError::InvalidResponse(
+                                        err.to_string(),
+                                    ),
+                                )
                             })?;
                         approval_resolved |= resolved;
                         if self.pending.input_action.is_some() {
-                            break;
+                            break 'event;
                         }
                     }
                     if self.should_quit {

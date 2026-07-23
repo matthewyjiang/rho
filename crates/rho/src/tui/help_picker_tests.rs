@@ -35,6 +35,7 @@ fn help_picker_lists_core_and_configurable_shortcuts() {
         "ctrl+j",
         "ctrl+shift+r",
         "ctrl+g",
+        "ctrl+end",
         "ctrl+o",
         "ctrl+v",
         "alt+up",

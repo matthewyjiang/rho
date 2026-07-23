@@ -49,6 +49,11 @@ impl App {
             return Ok(());
         }
 
+        if self.external_editor_shortcut_matches(key) {
+            self.open_composer_in_editor(terminal).await?;
+            return Ok(());
+        }
+
         if self.handle_history_key(key, terminal)? {
             return Ok(());
         }

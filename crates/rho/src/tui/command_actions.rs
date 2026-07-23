@@ -79,14 +79,17 @@ impl App {
         let compacted = loop {
             tokio::select! {
                 result = &mut compact_future => break result,
-                terminal_event = self.terminal_events.as_mut().expect("terminal events initialized").next() => {
+                terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     match self.handle_running_terminal_events(
                         terminal_event?,
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
                         RunningInputMode::Compacting,
-                    )? {
+                    )
+                    .await
+                    .map_err(super::during_turn::RunningTerminalError::into_anyhow)?
+                    {
                         StreamControl::Interrupt => {
                             break Err(anyhow::anyhow!("compaction interrupted"));
                         }

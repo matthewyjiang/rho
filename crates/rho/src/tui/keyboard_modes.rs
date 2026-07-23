@@ -36,15 +36,27 @@ impl Enabled {
     }
 
     pub(super) fn release(self) {
+        let _ = self.try_release();
+    }
+
+    pub(super) fn try_release(self) -> std::io::Result<()> {
+        let mut first_error = None;
         if self.keyboard_enhancements {
-            let _ = disable_keyboard_enhancements();
+            record_first_error(&mut first_error, disable_keyboard_enhancements());
         }
         if self.modified_keys {
-            let _ = disable_modified_keys();
+            record_first_error(&mut first_error, disable_modified_keys());
         }
         if self.bracketed_paste {
-            let _ = disable_bracketed_paste();
+            record_first_error(&mut first_error, disable_bracketed_paste());
         }
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
+fn record_first_error(first_error: &mut Option<std::io::Error>, result: std::io::Result<()>) {
+    if let Err(error) = result {
+        first_error.get_or_insert(error);
     }
 }
 

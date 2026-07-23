@@ -403,6 +403,10 @@ impl PtyHarness {
         self.pty.is_running()
     }
 
+    pub fn child_pid(&self) -> Option<u32> {
+        self.pty.child_pid()
+    }
+
     pub fn kill(&mut self) -> Result<()> {
         self.log("kill child");
         self.pty.kill()

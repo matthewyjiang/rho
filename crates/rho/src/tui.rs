@@ -39,6 +39,7 @@ mod context_handoff;
 mod copy_interaction;
 mod doctor;
 mod event_adapter;
+mod external_editor;
 mod feed_image;
 mod file_palette;
 mod file_picker;
@@ -101,6 +102,7 @@ mod stream;
 mod stream_preview;
 mod subagent_panel;
 mod terminal_events;
+mod terminal_session;
 mod text_selection;
 mod theme;
 mod tool_call_batch;
@@ -163,7 +165,7 @@ use scrollbar::{scroll_state_for_top_line, HistoryScrollbar};
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
 use subagent_panel::SubagentPanel;
-use terminal_events::TerminalEvents;
+use terminal_session::TerminalSession;
 use text_selection::{highlight_selection, render_copy_notice};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
@@ -194,7 +196,6 @@ const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
 const MIN_COMMAND_DESCRIPTION_WIDTH: usize = 7;
-const MAX_TERMINAL_EVENTS_PER_TICK: usize = 256;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
 const STREAM_PREVIEW_MIN_CHARS: usize = 2;
@@ -246,8 +247,6 @@ pub(crate) use attachment::{run as run_attachment, AttachmentWriter};
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
-    let keyboard = keyboard_modes::Enabled::acquire();
-    let mouse_capture_enabled = mouse_capture::enable().is_ok();
     let herdr = info.services.herdr.clone();
     let herdr_graphics = herdr.graphics_capability().await;
     let initial_state = if info.services.auth_unavailable.is_some() {
@@ -270,18 +269,14 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
 
         match injected {
             Ok(()) => {
-                App::new(info, herdr_graphics)
-                    .run(&mut terminal, agent)
-                    .await
+                let mut app = App::new(info, herdr_graphics);
+                app.terminal_session = Some(TerminalSession::acquire());
+                app.run(&mut terminal, agent).await
             }
             Err(error) => Err(error),
         }
     };
     herdr.release().await;
-    keyboard.release();
-    if mouse_capture_enabled {
-        let _ = mouse_capture::disable();
-    }
     ratatui::restore();
     if let Ok(result) = &result {
         app_loop::print_exit_summary(result.exit_summary.as_deref())?;
@@ -291,7 +286,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
 
 struct App {
     info: TuiBootstrap,
-    terminal_events: Option<TerminalEvents>,
+    terminal_session: Option<TerminalSession>,
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
     input_ui: InputUi,
