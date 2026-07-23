@@ -251,7 +251,13 @@ pub(super) fn questionnaire_request(request: &HostInputRequest) -> Questionnaire
                 let choices = question
                     .choices()
                     .iter()
-                    .map(|choice| QuestionnaireChoice::new(choice.value(), choice.label()))
+                    .map(|choice| {
+                        let mapped = QuestionnaireChoice::new(choice.value(), choice.label());
+                        match choice.description_text() {
+                            Some(description) => mapped.description(description),
+                            None => mapped,
+                        }
+                    })
                     .collect::<Vec<_>>();
                 QuestionnaireQuestion {
                     id: question.id().to_string(),

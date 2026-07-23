@@ -222,6 +222,44 @@ fn form_composer() -> QuestionnaireComposer {
 }
 
 #[test]
+fn frame_shows_wrapped_choice_descriptions_below_labels() {
+    let question = QuestionnaireQuestion {
+        id: "style".into(),
+        question: "Style?".into(),
+        header: None,
+        help: None,
+        default: None,
+        kind: QuestionnaireQuestionKind::Choice,
+        required: true,
+        choices: vec![
+            QuestionnaireChoice::new("brief", "Brief").description("A short answer with key facts"),
+            QuestionnaireChoice::new("detailed", "Detailed"),
+        ],
+        allow_other: false,
+    };
+    let composer = QuestionnaireComposer::new(
+        QuestionnaireRequest {
+            title: None,
+            reason: None,
+            questions: vec![question],
+        },
+        QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
+    );
+
+    let (lines, cursor) = questionnaire_frame(&composer, 24);
+    let text = lines.iter().map(line_text).collect::<Vec<_>>();
+    let label_row = text
+        .iter()
+        .position(|line| line.contains("→ ○ Brief"))
+        .expect("choice label");
+
+    assert_eq!(cursor.y as usize, label_row);
+    assert_eq!(text[label_row + 1].trim_end(), "        A short answer");
+    assert_eq!(text[label_row + 2].trim_end(), "        with key facts");
+    assert!(text.iter().any(|line| line.contains("○ Detailed")));
+}
+
+#[test]
 fn cursor_lands_on_highlighted_choice_row_after_wrapping() {
     let question = QuestionnaireQuestion {
         id: "style".into(),

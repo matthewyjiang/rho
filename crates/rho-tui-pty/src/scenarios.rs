@@ -308,6 +308,10 @@ const QUESTIONNAIRE_STEPS: &[Step] = &[
         text: "Choose one color",
         timeout: STREAM,
     },
+    Step::WaitText {
+        text: "A warm primary color",
+        timeout: STREAM,
+    },
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {

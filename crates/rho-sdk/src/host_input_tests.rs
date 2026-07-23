@@ -29,6 +29,15 @@ fn request() -> HostInputRequest {
 }
 
 #[test]
+fn host_choice_exposes_optional_description() {
+    let plain = HostChoice::new("fast", "Fast");
+    let detailed = HostChoice::new("safe", "Safe").description("Run every check");
+
+    assert_eq!(plain.description_text(), None);
+    assert_eq!(detailed.description_text(), Some("Run every check"));
+}
+
+#[test]
 fn questionnaire_validates_complete_typed_answers() {
     let request = request();
     let response = HostInputResponse::new()

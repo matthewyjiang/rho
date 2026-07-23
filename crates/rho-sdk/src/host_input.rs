@@ -11,6 +11,7 @@ use serde_json::Value;
 pub struct HostChoice {
     value: String,
     label: String,
+    description: Option<String>,
 }
 
 impl HostChoice {
@@ -18,7 +19,14 @@ impl HostChoice {
         Self {
             value: value.into(),
             label: label.into(),
+            description: None,
         }
+    }
+
+    /// Add short supporting text that hosts may show below the choice label.
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 
     pub fn value(&self) -> &str {
@@ -27,6 +35,10 @@ impl HostChoice {
 
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    pub fn description_text(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 }
 
