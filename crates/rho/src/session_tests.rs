@@ -90,6 +90,82 @@ fn enriched_assistant_context_round_trips_for_resume() {
 }
 
 #[test]
+fn resumes_session_by_id_from_a_different_workspace() {
+    let root = temp_session_root();
+    let created_cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &created_cwd).unwrap();
+    session
+        .append_message(&Message::assistant_text("from the original workspace"))
+        .unwrap();
+    let id = session.id().to_string();
+
+    let other_cwd = temp_cwd();
+    let (resumed, messages) = Session::open_by_id_in_root(&root, &other_cwd, &id).unwrap();
+
+    assert_eq!(resumed.id(), id);
+    assert_eq!(
+        resumed.cwd(),
+        &*created_cwd,
+        "resume adopts the session's original workspace, not the current directory"
+    );
+    assert_eq!(messages.len(), 1);
+    assert!(matches!(
+        &messages[0],
+        Message::Assistant(content)
+            if matches!(content.as_slice(), [ContentBlock::Text(text)] if text == "from the original workspace")
+    ));
+}
+
+#[test]
+fn resume_by_id_errors_when_the_original_workspace_is_gone() {
+    let root = temp_session_root();
+    let parent = temp_cwd();
+    let original = parent.join("project");
+    std::fs::create_dir(&original).unwrap();
+    let session = Session::create_in_root(&root, &original).unwrap();
+    session
+        .append_message(&Message::assistant_text("work in progress"))
+        .unwrap();
+    let id = session.id().to_string();
+
+    std::fs::remove_dir_all(&original).unwrap();
+
+    let other_cwd = temp_cwd();
+    let error = Session::open_by_id_in_root(&root, &other_cwd, &id).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("no longer an accessible directory"),
+        "expected a workspace-gone recovery error, got: {error}"
+    );
+}
+
+#[test]
+fn resume_by_id_errors_when_the_original_workspace_is_a_file() {
+    let root = temp_session_root();
+    let parent = temp_cwd();
+    let original = parent.join("project");
+    std::fs::create_dir(&original).unwrap();
+    let session = Session::create_in_root(&root, &original).unwrap();
+    session
+        .append_message(&Message::assistant_text("work in progress"))
+        .unwrap();
+    let id = session.id().to_string();
+
+    std::fs::remove_dir_all(&original).unwrap();
+    std::fs::write(&original, "not a directory").unwrap();
+
+    let other_cwd = temp_cwd();
+    let error = Session::open_by_id_in_root(&root, &other_cwd, &id).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("no longer an accessible directory"),
+        "a non-directory at the workspace path must not be accepted, got: {error}"
+    );
+}
+
+#[test]
 fn separate_display_message_round_trips_for_resume_and_export() {
     let root = temp_session_root();
     let cwd = temp_cwd();

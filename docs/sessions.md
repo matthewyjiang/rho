@@ -25,6 +25,8 @@ rho --resume <session-uuid>
 rho -R <session-uuid-prefix>
 ```
 
+Resuming by id first looks in the current workspace. If no session matches there, Rho resolves the id across every workspace, so you can resume a session by id from a different directory. A session resumed this way continues under **its own** workspace, not the current directory, because its history refers to that project's files and tools. If that workspace directory no longer exists — for example after it was renamed, moved, or deleted — Rho reports where the session belongs instead of continuing against an unrelated tree; its transcript remains preserved under `~/.rho/sessions`.
+
 You can also omit the ID to open an interactive picker for saved sessions in the current workspace:
 
 ```bash
@@ -32,7 +34,7 @@ rho --resume
 rho -R
 ```
 
-Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker.
+The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker.
 
 After you send at least one message, Rho restores your shell view on exit and prints a short saved-session summary plus a resume command that you can paste later.
 

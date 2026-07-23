@@ -28,6 +28,11 @@ pub(super) const SESSION_VERSION: u32 = 4;
 pub(super) struct ResolvedSession {
     pub(super) id: String,
     pub(super) path: PathBuf,
+    /// The workspace the session belongs to: the current directory for a local
+    /// match, or the session's own stored workspace for a by-id match found
+    /// elsewhere. Resume roots to this so it never runs one project's history
+    /// against another's tree.
+    pub(super) cwd: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -50,23 +55,29 @@ impl SessionStore {
 
     pub(super) fn resolve(&self, id_prefix: &str) -> anyhow::Result<ResolvedSession> {
         let dir = self.ensure_dir()?;
-        let matches = matching_session_files(&dir, id_prefix)?;
-        for path in &matches {
+        let local = matching_session_files(&dir, id_prefix)?;
+        for path in &local {
             let _ = index::sync_session_file(&self.root, &self.cwd, path);
         }
-        match matches.as_slice() {
-            [] => anyhow::bail!("no session found matching '{id_prefix}'"),
-            [path] => {
-                let id = session_id_from_path(path).ok_or_else(|| {
-                    anyhow::anyhow!("session file has invalid name: {}", path.display())
-                })?;
-                Ok(ResolvedSession {
-                    id,
-                    path: path.clone(),
-                })
-            }
-            _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
+        if let Some(path) = single_match(&local, id_prefix)? {
+            return Ok(ResolvedSession {
+                id: session_id(path)?,
+                path: path.clone(),
+                cwd: self.cwd.clone(),
+            });
         }
+
+        // Recover by id across every workspace, keeping the session's own
+        // workspace so resume does not silently continue in the current one.
+        let global = index::matching_sessions_any_workspace(&self.root, id_prefix)?;
+        let Some((path, cwd)) = single_match(&global, id_prefix)? else {
+            anyhow::bail!("no session found matching '{id_prefix}'");
+        };
+        Ok(ResolvedSession {
+            id: session_id(path)?,
+            path: path.clone(),
+            cwd: cwd.clone(),
+        })
     }
 
     pub(super) fn create_path(&self, id: &str, created_at: u64) -> anyhow::Result<PathBuf> {
@@ -628,6 +639,21 @@ fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
         index = results_end;
     }
     messages
+}
+
+/// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.
+/// Returns `None` when nothing matched.
+fn single_match<'a, T>(matches: &'a [T], id_prefix: &str) -> anyhow::Result<Option<&'a T>> {
+    match matches {
+        [] => Ok(None),
+        [only] => Ok(Some(only)),
+        _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
+    }
+}
+
+fn session_id(path: &Path) -> anyhow::Result<String> {
+    session_id_from_path(path)
+        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))
 }
 
 fn matching_session_files(dir: &Path, id_prefix: &str) -> anyhow::Result<Vec<PathBuf>> {
