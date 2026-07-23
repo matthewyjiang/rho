@@ -103,8 +103,9 @@ pub(super) enum InputSubmissionMode {
     Prompt,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) enum ComposerMode {
+    #[default]
     Input,
     Picker(UiPicker),
     SecretInput(SecretInput),
@@ -114,12 +115,6 @@ pub(super) enum ComposerMode {
     InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
-}
-
-impl Default for ComposerMode {
-    fn default() -> Self {
-        Self::Input
-    }
 }
 
 impl ComposerMode {

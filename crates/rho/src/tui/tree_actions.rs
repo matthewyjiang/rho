@@ -123,20 +123,20 @@ impl App {
 
         self.info.session.recovered_messages = histories.display.clone();
         self.input_ui.composer = ComposerMode::Input;
-        self.input_ui.input.clear();
+        self.input_ui.text.clear();
         self.input_ui.paste_segments.clear();
         self.input_ui.shell_mode = None;
-        self.input_ui.input_cursor = 0;
+        self.input_ui.cursor = 0;
         self.input_ui.command_palette_dismissed = false;
         self.reset_streams();
         self.goal = None;
         self.reset_usage();
         self.usage.current_context = None;
-        self.history.transcript = visible_entries;
-        self.history.markdown_images.clear();
+        self.history.set_entries(visible_entries);
+        self.history.images_mut().clear();
         self.history.invalidate_from(0);
-        self.history.last_inserted_was_tool =
-            self.history.transcript.last().is_some_and(is_tool_entry);
+        self.history
+            .set_last_inserted_was_tool(self.history.last().is_some_and(is_tool_entry));
         self.scroll_history_to_bottom();
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));

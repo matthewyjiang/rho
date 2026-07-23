@@ -107,7 +107,7 @@ impl App {
 
         let activity_status = self.activity_status();
         let activity_active = activity_status.is_some() && history.height > 0;
-        let bottom_follow = matches!(self.history.history_scroll, HistoryScroll::Bottom);
+        let bottom_follow = matches!(self.history.scroll(), HistoryScroll::Bottom);
         let content_inset = activity::bottom_follow_activity_inset(activity_active, bottom_follow)
             .min(history_height);
         let content_height = history_height.saturating_sub(content_inset);
@@ -194,7 +194,7 @@ impl App {
     pub(super) fn history_content_inset(&self) -> usize {
         activity::bottom_follow_activity_inset(
             self.activity_status().is_some(),
-            matches!(self.history.history_scroll, HistoryScroll::Bottom),
+            matches!(self.history.scroll(), HistoryScroll::Bottom),
         )
     }
 

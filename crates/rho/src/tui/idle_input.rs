@@ -82,7 +82,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.clear_submitted_input();
-                    self.input_ui.input_submission_mode = InputSubmissionMode::ParseCommands;
+                    self.input_ui.submission_mode = InputSubmissionMode::ParseCommands;
                     self.input_ui.pending_images.clear();
                     self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
@@ -109,13 +109,13 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
-                self.input_ui.input_cursor =
-                    previous_word_boundary(&self.input_ui.input, self.input_ui.input_cursor);
+                self.input_ui.cursor =
+                    previous_word_boundary(&self.input_ui.text, self.input_ui.cursor);
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
-                self.input_ui.input_cursor =
-                    next_word_boundary(&self.input_ui.input, self.input_ui.input_cursor);
+                self.input_ui.cursor =
+                    next_word_boundary(&self.input_ui.text, self.input_ui.cursor);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {
@@ -138,12 +138,12 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 self.reset_input_history_navigation();
-                self.input_ui.input_cursor = 0;
+                self.input_ui.cursor = 0;
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
                 self.reset_input_history_navigation();
-                self.input_ui.input_cursor = self.input_char_len();
+                self.input_ui.cursor = self.input_char_len();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
@@ -248,7 +248,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let mut turn = TurnPrompt::standard(
             self.expanded_input().trim().to_string(),
-            self.input_ui.input.trim().to_string(),
+            self.input_ui.text.trim().to_string(),
         );
         if turn.model.is_empty()
             && self.input_ui.pending_images.is_empty()

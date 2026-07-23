@@ -71,7 +71,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
                     self.clear_submitted_input();
-                    self.input_ui.input_submission_mode = InputSubmissionMode::ParseCommands;
+                    self.input_ui.submission_mode = InputSubmissionMode::ParseCommands;
                     self.input_ui.pending_images.clear();
                     self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
@@ -92,13 +92,13 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
-                self.input_ui.input_cursor =
-                    previous_word_boundary(&self.input_ui.input, self.input_ui.input_cursor);
+                self.input_ui.cursor =
+                    previous_word_boundary(&self.input_ui.text, self.input_ui.cursor);
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
-                self.input_ui.input_cursor =
-                    next_word_boundary(&self.input_ui.input, self.input_ui.input_cursor);
+                self.input_ui.cursor =
+                    next_word_boundary(&self.input_ui.text, self.input_ui.cursor);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {
@@ -121,12 +121,12 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 self.reset_input_history_navigation();
-                self.input_ui.input_cursor = 0;
+                self.input_ui.cursor = 0;
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
                 self.reset_input_history_navigation();
-                self.input_ui.input_cursor = self.input_char_len();
+                self.input_ui.cursor = self.input_char_len();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
@@ -164,7 +164,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let prompt = self.expanded_input().trim().to_string();
-        let display_prompt = self.input_ui.input.clone();
+        let display_prompt = self.input_ui.text.clone();
         let paste_segments = self.input_ui.paste_segments.clone();
         if prompt.is_empty() && self.input_ui.shell_mode.is_none() {
             self.clear_submitted_input();
@@ -222,7 +222,7 @@ impl App {
 
     pub(super) fn queue_prompt_after_turn(&mut self) -> anyhow::Result<()> {
         let prompt = self.expanded_input().trim().to_string();
-        let display_prompt = self.input_ui.input.clone();
+        let display_prompt = self.input_ui.text.clone();
         let paste_segments = self.input_ui.paste_segments.clone();
         if prompt.is_empty() {
             self.clear_submitted_input();
@@ -431,8 +431,8 @@ impl App {
         }
         match action {
             PickerAction::InsertSkillCommand => {
-                self.input_ui.input = format!("/skill:{value}");
-                self.input_ui.input_cursor = self.input_char_len();
+                self.input_ui
+                    .set_text_and_cursor(format!("/skill:{value}"), self.input_char_len());
                 self.input_ui.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
             }
@@ -660,7 +660,7 @@ impl App {
             };
             match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    self.history.text_selection = None;
+                    self.history.clear_text_selection();
                     if key.code == KeyCode::Esc
                         && matches!(self.input_ui.composer, ComposerMode::Approval(_))
                     {
@@ -689,7 +689,7 @@ impl App {
                                 rho_providers::model::ModelError::InvalidResponse(err.to_string())
                             })?;
                         approval_resolved |= resolved;
-                        if self.pending.pending_input_action.is_some() {
+                        if self.pending.input_action.is_some() {
                             break;
                         }
                     }
@@ -708,8 +708,8 @@ impl App {
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
                     self.clamp_overlay_detail_scroll(terminal);
-                    self.history.text_selection = None;
-                    self.history.hovered_code_block_copy = None;
+                    self.history.clear_text_selection();
+                    self.history.set_hovered_code_block_copy(None);
                     self.hide_history_scrollbar();
                     self.clamp_history_scroll_for_terminal(terminal)?;
                     self.drain_streams(terminal)?;

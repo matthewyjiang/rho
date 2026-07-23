@@ -91,17 +91,7 @@ impl App {
     }
 
     pub(super) fn preserve_unapplied_steering_as_follow_ups(&mut self) {
-        let mut pending = self
-            .pending
-            .accepted_steering
-            .drain(..)
-            .map(|entry| entry.prompt)
-            .chain(self.pending.steering_prompts.drain(..))
-            .collect::<std::collections::VecDeque<_>>();
-        pending.append(&mut self.pending.queued_prompts);
-        self.pending.queued_prompts = pending;
-        self.pending.retracting_steering = None;
-        self.pending.pending_input_action = None;
+        self.pending.preserve_unapplied_steering_as_follow_ups();
         self.pending_input_changed();
         self.select_pending_recall_target();
     }
@@ -131,11 +121,11 @@ impl App {
         if !self.expanded_input().trim().is_empty() {
             messages.push(self.expanded_input());
         }
-        self.input_ui.input = messages.join("\n\n");
+        self.input_ui.text = messages.join("\n\n");
         self.input_ui.paste_segments.clear();
         self.input_ui.shell_mode = None;
-        self.input_ui.input_cursor = self.input_char_len();
-        self.input_ui.input_submission_mode = InputSubmissionMode::ParseCommands;
+        self.input_ui.cursor = self.input_char_len();
+        self.input_ui.submission_mode = InputSubmissionMode::ParseCommands;
         self.reset_input_history_navigation();
         self.input_changed();
         self.pending_input_changed();

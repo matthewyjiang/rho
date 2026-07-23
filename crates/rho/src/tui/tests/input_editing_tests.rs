@@ -3,17 +3,17 @@ use super::*;
 #[test]
 fn valid_slash_commands_are_added_to_input_history() {
     let mut app = test_app();
-    app.input_ui.input = "/info  ".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "/info  ".into();
+    app.input_ui.cursor = app.input_char_len();
 
     let invocation = app.parse_input_command().unwrap().unwrap();
 
     assert_eq!(invocation.id, CommandId::Info);
-    assert_eq!(app.input_ui.input_history, ["/info"]);
-    app.input_ui.input.clear();
-    app.input_ui.input_cursor = 0;
+    assert_eq!(app.input_ui.history, ["/info"]);
+    app.input_ui.text.clear();
+    app.input_ui.cursor = 0;
     app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
-    assert_eq!(app.input_ui.input, "/info");
+    assert_eq!(app.input_ui.text, "/info");
 }
 
 #[test]
@@ -24,14 +24,14 @@ fn left_and_right_arrows_treat_collapsed_paste_as_one_character() {
     let segment = app.input_ui.paste_segments[0].clone();
 
     app.move_input_cursor_left();
-    assert_eq!(app.input_ui.input_cursor, segment.start);
+    assert_eq!(app.input_ui.cursor, segment.start);
 
     app.move_input_cursor_right();
-    assert_eq!(app.input_ui.input_cursor, segment.end());
+    assert_eq!(app.input_ui.cursor, segment.end());
 
     app.move_input_cursor_left();
     app.move_input_cursor_left();
-    assert_eq!(app.input_ui.input_cursor, segment.start - 1);
+    assert_eq!(app.input_ui.cursor, segment.start - 1);
 }
 
 #[test]
@@ -57,11 +57,11 @@ fn vertical_cursor_movement_focuses_a_collapsed_paste_item() {
     app.insert_input_text("first line\n");
     app.insert_pasted_input_text("alpha\nbeta\ngamma");
     let segment = app.input_ui.paste_segments[0].clone();
-    app.input_ui.input_cursor = 5;
+    app.input_ui.cursor = 5;
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
 
-    assert_eq!(app.input_ui.input_cursor, segment.start);
+    assert_eq!(app.input_ui.cursor, segment.start);
 }
 
 #[test]
@@ -71,8 +71,8 @@ fn backspace_removes_collapsed_paste_as_one_item() {
 
     app.backspace_input();
 
-    assert_eq!(app.input_ui.input, "");
-    assert_eq!(app.input_ui.input_cursor, 0);
+    assert_eq!(app.input_ui.text, "");
+    assert_eq!(app.input_ui.cursor, 0);
     assert!(app.input_ui.paste_segments.is_empty());
 }
 
@@ -82,12 +82,12 @@ fn delete_removes_collapsed_paste_as_one_item() {
     app.insert_input_text("before ");
     app.insert_pasted_input_text("alpha\nbeta\ngamma");
     app.insert_input_text(" after");
-    app.input_ui.input_cursor = "before ".chars().count();
+    app.input_ui.cursor = "before ".chars().count();
 
     app.delete_input();
 
-    assert_eq!(app.input_ui.input, "before  after");
-    assert_eq!(app.input_ui.input_cursor, "before ".chars().count());
+    assert_eq!(app.input_ui.text, "before  after");
+    assert_eq!(app.input_ui.cursor, "before ".chars().count());
     assert!(app.input_ui.paste_segments.is_empty());
 }
 
@@ -95,11 +95,11 @@ fn delete_removes_collapsed_paste_as_one_item() {
 fn editing_from_inside_collapsed_paste_removes_the_whole_item() {
     let mut app = test_app();
     app.insert_pasted_input_text("alpha\nbeta\ngamma");
-    app.input_ui.input_cursor = 5;
+    app.input_ui.cursor = 5;
 
     app.backspace_input();
 
-    assert_eq!(app.input_ui.input, "");
-    assert_eq!(app.input_ui.input_cursor, 0);
+    assert_eq!(app.input_ui.text, "");
+    assert_eq!(app.input_ui.cursor, 0);
     assert!(app.input_ui.paste_segments.is_empty());
 }

@@ -11,8 +11,8 @@ fn prompt(model: &str, display: &str) -> QueuedPrompt {
 #[test]
 fn interrupt_restores_accepted_local_and_follow_up_input() {
     let mut app = test_app();
-    app.input_ui.input = "draft".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "draft".into();
+    app.input_ui.cursor = app.input_char_len();
     app.pending.accepted_steering.push_back(AcceptedSteering {
         id: rho_sdk::SteeringId::new(),
         prompt: prompt("accepted steer", "accepted steer"),
@@ -27,13 +27,13 @@ fn interrupt_restores_accepted_local_and_follow_up_input() {
     app.restore_pending_work_to_input();
 
     assert_eq!(
-        app.input_ui.input,
+        app.input_ui.text,
         "accepted steer\n\nlocal steer\n\nexpanded next turn\n\ndraft"
     );
     assert!(app.pending.accepted_steering.is_empty());
     assert!(app.pending.steering_prompts.is_empty());
     assert!(app.pending.queued_prompts.is_empty());
-    assert_eq!(app.input_ui.input_cursor, app.input_char_len());
+    assert_eq!(app.input_ui.cursor, app.input_char_len());
 }
 
 #[test]
@@ -74,6 +74,6 @@ fn interrupt_expands_pasted_draft_before_restoring_it() {
 
     app.restore_pending_work_to_input();
 
-    assert_eq!(app.input_ui.input, "steer\n\nalpha\nbeta");
+    assert_eq!(app.input_ui.text, "steer\n\nalpha\nbeta");
     assert!(app.input_ui.paste_segments.is_empty());
 }

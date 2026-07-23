@@ -55,13 +55,13 @@ impl App {
 
     pub(super) fn insert_selected_file_path(&mut self, path: &str) {
         let Some(mention) =
-            file_picker::active_file_mention(&self.input_ui.input, self.input_ui.input_cursor)
+            file_picker::active_file_mention(&self.input_ui.text, self.input_ui.cursor)
         else {
             return;
         };
         let insertion = if self
             .input_ui
-            .input
+            .text
             .chars()
             .nth(mention.end)
             .is_some_and(char::is_whitespace)
@@ -78,7 +78,7 @@ impl App {
 
     pub(super) fn file_matches(&self) -> Arc<Vec<String>> {
         let Some(mention) =
-            file_picker::active_file_mention(&self.input_ui.input, self.input_ui.input_cursor)
+            file_picker::active_file_mention(&self.input_ui.text, self.input_ui.cursor)
         else {
             return Arc::new(Vec::new());
         };
@@ -94,7 +94,7 @@ impl App {
 
     fn refresh_file_match_cache(&mut self) {
         let Some(mention) =
-            file_picker::active_file_mention(&self.input_ui.input, self.input_ui.input_cursor)
+            file_picker::active_file_mention(&self.input_ui.text, self.input_ui.cursor)
         else {
             self.input_ui.file_match_cache = None;
             return;
@@ -132,15 +132,13 @@ impl App {
         matches!(self.input_ui.composer, ComposerMode::Input)
             && !self.input_ui.file_palette_dismissed
             && !self.command_palette_visible()
-            && file_picker::active_file_mention(&self.input_ui.input, self.input_ui.input_cursor)
-                .is_some()
+            && file_picker::active_file_mention(&self.input_ui.text, self.input_ui.cursor).is_some()
             && !self.file_matches().is_empty()
     }
 
     pub(super) fn clamp_file_selection(&mut self) {
-        let query =
-            file_picker::active_file_mention(&self.input_ui.input, self.input_ui.input_cursor)
-                .map(|mention| mention.query);
+        let query = file_picker::active_file_mention(&self.input_ui.text, self.input_ui.cursor)
+            .map(|mention| mention.query);
         if self.input_ui.file_query != query {
             self.input_ui.file_query = query;
             self.input_ui.file_selection = 0;

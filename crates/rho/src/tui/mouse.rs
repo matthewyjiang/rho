@@ -31,15 +31,15 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
-                self.history.hovered_code_block_copy = None;
+                self.history.set_hovered_code_block_copy(None);
                 self.reveal_history_scrollbar(now);
-                self.history.history_scrollbar_drag = None;
+                self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(width, height, now, -3);
             }
             MouseEventKind::ScrollDown => {
-                self.history.hovered_code_block_copy = None;
+                self.history.set_hovered_code_block_copy(None);
                 self.reveal_history_scrollbar(now);
-                self.history.history_scrollbar_drag = None;
+                self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(width, height, now, 3);
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -54,50 +54,53 @@ impl App {
                     .filter(|scrollbar| scrollbar.contains(column, row))
                     .filter(|_| self.should_render_history_scrollbar(now));
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                self.history.hovered_code_block_copy =
-                    code_target.as_ref().map(|target| target.line);
+                self.history
+                    .set_hovered_code_block_copy(code_target.as_ref().map(|target| target.line));
                 if let Some(scrollbar) = scrollbar {
-                    self.history.text_selection = None;
+                    self.history.clear_text_selection();
                     self.reveal_history_scrollbar(now);
                     let drag = scrollbar.begin_drag(row);
-                    self.history.history_scrollbar_drag = Some(drag);
-                    self.history.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
+                    self.history.set_scrollbar_drag(Some(drag));
+                    self.history
+                        .set_scroll(scrollbar.scroll_state_for_pointer(row, drag));
                 } else if layout.jump_to_bottom.is_some_and(|rect| {
                     rect.contains(ratatui::layout::Position { x: column, y: row })
                 }) {
-                    self.history.text_selection = None;
-                    self.history.history_scrollbar_drag = None;
+                    self.history.clear_text_selection();
+                    self.history.set_scrollbar_drag(None);
                     self.scroll_history_to_bottom();
                 } else if let Some(target) = code_target {
-                    self.history.text_selection = None;
+                    self.history.clear_text_selection();
                     self.copy_text(&target.text, now);
                 } else if let Some(position) =
                     selection_position(history, history_start, column, row)
                 {
-                    self.history.history_scrollbar_drag = None;
-                    self.history.text_selection = Some(TextSelection::new(position));
+                    self.history.set_scrollbar_drag(None);
+                    *self.history.text_selection_mut() = Some(TextSelection::new(position));
                 } else {
-                    self.history.text_selection = None;
+                    self.history.clear_text_selection();
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                if let Some(drag) = self.history.history_scrollbar_drag {
-                    self.history.text_selection = None;
-                    self.history.hovered_code_block_copy = None;
+                if let Some(drag) = self.history.scrollbar_drag() {
+                    self.history.clear_text_selection();
+                    self.history.set_hovered_code_block_copy(None);
                     if let Some(scrollbar) = layout.history_scrollbar {
-                        self.history.history_scroll = scrollbar.scroll_state_for_pointer(row, drag);
+                        self.history
+                            .set_scroll(scrollbar.scroll_state_for_pointer(row, drag));
                     }
                 } else {
                     let (history, history_start) =
                         self.mouse_history_view(layout.history_content, layout.history_len);
                     let targets = self.code_block_copy_targets(width);
-                    self.history.hovered_code_block_copy =
+                    self.history.set_hovered_code_block_copy(
                         code_block_copy_target_at(&targets, history, history_start, column, row)
-                            .map(|target| target.line);
+                            .map(|target| target.line),
+                    );
                     if let (Some(selection), Some(position)) = (
-                        &mut self.history.text_selection,
+                        &mut self.history.text_selection(),
                         selection_position_clamped(history, history_start, column, row),
                     ) {
                         selection.update(position);
@@ -105,18 +108,20 @@ impl App {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                let was_scrollbar_drag = self.history.history_scrollbar_drag.take().is_some();
+                let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
+                self.history.set_scrollbar_drag(None);
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let targets = self.code_block_copy_targets(width);
-                self.history.hovered_code_block_copy =
+                self.history.set_hovered_code_block_copy(
                     code_block_copy_target_at(&targets, history, history_start, column, row)
-                        .map(|target| target.line);
+                        .map(|target| target.line),
+                );
                 if was_scrollbar_drag {
-                    self.history.text_selection = None;
-                } else if let Some(mut selection) = self.history.text_selection.take() {
+                    self.history.clear_text_selection();
+                } else if let Some(mut selection) = self.history.text_selection_mut().take() {
                     let release_position =
                         selection_position_clamped(history, history_start, column, row);
                     if let Some(position) = release_position {
@@ -132,7 +137,7 @@ impl App {
                         );
                         if let Some(text) = selection.selected_text(&lines, selected_lines.start) {
                             self.copy_text(&text, now);
-                            self.history.text_selection = Some(selection);
+                            *self.history.text_selection_mut() = Some(selection);
                         }
                     } else if release_position.is_some() {
                         let line =
@@ -148,14 +153,14 @@ impl App {
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
-                self.history.hovered_code_block_copy =
-                    if history.contains(ratatui::layout::Position { x: column, y: row }) {
-                        let targets = self.code_block_copy_targets(width);
-                        code_block_copy_target_at(&targets, history, history_start, column, row)
-                            .map(|target| target.line)
-                    } else {
-                        None
-                    };
+                let hovered = if history.contains(ratatui::layout::Position { x: column, y: row }) {
+                    let targets = self.code_block_copy_targets(width);
+                    code_block_copy_target_at(&targets, history, history_start, column, row)
+                        .map(|target| target.line)
+                } else {
+                    None
+                };
+                self.history.set_hovered_code_block_copy(hovered);
             }
             MouseEventKind::Down(MouseButton::Right)
             | MouseEventKind::Down(MouseButton::Middle)
@@ -178,16 +183,22 @@ impl App {
         let header_len = self.session_header_lines(width).len();
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
-            let markdown_images = &self.history.markdown_images;
-            let index = self.history.history_lines.entry_index_at_line(
-                &self.history.transcript,
-                width,
-                self.info.runtime.max_tool_output_lines,
-                transcript_line,
-                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
+            let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+            let index = self.history.with_lines_and_images_mut(
+                |history_lines, entries, markdown_images| {
+                    history_lines.entry_index_at_line(
+                        entries,
+                        width,
+                        max_tool_output_lines,
+                        transcript_line,
+                        &|entry_index, sources| {
+                            markdown_images.ready_images(entry_index, sources, &cwd)
+                        },
+                    )
+                },
             );
             if let Some(index) = index.filter(|&index| {
-                self.history.transcript.get(index).is_some_and(|entry| {
+                self.history.get(index).is_some_and(|entry| {
                     expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
                 })
             }) {
@@ -199,8 +210,8 @@ impl App {
 
         let static_len = self.history_static_len(width);
         let mut pending_start = static_len;
-        let transcript_ends_with_tool = self.history.last_inserted_was_tool
-            || self.history.transcript.last().is_some_and(is_tool_entry);
+        let transcript_ends_with_tool =
+            self.history.last_inserted_was_tool() || self.history.last().is_some_and(is_tool_entry);
         for (shell_index, shell) in self.running_inline_shell_entries().enumerate() {
             if shell_index > 0 || transcript_ends_with_tool {
                 pending_start = pending_start.saturating_add(1);
@@ -262,10 +273,11 @@ impl App {
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {
         let character_count = text.chars().count();
-        self.history.copy_notice = Some(CopyNotice::from_copy_result(
-            self.clipboard.copy(text),
-            character_count,
-            now,
-        ));
+        self.history
+            .set_copy_notice(Some(CopyNotice::from_copy_result(
+                self.clipboard.copy(text),
+                character_count,
+                now,
+            )));
     }
 }

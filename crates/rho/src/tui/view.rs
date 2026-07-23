@@ -58,7 +58,7 @@ impl App {
             Paragraph::new(history_visible).style(Style::default()),
             layout.history_content,
         );
-        if let Some(selection) = self.history.text_selection {
+        if let Some(selection) = self.history.text_selection() {
             highlight_selection(
                 frame.buffer_mut(),
                 layout.history_content,
@@ -66,7 +66,7 @@ impl App {
                 selection,
             );
         }
-        if let Some(hovered_line) = self.history.hovered_code_block_copy {
+        if let Some(hovered_line) = self.history.hovered_code_block_copy() {
             let code_block_copy_targets = self.code_block_copy_targets(width);
             if let Some(target) = code_block_copy_targets
                 .iter()
@@ -105,7 +105,7 @@ impl App {
             .history_scrollbar
             .filter(|_| self.should_render_history_scrollbar(now))
         {
-            scrollbar.render(frame, self.history.history_scrollbar_drag.is_some());
+            scrollbar.render(frame, self.history.scrollbar_drag().is_some());
         }
         if let Some(activity) = layout.activity {
             frame.render_widget(
@@ -198,7 +198,7 @@ impl App {
             .style(Style::default()),
             layout.commands,
         );
-        if let Some(notice) = &self.history.copy_notice {
+        if let Some(notice) = &self.history.copy_notice() {
             render_copy_notice(frame, area, notice, now);
         }
 
@@ -345,17 +345,17 @@ impl App {
         let update_notice = self.info.services.update_notice.clone();
         let stale = self
             .history
-            .session_header_cache
-            .as_ref()
+            .session_header_cache()
             .is_none_or(|cache| cache.width != width || cache.update_notice != update_notice);
         if stale {
-            self.history.session_header_cache = Some(SessionHeaderCache {
-                width,
-                update_notice,
-                lines: session_header_lines(self.info.services.update_notice.as_deref(), width),
-            });
+            self.history
+                .set_session_header_cache(Some(SessionHeaderCache {
+                    width,
+                    update_notice,
+                    lines: session_header_lines(self.info.services.update_notice.as_deref(), width),
+                }));
         }
-        &self.history.session_header_cache.as_ref().unwrap().lines
+        &self.history.session_header_cache().unwrap().lines
     }
 
     pub(super) fn history_len(&mut self, width: usize, now: Instant) -> usize {
@@ -397,18 +397,22 @@ impl App {
             let transcript_start = start.saturating_sub(header_len);
             let transcript_count = count - lines.len();
             let cwd = self.info.runtime.cwd.clone();
-            let markdown_images = &self.history.markdown_images;
-            self.history.history_lines.extend_visible_lines(
-                &self.history.transcript,
-                width,
-                self.info.runtime.max_tool_output_lines,
-                HistoryLineSlice {
-                    start: transcript_start,
-                    count: transcript_count,
-                },
-                &mut lines,
-                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
-            );
+            self.history
+                .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
+                    history_lines.extend_visible_lines(
+                        entries,
+                        width,
+                        self.info.runtime.max_tool_output_lines,
+                        HistoryLineSlice {
+                            start: transcript_start,
+                            count: transcript_count,
+                        },
+                        &mut lines,
+                        &|entry_index, sources| {
+                            markdown_images.ready_images(entry_index, sources, &cwd)
+                        },
+                    );
+                });
         }
 
         let static_len = header_len.saturating_add(self.cached_transcript_line_count(width));
@@ -432,42 +436,51 @@ impl App {
 
     pub(super) fn cached_transcript_line_count(&mut self, width: usize) -> usize {
         let cwd = self.info.runtime.cwd.clone();
-        let markdown_images = &self.history.markdown_images;
-        self.history.history_lines.line_count(
-            &self.history.transcript,
-            width,
-            self.info.runtime.max_tool_output_lines,
-            &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
-        )
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        self.history
+            .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
+                history_lines.line_count(
+                    entries,
+                    width,
+                    max_tool_output_lines,
+                    &|entry_index, sources| {
+                        markdown_images.ready_images(entry_index, sources, &cwd)
+                    },
+                )
+            })
     }
 
     pub(super) fn code_block_copy_targets(&mut self, width: usize) -> Vec<CodeBlockCopyTarget> {
         let header_len = self.session_header_lines(width).len();
         let cwd = self.info.runtime.cwd.clone();
-        let markdown_images = &self.history.markdown_images;
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         self.history
-            .history_lines
-            .code_blocks(
-                &self.history.transcript,
-                width,
-                self.info.runtime.max_tool_output_lines,
-                &|entry_index, sources| markdown_images.ready_images(entry_index, sources, &cwd),
-            )
-            .iter()
-            .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
-                line: header_len.saturating_add(block.line),
-                columns: block.copy_columns.clone(),
-                text: Arc::clone(&block.text),
+            .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
+                history_lines
+                    .code_blocks(
+                        entries,
+                        width,
+                        max_tool_output_lines,
+                        &|entry_index, sources| {
+                            markdown_images.ready_images(entry_index, sources, &cwd)
+                        },
+                    )
+                    .iter()
+                    .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
+                        line: header_len.saturating_add(block.line),
+                        columns: block.copy_columns.clone(),
+                        text: Arc::clone(&block.text),
+                    })
+                    .collect()
             })
-            .collect()
     }
 
     pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for pending in self.running_inline_shell_entries() {
             if !lines.is_empty()
-                || self.history.last_inserted_was_tool
-                || self.history.transcript.last().is_some_and(is_tool_entry)
+                || self.history.last_inserted_was_tool()
+                || self.history.last().is_some_and(is_tool_entry)
             {
                 lines.push(Line::raw(""));
             }
@@ -478,8 +491,8 @@ impl App {
             ));
         }
         for pending in self.tool_calls.live_entries() {
-            if self.history.last_inserted_was_tool
-                || self.history.transcript.last().is_some_and(is_tool_entry)
+            if self.history.last_inserted_was_tool()
+                || self.history.last().is_some_and(is_tool_entry)
             {
                 lines.push(Line::raw(""));
             }
@@ -517,7 +530,7 @@ impl App {
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
         let max_start = history_len.saturating_sub(height);
-        match self.history.history_scroll {
+        match self.history.scroll() {
             HistoryScroll::Bottom => max_start,
             HistoryScroll::Manual { top_line } => top_line.min(max_start),
         }
@@ -538,8 +551,7 @@ impl App {
     }
 
     pub(super) fn scroll_history_to_bottom(&mut self) {
-        self.history.history_scroll = HistoryScroll::Bottom;
-        self.hide_history_scrollbar();
+        self.history.scroll_to_bottom();
     }
 
     pub(super) fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
@@ -574,30 +586,24 @@ impl App {
         let max_start = history_len.saturating_sub(content_height);
         let current = self.visible_history_start(history_len, content_height);
         let next = current.saturating_add_signed(delta).min(max_start);
-        self.history.history_scroll = scroll_state_for_top_line(history_len, content_height, next);
-        if matches!(self.history.history_scroll, HistoryScroll::Bottom) {
+        self.history
+            .set_scroll(scroll_state_for_top_line(history_len, content_height, next));
+        if matches!(self.history.scroll(), HistoryScroll::Bottom) {
             self.hide_history_scrollbar();
         }
     }
 
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
-        self.history.history_scrollbar_visible_until =
-            Some(now + HISTORY_SCROLLBAR_REVEAL_DURATION);
+        self.history
+            .reveal_scrollbar(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
     }
 
     pub(super) fn hide_history_scrollbar(&mut self) {
-        self.history.history_scrollbar_drag = None;
-        self.history.history_scrollbar_visible_until = None;
-        self.history.history_scrollbar_hovered = false;
+        self.history.hide_scrollbar();
     }
 
     pub(super) fn should_render_history_scrollbar(&self, now: Instant) -> bool {
-        self.history.history_scrollbar_drag.is_some()
-            || self.history.history_scrollbar_hovered
-            || self
-                .history
-                .history_scrollbar_visible_until
-                .is_some_and(|visible_until| now < visible_until)
+        self.history.should_render_scrollbar(now)
     }
 
     pub(super) fn update_history_scrollbar_hover(
@@ -606,13 +612,14 @@ impl App {
         column: u16,
         row: u16,
     ) {
-        self.history.history_scrollbar_hovered =
-            scrollbar.is_some_and(|scrollbar| scrollbar.contains(column, row));
+        self.history.set_scrollbar_hovered(
+            scrollbar.is_some_and(|scrollbar| scrollbar.contains(column, row)),
+        );
     }
 
     pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
-        if matches!(self.history.history_scroll, HistoryScroll::Bottom) {
-            self.history.history_scrollbar_drag = None;
+        if matches!(self.history.scroll(), HistoryScroll::Bottom) {
+            self.history.set_scrollbar_drag(None);
             return;
         }
         let history_len = self.history_len(width, now);
@@ -624,10 +631,13 @@ impl App {
             command_line_count,
         ));
         let max_start = history_len.saturating_sub(content_height);
-        if let HistoryScroll::Manual { top_line } = self.history.history_scroll {
-            self.history.history_scroll =
-                scroll_state_for_top_line(history_len, content_height, top_line.min(max_start));
-            if matches!(self.history.history_scroll, HistoryScroll::Bottom) {
+        if let HistoryScroll::Manual { top_line } = self.history.scroll() {
+            self.history.set_scroll(scroll_state_for_top_line(
+                history_len,
+                content_height,
+                top_line.min(max_start),
+            ));
+            if matches!(self.history.scroll(), HistoryScroll::Bottom) {
                 self.hide_history_scrollbar();
             }
         }
@@ -680,7 +690,7 @@ impl App {
         match (key.modifiers, key.code) {
             (_, KeyCode::PageUp) => {
                 self.reveal_history_scrollbar(now);
-                self.history.history_scrollbar_drag = None;
+                self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_up(width, height, now);
                 self.input_ui.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -688,7 +698,7 @@ impl App {
             }
             (_, KeyCode::PageDown) => {
                 self.reveal_history_scrollbar(now);
-                self.history.history_scrollbar_drag = None;
+                self.history.set_scrollbar_drag(None);
                 self.scroll_history_page_down(width, height, now);
                 self.input_ui.paste_burst.clear();
                 self.ctrl_c_streak = 0;
@@ -763,15 +773,12 @@ impl App {
             )));
         }
         transcript.extend(visible_entries);
-        self.history.transcript = transcript;
-        self.history.markdown_images.clear();
+        self.history.set_entries(transcript);
+        self.history.images_mut().clear();
         self.history.invalidate_from(0);
-        self.history.last_status_notice =
-            self.history
-                .transcript
-                .iter()
-                .rev()
-                .find_map(|entry| match entry {
+        self.history
+            .set_last_status_notice(self.history.entries().iter().rev().find_map(
+                |entry| match entry {
                     Entry::Notice(text) => Some(text.clone()),
                     Entry::User(_)
                     | Entry::Assistant(_)
@@ -780,9 +787,10 @@ impl App {
                     | Entry::UsageLimits(_)
                     | Entry::Tool(_)
                     | Entry::Error(_) => None,
-                });
-        self.history.last_inserted_was_tool =
-            self.history.transcript.last().is_some_and(is_tool_entry);
+                },
+            ));
+        self.history
+            .set_last_inserted_was_tool(self.history.last().is_some_and(is_tool_entry));
         Ok(())
     }
 }

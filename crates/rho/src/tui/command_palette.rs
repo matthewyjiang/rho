@@ -9,7 +9,7 @@ const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 impl App {
     pub(super) fn command_matches(&self) -> Vec<CommandChoice> {
         let argument_choices =
-            commands::argument_choices(&self.input_ui.input, self.input_ui.input_cursor);
+            commands::argument_choices(&self.input_ui.text, self.input_ui.cursor);
         if !argument_choices.is_empty() {
             return argument_choices
                 .iter()
@@ -17,7 +17,7 @@ impl App {
                 .collect();
         }
 
-        let Some(prefix) = commands::command_prefix(&self.input_ui.input) else {
+        let Some(prefix) = commands::command_prefix(&self.input_ui.text) else {
             return Vec::new();
         };
         let prefix = prefix
@@ -129,11 +129,11 @@ impl App {
     pub(super) fn complete_command_choice(&mut self, choice: &CommandChoice) {
         let (input, cursor) = match &choice.kind {
             CommandChoiceKind::Builtin(spec) => {
-                self.input_ui.input_submission_mode = super::InputSubmissionMode::ParseCommands;
-                commands::complete_command(&self.input_ui.input, self.input_ui.input_cursor, spec)
+                self.input_ui.submission_mode = super::InputSubmissionMode::ParseCommands;
+                commands::complete_command(&self.input_ui.text, self.input_ui.cursor, spec)
             }
             CommandChoiceKind::BuiltinArgument(choice) => {
-                self.input_ui.input_submission_mode = super::InputSubmissionMode::ParseCommands;
+                self.input_ui.submission_mode = super::InputSubmissionMode::ParseCommands;
                 commands::complete_argument_choice(choice)
             }
             CommandChoiceKind::PromptTemplate(template) => {
@@ -143,20 +143,15 @@ impl App {
                 input.push(' ');
                 let cursor = input.chars().count();
                 self.input_ui.paste_segments.clear();
-                self.input_ui.input_submission_mode = super::InputSubmissionMode::Prompt;
+                self.input_ui.submission_mode = super::InputSubmissionMode::Prompt;
                 (input, cursor)
             }
             CommandChoiceKind::Skill => {
-                self.input_ui.input_submission_mode = super::InputSubmissionMode::ParseCommands;
-                complete_slash_command(
-                    &self.input_ui.input,
-                    self.input_ui.input_cursor,
-                    &choice.name,
-                )
+                self.input_ui.submission_mode = super::InputSubmissionMode::ParseCommands;
+                complete_slash_command(&self.input_ui.text, self.input_ui.cursor, &choice.name)
             }
         };
-        self.input_ui.input = input;
-        self.input_ui.input_cursor = cursor;
+        self.input_ui.set_text_and_cursor(input, cursor);
         self.input_ui.shell_mode = None;
     }
 }

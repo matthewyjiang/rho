@@ -98,7 +98,7 @@ fn resolving_questionnaire_clears_preexisting_shell_mode() {
         app.handle_questionnaire_key(key).unwrap();
 
         assert_eq!(app.input_ui.shell_mode, None);
-        assert!(app.input_ui.input.is_empty());
+        assert!(app.input_ui.text.is_empty());
         assert!(matches!(app.input_ui.composer, ComposerMode::Input));
     }
 }

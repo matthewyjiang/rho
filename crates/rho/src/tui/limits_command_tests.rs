@@ -17,7 +17,7 @@ fn running_limits_query_does_not_queue_model_context() {
     assert!(app.pending.steering_prompts.is_empty());
     assert!(app.pending.queued_prompts.is_empty());
     assert!(matches!(
-        app.history.transcript.last(),
+        app.history.last(),
         Some(Entry::Notice(notice))
             if notice == "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth"
     ));

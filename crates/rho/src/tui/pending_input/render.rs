@@ -17,21 +17,21 @@ impl App {
         if count == 0 {
             return 0;
         }
-        1 + count.min(MAX_VISIBLE_ITEMS) + usize::from(self.pending.pending_input_panel.focused)
+        1 + count.min(MAX_VISIBLE_ITEMS) + usize::from(self.pending.input_panel.focused)
     }
 
     pub(in crate::tui) fn pending_input_lines(&mut self, width: usize) -> Vec<Line<'static>> {
         let items = self.pending_input_refs();
         if items.is_empty() {
-            self.pending.pending_input_panel.focused = false;
+            self.pending.input_panel.focused = false;
             return Vec::new();
         }
         self.clamp_pending_input_selection(items.len());
-        let selected = self.pending.pending_input_panel.selected;
+        let selected = self.pending.input_panel.selected;
         let start = visible_start(selected, items.len(), MAX_VISIBLE_ITEMS);
         let steering_count =
             self.pending.accepted_steering.len() + self.pending.steering_prompts.len();
-        let hint = if self.pending.pending_input_panel.focused {
+        let hint = if self.pending.input_panel.focused {
             "↑↓ select · enter edit · backspace discard · esc close".to_string()
         } else {
             format!(
@@ -56,7 +56,7 @@ impl App {
                     self.pending_item_line(width, *item, start + visible_index == selected)
                 }),
         );
-        if self.pending.pending_input_panel.focused {
+        if self.pending.input_panel.focused {
             lines.push(Line::styled(
                 truncate_one_line(
                     "  steer affects this run · next starts after this turn",

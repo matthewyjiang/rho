@@ -157,7 +157,7 @@ impl App {
             failed_turn.attach_notification_context(batch_model);
         }
         let model_input = failed_turn.model_input()?;
-        self.current_turn_start = Some(self.history.transcript.len());
+        self.current_turn_start = Some(self.history.len());
         self.reset_streams();
         self.reasoning_phase
             .begin_step(self.info.runtime.show_reasoning_output);
@@ -434,12 +434,12 @@ impl App {
                 self.insert_final_answer_suffix(outcome.text());
                 self.reset_streams();
                 self.current_turn_start = None;
-                self.status = if self.pending.queued_prompts.is_empty() {
+                self.status = if !self.pending.has_follow_ups() {
                     "ready".into()
                 } else {
                     format!(
                         "running next queued message ({})",
-                        self.pending.queued_prompts.len()
+                        self.pending.follow_up_len()
                     )
                 };
                 TurnOutcome::Completed

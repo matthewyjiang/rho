@@ -51,7 +51,7 @@ impl App {
                     .focused_paste_segment()
                     .map(|segment| segment.start..segment.end());
                 input_lines_with_images(
-                    &self.input_ui.input,
+                    &self.input_ui.text,
                     &self.input_ui.pending_images,
                     width,
                     focused_paste,
@@ -73,7 +73,7 @@ impl App {
         match &self.input_ui.composer {
             ComposerMode::Input => {
                 let mut position =
-                    input_cursor_position(&self.input_ui.input, self.input_ui.input_cursor, width);
+                    input_cursor_position(&self.input_ui.text, self.input_ui.cursor, width);
                 position.y = position
                     .y
                     .saturating_add(self.input_ui.pending_images.len() as u16);

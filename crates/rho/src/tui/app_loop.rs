@@ -92,7 +92,7 @@ impl App {
                 || self.pending_oauth_login.is_some()
                 || self.pending_usage_limits.is_some()
                 || !self.pending_inline_shells.is_empty()
-                || self.history.markdown_images.has_pending()
+                || self.history.images().has_pending()
             {
                 Duration::from_millis(100)
             } else if subagents_active {
@@ -159,7 +159,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                self.history.text_selection = None;
+                self.history.clear_text_selection();
                 self.handle_key(key, terminal, agent).await?;
             }
             Event::Paste(text) => {
@@ -171,8 +171,8 @@ impl App {
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
                 self.clamp_overlay_detail_scroll(terminal);
-                self.history.text_selection = None;
-                self.history.hovered_code_block_copy = None;
+                self.history.clear_text_selection();
+                self.history.set_hovered_code_block_copy(None);
                 self.hide_history_scrollbar();
                 self.clamp_history_scroll_for_terminal(terminal)?;
             }
@@ -195,15 +195,14 @@ impl App {
         let timeout = self.input_ui.paste_burst.poll_timeout(now, idle_timeout);
         let timeout = self
             .history
-            .copy_notice
-            .as_ref()
+            .copy_notice()
             .and_then(|notice| notice.visible_until().checked_duration_since(now))
             .map_or(timeout, |remaining| remaining.min(timeout));
-        if self.history.history_scrollbar_hovered || self.history.history_scrollbar_drag.is_some() {
+        if self.history.scrollbar_hovered() || self.history.scrollbar_drag().is_some() {
             return timeout;
         }
         self.history
-            .history_scrollbar_visible_until
+            .scrollbar_visible_until()
             .and_then(|visible_until| visible_until.checked_duration_since(now))
             .map_or(timeout, |remaining| remaining.min(timeout))
     }
@@ -213,14 +212,13 @@ impl App {
             || self.subagent_panel.is_active()
             || self
                 .history
-                .copy_notice
-                .as_ref()
+                .copy_notice()
                 .is_some_and(|notice| now < notice.visible_until())
-            || self.history.history_scrollbar_hovered
-            || self.history.history_scrollbar_drag.is_some()
+            || self.history.scrollbar_hovered()
+            || self.history.scrollbar_drag().is_some()
             || self
                 .history
-                .history_scrollbar_visible_until
+                .scrollbar_visible_until()
                 .is_some_and(|until| now < until)
     }
 

@@ -59,7 +59,7 @@ fn alt_up_prioritizes_latest_local_steer_over_follow_up() {
 
     assert!(app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT)));
 
-    assert_eq!(app.input_ui.input, "latest steer");
+    assert_eq!(app.input_ui.text, "latest steer");
     assert_eq!(
         app.pending.steering_prompts,
         VecDeque::from([prompt("first steer")])
@@ -82,32 +82,32 @@ fn alt_up_requests_retraction_for_accepted_steer() {
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT));
 
     assert!(matches!(
-        app.pending.pending_input_action,
+        app.pending.input_action,
         Some(PendingInputAction::EditAccepted {
             id: ref action_id,
             ..
         }) if action_id == &id
     ));
-    assert!(app.input_ui.input.is_empty());
+    assert!(app.input_ui.text.is_empty());
     assert_eq!(app.pending.accepted_steering.len(), 1);
 }
 
 #[test]
 fn alt_up_preserves_nonempty_composer() {
     let mut app = test_app();
-    app.input_ui.input = "draft".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "draft".into();
+    app.input_ui.cursor = app.input_char_len();
     app.pending.queued_prompts.push_back(prompt("future turn"));
 
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT));
 
-    assert_eq!(app.input_ui.input, "draft");
+    assert_eq!(app.input_ui.text, "draft");
     assert_eq!(
         app.pending.queued_prompts,
         VecDeque::from([prompt("future turn")])
     );
     assert_eq!(
-        app.history.last_status_notice.as_deref(),
+        app.history.last_status_notice(),
         Some("clear the composer before editing pending input")
     );
 }
@@ -125,11 +125,11 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
         prompt: prompt("second steer"),
     });
     app.pending.queued_prompts.push_back(prompt("future turn"));
-    app.pending.pending_input_panel.selected = 2;
+    app.pending.input_panel.selected = 2;
 
     app.mark_steering_applied(&[applied]);
 
-    assert_eq!(app.pending.pending_input_panel.selected, 1);
+    assert_eq!(app.pending.input_panel.selected, 1);
     let lines = app.pending_input_lines(80);
     assert!(line_text(&lines[2]).contains("▸ NEXT"));
 }
@@ -169,7 +169,7 @@ fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
     assert!(app.pending.steering_prompts.is_empty());
     assert_eq!(app.pending.queued_prompts, VecDeque::from([queued]));
     assert_eq!(
-        app.history.last_status_notice.as_deref(),
+        app.history.last_status_notice(),
         Some(
             "steer queued as follow-up: invalid host response: run completed before accepting steering input"
         )
@@ -199,8 +199,8 @@ fn applied_event_removes_only_matching_steering() {
 #[test]
 fn panel_reserves_space_immediately_above_composer() {
     let mut app = test_app();
-    app.input_ui.input = "draft".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "draft".into();
+    app.input_ui.cursor = app.input_char_len();
     app.pending.queued_prompts.push_back(prompt("future turn"));
     app.select_pending_recall_target();
 
@@ -219,11 +219,11 @@ fn panel_reserves_space_immediately_above_composer() {
 #[test]
 fn focused_panel_stays_visible_with_a_tall_composer_in_a_short_terminal() {
     let mut app = test_app();
-    app.input_ui.input =
+    app.input_ui.text =
         "a long draft that wraps across many composer lines in a narrow terminal".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.cursor = app.input_char_len();
     app.pending.queued_prompts.push_back(prompt("future turn"));
-    app.pending.pending_input_panel.focused = true;
+    app.pending.input_panel.focused = true;
     app.select_pending_recall_target();
 
     let layout = app.screen_layout(

@@ -583,10 +583,10 @@ impl App {
         self.info.session.session_id = Some(full_id);
         self.info.session.recovered_messages = display_history.clone();
         self.input_ui.composer = ComposerMode::Input;
-        self.input_ui.input.clear();
+        self.input_ui.text.clear();
         self.input_ui.paste_segments.clear();
         self.input_ui.shell_mode = None;
-        self.input_ui.input_cursor = 0;
+        self.input_ui.cursor = 0;
         self.input_ui.command_palette_dismissed = false;
         self.clamp_command_selection();
         self.reset_streams();
@@ -602,11 +602,11 @@ impl App {
             RECOVERED_HISTORY_LINE_LIMIT,
             self.info.runtime.max_tool_output_lines,
         );
-        self.history.transcript = visible_entries;
-        self.history.markdown_images.clear();
+        self.history.set_entries(visible_entries);
+        self.history.images_mut().clear();
         self.history.invalidate_from(0);
-        self.history.last_inserted_was_tool =
-            self.history.transcript.last().is_some_and(is_tool_entry);
+        self.history
+            .set_last_inserted_was_tool(self.history.last().is_some_and(is_tool_entry));
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));

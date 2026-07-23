@@ -254,8 +254,8 @@ impl App {
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input_ui.shell_mode = None;
-                self.input_ui.input = format!("/skill:{value}");
-                self.input_ui.input_cursor = self.input_char_len();
+                self.input_ui
+                    .set_text_and_cursor(format!("/skill:{value}"), self.input_char_len());
                 self.input_ui.command_palette_dismissed = true;
                 self.status = "skill command inserted".into();
                 Ok(())

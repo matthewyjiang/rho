@@ -126,10 +126,7 @@ fn info_command_uses_runtime_diagnostics() {
 
     app.execute_info_command().unwrap();
 
-    assert!(matches!(
-        app.history.transcript.last(),
-        Some(Entry::RuntimeInfo(_))
-    ));
+    assert!(matches!(app.history.last(), Some(Entry::RuntimeInfo(_))));
     assert_eq!(app.status, "runtime info");
 }
 
@@ -179,7 +176,7 @@ fn transcript_and_status_mutations_do_not_require_a_terminal() {
     app.notify_status("ready");
 
     assert!(matches!(
-        app.history.transcript.as_slice(),
+        app.history.entries(),
         [Entry::Assistant(answer), Entry::Notice(status)]
             if answer == "hello world" && status == "ready"
     ));
@@ -242,7 +239,7 @@ fn key_event_paste_burst_collapses_through_common_paste_path() {
     }
     app.flush_pending_paste_burst();
 
-    assert_eq!(app.input_ui.input, "[ pasted: 2 lines ]");
+    assert_eq!(app.input_ui.text, "[ pasted: 2 lines ]");
     assert_eq!(app.expanded_input(), "alpha\nbeta");
 }
 
@@ -259,7 +256,7 @@ fn idle_key_event_text_is_inserted_without_paste_marker() {
         start + Duration::from_millis(20)
     ));
 
-    assert_eq!(app.input_ui.input, "a");
+    assert_eq!(app.input_ui.text, "a");
     assert!(app.input_ui.paste_segments.is_empty());
 }
 
@@ -276,7 +273,7 @@ fn single_character_fast_enter_is_buffered_as_paste() {
         start + Duration::from_millis(1)
     ));
 
-    assert_eq!(app.input_ui.input, "");
+    assert_eq!(app.input_ui.text, "");
     assert!(app.input_ui.paste_segments.is_empty());
 }
 
@@ -286,11 +283,8 @@ fn pasted_multiline_input_collapses_to_marker_and_expands() {
 
     app.insert_pasted_input_text("alpha\nbeta\ngamma");
 
-    assert_eq!(app.input_ui.input, "[ pasted: 3 lines ]");
-    assert_eq!(
-        app.input_ui.input_cursor,
-        app.input_ui.input.chars().count()
-    );
+    assert_eq!(app.input_ui.text, "[ pasted: 3 lines ]");
+    assert_eq!(app.input_ui.cursor, app.input_ui.text.chars().count());
     assert_eq!(app.expanded_input(), "alpha\nbeta\ngamma");
 }
 
@@ -300,7 +294,7 @@ fn pasted_single_line_input_stays_literal_until_large() {
 
     app.insert_pasted_input_text("hello world");
 
-    assert_eq!(app.input_ui.input, "hello world");
+    assert_eq!(app.input_ui.text, "hello world");
     assert!(app.input_ui.paste_segments.is_empty());
     assert_eq!(app.expanded_input(), "hello world");
 }
@@ -309,10 +303,10 @@ fn pasted_single_line_input_stays_literal_until_large() {
 fn paste_segments_shift_after_edits_before_marker() {
     let mut app = test_app();
     app.insert_pasted_input_text("alpha\nbeta");
-    app.input_ui.input_cursor = 0;
+    app.input_ui.cursor = 0;
     app.insert_input_text("prefix ");
 
-    assert_eq!(app.input_ui.input, "prefix [ pasted: 2 lines ]");
+    assert_eq!(app.input_ui.text, "prefix [ pasted: 2 lines ]");
     assert_eq!(app.expanded_input(), "prefix alpha\nbeta");
 }
 
@@ -322,15 +316,15 @@ fn queued_pasted_prompt_keeps_marker_when_recalled_for_editing() {
     app.insert_pasted_input_text("alpha\nbeta");
     let queued = QueuedPrompt {
         prompt: app.expanded_input(),
-        display_prompt: app.input_ui.input.clone(),
+        display_prompt: app.input_ui.text.clone(),
         paste_segments: app.input_ui.paste_segments.clone(),
     };
-    app.input_ui.input.clear();
+    app.input_ui.text.clear();
     app.input_ui.paste_segments.clear();
     app.pending.queued_prompts.push_back(queued);
 
     assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
-    assert_eq!(app.input_ui.input, "[ pasted: 2 lines ]");
+    assert_eq!(app.input_ui.text, "[ pasted: 2 lines ]");
     assert_eq!(app.expanded_input(), "alpha\nbeta");
 }
 
@@ -341,15 +335,15 @@ fn queued_pasted_prompt_preserves_leading_space_segment_offsets() {
     app.insert_pasted_input_text("alpha\nbeta");
     let queued = QueuedPrompt {
         prompt: app.expanded_input().trim().to_string(),
-        display_prompt: app.input_ui.input.clone(),
+        display_prompt: app.input_ui.text.clone(),
         paste_segments: app.input_ui.paste_segments.clone(),
     };
-    app.input_ui.input.clear();
+    app.input_ui.text.clear();
     app.input_ui.paste_segments.clear();
     app.pending.queued_prompts.push_back(queued);
 
     assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
-    assert_eq!(app.input_ui.input, " [ pasted: 2 lines ]");
+    assert_eq!(app.input_ui.text, " [ pasted: 2 lines ]");
     assert_eq!(app.expanded_input().trim(), "alpha\nbeta");
 }
 
@@ -362,7 +356,7 @@ fn slash_command_args_can_keep_collapsed_display_separate_from_expanded_prompt()
     let expanded_input = app.expanded_input();
     assert_eq!(slash_command_args(&expanded_input).trim(), "alpha\nbeta");
     assert_eq!(
-        slash_command_args(&app.input_ui.input).trim(),
+        slash_command_args(&app.input_ui.text).trim(),
         "[ pasted: 2 lines ]"
     );
 }
@@ -546,38 +540,38 @@ fn untruncated_tool_block_does_not_show_expand_prompt() {
 fn toggling_latest_truncated_tool_collapses_previous_tool() {
     let mut app = test_app();
     app.info.runtime.max_tool_output_lines = 1;
-    app.history.transcript = vec![
+    app.history.set_entries(vec![
         test_tool_entry(true, &["first", "a\nb"]),
         test_tool_entry(true, &["second", "c\nd"]),
-    ];
-    if let Entry::Tool(tool) = &mut app.history.transcript[0] {
+    ]);
+    if let Entry::Tool(tool) = &mut app.history.entries_mut()[0] {
         tool.expanded = true;
     }
 
     let index = app
         .history
-        .transcript
+        .entries()
         .iter()
         .rposition(|entry| expandable_tool_entry(entry, app.info.runtime.max_tool_output_lines))
         .unwrap();
-    for entry in &mut app.history.transcript {
+    for entry in app.history.entries_mut() {
         if let Entry::Tool(tool) = entry {
             tool.expanded = false;
         }
     }
-    if let Entry::Tool(tool) = &mut app.history.transcript[index] {
+    if let Entry::Tool(tool) = &mut app.history.entries_mut()[index] {
         tool.expanded = true;
     }
 
     assert!(matches!(
-        app.history.transcript[0],
+        app.history.entries()[0],
         Entry::Tool(ToolEntry {
             expanded: false,
             ..
         })
     ));
     assert!(matches!(
-        app.history.transcript[1],
+        app.history.entries()[1],
         Entry::Tool(ToolEntry { expanded: true, .. })
     ));
 }
@@ -607,7 +601,7 @@ fn final_answer_mismatch_replaces_transcript_without_duplicating_entry() {
     app.replace_current_turn_assistant_transcript("final");
 
     assert!(matches!(
-        app.history.transcript.as_slice(),
+        app.history.entries(),
         [Entry::Assistant(text)] if text == "final"
     ));
 }
@@ -620,7 +614,7 @@ fn final_answer_mismatch_replaces_transcript_with_empty_answer() {
     app.replace_current_turn_assistant_transcript("");
 
     assert!(matches!(
-        app.history.transcript.as_slice(),
+        app.history.entries(),
         [Entry::Assistant(text)] if text.is_empty()
     ));
 }
@@ -629,7 +623,7 @@ fn final_answer_mismatch_replaces_transcript_with_empty_answer() {
 fn final_answer_mismatch_replaces_interleaved_current_turn_assistant_fragments() {
     let mut app = test_app();
     app.push_transcript_entry(Entry::User("prompt".into()));
-    app.current_turn_start = Some(app.history.transcript.len());
+    app.current_turn_start = Some(app.history.len());
     app.push_transcript_entry(Entry::Assistant("hel".into()));
     app.push_transcript_entry(Entry::Reasoning("thinking".into()));
     app.push_transcript_entry(Entry::Assistant("lo".into()));
@@ -637,7 +631,7 @@ fn final_answer_mismatch_replaces_interleaved_current_turn_assistant_fragments()
     app.replace_current_turn_assistant_transcript("goodbye");
 
     assert!(matches!(
-        app.history.transcript.as_slice(),
+        app.history.entries(),
         [Entry::User(_), Entry::Assistant(text), Entry::Reasoning(_)] if text == "goodbye"
     ));
 }
@@ -659,7 +653,7 @@ fn active_lines_do_not_render_pending_stream_text() {
 #[test]
 fn input_divider_style_tracks_reasoning_level() {
     let mut app = test_app();
-    app.input_ui.input = "hello".into();
+    app.input_ui.text = "hello".into();
 
     app.info.runtime.reasoning = ReasoningLevel::Off;
     let off_lines = app.active_lines(20);
@@ -791,11 +785,11 @@ fn draw_anchors_last_live_line_to_viewport_bottom() {
 #[test]
 fn long_input_keeps_statusline_and_cursor_visible() {
     let mut app = test_app();
-    app.input_ui.input = (0..30)
+    app.input_ui.text = (0..30)
         .map(|index| format!("line {index:02}"))
         .collect::<Vec<_>>()
         .join("\n");
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.cursor = app.input_char_len();
     let height = 8;
     let backend = TestBackend::new(40, height);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -820,8 +814,8 @@ fn long_input_keeps_statusline_and_cursor_visible() {
 #[test]
 fn command_palette_anchors_last_suggestion_to_viewport_bottom() {
     let mut app = test_app();
-    app.input_ui.input = "/m".into();
-    app.input_ui.input_cursor = 2;
+    app.input_ui.text = "/m".into();
+    app.input_ui.cursor = 2;
     app.clamp_command_selection();
     let height = 24;
     let backend = TestBackend::new(60, height);
@@ -870,23 +864,23 @@ fn long_picker_filter_does_not_clip_bottom_status() {
 fn command_palette_visibility_tracks_leading_command_token() {
     let mut app = test_app();
 
-    app.input_ui.input = "/".into();
-    app.input_ui.input_cursor = 1;
+    app.input_ui.text = "/".into();
+    app.input_ui.cursor = 1;
     app.clamp_command_selection();
     assert!(app.command_palette_visible());
 
-    app.input_ui.input = "/mo".into();
-    app.input_ui.input_cursor = 3;
+    app.input_ui.text = "/mo".into();
+    app.input_ui.cursor = 3;
     app.clamp_command_selection();
     assert!(app.command_palette_visible());
 
-    app.input_ui.input = "/model arg".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "/model arg".into();
+    app.input_ui.cursor = app.input_char_len();
     app.clamp_command_selection();
     assert!(!app.command_palette_visible());
 
-    app.input_ui.input = "hello /model".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "hello /model".into();
+    app.input_ui.cursor = app.input_char_len();
     app.clamp_command_selection();
     assert!(!app.command_palette_visible());
 }
@@ -905,8 +899,8 @@ fn file_palette_stays_inline_with_input_and_inserts_selected_path() {
 
     let mut app = test_app();
     app.info.runtime.cwd = workspace.path().to_path_buf();
-    app.input_ui.input = "review @slr".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "review @slr".into();
+    app.input_ui.cursor = app.input_char_len();
     app.clamp_file_selection();
 
     assert!(app.file_palette_visible());
@@ -923,14 +917,14 @@ fn file_palette_stays_inline_with_input_and_inserts_selected_path() {
     assert!(rendered.contains("review @slr"), "{rendered}");
 
     app.insert_selected_file_path("src/lib.rs");
-    assert_eq!(app.input_ui.input, "review @src/lib.rs ");
+    assert_eq!(app.input_ui.text, "review @src/lib.rs ");
     assert!(!app.file_palette_visible());
 
-    app.input_ui.input = "review @src/lib.rs later".into();
-    app.input_ui.input_cursor = 11;
+    app.input_ui.text = "review @src/lib.rs later".into();
+    app.input_ui.cursor = 11;
     app.input_changed();
     app.insert_selected_file_path("src/main.rs");
-    assert_eq!(app.input_ui.input, "review @src/main.rs later");
+    assert_eq!(app.input_ui.text, "review @src/main.rs later");
 }
 
 #[test]
@@ -948,8 +942,8 @@ fn file_palette_arrow_keys_scroll_beyond_visible_window() {
 
     let mut app = test_app();
     app.info.runtime.cwd = workspace.path().to_path_buf();
-    app.input_ui.input = "@".into();
-    app.input_ui.input_cursor = 1;
+    app.input_ui.text = "@".into();
+    app.input_ui.cursor = 1;
     app.clamp_file_selection();
 
     let matches = app.file_matches();
@@ -1001,8 +995,8 @@ fn file_palette_arrow_keys_scroll_beyond_visible_window() {
 #[test]
 fn command_palette_rendering_shows_selected_match() {
     let mut app = test_app();
-    app.input_ui.input = "/m".into();
-    app.input_ui.input_cursor = 2;
+    app.input_ui.text = "/m".into();
+    app.input_ui.cursor = 2;
     app.clamp_command_selection();
 
     let rendered = app
@@ -1019,8 +1013,8 @@ fn command_palette_rendering_shows_selected_match() {
 #[test]
 fn command_palette_renders_under_message_box() {
     let mut app = test_app();
-    app.input_ui.input = "/m".into();
-    app.input_ui.input_cursor = 2;
+    app.input_ui.text = "/m".into();
+    app.input_ui.cursor = 2;
     app.clamp_command_selection();
 
     let lines = app
@@ -1043,8 +1037,8 @@ fn command_palette_renders_under_message_box() {
 #[test]
 fn picker_renders_in_place_of_message_box() {
     let mut app = test_app();
-    app.input_ui.input = "draft prompt".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "draft prompt".into();
+    app.input_ui.cursor = app.input_char_len();
     app.input_ui.composer = ComposerMode::Picker(UiPicker::new(
         "select model",
         "enter confirm",
@@ -1365,7 +1359,7 @@ fn favorite_save_failure_keeps_model_picker_open() {
     assert!(app.info.runtime.favorite_models.is_empty());
     assert_eq!(app.status, "config save failed");
     assert!(matches!(
-        app.history.transcript.last(),
+        app.history.last(),
         Some(Entry::Error(message)) if message.starts_with("could not save pinned models: ")
     ));
 }
@@ -1451,22 +1445,22 @@ fn input_history_recalls_previous_messages_and_restores_draft() {
     let mut app = test_app();
     app.push_input_history("first message");
     app.push_input_history("second message");
-    app.input_ui.input = "draft".into();
-    app.input_ui.input_cursor = app.input_char_len();
+    app.input_ui.text = "draft".into();
+    app.input_ui.cursor = app.input_char_len();
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
-    assert_eq!(app.input_ui.input, "second message");
-    assert_eq!(app.input_ui.input_cursor, "second message".chars().count());
+    assert_eq!(app.input_ui.text, "second message");
+    assert_eq!(app.input_ui.cursor, "second message".chars().count());
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
-    assert_eq!(app.input_ui.input, "first message");
+    assert_eq!(app.input_ui.text, "first message");
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
-    assert_eq!(app.input_ui.input, "second message");
+    assert_eq!(app.input_ui.text, "second message");
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
-    assert_eq!(app.input_ui.input, "draft");
-    assert_eq!(app.input_ui.input_history_cursor, None);
+    assert_eq!(app.input_ui.text, "draft");
+    assert_eq!(app.input_ui.history_cursor, None);
 }
 
 #[test]
@@ -1476,10 +1470,7 @@ fn input_history_clears_paste_segments_and_restores_draft_segments() {
     app.insert_pasted_input_text("alpha\nbeta");
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
-    assert_eq!(
-        app.input_ui.input,
-        "previous message long enough for marker"
-    );
+    assert_eq!(app.input_ui.text, "previous message long enough for marker");
     assert!(app.input_ui.paste_segments.is_empty());
     assert_eq!(
         app.expanded_input(),
@@ -1487,7 +1478,7 @@ fn input_history_clears_paste_segments_and_restores_draft_segments() {
     );
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
-    assert_eq!(app.input_ui.input, "[ pasted: 2 lines ]");
+    assert_eq!(app.input_ui.text, "[ pasted: 2 lines ]");
     assert_eq!(app.expanded_input(), "alpha\nbeta");
 }
 
@@ -1499,16 +1490,16 @@ fn editing_input_exits_history_navigation() {
 
     app.insert_input_char('!');
 
-    assert_eq!(app.input_ui.input, "previous!");
-    assert_eq!(app.input_ui.input_history_cursor, None);
-    assert_eq!(app.input_ui.input_history_draft, None);
+    assert_eq!(app.input_ui.text, "previous!");
+    assert_eq!(app.input_ui.history_cursor, None);
+    assert_eq!(app.input_ui.history_draft, None);
 }
 
 #[test]
 fn command_selection_clamps_to_available_matches() {
     let mut app = test_app();
-    app.input_ui.input = "/".into();
-    app.input_ui.input_cursor = 1;
+    app.input_ui.text = "/".into();
+    app.input_ui.cursor = 1;
     app.clamp_command_selection();
     app.input_ui.command_selection = 99;
     app.clamp_command_selection();
@@ -1517,8 +1508,8 @@ fn command_selection_clamps_to_available_matches() {
         app.command_matches().len() - 1
     );
 
-    app.input_ui.input = "/mo".into();
-    app.input_ui.input_cursor = 3;
+    app.input_ui.text = "/mo".into();
+    app.input_ui.cursor = 3;
     app.clamp_command_selection();
     assert_eq!(app.input_ui.command_selection, 0);
 }
@@ -1537,8 +1528,8 @@ fn command_suggestions_truncate_long_descriptions() {
         .unwrap();
     let mut app = test_app();
     app.info.runtime.cwd = project.path().to_path_buf();
-    app.input_ui.input = "/zz".into();
-    app.input_ui.input_cursor = 3;
+    app.input_ui.text = "/zz".into();
+    app.input_ui.cursor = 3;
     app.clamp_command_selection();
 
     let lines = app.command_suggestion_lines(40);
@@ -1612,7 +1603,7 @@ fn status_notice_suppresses_consecutive_duplicates() {
     app.notify_status("input cleared; press ctrl-c again to quit");
 
     assert_eq!(
-            app.history.transcript
+            app.history.entries()
                 .iter()
                 .filter(|entry| matches!(entry, Entry::Notice(text) if text == "input cleared; press ctrl-c again to quit"))
                 .count(),

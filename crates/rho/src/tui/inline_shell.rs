@@ -319,8 +319,8 @@ impl super::App {
     /// text, so cursor/home/delete/word/paste coordinates stay ordinary.
     pub(super) fn try_enter_shell_mode_from_bang(&mut self) -> bool {
         if !matches!(self.input_ui.composer, super::ComposerMode::Input)
-            || self.input_ui.input_cursor != 0
-            || !self.input_ui.input.is_empty()
+            || self.input_ui.cursor != 0
+            || !self.input_ui.text.is_empty()
             || !self.input_ui.paste_segments.is_empty()
         {
             return false;
@@ -340,9 +340,9 @@ impl super::App {
 
     pub(super) fn shell_submission(&self) -> Option<(InlineShellMode, String)> {
         if let Some(mode) = self.input_ui.shell_mode {
-            return Some((mode, self.input_ui.input.trim().to_string()));
+            return Some((mode, self.input_ui.text.trim().to_string()));
         }
-        InlineShellMode::parse(self.input_ui.input.trim())
+        InlineShellMode::parse(self.input_ui.text.trim())
             .map(|(mode, command)| (mode, command.to_string()))
     }
 
@@ -356,19 +356,19 @@ impl super::App {
         if paste_segments.is_empty() {
             if let Some((mode, command)) = InlineShellMode::parse(text.trim_end()) {
                 self.input_ui.shell_mode = Some(mode);
-                self.input_ui.input = command.to_string();
+                self.input_ui.text = command.to_string();
                 self.input_ui.paste_segments.clear();
-                self.input_ui.input_submission_mode = submission_mode;
-                self.input_ui.input_cursor = self.input_char_len();
+                self.input_ui.submission_mode = submission_mode;
+                self.input_ui.cursor = self.input_char_len();
                 self.input_changed();
                 return;
             }
         }
         self.input_ui.shell_mode = None;
-        self.input_ui.input = text;
+        self.input_ui.text = text;
         self.input_ui.paste_segments = paste_segments;
-        self.input_ui.input_submission_mode = submission_mode;
-        self.input_ui.input_cursor = self.input_char_len();
+        self.input_ui.submission_mode = submission_mode;
+        self.input_ui.cursor = self.input_char_len();
         self.input_changed();
     }
 
@@ -484,10 +484,7 @@ impl super::App {
     }
 
     pub(super) fn clear_submitted_input(&mut self) {
-        self.input_ui.input.clear();
-        self.input_ui.paste_segments.clear();
-        self.input_ui.shell_mode = None;
-        self.input_ui.input_cursor = 0;
+        self.input_ui.clear_submitted();
         self.clamp_command_selection();
     }
 }
