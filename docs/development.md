@@ -87,20 +87,20 @@ python3 scripts/check_architecture.py
 python3 scripts/check_architecture.py --self-test
 ```
 
-The script uses only the Python standard library and enforces these repository policies:
+The script uses only the Python standard library and reads policy from `scripts/architecture.json`. It enforces these repository policies:
 
-- Hand-written production Rust files under workspace crate `src/` directories, plus crate `build.rs` files, have a 1,000-line default budget.
+- Hand-written production Rust files under workspace crate `src/` directories, plus crate `build.rs` files, have a 1,000-line default budget (`default_production_line_budget`).
 - Dedicated test files, including files under a `tests/` directory and `*_test.rs`, `*_tests.rs`, or `tests.rs`, are excluded. Inline tests still count toward their production file's budget.
-- Generated Rust files are excluded only when their exact path and reason are recorded in `GENERATED_RUST_FILES` in the script. There are currently no generated-file exclusions.
-- Existing oversized production files are listed explicitly in `LEGACY_FILE_LINE_BUDGETS`. Their ceilings prevent further growth and should be lowered or removed as the files are split.
-- `crates/rho/src/credentials.rs` must remain independent of `crate::model`, keeping credential storage separate from model runtime metadata.
-- `crates/rho/src/main.rs` has a 50-line thin-binary budget so application orchestration remains in the library.
+- Generated Rust files are excluded only when their exact path and reason are recorded in `generated_files` in `scripts/architecture.json`. There are currently no generated-file exclusions.
+- Existing oversized production files are listed explicitly in `legacy_file_budgets`. Their ceilings prevent further growth and should be lowered or removed as the files are split.
+- `crates/rho-providers/src/credentials` must remain independent of `model`, keeping credential storage separate from model runtime metadata (`forbidden_dependencies`).
+- `crates/rho/src/main.rs` has a 50-line thin-binary budget so application orchestration remains in the library (`thin_binary_budgets`).
+- Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering.
 
 Current legacy file budgets are:
 
 | File | Maximum lines |
 | --- | ---: |
-| `crates/rho/src/tui.rs` | 7,753 |
-| `crates/rho/src/providers/openai/codex_ws.rs` | 1,036 |
+| `crates/rho/src/tui.rs` | 5,050 |
 
 Do not raise a budget just to make a check pass. Prefer extracting a cohesive module and reducing the recorded ceiling. If a generated file must be added, list its exact repository-relative path with a non-empty reason so the exclusion remains reviewable. When changing the scanner or policy, update its self-tests and this documentation together.

@@ -7,12 +7,21 @@ use crate::model::{
     ContentBlock, Message, ReasoningCapabilities, ReasoningLevelSet,
 };
 use pretty_assertions::assert_eq;
-use rho_tools::tool::Tool;
 use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
+
+use crate::model::ToolSpec;
+
+fn sample_tool() -> ToolSpec {
+    ToolSpec {
+        name: "edit_file".into(),
+        description: "test tool".into(),
+        input_schema: json!({"type":"object","properties":{}}),
+    }
+}
 
 #[tokio::test]
 async fn moonshot_posts_chat_completions_with_bearer_auth() {
@@ -59,7 +68,7 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
         crate::reasoning::ReasoningLevel::Low,
         crate::reasoning::ReasoningLevel::Max,
     ]));
-    let tool = rho_tools::edit_file::EditFile.spec();
+    let tool = sample_tool();
     let response = provider
         .complete_turn(ModelRequest {
             messages: &[Message::user_text("hello")],

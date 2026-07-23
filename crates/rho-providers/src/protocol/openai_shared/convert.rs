@@ -5,7 +5,7 @@ use crate::model::{
     handoff::{prepare_assistant, PreparedAssistant},
     ContentBlock, Message, ModelError, ModelResponse, PartialToolCall, ProviderContextBlock,
 };
-use rho_tools::tool::{ToolCall, ToolSpec};
+use rho_sdk::model::{ToolCall, ToolSpec};
 
 use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
