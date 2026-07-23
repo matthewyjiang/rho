@@ -30,9 +30,44 @@ pub struct QuestionnaireQuestion {
     #[serde(default = "default_required")]
     pub required: bool,
     #[serde(default)]
-    pub choices: Vec<String>,
+    pub choices: Vec<QuestionnaireChoice>,
     #[serde(default)]
     pub allow_other: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "RawQuestionnaireChoice")]
+pub struct QuestionnaireChoice {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl From<RawQuestionnaireChoice> for QuestionnaireChoice {
+    fn from(choice: RawQuestionnaireChoice) -> Self {
+        match choice {
+            RawQuestionnaireChoice::Label(label) => label.into(),
+            RawQuestionnaireChoice::Detailed(choice) => Self {
+                label: choice.label,
+                description: choice.description,
+            },
+        }
+    }
+}
+
+impl From<String> for QuestionnaireChoice {
+    fn from(label: String) -> Self {
+        Self {
+            label,
+            description: None,
+        }
+    }
+}
+
+impl From<&str> for QuestionnaireChoice {
+    fn from(label: &str) -> Self {
+        label.to_string().into()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,9 +125,24 @@ struct RawQuestionnaireQuestion {
     #[serde(default)]
     required: Option<bool>,
     #[serde(default)]
-    choices: Vec<String>,
+    choices: Vec<QuestionnaireChoice>,
     #[serde(default)]
     allow_other: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawQuestionnaireChoice {
+    Label(String),
+    Detailed(RawDetailedChoice),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDetailedChoice {
+    label: String,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 pub fn tool_spec() -> ToolSpec {
@@ -146,8 +196,27 @@ pub fn tool_spec() -> ToolSpec {
                             },
                             "choices": {
                                 "type": "array",
-                                "items": { "type": "string" },
-                                "description": "Concrete answers the user can select from. Required for choice and multi_select."
+                                "items": {
+                                    "oneOf": [
+                                        { "type": "string" },
+                                        {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "required": ["label"],
+                                            "properties": {
+                                                "label": {
+                                                    "type": "string",
+                                                    "description": "The concise choice label returned as the answer."
+                                                },
+                                                "description": {
+                                                    "type": "string",
+                                                    "description": "Optional short detail shown below the label."
+                                                }
+                                            }
+                                        }
+                                    ]
+                                },
+                                "description": "Concrete answers the user can select from. Use {label, description} objects when a choice needs more detail. Plain strings remain supported. Required for choice and multi_select."
                             },
                             "allow_other": {
                                 "type": "boolean",
@@ -256,7 +325,12 @@ fn parse_question(
     let choices = raw
         .choices
         .into_iter()
-        .filter_map(|choice| trim_optional(Some(choice)))
+        .filter_map(|choice| {
+            trim_optional(Some(choice.label)).map(|label| QuestionnaireChoice {
+                label,
+                description: trim_optional(choice.description),
+            })
+        })
         .collect::<Vec<_>>();
     let kind = raw.kind.unwrap_or(if choices.is_empty() {
         QuestionnaireQuestionKind::Text
@@ -315,7 +389,7 @@ fn normalize_default(
     index: usize,
     default: Option<Value>,
     kind: QuestionnaireQuestionKind,
-    choices: &[String],
+    choices: &[QuestionnaireChoice],
     allow_other: bool,
 ) -> Result<Option<Value>, String> {
     let Some(default) = default else {
@@ -337,9 +411,9 @@ fn normalize_default(
             };
             match choices
                 .iter()
-                .find(|choice| choice.eq_ignore_ascii_case(&value))
+                .find(|choice| choice.label.eq_ignore_ascii_case(&value))
             {
-                Some(choice) => normalized.push(Value::String(choice.clone())),
+                Some(choice) => normalized.push(Value::String(choice.label.clone())),
                 None if allow_other => normalized.push(Value::String(value)),
                 None => {
                     return Err(format!(
@@ -365,8 +439,8 @@ fn normalize_default(
         QuestionnaireQuestionKind::Text => Ok(Some(Value::String(value))),
         QuestionnaireQuestionKind::Choice => choices
             .iter()
-            .find(|choice| choice.eq_ignore_ascii_case(&value))
-            .cloned()
+            .find(|choice| choice.label.eq_ignore_ascii_case(&value))
+            .map(|choice| choice.label.clone())
             .or_else(|| allow_other.then_some(value))
             .map(Value::String)
             .map(Some)
@@ -470,6 +544,53 @@ mod tests {
                     allow_other: false,
                 }],
             }
+        );
+    }
+
+    #[test]
+    fn parse_request_accepts_choice_descriptions() {
+        let request = parse_request(json!({
+            "questions": [{
+                "id": "mode",
+                "question": "Which mode?",
+                "type": "choice",
+                "choices": [
+                    { "label": "Fast", "description": "Finish sooner with fewer checks" },
+                    "Safe"
+                ],
+                "default": "fast"
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request.questions[0].choices,
+            vec![
+                QuestionnaireChoice {
+                    label: "Fast".into(),
+                    description: Some("Finish sooner with fewer checks".into()),
+                },
+                QuestionnaireChoice::from("Safe"),
+            ]
+        );
+        assert_eq!(request.questions[0].default, Some(json!("Fast")));
+    }
+
+    #[test]
+    fn parse_request_trims_choice_descriptions() {
+        let request = parse_request(json!({
+            "questions": [{
+                "question": "Which mode?",
+                "type": "choice",
+                "choices": [{ "label": " Fast ", "description": "  Quicker  " }]
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(request.questions[0].choices[0].label, "Fast");
+        assert_eq!(
+            request.questions[0].choices[0].description.as_deref(),
+            Some("Quicker")
         );
     }
 
@@ -587,6 +708,31 @@ mod tests {
         assert!(value.get("kind").is_none());
         let round_tripped: QuestionnaireQuestion = serde_json::from_value(value).unwrap();
         assert_eq!(round_tripped.kind, QuestionnaireQuestionKind::Confirm);
+    }
+
+    #[test]
+    fn questionnaire_question_deserializes_legacy_and_detailed_choices() {
+        let question: QuestionnaireQuestion = serde_json::from_value(json!({
+            "id": "mode",
+            "question": "Which mode?",
+            "type": "choice",
+            "choices": [
+                "Fast",
+                { "label": "Safe", "description": "Run every check" }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            question.choices,
+            vec![
+                QuestionnaireChoice::from("Fast"),
+                QuestionnaireChoice {
+                    label: "Safe".into(),
+                    description: Some("Run every check".into()),
+                },
+            ]
+        );
     }
 
     #[test]

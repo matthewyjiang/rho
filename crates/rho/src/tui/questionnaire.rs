@@ -32,6 +32,7 @@ pub(super) struct QuestionnaireQuestion {
 pub(super) struct QuestionnaireChoice {
     value: String,
     label: String,
+    description: Option<String>,
 }
 
 impl QuestionnaireChoice {
@@ -39,7 +40,13 @@ impl QuestionnaireChoice {
         Self {
             value: value.into(),
             label: label.into(),
+            description: None,
         }
+    }
+
+    pub(super) fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 
     fn same(value: impl Into<String>) -> Self {
@@ -53,6 +60,10 @@ impl QuestionnaireChoice {
 
     pub(super) fn label(&self) -> &str {
         &self.label
+    }
+
+    pub(super) fn description_text(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 
     fn matches_default(&self, default: &str) -> bool {

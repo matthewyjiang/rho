@@ -257,30 +257,28 @@ fn host_question(
 ) -> Result<HostQuestion, SdkToolError> {
     use crate::questionnaire::QuestionnaireQuestionKind;
 
-    let (choices, selection) = match question.kind {
-        QuestionnaireQuestionKind::Choice => (
-            question
-                .choices
-                .iter()
-                .map(|choice| HostChoice::new(choice, choice))
-                .collect(),
-            SelectionMode::One,
-        ),
-        QuestionnaireQuestionKind::MultiSelect => (
-            question
-                .choices
-                .iter()
-                .map(|choice| HostChoice::new(choice, choice))
-                .collect(),
-            SelectionMode::Many,
-        ),
-        QuestionnaireQuestionKind::Confirm => (
-            vec![HostChoice::new("yes", "Yes"), HostChoice::new("no", "No")],
-            SelectionMode::One,
-        ),
-        QuestionnaireQuestionKind::Text => {
-            (vec![HostChoice::new("other", "Other")], SelectionMode::One)
+    let selection = match question.kind {
+        QuestionnaireQuestionKind::MultiSelect => SelectionMode::Many,
+        QuestionnaireQuestionKind::Choice
+        | QuestionnaireQuestionKind::Confirm
+        | QuestionnaireQuestionKind::Text => SelectionMode::One,
+    };
+    let choices = match question.kind {
+        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => question
+            .choices
+            .iter()
+            .map(|choice| {
+                let host = HostChoice::new(&choice.label, &choice.label);
+                match &choice.description {
+                    Some(description) => host.description(description),
+                    None => host,
+                }
+            })
+            .collect(),
+        QuestionnaireQuestionKind::Confirm => {
+            vec![HostChoice::new("yes", "Yes"), HostChoice::new("no", "No")]
         }
+        QuestionnaireQuestionKind::Text => vec![HostChoice::new("other", "Other")],
     };
     let mut host = HostQuestion::new(&question.id, &question.question, choices, selection)
         .map_err(map_sdk_error)?;

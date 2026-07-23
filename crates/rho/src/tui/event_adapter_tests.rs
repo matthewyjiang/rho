@@ -179,7 +179,10 @@ fn choice_round_trip_renders_label_and_returns_machine_value() {
     let question = HostQuestion::new(
         "language",
         "Language?",
-        vec![HostChoice::new("rust", "Rust"), HostChoice::new("go", "Go")],
+        vec![
+            HostChoice::new("rust", "Rust").description("Strong type and memory safety"),
+            HostChoice::new("go", "Go"),
+        ],
         SelectionMode::One,
     )
     .unwrap()
@@ -191,7 +194,7 @@ fn choice_round_trip_renders_label_and_returns_machine_value() {
     assert_eq!(
         translated.questions[0].choices,
         vec![
-            QuestionnaireChoice::new("rust", "Rust"),
+            QuestionnaireChoice::new("rust", "Rust").description("Strong type and memory safety"),
             QuestionnaireChoice::new("go", "Go"),
         ]
     );

@@ -242,6 +242,14 @@ fn push_active_question(
                         questionnaire_choice_label(question, choice_index)
                     };
                     push_hanging_text(lines, &format!("  {arrow} {marker} "), &label, width, style);
+                    if let Some(description) = question
+                        .choices
+                        .get(choice_index)
+                        .filter(|_| !is_other)
+                        .and_then(|choice| choice.description_text())
+                    {
+                        push_hanging_text(lines, "        ", description, width, Theme::dim());
+                    }
                     if highlighted {
                         cursor = Position {
                             x: 2,

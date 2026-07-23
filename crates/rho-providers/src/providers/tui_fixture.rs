@@ -215,7 +215,16 @@ async fn fixture_stream(
                         "id": "color",
                         "question": "Choose one color",
                         "type": "choice",
-                        "choices": ["red", "blue"],
+                        "choices": [
+                            {
+                                "label": "red",
+                                "description": "A warm primary color"
+                            },
+                            {
+                                "label": "blue",
+                                "description": "A cool primary color"
+                            }
+                        ],
                         "default": "red",
                         "required": true,
                     }],
