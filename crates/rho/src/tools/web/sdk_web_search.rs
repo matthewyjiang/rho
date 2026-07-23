@@ -12,13 +12,13 @@ use super::WebSearch;
 
 const WEB_SEARCH_TOOL: &str = "web_search";
 
-pub(crate) struct SdkWebSearch {
+pub(in crate::tools) struct SdkWebSearch {
     inner: WebSearch,
     max_output_bytes: usize,
 }
 
 impl SdkWebSearch {
-    pub(crate) fn new(inner: WebSearch, max_output_bytes: usize) -> Self {
+    pub(in crate::tools) fn new(inner: WebSearch, max_output_bytes: usize) -> Self {
         Self {
             inner,
             max_output_bytes,

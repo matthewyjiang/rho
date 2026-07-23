@@ -3480,34 +3480,6 @@ mod tests {
     }
 
     #[test]
-    fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
-        let mut app = test_app();
-        app.cumulative_usage = Some(ModelUsage {
-            input_tokens: Some(1_000),
-            output_tokens: Some(500),
-            ..ModelUsage::default()
-        });
-
-        assert!(app
-            .record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
-                250,
-                Some(10_000),
-            )))
-            .is_none());
-
-        assert_eq!(
-            app.current_context,
-            Some(ContextUsage::estimated(250, Some(10_000)))
-        );
-        assert_eq!(
-            app.cumulative_usage
-                .as_ref()
-                .and_then(|usage| usage.input_tokens),
-            Some(1_000)
-        );
-    }
-
-    #[test]
     fn transcript_and_status_mutations_do_not_require_a_terminal() {
         let mut app = test_app();
 
@@ -3975,22 +3947,6 @@ mod tests {
             app.transcript.as_slice(),
             [Entry::User(_), Entry::Assistant(text), Entry::Reasoning(_)] if text == "goodbye"
         ));
-    }
-
-    #[test]
-    fn step_started_clears_stream_state() {
-        let mut app = test_app();
-        app.assistant_stream.push_delta("current");
-        app.reasoning_stream.push_delta("reasoning");
-
-        assert!(app
-            .record_agent_event(ViewModelEvent::StepStarted(2))
-            .is_none());
-
-        assert!(app.assistant_stream.is_empty());
-        assert!(app.reasoning_stream.is_empty());
-        assert!(app.running);
-        assert_eq!(app.status, "running step 2");
     }
 
     #[test]

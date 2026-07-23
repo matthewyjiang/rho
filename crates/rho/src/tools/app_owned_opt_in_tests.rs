@@ -199,7 +199,7 @@ async fn diagnostics_and_response_store_prepare_as_safe_reads() {
 
 #[tokio::test]
 async fn web_search_prepares_tool_managed_network() {
-    use rho_sdk::{CapabilityKind, CapabilityOperation, NetworkTarget};
+    use rho_sdk::{CapabilityKind, CapabilityOperation, CapabilitySource, NetworkTarget};
 
     let tool = web::SdkWebSearch::new(web::access_tools(&crate::config::Config::default()), 12_000);
     let prepared = tool
@@ -220,4 +220,8 @@ async fn web_search_prepares_tool_managed_network() {
         capability.operation(),
         CapabilityOperation::NetworkAccess(NetworkTarget::ToolManaged)
     ));
+    assert_eq!(
+        capability.source(),
+        &CapabilitySource::built_in_tool("web_search")
+    );
 }

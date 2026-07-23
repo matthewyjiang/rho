@@ -1,3 +1,12 @@
+//! Live provider stream and transcript event handling for the interactive TUI.
+//!
+//! This module owns App methods that switch and drain assistant/reasoning
+//! streams, schedule stream previews, record usage and cost from view-model
+//! events, drive tool-call lifecycle display state, and merge finished text
+//! into the transcript. Stream finalization that must happen before recording
+//! a lifecycle event is classified exhaustively via
+//! [`should_finish_streams_before_recording`].
+
 use std::time::Instant;
 
 use ratatui::{backend::Backend, DefaultTerminal, Terminal};
@@ -12,6 +21,26 @@ use super::{
     usage_difference, usage_with_estimated_cost, App, Entry, LiveStreamPreview, StreamKind,
     ToolEntry, ToolEntryState,
 };
+
+fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
+    match event {
+        ViewModelEvent::StepStarted(_)
+        | ViewModelEvent::ToolCallUpdated { .. }
+        | ViewModelEvent::ToolStarted { .. }
+        | ViewModelEvent::ToolFinished { .. } => true,
+        ViewModelEvent::RunStarted
+        | ViewModelEvent::SteeringApplied(_)
+        | ViewModelEvent::ProviderStreamReset
+        | ViewModelEvent::ProviderRetry
+        | ViewModelEvent::CompactionStarted
+        | ViewModelEvent::CompactionCompleted { .. }
+        | ViewModelEvent::OutputDelta(_)
+        | ViewModelEvent::ReasoningDelta(_)
+        | ViewModelEvent::ContextUsage(_)
+        | ViewModelEvent::Usage(_)
+        | ViewModelEvent::ToolUpdated { .. } => false,
+    }
+}
 
 impl App {
     pub(super) fn reset_streams(&mut self) {
@@ -60,13 +89,7 @@ impl App {
                 Ok(switched || drained)
             }
             other => {
-                if matches!(
-                    other,
-                    ViewModelEvent::StepStarted(_)
-                        | ViewModelEvent::ToolCallUpdated { .. }
-                        | ViewModelEvent::ToolStarted { .. }
-                        | ViewModelEvent::ToolFinished { .. }
-                ) {
+                if should_finish_streams_before_recording(&other) {
                     self.finish_streams();
                 }
                 if let Some(entry) = self.record_agent_event(other) {
@@ -363,3 +386,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "transcript_events_tests.rs"]
+mod tests;
