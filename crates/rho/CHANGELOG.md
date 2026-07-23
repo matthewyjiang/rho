@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.12.1...rho-coding-agent-v1.12.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* **tui:** paste image paths and fall back kitty under herdr ([#504](https://github.com/matthewyjiang/rho/issues/504)) ([c140bfe](https://github.com/matthewyjiang/rho/commit/c140bfe6994f4ffc42756075ec801eff6e63ce40))
+* **tui:** skip modifyOtherKeys on Windows under ConPTY ([#507](https://github.com/matthewyjiang/rho/issues/507)) ([2bb3b49](https://github.com/matthewyjiang/rho/commit/2bb3b49f2435714dc010ba6fe21cb088acd8f115))
+
 ## [1.12.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.12.0...rho-coding-agent-v1.12.1) (2026-07-22)
 
 
