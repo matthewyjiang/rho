@@ -89,9 +89,10 @@ impl ScopedWorkspacePolicy {
         self
     }
 
-    /// Allows capability checks for paths under roots deliberately attached to
-    /// [`Workspace::with_granted_root`]. This does not grant read or write by
-    /// itself.
+    /// Allows capability checks for paths outside the primary workspace. This
+    /// covers roots attached through [`Workspace::with_granted_root`] and broad
+    /// path resolution enabled by [`Workspace::with_unrestricted_file_access`].
+    /// It does not grant read or write by itself.
     pub fn allow_outside_workspace_paths(mut self) -> Self {
         self.outside_workspace_paths = true;
         self
@@ -150,7 +151,7 @@ impl WorkspacePolicy for ScopedWorkspacePolicy {
         }
         if request.is_outside_primary_root() && !self.outside_workspace_paths {
             return PolicyDecision::Deny {
-                reason: "access to a granted root requires an explicit outside-workspace grant"
+                reason: "access outside the primary workspace requires an explicit policy grant"
                     .into(),
             };
         }

@@ -164,7 +164,7 @@ impl InteractiveRuntime {
             SystemPrompt::Custom(text)
         };
         diagnostics.update_tools(&specs);
-        let workspace = Workspace::new(&sdk_options.workspace.root)?;
+        let workspace = sdk_options.workspace.build_workspace()?;
         let context_window = configured_context_window(config);
         let compaction = sdk_options.runtime.compaction.clone();
         let permission_mode = config.permission_mode;

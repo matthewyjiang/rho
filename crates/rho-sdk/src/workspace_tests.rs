@@ -100,6 +100,47 @@ proptest! {
     }
 }
 
+#[test]
+fn unrestricted_file_access_resolves_reads_and_writes_outside_workspace() {
+    let parent = TempDir::new().unwrap();
+    let root = parent.path().join("workspace");
+    let outside = parent.path().join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let existing = outside.join("existing.txt");
+    std::fs::write(&existing, "outside").unwrap();
+    let workspace = Workspace::new(&root)
+        .unwrap()
+        .with_unrestricted_file_access();
+
+    let read = workspace
+        .resolve_for_read("../outside/existing.txt")
+        .unwrap();
+    let write = workspace
+        .resolve_for_write(outside.join("new.txt"))
+        .unwrap();
+
+    assert!(workspace.has_unrestricted_file_access());
+    assert_eq!(read.scope(), &PathScope::UnrestrictedFilesystem);
+    assert_eq!(write.scope(), &PathScope::UnrestrictedFilesystem);
+
+    let request =
+        CapabilityRequest::read_path(read.path(), read.scope().clone(), source("read_file"));
+    assert!(matches!(
+        ScopedWorkspacePolicy::new()
+            .allow_read_paths()
+            .evaluate(&request),
+        PolicyDecision::Deny { .. }
+    ));
+    assert_eq!(
+        ScopedWorkspacePolicy::new()
+            .allow_read_paths()
+            .allow_outside_workspace_paths()
+            .evaluate(&request),
+        PolicyDecision::Allow
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn symlinks_require_deliberate_outside_root_grants_and_policy_grants() {

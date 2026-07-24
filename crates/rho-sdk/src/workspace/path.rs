@@ -87,6 +87,7 @@ impl ResolvedWorkspacePath {
 pub struct Workspace {
     root: PathBuf,
     granted_roots: Vec<PathBuf>,
+    unrestricted_file_access: bool,
 }
 
 impl Workspace {
@@ -95,6 +96,7 @@ impl Workspace {
         Ok(Self {
             root,
             granted_roots: Vec::new(),
+            unrestricted_file_access: false,
         })
     }
 
@@ -123,6 +125,21 @@ impl Workspace {
         &self.granted_roots
     }
 
+    /// Allows paths under any filesystem root to be resolved.
+    ///
+    /// Paths outside the primary workspace remain labeled with unrestricted
+    /// filesystem scope, so the configured
+    /// [`WorkspacePolicy`](crate::WorkspacePolicy) must still authorize their
+    /// read or write capabilities.
+    pub fn with_unrestricted_file_access(mut self) -> Self {
+        self.unrestricted_file_access = true;
+        self
+    }
+
+    pub fn has_unrestricted_file_access(&self) -> bool {
+        self.unrestricted_file_access
+    }
+
     /// Resolves lexically without following the target. Prefer
     /// [`Self::resolve_for_read`] or [`Self::resolve_for_write`] before I/O.
     pub fn resolve(&self, path: impl AsRef<Path>) -> Result<PathBuf, WorkspacePathError> {
@@ -130,7 +147,7 @@ impl Workspace {
     }
 
     /// Resolves an existing target through symlinks and rejects targets outside
-    /// the primary or deliberately granted roots.
+    /// this workspace's configured path scope.
     pub fn resolve_existing(&self, path: impl AsRef<Path>) -> Result<PathBuf, WorkspacePathError> {
         self.resolve_for_read(path).map(|resolved| resolved.path)
     }
@@ -175,7 +192,7 @@ impl Workspace {
         // Use symlink_metadata so a broken final-component symlink is treated as
         // an existing target instead of a creatable missing path. Path::exists()
         // returns false for broken symlinks, which would otherwise authorize the
-        // link path and let later write I/O follow it outside granted roots.
+        // link path and let later write I/O follow it outside the resolved scope.
         match std::fs::symlink_metadata(&lexical) {
             Ok(_) => {
                 let canonical = std::fs::canonicalize(&lexical).map_err(|error| {
@@ -285,9 +302,10 @@ impl Workspace {
 
     fn lexical_path(&self, requested: &Path) -> Result<(PathBuf, PathScope), WorkspacePathError> {
         validate_native_path(requested)?;
-        if requested
-            .components()
-            .any(|component| component == Component::ParentDir)
+        if !self.unrestricted_file_access
+            && requested
+                .components()
+                .any(|component| component == Component::ParentDir)
         {
             return Err(WorkspacePathError::new(
                 WorkspacePathErrorKind::ParentTraversal,
@@ -331,11 +349,20 @@ impl Workspace {
         if path.starts_with(&self.root) {
             return Some(PathScope::PrimaryWorkspace);
         }
-        self.granted_roots
+        if let Some(scope) = self
+            .granted_roots
             .iter()
             .filter(|root| path.starts_with(root))
             .max_by_key(|root| root.components().count())
             .map(|root| PathScope::GrantedRoot { root: root.clone() })
+        {
+            return Some(scope);
+        }
+        if self.unrestricted_file_access {
+            Some(PathScope::UnrestrictedFilesystem)
+        } else {
+            None
+        }
     }
 
     fn scope_for_normalized_absolute(&self, path: &Path) -> Option<PathScope> {

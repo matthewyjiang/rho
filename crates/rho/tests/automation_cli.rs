@@ -9,6 +9,7 @@ use tempfile::TempDir;
 const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
 const RESPONSE_ENV: &str = "RHO_AUTOMATION_TEST_RESPONSE";
 const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
+const PATH_ENV: &str = "RHO_AUTOMATION_TEST_PATH";
 
 #[test]
 fn composes_prompt_arguments_stdin_and_combined_input() {
@@ -117,6 +118,36 @@ fn applies_configured_tool_output_limit() {
     assert_success(&output);
     assert_eq!(stdout(&output), "abcde\n[truncated]\n");
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn reads_and_writes_paths_outside_the_working_directory() {
+    let root = TempDir::new().unwrap();
+    let outside = tempfile::tempdir_in(root.path().parent().unwrap()).unwrap();
+    let input_path = outside.path().join("input.txt");
+    std::fs::write(&input_path, "outside content").unwrap();
+    let relative_input_path = std::path::Path::new("..")
+        .join(outside.path().file_name().unwrap())
+        .join("input.txt");
+
+    let mut read = command(&root, "read-path");
+    read.env(PATH_ENV, relative_input_path)
+        .args(["run", "read the outside file"]);
+    let read_output = read.output().unwrap();
+    assert_success(&read_output);
+    assert_eq!(stdout(&read_output), "outside content\n");
+
+    let output_path = outside.path().join("output.txt");
+    let mut write = command(&root, "write-path");
+    write
+        .env(PATH_ENV, &output_path)
+        .args(["run", "write the outside file"]);
+    let write_output = write.output().unwrap();
+    assert_success(&write_output);
+    assert_eq!(
+        std::fs::read_to_string(output_path).unwrap(),
+        "written outside the working directory"
+    );
 }
 
 #[test]
@@ -598,6 +629,7 @@ fn command(root: &TempDir, mode: &str) -> Command {
         .env(MODE_ENV, mode)
         .env_remove(RESPONSE_ENV)
         .env_remove(COMMAND_ENV)
+        .env_remove(PATH_ENV)
         .env_remove("HERDR_ENV")
         .env_remove("HERDR_SOCKET_PATH")
         .env_remove("HERDR_PANE_ID")

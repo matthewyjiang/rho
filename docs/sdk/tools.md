@@ -66,7 +66,7 @@ Registering a tool exposes its schema but grants no sensitive authority. The ind
 | Host approval | Denied when no handler is configured |
 | Workspace root | Absent |
 
-`ScopedWorkspacePolicy` opts into each class separately. Network URL hosts and tool-managed network built-ins are separate grants. Paths under deliberately attached roots additionally require `allow_outside_workspace_paths`.
+`ScopedWorkspacePolicy` opts into each class separately. Network URL hosts and tool-managed network built-ins are separate grants. Paths outside the primary workspace additionally require `allow_outside_workspace_paths`, whether they come from an attached root or unrestricted path resolution.
 
 Each `CapabilityRequest` contains a `CapabilityOperation` and `CapabilitySource`. The source distinguishes a host-provided tool, built-in tool, and prompt construction. Policy and approval code receives owned structured facts and must never parse a display command, shell preview, or model explanation.
 
@@ -74,17 +74,17 @@ Each `CapabilityRequest` contains a `CapabilityOperation` and `CapabilitySource`
 
 `Workspace::new` requires an absolute native path to an existing directory, rejects parent traversal, verifies it is a directory, and stores its canonical form. Native NUL units are rejected. Windows prefixes are interpreted only on Windows; Unix backslashes and colon characters remain ordinary filename characters.
 
-Relative paths resolve under the primary root. Absolute paths are accepted only when they are component-wise under the primary root or a root deliberately attached with `Workspace::with_granted_root`. A granted root is labeled `PathScope::GrantedRoot`, so policy cannot silently treat it as primary-workspace access.
+Relative paths resolve under the primary root. By default, absolute paths are accepted only when they are component-wise under the primary root or a root deliberately attached with `Workspace::with_granted_root`. Hosts that need process-wide path resolution can opt in with `Workspace::with_unrestricted_file_access`; this also permits parent components in requested paths. A path under an attached root is labeled `PathScope::GrantedRoot`; a path accepted by the broad mode is labeled `PathScope::UnrestrictedFilesystem`. Both scopes remain distinct from the primary workspace for policy checks. The unrestricted path-resolution mode does not grant read or write authority by itself.
 
 Use the operation-specific APIs:
 
-- `resolve_for_read` requires an existing target, follows symlinks, returns the canonical target, and rejects any target outside configured roots.
+- `resolve_for_read` requires an existing target, follows symlinks, returns the canonical target, and rejects any target outside the workspace's configured path scope.
 - `resolve_for_write` canonicalizes an existing target or the nearest existing parent of a missing target. Missing reads fail, while missing writes have the explicit `MissingWriteTarget` state.
 - `revalidate` checks that the canonical target, parent chain, scope, and missing/existing state did not change while authorization was pending.
 
 Coding-tool adapters authorize the returned `ResolvedWorkspacePath`, revalidate that same object immediately before I/O, and execute against its canonical path. Edit operations additionally open file handles and detect content changes before writes. This reduces check/use disagreement and common symlink swaps, but portable path checks cannot remove every filesystem race. Hosts needing stronger guarantees should use descriptor-relative safe-open APIs or an operating-system sandbox.
 
-Parent traversal is rejected even if lexical normalization would return inside the root. Symlinks into an attached outside root still require both the root attachment and the policy's outside-workspace grant. There is no implicit home-directory, sibling-directory, or absolute-path grant.
+Parent traversal is rejected even if lexical normalization would return inside the root unless the host enables unrestricted file access. Symlinks into an attached outside root still require both the root attachment and the policy's outside-workspace grant. Unrestricted file access and attached roots are explicit host choices; there is no implicit home-directory, sibling-directory, or absolute-path grant.
 
 ## Explicit process context
 

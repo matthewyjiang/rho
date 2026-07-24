@@ -89,7 +89,7 @@ Options:
   -h, --help                  Print help
 ```
 
-`rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. It runs in the current working directory and can read files, write files, edit files, and run shell commands when the model chooses those tools.
+`rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. It starts in the current working directory. Relative file paths resolve from that directory, but they can use parent components such as `../`; absolute paths can also read or modify files outside it when the model chooses those tools.
 
 Use `--no-tools` to remove tool access and send only the raw prompt and model response behavior.
 
