@@ -36,4 +36,6 @@ The active model and provider are saved when you choose them through `/model` or
 
 Rho stores persistent [configuration](/configuration) in `~/.rho/config.toml`. The [model catalog](/authentication-and-models#selecting-models) and `/model` command can update the active provider and model from inside the [interactive TUI](/interactive-tui#commands).
 
-For local project work, see [development](/development). If authentication, model selection, or environment setup fails, run `/doctor` in the TUI; use `/info` to inspect the active selection and `/limits` to inspect supported OAuth usage windows.
+For local project work, see [development](/development). If authentication, model selection, or environment setup fails, run `/doctor` in the TUI; use `/info` to inspect the active selection and `/limits` to inspect supported OAuth usage windows (including last-observed Claude Code limits after a `claude-cli` run).
+
+To delegate through Claude Code on a subscription, install the [Claude Code binary](/installation#claude-code-binary-optional), run `/login claude-code`, and define an agent with `runtime: claude-cli` ([agents and delegation](/subagents#claude-cli-execution)).

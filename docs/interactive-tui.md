@@ -41,7 +41,9 @@ Attached mode uses a separate read-only TUI. It renders the delegated prompt,
 reasoning, assistant output, tool activity, usage, and final state, but it has no
 message box and cannot submit prompts or change the subagent environment. Use
 Up/Down, Page Up/Page Down, and Home/End to scroll. Press `q`, Escape, or Ctrl-C
-to detach without stopping the run. See [subagents](/subagents#watching-a-subagent)
+to detach without stopping the run. For Claude-cli runs, attach also surfaces
+`claude_session_id` when present so you can open the full Claude transcript with
+`claude --resume <session-id>`. See [subagents](/subagents#attachment-and-artifacts)
 for lifecycle and Herdr behavior.
 
 ## Send prompts
@@ -104,7 +106,7 @@ Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use
 
 `/login` opens a readable provider picker first. Providers with multiple methods open a second picker such as **API Key** or **OAuth**; providers with one method continue directly to their login flow. Passing an internal provider name (for example `/login openai`) targets that method directly. Each flow is documented on the [provider page](/authentication-and-models#providers). Credentials for normal providers are stored in the configured credential backend, not in config or transcripts. When the backend is still unset, Rho asks where to store secrets only after you select a normal provider.
 
-The picker also includes **claude code (subscription, external)**. `/login claude-code` hands the terminal to the `claude` binary for `claude auth login --claudeai`. Claude Code owns that sign-in and stores the subscription credential. Rho never sees the token, never writes it to the Rho credential store, and never asks for a Rho store choice on this path.
+The picker also includes **claude code (subscription, external)**. `/login claude-code` suspends the TUI and hands the terminal to the `claude` binary for `claude auth login --claudeai`. Claude Code owns that sign-in and stores the subscription credential. Rho never sees the token, never writes it to the Rho credential store, and never asks for a Rho store choice on this path. Install the binary first if needed ([installation](/installation#claude-code-binary-optional)).
 
 `/logout` opens a provider picker containing only providers with stored credentials that can be deleted, or targets one directly (for example `/logout openai`). Environment overrides are CI/development hatches and can keep a provider available after logout. `/logout claude-code` asks for explicit confirmation first because it signs out of Claude Code everywhere the `claude` binary is used, not only inside Rho. It does not delete a Rho-stored token.
 

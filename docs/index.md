@@ -51,6 +51,8 @@ features:
 - [Automation and CLI](/automation-cli)
 - [Configuration](/configuration)
 - [Tools and workspace](/tools-workspace)
+- [Skills](/skills)
+- [Subagents](/subagents)
 - [Sessions](/sessions)
 - [Usage ledger](/usage-ledger)
 - [Rust SDK](/sdk/)
