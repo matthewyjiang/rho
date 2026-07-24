@@ -52,7 +52,6 @@ pub enum SelectionMode {
 
 /// How a host should apply a question's default value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum DefaultSelection {
     /// Pre-select the default answer.
     #[default]

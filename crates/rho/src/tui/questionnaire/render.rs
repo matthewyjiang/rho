@@ -236,14 +236,17 @@ fn push_active_question(
                         };
                     }
                 } else {
+                    let recommended = super::choice_is_focused_default(question, choice_index);
                     let label = if is_other {
-                        "other…".to_string()
+                        if field.other_value.is_empty() {
+                            "other…".to_string()
+                        } else {
+                            format!("other: {}", field.other_value)
+                        }
                     } else {
                         questionnaire_choice_label(question, choice_index)
                     };
                     let prefix = format!("  {arrow} {marker} ");
-                    let recommended =
-                        !is_other && super::choice_is_focused_default(question, choice_index);
                     if recommended {
                         push_choice_label_with_recommended(lines, &prefix, &label, width, style);
                     } else {

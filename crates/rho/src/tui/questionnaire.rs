@@ -666,11 +666,9 @@ fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection,
             other: preselect && other,
         },
         choice_cursor,
-        if preselect {
-            other_values.join(", ")
-        } else {
-            String::new()
-        },
+        // Keep custom default text for focused display even when Other is not
+        // selected yet. Answer normalization only emits it when `other` is true.
+        other_values.join(", "),
     )
 }
 
@@ -745,16 +743,24 @@ pub(super) fn choice_is_focused_default(
             _ => false,
         },
         QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => {
-            let Some(choice) = question.choices.get(choice_index) else {
-                return false;
-            };
-            question
+            let defaults = question
                 .default
                 .as_ref()
                 .map(questionnaire_default_strings)
-                .unwrap_or_default()
-                .iter()
-                .any(|value| choice.matches_default(value))
+                .unwrap_or_default();
+            let is_other = question.allow_other && choice_index == question.choices.len();
+            if is_other {
+                return defaults.iter().any(|value| {
+                    !question
+                        .choices
+                        .iter()
+                        .any(|choice| choice.matches_default(value))
+                });
+            }
+            let Some(choice) = question.choices.get(choice_index) else {
+                return false;
+            };
+            defaults.iter().any(|value| choice.matches_default(value))
         }
         QuestionnaireQuestionKind::Text => false,
     }

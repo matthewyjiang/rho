@@ -310,6 +310,46 @@ fn frame_marks_focused_default_as_recommended_without_selecting() {
 }
 
 #[test]
+fn frame_marks_focused_custom_other_without_selecting() {
+    let question = QuestionnaireQuestion {
+        id: "city".into(),
+        question: "Which city?".into(),
+        header: None,
+        help: None,
+        default: Some(serde_json::json!("Portland")),
+        default_selection: QuestionnaireDefaultSelection::Focused,
+        kind: QuestionnaireQuestionKind::Choice,
+        required: true,
+        choices: vec![
+            QuestionnaireChoice::new("nyc", "New York"),
+            QuestionnaireChoice::new("la", "Los Angeles"),
+        ],
+        allow_other: true,
+    };
+    let composer = QuestionnaireComposer::new(
+        QuestionnaireRequest {
+            title: None,
+            reason: None,
+            questions: vec![question],
+        },
+        QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
+    );
+
+    let (lines, cursor) = questionnaire_frame(&composer, 48);
+    let text = lines.iter().map(line_text).collect::<Vec<_>>();
+    let recommended_row = text
+        .iter()
+        .position(|line| line.contains("other: Portland (recommended)"))
+        .expect("focused other");
+
+    assert_eq!(cursor.y as usize, recommended_row);
+    assert!(text[recommended_row].contains('→'));
+    assert!(text[recommended_row].contains('○'));
+    assert!(text.iter().any(|line| line.contains("○ New York")));
+    assert!(!text.iter().any(|line| line.contains('●')));
+}
+
+#[test]
 fn cursor_lands_on_highlighted_choice_row_after_wrapping() {
     let question = QuestionnaireQuestion {
         id: "style".into(),
