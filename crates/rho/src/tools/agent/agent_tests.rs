@@ -10,6 +10,7 @@ use rho_sdk::{
 };
 
 use super::*;
+use crate::app::subagent_host_input::SubagentHostInputBridge;
 use crate::{
     app::agent_executor::AgentExecutor, config::Config, diagnostics::test_diagnostics,
     tools::agent_output::MODEL_NOTIFICATION_BYTES,
@@ -20,6 +21,7 @@ fn manager(root: &Path) -> SubagentManager {
         Config::default(),
         root.join("rho.toml"),
         root.to_path_buf(),
+        SubagentHostInputBridge::new(),
     ))
 }
 

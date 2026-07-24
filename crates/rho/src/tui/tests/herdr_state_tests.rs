@@ -50,6 +50,7 @@ async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
             }],
         },
         response: QuestionnaireResponseChannel::new(reply_tx),
+        notice: None,
     })
     .await
     .unwrap();
@@ -71,6 +72,14 @@ async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
     let working = server.next_request().await;
     assert_eq!(working["params"]["state"], "working");
     assert!(working["params"].get("message").is_none());
+
+    app.report_resting_herdr_state().await;
+    let blocked_again = server.next_request().await;
+    assert_eq!(blocked_again["params"]["state"], "blocked");
+    assert_eq!(
+        blocked_again["params"]["message"],
+        "waiting for your answers"
+    );
 }
 
 #[tokio::test]

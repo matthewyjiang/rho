@@ -46,6 +46,13 @@ impl InputUi {
         expand_paste_segments(&self.text, &self.paste_segments)
     }
 
+    pub(in crate::tui) fn has_pending_draft(&self) -> bool {
+        !self.text.is_empty()
+            || self.shell_mode.is_some()
+            || !self.pending_images.is_empty()
+            || self.paste_burst.has_pending()
+    }
+
     pub(in crate::tui) fn reset_history_navigation(&mut self) {
         self.history_cursor = None;
         self.history_draft = None;

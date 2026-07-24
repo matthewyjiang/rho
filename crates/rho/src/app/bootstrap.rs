@@ -166,6 +166,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
                 timeout,
                 diagnostics,
                 herdr,
+                host_input: None,
             },
         )
         .await;

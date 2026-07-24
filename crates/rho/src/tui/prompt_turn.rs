@@ -214,6 +214,16 @@ impl App {
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
+            let parent_interaction_active =
+                matches!(self.input_ui.composer(), ComposerMode::Approval(_))
+                    || pending_questionnaire.is_some();
+            if !parent_interaction_active
+                && self
+                    .poll_running_subagent_questionnaires(agent.session_id())
+                    .await?
+            {
+                self.draw_running_frame(terminal, &mut frame_scheduler)?;
+            }
             if self.update_subagent_panel(agent) {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
@@ -225,9 +235,11 @@ impl App {
             let interaction_available = interaction_slot_available(
                 /*approval_active*/
                 matches!(self.input_ui.composer(), ComposerMode::Approval(_)),
-                /*questionnaire_active*/ pending_questionnaire.is_some(),
+                /*questionnaire_active*/
+                pending_questionnaire.is_some() || self.pending_subagent_questionnaire.is_some(),
             );
             let approval_ready = approval_receiver_open && interaction_available;
+            let subagent_host_input_bound = self.subagent_host_input.is_some();
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
@@ -296,6 +308,20 @@ impl App {
                         }
                     }
                 }
+                request = super::app_loop::next_subagent_host_input(&mut self.subagent_host_input), if subagent_host_input_bound => {
+                    match request {
+                        Some(request) => self.queued_subagent_questionnaires.push_back(request),
+                        None => self.subagent_host_input = None,
+                    }
+                    let parent_interaction_active = matches!(
+                        self.input_ui.composer(),
+                        ComposerMode::Approval(_)
+                    ) || pending_questionnaire.is_some();
+                    if !parent_interaction_active {
+                        self.poll_running_subagent_questionnaires(agent.session_id()).await?;
+                    }
+                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                }
                 _ = tokio::time::sleep_until(frame_deadline) => {
                     self.drain_stream_preview(terminal)?;
                     self.flush_due_paste_burst();
@@ -335,7 +361,8 @@ impl App {
                                     self.input_ui.composer(),
                                     ComposerMode::Approval(_)
                                 ),
-                                /*questionnaire_active*/ pending_questionnaire.is_some(),
+                                /*questionnaire_active*/ pending_questionnaire.is_some()
+                    || self.pending_subagent_questionnaire.is_some(),
                             );
                             if interaction_available {
                                 pending_questionnaire = Some(
@@ -371,7 +398,9 @@ impl App {
                 && interaction_slot_available(
                     /*approval_active*/
                     matches!(self.input_ui.composer(), ComposerMode::Approval(_)),
-                    /*questionnaire_active*/ pending_questionnaire.is_some(),
+                    /*questionnaire_active*/
+                    pending_questionnaire.is_some()
+                        || self.pending_subagent_questionnaire.is_some(),
                 )
             {
                 if let Some((call_id, request)) = queued_questionnaires.pop_front() {
@@ -497,6 +526,9 @@ impl App {
         }
         self.clear_accepted_steering();
         self.apply_pending_model_selection(agent, completed)?;
+        if self.pending_subagent_questionnaire.is_some() {
+            self.status = HerdrUserWait::Questionnaire.message().into();
+        }
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
         Ok(outcome)
@@ -527,6 +559,7 @@ impl App {
         self.open_questionnaire(QuestionAnswerRequest {
             request: event_adapter::questionnaire_request(&request),
             response: QuestionnaireResponseChannel::new(reply_tx),
+            notice: None,
         })
         .await?;
         Ok((call_id, request_id, reply_rx))

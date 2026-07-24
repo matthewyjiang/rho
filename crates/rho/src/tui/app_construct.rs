@@ -1,6 +1,6 @@
 //! App construction helpers for the interactive TUI.
 
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use rho_providers::credentials::{available_auth_modes, CredentialStore};
 
@@ -56,6 +56,9 @@ impl App {
             terminal_session: None,
             statusline,
             subagent_panel: SubagentPanel::default(),
+            subagent_host_input: None,
+            queued_subagent_questionnaires: VecDeque::new(),
+            pending_subagent_questionnaire: None,
             input_ui: InputUi::default(),
             status,
             should_quit: false,

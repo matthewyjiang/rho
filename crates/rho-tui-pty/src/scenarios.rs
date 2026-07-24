@@ -10,8 +10,8 @@ mod runtime_info;
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use goal::{
-    GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
-    GOAL_WAITS_FOR_SUBAGENTS_STEPS,
+    GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
+    GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
 use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
 use runtime_info::RUNTIME_INFO_STEPS;
@@ -628,6 +628,63 @@ const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+fn assert_background_questionnaire_parent_active(harness: &mut crate::PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    if screen.contains("background questionnaire agent dispatched: agent") {
+        anyhow::bail!("parent turn ended before the child questionnaire appeared:\n{screen}");
+    }
+    Ok(())
+}
+
+const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("spawn_background_questionnaire_agent"),
+    Step::SubmitText("fixture background questionnaire"),
+    Step::Phase("answer_child_questionnaire"),
+    Step::WaitText {
+        text: "asks: Background questionnaire",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "Choose one color",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_background_questionnaire_parent_active),
+    Step::Phase("parent_finishes_while_questionnaire_remains_open"),
+    Step::WaitText {
+        text: "background questionnaire agent dispatched: agent",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "answered questionnaire for agent",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "background questionnaire agent dispatched: agent",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "(worker) started in background",
+        timeout: STREAM,
+    },
+    Step::Phase("automatic_completion_delivery"),
+    Step::WaitText {
+        text: "background agent questionnaire completion received (delivery 1)",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 /// All registered scenarios.
 pub fn all_scenarios() -> &'static [Scenario] {
     &[
@@ -791,6 +848,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             smoke: false,
         },
         Scenario {
+            id: "goal_questionnaire",
+            description: "Answer a background child questionnaire while an active goal waits",
+            size: DEFAULT_SIZE,
+            steps: GOAL_QUESTIONNAIRE_STEPS,
+            smoke: false,
+        },
+        Scenario {
             id: "goal_waits_for_subagents_during_retry",
             description: "Wait for delegated runs before retrying a failed goal turn",
             size: DEFAULT_SIZE,
@@ -803,6 +867,14 @@ pub fn all_scenarios() -> &'static [Scenario] {
                 "Spawn a background agent, end the turn, and receive its completion automatically",
             size: DEFAULT_SIZE,
             steps: BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "background_agent_questionnaire",
+            description:
+                "Answer a questionnaire raised by a background agent and deliver its completion",
+            size: DEFAULT_SIZE,
+            steps: BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
             smoke: false,
         },
     ]

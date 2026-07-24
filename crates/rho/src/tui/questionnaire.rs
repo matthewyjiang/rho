@@ -142,6 +142,7 @@ impl Drop for QuestionnaireResponseChannel {
 pub(super) struct QuestionAnswerRequest {
     pub(super) request: QuestionnaireRequest,
     pub(super) response: QuestionnaireResponseChannel,
+    pub(super) notice: Option<String>,
 }
 
 #[derive(Debug)]

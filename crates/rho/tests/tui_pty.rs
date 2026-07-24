@@ -307,6 +307,11 @@ fn goal_waits_for_subagents_before_evaluation() {
 }
 
 #[test]
+fn goal_answers_background_agent_questionnaire_while_waiting() {
+    assert_pass("goal_questionnaire");
+}
+
+#[test]
 fn goal_waits_for_subagents_before_retrying() {
     assert_pass("goal_waits_for_subagents_during_retry");
 }
@@ -314,6 +319,11 @@ fn goal_waits_for_subagents_before_retrying() {
 #[test]
 fn background_agent_completion_is_delivered_after_turn_end() {
     assert_pass("background_agent_auto_delivery");
+}
+
+#[test]
+fn background_agent_questionnaire_is_answered_in_parent_tui() {
+    assert_pass("background_agent_questionnaire");
 }
 
 #[test]

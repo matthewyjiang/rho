@@ -13,6 +13,7 @@ use {
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     automation::{self, RunArtifactIdentity, RunReporter},
+    subagent_host_input::SubagentHostInputBridge,
 };
 
 #[derive(Clone)]
@@ -21,11 +22,14 @@ pub(crate) struct AgentExecutor {
     config_path: PathBuf,
     cwd: PathBuf,
     permits: Arc<tokio::sync::Semaphore>,
+    host_input: SubagentHostInputBridge,
 }
 
 pub(crate) struct AgentLaunchRequest {
     pub(crate) definition: Arc<AgentDefinition>,
     pub(crate) prompt: String,
+    pub(crate) run_id: String,
+    pub(crate) background: bool,
     pub(crate) parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) output_file: PathBuf,
 }
@@ -61,7 +65,12 @@ impl AgentRunHandle {
 }
 
 impl AgentExecutor {
-    pub(crate) fn new(config: Config, config_path: PathBuf, cwd: PathBuf) -> Self {
+    pub(crate) fn new(
+        config: Config,
+        config_path: PathBuf,
+        cwd: PathBuf,
+        host_input: SubagentHostInputBridge,
+    ) -> Self {
         let concurrency = std::env::var("RHO_AGENT_CONCURRENCY")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -72,7 +81,12 @@ impl AgentExecutor {
             config_path,
             cwd,
             permits: Arc::new(tokio::sync::Semaphore::new(concurrency)),
+            host_input,
         }
+    }
+
+    pub(crate) fn host_input(&self) -> &SubagentHostInputBridge {
+        &self.host_input
     }
 
     pub(crate) fn update_model(
@@ -112,6 +126,13 @@ impl AgentExecutor {
         capabilities.remove(&ToolCapability::Bash);
         #[cfg(not(windows))]
         capabilities.remove(&ToolCapability::Powershell);
+        // A foreground child runs inside the parent tool call, so waiting for
+        // that parent to present a questionnaire would deadlock both runs.
+        let questionnaire_available =
+            request.background && request.parent_session_id.is_some() && self.host_input.is_bound();
+        if !questionnaire_available {
+            capabilities.remove(&ToolCapability::Questionnaire);
+        }
         let bound = AgentBinder::bind(
             request.definition,
             AgentInvocation {
@@ -136,8 +157,10 @@ impl AgentExecutor {
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
         let permits = Arc::clone(&self.permits);
+        let host_input = self.host_input.clone();
         let output_file = request.output_file;
         let parent_session_id = request.parent_session_id;
+        let run_id = request.run_id;
         let persisted_output = output_file.clone();
         let prompt = request.prompt;
 
@@ -180,6 +203,7 @@ impl AgentExecutor {
                 /* stream_output */ false,
                 Some(task_status_tx),
             )?;
+            let agent_id = bound.id().to_string();
             let startup = automation::Startup {
                 config: &config,
                 config_path,
@@ -188,7 +212,7 @@ impl AgentExecutor {
                 no_tools: false,
                 no_subagents: true,
                 usage_purpose: "subagent",
-                parent_session_id,
+                parent_session_id: parent_session_id.clone(),
                 agent: bound,
                 output_file: None,
                 output: OutputFormat::Text,
@@ -196,6 +220,13 @@ impl AgentExecutor {
                 timeout: None,
                 diagnostics,
                 herdr: HerdrReporter::default(),
+                host_input: questionnaire_available.then(|| automation::DelegatedHostInput {
+                    run_id,
+                    agent_id,
+                    parent_session_id: parent_session_id
+                        .expect("questionnaire bridge requires a parent session"),
+                    bridge: host_input,
+                }),
             };
             let result = automation::run_session(
                 prompt,

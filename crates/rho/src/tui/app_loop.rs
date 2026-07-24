@@ -67,6 +67,9 @@ impl App {
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_subagent_panel(agent);
+            needs_redraw |= self
+                .poll_subagent_questionnaires(agent.session_id())
+                .await?;
             needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -74,7 +77,8 @@ impl App {
             }
             let subagents_active = agent.subagents().is_some_and(|manager| {
                 manager.has_active_or_pending_notification(agent.session_id().as_str())
-            });
+            }) || self.pending_subagent_questionnaire.is_some()
+                || !self.queued_subagent_questionnaires.is_empty();
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
@@ -91,12 +95,20 @@ impl App {
             };
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
+            let subagent_host_input_bound = self.subagent_host_input.is_some();
             tokio::select! {
                 biased;
                 event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     self.handle_terminal_event(event?, terminal, agent).await?;
                     needs_redraw = true;
                     needs_redraw |= self.flush_due_paste_burst();
+                }
+                request = next_subagent_host_input(&mut self.subagent_host_input), if subagent_host_input_bound => {
+                    match request {
+                        Some(request) => self.queued_subagent_questionnaires.push_back(request),
+                        None => self.subagent_host_input = None,
+                    }
+                    needs_redraw = true;
                 }
                 _ = tokio::time::sleep(timeout) => {
                     needs_redraw |= self.flush_due_paste_burst();
@@ -204,6 +216,21 @@ impl App {
     }
 
     pub(super) async fn report_resting_herdr_state(&self) {
+        let user_wait = match self.input_ui.composer() {
+            ComposerMode::Approval(_) => Some(HerdrUserWait::Approval),
+            ComposerMode::Questionnaire(_) => Some(HerdrUserWait::Questionnaire),
+            ComposerMode::Input
+            | ComposerMode::Picker(_)
+            | ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::OAuthPending(_)
+            | ComposerMode::InlineChoice(_) => None,
+        };
+        if let Some(wait) = user_wait {
+            self.report_herdr_waiting_for_user(wait).await;
+            return;
+        }
         let goal_blocked_reason = self
             .goal
             .as_ref()
@@ -272,4 +299,18 @@ impl App {
             .as_ref()
             .map(|session_id| format!("rho session saved: {session_id}"))
     }
+}
+
+pub(super) async fn next_subagent_host_input(
+    receiver: &mut Option<
+        tokio::sync::mpsc::UnboundedReceiver<
+            crate::app::subagent_host_input::SubagentHostInputRequest,
+        >,
+    >,
+) -> Option<crate::app::subagent_host_input::SubagentHostInputRequest> {
+    receiver
+        .as_mut()
+        .expect("subagent host-input receiver checked before polling")
+        .recv()
+        .await
 }

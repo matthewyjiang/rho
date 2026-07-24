@@ -204,7 +204,10 @@ impl App {
     ) -> std::io::Result<()> {
         self.finish_streams();
         self.clear_submitted_input();
-        self.insert_entry(&Entry::Notice(questionnaire_notice_text(&request.request)));
+        let notice = request
+            .notice
+            .unwrap_or_else(|| questionnaire_notice_text(&request.request));
+        self.insert_entry(&Entry::Notice(notice));
         self.input_ui
             .set_composer(ComposerMode::Questionnaire(QuestionnaireComposer::new(
                 request.request,

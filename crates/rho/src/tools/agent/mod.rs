@@ -14,7 +14,10 @@ use serde_json::{json, Value};
 
 use {
     crate::agent::{AgentCatalog, AgentDefinition},
-    crate::app::agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
+    crate::app::{
+        agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
+        subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
+    },
     crate::subagent::{self, RunState, RunStatus},
     rho_sdk::tool::{
         OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
@@ -88,6 +91,16 @@ impl SubagentManager {
         }
     }
 
+    pub(crate) fn bind_host_input(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<SubagentHostInputRequest> {
+        self.executor.host_input().bind_parent()
+    }
+
+    pub(crate) fn unbind_host_input(&self) {
+        self.executor.host_input().unbind_parent();
+    }
+
     pub fn set_session(&self, session_id: String) {
         *self.session_id.lock().expect("delegated session lock") = Some(session_id);
     }
@@ -124,6 +137,8 @@ impl SubagentManager {
         let handle = self.executor.spawn(AgentLaunchRequest {
             definition: Arc::new(definition.clone()),
             prompt: prompt.to_string(),
+            run_id: id.clone(),
+            background,
             parent_session_id: session_id
                 .as_deref()
                 .and_then(|id| rho_sdk::SessionId::from_string(id.to_owned()).ok()),
@@ -784,6 +799,7 @@ pub(super) fn sdk_bundle(
         config.clone(),
         options.config_path,
         options.cwd.clone(),
+        SubagentHostInputBridge::new(),
     ));
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     if options.tools.launches() {

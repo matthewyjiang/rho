@@ -34,7 +34,16 @@ use super::{
         build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
     },
     sdk_config::SdkBootstrapOptions,
+    subagent_host_input::SubagentHostInputBridge,
 };
+
+/// Parent bridge used by delegated agents that need interactive questionnaires.
+pub(crate) struct DelegatedHostInput {
+    pub(crate) run_id: String,
+    pub(crate) agent_id: String,
+    pub(crate) parent_session_id: rho_sdk::SessionId,
+    pub(crate) bridge: SubagentHostInputBridge,
+}
 
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
 #[derive(Debug)]
@@ -147,6 +156,7 @@ pub(super) struct Startup<'a> {
     pub timeout: Option<Duration>,
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
+    pub host_input: Option<DelegatedHostInput>,
 }
 
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
@@ -525,7 +535,15 @@ async fn run_session_with_output(
         .herdr
         .report_state(HerdrState::Working, None, None)
         .await;
-    let result = complete_run(&session, prompt_text, reporter, cancellation, jsonl).await;
+    let result = complete_run(
+        &session,
+        prompt_text,
+        reporter,
+        cancellation,
+        jsonl,
+        startup.host_input.as_ref(),
+    )
+    .await;
 
     runtime.shutdown();
     tool_set.shutdown().await;
@@ -544,12 +562,13 @@ async fn complete_run(
     reporter: Option<&mut RunReporter>,
     external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
     jsonl: Option<&mut JsonlAdapter>,
+    host_input: Option<&DelegatedHostInput>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
-        outcome = drive_headless_run(&mut run, reporter, jsonl) => outcome,
+        outcome = drive_headless_run(&mut run, reporter, jsonl, host_input) => outcome,
         signal = shutdown_signal() => {
             let signal = signal?;
             cancellation.cancel();
@@ -564,14 +583,15 @@ async fn complete_run(
     }
 }
 
-/// Drains run events with no interactive host attached.
+/// Drives a run without a local TUI attached.
 ///
-/// Host input requests cannot be answered headlessly; cancel instead of
-/// leaving the requesting tool suspended until a signal arrives.
+/// Direct automation cannot answer host questionnaires. Delegated agents can
+/// forward them through a parent bridge when one is configured.
 async fn drive_headless_run(
     run: &mut rho_sdk::Run,
     mut reporter: Option<&mut RunReporter>,
     mut jsonl: Option<&mut JsonlAdapter>,
+    host_input: Option<&DelegatedHostInput>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut heartbeat = tokio::time::interval(REPORT_HEARTBEAT);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -600,19 +620,49 @@ async fn drive_headless_run(
                 }
             }
         }
-        let request = match event {
+        let request = match &event {
             rho_sdk::RunEvent::HostInputRequested { request }
-            | rho_sdk::RunEvent::ToolHostInputRequested { request, .. } => Some(request),
+            | rho_sdk::RunEvent::ToolHostInputRequested { request, .. } => Some(request.clone()),
             _ => None,
         };
         if let Some(request) = request {
-            run.cancel();
-            let _ = run.outcome().await;
-            anyhow::bail!(
-                "rho run cannot answer host input request '{}' ({}); run without tools that require interactive input",
-                request.id(),
-                request.title(),
-            );
+            match host_input {
+                Some(parent) => {
+                    let response = parent
+                        .bridge
+                        .request(
+                            parent.run_id.clone(),
+                            parent.agent_id.clone(),
+                            parent.parent_session_id.clone(),
+                            request.clone(),
+                            &run.cancellation_handle(),
+                        )
+                        .await;
+                    match response {
+                        Ok(response) => {
+                            if let Err(error) = run.respond(request.id().clone(), response).await {
+                                run.cancel();
+                                let _ = run.outcome().await;
+                                return Err(error.into());
+                            }
+                        }
+                        Err(error) => {
+                            run.cancel();
+                            let _ = run.outcome().await;
+                            return Err(error.into());
+                        }
+                    }
+                }
+                None => {
+                    run.cancel();
+                    let _ = run.outcome().await;
+                    anyhow::bail!(
+                        "rho run cannot answer host input request '{}' ({}); run without tools that require interactive input",
+                        request.id(),
+                        request.title(),
+                    );
+                }
+            }
         }
     }
     Ok(run.outcome().await?)
@@ -706,6 +756,12 @@ impl RunReporter {
             RunEvent::ToolStarted { name, .. } => {
                 self.status.last_activity = Some(format!("tool: {name}"));
                 self.stream(&format!("\n[tool] {name}\n"));
+                self.write();
+            }
+            RunEvent::HostInputRequested { request }
+            | RunEvent::ToolHostInputRequested { request, .. } => {
+                self.status.last_activity =
+                    Some(format!("waiting for questionnaire: {}", request.title()));
                 self.write();
             }
             RunEvent::AssistantTextDelta { text } => {

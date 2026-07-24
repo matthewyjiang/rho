@@ -16,6 +16,7 @@ mod policy;
 mod provider_controller;
 mod runtime_builder;
 pub(crate) mod sdk_config;
+pub(crate) mod subagent_host_input;
 
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
