@@ -8,7 +8,11 @@ use crate::herdr::test_support::{reporter_for_socket, TestHerdrServer};
 use super::ParentActivity;
 use crate::{
     app::subagent_host_input::SubagentHostInputRequest,
-    tui::{tests::test_app, ComposerMode},
+    tui::{
+        goal::{GoalEvaluation, GoalState},
+        tests::test_app,
+        ComposerMode,
+    },
 };
 
 fn host_request() -> HostInputRequest {
@@ -42,6 +46,24 @@ fn pending_request(
         },
         receiver,
     )
+}
+
+#[test]
+fn questionnaire_presentation_allows_only_blocked_goals() {
+    let mut app = test_app();
+    assert!(app.can_present_subagent_questionnaire());
+
+    app.goal = Some(GoalState::new("tests pass".into()));
+    assert!(!app.can_present_subagent_questionnaire());
+
+    app.goal
+        .as_mut()
+        .unwrap()
+        .record_evaluation(&GoalEvaluation::Blocked {
+            reason: "human input required".into(),
+            pending_steps: Vec::new(),
+        });
+    assert!(app.can_present_subagent_questionnaire());
 }
 
 #[tokio::test]

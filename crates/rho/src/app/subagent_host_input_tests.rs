@@ -119,6 +119,69 @@ async fn child_cancellation_ends_a_waiting_request() {
 }
 
 #[tokio::test]
+async fn responder_adapter_reports_parent_send_failure() {
+    use crate::app::{
+        automation::HostInputResponder,
+        subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
+    };
+
+    let bridge = SubagentHostInputBridge::new();
+    let receiver = bridge.bind_parent();
+    drop(receiver);
+    let responder = SubagentHostInputResponder::new("run-1", "worker", SessionId::new(), bridge);
+    let cancellation = CancellationToken::new();
+
+    let error = timeout(
+        Duration::from_secs(1),
+        responder.respond(sample_request(), &cancellation),
+    )
+    .await
+    .expect("responder timeout")
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        rho_sdk::Error::Interrupted { message }
+            if message.contains("stopped accepting delegated questionnaires")
+    ));
+}
+
+#[tokio::test]
+async fn responder_adapter_reports_dropped_queued_request() {
+    use crate::app::{
+        automation::HostInputResponder,
+        subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
+    };
+
+    let bridge = SubagentHostInputBridge::new();
+    let receiver = bridge.bind_parent();
+    let responder = SubagentHostInputResponder::new("run-1", "worker", SessionId::new(), bridge);
+    let cancellation = CancellationToken::new();
+    let child =
+        tokio::spawn(async move { responder.respond(sample_request(), &cancellation).await });
+
+    timeout(Duration::from_secs(1), async {
+        while receiver.is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("request should be queued");
+    drop(receiver);
+
+    let error = timeout(Duration::from_secs(1), child)
+        .await
+        .expect("responder timeout")
+        .expect("responder task")
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        rho_sdk::Error::Interrupted { message }
+            if message.contains("dropped without a response")
+    ));
+}
+
+#[tokio::test]
 async fn responder_adapter_forwards_identity_to_parent_bridge() {
     use crate::app::{
         automation::HostInputResponder,

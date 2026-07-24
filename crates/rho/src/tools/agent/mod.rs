@@ -91,9 +91,7 @@ impl SubagentManager {
         }
     }
 
-    pub(crate) fn bind_host_input(
-        &self,
-    ) -> tokio::sync::mpsc::UnboundedReceiver<SubagentHostInputRequest> {
+    pub(crate) fn bind_host_input(&self) -> tokio::sync::mpsc::Receiver<SubagentHostInputRequest> {
         self.executor.host_input().bind_parent()
     }
 

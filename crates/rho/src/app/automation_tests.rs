@@ -27,8 +27,8 @@ use tokio::{
 };
 
 use super::{
-    classify_error, complete_run, prompt_from_reader, AutomationExit, HostInputRespondFuture,
-    HostInputResponder, RunArtifactIdentity, RunReporter,
+    classify_error, complete_run, prompt_from_reader, AutomationExit, HeadlessRunDeps,
+    HostInputRespondFuture, HostInputResponder, RunArtifactIdentity, RunReporter,
 };
 use crate::{
     app::{
@@ -179,9 +179,18 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(50));
     let session = runtime.session(SessionOptions::default()).await.unwrap();
 
-    let outcome = complete_run(&session, "continue".into(), None, None, None, None)
-        .await
-        .unwrap();
+    let outcome = complete_run(
+        &session,
+        "continue".into(),
+        HeadlessRunDeps {
+            reporter: None,
+            external_cancellation: None,
+            jsonl: None,
+            host_input: None,
+        },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome.text(), "done");
     let requests = provider.recorded_requests();
@@ -370,7 +379,16 @@ async fn headless_run_fails_closed_without_host_input_responder() {
 
     let error = timeout(
         Duration::from_secs(2),
-        complete_run(&session, "ask".into(), None, None, None, None),
+        complete_run(
+            &session,
+            "ask".into(),
+            HeadlessRunDeps {
+                reporter: None,
+                external_cancellation: None,
+                jsonl: None,
+                host_input: None,
+            },
+        ),
     )
     .await
     .expect("fail-closed path should finish")
@@ -412,10 +430,12 @@ async fn headless_run_answers_host_input_through_generic_responder() {
         complete_run(
             &session,
             "ask".into(),
-            None,
-            None,
-            None,
-            Some(&responder as &dyn HostInputResponder),
+            HeadlessRunDeps {
+                reporter: None,
+                external_cancellation: None,
+                jsonl: None,
+                host_input: Some(&responder as &dyn HostInputResponder),
+            },
         ),
     )
     .await
@@ -469,10 +489,12 @@ async fn headless_run_drains_events_while_waiting_for_parent_host_input() {
             complete_run(
                 &session,
                 "ask".into(),
-                None,
-                None,
-                None,
-                Some(&responder as &dyn HostInputResponder),
+                HeadlessRunDeps {
+                    reporter: None,
+                    external_cancellation: None,
+                    jsonl: None,
+                    host_input: Some(&responder as &dyn HostInputResponder),
+                },
             )
             .await
         }
@@ -566,10 +588,12 @@ async fn headless_run_drains_events_while_waiting_for_respond_ack() {
         complete_run(
             &session,
             "ask".into(),
-            None,
-            None,
-            None,
-            Some(&responder as &dyn HostInputResponder),
+            HeadlessRunDeps {
+                reporter: None,
+                external_cancellation: None,
+                jsonl: None,
+                host_input: Some(&responder as &dyn HostInputResponder),
+            },
         )
         .await
     });

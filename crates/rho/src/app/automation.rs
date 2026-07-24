@@ -553,10 +553,12 @@ async fn run_session_with_output(
     let result = complete_run(
         &session,
         prompt_text,
-        reporter,
-        cancellation,
-        jsonl,
-        startup.host_input.as_deref(),
+        HeadlessRunDeps {
+            reporter,
+            external_cancellation: cancellation,
+            jsonl,
+            host_input: startup.host_input.as_deref(),
+        },
     )
     .await;
 
@@ -571,14 +573,24 @@ async fn run_session_with_output(
     result
 }
 
+struct HeadlessRunDeps<'a> {
+    reporter: Option<&'a mut RunReporter>,
+    external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
+    jsonl: Option<&'a mut JsonlAdapter>,
+    host_input: Option<&'a dyn HostInputResponder>,
+}
+
 async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
-    reporter: Option<&mut RunReporter>,
-    external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
-    jsonl: Option<&mut JsonlAdapter>,
-    host_input: Option<&dyn HostInputResponder>,
+    dependencies: HeadlessRunDeps<'_>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
+    let HeadlessRunDeps {
+        reporter,
+        external_cancellation,
+        jsonl,
+        host_input,
+    } = dependencies;
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
     let external_cancellation = external_cancellation.unwrap_or_default();

@@ -303,9 +303,7 @@ impl App {
 
 pub(super) async fn next_subagent_host_input(
     receiver: &mut Option<
-        tokio::sync::mpsc::UnboundedReceiver<
-            crate::app::subagent_host_input::SubagentHostInputRequest,
-        >,
+        tokio::sync::mpsc::Receiver<crate::app::subagent_host_input::SubagentHostInputRequest>,
     >,
 ) -> Option<crate::app::subagent_host_input::SubagentHostInputRequest> {
     receiver

@@ -7,6 +7,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::automation::{HostInputRespondFuture, HostInputResponder};
 
+const HOST_INPUT_QUEUE_CAPACITY: usize = 32;
+
 /// One questionnaire raised by a delegated run and awaiting a parent answer.
 pub(crate) struct SubagentHostInputRequest {
     pub(crate) run_id: String,
@@ -23,7 +25,7 @@ pub(crate) struct SubagentHostInputBridge {
 
 #[derive(Default)]
 struct Inner {
-    sender: Mutex<Option<mpsc::UnboundedSender<SubagentHostInputRequest>>>,
+    sender: Mutex<Option<mpsc::Sender<SubagentHostInputRequest>>>,
 }
 
 /// Headless responder that forwards child questionnaires through a parent bridge.
@@ -72,8 +74,8 @@ impl SubagentHostInputBridge {
     }
 
     /// Installs the parent receiver. Replaces any previous binding.
-    pub(crate) fn bind_parent(&self) -> mpsc::UnboundedReceiver<SubagentHostInputRequest> {
-        let (sender, receiver) = mpsc::unbounded_channel();
+    pub(crate) fn bind_parent(&self) -> mpsc::Receiver<SubagentHostInputRequest> {
+        let (sender, receiver) = mpsc::channel(HOST_INPUT_QUEUE_CAPACITY);
         *self
             .inner
             .sender
@@ -120,17 +122,19 @@ impl SubagentHostInputBridge {
                     .into(),
             })?;
         let (response_tx, response_rx) = oneshot::channel();
-        sender
-            .send(SubagentHostInputRequest {
-                run_id: run_id.into(),
-                agent_id: agent_id.into(),
-                parent_session_id,
-                request,
-                response: response_tx,
-            })
-            .map_err(|_| Error::Interrupted {
+        let pending = SubagentHostInputRequest {
+            run_id: run_id.into(),
+            agent_id: agent_id.into(),
+            parent_session_id,
+            request,
+            response: response_tx,
+        };
+        tokio::select! {
+            result = sender.send(pending) => result.map_err(|_| Error::Interrupted {
                 message: "parent session stopped accepting delegated questionnaires".into(),
-            })?;
+            })?,
+            () = cancellation.cancelled() => return Err(Error::Cancelled),
+        }
         tokio::select! {
             result = response_rx => result.map_err(|_| Error::Interrupted {
                 message: "delegated questionnaire was dropped without a response".into(),

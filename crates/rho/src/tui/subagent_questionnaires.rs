@@ -265,7 +265,10 @@ impl App {
             && matches!(self.input_ui.composer(), ComposerMode::Input)
             && !self.input_ui.has_pending_draft()
             && self.allows_idle_subagent_delivery()
-            && self.goal.is_none()
+            && self
+                .goal
+                .as_ref()
+                .is_none_or(crate::tui::goal::GoalState::is_blocked)
             && self.pending.queued_prompts().is_empty()
             && self.pending.steering_prompts().is_empty()
     }

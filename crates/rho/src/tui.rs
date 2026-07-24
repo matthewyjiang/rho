@@ -295,9 +295,7 @@ struct App {
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
     subagent_host_input: Option<
-        tokio::sync::mpsc::UnboundedReceiver<
-            crate::app::subagent_host_input::SubagentHostInputRequest,
-        >,
+        tokio::sync::mpsc::Receiver<crate::app::subagent_host_input::SubagentHostInputRequest>,
     >,
     queued_subagent_questionnaires:
         VecDeque<crate::app::subagent_host_input::SubagentHostInputRequest>,
