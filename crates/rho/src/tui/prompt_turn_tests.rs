@@ -29,6 +29,59 @@ fn approval_and_questionnaire_share_one_interaction_slot() {
 }
 
 #[test]
+fn mixed_interactions_preserve_arrival_order() {
+    let approval_request = rho_sdk::ApprovalRequest::new(
+        rho_sdk::CapabilityRequest::read_path(
+            "/workspace/file",
+            rho_sdk::PathScope::PrimaryWorkspace,
+            rho_sdk::CapabilitySource::built_in_tool("read_file"),
+        ),
+        "approval required",
+    );
+    let (approval, _approval_response) = rho_sdk::PendingApproval::new(approval_request);
+    let question = rho_sdk::HostQuestion::new(
+        "color",
+        "Choose one color",
+        vec![rho_sdk::HostChoice::new("blue", "blue")],
+        rho_sdk::SelectionMode::One,
+    )
+    .unwrap();
+    let parent_request =
+        rho_sdk::HostInputRequest::questionnaire("parent", vec![question.clone()]).unwrap();
+    let child_request = rho_sdk::HostInputRequest::questionnaire("child", vec![question]).unwrap();
+    let (child_response, _child_response_rx) = tokio::sync::oneshot::channel();
+    let child = crate::app::subagent_host_input::SubagentHostInputRequest {
+        run_id: "abc123".into(),
+        agent_id: "worker".into(),
+        parent_session_id: rho_sdk::SessionId::new(),
+        request: child_request,
+        response: child_response,
+    };
+
+    let mut queue = RunningInteractionQueue::default();
+    queue.push(QueuedRunningInteraction::Approval(approval));
+    queue.push(QueuedRunningInteraction::SubagentQuestionnaire(child));
+    queue.push(QueuedRunningInteraction::ParentQuestionnaire {
+        call_id: rho_sdk::ToolCallId::from_string("parent-call").unwrap(),
+        request: parent_request,
+    });
+
+    assert!(matches!(
+        queue.pop(),
+        Some(QueuedRunningInteraction::Approval(_))
+    ));
+    assert!(matches!(
+        queue.pop(),
+        Some(QueuedRunningInteraction::SubagentQuestionnaire(_))
+    ));
+    assert!(matches!(
+        queue.pop(),
+        Some(QueuedRunningInteraction::ParentQuestionnaire { .. })
+    ));
+    assert!(queue.pop().is_none());
+}
+
+#[test]
 fn retry_request_reuses_the_failed_turn_input_and_display() {
     let failed_turn = failed_turn();
     let PromptTurnRequest::Retry(retry) = PromptTurnRequest::Retry(failed_turn.clone()) else {

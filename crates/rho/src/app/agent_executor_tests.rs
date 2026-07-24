@@ -1,10 +1,16 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::app::subagent_host_input::SubagentHostInputBridge;
 
 #[test]
 fn model_updates_are_shared_with_executor_clones() {
-    let executor = AgentExecutor::new(Config::default(), PathBuf::new(), PathBuf::new());
+    let executor = AgentExecutor::new(
+        Config::default(),
+        PathBuf::new(),
+        PathBuf::new(),
+        SubagentHostInputBridge::new(),
+    );
     let cloned = executor.clone();
 
     executor.update_model("openai-codex", "gpt-5.6-luna", rho_sdk::ReasoningLevel::Low);
@@ -17,7 +23,12 @@ fn model_updates_are_shared_with_executor_clones() {
 
 #[test]
 fn permission_mode_updates_are_shared_with_executor_clones() {
-    let executor = AgentExecutor::new(Config::default(), PathBuf::new(), PathBuf::new());
+    let executor = AgentExecutor::new(
+        Config::default(),
+        PathBuf::new(),
+        PathBuf::new(),
+        SubagentHostInputBridge::new(),
+    );
     let cloned = executor.clone();
 
     executor.update_permission_mode(crate::permission::PermissionMode::Plan);

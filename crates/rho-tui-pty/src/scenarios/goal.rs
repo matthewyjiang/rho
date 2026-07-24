@@ -91,6 +91,39 @@ pub(super) const GOAL_WAITS_FOR_SUBAGENTS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+pub(super) const GOAL_QUESTIONNAIRE_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("delegate_questionnaire_goal_work"),
+    Step::SubmitText("/goal fixture goal background questionnaire"),
+    Step::WaitText {
+        text: "asks: Background questionnaire",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "Choose one color",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "answered questionnaire for agent",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "background agent questionnaire completion received (delivery 1)",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "goal achieved",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
 fn assert_goal_retry_waited_for_subagents(harness: &mut crate::PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if screen.contains("goal retry started before delegated agent finished") {

@@ -1,15 +1,12 @@
-//! Background polling for model metadata, update notices, and idle subagents.
+//! Background polling for model metadata and update notices.
 
 use futures_util::FutureExt;
-use ratatui::DefaultTerminal;
 use rho_providers::model::models_dev::fetch_model_metadata;
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
 use crate::credential_store::build_provider;
 
-use super::{
-    reasoning_metadata, turn_prompt::TurnPrompt, App, Entry, InteractiveRuntime, TurnOutcome,
-};
+use super::{reasoning_metadata, App, Entry, InteractiveRuntime};
 
 impl App {
     pub(super) fn poll_update_notice(&mut self) {
@@ -23,55 +20,6 @@ impl App {
         if let Ok(Some(notice)) = result {
             self.info.services.update_notice = Some(notice);
         }
-    }
-
-    /// Wakes an idle session with a turn for finished background subagents.
-    /// Real prompt turns drain these notifications themselves, while active
-    /// goals deliver them before evaluating the goal again.
-    pub(super) async fn poll_subagent_completions(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        if !self.should_deliver_idle_subagent_completions() {
-            return Ok(false);
-        }
-        Ok(self
-            .run_subagent_completion_turn(terminal, agent)
-            .await?
-            .is_some())
-    }
-
-    pub(super) async fn run_subagent_completion_turn(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<Option<TurnOutcome>> {
-        let Some(manager) = agent.subagents().cloned() else {
-            return Ok(None);
-        };
-        let notifications = manager.take_notifications(agent.session_id().as_str());
-        if notifications.is_empty() {
-            return Ok(None);
-        }
-        // The whole drained batch is one message and one model request, no
-        // matter how many runs finished while the parent was busy.
-        let (model_prompt, display_prompt) =
-            crate::tools::agent::notification_prompts(&notifications);
-        self.run_prompt_turn(
-            TurnPrompt::standard(model_prompt, display_prompt),
-            Vec::new(),
-            terminal,
-            agent,
-        )
-        .await
-        .map(Some)
-    }
-
-    pub(super) fn should_deliver_idle_subagent_completions(&self) -> bool {
-        self.allows_idle_subagent_delivery()
-            && self.goal.is_none()
-            && self.pending.queued_prompts().is_empty()
     }
 
     pub(super) fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {

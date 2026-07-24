@@ -43,6 +43,7 @@ mod file_palette;
 mod file_picker;
 mod frame_scheduler;
 mod goal;
+mod subagent_questionnaires;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod choice_actions;
 mod during_turn;
@@ -268,7 +269,14 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
             Ok(()) => {
                 let mut app = App::new(info, herdr_graphics);
                 app.terminal_session = Some(TerminalSession::acquire());
-                app.run(&mut terminal, agent).await
+                if let Some(manager) = agent.subagents() {
+                    app.subagent_host_input = Some(manager.bind_host_input());
+                }
+                let result = app.run(&mut terminal, agent).await;
+                if let Some(manager) = agent.subagents() {
+                    manager.unbind_host_input();
+                }
+                result
             }
             Err(error) => Err(error),
         }
@@ -286,6 +294,12 @@ struct App {
     terminal_session: Option<TerminalSession>,
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
+    subagent_host_input: Option<
+        tokio::sync::mpsc::Receiver<crate::app::subagent_host_input::SubagentHostInputRequest>,
+    >,
+    queued_subagent_questionnaires:
+        VecDeque<crate::app::subagent_host_input::SubagentHostInputRequest>,
+    pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,
     status: String,
     should_quit: bool,
@@ -314,6 +328,13 @@ struct App {
     pending_session_title: Option<PendingSessionTitle>,
     clipboard: Box<dyn ClipboardWriter + Send>,
     last_mouse_position: Option<(u16, u16)>,
+}
+
+struct PendingSubagentQuestionnaire {
+    run_id: String,
+    agent_id: String,
+    reply_rx: oneshot::Receiver<QuestionnaireReply>,
+    response_tx: tokio::sync::oneshot::Sender<Result<rho_sdk::HostInputResponse, rho_sdk::Error>>,
 }
 
 #[cfg(test)]

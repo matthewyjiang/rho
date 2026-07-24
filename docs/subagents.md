@@ -52,7 +52,7 @@ Unknown fields, values, and tool references fail before provider execution. Defi
 
 Every invocation goes through the same binder. It resolves model and reasoning policy, renders prompt policy, and intersects requested tools with capabilities supplied by the host. Host policy is always the upper authority boundary.
 
-Delegated invocations do not receive `agent`, `agents`, or interactive questionnaire capabilities, so they cannot recursively delegate. Each delegated run owns a fresh SDK runtime, session, tool registry, cancellation token, event stream, and usage accounting. Immutable configuration and provider infrastructure may be shared.
+Delegated invocations do not receive `agent` or `agents`, so they cannot recursively delegate. Background delegated agents under an interactive parent may use the questionnaire tool. The child pauses on that request, the parent TUI presents the structured form without blocking its active turn or goal loop, and the answer is routed back to the same child run. TUI approvals and questionnaires still use one shared interaction slot, so concurrent requests wait in order. Foreground delegated agents and headless automation omit questionnaire support. Each delegated run owns a fresh SDK runtime, session, tool registry, cancellation token, event stream, and usage accounting. Immutable configuration and provider infrastructure may be shared.
 
 ## Delegating work
 
@@ -61,7 +61,7 @@ The `agent` tool accepts an `agent_id`, prompt, and optional `background` flag:
 - Foreground delegation waits on the run handle and returns its final result.
 - Background delegation returns a six-character run ID immediately and sends a completion notification later.
 
-Both modes use the same in-process `AgentExecutor`; Rho never starts a CLI child for internal delegation. The `agents` tool lists, inspects, or cancels handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run headlessly and cannot open an approval prompt in the parent TUI. In Supervised mode, delegated Write and Process operations therefore fail closed. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
+Both modes use the same in-process `AgentExecutor`; Rho never starts a CLI child for internal delegation. The `agents` tool lists, inspects, or cancels handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by background agents surface in the parent session; approvals still cannot. In Supervised mode, delegated Write and Process operations therefore fail closed. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
 

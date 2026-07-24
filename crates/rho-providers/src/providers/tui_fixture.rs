@@ -23,14 +23,18 @@ const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
 const CONCURRENT_SLOW_CALL_ID: &str = "tui-fixture-concurrent-slow";
 const CONCURRENT_FAST_CALL_ID: &str = "tui-fixture-concurrent-fast";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
+const BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID: &str = "tui-fixture-background-questionnaire-agent";
 const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
 const GOAL_BLOCKED_CONDITION: &str = "fixture goal blocked";
 const GOAL_DELEGATION_CONDITION: &str = "fixture goal delegation";
+const GOAL_QUESTIONNAIRE_CONDITION: &str = "fixture goal background questionnaire";
 const GOAL_DELEGATION_RETRY_CONDITION: &str = "fixture goal delegation retry";
 const DELEGATION_REVIEW_RESPONSE: &str =
     "background agent completion received with delegated result (delivery 1)";
+const BACKGROUND_QUESTIONNAIRE_COMPLETION: &str =
+    "background agent questionnaire completed with color blue";
 static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 static GOAL_BLOCKED_EVALUATIONS: AtomicUsize = AtomicUsize::new(0);
 static GOAL_DELEGATION_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -113,6 +117,19 @@ async fn fixture_stream(
             "deterministic goal delegation retry failure",
             Retryability::Retryable,
         ));
+    }
+    if is_goal_questionnaire_prompt(&prompt)
+        && tool_result(&request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none()
+    {
+        return completed_tool_call(
+            BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
+            "agent",
+            serde_json::json!({
+                "agent_id": "worker",
+                "prompt": "fixture delayed child questionnaire",
+                "background": true,
+            }),
+        );
     }
     if is_goal_delegation_prompt(&prompt)
         && tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none()
@@ -292,6 +309,51 @@ async fn fixture_stream(
                 }),
             )
         }
+        "fixture background questionnaire"
+            if tool_result(&request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none() =>
+        {
+            completed_tool_call(
+                BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker",
+                    "prompt": "fixture child questionnaire",
+                    "background": true,
+                }),
+            )
+        }
+        "fixture child questionnaire" | "fixture delayed child questionnaire"
+            if tool_result(&request, QUESTIONNAIRE_CALL_ID).is_none() =>
+        {
+            if prompt == "fixture delayed child questionnaire" {
+                fixture_sleep(&request.cancellation, Duration::from_secs(1)).await?;
+            }
+            completed_tool_call(
+                QUESTIONNAIRE_CALL_ID,
+                "questionnaire",
+                serde_json::json!({
+                    "title": "Background questionnaire",
+                    "reason": "Validate delegated host input routing.",
+                    "questions": [{
+                        "id": "color",
+                        "question": "Choose one color",
+                        "type": "choice",
+                        "choices": [
+                            {
+                                "label": "red",
+                                "description": "A warm primary color"
+                            },
+                            {
+                                "label": "blue",
+                                "description": "A cool primary color"
+                            }
+                        ],
+                        "default": "red",
+                        "required": true,
+                    }],
+                }),
+            )
+        }
         "fixture agents list" if tool_result(&request, AGENTS_LIST_CALL_ID).is_none() => {
             completed_tool_call(
                 AGENTS_LIST_CALL_ID,
@@ -356,6 +418,9 @@ async fn fixture_stream(
             completed(response)
         }
         _ => {
+            if prompt == "fixture background questionnaire" {
+                fixture_sleep(&request.cancellation, Duration::from_secs(2)).await?;
+            }
             let response = fixture_response(&request)?;
             let ModelResponse::Assistant(blocks) = &response;
             for block in blocks {
@@ -378,6 +443,11 @@ fn is_goal_delegation_prompt(prompt: &str) -> bool {
         && prompt.contains(&format!("Goal:\n{GOAL_DELEGATION_CONDITION}\n\n"))
 }
 
+fn is_goal_questionnaire_prompt(prompt: &str) -> bool {
+    prompt.contains("The user invoked Rho's `/goal` command")
+        && prompt.contains(&format!("Goal:\n{GOAL_QUESTIONNAIRE_CONDITION}\n\n"))
+}
+
 fn is_goal_delegation_retry_continuation(prompt: &str) -> bool {
     prompt.starts_with("Continue working toward this goal:")
         && prompt.contains(GOAL_DELEGATION_RETRY_CONDITION)
@@ -394,6 +464,11 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
             r#"{"state":"Met","reason":"the fixture release is now published","human_steps":[]}"#
         };
         return completed(evaluation);
+    }
+    if is_goal_questionnaire_evaluation(request) {
+        return completed(
+            r#"{"state":"Met","reason":"the delegated questionnaire was answered","human_steps":[]}"#,
+        );
     }
     if is_delegation_retry_goal_evaluation(request) {
         let reviewed = last_user_text(request)
@@ -447,21 +522,43 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
             result.content
         ));
     }
-    if let Some(result) = tool_result(request, QUESTIONNAIRE_CALL_ID) {
-        let count = current_turn_tool_results(request)
-            .filter(|result| result.id == QUESTIONNAIRE_CALL_ID)
-            .count();
-        return completed(format!(
-            "questionnaire response observed exactly {count} time(s): {}",
-            result.content
-        ));
-    }
     if let Some(result) = tool_result(request, BACKGROUND_AGENT_CALL_ID) {
         // Echo the spawn receipt so PTY scenarios can assert from screen text
         // that the tool resolved immediately with a start line, then end the
         // turn so completion arrives through automatic delivery.
         let receipt = result.content.lines().next().unwrap_or_default();
         return completed(format!("background agent dispatched: {receipt}"));
+    }
+    if let Some(result) = tool_result(request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID) {
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return completed(format!(
+            "background questionnaire agent dispatched: {receipt}"
+        ));
+    }
+    if let Some(result) = tool_result(request, QUESTIONNAIRE_CALL_ID) {
+        let count = current_turn_tool_results(request)
+            .filter(|result| result.id == QUESTIONNAIRE_CALL_ID)
+            .count();
+        let prompt = last_user_text(request).unwrap_or_default();
+        if matches!(
+            prompt.as_str(),
+            "fixture child questionnaire" | "fixture delayed child questionnaire"
+        ) {
+            if result.content.contains("blue") {
+                return completed(format!(
+                    "{BACKGROUND_QUESTIONNAIRE_COMPLETION}: {}",
+                    result.content
+                ));
+            }
+            return completed(format!(
+                "background agent questionnaire received wrong answer: {}",
+                result.content
+            ));
+        }
+        return completed(format!(
+            "questionnaire response observed exactly {count} time(s): {}",
+            result.content
+        ));
     }
     if tool_result(request, AGENTS_LIST_CALL_ID).is_some() {
         return completed("agents list complete");
@@ -490,6 +587,19 @@ fn is_blocked_goal_evaluation(request: &ModelRequest<'_>) -> bool {
         )
     }) && last_user_text(request).is_some_and(|prompt| {
         prompt.contains(&format!("Completion condition:\n{GOAL_BLOCKED_CONDITION}"))
+    })
+}
+
+fn is_goal_questionnaire_evaluation(request: &ModelRequest<'_>) -> bool {
+    request.messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::System(prompt) if prompt.contains("conservative goal-completion evaluator")
+        )
+    }) && last_user_text(request).is_some_and(|prompt| {
+        prompt.contains(&format!(
+            "Completion condition:\n{GOAL_QUESTIONNAIRE_CONDITION}"
+        ))
     })
 }
 
@@ -569,10 +679,17 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
             )
         })
         .count();
-    if prompt.contains("(worker): ok") && prompt.contains("assistant stream part one part two") {
-        format!(
-            "background agent completion received with delegated result (delivery {deliveries})"
-        )
+    if prompt.contains("(worker): ok")
+        && (prompt.contains("assistant stream part one part two")
+            || prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION))
+    {
+        if prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION) {
+            format!("background agent questionnaire completion received (delivery {deliveries})")
+        } else {
+            format!(
+                "background agent completion received with delegated result (delivery {deliveries})"
+            )
+        }
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }

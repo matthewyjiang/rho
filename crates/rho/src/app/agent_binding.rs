@@ -63,7 +63,6 @@ impl AgentBinder {
         if invocation.role == AgentRole::Delegated {
             capabilities.remove(&ToolCapability::Agent);
             capabilities.remove(&ToolCapability::Agents);
-            capabilities.remove(&ToolCapability::Questionnaire);
         }
 
         let capabilities = match &definition.tools {

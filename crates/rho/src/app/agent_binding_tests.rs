@@ -57,12 +57,29 @@ fn root_roles_bind_equivalently() {
 }
 
 #[test]
-fn delegated_role_removes_recursive_and_interactive_capabilities() {
+fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     let bound = AgentBinder::bind(
         definition(ToolPolicy::All),
         AgentInvocation {
             role: AgentRole::Delegated,
             available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        bound.capabilities(),
+        &capability_set(&["read_file", "write_file", "questionnaire"])
+    );
+}
+
+#[test]
+fn delegated_role_removes_recursive_capabilities() {
+    let bound = AgentBinder::bind(
+        definition(ToolPolicy::All),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capability_set(&["read_file", "write_file", "agent", "agents"]),
         },
         &Config::default(),
     )

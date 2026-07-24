@@ -639,6 +639,82 @@ async fn respond_and_steering_are_acknowledged_while_progress_backpressures_even
 }
 
 #[tokio::test]
+async fn request_respond_is_acknowledged_while_progress_backpressures_events() {
+    let request = question_request("request-respond-backpressure");
+    let progress_gate = Arc::new(Semaphore::new(0));
+    let finish_gate = Arc::new(Semaphore::new(0));
+    let (progress_sent, mut sent) = mpsc::unbounded_channel();
+    let runtime = Rho::builder()
+        .provider(provider(vec![
+            call("ask-call", "interact", "ask", "ask"),
+            call("progress-call", "interact", "progress", "progress"),
+        ]))
+        .tool(BackpressureInteractionTool {
+            request,
+            progress_gate: Arc::clone(&progress_gate),
+            progress_sent,
+            finish_gate: Arc::clone(&finish_gate),
+        })
+        .max_parallel_tools(NonZeroUsize::new(2).unwrap())
+        .event_capacity(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session
+        .start(UserInput::text("request respond backpressure"))
+        .await
+        .unwrap();
+
+    let pending = loop {
+        if let RunEvent::ToolHostInputRequested { request, .. } =
+            tokio::time::timeout(TEST_TIMEOUT, run.next_event())
+                .await
+                .expect("host input request was not delivered")
+                .expect("run ended before requesting host input")
+        {
+            break request;
+        }
+    };
+
+    progress_gate.add_permits(2);
+    for _ in 0..2 {
+        tokio::time::timeout(TEST_TIMEOUT, sent.recv())
+            .await
+            .expect("progress sender stalled")
+            .expect("progress sender closed");
+    }
+
+    let ack = run
+        .request_respond(
+            pending.id().clone(),
+            HostInputResponse::new().answer("answer", ["yes"]),
+        )
+        .expect("request_respond should queue under event backpressure");
+    tokio::pin!(ack);
+
+    // Keep draining events so the runtime can accept the queued Respond command.
+    let accepted = tokio::time::timeout(TEST_TIMEOUT, async {
+        loop {
+            tokio::select! {
+                result = &mut ack => break result,
+                event = run.next_event() => {
+                    if event.is_none() {
+                        break ack.await;
+                    }
+                }
+            }
+        }
+    })
+    .await
+    .expect("request_respond was not acknowledged under event backpressure");
+    accepted.unwrap();
+
+    finish_gate.add_permits(1);
+    while run.next_event().await.is_some() {}
+    assert_eq!(run.outcome().await.unwrap().text(), "done");
+}
+
+#[tokio::test]
 async fn steering_during_parallel_batch_applies_after_all_results_close() {
     let (probe, mut started) = InteractionProbe::new();
     let scripted = provider(vec![

@@ -23,8 +23,10 @@ pub enum ScenarioId {
     LoginProviderGroups,
     GoalBlockedAndResumed,
     GoalWaitsForSubagents,
+    GoalQuestionnaire,
     GoalWaitsForSubagentsDuringRetry,
     BackgroundAgentAutoDelivery,
+    BackgroundAgentQuestionnaire,
 }
 
 impl ScenarioId {
@@ -52,8 +54,10 @@ impl ScenarioId {
             Self::LoginProviderGroups => "login_provider_groups",
             Self::GoalBlockedAndResumed => "goal_blocked_and_resumed",
             Self::GoalWaitsForSubagents => "goal_waits_for_subagents",
+            Self::GoalQuestionnaire => "goal_questionnaire",
             Self::GoalWaitsForSubagentsDuringRetry => "goal_waits_for_subagents_during_retry",
             Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
+            Self::BackgroundAgentQuestionnaire => "background_agent_questionnaire",
         }
     }
 
@@ -81,8 +85,10 @@ impl ScenarioId {
             "login_provider_groups" => Some(Self::LoginProviderGroups),
             "goal_blocked_and_resumed" => Some(Self::GoalBlockedAndResumed),
             "goal_waits_for_subagents" => Some(Self::GoalWaitsForSubagents),
+            "goal_questionnaire" => Some(Self::GoalQuestionnaire),
             "goal_waits_for_subagents_during_retry" => Some(Self::GoalWaitsForSubagentsDuringRetry),
             "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
+            "background_agent_questionnaire" => Some(Self::BackgroundAgentQuestionnaire),
             _ => None,
         }
     }
