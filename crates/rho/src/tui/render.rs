@@ -1,8 +1,12 @@
 mod entry_render;
 
 #[cfg(test)]
+use entry_render::render_entry;
+#[cfg(test)]
 pub(super) use entry_render::render_entry_with_images;
-pub(super) use entry_render::{apply_markdown_images, entry_lines, render_entry};
+pub(super) use entry_render::{
+    apply_markdown_images, entry_lines, render_entry_with_options, TrailingBlank,
+};
 
 use super::{
     feed_image::{

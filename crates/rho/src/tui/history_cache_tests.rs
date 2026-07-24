@@ -1,7 +1,9 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::{entry_lines, render_entry_with_images};
+use crate::tui::render::{
+    entry_lines, render_entry_with_images, render_entry_with_options, TrailingBlank,
+};
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -334,4 +336,47 @@ fn markdown_image_placement_renders_after_images_resolve() {
     );
     let expected = render_entry_with_images(&entries[0], 40, 20, Some(&[(0, feed.clone())])).lines;
     assert_eq!(lines, expected);
+}
+
+#[test]
+fn open_stream_tail_omits_trailing_blank_until_closed() {
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![Entry::Assistant("Hello committed line\n".into())];
+
+    cache.set_open_stream_tail(true);
+    let open_count = cache.line_count(&entries, 60, 10, &no_images);
+    let mut open_lines = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        60,
+        10,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut open_lines,
+        &no_images,
+    );
+    assert_eq!(open_lines.len(), open_count);
+    assert_eq!(
+        open_lines,
+        render_entry_with_options(&entries[0], 60, 10, TrailingBlank::Omit).lines
+    );
+
+    cache.set_open_stream_tail(false);
+    let closed_count = cache.line_count(&entries, 60, 10, &no_images);
+    assert_eq!(closed_count, open_count + 1);
+    let mut closed_lines = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        60,
+        10,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut closed_lines,
+        &no_images,
+    );
+    assert_eq!(closed_lines, entry_lines(&entries[0], 60, 10));
 }

@@ -184,6 +184,7 @@ impl App {
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
             let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+            self.sync_open_stream_tail();
             let index = self.history.with_lines_and_images_mut(
                 |history_lines, entries, markdown_images| {
                     history_lines.entry_index_at_line(

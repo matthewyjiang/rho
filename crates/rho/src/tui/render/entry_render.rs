@@ -1,6 +1,21 @@
 use super::*;
 use crate::tui::Entry;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum TrailingBlank {
+    Include,
+    Omit,
+}
+
+impl TrailingBlank {
+    fn is_included(self) -> bool {
+        match self {
+            Self::Include => true,
+            Self::Omit => false,
+        }
+    }
+}
+
 pub(in crate::tui) fn entry_lines(
     entry: &Entry,
     width: usize,
@@ -13,6 +28,19 @@ pub(in crate::tui) fn render_entry(
     entry: &Entry,
     width: usize,
     max_tool_output_lines: usize,
+) -> RenderedEntry {
+    render_entry_with_options(entry, width, max_tool_output_lines, TrailingBlank::Include)
+}
+
+/// Render an entry, optionally omitting the trailing separator blank.
+///
+/// Open stream tails omit the trailing blank so a live continuation can abut the
+/// committed content without a mid-message gap.
+pub(in crate::tui) fn render_entry_with_options(
+    entry: &Entry,
+    width: usize,
+    max_tool_output_lines: usize,
+    trailing_blank: TrailingBlank,
 ) -> RenderedEntry {
     let inner_width = padded_inner_width(width);
     let (mut lines, code_blocks, image_sources, image_rows) = match entry {
@@ -61,10 +89,13 @@ pub(in crate::tui) fn render_entry(
         .and_then(|line| line.spans.first())
         .map(|span| span.style)
         .unwrap_or_default();
-    let mut padded = Vec::with_capacity(lines.len() + 2);
+    let mut padded =
+        Vec::with_capacity(lines.len() + 1 + usize::from(trailing_blank.is_included()));
     padded.push(styled_blank_line(width, block_style));
     padded.extend(lines.into_iter().map(pad_line));
-    padded.push(styled_blank_line(width, block_style));
+    if trailing_blank.is_included() {
+        padded.push(styled_blank_line(width, block_style));
+    }
     RenderedEntry {
         lines: padded,
         code_blocks,
