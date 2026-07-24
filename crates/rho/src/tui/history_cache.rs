@@ -7,7 +7,7 @@ use super::{
     markdown::incremental_markdown_tail_start,
     markdown_image::MarkdownImageSource,
     message_render::render_assistant_content,
-    render::{apply_markdown_images, pad_entry_line, render_entry_with_options},
+    render::{apply_markdown_images, pad_entry_line, render_entry_with_options, TrailingBlank},
     tool_output_ui::is_tool_entry,
     Entry,
 };
@@ -241,7 +241,11 @@ impl HistoryLineCache {
                 self.lines.push(Line::raw(""));
             }
             let entry_start = self.lines.len();
-            let trailing_blank = !(self.open_stream_tail && entry_index + 1 == entries.len());
+            let trailing_blank = if self.open_stream_tail && entry_index + 1 == entries.len() {
+                TrailingBlank::Omit
+            } else {
+                TrailingBlank::Include
+            };
             let mut rendered =
                 render_entry_with_options(entry, width, max_tool_output_lines, trailing_blank);
             if !rendered.image_sources.is_empty() {

@@ -433,12 +433,13 @@ impl App {
 
     /// Open assistant/reasoning entries omit their trailing separator while the stream is live.
     pub(super) fn sync_open_stream_tail(&mut self) {
-        let open = match (self.streams.current_stream_kind, self.history.last()) {
-            (Some(StreamKind::Assistant), Some(Entry::Assistant(_))) => true,
-            (Some(StreamKind::Reasoning), Some(Entry::Reasoning(reasoning))) => {
-                !reasoning.text.is_empty()
-            }
-            _ => false,
+        let open = match self.streams.current_stream_kind {
+            None => false,
+            Some(StreamKind::Assistant) => matches!(self.history.last(), Some(Entry::Assistant(_))),
+            Some(StreamKind::Reasoning) => matches!(
+                self.history.last(),
+                Some(Entry::Reasoning(reasoning)) if !reasoning.text.is_empty()
+            ),
         };
         self.history.lines_mut().set_open_stream_tail(open);
     }

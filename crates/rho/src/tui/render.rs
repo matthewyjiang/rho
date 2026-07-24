@@ -3,7 +3,7 @@ mod entry_render;
 #[cfg(test)]
 pub(super) use entry_render::render_entry_with_images;
 pub(super) use entry_render::{
-    apply_markdown_images, entry_lines, render_entry, render_entry_with_options,
+    apply_markdown_images, entry_lines, render_entry, render_entry_with_options, TrailingBlank,
 };
 
 use super::{

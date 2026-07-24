@@ -1,7 +1,9 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::{entry_lines, render_entry_with_images, render_entry_with_options};
+use crate::tui::render::{
+    entry_lines, render_entry_with_images, render_entry_with_options, TrailingBlank,
+};
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -358,7 +360,7 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
     assert_eq!(open_lines.len(), open_count);
     assert_eq!(
         open_lines,
-        render_entry_with_options(&entries[0], 60, 10, false).lines
+        render_entry_with_options(&entries[0], 60, 10, TrailingBlank::Omit).lines
     );
 
     cache.set_open_stream_tail(false);
