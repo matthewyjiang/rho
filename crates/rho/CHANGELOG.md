@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.14.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.13.0...rho-coding-agent-v1.14.0) (2026-07-24)
+
+
+### Features
+
+* **questionnaire:** add focused default selection ([#530](https://github.com/matthewyjiang/rho/issues/530)) ([47d1853](https://github.com/matthewyjiang/rho/commit/47d185377a68881c96db18ee186b3173215e39ee))
+
+
+### Bug Fixes
+
+* **sessions:** resolve sessions by id from any directory ([#492](https://github.com/matthewyjiang/rho/issues/492)) ([f88ff1b](https://github.com/matthewyjiang/rho/commit/f88ff1b38cecbfebbc1046be14f9e0964c45d364))
+* **tui:** omit trailing blank on open stream entries ([#531](https://github.com/matthewyjiang/rho/issues/531)) ([5bb0046](https://github.com/matthewyjiang/rho/commit/5bb0046c93bca07e80a7dffcfb3b1bf46a701bbb))
+* **tui:** smooth external editor terminal handoff ([#527](https://github.com/matthewyjiang/rho/issues/527)) ([387e355](https://github.com/matthewyjiang/rho/commit/387e355e1ce049df1920ff96147b9108e9c33f52))
+* **web:** inline fetch content and session-folder web sidecars ([#532](https://github.com/matthewyjiang/rho/issues/532)) ([76e2f45](https://github.com/matthewyjiang/rho/commit/76e2f4534fd5618fffbebd0861089654a234f181))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.8.0 to 1.9.0
+    * rho-providers bumped from 0.8.0 to 0.8.1
+
 ## [1.13.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.12.2...rho-coding-agent-v1.13.0) (2026-07-23)
 
 
