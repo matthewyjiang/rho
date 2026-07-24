@@ -12,9 +12,27 @@ Sessions persist automatically under:
 
 `<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Rho uses the current directory as its [workspace](/tools-workspace).
 
+### Layout
+
+New sessions use one folder per session:
+
+```text
+~/.rho/sessions/<workspace-key>/<created-at>_<session-id>/
+  session.jsonl    # append-only transcript
+  web/             # web-access sidecar blobs for this session
+```
+
+Rho still opens legacy flat transcripts directly:
+
+```text
+~/.rho/sessions/<workspace-key>/<created-at>_<session-id>.jsonl
+```
+
+For those legacy files, web-access blobs use a sibling companion directory named `<created-at>_<session-id>.web/` when needed. Session discovery accepts either the folder transcript path or the legacy `.jsonl` file path.
+
 ## Creating a session
 
-Starting `rho` opens the [interactive TUI](/interactive-tui). Rho creates a new session file only after you send the first message.
+Starting `rho` opens the [interactive TUI](/interactive-tui). Rho creates a new session folder only after you send the first message.
 
 ## Resuming a session
 
@@ -54,6 +72,6 @@ Auto compaction is not a privacy or deletion feature.
 
 ## Resetting history
 
-Press `ctrl-r` in the [interactive TUI](/interactive-tui) to reset the conversation. The next message starts a new session file.
+Press `ctrl-r` in the [interactive TUI](/interactive-tui) to reset the conversation. The next message starts a new session folder.
 
 For one-shot prompts that do not need an ongoing interactive session, use [automation and CLI](/automation-cli).

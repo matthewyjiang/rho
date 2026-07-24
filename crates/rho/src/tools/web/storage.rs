@@ -13,6 +13,7 @@ use rho_tools::tool::ToolError;
 
 static CONTENT_STORE: OnceLock<Mutex<HashMap<String, StoredContent>>> = OnceLock::new();
 static CACHE_ROOT_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+static ACTIVE_SESSION_WEB_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct StoredContent {
@@ -91,9 +92,11 @@ pub(super) fn validate_response_id(response_id: &str) -> Result<(), ToolError> {
 
 /// Durable sidecar root for web-access blobs and GitHub clones.
 ///
-/// Lives under the Rho data directory when available so content survives process
-/// restarts without being stuffed into session transcripts. Falls back to the
-/// process temp directory only when the data root cannot be resolved.
+/// Preference order:
+/// 1. test override
+/// 2. active session `web/` directory
+/// 3. legacy process-global data-dir fallback
+/// 4. temp dir when no Rho home is available
 pub(super) fn web_access_cache_root() -> PathBuf {
     if let Some(path) = CACHE_ROOT_OVERRIDE
         .lock()
@@ -102,7 +105,26 @@ pub(super) fn web_access_cache_root() -> PathBuf {
     {
         return path;
     }
+    if let Some(path) = ACTIVE_SESSION_WEB_ROOT
+        .lock()
+        .expect("active session web root lock poisoned")
+        .clone()
+    {
+        return path;
+    }
     default_web_access_cache_root()
+}
+
+/// Binds web-access storage to the current durable session sidecar directory.
+pub(crate) fn set_active_session_web_root(path: Option<PathBuf>) {
+    *ACTIVE_SESSION_WEB_ROOT
+        .lock()
+        .expect("active session web root lock poisoned") = path;
+}
+
+#[cfg(test)]
+pub(crate) fn web_access_cache_root_for_tests() -> PathBuf {
+    web_access_cache_root()
 }
 
 pub(super) fn create_private_dir_all(path: &Path) -> Result<(), ToolError> {
@@ -156,6 +178,7 @@ fn content_store() -> &'static Mutex<HashMap<String, StoredContent>> {
 }
 
 fn default_web_access_cache_root() -> PathBuf {
+    // Used only when no session is bound (tests, pre-session tool calls).
     crate::paths::rho_dir()
         .map(|dir| dir.join("web-access"))
         .unwrap_or_else(|_| std::env::temp_dir().join("rho-web-access"))

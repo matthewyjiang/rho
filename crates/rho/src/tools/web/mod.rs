@@ -10,7 +10,7 @@ pub(super) mod sdk_get_search_content;
 pub(super) mod sdk_web_search;
 mod search;
 mod ssrf;
-mod storage;
+pub(crate) mod storage;
 mod util;
 
 pub use adapters::{GetSearchContent, WebSearch};

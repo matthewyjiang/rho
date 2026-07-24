@@ -74,6 +74,7 @@ impl InteractiveSessionController {
     }
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
+        storage.bind_web_access_root();
         self.storage = Some(storage);
         self.persisted_pending_user = false;
     }
@@ -116,6 +117,7 @@ impl InteractiveSessionController {
     pub(crate) fn reset(&mut self) -> anyhow::Result<SessionId> {
         self.session.reset()?;
         self.storage = None;
+        crate::tools::web::storage::set_active_session_web_root(None);
         self.persisted_pending_user = false;
         let session_id = SessionId::new();
         self.pending_session_id = Some(session_id.clone());
@@ -123,6 +125,7 @@ impl InteractiveSessionController {
     }
 
     pub(crate) fn set_resumed_storage(&mut self, storage: StoredSession) {
+        storage.bind_web_access_root();
         self.storage = Some(storage);
         self.persisted_pending_user = false;
     }

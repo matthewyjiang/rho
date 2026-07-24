@@ -350,9 +350,24 @@ fn stores_sessions_under_session_root_workspace_key() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
-    let expected_parent = root.join(workspace_key(&cwd));
+    let expected_workspace = root.join(workspace_key(&cwd));
 
-    assert_eq!(session.path().parent(), Some(expected_parent.as_path()));
+    assert_eq!(
+        session.path().file_name().and_then(|name| name.to_str()),
+        Some("session.jsonl")
+    );
+    assert_eq!(
+        session.path().parent().and_then(|path| path.parent()),
+        Some(expected_workspace.as_path())
+    );
+    assert!(session
+        .path()
+        .parent()
+        .unwrap()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap()
+        .contains(session.id()));
 }
 
 #[test]
@@ -598,7 +613,7 @@ fn list_removes_stale_index_rows() {
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
     assert_eq!(Session::list_in_root(&root, &cwd).unwrap().len(), 1);
-    fs::remove_file(session.path()).unwrap();
+    remove_session_storage(session.path());
 
     let summaries = Session::list_in_root(&root, &cwd).unwrap();
 
@@ -613,7 +628,12 @@ fn creates_session_paths_with_private_permissions() {
     let session = Session::create_in_root(&root, &cwd).unwrap();
 
     let root_mode = fs::metadata(&root).unwrap().permissions().mode() & 0o777;
-    let dir_mode = fs::metadata(session.path().parent().unwrap())
+    let workspace_mode = fs::metadata(session.path().parent().unwrap().parent().unwrap())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    let session_dir_mode = fs::metadata(session.path().parent().unwrap())
         .unwrap()
         .permissions()
         .mode()
@@ -621,7 +641,8 @@ fn creates_session_paths_with_private_permissions() {
     let file_mode = fs::metadata(session.path()).unwrap().permissions().mode() & 0o777;
 
     assert_eq!(root_mode, 0o700);
-    assert_eq!(dir_mode, 0o700);
+    assert_eq!(workspace_mode, 0o700);
+    assert_eq!(session_dir_mode, 0o700);
     assert_eq!(file_mode, 0o600);
 }
 
@@ -697,6 +718,14 @@ fn temp_cwd() -> TestDir {
     TestDir(tempfile::tempdir().unwrap())
 }
 
+fn remove_session_storage(path: &Path) {
+    if path.file_name().and_then(|name| name.to_str()) == Some("session.jsonl") {
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    } else {
+        fs::remove_file(path).unwrap();
+    }
+}
+
 fn write_minimal_session_file(root: &Path, cwd: &Path, id: &str) {
     write_session_file(root, cwd, id, 0, &[]);
 }
@@ -753,4 +782,56 @@ fn legacy_session_reports_missing_agent_identity() {
         Session::create_with_id_in_root(root.path(), cwd.path(), "legacy-session", None).unwrap();
 
     assert_eq!(session.stored_agent_identity().unwrap(), None);
+}
+
+#[test]
+fn opens_legacy_flat_jsonl_sessions_by_id() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    write_session_file(&root, &cwd, "flat-legacy-id", 42, &["hello legacy"]);
+
+    let (session, messages) = Session::open_by_id_in_root(&root, &cwd, "flat-legacy-id").unwrap();
+
+    assert_eq!(session.id(), "flat-legacy-id");
+    assert!(session.path().extension().and_then(|ext| ext.to_str()) == Some("jsonl"));
+    assert!(session
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap()
+        .ends_with("_flat-legacy-id.jsonl"));
+    assert!(matches!(
+        messages.as_slice(),
+        [Message::User(blocks)] if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "hello legacy")
+    ));
+}
+
+#[test]
+fn session_web_dir_uses_folder_sidecar_and_legacy_companion() {
+    let folder = PathBuf::from("/tmp/ws/100_abc/session.jsonl");
+    assert_eq!(
+        super::persistence::session_web_dir(&folder),
+        Some(PathBuf::from("/tmp/ws/100_abc/web"))
+    );
+
+    let legacy = PathBuf::from("/tmp/ws/100_abc.jsonl");
+    assert_eq!(
+        super::persistence::session_web_dir(&legacy),
+        Some(PathBuf::from("/tmp/ws/100_abc.web"))
+    );
+}
+
+#[test]
+fn bind_web_access_root_points_storage_at_session_web_dir() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    session.bind_web_access_root();
+
+    let expected = session.path().parent().unwrap().join("web");
+    assert_eq!(
+        crate::tools::web::storage::web_access_cache_root_for_tests(),
+        expected
+    );
+    crate::tools::web::storage::set_active_session_web_root(None);
 }
