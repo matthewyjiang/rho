@@ -233,24 +233,33 @@ mod windows_round_trip {
         ClaudeExecutable, ClaudeExecutableError, ClaudeInvocationKind, WindowsShimArgError,
     };
 
+    /// Fake Claude `.cmd` shim: forward `%*` to a native argv consumer.
+    ///
+    /// Real npm/scoop `claude.cmd` shims end with `node.exe ... %*`. Observing
+    /// batch `%1` is the wrong boundary: cmd keeps surrounding quotes in `%1`
+    /// (`ARG2="a b"`), while CRT / PowerShell `-File` / Node `process.argv`
+    /// dequote. Probe that native boundary so expectations match what Claude
+    /// receives. Delayed expansion stays off; extensions stay on so the std
+    /// `%` null-slice hack can restore literal percent chars before forward.
     fn write_cmd_recorder(path: &std::path::Path, out_file: &std::path::Path) {
-        // Dump %1..%9 after cmd parse. Delayed expansion off; extensions on
-        // so the std % null-slice hack can restore literal percent chars.
+        let probe = path.with_file_name("rho_cmd_argv_probe.ps1");
         let out = out_file.display().to_string().replace('/', "\\");
+        std::fs::write(
+            &probe,
+            "$ErrorActionPreference = 'Stop'\r\n\
+$outPath = $env:RHO_CMD_ARGV_OUT\r\n\
+if ([string]::IsNullOrEmpty($outPath)) { throw 'RHO_CMD_ARGV_OUT missing' }\r\n\
+$lines = New-Object System.Collections.Generic.List[string]\r\n\
+foreach ($a in $args) { [void]$lines.Add([string]$a) }\r\n\
+[System.IO.File]::WriteAllLines($outPath, $lines)\r\n",
+        )
+        .unwrap();
         let script = format!(
             "@echo off\r\n\
 setlocal EnableExtensions DisableDelayedExpansion\r\n\
-set \"OUT={out}\"\r\n\
->\"%OUT%\" echo ARG1=%1\r\n\
->>\"%OUT%\" echo ARG2=%2\r\n\
->>\"%OUT%\" echo ARG3=%3\r\n\
->>\"%OUT%\" echo ARG4=%4\r\n\
->>\"%OUT%\" echo ARG5=%5\r\n\
->>\"%OUT%\" echo ARG6=%6\r\n\
->>\"%OUT%\" echo ARG7=%7\r\n\
->>\"%OUT%\" echo ARG8=%8\r\n\
->>\"%OUT%\" echo ARG9=%9\r\n\
-exit /b 0\r\n"
+set \"RHO_CMD_ARGV_OUT={out}\"\r\n\
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%~dp0rho_cmd_argv_probe.ps1\" %*\r\n\
+exit /b %ERRORLEVEL%\r\n"
         );
         std::fs::write(path, script).unwrap();
     }
@@ -305,17 +314,23 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         ];
         let mut command = exe.try_command(args).unwrap();
         let body = run_and_read(&mut command, &out).await;
-        // %1..%9 lines; cmd dequotes standard quoted args.
-        assert!(body.contains("ARG1=auth"), "{body}");
-        assert!(body.contains("ARG2=a b"), "{body}");
-        assert!(body.contains("ARG3=a&b"), "{body}");
-        assert!(body.contains("ARG4=c|d"), "{body}");
-        assert!(body.contains("ARG5=e(f)"), "{body}");
-        assert!(body.contains("ARG6=wow!"), "{body}");
-        // % expansion null-slice should restore literal percent for the batch arg.
-        assert!(body.contains("ARG7=100%sure"), "{body}");
-        assert!(body.contains("ARG8=say \"hi\""), "{body}");
-        assert!(body.contains("ARG9=模型"), "{body}");
+        // Native-boundary argv (PowerShell -File after %* forward), not raw %1.
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "auth",
+                "a b",
+                "a&b",
+                "c|d",
+                "e(f)",
+                "wow!",
+                "100%sure",
+                "say \"hi\"",
+                "模型",
+            ],
+            "{body}"
+        );
     }
 
     #[tokio::test]
@@ -345,24 +360,16 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         ];
         let mut command = exe.try_command(args).unwrap();
         let body = run_and_read(&mut command, &out).await;
-        assert!(body.contains("ARG1=-p"), "{body}");
-        assert!(body.contains("ARG2=--system-prompt-file"), "{body}");
-        // Path with spaces must round-trip as one argument.
-        assert!(
-            body.contains(&format!("ARG3={prompt_path}"))
-                || body.lines().any(|line| {
-                    line.starts_with("ARG3=")
-                        && line.contains("system-prompt.txt")
-                        && line.contains("run dir")
-                }),
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines[0], "-p", "{body}");
+        assert_eq!(lines[1], "--system-prompt-file", "{body}");
+        // Path with spaces must round-trip as one dequoted argument.
+        assert_eq!(lines[2], prompt_path, "{body}");
+        assert_eq!(
+            &lines[3..],
+            ["a&b", "c|d", "e(f)", "x^y", "p>q", "wow!"],
             "{body}"
         );
-        assert!(body.contains("ARG4=a&b"), "{body}");
-        assert!(body.contains("ARG5=c|d"), "{body}");
-        assert!(body.contains("ARG6=e(f)"), "{body}");
-        assert!(body.contains("ARG7=x^y"), "{body}");
-        assert!(body.contains("ARG8=p>q"), "{body}");
-        assert!(body.contains("ARG9=wow!"), "{body}");
     }
 
     #[tokio::test]
