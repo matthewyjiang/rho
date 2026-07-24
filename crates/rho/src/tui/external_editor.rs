@@ -24,7 +24,7 @@ impl App {
         let (mut command, path) = match prepare_editor(&composer_text) {
             Ok(prepared) => prepared,
             Err(error) => {
-                self.notify_status(format!("editor failed: {error}"));
+                self.notify_status(editor_setup_status(&error));
                 return Ok(());
             }
         };
@@ -99,7 +99,7 @@ fn preserve_draft_for_recovery(contents: &str) -> anyhow::Result<std::path::Path
 }
 
 fn prepare_editor(contents: &str) -> anyhow::Result<(Command, tempfile::TempPath)> {
-    let editor = env::var_os("EDITOR").context("EDITOR is not set")?;
+    let editor = resolve_editor(env::var_os("VISUAL"), env::var_os("EDITOR"))?;
     let mut command = editor_command(&editor)?;
     let mut file = tempfile::Builder::new()
         .prefix("rho-composer-")
@@ -112,6 +112,23 @@ fn prepare_editor(contents: &str) -> anyhow::Result<(Command, tempfile::TempPath
     let path = file.into_temp_path();
     command.arg(path.as_os_str());
     Ok((command, path))
+}
+
+/// Prefer `VISUAL`, then `EDITOR`. Do not invent a platform default editor.
+fn resolve_editor(visual: Option<OsString>, editor: Option<OsString>) -> anyhow::Result<OsString> {
+    match visual {
+        Some(value) if !value.is_empty() => Ok(value),
+        _ => editor.context("EDITOR is not set"),
+    }
+}
+
+fn editor_setup_status(error: &anyhow::Error) -> String {
+    let message = error.to_string();
+    if message == "EDITOR is not set" {
+        message
+    } else {
+        format!("editor failed: {message}")
+    }
 }
 
 fn remove_editor_final_line_ending(mut text: String) -> String {

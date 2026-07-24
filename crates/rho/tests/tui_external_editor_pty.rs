@@ -143,30 +143,33 @@ fn external_editor_errors_preserve_the_composer() {
     std::fs::write(&failing_editor, "#!/bin/sh\nexit 7\n").unwrap();
     std::fs::set_permissions(&failing_editor, std::fs::Permissions::from_mode(0o700)).unwrap();
     let cases = [
-        ("empty", String::new(), "EDITOR is empty"),
+        ("unset", None, "EDITOR is not set"),
+        ("empty", Some(String::new()), "EDITOR is empty"),
         (
             "missing",
-            "/rho/does/not/exist".into(),
+            Some("/rho/does/not/exist".into()),
             "could not start EDITOR",
         ),
         (
             "nonzero",
-            failing_editor.display().to_string(),
+            Some(failing_editor.display().to_string()),
             "EDITOR exited with exit status: 7",
         ),
     ];
 
     for (name, editor, expected_error) in cases {
         let home = IsolatedHome::new().unwrap();
-        let plan = RhoLaunchPlan::matrix(
+        let mut plan = RhoLaunchPlan::matrix(
             PathBuf::from(env!("CARGO_BIN_EXE_rho")),
             &home,
             PtySize {
                 rows: 28,
                 cols: 100,
             },
-        )
-        .with_env("EDITOR", editor);
+        );
+        if let Some(editor) = editor {
+            plan = plan.with_env("EDITOR", editor);
+        }
         let mut harness =
             PtyHarness::spawn_named(&plan, format!("external_editor_{name}")).unwrap();
         harness
