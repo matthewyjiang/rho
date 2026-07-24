@@ -34,15 +34,27 @@ use super::{
         build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
     },
     sdk_config::SdkBootstrapOptions,
-    subagent_host_input::SubagentHostInputBridge,
 };
 
-/// Parent bridge used by delegated agents that need interactive questionnaires.
-pub(crate) struct DelegatedHostInput {
-    pub(crate) run_id: String,
-    pub(crate) agent_id: String,
-    pub(crate) parent_session_id: rho_sdk::SessionId,
-    pub(crate) bridge: SubagentHostInputBridge,
+/// Future returned by [`HostInputResponder`] implementations.
+pub(crate) type HostInputRespondFuture<'a> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<rho_sdk::HostInputResponse, rho_sdk::Error>>
+            + Send
+            + 'a,
+    >,
+>;
+
+/// Answers structured host questionnaires for a headless automation run.
+///
+/// Direct CLI automation leaves this unset and fails closed. Interactive hosts
+/// supply an implementation that forwards requests to a parent session or UI.
+pub(crate) trait HostInputResponder: Send + Sync {
+    fn respond<'a>(
+        &'a self,
+        request: rho_sdk::HostInputRequest,
+        cancellation: &'a rho_sdk::CancellationToken,
+    ) -> HostInputRespondFuture<'a>;
 }
 
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
@@ -156,7 +168,7 @@ pub(super) struct Startup<'a> {
     pub timeout: Option<Duration>,
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
-    pub host_input: Option<DelegatedHostInput>,
+    pub host_input: Option<Arc<dyn HostInputResponder>>,
 }
 
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
@@ -541,7 +553,7 @@ async fn run_session_with_output(
         reporter,
         cancellation,
         jsonl,
-        startup.host_input.as_ref(),
+        startup.host_input.as_deref(),
     )
     .await;
 
@@ -562,7 +574,7 @@ async fn complete_run(
     reporter: Option<&mut RunReporter>,
     external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
     jsonl: Option<&mut JsonlAdapter>,
-    host_input: Option<&DelegatedHostInput>,
+    host_input: Option<&dyn HostInputResponder>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     let cancellation = run.cancellation_handle();
@@ -585,82 +597,125 @@ async fn complete_run(
 
 /// Drives a run without a local TUI attached.
 ///
-/// Direct automation cannot answer host questionnaires. Delegated agents can
-/// forward them through a parent bridge when one is configured.
+/// Direct automation cannot answer host questionnaires. When a responder is
+/// configured, this loop keeps draining [`rho_sdk::RunEvent`]s and reporter
+/// heartbeats while waiting for the parent answer and the runtime ack so bounded
+/// event channels cannot deadlock the worker.
 async fn drive_headless_run(
     run: &mut rho_sdk::Run,
     mut reporter: Option<&mut RunReporter>,
     mut jsonl: Option<&mut JsonlAdapter>,
-    host_input: Option<&DelegatedHostInput>,
+    host_input: Option<&dyn HostInputResponder>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
+    let cancellation = run.cancellation_handle();
     let mut heartbeat = tokio::time::interval(REPORT_HEARTBEAT);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut pending_requests: std::collections::VecDeque<rho_sdk::HostInputRequest> =
+        std::collections::VecDeque::new();
+    let mut parent_wait: Option<(rho_sdk::HostInputId, HostInputRespondFuture<'_>)> = None;
+    let mut ack_wait: Option<
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), rho_sdk::Error>> + Send>>,
+    > = None;
+    let mut events_open = true;
+
     loop {
-        let event = tokio::select! {
-            event = run.next_event() => event,
-            _ = heartbeat.tick(), if reporter.is_some() => {
-                if let Some(reporter) = reporter.as_deref_mut() {
-                    reporter.write();
+        if parent_wait.is_none() && ack_wait.is_none() {
+            if let Some(request) = pending_requests.pop_front() {
+                match host_input {
+                    Some(responder) => {
+                        let request_id = request.id().clone();
+                        parent_wait = Some((request_id, responder.respond(request, &cancellation)));
+                    }
+                    None => {
+                        run.cancel();
+                        let _ = run.outcome().await;
+                        anyhow::bail!(
+                            "rho run cannot answer host input request '{}' ({}); run without tools that require interactive input",
+                            request.id(),
+                            request.title(),
+                        );
+                    }
                 }
-                continue;
             }
-        };
-        let Some(event) = event else {
+        }
+
+        if !events_open
+            && parent_wait.is_none()
+            && ack_wait.is_none()
+            && pending_requests.is_empty()
+        {
             break;
-        };
-        if let Some(reporter) = reporter.as_deref_mut() {
-            reporter.on_event(&event);
         }
-        if let Some(adapter) = jsonl.as_deref_mut() {
-            if let Some(wire_event) = adapter.event(&event) {
-                if let Err(error) = emit(wire_event) {
-                    run.cancel();
-                    let _ = run.outcome().await;
-                    return Err(error);
-                }
-            }
-        }
-        let request = match &event {
-            rho_sdk::RunEvent::HostInputRequested { request }
-            | rho_sdk::RunEvent::ToolHostInputRequested { request, .. } => Some(request.clone()),
-            _ => None,
-        };
-        if let Some(request) = request {
-            match host_input {
-                Some(parent) => {
-                    let response = parent
-                        .bridge
-                        .request(
-                            parent.run_id.clone(),
-                            parent.agent_id.clone(),
-                            parent.parent_session_id.clone(),
-                            request.clone(),
-                            &run.cancellation_handle(),
-                        )
-                        .await;
-                    match response {
-                        Ok(response) => {
-                            if let Err(error) = run.respond(request.id().clone(), response).await {
-                                run.cancel();
-                                let _ = run.outcome().await;
-                                return Err(error.into());
-                            }
-                        }
+
+        tokio::select! {
+            biased;
+
+            result = async {
+                parent_wait
+                    .as_mut()
+                    .expect("parent wait guarded")
+                    .1
+                    .as_mut()
+                    .await
+            }, if parent_wait.is_some() => {
+                let (request_id, _) = parent_wait.take().expect("parent wait guarded");
+                match result {
+                    Ok(response) => match run.request_respond(request_id, response) {
+                        Ok(ack) => ack_wait = Some(Box::pin(ack)),
                         Err(error) => {
                             run.cancel();
                             let _ = run.outcome().await;
                             return Err(error.into());
                         }
+                    },
+                    Err(error) => {
+                        run.cancel();
+                        let _ = run.outcome().await;
+                        return Err(error.into());
                     }
                 }
-                None => {
+            }
+
+            result = async {
+                ack_wait.as_mut().expect("ack wait guarded").await
+            }, if ack_wait.is_some() => {
+                ack_wait = None;
+                if let Err(error) = result {
                     run.cancel();
                     let _ = run.outcome().await;
-                    anyhow::bail!(
-                        "rho run cannot answer host input request '{}' ({}); run without tools that require interactive input",
-                        request.id(),
-                        request.title(),
-                    );
+                    return Err(error.into());
+                }
+            }
+
+            event = run.next_event(), if events_open => {
+                let Some(event) = event else {
+                    events_open = false;
+                    continue;
+                };
+                if let Some(reporter) = reporter.as_deref_mut() {
+                    reporter.on_event(&event);
+                }
+                if let Some(adapter) = jsonl.as_deref_mut() {
+                    if let Some(wire_event) = adapter.event(&event) {
+                        if let Err(error) = emit(wire_event) {
+                            run.cancel();
+                            let _ = run.outcome().await;
+                            return Err(error);
+                        }
+                    }
+                }
+                match event {
+                    rho_sdk::RunEvent::HostInputRequested { request }
+                    | rho_sdk::RunEvent::ToolHostInputRequested { request, .. } => {
+                        pending_requests.push_back(request);
+                    }
+                    _ => {}
+                }
+            }
+
+            _ = heartbeat.tick(), if reporter.is_some() => {
+                if let Some(reporter) = reporter.as_deref_mut() {
+                    reporter.write();
                 }
             }
         }

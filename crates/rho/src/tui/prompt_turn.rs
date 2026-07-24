@@ -206,24 +206,21 @@ impl App {
             rho_sdk::HostInputId,
             oneshot::Receiver<QuestionnaireReply>,
         )> = None;
-        let mut queued_questionnaires: VecDeque<(rho_sdk::ToolCallId, rho_sdk::HostInputRequest)> =
-            VecDeque::new();
+        let mut queued_interactions = RunningInteractionQueue::default();
         let mut pending_input_request = None;
         let mut approval_receiver_open = agent.approval_receiver().is_some();
         let mut terminal_event = false;
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
-            let parent_interaction_active =
-                matches!(self.input_ui.composer(), ComposerMode::Approval(_))
-                    || pending_questionnaire.is_some();
-            if !parent_interaction_active
-                && self
-                    .poll_running_subagent_questionnaires(agent.session_id())
-                    .await?
+            if self
+                .poll_running_subagent_questionnaire_state(agent.session_id())
+                .await?
             {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
+            queued_interactions
+                .extend_subagent_questionnaires(self.queued_subagent_questionnaires.drain(..));
             if self.update_subagent_panel(agent) {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
@@ -232,13 +229,7 @@ impl App {
             }
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
-            let interaction_available = interaction_slot_available(
-                /*approval_active*/
-                matches!(self.input_ui.composer(), ComposerMode::Approval(_)),
-                /*questionnaire_active*/
-                pending_questionnaire.is_some() || self.pending_subagent_questionnaire.is_some(),
-            );
-            let approval_ready = approval_receiver_open && interaction_available;
+            let approval_ready = approval_receiver_open;
             let subagent_host_input_bound = self.subagent_host_input.is_some();
             tokio::select! {
                 biased;
@@ -310,15 +301,10 @@ impl App {
                 }
                 request = super::app_loop::next_subagent_host_input(&mut self.subagent_host_input), if subagent_host_input_bound => {
                     match request {
-                        Some(request) => self.queued_subagent_questionnaires.push_back(request),
+                        Some(request) => queued_interactions.push(
+                            QueuedRunningInteraction::SubagentQuestionnaire(request),
+                        ),
                         None => self.subagent_host_input = None,
-                    }
-                    let parent_interaction_active = matches!(
-                        self.input_ui.composer(),
-                        ComposerMode::Approval(_)
-                    ) || pending_questionnaire.is_some();
-                    if !parent_interaction_active {
-                        self.poll_running_subagent_questionnaires(agent.session_id()).await?;
                     }
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
@@ -330,9 +316,8 @@ impl App {
                 event = next_runtime_event(agent, approval_ready) => {
                     let event = match event {
                         RuntimeEvent::Approval(pending) => {
-                            self.finish_streams();
-                            self.open_approval(pending).await;
-                            self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                            queued_interactions
+                                .push(QueuedRunningInteraction::Approval(pending));
                             continue;
                         }
                         RuntimeEvent::ApprovalReceiverClosed => {
@@ -343,7 +328,6 @@ impl App {
                         RuntimeEvent::Agent(None) => break,
                     };
                     let mut changed = false;
-                    let mut interaction_ready = false;
                     if let Some(context) = agent.take_context_usage() {
                         changed |= self.handle_queued_agent_event(
                             ViewModelEvent::ContextUsage(context),
@@ -356,22 +340,9 @@ impl App {
                             tool_call_active.store(self.turn.tool_calls().is_running(), Ordering::SeqCst);
                         }
                         ViewEvent::Questionnaire { call_id, request } => {
-                            let interaction_available = interaction_slot_available(
-                                /*approval_active*/ matches!(
-                                    self.input_ui.composer(),
-                                    ComposerMode::Approval(_)
-                                ),
-                                /*questionnaire_active*/ pending_questionnaire.is_some()
-                    || self.pending_subagent_questionnaire.is_some(),
+                            queued_interactions.push(
+                                QueuedRunningInteraction::ParentQuestionnaire { call_id, request },
                             );
-                            if interaction_available {
-                                pending_questionnaire = Some(
-                                    self.begin_pending_questionnaire(call_id, request).await?,
-                                );
-                                interaction_ready = true;
-                            } else {
-                                queued_questionnaires.push_back((call_id, request));
-                            }
                             changed = true;
                         }
                         ViewEvent::Notice(notice) => {
@@ -386,14 +357,13 @@ impl App {
                         }
                         ViewEvent::Ignored => {}
                     }
-                    let render_now = interaction_ready
-                        || (changed && frame_scheduler.request_background_frame(Instant::now()));
-                    if render_now {
+                    if changed && frame_scheduler.request_background_frame(Instant::now()) {
                         self.draw_running_frame(terminal, &mut frame_scheduler)?;
                     }
                 }
             }
-            if !questionnaire_cancelled_by_user
+            if !terminal_event
+                && !questionnaire_cancelled_by_user
                 && sdk_failure.is_none()
                 && interaction_slot_available(
                     /*approval_active*/
@@ -403,10 +373,33 @@ impl App {
                         || self.pending_subagent_questionnaire.is_some(),
                 )
             {
-                if let Some((call_id, request)) = queued_questionnaires.pop_front() {
-                    pending_questionnaire =
-                        Some(self.begin_pending_questionnaire(call_id, request).await?);
-                    self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                while let Some(interaction) = queued_interactions.pop() {
+                    let presented = match interaction {
+                        QueuedRunningInteraction::Approval(pending) => {
+                            self.finish_streams();
+                            self.open_approval(pending).await;
+                            true
+                        }
+                        QueuedRunningInteraction::ParentQuestionnaire { call_id, request } => {
+                            pending_questionnaire =
+                                Some(self.begin_pending_questionnaire(call_id, request).await?);
+                            true
+                        }
+                        QueuedRunningInteraction::SubagentQuestionnaire(request) => {
+                            if request.parent_session_id != *agent.session_id() {
+                                let _ = request.response.send(Err(rho_sdk::Error::Interrupted {
+                                    message: "parent session changed before the delegated questionnaire was shown".into(),
+                                }));
+                                false
+                            } else {
+                                self.present_subagent_questionnaire(request).await?
+                            }
+                        }
+                    };
+                    if presented {
+                        self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                        break;
+                    }
                 }
             }
             if pending_input_request.is_none()
@@ -421,6 +414,9 @@ impl App {
                 terminal.draw(|frame| self.draw(frame))?;
             }
         }
+
+        self.queued_subagent_questionnaires
+            .extend(queued_interactions.into_subagent_questionnaires());
 
         if pending_input_request.is_some() {
             let completion = pending_input::pending_input_completion(&mut pending_input_request)
@@ -579,6 +575,53 @@ impl App {
 
 fn interaction_slot_available(approval_active: bool, questionnaire_active: bool) -> bool {
     !approval_active && !questionnaire_active
+}
+
+enum QueuedRunningInteraction {
+    Approval(rho_sdk::PendingApproval),
+    ParentQuestionnaire {
+        call_id: rho_sdk::ToolCallId,
+        request: rho_sdk::HostInputRequest,
+    },
+    SubagentQuestionnaire(crate::app::subagent_host_input::SubagentHostInputRequest),
+}
+
+#[derive(Default)]
+struct RunningInteractionQueue {
+    pending: VecDeque<QueuedRunningInteraction>,
+}
+
+impl RunningInteractionQueue {
+    fn push(&mut self, interaction: QueuedRunningInteraction) {
+        self.pending.push_back(interaction);
+    }
+
+    fn extend_subagent_questionnaires(
+        &mut self,
+        requests: impl IntoIterator<Item = crate::app::subagent_host_input::SubagentHostInputRequest>,
+    ) {
+        self.pending.extend(
+            requests
+                .into_iter()
+                .map(QueuedRunningInteraction::SubagentQuestionnaire),
+        );
+    }
+
+    fn pop(&mut self) -> Option<QueuedRunningInteraction> {
+        self.pending.pop_front()
+    }
+
+    fn into_subagent_questionnaires(
+        self,
+    ) -> impl Iterator<Item = crate::app::subagent_host_input::SubagentHostInputRequest> {
+        self.pending.into_iter().filter_map(|interaction| {
+            if let QueuedRunningInteraction::SubagentQuestionnaire(request) = interaction {
+                Some(request)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 enum RuntimeEvent {

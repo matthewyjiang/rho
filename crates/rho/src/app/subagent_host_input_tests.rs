@@ -119,21 +119,46 @@ async fn child_cancellation_ends_a_waiting_request() {
 }
 
 #[tokio::test]
-async fn unbinding_the_parent_fails_later_requests() {
+async fn responder_adapter_forwards_identity_to_parent_bridge() {
+    use crate::app::{
+        automation::HostInputResponder,
+        subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
+    };
+
     let bridge = SubagentHostInputBridge::new();
-    let _receiver = bridge.bind_parent();
-    assert!(bridge.is_bound());
-    bridge.unbind_parent();
-    assert!(!bridge.is_bound());
-    let error = bridge
-        .request(
-            "abc123",
-            "worker",
-            SessionId::new(),
-            sample_request(),
-            &CancellationToken::new(),
-        )
+    let mut receiver = bridge.bind_parent();
+    let parent_session_id = rho_sdk::SessionId::new();
+    let responder =
+        SubagentHostInputResponder::new("run-1", "worker", parent_session_id.clone(), bridge);
+    let request = sample_request();
+    let request_id = request.id().clone();
+    let cancellation = CancellationToken::new();
+
+    let child = tokio::spawn({
+        let cancellation = cancellation.clone();
+        async move { responder.respond(request, &cancellation).await }
+    });
+
+    let pending = timeout(Duration::from_secs(1), receiver.recv())
         .await
-        .unwrap_err();
-    assert!(error.to_string().contains("interactive parent session"));
+        .expect("bridge delivery")
+        .expect("pending request");
+    assert_eq!(pending.run_id, "run-1");
+    assert_eq!(pending.agent_id, "worker");
+    assert_eq!(pending.parent_session_id, parent_session_id);
+    assert_eq!(pending.request.id(), &request_id);
+    pending
+        .response
+        .send(Ok(HostInputResponse::new().answer("color", ["blue"])))
+        .unwrap();
+
+    let response = timeout(Duration::from_secs(1), child)
+        .await
+        .expect("child join")
+        .expect("child task")
+        .expect("child response");
+    assert_eq!(
+        response.answers().get("color").map(Vec::as_slice),
+        Some(["blue".to_string()].as_slice())
+    );
 }

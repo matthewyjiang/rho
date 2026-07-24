@@ -13,7 +13,7 @@ use {
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     automation::{self, RunArtifactIdentity, RunReporter},
-    subagent_host_input::SubagentHostInputBridge,
+    subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
 };
 
 #[derive(Clone)]
@@ -220,12 +220,13 @@ impl AgentExecutor {
                 timeout: None,
                 diagnostics,
                 herdr: HerdrReporter::default(),
-                host_input: questionnaire_available.then(|| automation::DelegatedHostInput {
-                    run_id,
-                    agent_id,
-                    parent_session_id: parent_session_id
-                        .expect("questionnaire bridge requires a parent session"),
-                    bridge: host_input,
+                host_input: questionnaire_available.then(|| {
+                    Arc::new(SubagentHostInputResponder::new(
+                        run_id,
+                        agent_id,
+                        parent_session_id.expect("questionnaire bridge requires a parent session"),
+                        host_input,
+                    )) as Arc<dyn automation::HostInputResponder>
                 }),
             };
             let result = automation::run_session(

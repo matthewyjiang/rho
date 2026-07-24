@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use rho_sdk::{CancellationToken, Error, HostInputRequest, HostInputResponse, SessionId};
 use tokio::sync::{mpsc, oneshot};
 
+use super::automation::{HostInputRespondFuture, HostInputResponder};
+
 /// One questionnaire raised by a delegated run and awaiting a parent answer.
 pub(crate) struct SubagentHostInputRequest {
     pub(crate) run_id: String,
@@ -22,6 +24,46 @@ pub(crate) struct SubagentHostInputBridge {
 #[derive(Default)]
 struct Inner {
     sender: Mutex<Option<mpsc::UnboundedSender<SubagentHostInputRequest>>>,
+}
+
+/// Headless responder that forwards child questionnaires through a parent bridge.
+pub(crate) struct SubagentHostInputResponder {
+    run_id: String,
+    agent_id: String,
+    parent_session_id: SessionId,
+    bridge: SubagentHostInputBridge,
+}
+
+impl SubagentHostInputResponder {
+    pub(crate) fn new(
+        run_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        parent_session_id: SessionId,
+        bridge: SubagentHostInputBridge,
+    ) -> Self {
+        Self {
+            run_id: run_id.into(),
+            agent_id: agent_id.into(),
+            parent_session_id,
+            bridge,
+        }
+    }
+}
+
+impl HostInputResponder for SubagentHostInputResponder {
+    fn respond<'a>(
+        &'a self,
+        request: HostInputRequest,
+        cancellation: &'a CancellationToken,
+    ) -> HostInputRespondFuture<'a> {
+        Box::pin(self.bridge.request(
+            self.run_id.clone(),
+            self.agent_id.clone(),
+            self.parent_session_id.clone(),
+            request,
+            cancellation,
+        ))
+    }
 }
 
 impl SubagentHostInputBridge {

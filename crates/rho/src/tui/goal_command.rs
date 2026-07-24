@@ -466,7 +466,7 @@ impl App {
             && !self.should_quit
         {
             if self
-                .poll_running_subagent_questionnaires(agent.session_id())
+                .poll_waiting_subagent_questionnaires(agent.session_id())
                 .await?
             {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -493,7 +493,7 @@ impl App {
                         Some(request) => self.queued_subagent_questionnaires.push_back(request),
                         None => self.subagent_host_input = None,
                     }
-                    self.poll_running_subagent_questionnaires(agent.session_id()).await?;
+                    self.poll_waiting_subagent_questionnaires(agent.session_id()).await?;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {
                     self.flush_due_paste_burst();

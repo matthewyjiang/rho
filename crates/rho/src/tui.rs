@@ -43,6 +43,7 @@ mod file_palette;
 mod file_picker;
 mod frame_scheduler;
 mod goal;
+mod subagent_questionnaires;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod choice_actions;
 mod during_turn;

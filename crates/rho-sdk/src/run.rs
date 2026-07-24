@@ -169,6 +169,35 @@ impl Run {
             .map_err(|message| Error::InvalidHostResponse { message })
     }
 
+    /// Starts delivering a host response without waiting for the runtime acknowledgement.
+    ///
+    /// Event loops can continue consuming [`RunEvent`] values before awaiting the returned
+    /// future, avoiding command/event backpressure cycles.
+    pub fn request_respond(
+        &self,
+        request_id: crate::HostInputId,
+        response: crate::HostInputResponse,
+    ) -> Result<impl Future<Output = Result<(), Error>> + Send + 'static, Error> {
+        let (accepted, receipt) = tokio::sync::oneshot::channel();
+        self.commands
+            .try_send(RunCommand::Respond {
+                request_id,
+                response,
+                accepted,
+            })
+            .map_err(|error| Error::InvalidHostResponse {
+                message: format!("run cannot queue host input: {error}"),
+            })?;
+        Ok(async move {
+            receipt
+                .await
+                .map_err(|_| Error::InvalidHostResponse {
+                    message: "run completed before accepting host input".into(),
+                })?
+                .map_err(|message| Error::InvalidHostResponse { message })
+        })
+    }
+
     pub async fn next_event(&mut self) -> Option<RunEvent> {
         self.events.recv().await
     }

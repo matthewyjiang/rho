@@ -130,6 +130,28 @@ async fn answered_running_questionnaire_reports_parent_working_again() {
 }
 
 #[tokio::test]
+async fn answered_goal_questionnaire_restores_wait_status() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = test_app();
+    let session_id = SessionId::new();
+    let (request, response) = pending_request(session_id.clone());
+    app.queued_subagent_questionnaires.push_back(request);
+
+    app.poll_waiting_subagent_questionnaires(&session_id)
+        .await
+        .unwrap();
+    app.handle_questionnaire_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    app.poll_waiting_subagent_questionnaires(&session_id)
+        .await
+        .unwrap();
+
+    assert_eq!(app.status, "waiting for delegated agents");
+    assert!(response.await.unwrap().is_ok());
+}
+
+#[tokio::test]
 async fn cancelled_visible_questionnaire_restores_input_composer() {
     let mut app = test_app();
     let session_id = SessionId::new();
