@@ -40,15 +40,6 @@ impl ClaudeLoginAuthOutcome {
             Self::Failed { .. } => "claude code login failed",
         }
     }
-
-    fn summary_for_error(&self) -> String {
-        match self {
-            Self::Complete { notice } => format!("post-login auth status: {notice}"),
-            Self::Incomplete { message } | Self::Failed { message } => {
-                format!("post-login auth status: {message}")
-            }
-        }
-    }
 }
 
 impl App {
@@ -264,15 +255,19 @@ impl App {
             .await;
         self.terminal_session = Some(terminal_session);
 
-        // Bounded post-login status is safe even when terminal restore failed:
-        // it does not need the alternate screen. Keep restore as the primary
-        // error and still record the auth outcome in history.
-        let auth_outcome =
-            resolve_claude_login_auth_outcome(suspended_run.operation_result, auth::query).await;
-        self.record_claude_login_auth_outcome(&auth_outcome);
-
-        if let Err(resume_error) = suspended_run.resume_result {
-            return Err(resume_error.context(auth_outcome.summary_for_error()));
+        // resume_result owns terminal lifecycle and must win first. Auth status
+        // and child-exit presentation are only safe once the TUI is back.
+        match resolve_claude_login_after_suspend(
+            suspended_run.resume_result,
+            suspended_run.operation_result,
+            auth::query,
+        )
+        .await
+        {
+            ClaudeLoginAfterSuspend::ResumeFailed { error } => return Err(error),
+            ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
+                self.record_claude_login_auth_outcome(&outcome);
+            }
         }
 
         self.ctrl_c_streak = 0;
@@ -291,6 +286,41 @@ impl App {
             }
         }
         self.status = outcome.status_line().into();
+    }
+}
+
+/// Result of post-suspend Claude login handling.
+#[derive(Debug)]
+enum ClaudeLoginAfterSuspend {
+    ResumeFailed { error: anyhow::Error },
+    AuthResolved { outcome: ClaudeLoginAuthOutcome },
+}
+
+/// Check terminal resume before any auth status work or child-result UI.
+///
+/// `query` is injected so unit tests can prove resume failures never call it,
+/// while successful resume always re-queries regardless of child exit.
+async fn resolve_claude_login_after_suspend<F, Fut>(
+    resume_result: Result<(), anyhow::Error>,
+    operation_result: Result<(), anyhow::Error>,
+    query: F,
+) -> ClaudeLoginAfterSuspend
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<ClaudeAuthStatus, ClaudeAuthError>>,
+{
+    if let Err(resume_error) = resume_result {
+        let error = match operation_result {
+            Ok(()) => resume_error,
+            Err(operation_error) => resume_error.context(format!(
+                "claude auth login also failed: {operation_error:#}"
+            )),
+        };
+        return ClaudeLoginAfterSuspend::ResumeFailed { error };
+    }
+
+    ClaudeLoginAfterSuspend::AuthResolved {
+        outcome: resolve_claude_login_auth_outcome(operation_result, query).await,
     }
 }
 

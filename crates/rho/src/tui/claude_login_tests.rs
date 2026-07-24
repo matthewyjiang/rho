@@ -1,8 +1,11 @@
 use pretty_assertions::assert_eq;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::{
-    resolve_claude_login_auth_outcome, CANCEL_LOGOUT_VALUE, CLAUDE_CODE_TARGET,
-    CONFIRM_LOGOUT_VALUE, KEEP_LOGIN_VALUE, RELAY_LOGIN_VALUE,
+    resolve_claude_login_after_suspend, resolve_claude_login_auth_outcome, ClaudeLoginAfterSuspend,
+    ClaudeLoginAuthOutcome, CANCEL_LOGOUT_VALUE, CLAUDE_CODE_TARGET, CONFIRM_LOGOUT_VALUE,
+    KEEP_LOGIN_VALUE, RELAY_LOGIN_VALUE,
 };
 use crate::claude_runtime::auth::{self, ClaudeAuthError, ClaudeAuthStatus};
 
@@ -63,7 +66,12 @@ async fn successful_login_with_signed_in_status_is_complete() {
     let outcome =
         resolve_claude_login_auth_outcome(Ok(()), || async { Ok(signed_in_status()) }).await;
     assert_eq!(outcome.status_line(), "claude code login complete");
-    assert!(outcome.summary_for_error().contains("someone@example.com"));
+    match outcome {
+        ClaudeLoginAuthOutcome::Complete { notice } => {
+            assert!(notice.contains("someone@example.com"));
+        }
+        other => panic!("expected complete outcome, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -71,9 +79,12 @@ async fn successful_login_with_signed_out_status_is_incomplete() {
     let outcome =
         resolve_claude_login_auth_outcome(Ok(()), || async { Ok(signed_out_status()) }).await;
     assert_eq!(outcome.status_line(), "claude code login incomplete");
-    assert!(outcome
-        .summary_for_error()
-        .contains("status still reports signed out"));
+    match outcome {
+        ClaudeLoginAuthOutcome::Incomplete { message } => {
+            assert!(message.contains("status still reports signed out"));
+        }
+        other => panic!("expected incomplete outcome, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -82,9 +93,12 @@ async fn successful_login_with_unreadable_status_is_incomplete() {
         resolve_claude_login_auth_outcome(Ok(()), || async { Err(ClaudeAuthError::BinaryMissing) })
             .await;
     assert_eq!(outcome.status_line(), "claude code login incomplete");
-    assert!(outcome
-        .summary_for_error()
-        .contains("status could not be read"));
+    match outcome {
+        ClaudeLoginAuthOutcome::Incomplete { message } => {
+            assert!(message.contains("status could not be read"));
+        }
+        other => panic!("expected incomplete outcome, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -97,9 +111,12 @@ async fn failed_login_still_complete_when_status_shows_signed_in() {
     )
     .await;
     assert_eq!(outcome.status_line(), "claude code login complete");
-    assert!(outcome
-        .summary_for_error()
-        .contains("status shows signed in"));
+    match outcome {
+        ClaudeLoginAuthOutcome::Complete { notice } => {
+            assert!(notice.contains("status shows signed in"));
+        }
+        other => panic!("expected complete outcome, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -112,23 +129,133 @@ async fn failed_login_with_signed_out_status_is_failed() {
     )
     .await;
     assert_eq!(outcome.status_line(), "claude code login failed");
-    assert!(outcome.summary_for_error().contains("login failed"));
+    match outcome {
+        ClaudeLoginAuthOutcome::Failed { message } => {
+            assert!(message.contains("login failed"));
+        }
+        other => panic!("expected failed outcome, got {other:?}"),
+    }
 }
 
 #[tokio::test]
-async fn resume_failure_still_queries_and_keeps_restore_as_primary() {
-    // Mirrors run_claude_code_login: auth outcome is always resolved, then the
-    // resume error stays primary with the auth summary attached.
-    let auth_outcome =
-        resolve_claude_login_auth_outcome(Ok(()), || async { Ok(signed_in_status()) }).await;
-    let resume_error = anyhow::anyhow!("failed to resume Rho after suspended operation")
-        .context(auth_outcome.summary_for_error());
-    let rendered = format!("{resume_error:#}");
-    assert!(
-        rendered.contains("failed to resume Rho after suspended operation"),
-        "{rendered}"
-    );
-    assert!(rendered.contains("post-login auth status"), "{rendered}");
-    assert!(rendered.contains("someone@example.com"), "{rendered}");
-    assert_eq!(auth_outcome.status_line(), "claude code login complete");
+async fn resume_failure_does_not_query_auth_status() {
+    let query_calls = AtomicUsize::new(0);
+    let result = resolve_claude_login_after_suspend(
+        Err(anyhow::anyhow!(
+            "failed to resume Rho after suspended operation"
+        )),
+        Ok(()),
+        || {
+            query_calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(signed_in_status()) }
+        },
+    )
+    .await;
+
+    assert_eq!(query_calls.load(Ordering::SeqCst), 0);
+    match result {
+        ClaudeLoginAfterSuspend::ResumeFailed { error } => {
+            let rendered = format!("{error:#}");
+            assert!(
+                rendered.contains("failed to resume Rho after suspended operation"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("post-login auth status"), "{rendered}");
+        }
+        ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
+            panic!("expected resume failure, got auth outcome {outcome:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn resume_failure_keeps_restore_primary_and_attaches_child_error() {
+    let query_calls = AtomicUsize::new(0);
+    let result = resolve_claude_login_after_suspend(
+        Err(anyhow::anyhow!(
+            "failed to resume Rho after suspended operation"
+        )),
+        Err(anyhow::anyhow!(
+            "claude auth login exited with exit status: 1"
+        )),
+        || {
+            query_calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(signed_out_status()) }
+        },
+    )
+    .await;
+
+    assert_eq!(query_calls.load(Ordering::SeqCst), 0);
+    match result {
+        ClaudeLoginAfterSuspend::ResumeFailed { error } => {
+            let rendered = format!("{error:#}");
+            assert!(
+                rendered.contains("failed to resume Rho after suspended operation"),
+                "{rendered}"
+            );
+            assert!(
+                rendered.contains("claude auth login also failed"),
+                "{rendered}"
+            );
+            assert!(
+                rendered.contains("claude auth login exited with exit status: 1"),
+                "{rendered}"
+            );
+        }
+        ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
+            panic!("expected resume failure, got auth outcome {outcome:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn successful_resume_queries_auth_after_child_success() {
+    let query_calls = AtomicUsize::new(0);
+    let result = resolve_claude_login_after_suspend(Ok(()), Ok(()), || {
+        query_calls.fetch_add(1, Ordering::SeqCst);
+        async { Ok(signed_in_status()) }
+    })
+    .await;
+
+    assert_eq!(query_calls.load(Ordering::SeqCst), 1);
+    match result {
+        ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
+            assert_eq!(outcome.status_line(), "claude code login complete");
+        }
+        ClaudeLoginAfterSuspend::ResumeFailed { error } => {
+            panic!("expected auth outcome, got resume failure {error:#}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn successful_resume_queries_auth_after_child_failure() {
+    let query_calls = AtomicUsize::new(0);
+    let result = resolve_claude_login_after_suspend(
+        Ok(()),
+        Err(anyhow::anyhow!(
+            "claude auth login exited with exit status: 1"
+        )),
+        || {
+            query_calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(signed_in_status()) }
+        },
+    )
+    .await;
+
+    assert_eq!(query_calls.load(Ordering::SeqCst), 1);
+    match result {
+        ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
+            assert_eq!(outcome.status_line(), "claude code login complete");
+            match outcome {
+                ClaudeLoginAuthOutcome::Complete { notice } => {
+                    assert!(notice.contains("status shows signed in"));
+                }
+                other => panic!("expected complete outcome, got {other:?}"),
+            }
+        }
+        ClaudeLoginAfterSuspend::ResumeFailed { error } => {
+            panic!("expected auth outcome, got resume failure {error:#}");
+        }
+    }
 }
