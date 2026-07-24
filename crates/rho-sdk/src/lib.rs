@@ -159,7 +159,7 @@ pub use event::{
     PROVIDER_ACTIVITY_WEB_SEARCH,
 };
 pub use host_input::{
-    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
+    DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
 };
 pub use id::{HostInputId, InvalidId, Revision, RunId, SessionId, SteeringId, ToolCallId};
 pub use persistence::{

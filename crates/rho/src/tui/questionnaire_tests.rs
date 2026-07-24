@@ -1,4 +1,5 @@
 use super::*;
+use crate::questionnaire::QuestionnaireDefaultSelection;
 
 fn text_question() -> QuestionnaireQuestion {
     QuestionnaireQuestion {
@@ -7,6 +8,7 @@ fn text_question() -> QuestionnaireQuestion {
         header: None,
         help: None,
         default: None,
+        default_selection: QuestionnaireDefaultSelection::Selected,
         kind: QuestionnaireQuestionKind::Text,
         required: true,
         choices: Vec::new(),
@@ -50,6 +52,7 @@ fn submit_sends_selection_answers() {
                     header: None,
                     help: None,
                     default: Some(serde_json::json!("main")),
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::Choice,
                     required: true,
                     choices: vec!["main".into(), "develop".into()],
@@ -61,6 +64,7 @@ fn submit_sends_selection_answers() {
                     header: None,
                     help: None,
                     default: Some(serde_json::json!(["unit"])),
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::MultiSelect,
                     required: true,
                     choices: vec!["unit".into(), "e2e".into(), "lint".into()],
@@ -72,6 +76,7 @@ fn submit_sends_selection_answers() {
                     header: None,
                     help: None,
                     default: Some(serde_json::json!("yes")),
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::Confirm,
                     required: true,
                     choices: Vec::new(),
@@ -129,6 +134,7 @@ fn required_confirm_without_default_requires_explicit_choice() {
         header: None,
         help: None,
         default: None,
+        default_selection: QuestionnaireDefaultSelection::Selected,
         kind: QuestionnaireQuestionKind::Confirm,
         required: true,
         choices: Vec::new(),
@@ -158,6 +164,7 @@ fn multi_select_default_preserves_commas() {
         header: None,
         help: None,
         default: Some(serde_json::json!(["New York, NY", "Los Angeles, CA"])),
+        default_selection: QuestionnaireDefaultSelection::Selected,
         kind: QuestionnaireQuestionKind::MultiSelect,
         required: true,
         choices: vec!["New York, NY".into(), "Boston, MA".into()],
@@ -199,6 +206,7 @@ fn form_composer() -> QuestionnaireComposer {
                     header: None,
                     help: None,
                     default: Some(serde_json::json!("main")),
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::Choice,
                     required: true,
                     choices: vec!["main".into(), "develop".into()],
@@ -210,6 +218,7 @@ fn form_composer() -> QuestionnaireComposer {
                     header: None,
                     help: None,
                     default: None,
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::MultiSelect,
                     required: true,
                     choices: vec!["unit".into(), "e2e".into()],
@@ -229,6 +238,7 @@ fn frame_shows_wrapped_choice_descriptions_below_labels() {
         header: None,
         help: None,
         default: None,
+        default_selection: QuestionnaireDefaultSelection::Selected,
         kind: QuestionnaireQuestionKind::Choice,
         required: true,
         choices: vec![
@@ -260,6 +270,46 @@ fn frame_shows_wrapped_choice_descriptions_below_labels() {
 }
 
 #[test]
+fn frame_marks_focused_default_as_recommended_without_selecting() {
+    let question = QuestionnaireQuestion {
+        id: "prompt".into(),
+        question: "Prompt mode?".into(),
+        header: None,
+        help: None,
+        default: Some(serde_json::json!("extend")),
+        default_selection: QuestionnaireDefaultSelection::Focused,
+        kind: QuestionnaireQuestionKind::Choice,
+        required: true,
+        choices: vec![
+            QuestionnaireChoice::new("replace", "replace"),
+            QuestionnaireChoice::new("extend", "extend"),
+        ],
+        allow_other: false,
+    };
+    let composer = QuestionnaireComposer::new(
+        QuestionnaireRequest {
+            title: None,
+            reason: None,
+            questions: vec![question],
+        },
+        QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
+    );
+
+    let (lines, cursor) = questionnaire_frame(&composer, 48);
+    let text = lines.iter().map(line_text).collect::<Vec<_>>();
+    let recommended_row = text
+        .iter()
+        .position(|line| line.contains("extend (recommended)"))
+        .expect("recommended choice");
+
+    assert_eq!(cursor.y as usize, recommended_row);
+    assert!(text[recommended_row].contains('→'));
+    assert!(text[recommended_row].contains('○'));
+    assert!(text.iter().any(|line| line.contains("○ replace")));
+    assert!(!text.iter().any(|line| line.contains('●')));
+}
+
+#[test]
 fn cursor_lands_on_highlighted_choice_row_after_wrapping() {
     let question = QuestionnaireQuestion {
         id: "style".into(),
@@ -267,6 +317,7 @@ fn cursor_lands_on_highlighted_choice_row_after_wrapping() {
         header: None,
         help: None,
         default: None,
+        default_selection: QuestionnaireDefaultSelection::Selected,
         kind: QuestionnaireQuestionKind::Choice,
         required: true,
         choices: vec!["brief".into(), "detailed".into()],
@@ -340,6 +391,7 @@ fn many_questions_composer(count: usize) -> QuestionnaireComposer {
                     header: None,
                     help: None,
                     default: None,
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::Confirm,
                     required: true,
                     choices: Vec::new(),

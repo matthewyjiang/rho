@@ -25,6 +25,9 @@ pub struct QuestionnaireQuestion {
     pub help: Option<String>,
     #[serde(default)]
     pub default: Option<Value>,
+    /// Whether `default` pre-selects the answer or only focuses it.
+    #[serde(default, skip_serializing_if = "is_default_selection_selected")]
+    pub default_selection: QuestionnaireDefaultSelection,
     #[serde(rename = "type", alias = "kind", default)]
     pub kind: QuestionnaireQuestionKind,
     #[serde(default = "default_required")]
@@ -80,6 +83,41 @@ pub enum QuestionnaireQuestionKind {
     Confirm,
 }
 
+/// How a question's `default` should be applied in the host UI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionnaireDefaultSelection {
+    /// Pre-select the default answer.
+    #[default]
+    Selected,
+    /// Focus the default choice without selecting it. Hosts may mark it as
+    /// recommended so the user still confirms consciously.
+    Focused,
+}
+
+fn is_default_selection_selected(value: &QuestionnaireDefaultSelection) -> bool {
+    matches!(value, QuestionnaireDefaultSelection::Selected)
+}
+
+impl From<QuestionnaireDefaultSelection> for rho_sdk::DefaultSelection {
+    fn from(value: QuestionnaireDefaultSelection) -> Self {
+        match value {
+            QuestionnaireDefaultSelection::Selected => Self::Selected,
+            QuestionnaireDefaultSelection::Focused => Self::Focused,
+        }
+    }
+}
+
+impl From<rho_sdk::DefaultSelection> for QuestionnaireDefaultSelection {
+    fn from(value: rho_sdk::DefaultSelection) -> Self {
+        match value {
+            rho_sdk::DefaultSelection::Selected => Self::Selected,
+            rho_sdk::DefaultSelection::Focused => Self::Focused,
+            _ => Self::Selected,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuestionnaireResponse {
     pub answers: Vec<QuestionnaireAnswer>,
@@ -122,6 +160,8 @@ struct RawQuestionnaireQuestion {
     kind: Option<QuestionnaireQuestionKind>,
     #[serde(default)]
     default: Option<Value>,
+    #[serde(default)]
+    default_selection: QuestionnaireDefaultSelection,
     #[serde(default)]
     required: Option<bool>,
     #[serde(default)]
@@ -231,6 +271,11 @@ pub fn tool_spec() -> ToolSpec {
                                     { "type": "array", "items": { "type": "string" } }
                                 ]
                             },
+                            "default_selection": {
+                                "type": "string",
+                                "enum": ["selected", "focused"],
+                                "description": "How to apply default. selected pre-selects it. focused only moves the cursor and may mark the choice recommended, so the user still confirms. Requires default. Defaults to selected."
+                            },
                             "required": {
                                 "type": "boolean",
                                 "description": "Whether a non-empty answer is required. Defaults to true."
@@ -258,6 +303,7 @@ pub fn parse_request(arguments: Value) -> Result<QuestionnaireRequest, String> {
                 reason: None,
                 kind: None,
                 default: raw.default,
+                default_selection: QuestionnaireDefaultSelection::Selected,
                 required: None,
                 choices: Vec::new(),
                 allow_other: false,
@@ -372,12 +418,22 @@ fn parse_question(
     }
 
     let default = normalize_default(index, raw.default, kind, &choices, raw.allow_other)?;
+    if matches!(
+        raw.default_selection,
+        QuestionnaireDefaultSelection::Focused
+    ) && default.is_none()
+    {
+        return Err(format!(
+            "questions[{index}].default_selection focused requires default"
+        ));
+    }
     Ok(QuestionnaireQuestion {
         id,
         question,
         header: trim_optional(raw.header),
         help: trim_optional(raw.help).or_else(|| trim_optional(raw.reason)),
         default,
+        default_selection: raw.default_selection,
         kind,
         required: raw.required.unwrap_or_else(default_required),
         choices,
@@ -538,6 +594,7 @@ mod tests {
                     header: Some("File".into()),
                     help: Some("Use a repo-relative path".into()),
                     default: Some(json!("src/main.rs")),
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::Choice,
                     required: true,
                     choices: vec!["src/main.rs".into(), "src/lib.rs".into()],
@@ -696,6 +753,7 @@ mod tests {
             header: None,
             help: None,
             default: Some(json!("no")),
+            default_selection: QuestionnaireDefaultSelection::Selected,
             kind: QuestionnaireQuestionKind::Confirm,
             required: true,
             choices: Vec::new(),
@@ -732,6 +790,59 @@ mod tests {
                     description: Some("Run every check".into()),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn parse_request_accepts_focused_default_selection() {
+        let request = parse_request(json!({
+            "questions": [{
+                "id": "prompt",
+                "question": "Prompt mode?",
+                "type": "choice",
+                "choices": [
+                    { "label": "extend", "description": "Keep the standard prompt" },
+                    "replace"
+                ],
+                "default": "extend",
+                "default_selection": "focused"
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(request.questions[0].default, Some(json!("extend")));
+        assert_eq!(
+            request.questions[0].default_selection,
+            QuestionnaireDefaultSelection::Focused
+        );
+        assert_eq!(
+            request.questions[0].choices,
+            vec![
+                QuestionnaireChoice {
+                    label: "extend".into(),
+                    description: Some("Keep the standard prompt".into()),
+                },
+                QuestionnaireChoice::from("replace"),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_request_rejects_focused_default_selection_without_default() {
+        let err = parse_request(json!({
+            "questions": [{
+                "id": "prompt",
+                "question": "Prompt mode?",
+                "type": "choice",
+                "choices": ["extend", "replace"],
+                "default_selection": "focused"
+            }]
+        }))
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            "questions[0].default_selection focused requires default"
         );
     }
 

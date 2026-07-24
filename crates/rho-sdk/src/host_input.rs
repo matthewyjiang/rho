@@ -50,6 +50,18 @@ pub enum SelectionMode {
     Many,
 }
 
+/// How a host should apply a question's default value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DefaultSelection {
+    /// Pre-select the default answer.
+    #[default]
+    Selected,
+    /// Focus the default choice without selecting it. Hosts may mark it as
+    /// recommended so the user still confirms consciously.
+    Focused,
+}
+
 /// One structured question presented by a host.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostQuestion {
@@ -61,6 +73,7 @@ pub struct HostQuestion {
     allow_other: bool,
     help: Option<String>,
     default: Option<Value>,
+    default_selection: DefaultSelection,
     required: bool,
 }
 
@@ -97,6 +110,7 @@ impl HostQuestion {
             allow_other: false,
             help: None,
             default: None,
+            default_selection: DefaultSelection::Selected,
             required: true,
         })
     }
@@ -120,6 +134,12 @@ impl HostQuestion {
 
     pub fn default_value(mut self, default: Value) -> Self {
         self.default = Some(default);
+        self
+    }
+
+    /// Control whether `default_value` pre-selects or only focuses the choice.
+    pub fn default_selection(mut self, selection: DefaultSelection) -> Self {
+        self.default_selection = selection;
         self
     }
 
@@ -158,6 +178,10 @@ impl HostQuestion {
 
     pub fn default_value_ref(&self) -> Option<&Value> {
         self.default.as_ref()
+    }
+
+    pub fn default_selection_mode(&self) -> DefaultSelection {
+        self.default_selection
     }
 
     pub fn is_required(&self) -> bool {

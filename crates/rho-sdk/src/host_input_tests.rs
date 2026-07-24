@@ -38,6 +38,36 @@ fn host_choice_exposes_optional_description() {
 }
 
 #[test]
+fn host_question_default_selection_defaults_to_selected() {
+    use super::DefaultSelection;
+
+    let selected = HostQuestion::new(
+        "mode",
+        "mode?",
+        vec![
+            HostChoice::new("fast", "Fast"),
+            HostChoice::new("safe", "Safe"),
+        ],
+        SelectionMode::One,
+    )
+    .unwrap()
+    .default_value(serde_json::json!("safe"));
+    let focused = selected
+        .clone()
+        .default_selection(DefaultSelection::Focused);
+
+    assert_eq!(
+        selected.default_selection_mode(),
+        DefaultSelection::Selected
+    );
+    assert_eq!(focused.default_selection_mode(), DefaultSelection::Focused);
+    assert_eq!(
+        focused.default_value_ref(),
+        Some(&serde_json::json!("safe"))
+    );
+}
+
+#[test]
 fn questionnaire_validates_complete_typed_answers() {
     let request = request();
     let response = HostInputResponse::new()

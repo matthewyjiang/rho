@@ -208,6 +208,42 @@ fn choice_round_trip_renders_label_and_returns_machine_value() {
 }
 
 #[test]
+fn focused_default_round_trips_without_preselecting() {
+    use rho_sdk::DefaultSelection;
+
+    let question = HostQuestion::new(
+        "prompt",
+        "Prompt mode?",
+        vec![
+            HostChoice::new("replace", "replace"),
+            HostChoice::new("extend", "extend"),
+        ],
+        SelectionMode::One,
+    )
+    .unwrap()
+    .default_value(serde_json::json!("extend"))
+    .default_selection(DefaultSelection::Focused);
+    let request = HostInputRequest::questionnaire("Prompt", vec![question]).unwrap();
+    let translated = questionnaire_request(&request);
+
+    assert_eq!(
+        translated.questions[0].default_selection,
+        crate::questionnaire::QuestionnaireDefaultSelection::Focused
+    );
+    assert_eq!(
+        translated.questions[0].default,
+        Some(serde_json::json!("extend"))
+    );
+
+    let (response, display) = submit(translated, |composer| composer.toggle_active_choice());
+    let host = host_response(response);
+
+    assert_eq!(display, "extend");
+    assert_eq!(host.answers()["prompt"], ["extend"]);
+    assert!(request.validate(&host).is_ok());
+}
+
+#[test]
 fn yes_no_round_trip_preserves_confirm_semantics_and_values() {
     let question = HostQuestion::new(
         "apply",

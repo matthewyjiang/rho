@@ -294,6 +294,7 @@ fn host_question(
     if let Some(default) = &question.default {
         host = host.default_value(default.clone());
     }
+    host = host.default_selection(question.default_selection.into());
     if !question.required {
         host = host.optional();
     }

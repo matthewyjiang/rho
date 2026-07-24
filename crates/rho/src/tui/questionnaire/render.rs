@@ -241,7 +241,14 @@ fn push_active_question(
                     } else {
                         questionnaire_choice_label(question, choice_index)
                     };
-                    push_hanging_text(lines, &format!("  {arrow} {marker} "), &label, width, style);
+                    let prefix = format!("  {arrow} {marker} ");
+                    let recommended =
+                        !is_other && super::choice_is_focused_default(question, choice_index);
+                    if recommended {
+                        push_choice_label_with_recommended(lines, &prefix, &label, width, style);
+                    } else {
+                        push_hanging_text(lines, &prefix, &label, width, style);
+                    }
                     if let Some(description) = question
                         .choices
                         .get(choice_index)
@@ -424,6 +431,36 @@ fn push_hanging_text(
             LineFill::Natural,
         ));
     }
+}
+
+/// Render a choice label with a dim "(recommended)" badge as its own span.
+fn push_choice_label_with_recommended(
+    lines: &mut Vec<Line<'static>>,
+    prefix: &str,
+    label: &str,
+    width: usize,
+    style: Style,
+) {
+    const BADGE: &str = " (recommended)";
+    let prefix_width = display_width(prefix);
+    let inner_width = width.saturating_sub(prefix_width).max(1);
+    let badge_width = display_width(BADGE);
+
+    // Common path: label and badge share one line with separate styles.
+    if !label.contains('\n') && display_width(label) + badge_width <= inner_width {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{prefix}{label}"), style),
+            Span::styled(BADGE.to_string(), Theme::dim()),
+        ]));
+        return;
+    }
+
+    // Rare overflow: wrap the label, then put the badge on the following line.
+    push_hanging_text(lines, prefix, label, width, style);
+    lines.push(Line::from(vec![
+        Span::styled(" ".repeat(prefix_width), style),
+        Span::styled(BADGE.trim_start().to_string(), Theme::dim()),
+    ]));
 }
 
 fn push_prefixed_input_lines(

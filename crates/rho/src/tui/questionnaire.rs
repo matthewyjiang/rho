@@ -7,7 +7,10 @@ use render::questionnaire_frame;
 pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 
 use super::paste_burst::{next_word_boundary, previous_word_boundary};
-use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse};
+use crate::questionnaire::{
+    QuestionnaireAnswer, QuestionnaireDefaultSelection, QuestionnaireQuestionKind,
+    QuestionnaireResponse,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct QuestionnaireRequest {
@@ -23,6 +26,7 @@ pub(super) struct QuestionnaireQuestion {
     pub(super) header: Option<String>,
     pub(super) help: Option<String>,
     pub(super) default: Option<serde_json::Value>,
+    pub(super) default_selection: QuestionnaireDefaultSelection,
     pub(super) kind: QuestionnaireQuestionKind,
     pub(super) required: bool,
     pub(super) choices: Vec<QuestionnaireChoice>,
@@ -609,10 +613,18 @@ fn default_choice_selection(question: &QuestionnaireQuestion) -> (FieldSelection
         .iter()
         .position(|choice| choice.matches_default(&default))
     {
-        return (FieldSelection::Single(index), index, String::new());
+        let selection = match question.default_selection {
+            QuestionnaireDefaultSelection::Selected => FieldSelection::Single(index),
+            QuestionnaireDefaultSelection::Focused => FieldSelection::None,
+        };
+        return (selection, index, String::new());
     }
     if question.allow_other {
-        return (FieldSelection::Other, question.choices.len(), default);
+        let selection = match question.default_selection {
+            QuestionnaireDefaultSelection::Selected => FieldSelection::Other,
+            QuestionnaireDefaultSelection::Focused => FieldSelection::None,
+        };
+        return (selection, question.choices.len(), default);
     }
     (FieldSelection::None, 0, String::new())
 }
@@ -639,31 +651,46 @@ fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection,
     selected.sort_unstable();
     selected.dedup();
     let other = !other_values.is_empty();
+    let preselect = matches!(
+        question.default_selection,
+        QuestionnaireDefaultSelection::Selected
+    );
     let choice_cursor = selected
         .first()
         .copied()
         .or_else(|| other.then_some(question.choices.len()))
         .unwrap_or(0);
     (
-        FieldSelection::Multi { selected, other },
+        FieldSelection::Multi {
+            selected: if preselect { selected } else { Vec::new() },
+            other: preselect && other,
+        },
         choice_cursor,
-        other_values.join(", "),
+        if preselect {
+            other_values.join(", ")
+        } else {
+            String::new()
+        },
     )
 }
 
 fn default_confirm_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    match question
+    let default = question
         .default
         .as_ref()
         .map(questionnaire_default_string)
         .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "yes" | "y" | "true" => (FieldSelection::Single(0), 0, String::new()),
-        "no" | "n" | "false" => (FieldSelection::Single(1), 1, String::new()),
-        _ => (FieldSelection::None, 0, String::new()),
-    }
+        .to_ascii_lowercase();
+    let index = match default.as_str() {
+        "yes" | "y" | "true" => 0,
+        "no" | "n" | "false" => 1,
+        _ => return (FieldSelection::None, 0, String::new()),
+    };
+    let selection = match question.default_selection {
+        QuestionnaireDefaultSelection::Selected => FieldSelection::Single(index),
+        QuestionnaireDefaultSelection::Focused => FieldSelection::None,
+    };
+    (selection, index, String::new())
 }
 
 fn questionnaire_default_strings(default: &serde_json::Value) -> Vec<String> {
@@ -691,6 +718,45 @@ fn questionnaire_default_string(default: &serde_json::Value) -> String {
         serde_json::Value::Number(value) => value.to_string(),
         serde_json::Value::Null => String::new(),
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => default.to_string(),
+    }
+}
+
+pub(super) fn choice_is_focused_default(
+    question: &QuestionnaireQuestion,
+    choice_index: usize,
+) -> bool {
+    if !matches!(
+        question.default_selection,
+        QuestionnaireDefaultSelection::Focused
+    ) {
+        return false;
+    }
+    match question.kind {
+        QuestionnaireQuestionKind::Confirm => match question
+            .default
+            .as_ref()
+            .map(questionnaire_default_string)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "yes" | "y" | "true" => choice_index == 0,
+            "no" | "n" | "false" => choice_index == 1,
+            _ => false,
+        },
+        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => {
+            let Some(choice) = question.choices.get(choice_index) else {
+                return false;
+            };
+            question
+                .default
+                .as_ref()
+                .map(questionnaire_default_strings)
+                .unwrap_or_default()
+                .iter()
+                .any(|value| choice.matches_default(value))
+        }
+        QuestionnaireQuestionKind::Text => false,
     }
 }
 
