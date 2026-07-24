@@ -155,14 +155,14 @@ Most editing keys work the way they do in a normal terminal input.
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |
 | `pageup` / `pagedown` | Scroll the transcript viewport |
-| `ctrl-g` | Open the current composer text in `$EDITOR` |
+| `ctrl-g` | Open the current composer text in `$VISUAL` or `$EDITOR` |
 | `ctrl-end` | Jump the transcript viewport back to the bottom |
 | mouse wheel | Scroll the transcript viewport |
 | left-click and drag | Select transcript text and copy it on release |
 | code block `COPY` | Copy the full code block contents |
 | `ctrl-c` | Clear input, then quit if pressed again |
 
-`ctrl-g` opens the current composer text in `$EDITOR`, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `EDITOR` to an executable path or a platform-native command line with arguments.
+`ctrl-g` opens the current composer text in `$VISUAL` or `$EDITOR`, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `VISUAL` or `EDITOR` to an executable path or a platform-native command line with arguments. Rho does not pick a default editor; if neither variable is set, it warns with `EDITOR is not set`.
 
 Copied text is sent to the terminal clipboard, and Rho briefly shows how many characters were copied. Code block copy buttons are shown in the top-right border and highlight on hover.
 

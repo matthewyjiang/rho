@@ -21,7 +21,11 @@ impl App {
         self.flush_pending_paste_burst();
         self.input_ui.clear_paste_burst();
         let composer_text = self.expanded_input();
-        let (mut command, path) = match prepare_editor(&composer_text) {
+        let Some(editor) = resolve_editor(env::var_os("VISUAL"), env::var_os("EDITOR")) else {
+            self.notify_status("EDITOR is not set");
+            return Ok(());
+        };
+        let (mut command, path) = match prepare_editor(&editor, &composer_text) {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.notify_status(format!("editor failed: {error}"));
@@ -38,9 +42,9 @@ impl App {
                 #[cfg(unix)]
                 let _signal_guard = unix_editor_signals::EditorSignalGuard::install(&mut command)
                     .context("could not prepare editor signal handling")?;
-                let status = command.status().await.context("could not start EDITOR")?;
+                let status = command.status().await.context("could not start editor")?;
                 if !status.success() {
-                    return Err(anyhow!("EDITOR exited with {status}"));
+                    return Err(anyhow!("editor exited with {status}"));
                 }
                 let text =
                     fs::read_to_string(&path).context("could not read edited composer file")?;
@@ -98,9 +102,11 @@ fn preserve_draft_for_recovery(contents: &str) -> anyhow::Result<std::path::Path
         .context("could not preserve composer recovery file")
 }
 
-fn prepare_editor(contents: &str) -> anyhow::Result<(Command, tempfile::TempPath)> {
-    let editor = env::var_os("EDITOR").context("EDITOR is not set")?;
-    let mut command = editor_command(&editor)?;
+fn prepare_editor(
+    editor: &std::ffi::OsStr,
+    contents: &str,
+) -> anyhow::Result<(Command, tempfile::TempPath)> {
+    let mut command = editor_command(editor)?;
     let mut file = tempfile::Builder::new()
         .prefix("rho-composer-")
         .suffix(".md")
@@ -112,6 +118,14 @@ fn prepare_editor(contents: &str) -> anyhow::Result<(Command, tempfile::TempPath
     let path = file.into_temp_path();
     command.arg(path.as_os_str());
     Ok((command, path))
+}
+
+/// Prefer `VISUAL`, then `EDITOR`. Do not invent a platform default editor.
+fn resolve_editor(visual: Option<OsString>, editor: Option<OsString>) -> Option<OsString> {
+    match visual {
+        Some(value) if !value.is_empty() => Some(value),
+        _ => editor.filter(|value| !value.is_empty()),
+    }
 }
 
 fn remove_editor_final_line_ending(mut text: String) -> String {
@@ -127,9 +141,9 @@ fn editor_command(editor: &std::ffi::OsStr) -> anyhow::Result<Command> {
     let parts = editor_parts(editor)?;
     let (program, args) = parts
         .split_first()
-        .ok_or_else(|| anyhow!("EDITOR is empty"))?;
+        .ok_or_else(|| anyhow!("editor command is empty"))?;
     if program.is_empty() {
-        return Err(anyhow!("EDITOR is empty"));
+        return Err(anyhow!("editor command is empty"));
     }
     let mut command = Command::new(program);
     command.args(args);
@@ -138,7 +152,7 @@ fn editor_command(editor: &std::ffi::OsStr) -> anyhow::Result<Command> {
 
 fn editor_parts(editor: &std::ffi::OsStr) -> anyhow::Result<Vec<OsString>> {
     if editor.is_empty() {
-        return Err(anyhow!("EDITOR is empty"));
+        return Err(anyhow!("editor command is empty"));
     }
     if Path::new(editor).is_file() {
         return Ok(vec![editor.to_os_string()]);
@@ -150,9 +164,9 @@ fn editor_parts(editor: &std::ffi::OsStr) -> anyhow::Result<Vec<OsString>> {
 fn split_editor_command(editor: &std::ffi::OsStr) -> anyhow::Result<Vec<OsString>> {
     let editor = editor
         .to_str()
-        .context("EDITOR is not valid UTF-8 and is not an executable path")?;
+        .context("editor command is not valid UTF-8 and is not an executable path")?;
     shell_words::split(editor)
-        .context("EDITOR has invalid quoting")
+        .context("editor command has invalid quoting")
         .map(|parts| parts.into_iter().map(OsString::from).collect())
 }
 
@@ -166,7 +180,7 @@ fn split_editor_command(editor: &std::ffi::OsStr) -> anyhow::Result<Vec<OsString
     let mut count = 0;
     let arguments = unsafe { CommandLineToArgvW(command_line.as_ptr(), &mut count) };
     if arguments.is_null() {
-        return Err(std::io::Error::last_os_error()).context("could not parse EDITOR");
+        return Err(std::io::Error::last_os_error()).context("could not parse editor command");
     }
 
     let pointers = unsafe { std::slice::from_raw_parts(arguments, count as usize) };
