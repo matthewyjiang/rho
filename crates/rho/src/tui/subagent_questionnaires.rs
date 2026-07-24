@@ -64,25 +64,6 @@ impl App {
         Ok(changed)
     }
 
-    /// Surfaces delegated questionnaires inside a running TUI wait state.
-    pub(super) async fn poll_running_subagent_questionnaires(
-        &mut self,
-        session_id: &rho_sdk::SessionId,
-    ) -> anyhow::Result<bool> {
-        let mut changed = self.drain_subagent_host_input();
-        changed |= self.discard_stale_subagent_questionnaires(session_id);
-        changed |= self
-            .finish_pending_subagent_questionnaire(ParentActivity::Working("running"))
-            .await?;
-        if self.pending_subagent_questionnaire.is_none()
-            && matches!(self.input_ui.composer(), ComposerMode::Input)
-            && !self.input_ui.has_pending_draft()
-        {
-            changed |= self.present_next_subagent_questionnaire(session_id).await?;
-        }
-        Ok(changed)
-    }
-
     /// Surfaces delegated questionnaires while a goal waits for its children.
     pub(super) async fn poll_waiting_subagent_questionnaires(
         &mut self,

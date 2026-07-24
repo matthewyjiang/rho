@@ -45,6 +45,9 @@ pub(crate) type HostInputRespondFuture<'a> = std::pin::Pin<
     >,
 >;
 
+type HostInputAckFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), rho_sdk::Error>> + Send>>;
+
 /// Answers structured host questionnaires for a headless automation run.
 ///
 /// Direct CLI automation leaves this unset and fails closed. Interactive hosts
@@ -613,9 +616,7 @@ async fn drive_headless_run(
     let mut pending_requests: std::collections::VecDeque<rho_sdk::HostInputRequest> =
         std::collections::VecDeque::new();
     let mut parent_wait: Option<(rho_sdk::HostInputId, HostInputRespondFuture<'_>)> = None;
-    let mut ack_wait: Option<
-        std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), rho_sdk::Error>> + Send>>,
-    > = None;
+    let mut ack_wait: Option<HostInputAckFuture> = None;
     let mut events_open = true;
 
     loop {

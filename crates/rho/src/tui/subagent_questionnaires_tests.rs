@@ -69,10 +69,7 @@ async fn cancelled_queued_questionnaire_is_not_presented() {
     drop(response);
     app.queued_subagent_questionnaires.push_back(request);
 
-    assert!(app
-        .poll_running_subagent_questionnaires(&session_id)
-        .await
-        .unwrap());
+    assert!(app.poll_subagent_questionnaires(&session_id).await.unwrap());
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
     assert!(app.queued_subagent_questionnaires.is_empty());
 }
@@ -85,10 +82,7 @@ async fn queued_questionnaire_waits_without_clearing_parent_draft() {
     app.input_ui.set_text_and_cursor("unsent draft".into(), 12);
     app.queued_subagent_questionnaires.push_back(request);
 
-    assert!(!app
-        .poll_running_subagent_questionnaires(&session_id)
-        .await
-        .unwrap());
+    assert!(!app.poll_subagent_questionnaires(&session_id).await.unwrap());
 
     assert_eq!(app.input_ui.text(), "unsent draft");
     assert_eq!(app.input_ui.cursor(), 12);
@@ -111,15 +105,13 @@ async fn answered_running_questionnaire_reports_parent_working_again() {
     let (request, response) = pending_request(session_id.clone());
     app.queued_subagent_questionnaires.push_back(request);
 
-    app.poll_running_subagent_questionnaires(&session_id)
-        .await
-        .unwrap();
+    app.poll_subagent_questionnaires(&session_id).await.unwrap();
     let blocked = server.next_request().await;
     assert_eq!(blocked["params"]["state"], "blocked");
 
     app.handle_questionnaire_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
-    app.poll_running_subagent_questionnaires(&session_id)
+    app.finish_pending_subagent_questionnaire(ParentActivity::Working("running"))
         .await
         .unwrap();
 
