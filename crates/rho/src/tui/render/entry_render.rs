@@ -9,7 +9,10 @@ pub(in crate::tui) enum TrailingBlank {
 
 impl TrailingBlank {
     fn is_included(self) -> bool {
-        matches!(self, Self::Include)
+        match self {
+            Self::Include => true,
+            Self::Omit => false,
+        }
     }
 }
 
