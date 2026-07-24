@@ -48,13 +48,7 @@ fn build_single_fetch_output(
     // JSON string escaping can expand content; leave a small cushion and retry once.
     for _ in 0..2 {
         let body = utf8_prefix(&item.content, budget);
-        let rendered = to_pretty_json(&single_payload(
-            response_id,
-            item,
-            &body,
-            true,
-            Some(note),
-        ));
+        let rendered = to_pretty_json(&single_payload(response_id, item, &body, true, Some(note)));
         if rendered.len() <= max_output_bytes {
             return rendered;
         }

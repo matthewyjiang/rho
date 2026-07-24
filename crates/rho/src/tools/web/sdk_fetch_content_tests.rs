@@ -61,7 +61,11 @@ async fn run_fetch(
         workspace,
         policy,
         arguments,
-        SdkFetchContent::new(12_000, rho_sdk::ProcessEnvironment::InheritAll, super::storage::WebAccessStore::new()),
+        SdkFetchContent::new(
+            12_000,
+            rho_sdk::ProcessEnvironment::InheritAll,
+            super::storage::WebAccessStore::new(),
+        ),
     )
     .await
 }

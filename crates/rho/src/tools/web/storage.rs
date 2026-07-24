@@ -128,7 +128,11 @@ impl WebAccessStore {
     #[cfg(test)]
     pub(super) fn with_root(path: PathBuf) -> Self {
         let store = Self::new();
-        store.state.lock().expect("web access store lock poisoned").override_root = Some(path);
+        store
+            .state
+            .lock()
+            .expect("web access store lock poisoned")
+            .override_root = Some(path);
         store
     }
 }

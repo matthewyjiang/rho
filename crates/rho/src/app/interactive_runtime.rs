@@ -223,7 +223,11 @@ impl InteractiveRuntime {
         Ok(Self {
             runtime,
             runs: InteractiveRunController::default(),
-            sessions: InteractiveSessionController::new(session, storage, tools.web_access().clone()),
+            sessions: InteractiveSessionController::new(
+                session,
+                storage,
+                tools.web_access().clone(),
+            ),
             provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
             tools,
             workspace,

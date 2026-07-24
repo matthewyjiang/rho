@@ -5,11 +5,7 @@ use rho_sdk::tool::{
 };
 use rho_tools::tool::Tool as LegacyTool;
 
-use super::{
-    adapters::GetSearchContentArgs,
-    storage::WebAccessStore,
-    GetSearchContent,
-};
+use super::{adapters::GetSearchContentArgs, storage::WebAccessStore, GetSearchContent};
 
 pub(crate) struct SdkGetSearchContent {
     max_output_bytes: usize,
