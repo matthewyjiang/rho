@@ -84,6 +84,7 @@ pub struct DiagnosticsSnapshot {
     tools: Vec<ToolDiagnostic>,
     workspace_root: Option<PathBuf>,
     granted_workspace_roots: Vec<PathBuf>,
+    unrestricted_file_access: bool,
     prompt_sources: Vec<PromptSource>,
     approval_audit: Vec<ApprovalAuditRecord>,
     event_capacity: usize,
@@ -101,6 +102,7 @@ pub(crate) struct SecuritySettings {
     pub(crate) tool_security: Vec<(String, ToolSecurity)>,
     pub(crate) workspace_root: Option<PathBuf>,
     pub(crate) granted_workspace_roots: Vec<PathBuf>,
+    pub(crate) unrestricted_file_access: bool,
     pub(crate) prompt_sources: Vec<PromptSource>,
     pub(crate) approval_audit: Vec<ApprovalAuditRecord>,
 }
@@ -132,6 +134,7 @@ impl DiagnosticsSnapshot {
             tools,
             workspace_root: security.workspace_root,
             granted_workspace_roots: security.granted_workspace_roots,
+            unrestricted_file_access: security.unrestricted_file_access,
             prompt_sources: security.prompt_sources,
             approval_audit: security.approval_audit,
             event_capacity: execution.event_capacity,
@@ -163,6 +166,10 @@ impl DiagnosticsSnapshot {
 
     pub fn granted_workspace_roots(&self) -> &[PathBuf] {
         &self.granted_workspace_roots
+    }
+
+    pub fn has_unrestricted_file_access(&self) -> bool {
+        self.unrestricted_file_access
     }
 
     pub fn prompt_sources(&self) -> &[PromptSource] {
@@ -206,3 +213,7 @@ impl DiagnosticsSnapshot {
         &self.default_features
     }
 }
+
+#[cfg(test)]
+#[path = "diagnostics_tests.rs"]
+mod tests;

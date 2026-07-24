@@ -105,6 +105,13 @@ fn renders_complete_sanitized_operation_details() {
         vec!["path: src/main.rs\\nspoofed", "scope: primary workspace",]
     );
 
+    let unrestricted =
+        CapabilityRequest::read_path("/outside/file", PathScope::UnrestrictedFilesystem, source());
+    assert_eq!(
+        approval_details(&unrestricted),
+        vec!["path: /outside/file", "scope: unrestricted filesystem"]
+    );
+
     let network = CapabilityRequest::network(
         NetworkTarget::Url("https://example.com/a/very/long/path".into()),
         source(),

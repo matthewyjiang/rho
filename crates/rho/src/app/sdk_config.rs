@@ -6,8 +6,12 @@ use std::{
 use url::Url;
 
 use {
-    crate::compaction::CompactionConfig, crate::config::Config, rho_providers::model::ModelError,
-    rho_providers::providers::ProviderBuildOptions, rho_providers::reasoning::ReasoningLevel,
+    crate::compaction::CompactionConfig,
+    crate::config::Config,
+    rho_providers::model::ModelError,
+    rho_providers::providers::ProviderBuildOptions,
+    rho_providers::reasoning::ReasoningLevel,
+    rho_sdk::{Workspace, WorkspacePathError},
 };
 
 /// Step budget for one application run.
@@ -89,6 +93,14 @@ pub(crate) struct RuntimeOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkspaceOptions {
     pub(crate) root: PathBuf,
+}
+
+impl WorkspaceOptions {
+    /// Builds Rho's tool workspace with access to paths outside the working
+    /// directory. Relative paths still resolve from the working directory.
+    pub(crate) fn build_workspace(&self) -> Result<Workspace, WorkspacePathError> {
+        Ok(Workspace::new(&self.root)?.with_unrestricted_file_access())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

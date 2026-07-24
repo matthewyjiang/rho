@@ -417,6 +417,10 @@ impl Rho {
                     .as_ref()
                     .map(|workspace| workspace.granted_roots().to_vec())
                     .unwrap_or_default(),
+                unrestricted_file_access: self
+                    .workspace
+                    .as_ref()
+                    .is_some_and(|workspace| workspace.has_unrestricted_file_access()),
                 prompt_sources,
                 approval_audit: self.approval_audit.snapshot(),
             },

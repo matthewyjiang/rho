@@ -52,8 +52,12 @@ impl CapabilitySource {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PathScope {
+    /// Path under the workspace's primary root.
     PrimaryWorkspace,
+    /// Path under a canonical root deliberately attached by the host.
     GrantedRoot { root: PathBuf },
+    /// Path outside the primary root accepted through unrestricted resolution.
+    UnrestrictedFilesystem,
 }
 
 /// How an executable name is resolved.
@@ -413,18 +417,17 @@ impl CapabilityRequest {
     }
 
     pub(crate) fn is_outside_primary_root(&self) -> bool {
-        matches!(
-            &self.operation,
-            CapabilityOperation::ReadPath {
-                scope: PathScope::GrantedRoot { .. },
-                ..
-            } | CapabilityOperation::WritePath {
-                scope: PathScope::GrantedRoot { .. },
-                ..
-            } | CapabilityOperation::DiscoverInstructions {
-                scope: PathScope::GrantedRoot { .. },
-                ..
-            }
-        )
+        let scope = match &self.operation {
+            CapabilityOperation::ReadPath { scope, .. }
+            | CapabilityOperation::WritePath { scope, .. }
+            | CapabilityOperation::DiscoverInstructions { scope, .. } => scope,
+            CapabilityOperation::ExecuteProcess(_)
+            | CapabilityOperation::NetworkAccess(_)
+            | CapabilityOperation::LoadSkill { .. } => return false,
+        };
+        match scope {
+            PathScope::PrimaryWorkspace => false,
+            PathScope::GrantedRoot { .. } | PathScope::UnrestrictedFilesystem => true,
+        }
     }
 }

@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use rho_sdk::{SessionOptions, SystemPrompt, UserInput, Workspace};
+use rho_sdk::{SessionOptions, SystemPrompt, UserInput};
 
 use {
     crate::agent::{PromptPolicy, ToolCapability},
@@ -491,7 +491,7 @@ async fn run_session_with_output(
     startup.diagnostics.update_tools(&tool_specs);
 
     let workspace_root = sdk_options.workspace.root.clone();
-    let workspace = Workspace::new(&workspace_root)?;
+    let workspace = sdk_options.workspace.build_workspace()?;
     let context_window = configured_context_window(startup.config);
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);

@@ -71,7 +71,7 @@ A custom provider or tool is trusted host code. The SDK cannot prevent it from o
 
 ## Diagnostics and prompt sources
 
-`Rho::diagnostics` and `Session::diagnostics` return owned snapshots of effective provider identity, registered tool names, workspace root, prompt-source metadata, event capacity, step limit, compaction threshold, reasoning level, and enabled SDK features. Diagnostics are intended to describe configuration, not contain credentials or prompt bodies.
+`Rho::diagnostics` and `Session::diagnostics` return owned snapshots of effective provider identity, registered tools, workspace root and path scope, prompt-source metadata, event capacity, step limit, compaction threshold, reasoning level, and enabled SDK features. Diagnostics are intended to describe configuration, not contain credentials or prompt bodies.
 
 The current core SDK supports `SystemPrompt::None` and `SystemPrompt::Custom`. Rho coding-prompt construction, `AGENTS.md` discovery, and skill discovery belong to explicit application or future adapter policy. A host that performs instruction discovery must scope it to the configured workspace and expose included sources in diagnostics rather than hiding global discovery.
 

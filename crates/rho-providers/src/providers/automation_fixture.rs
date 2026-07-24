@@ -14,6 +14,7 @@ use rho_sdk::{
 const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
 const RESPONSE_ENV: &str = "RHO_AUTOMATION_TEST_RESPONSE";
 const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
+const PATH_ENV: &str = "RHO_AUTOMATION_TEST_PATH";
 
 pub(super) fn from_env(
     provider: &str,
@@ -43,6 +44,8 @@ enum Mode {
     Delay,
     ToolFailure,
     ReadFile,
+    ReadPath,
+    WritePath,
     ProcessThenDelay,
 }
 
@@ -57,6 +60,8 @@ impl Mode {
             "delay" => Ok(Self::Delay),
             "tool-failure" => Ok(Self::ToolFailure),
             "read-file" => Ok(Self::ReadFile),
+            "read-path" => Ok(Self::ReadPath),
+            "write-path" => Ok(Self::WritePath),
             "process-then-delay" => Ok(Self::ProcessThenDelay),
             _ => Err(format!("unknown {MODE_ENV} value '{value}'")),
         }
@@ -110,6 +115,21 @@ impl ModelProvider for AutomationFixtureProvider {
                     serde_json::json!({"path": "large.txt"}),
                 ),
                 Mode::ReadFile => completed(last_tool_result(&request)?),
+                Mode::ReadPath if turn == 0 => completed_tool_call(
+                    "fixture-read-path",
+                    "read_file",
+                    serde_json::json!({"path": required_env(PATH_ENV)?}),
+                ),
+                Mode::ReadPath => completed(last_tool_result(&request)?),
+                Mode::WritePath if turn == 0 => completed_tool_call(
+                    "fixture-write-path",
+                    "write_file",
+                    serde_json::json!({
+                        "path": required_env(PATH_ENV)?,
+                        "content": "written outside the working directory",
+                    }),
+                ),
+                Mode::WritePath => completed(fixed_response()),
                 Mode::ProcessThenDelay if turn == 0 => completed_tool_call(
                     "fixture-process",
                     "process",

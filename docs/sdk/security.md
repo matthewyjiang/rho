@@ -19,7 +19,7 @@ A provider is required because a runtime without a provider cannot execute, but 
 
 ### Rho application defaults differ
 
-The default-deny posture above applies to external SDK embedders. The shipped Rho CLI, automation mode, and interactive TUI preserve the application's existing behavior by installing workspace policies that allow every capability request without prompting. Running the Rho application therefore grants its built-in tools the authority of the current process, subject to workspace path checks and other tool-specific validation. Do not treat the CLI or TUI defaults as a security boundary. Hosts that need capability gating must embed the SDK with an explicit restrictive policy and approval handler.
+The default-deny posture above applies to external SDK embedders. The shipped Rho CLI, automation mode, and interactive TUI enable unrestricted path resolution, while the selected [permission mode](/configuration#permission-modes) controls capability authority. `auto` allows requests, `plan` denies writes and process execution, and `supervised` asks before those actions. Supervised non-interactive runs fail closed. Built-in tools still run with the current process's operating-system rights, so do not treat these controls as a sandbox. Hosts that need tighter controls must embed the SDK with an explicit workspace and policy.
 
 ## Capability model
 
@@ -31,9 +31,9 @@ An approval can be one-shot or remembered for the exact structured request in th
 
 ## Workspace scope
 
-A `Workspace` stores a canonical primary root and optional canonical roots deliberately attached by the host. Roots are scopes, not grants. Read resolution requires an existing canonical target. Write resolution canonicalizes either the target or its nearest existing parent. Both return a `ResolvedWorkspacePath` with primary or granted-root scope. Built-ins authorize that object, revalidate it immediately before I/O, and use its canonical path.
+A `Workspace` stores a canonical primary root and optional canonical roots deliberately attached by the host. A host can instead opt into unrestricted file paths. Path scopes control resolution; they do not grant capability authority. Read resolution requires an existing canonical target. Write resolution canonicalizes either the target or its nearest existing parent. Both return a `ResolvedWorkspacePath` with primary-workspace, granted-root, or unrestricted-filesystem scope. Built-ins authorize that object, revalidate it immediately before I/O, and use its canonical path.
 
-Parent traversal is rejected even when it would normalize back inside. Absolute paths must be under the primary or an attached root. Missing reads fail; missing writes have an explicit state. Symlinks outside configured roots fail. A granted root still requires the policy's explicit outside-workspace grant.
+By default, parent traversal is rejected even when it would normalize back inside, absolute paths must be under the primary or an attached root, and symlinks outside configured roots fail. `Workspace::with_unrestricted_file_access` permits parent traversal and absolute paths, but paths outside the primary workspace retain unrestricted-filesystem scope and still require policy authorization. Missing reads fail; missing writes have an explicit state.
 
 These controls narrow normalization and check/use disagreement but cannot eliminate every mutable-filesystem race. Use descriptor-relative safe-open techniques or OS sandboxing where stronger guarantees are required. Process working directories and instruction/skill discovery must use the same resolved workspace rules.
 

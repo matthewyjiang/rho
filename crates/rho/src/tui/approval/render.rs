@@ -227,6 +227,7 @@ fn format_path_scope(scope: &PathScope) -> String {
             "scope: granted root {}",
             sanitize_controls(&root.to_string_lossy())
         ),
+        PathScope::UnrestrictedFilesystem => "scope: unrestricted filesystem".into(),
         _ => "scope: unspecified".into(),
     }
 }

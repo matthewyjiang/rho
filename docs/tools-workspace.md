@@ -1,6 +1,6 @@
 # Tools and workspace
 
-Rho uses the current working directory as the workspace for file reads, edits, and shell commands. Start the [interactive TUI](/interactive-tui) or [automation command](/automation-cli) from the repository or directory you want Rho to work in.
+Rho uses the current working directory as the workspace and as the base for relative file paths and shell commands. File paths can point outside that directory, either with parent components such as `../` or with absolute paths. Start the [interactive TUI](/interactive-tui) or [automation command](/automation-cli) from the repository or directory you want Rho to use as its main work context.
 
 ## Built-in tools
 
@@ -29,7 +29,7 @@ Built-in skills that ship with the binary include `rho-diagnostics` for harness 
 
 Web access tools keep normal prompts small when needed, but `fetch_content` returns a single target's readable body inline when it fits the tool output limit. Larger or multi-target results keep a `responseId` for `get_search_content`. Full bodies are stored as sidecar blobs under the active session folder (`.../<session>/web/` for new sessions, or a legacy `*.web/` companion beside flat transcripts), not in the session transcript and not as paths for `read_file`. `get_search_content` selectors must use the exact original query/prompt or URL from the prior tool result; free-text keyword queries are rejected with the available selectors listed. `web_search` stores snippets by default and stores fetched source pages only when `includeContent` succeeds. GitHub repository URLs prefer a local clone so the tool can return real tree/file contents through the web tools; oversized repositories fall back to the GitHub API unless `forceClone` is set. Do not open web-access cache directories with `read_file`. HTTP fetches refuse private, loopback, and link-local destinations by default. Set `RHO_SSRF_ALLOW_RANGES` to a comma-separated list of CIDRs (for example `198.18.0.0/15`) only when a TUN or fake-IP proxy requires it.
 
-These tools can read and modify files, run shell commands in the working directory, and fetch external or local content when invoked. The `rho` tool is read-only and returns compact live snapshots. Its detailed action reference is embedded in the `rho-diagnostics` skill and loaded only when needed; diagnostics exclude credentials, prompt contents, and conversation history. Restart-only settings report the values used by the running process, not newer values saved for the next session.
+These tools can read and modify files inside or outside the workspace, run shell commands that start in the working directory, and fetch external or local content when invoked. The `rho` tool is read-only and returns compact live snapshots. Its detailed action reference is embedded in the `rho-diagnostics` skill and loaded only when needed; diagnostics exclude credentials, prompt contents, and conversation history. Restart-only settings report the values used by the running process, not newer values saved for the next session.
 
 ## Image previews
 
@@ -71,8 +71,8 @@ File write results include a unified diff so the model and transcript can inspec
 
 ## Security and workspace boundaries
 
-Tools run with the current user's permissions and can read or modify files and execute shell commands in the current workspace. The default `auto` [permission mode](/configuration#permission-modes) preserves this unrestricted behavior. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised non-interactive runs fail closed because no approval UI is available.
+Tools run with the current user's permissions. File tools can read or modify any path that the user can access, including paths outside the workspace, and shell commands can do the same. The default `auto` [permission mode](/configuration#permission-modes) allows this behavior. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised non-interactive runs fail closed because no approval UI is available.
 
-Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. Run Rho only in workspaces where you are comfortable with the selected mode and these limitations.
+Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. The SDK still scopes file access by default; embedded hosts must opt into broader access when they build a `Workspace`. Run Rho only in workspaces where you are comfortable with the selected mode and these limits.
 
 For session storage separate from the workspace, see [sessions](/sessions). For output-size settings, see [configuration](/configuration#tool-output-limit).
