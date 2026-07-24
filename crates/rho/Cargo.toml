@@ -1,6 +1,6 @@
 [package]
 name = "rho-coding-agent"
-version = "1.13.0"
+version = "1.14.0"
 edition = "2021"
 rust-version = "1.92"
 description = "A lightweight agent harness inspired by Pi"
@@ -23,8 +23,8 @@ name = "rho"
 path = "src/main.rs"
 
 [dependencies]
-rho-sdk = { version = "1.8.0", path = "../rho-sdk" }
-rho-providers = { version = "0.8.0", path = "../rho-providers", default-features = false }
+rho-sdk = { version = "1.9.0", path = "../rho-sdk" }
+rho-providers = { version = "0.8.1", path = "../rho-providers", default-features = false }
 rho-tools = { version = "0.5.4", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
