@@ -308,11 +308,14 @@ fn non_utf8_system_prompt_path_is_rejected_before_write() {
     ))
     .unwrap();
 
-    // Build an output path whose parent directory name is not valid UTF-8.
+    // Construct a non-UTF-8 output path under a valid parent without creating it.
+    // macOS rejects non-UTF-8 path components at the filesystem boundary
+    // (`Illegal byte sequence`), so the test must not depend on mkdir.
     let dir = tempfile::tempdir().unwrap();
-    let non_utf8_dir = dir.path().join(OsStr::from_bytes(b"run-\xff-dir"));
-    std::fs::create_dir_all(&non_utf8_dir).unwrap();
-    let output = non_utf8_dir.join("result.json");
+    let output = dir
+        .path()
+        .join(OsStr::from_bytes(b"run-\xff-dir"))
+        .join("result.json");
 
     let err = finalize_spawn_args(&plan, &output).expect_err("non-utf8 path must fail");
     assert!(
