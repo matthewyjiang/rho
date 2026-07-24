@@ -231,7 +231,11 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     InteractiveRuntime {
         runtime,
         runs: InteractiveRunController::default(),
-        sessions: InteractiveSessionController::new(session, None),
+        sessions: InteractiveSessionController::new(
+            session,
+            None,
+            crate::tools::web::WebAccessStore::new(),
+        ),
         provider: ProviderController::new(shared_provider, rho_sdk::ReasoningLevel::Off),
         tools,
         workspace,

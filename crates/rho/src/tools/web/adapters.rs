@@ -8,22 +8,36 @@ use {
 
 use super::{
     search::{self, SearchBackendConfig},
-    storage::{self, StoredContent, StoredItem},
+    storage::{self, StoredContent, StoredItem, WebAccessStore},
     util::to_pretty_json,
 };
 
 pub struct WebSearch {
     config: SearchBackendConfig,
     client: reqwest::Client,
+    store: WebAccessStore,
 }
 
-pub struct GetSearchContent;
+pub struct GetSearchContent {
+    store: WebAccessStore,
+}
+
+impl GetSearchContent {
+    pub(super) fn new(store: WebAccessStore) -> Self {
+        Self { store }
+    }
+}
 
 impl WebSearch {
-    pub(super) fn with_client(config: &Config, client: reqwest::Client) -> Self {
+    pub(super) fn with_client(
+        config: &Config,
+        client: reqwest::Client,
+        store: WebAccessStore,
+    ) -> Self {
         Self {
             config: SearchBackendConfig::from_config(config),
             client,
+            store,
         }
     }
 
@@ -156,7 +170,7 @@ impl Tool for WebSearch {
 
         let availability = storage::content_availability(&items);
         let stored_content_available = !items.is_empty();
-        storage::store(
+        self.store.store(
             response_id.clone(),
             StoredContent {
                 kind: "web_search".into(),
@@ -223,7 +237,7 @@ impl GetSearchContent {
         max_output_bytes: usize,
         id: String,
     ) -> Result<ToolResult, ToolError> {
-        let stored = storage::load(&args.response_id)?;
+        let stored = self.store.load(&args.response_id)?;
         let item = select_stored_item(&stored, &args)?;
         let content = json!({
             "responseId": args.response_id,

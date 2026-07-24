@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use serde::{Deserialize, Serialize};
@@ -12,8 +12,6 @@ use uuid::Uuid;
 use rho_tools::tool::ToolError;
 
 static CONTENT_STORE: OnceLock<Mutex<HashMap<String, StoredContent>>> = OnceLock::new();
-static CACHE_ROOT_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
-static ACTIVE_SESSION_WEB_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct StoredContent {
@@ -36,6 +34,105 @@ pub(super) struct ContentAvailability {
     pub(super) sources: bool,
 }
 
+/// Session-scoped (or fallback) root for durable web-access blobs.
+///
+/// Owned by the app tool set / interactive runtime and injected into web tools.
+/// Not a process-global "active session" side channel.
+#[derive(Clone, Debug, Default)]
+pub struct WebAccessStore {
+    state: Arc<Mutex<WebAccessStoreState>>,
+}
+
+#[derive(Debug, Default)]
+struct WebAccessStoreState {
+    session_root: Option<PathBuf>,
+    #[cfg(test)]
+    override_root: Option<PathBuf>,
+}
+
+impl WebAccessStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Points durable web blobs at the active session sidecar directory.
+    pub fn bind_session(&self, root: Option<PathBuf>) {
+        self.state
+            .lock()
+            .expect("web access store lock poisoned")
+            .session_root = root;
+    }
+
+    /// Durable sidecar root for web-access blobs and GitHub clones.
+    ///
+    /// Preference order:
+    /// 1. test override
+    /// 2. bound session `web/` directory
+    /// 3. process data-dir fallback
+    /// 4. temp dir when no Rho home is available
+    pub fn root(&self) -> PathBuf {
+        let state = self.state.lock().expect("web access store lock poisoned");
+        #[cfg(test)]
+        if let Some(path) = state.override_root.clone() {
+            return path;
+        }
+        if let Some(path) = state.session_root.clone() {
+            return path;
+        }
+        default_web_access_cache_root()
+    }
+
+    pub(super) fn store(
+        &self,
+        response_id: String,
+        content: StoredContent,
+    ) -> Result<(), ToolError> {
+        write_at(&self.root(), &response_id, &content)?;
+        content_store()
+            .lock()
+            .expect("content store lock poisoned")
+            .insert(response_id, content);
+        Ok(())
+    }
+
+    pub(super) fn load(&self, response_id: &str) -> Result<StoredContent, ToolError> {
+        validate_response_id(response_id)?;
+        if let Some(content) = content_store()
+            .lock()
+            .expect("content store lock poisoned")
+            .get(response_id)
+            .cloned()
+        {
+            return Ok(content);
+        }
+        read_at(&self.root(), response_id)
+    }
+
+    pub(super) fn create_private_dir_all(&self, path: &Path) -> Result<(), ToolError> {
+        fs::create_dir_all(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let root = self.root();
+            if root.exists() {
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+            }
+            if path.exists() {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_root(path: PathBuf) -> Self {
+        let store = Self::new();
+        store.state.lock().expect("web access store lock poisoned").override_root = Some(path);
+        store
+    }
+}
+
 pub(super) fn content_availability(items: &[StoredItem]) -> ContentAvailability {
     ContentAvailability {
         snippets: items.iter().any(|item| {
@@ -48,28 +145,6 @@ pub(super) fn content_availability(items: &[StoredItem]) -> ContentAvailability 
             item.metadata.get("contentKind").and_then(Value::as_str) == Some("source_page")
         }),
     }
-}
-
-pub(super) fn store(response_id: String, content: StoredContent) -> Result<(), ToolError> {
-    write(&response_id, &content)?;
-    content_store()
-        .lock()
-        .expect("content store lock poisoned")
-        .insert(response_id, content);
-    Ok(())
-}
-
-pub(super) fn load(response_id: &str) -> Result<StoredContent, ToolError> {
-    validate_response_id(response_id)?;
-    if let Some(content) = content_store()
-        .lock()
-        .expect("content store lock poisoned")
-        .get(response_id)
-        .cloned()
-    {
-        return Ok(content);
-    }
-    read(response_id)
 }
 
 pub(super) fn new_response_id() -> String {
@@ -90,66 +165,13 @@ pub(super) fn validate_response_id(response_id: &str) -> Result<(), ToolError> {
     }
 }
 
-/// Durable sidecar root for web-access blobs and GitHub clones.
-///
-/// Preference order:
-/// 1. test override
-/// 2. active session `web/` directory
-/// 3. legacy process-global data-dir fallback
-/// 4. temp dir when no Rho home is available
-pub(super) fn web_access_cache_root() -> PathBuf {
-    if let Some(path) = CACHE_ROOT_OVERRIDE
-        .lock()
-        .expect("web access cache root lock poisoned")
-        .clone()
-    {
-        return path;
-    }
-    if let Some(path) = ACTIVE_SESSION_WEB_ROOT
-        .lock()
-        .expect("active session web root lock poisoned")
-        .clone()
-    {
-        return path;
-    }
-    default_web_access_cache_root()
-}
-
-/// Binds web-access storage to the current durable session sidecar directory.
-pub(crate) fn set_active_session_web_root(path: Option<PathBuf>) {
-    *ACTIVE_SESSION_WEB_ROOT
-        .lock()
-        .expect("active session web root lock poisoned") = path;
-}
-
-#[cfg(test)]
-pub(crate) fn web_access_cache_root_for_tests() -> PathBuf {
-    web_access_cache_root()
-}
-
-pub(super) fn create_private_dir_all(path: &Path) -> Result<(), ToolError> {
-    fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let root = web_access_cache_root();
-        if root.exists() {
-            fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
-        }
-        if path.exists() {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-        }
-    }
-    Ok(())
-}
-
 /// Lists exact selector keys an agent may pass to `get_search_content`.
 pub(super) fn available_selectors(stored: &StoredContent) -> String {
-    let mut lines = Vec::new();
     if stored.items.is_empty() {
         return "no stored items".into();
     }
+    let mut lines = Vec::with_capacity(stored.items.len());
+    let mut query_index = 0usize;
     for (index, item) in stored.items.iter().enumerate() {
         let mut parts = vec![format!("urlIndex={index}")];
         if let Some(url) = item.url.as_deref() {
@@ -157,16 +179,8 @@ pub(super) fn available_selectors(stored: &StoredContent) -> String {
         }
         if let Some(query) = item.query.as_deref() {
             parts.push(format!("query={query:?}"));
-        }
-        if item.query.is_some() {
-            let query_index = stored
-                .items
-                .iter()
-                .take(index + 1)
-                .filter(|candidate| candidate.query.is_some())
-                .count()
-                .saturating_sub(1);
             parts.push(format!("queryIndex={query_index}"));
+            query_index += 1;
         }
         lines.push(format!("- {}", parts.join(" ")));
     }
@@ -178,24 +192,34 @@ fn content_store() -> &'static Mutex<HashMap<String, StoredContent>> {
 }
 
 fn default_web_access_cache_root() -> PathBuf {
-    // Used only when no session is bound (tests, pre-session tool calls).
+    // Used only when no session is bound (tests, pre-session tool calls, automation).
     crate::paths::rho_dir()
         .map(|dir| dir.join("web-access"))
         .unwrap_or_else(|_| std::env::temp_dir().join("rho-web-access"))
 }
 
-fn write(response_id: &str, content: &StoredContent) -> Result<(), ToolError> {
-    let path = stored_content_path(response_id)?;
+fn write_at(root: &Path, response_id: &str, content: &StoredContent) -> Result<(), ToolError> {
+    let path = stored_content_path(root, response_id)?;
     if let Some(parent) = path.parent() {
-        create_private_dir_all(parent)?;
+        fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if root.exists() {
+                fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
+            }
+            if parent.exists() {
+                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+            }
+        }
     }
     let serialized = serde_json::to_string(content)
         .map_err(|err| ToolError::Message(format!("failed to serialize stored content: {err}")))?;
     write_private_file(&path, serialized.as_bytes())
 }
 
-fn read(response_id: &str) -> Result<StoredContent, ToolError> {
-    let path = stored_content_path(response_id)?;
+fn read_at(root: &Path, response_id: &str) -> Result<StoredContent, ToolError> {
+    let path = stored_content_path(root, response_id)?;
     match fs::read_to_string(&path) {
         Ok(content) => parse_stored_content(&content),
         Err(_) => read_legacy_temp(response_id),
@@ -220,11 +244,9 @@ fn parse_stored_content(content: &str) -> Result<StoredContent, ToolError> {
         .map_err(|err| ToolError::Message(format!("stored content was not valid JSON: {err}")))
 }
 
-fn stored_content_path(response_id: &str) -> Result<PathBuf, ToolError> {
+fn stored_content_path(root: &Path, response_id: &str) -> Result<PathBuf, ToolError> {
     validate_response_id(response_id)?;
-    Ok(web_access_cache_root()
-        .join("content")
-        .join(format!("{response_id}.json")))
+    Ok(root.join("content").join(format!("{response_id}.json")))
 }
 
 fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), ToolError> {
@@ -248,31 +270,6 @@ fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), ToolError> {
     {
         fs::write(path, contents)?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-pub(super) struct CacheRootGuard {
-    previous: Option<PathBuf>,
-}
-
-#[cfg(test)]
-impl CacheRootGuard {
-    pub(super) fn set(path: PathBuf) -> Self {
-        let previous = CACHE_ROOT_OVERRIDE
-            .lock()
-            .expect("web access cache root lock poisoned")
-            .replace(path);
-        Self { previous }
-    }
-}
-
-#[cfg(test)]
-impl Drop for CacheRootGuard {
-    fn drop(&mut self) {
-        *CACHE_ROOT_OVERRIDE
-            .lock()
-            .expect("web access cache root lock poisoned") = self.previous.take();
     }
 }
 

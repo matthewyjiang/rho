@@ -822,16 +822,10 @@ fn session_web_dir_uses_folder_sidecar_and_legacy_companion() {
 }
 
 #[test]
-fn bind_web_access_root_points_storage_at_session_web_dir() {
+fn session_web_dir_method_matches_layout() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
-    session.bind_web_access_root();
-
     let expected = session.path().parent().unwrap().join("web");
-    assert_eq!(
-        crate::tools::web::storage::web_access_cache_root_for_tests(),
-        expected
-    );
-    crate::tools::web::storage::set_active_session_web_root(None);
+    assert_eq!(session.web_dir(), Some(expected));
 }

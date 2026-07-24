@@ -5,19 +5,28 @@ use rho_sdk::tool::{
 };
 use rho_tools::tool::Tool as LegacyTool;
 
-use super::{adapters::GetSearchContentArgs, GetSearchContent};
+use super::{
+    adapters::GetSearchContentArgs,
+    storage::WebAccessStore,
+    GetSearchContent,
+};
 
 pub(crate) struct SdkGetSearchContent {
     max_output_bytes: usize,
+    inner: GetSearchContent,
 }
 
 impl SdkGetSearchContent {
-    pub(crate) fn new(max_output_bytes: usize) -> Self {
-        Self { max_output_bytes }
+    pub(crate) fn new(max_output_bytes: usize, store: WebAccessStore) -> Self {
+        Self {
+            max_output_bytes,
+            inner: GetSearchContent::new(store),
+        }
     }
 
     fn execute(&self, args: GetSearchContentArgs) -> Result<ToolOutput, ToolError> {
-        let result = GetSearchContent
+        let result = self
+            .inner
             .execute(args, self.max_output_bytes, String::new())
             .map_err(map_legacy_error)?;
         if !result.ok {
@@ -29,7 +38,7 @@ impl SdkGetSearchContent {
 
 impl Tool for SdkGetSearchContent {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
-        GetSearchContent.spec()
+        self.inner.spec()
     }
 
     fn security(&self) -> ToolSecurity {

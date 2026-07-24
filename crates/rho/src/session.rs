@@ -131,9 +131,10 @@ impl Session {
             resolved.cwd.display(),
         );
         let histories = resolved.histories()?;
-        let session = Self::from_parts(session_root, &resolved.cwd, resolved.id, resolved.path);
-        session.bind_web_access_root();
-        Ok((session, histories))
+        Ok((
+            Self::from_parts(session_root, &resolved.cwd, resolved.id, resolved.path),
+            histories,
+        ))
     }
 
     pub(crate) fn tree_facts_by_id(
@@ -292,7 +293,6 @@ impl Session {
         let created_at = unix_timestamp_secs();
         let path = store.create_path(&id, created_at)?;
         let session = Self::from_parts(session_root, cwd, id.clone(), path);
-        session.bind_web_access_root();
         session.append_session_metadata(id, created_at, agent)?;
         Ok(session)
     }
@@ -332,11 +332,9 @@ impl Session {
         &self.path
     }
 
-    /// Points web-access storage at this session's sidecar directory.
-    pub(crate) fn bind_web_access_root(&self) {
-        if let Some(web_dir) = session_web_dir(&self.path) {
-            crate::tools::web::storage::set_active_session_web_root(Some(web_dir));
-        }
+    /// Web-access sidecar directory for this session, when the on-disk layout supports one.
+    pub(crate) fn web_dir(&self) -> Option<PathBuf> {
+        session_web_dir(&self.path)
     }
 
     pub fn id(&self) -> &str {

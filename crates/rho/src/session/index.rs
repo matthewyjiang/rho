@@ -132,12 +132,13 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
     if dir.exists() {
         for entry in fs::read_dir(&dir)? {
             let path = entry?.path();
-            let Some(transcript) = super::persistence::resolve_transcript_path(&path) else {
+            let Some(unit) = super::persistence::SessionUnit::from_path(&path) else {
                 continue;
             };
-            let Some(id) = session_id_from_path(&transcript) else {
+            let Some(id) = unit.id() else {
                 continue;
             };
+            let transcript = unit.transcript_path();
             seen.insert(id.clone());
             let (file_size, file_mtime) = session_file_stats(&transcript);
             if indexed_file_is_current(

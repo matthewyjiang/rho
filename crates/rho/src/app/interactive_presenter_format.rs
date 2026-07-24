@@ -468,16 +468,24 @@ pub(super) fn fetch_content_line(content: &str) -> String {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
         return "fetch content finished".into();
     };
+    if let Some(count) = value.get("itemCount").and_then(|count| count.as_u64()) {
+        let truncated = value
+            .get("contentTruncated")
+            .and_then(|flag| flag.as_bool())
+            .unwrap_or(false);
+        return if truncated && count == 1 {
+            "fetch content: fetched 1 item (truncated)".into()
+        } else {
+            format!(
+                "fetch content: fetched {}",
+                pluralized(count as usize, "item", "")
+            )
+        };
+    }
     if let Some(items) = value.get("items").and_then(|items| items.as_array()) {
         return format!(
             "fetch content: fetched {}",
             pluralized(items.len(), "item", "")
-        );
-    }
-    if let Some(count) = value.get("itemCount").and_then(|count| count.as_u64()) {
-        return format!(
-            "fetch content: fetched {}",
-            pluralized(count as usize, "item", "")
         );
     }
     if value.get("content").is_some() {

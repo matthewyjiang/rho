@@ -12,22 +12,22 @@ use url::Url;
 
 use super::{
     fetch::{self, github, FetchedTarget},
-    fetch_response::build_fetch_content_output,
-    storage::{self, StoredContent, StoredItem},
+    fetch_response::{build_fetch_content_output, FETCH_CONTENT_TOOL},
+    storage::{self, StoredContent, StoredItem, WebAccessStore},
     util,
 };
 
 mod github_clone;
 
-use github_clone::GitHubClonePlan;
+use github_clone::{GitHubCloneConfig, GitHubClonePlan};
 
 const DEFAULT_FRAMES: usize = 6;
-const FETCH_CONTENT_TOOL: &str = "fetch_content";
 
 pub(in crate::tools) struct SdkFetchContent {
     client: reqwest::Client,
     max_output_bytes: usize,
     process_environment: rho_sdk::ProcessEnvironment,
+    store: WebAccessStore,
     /// Test-only override installed around the tool future so the fetch choke
     /// point can allow loopback without threading policy through plan types.
     #[cfg(test)]
@@ -38,11 +38,13 @@ impl SdkFetchContent {
     pub(in crate::tools) fn new(
         max_output_bytes: usize,
         process_environment: rho_sdk::ProcessEnvironment,
+        store: WebAccessStore,
     ) -> Self {
         Self {
             client: util::fetch_http_client(),
             max_output_bytes,
             process_environment,
+            store,
             #[cfg(test)]
             allow_ranges_override: None,
         }
@@ -57,6 +59,7 @@ impl SdkFetchContent {
             client: util::fetch_http_client(),
             max_output_bytes,
             process_environment: rho_sdk::ProcessEnvironment::InheritAll,
+            store: WebAccessStore::new(),
             allow_ranges_override: Some(allow_ranges),
         }
     }
@@ -82,12 +85,14 @@ struct TargetOptions<'a> {
     force_clone: bool,
     max_output_bytes: usize,
     process_environment: rho_sdk::ProcessEnvironment,
+    store: WebAccessStore,
 }
 
 struct FetchPlan {
     response_id: String,
     prompt: Option<String>,
     targets: Vec<TargetPlan>,
+    store: WebAccessStore,
 }
 
 enum TargetPlan {
@@ -137,6 +142,7 @@ impl FetchPlan {
         context: &ToolContext,
         max_output_bytes: usize,
         process_environment: rho_sdk::ProcessEnvironment,
+        store: WebAccessStore,
     ) -> Result<Self, ToolError> {
         let arguments: FetchContentArgs = serde_json::from_value(arguments).map_err(|error| {
             ToolError::new(
@@ -168,6 +174,7 @@ impl FetchPlan {
                     force_clone,
                     max_output_bytes,
                     process_environment: process_environment.clone(),
+                    store: store.clone(),
                 },
             )?);
         }
@@ -175,6 +182,7 @@ impl FetchPlan {
             response_id,
             prompt: arguments.prompt,
             targets: plans,
+            store,
         })
     }
 
@@ -206,17 +214,17 @@ impl FetchPlan {
             });
         }
 
-        storage::store(
-            self.response_id.clone(),
-            StoredContent {
-                kind: FETCH_CONTENT_TOOL.into(),
-                items: items.clone(),
-            },
-        )
-        .map_err(map_app_tool_error)?;
-
         let content =
             build_fetch_content_output(&self.response_id, &items, &previews, max_output_bytes);
+        self.store
+            .store(
+                self.response_id,
+                StoredContent {
+                    kind: FETCH_CONTENT_TOOL.into(),
+                    items,
+                },
+            )
+            .map_err(map_app_tool_error)?;
         Ok(ToolOutput::text(content)
             .metadata(ToolMetadata::new().operation(OperationKind::Network)))
     }
@@ -233,11 +241,14 @@ impl TargetPlan {
                 return Ok(Self::GitHubClone(GitHubClonePlan::new(
                     requested,
                     target,
-                    options.response_id,
-                    options.target_index,
-                    workspace.root(),
-                    options.max_output_bytes,
-                    options.process_environment,
+                    GitHubCloneConfig {
+                        response_id: options.response_id.to_owned(),
+                        target_index: options.target_index,
+                        working_directory: workspace.root().to_path_buf(),
+                        max_output_bytes: options.max_output_bytes,
+                        process_environment: options.process_environment,
+                        store: options.store,
+                    },
                 )));
             }
             let api_url = github::api_url(&target);
@@ -419,6 +430,7 @@ impl Tool for SdkFetchContent {
                 &context,
                 self.max_output_bytes,
                 self.process_environment.clone(),
+                self.store.clone(),
             )?;
             plan.authorize(&context).await?;
             let execute = plan.execute(&self.client, &context, self.max_output_bytes);
