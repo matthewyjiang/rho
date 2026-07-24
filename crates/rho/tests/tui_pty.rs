@@ -5,6 +5,9 @@
 
 #![cfg(unix)]
 
+#[path = "support/claude_e2e.rs"]
+mod claude_e2e;
+
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
@@ -206,8 +209,12 @@ web_search_provider = "disabled"
         "store chooser must wait until a normal provider is selected:\n{screen}"
     );
     assert!(
-        screen.contains("claude code (subscription"),
-        "claude-code must appear in the bare login picker:\n{screen}"
+        !screen.contains("claude code (delegation only)"),
+        "claude-code belongs under Anthropic methods, not the top-level group picker:\n{screen}"
+    );
+    assert!(
+        screen.contains("Anthropic"),
+        "Anthropic group must remain in the bare login picker:\n{screen}"
     );
 
     // Filter to OpenAI so the test does not depend on picker sort order.
@@ -729,6 +736,222 @@ fn attach_replays_finished_claude_run_from_fixtures() {
             .unwrap(),
         0
     );
+}
+
+/// Full fake-Claude runtime path: matrix parent -> agent tool -> binder/executor
+/// -> `claude -p` spawn -> stream-json -> result/events persistence -> parent
+/// completion UI -> `rho attach` replay. Never touches a real Claude binary or
+/// the network.
+#[test]
+fn fake_claude_runtime_end_to_end_success() {
+    let home = IsolatedHome::new().unwrap();
+    claude_e2e::install_claude_planner_agent(&home.home);
+
+    let fake_root = home.path().join("fake-claude");
+    let fake = claude_e2e::install_fake_claude(&fake_root, claude_e2e::FakeClaudeMode::Success);
+    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+
+    // Prove the isolated PATH cannot resolve a host Claude: only our stub.
+    assert!(fake.claude.is_file());
+    assert_eq!(
+        which_on_path("claude", &path).as_deref(),
+        Some(fake.claude.as_path()),
+        "PATH must resolve the fake claude first"
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path);
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    // Real agent-tool path via matrix fixture prompt (foreground delegation).
+    harness.submit_text("fixture claude agent").unwrap();
+    harness
+        .wait_for_text(
+            "claude-planner",
+            WaitTimeout::secs(15, "agent tool started"),
+        )
+        .unwrap();
+
+    claude_e2e::wait_for_spawn(&fake, Duration::from_secs(15));
+    let record = fake.read_spawn_record();
+    claude_e2e::assert_success_spawn(&record, &home.workspace);
+
+    // Parent UI shows final text and Claude session id from the live fixture.
+    harness
+        .wait_for_text(
+            "rho-claude-e2e-ok",
+            WaitTimeout::secs(20, "final assistant text"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "11111111-2222-4333-8444-555555555555",
+            WaitTimeout::secs(10, "claude session id"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "claude agent tool finished:",
+            WaitTimeout::secs(15, "parent turn closed"),
+        )
+        .unwrap();
+
+    let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
+    let run_id = run_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("run id")
+        .to_string();
+    let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
+    claude_e2e::assert_success_result(&status, &run_dir);
+
+    // Offline proof: only the fake binary ran; spawn marker is under the temp root.
+    assert!(
+        fake.spawn_marker.starts_with(home.path()),
+        "spawn marker escaped isolated root: {}",
+        fake.spawn_marker.display()
+    );
+    assert!(
+        record.args.iter().all(|arg| !arg.contains("anthropic.com")),
+        "spawn argv must not reference network endpoints: {:?}",
+        record.args
+    );
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+
+    // Replay the real on-disk artifacts through `rho attach`.
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 120,
+        },
+    )
+    .with_arg("attach")
+    .with_arg(&run_id);
+    let mut attach = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_attach").unwrap();
+    attach
+        .wait_for_text(
+            &format!("attached to {run_id}"),
+            WaitTimeout::secs(10, "attach startup"),
+        )
+        .unwrap();
+    attach
+        .wait_for_text(
+            "Say hello in one short sentence.",
+            WaitTimeout::secs(5, "attach prompt"),
+        )
+        .unwrap();
+    // Partial deltas are stored separately; the live fixture splits the final
+    // phrase across two assistant_text_delta events ("r" + "ho-claude-e2e-ok").
+    attach
+        .wait_for_text(
+            "ho-claude-e2e-ok",
+            WaitTimeout::secs(5, "attach final text tail"),
+        )
+        .unwrap();
+    attach
+        .wait_for_text(
+            "claude 11111111-2222-4333-8444-555555555555",
+            WaitTimeout::secs(5, "attach session id"),
+        )
+        .unwrap();
+    attach
+        .wait_for_text("claude-planner", WaitTimeout::secs(5, "attach agent id"))
+        .unwrap();
+    assert!(attach.screen().contains_text("read-only"));
+    assert!(attach.screen().contains_text("ok") || attach.screen().contains_text("complete"));
+    // Joined final text lives in result.json (asserted earlier); attach stream
+    // fidelity keeps the partial pieces visible.
+    let attach_screen = attach.screen().contents();
+    assert!(
+        attach_screen.contains('r') && attach_screen.contains("ho-claude-e2e-ok"),
+        "attach should replay streamed halves:\n{attach_screen}"
+    );
+    attach.inject_key(&Key::Char('q')).unwrap();
+    assert_eq!(
+        attach
+            .wait_for_exit(WaitTimeout::secs(5, "detach"))
+            .unwrap(),
+        0
+    );
+}
+
+/// Sibling error path: fake Claude emits a terminal error stream and nonzero
+/// exit; the parent surfaces a failed delegated run without network access.
+#[test]
+fn fake_claude_runtime_end_to_end_error() {
+    let home = IsolatedHome::new().unwrap();
+    claude_e2e::install_claude_planner_agent(&home.home);
+
+    let fake_root = home.path().join("fake-claude");
+    let fake = claude_e2e::install_fake_claude(&fake_root, claude_e2e::FakeClaudeMode::Error);
+    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path);
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_error").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.submit_text("fixture claude agent error").unwrap();
+    harness
+        .wait_for_text(
+            "claude-planner",
+            WaitTimeout::secs(15, "agent tool started"),
+        )
+        .unwrap();
+
+    claude_e2e::wait_for_spawn(&fake, Duration::from_secs(15));
+
+    // Failed foreground agent should show failed presentation and/or error text.
+    harness
+        .wait_for_text("failed", WaitTimeout::secs(20, "failed agent state"))
+        .unwrap();
+
+    let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
+    let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
+    claude_e2e::assert_error_result(&status);
+    assert!(
+        fake.spawn_marker.exists(),
+        "error path must still have spawned the fake binary"
+    );
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+/// Resolve `program` on a PATH string the same way a shell would (first hit).
+fn which_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
+    for dir in path_var.split(':').filter(|dir| !dir.is_empty()) {
+        let candidate = PathBuf::from(dir).join(program);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[test]
