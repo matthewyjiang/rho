@@ -1,6 +1,83 @@
 use super::*;
 
 #[test]
+fn stream_preview_continues_committed_assistant_without_gap() {
+    let mut app = test_app();
+    app.push_transcript_entry(Entry::Assistant("Hello committed line\n".into()));
+    app.streams.current_stream_kind = Some(StreamKind::Assistant);
+    app.streams.live_stream_preview = Some(LiveStreamPreview {
+        kind: StreamKind::Assistant,
+        text: "and the live partial".into(),
+        include_leading_blank: false,
+    });
+    let lines = app
+        .history_lines(60, Instant::now())
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let hello_idx = lines
+        .iter()
+        .position(|line| line.contains("Hello committed line"))
+        .expect("committed line");
+    let live_idx = lines
+        .iter()
+        .position(|line| line.contains("and the live partial"))
+        .expect("live preview line");
+    assert_eq!(
+        live_idx,
+        hello_idx + 1,
+        "expected live line immediately after committed, got lines: {lines:#?}"
+    );
+}
+
+#[test]
+fn stream_preview_continues_committed_reasoning_without_gap() {
+    let mut app = test_app();
+    app.push_transcript_entry(Entry::Reasoning(ReasoningEntry::new(
+        "First thought line\n",
+    )));
+    app.streams.current_stream_kind = Some(StreamKind::Reasoning);
+    app.streams.live_stream_preview = Some(LiveStreamPreview {
+        kind: StreamKind::Reasoning,
+        text: "still thinking".into(),
+        include_leading_blank: false,
+    });
+    let lines = app
+        .history_lines(60, Instant::now())
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let first_idx = lines
+        .iter()
+        .position(|line| line.contains("First thought line"))
+        .expect("committed reasoning line");
+    let live_idx = lines
+        .iter()
+        .position(|line| line.contains("still thinking"))
+        .expect("live reasoning preview");
+    assert_eq!(
+        live_idx,
+        first_idx + 1,
+        "expected live reasoning immediately after committed, got lines: {lines:#?}"
+    );
+}
+
+#[test]
+fn finished_stream_restores_trailing_blank_before_next_entry() {
+    let mut app = test_app();
+    app.push_transcript_entry(Entry::Assistant("Done streaming\n".into()));
+    app.streams.current_stream_kind = Some(StreamKind::Assistant);
+    let open_len = app.history_len(60, Instant::now());
+    app.streams.current_stream_kind = None;
+    let closed_len = app.history_len(60, Instant::now());
+    assert_eq!(
+        closed_len,
+        open_len + 1,
+        "closing the stream should restore the entry trailing blank"
+    );
+}
+
+#[test]
 fn reasoning_stream_preview_renders_markdown() {
     let mut app = test_app();
     app.streams.live_stream_preview = Some(LiveStreamPreview {

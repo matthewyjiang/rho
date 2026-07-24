@@ -7,7 +7,7 @@ use super::{
     markdown::incremental_markdown_tail_start,
     markdown_image::MarkdownImageSource,
     message_render::render_assistant_content,
-    render::{apply_markdown_images, pad_entry_line, render_entry},
+    render::{apply_markdown_images, pad_entry_line, render_entry_with_options},
     tool_output_ui::is_tool_entry,
     Entry,
 };
@@ -46,6 +46,8 @@ pub(super) struct HistoryLineCache {
     image_placements: Vec<RenderedImagePlacements>,
     dirty_from: Option<usize>,
     appended_assistant: Option<usize>,
+    /// When set, the last entry is still being streamed and must not own a trailing blank.
+    open_stream_tail: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +60,20 @@ impl HistoryLineCache {
     pub(super) fn invalidate_from(&mut self, index: usize) {
         self.appended_assistant = None;
         self.dirty_from = Some(self.dirty_from.map_or(index, |dirty| dirty.min(index)));
+    }
+
+    /// Suppress the trailing separator on the last entry while a stream is still open.
+    ///
+    /// Flipping this flag rebuilds only the last cached entry so live continuations can
+    /// abut committed content, then restore normal spacing when the stream finishes.
+    pub(super) fn set_open_stream_tail(&mut self, open: bool) {
+        if self.open_stream_tail == open {
+            return;
+        }
+        self.open_stream_tail = open;
+        if let Some(last) = self.entry_ranges.len().checked_sub(1) {
+            self.invalidate_from(last);
+        }
     }
 
     pub(super) fn assistant_appended(&mut self, index: usize) {
@@ -225,7 +241,10 @@ impl HistoryLineCache {
                 self.lines.push(Line::raw(""));
             }
             let entry_start = self.lines.len();
-            let mut rendered = render_entry(entry, width, max_tool_output_lines);
+            let trailing_blank =
+                !(self.open_stream_tail && entry_index + 1 == entries.len());
+            let mut rendered =
+                render_entry_with_options(entry, width, max_tool_output_lines, trailing_blank);
             if !rendered.image_sources.is_empty() {
                 let images = image_resolver(entry_index, &rendered.image_sources);
                 apply_markdown_images(&mut rendered, &images, width);
@@ -299,11 +318,18 @@ impl HistoryLineCache {
             return false;
         }
 
+        // Open stream tails omit the trailing separator; closed entries keep it.
+        let has_trailing_blank = !(self.open_stream_tail && index + 1 == entries.len());
+        let content_end = if has_trailing_blank {
+            range.end.saturating_sub(1)
+        } else {
+            range.end
+        };
         let preserve_end = range
             .start
             .saturating_add(1)
             .saturating_add(cache.stable_line_count);
-        if preserve_end >= range.end || preserve_end > self.lines.len() {
+        if preserve_end >= content_end || preserve_end > self.lines.len() {
             return false;
         }
         if self
@@ -314,7 +340,7 @@ impl HistoryLineCache {
         {
             return false;
         }
-        let trailing_blank = self.lines[range.end - 1].clone();
+        let trailing_blank = has_trailing_blank.then(|| self.lines[range.end - 1].clone());
         self.lines.truncate(preserve_end);
         self.code_blocks.retain(|block| block.line < preserve_end);
 
@@ -326,7 +352,9 @@ impl HistoryLineCache {
         cache.stable_line_count = self.lines.len().saturating_sub(range.start + 1);
         cache.stable_source_len = new_tail_start;
         self.append_assistant_segment(&text[new_tail_start..], width);
-        self.lines.push(trailing_blank);
+        if let Some(trailing_blank) = trailing_blank {
+            self.lines.push(trailing_blank);
+        }
         self.entry_ranges[index].end = self.lines.len();
         true
     }

@@ -33,9 +33,7 @@ impl App {
         let area = frame.area();
         let width = area.width as usize;
         let live_history = self.history_live_lines(width, now);
-        let history_len = self
-            .history_static_len(width)
-            .saturating_add(live_history.len());
+        let history_len = self.history_len_with_live(width, &live_history);
         let composer_lines = self.composer_lines(width);
         let command_lines = self.command_suggestion_lines(width);
         let layout = self.screen_layout_for_history_len(
@@ -359,8 +357,12 @@ impl App {
     }
 
     pub(super) fn history_len(&mut self, width: usize, now: Instant) -> usize {
-        self.history_static_len(width)
-            .saturating_add(self.history_live_lines(width, now).len())
+        let live = self.history_live_lines(width, now);
+        self.history_len_with_live(width, &live)
+    }
+
+    fn history_len_with_live(&mut self, width: usize, live: &[Line<'static>]) -> usize {
+        self.history_static_len(width).saturating_add(live.len())
     }
 
     pub(super) fn visible_history_lines(
@@ -397,6 +399,7 @@ impl App {
             let transcript_start = start.saturating_sub(header_len);
             let transcript_count = count - lines.len();
             let cwd = self.info.runtime.cwd.clone();
+            self.sync_open_stream_tail();
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                     history_lines.extend_visible_lines(
@@ -428,6 +431,18 @@ impl App {
         lines
     }
 
+    /// Open assistant/reasoning entries omit their trailing separator while the stream is live.
+    pub(super) fn sync_open_stream_tail(&mut self) {
+        let open = match (self.streams.current_stream_kind, self.history.last()) {
+            (Some(StreamKind::Assistant), Some(Entry::Assistant(_))) => true,
+            (Some(StreamKind::Reasoning), Some(Entry::Reasoning(reasoning))) => {
+                !reasoning.text.is_empty()
+            }
+            _ => false,
+        };
+        self.history.lines_mut().set_open_stream_tail(open);
+    }
+
     pub(super) fn history_static_len(&mut self, width: usize) -> usize {
         self.session_header_lines(width)
             .len()
@@ -435,6 +450,7 @@ impl App {
     }
 
     pub(super) fn cached_transcript_line_count(&mut self, width: usize) -> usize {
+        self.sync_open_stream_tail();
         let cwd = self.info.runtime.cwd.clone();
         let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         self.history
@@ -451,6 +467,7 @@ impl App {
     }
 
     pub(super) fn code_block_copy_targets(&mut self, width: usize) -> Vec<CodeBlockCopyTarget> {
+        self.sync_open_stream_tail();
         let header_len = self.session_header_lines(width).len();
         let cwd = self.info.runtime.cwd.clone();
         let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
