@@ -14,9 +14,9 @@ use super::super::event_adapter::{
     COMPACTION_STARTED_NOTICE,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub(super) enum AttachmentEvent {
+pub(crate) enum AttachmentEvent {
     Prompt(String),
     AssistantTextDelta(String),
     ReasoningDelta(String),
@@ -43,25 +43,45 @@ pub(super) enum AttachmentEvent {
 
 /// Persists the same presentation events consumed by the interactive TUI so a
 /// separate `rho attach` process can render a subagent without controlling it.
+///
+/// File mechanics are generic. The Rho SDK adapter is optional so the Claude
+/// runtime can write the same `AttachmentEvent` stream without SDK events.
 pub(crate) struct AttachmentWriter {
     file: File,
-    adapter: SdkEventAdapter,
+    adapter: Option<SdkEventAdapter>,
 }
 
 impl AttachmentWriter {
     pub(crate) fn new(result_path: &Path, cwd: PathBuf, prompt: &str) -> anyhow::Result<Self> {
-        let path = result_path.with_file_name(subagent::ATTACHMENT_FILE_NAME);
-        let file = subagent::create_private_file(&path)?;
-        let mut writer = Self {
-            file,
-            adapter: SdkEventAdapter::new(cwd),
-        };
-        writer.write(&AttachmentEvent::Prompt(prompt.to_string()))?;
+        let mut writer = Self::open(result_path)?;
+        writer.adapter = Some(SdkEventAdapter::new(cwd));
+        writer.write_event(&AttachmentEvent::Prompt(prompt.to_string()))?;
         Ok(writer)
     }
 
+    /// Open the attachment journal without an SDK adapter (Claude runtime).
+    pub(crate) fn open(result_path: &Path) -> anyhow::Result<Self> {
+        let path = result_path.with_file_name(subagent::ATTACHMENT_FILE_NAME);
+        let file = subagent::create_private_file(&path)?;
+        Ok(Self {
+            file,
+            adapter: None,
+        })
+    }
+
+    pub(crate) fn write_event(&mut self, event: &AttachmentEvent) -> anyhow::Result<()> {
+        let mut line = serde_json::to_vec(event)?;
+        line.push(b'\n');
+        self.file.write_all(&line)?;
+        self.file.flush()?;
+        Ok(())
+    }
+
     pub(crate) fn on_event(&mut self, event: &rho_sdk::RunEvent) -> anyhow::Result<()> {
-        let attachment = match self.adapter.translate(event.clone()) {
+        let Some(adapter) = self.adapter.as_mut() else {
+            anyhow::bail!("attachment writer has no SDK adapter");
+        };
+        let attachment = match adapter.translate(event.clone()) {
             ViewEvent::Update(update) => attachment_update(update),
             ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
             ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
@@ -74,16 +94,8 @@ impl AttachmentWriter {
             ViewEvent::Ignored => None,
         };
         if let Some(attachment) = attachment {
-            self.write(&attachment)?;
+            self.write_event(&attachment)?;
         }
-        Ok(())
-    }
-
-    fn write(&mut self, event: &AttachmentEvent) -> anyhow::Result<()> {
-        let mut line = serde_json::to_vec(event)?;
-        line.push(b'\n');
-        self.file.write_all(&line)?;
-        self.file.flush()?;
         Ok(())
     }
 }

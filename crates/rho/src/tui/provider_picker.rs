@@ -7,7 +7,7 @@ use rho_providers::{
 pub(super) const ALL_REFRESHABLE_PROVIDERS: &str = "all";
 
 pub(super) fn login_group_picker() -> UiPicker {
-    let items = catalog::login_groups()
+    let mut items = catalog::login_groups()
         .into_iter()
         .map(|group| PickerItem {
             section: None,
@@ -17,7 +17,16 @@ pub(super) fn login_group_picker() -> UiPicker {
             badge: None,
             value: group.id,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    items.push(PickerItem {
+        section: None,
+        label: "claude code (subscription, external)".into(),
+        detail: Some("Sign in through the claude binary. Rho never stores this credential.".into()),
+        preview: None,
+        badge: None,
+        value: super::claude_login::CLAUDE_CODE_TARGET.into(),
+    });
+    sort_items_by_ascii_label(&mut items);
     UiPicker::new(
         "select provider to login",
         "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
@@ -83,8 +92,9 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
     )
 }
 
-pub(super) fn logout_provider_picker(
+pub(super) async fn logout_provider_picker(
     store: &dyn CredentialStore,
+    claude_signed_in: bool,
 ) -> rho_providers::credentials::CredentialResult<UiPicker> {
     let mut targets = Vec::new();
     for target in catalog::login_targets() {
@@ -92,11 +102,22 @@ pub(super) fn logout_provider_picker(
             targets.push(target);
         }
     }
-    Ok(provider_picker_for_targets(
-        "logout",
-        PickerAction::LogoutProvider,
-        targets,
-    ))
+    let mut picker = provider_picker_for_targets("logout", PickerAction::LogoutProvider, targets);
+    // Claude Code is not a Rho credential. Offer it when the caller already
+    // knows the binary reports signed in so logout stays honest about the
+    // global effect without probing here.
+    if claude_signed_in {
+        picker.items.push(PickerItem {
+            section: None,
+            label: super::claude_login::CLAUDE_CODE_TARGET.into(),
+            detail: Some("Sign out of Claude Code everywhere the claude binary is used.".into()),
+            preview: None,
+            badge: None,
+            value: super::claude_login::CLAUDE_CODE_TARGET.into(),
+        });
+        sort_items_by_ascii_label(&mut picker.items);
+    }
+    Ok(picker)
 }
 
 fn provider_picker_for_targets(

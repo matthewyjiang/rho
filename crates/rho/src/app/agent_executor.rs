@@ -11,16 +11,29 @@ use {
 };
 
 use super::{
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole},
+    agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime},
     automation::{self, RunArtifactIdentity, RunReporter},
 };
+
+/// Default total concurrency across all delegated agents (Rho + Claude).
+const DEFAULT_TOTAL_CONCURRENCY: usize = 4;
+/// Default Claude-specific concurrency. Always nested under the total pool so
+/// Claude fan-out cannot exceed this even when Rho capacity remains.
+const DEFAULT_CLAUDE_CONCURRENCY: usize = 2;
 
 #[derive(Clone)]
 pub(crate) struct AgentExecutor {
     config: Arc<std::sync::RwLock<Config>>,
     config_path: PathBuf,
     cwd: PathBuf,
-    permits: Arc<tokio::sync::Semaphore>,
+    /// Global permit pool for every delegated agent (Rho and Claude).
+    ///
+    /// `RHO_AGENT_CONCURRENCY` overrides this total. Claude runs also take a
+    /// permit from [`Self::claude_permits`], so one env override never opens a
+    /// 2N fan-out window.
+    total_permits: Arc<tokio::sync::Semaphore>,
+    /// Claude-only nested pool. Sized to min(total, Claude default/override).
+    claude_permits: Arc<tokio::sync::Semaphore>,
 }
 
 pub(crate) struct AgentLaunchRequest {
@@ -62,19 +75,21 @@ impl AgentRunHandle {
 
 impl AgentExecutor {
     pub(crate) fn new(config: Config, config_path: PathBuf, cwd: PathBuf) -> Self {
-        let concurrency = std::env::var("RHO_AGENT_CONCURRENCY")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .filter(|limit| *limit > 0)
-            .unwrap_or(4);
+        let limits = concurrency_limits();
         Self {
             config: Arc::new(std::sync::RwLock::new(config)),
             config_path,
             cwd,
-            permits: Arc::new(tokio::sync::Semaphore::new(concurrency)),
+            total_permits: Arc::new(tokio::sync::Semaphore::new(limits.total)),
+            claude_permits: Arc::new(tokio::sync::Semaphore::new(limits.claude)),
         }
     }
 
+    /// Updates the parent session's provider/model snapshot used by **Rho**
+    /// runtime delegated agents that inherit model policy.
+    ///
+    /// Claude-cli agents never read this snapshot for spawn: binding copies
+    /// Claude model/tools/inherit from the definition only, byte-for-byte.
     pub(crate) fn update_model(
         &self,
         provider: &str,
@@ -120,36 +135,54 @@ impl AgentExecutor {
             },
             &config,
         )?;
+
+        let (provider, model_label, needs_claude_permit) = match bound.runtime() {
+            BoundRuntime::ClaudeCli { model, .. } => (
+                "claude-code".into(),
+                model.clone().unwrap_or_else(|| "claude-cli".into()),
+                true,
+            ),
+            BoundRuntime::Rho { config, .. } => {
+                (config.provider.clone(), config.model.clone(), false)
+            }
+        };
+
         let initial = RunStatus {
             state: RunState::Starting,
             agent_id: Some(bound.id().to_string()),
             agent_fingerprint: Some(bound.fingerprint().to_string()),
-            provider: Some(bound.config().provider.clone()),
-            model: Some(bound.config().model.clone()),
+            provider: Some(provider.clone()),
+            model: Some(model_label.clone()),
             ..RunStatus::default()
         };
-        subagent::write_status(&request.output_file, &initial)?;
+        subagent::initialize_status(&request.output_file, &initial)?;
         let (status_tx, status) = tokio::sync::watch::channel(initial);
         let (completion_tx, completion) = tokio::sync::watch::channel(false);
         let cancellation = RunCancellation::new();
         let task_cancellation = cancellation.clone();
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
-        let permits = Arc::clone(&self.permits);
         let output_file = request.output_file;
         let parent_session_id = request.parent_session_id;
         let persisted_output = output_file.clone();
         let prompt = request.prompt;
+        let total_permits = Arc::clone(&self.total_permits);
+        let claude_permits = Arc::clone(&self.claude_permits);
 
         let task_status_tx = status_tx.clone();
         let task: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-            let Some(_permit) = acquire_permit_or_cancel(permits, &task_cancellation).await? else {
+            // Every delegated run takes one global permit. Claude runs also
+            // take a nested Claude permit so total fan-out stays <= N and
+            // Claude fan-out stays <= min(N, Claude cap).
+            let Some(_total_permit) =
+                acquire_permit_or_cancel(total_permits, &task_cancellation).await?
+            else {
                 let stopped = RunStatus {
                     state: RunState::Stopped,
                     agent_id: Some(bound.id().to_string()),
                     agent_fingerprint: Some(bound.fingerprint().to_string()),
-                    provider: Some(bound.config().provider.clone()),
-                    model: Some(bound.config().model.clone()),
+                    provider: Some(provider.clone()),
+                    model: Some(model_label.clone()),
                     last_activity: Some("cancelled before execution".into()),
                     ..RunStatus::default()
                 };
@@ -157,55 +190,114 @@ impl AgentExecutor {
                 subagent::write_status(&output_file, &stopped)?;
                 return Ok(());
             };
-            let mut config = bound.config().clone();
-            super::cli_config::prepare_model_metadata(
-                &config,
-                &crate::credential_store::AppCredentialStore,
-                &super::cli_config::ProviderRefreshStatus::NotAttempted,
-            )
-            .await;
-            super::cli_config::normalize_reasoning(&mut config);
-            let diagnostics = RuntimeDiagnostics::new(&config);
-            diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
-            let mut reporter = RunReporter::new(
-                output_file,
-                RunArtifactIdentity {
-                    agent_id: bound.id().to_string(),
-                    agent_fingerprint: bound.fingerprint().to_string(),
-                    provider: config.provider.clone(),
-                    model: config.model.clone(),
-                },
-                cwd.clone(),
-                &prompt,
-                /* stream_output */ false,
-                Some(task_status_tx),
-            )?;
-            let startup = automation::Startup {
-                config: &config,
-                config_path,
-                cwd,
-                no_system_prompt: false,
-                no_tools: false,
-                no_subagents: true,
-                usage_purpose: "subagent",
-                parent_session_id,
-                agent: bound,
-                output_file: None,
-                output: OutputFormat::Text,
-                max_steps: None,
-                timeout: None,
-                diagnostics,
-                herdr: HerdrReporter::default(),
+
+            let _claude_permit = if needs_claude_permit {
+                let Some(permit) =
+                    acquire_permit_or_cancel(claude_permits, &task_cancellation).await?
+                else {
+                    let stopped = RunStatus {
+                        state: RunState::Stopped,
+                        agent_id: Some(bound.id().to_string()),
+                        agent_fingerprint: Some(bound.fingerprint().to_string()),
+                        provider: Some(provider.clone()),
+                        model: Some(model_label.clone()),
+                        last_activity: Some("cancelled before execution".into()),
+                        ..RunStatus::default()
+                    };
+                    task_status_tx.send_replace(stopped.clone());
+                    subagent::write_status(&output_file, &stopped)?;
+                    return Ok(());
+                };
+                Some(permit)
+            } else {
+                None
             };
-            let result = automation::run_session(
-                prompt,
-                &startup,
-                Some(&mut reporter),
-                Some(task_cancellation),
-            )
-            .await;
-            reporter.finish(&result);
-            result.map(|_| ())
+
+            match bound.runtime().clone() {
+                BoundRuntime::ClaudeCli {
+                    model,
+                    tools,
+                    inherit_claude_config,
+                    permission_mode,
+                    max_turns,
+                } => {
+                    crate::claude_runtime::session::run_bound_session(
+                        crate::claude_runtime::session::ClaudeBoundLaunch {
+                            definition: Arc::new(bound.definition().clone()),
+                            identity: crate::claude_runtime::session::ClaudeRunIdentity {
+                                agent_id: bound.id().to_string(),
+                                agent_fingerprint: bound.fingerprint().to_string(),
+                                model: model.clone(),
+                            },
+                            model,
+                            tools,
+                            inherit_claude_config,
+                            permission_mode,
+                            max_turns,
+                            prompt,
+                            output_file,
+                            cwd,
+                            cancellation: task_cancellation,
+                            status_tx: task_status_tx,
+                        },
+                    )
+                    .await
+                }
+                BoundRuntime::Rho {
+                    config: bound_config,
+                    ..
+                } => {
+                    let mut config = bound_config;
+                    super::cli_config::prepare_model_metadata(
+                        &config,
+                        &crate::credential_store::AppCredentialStore,
+                        &super::cli_config::ProviderRefreshStatus::NotAttempted,
+                    )
+                    .await;
+                    super::cli_config::normalize_reasoning(&mut config);
+                    let diagnostics = RuntimeDiagnostics::new(&config);
+                    diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
+                    let mut reporter = RunReporter::new(
+                        output_file,
+                        RunArtifactIdentity {
+                            agent_id: bound.id().to_string(),
+                            agent_fingerprint: bound.fingerprint().to_string(),
+                            provider: config.provider.clone(),
+                            model: config.model.clone(),
+                        },
+                        cwd.clone(),
+                        &prompt,
+                        /* stream_output */ false,
+                        Some(task_status_tx),
+                    )?;
+                    let startup = automation::Startup {
+                        config: &config,
+                        config_path,
+                        cwd,
+                        no_system_prompt: false,
+                        no_tools: false,
+                        no_subagents: true,
+                        usage_purpose: "subagent",
+                        parent_session_id,
+                        agent: bound,
+                        output_file: None,
+                        output: OutputFormat::Text,
+                        max_steps: None,
+                        timeout: None,
+                        diagnostics,
+                        herdr: HerdrReporter::default(),
+                    };
+                    let result = automation::run_session(
+                        prompt,
+                        &startup,
+                        Some(&mut reporter),
+                        Some(task_cancellation),
+                    )
+                    .await;
+                    reporter.finish(&result);
+                    result.map(|_| ())
+                }
+            }
         });
 
         let failure_status = status.clone();
@@ -234,6 +326,27 @@ impl AgentExecutor {
             completion,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ConcurrencyLimits {
+    total: usize,
+    claude: usize,
+}
+
+fn concurrency_limits() -> ConcurrencyLimits {
+    concurrency_limits_from_env(std::env::var("RHO_AGENT_CONCURRENCY").ok().as_deref())
+}
+
+fn concurrency_limits_from_env(raw: Option<&str>) -> ConcurrencyLimits {
+    let total = raw
+        .and_then(|value| value.parse().ok())
+        .filter(|limit: &usize| *limit > 0)
+        .unwrap_or(DEFAULT_TOTAL_CONCURRENCY);
+    // Nested Claude pool never exceeds the global total, so one override cannot
+    // open total + Claude = 2N concurrent delegated runs.
+    let claude = DEFAULT_CLAUDE_CONCURRENCY.min(total);
+    ConcurrencyLimits { total, claude }
 }
 
 async fn acquire_permit_or_cancel(

@@ -77,3 +77,20 @@ fn refresh_picker_always_offers_all_configured_providers() {
     assert_eq!(picker.items.len(), 1);
     assert_eq!(picker.items[0].value, ALL_REFRESHABLE_PROVIDERS);
 }
+
+#[test]
+fn login_picker_lists_claude_code_as_external_runtime() {
+    let picker = login_group_picker();
+    let claude = picker
+        .items
+        .iter()
+        .find(|item| item.value == "claude-code")
+        .expect("claude-code should be available for login");
+
+    assert_eq!(claude.label, "claude code (subscription, external)");
+    assert!(claude
+        .detail
+        .as_deref()
+        .unwrap_or_default()
+        .contains("claude binary"));
+}

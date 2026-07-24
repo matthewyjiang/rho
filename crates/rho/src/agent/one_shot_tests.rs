@@ -13,7 +13,9 @@ use rho_sdk::{
 use serde_json::json;
 
 use super::*;
-use crate::agent::{AgentId, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy};
+use crate::agent::{
+    AgentId, AgentRuntime, AgentTools, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
+};
 
 #[derive(Clone, Default)]
 struct CapturingRecorder(Arc<Mutex<Vec<ProviderRequestUsageEvent>>>);
@@ -31,8 +33,10 @@ fn definition() -> AgentDefinition {
         description: "test".into(),
         prompt: PromptPolicy::Replace("system prompt".into()),
         model: ModelPolicy::Inherit,
-        tools: ToolPolicy::Allow(BTreeSet::new()),
+        runtime: AgentRuntime::Rho,
+        tools: AgentTools::Rho(ToolPolicy::Allow(BTreeSet::new())),
         reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+        inherit_claude_config: false,
     }
 }
 
@@ -99,7 +103,9 @@ fn rejects_definitions_that_do_not_replace_the_prompt() {
 #[test]
 fn rejects_definitions_with_tools() {
     let mut definition = definition();
-    definition.tools = ToolPolicy::Allow(BTreeSet::from([ToolCapability::ReadFile]));
+    definition.tools = AgentTools::Rho(ToolPolicy::Allow(BTreeSet::from([
+        ToolCapability::ReadFile,
+    ])));
     assert!(validate_definition(&definition)
         .unwrap_err()
         .to_string()

@@ -32,7 +32,7 @@ impl App {
             }
             CommandId::Tree => self.execute_tree_command(agent),
             CommandId::Config => self.execute_config_command(terminal),
-            CommandId::Info => self.execute_info_command(),
+            CommandId::Info => self.execute_info_command().await,
             CommandId::Help => self.execute_help_command(),
             CommandId::Compact => self
                 .execute_compact_command(terminal, agent)

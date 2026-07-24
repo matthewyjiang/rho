@@ -2,7 +2,9 @@ use std::{collections::BTreeSet, sync::LazyLock};
 
 use rho_providers::reasoning::ReasoningLevel;
 
-use super::{AgentDefinition, AgentId, ModelPolicy, PromptPolicy, ToolPolicy};
+use super::{
+    AgentDefinition, AgentId, AgentRuntime, AgentTools, ModelPolicy, PromptPolicy, ToolPolicy,
+};
 
 pub(crate) const SESSION_TITLE_AGENT_ID: &str = "session-title";
 pub(crate) const GOAL_JUDGE_AGENT_ID: &str = "goal-judge";
@@ -15,8 +17,10 @@ static INTERNAL_DEFINITIONS: LazyLock<Vec<AgentDefinition>> = LazyLock::new(|| {
                 .to_string(),
             prompt: PromptPolicy::Replace(crate::tui::SESSION_TITLE_PROMPT.into()),
             model: ModelPolicy::Inherit,
-            tools: ToolPolicy::Allow(BTreeSet::new()),
+            runtime: AgentRuntime::Rho,
+            tools: AgentTools::Rho(ToolPolicy::Allow(BTreeSet::new())),
             reasoning: Some(ReasoningLevel::Low),
+            inherit_claude_config: false,
         },
         AgentDefinition {
             id: AgentId::new(GOAL_JUDGE_AGENT_ID).expect("valid internal agent ID"),
@@ -24,8 +28,10 @@ static INTERNAL_DEFINITIONS: LazyLock<Vec<AgentDefinition>> = LazyLock::new(|| {
                 .to_string(),
             prompt: PromptPolicy::Replace(crate::tui::GOAL_JUDGE_PROMPT.into()),
             model: ModelPolicy::Inherit,
-            tools: ToolPolicy::Allow(BTreeSet::new()),
+            runtime: AgentRuntime::Rho,
+            tools: AgentTools::Rho(ToolPolicy::Allow(BTreeSet::new())),
             reasoning: Some(ReasoningLevel::Low),
+            inherit_claude_config: false,
         },
     ]
 });

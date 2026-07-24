@@ -33,7 +33,9 @@ fn formats_agent_metadata_with_prompt_extension() {
     assert!(detail.contains("~/.rho/agents"));
     assert!(detail.contains("require anthropic/claude-sonnet"));
     assert!(detail.contains("high"));
+    assert!(detail.contains("Runtime\nrho"));
     assert!(detail.contains("bash, read_file"));
+    assert!(detail.contains("Inherit Claude config\nno"));
     assert!(detail.contains("extend system prompt"));
     assert!(detail.contains("Prompt extension"));
     assert!(detail.contains("SECRET PROMPT BODY"));

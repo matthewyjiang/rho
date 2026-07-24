@@ -33,6 +33,39 @@ fn permission_mode_updates_are_shared_with_executor_clones() {
     );
 }
 
+#[test]
+fn default_concurrency_is_global_four_with_nested_claude_two() {
+    let limits = concurrency_limits_from_env(None);
+    assert_eq!(
+        limits,
+        ConcurrencyLimits {
+            total: 4,
+            claude: 2
+        }
+    );
+}
+
+#[test]
+fn env_override_sets_total_and_never_opens_two_n() {
+    let limits = concurrency_limits_from_env(Some("6"));
+    assert_eq!(
+        limits,
+        ConcurrencyLimits {
+            total: 6,
+            claude: 2
+        }
+    );
+
+    let tight = concurrency_limits_from_env(Some("1"));
+    assert_eq!(
+        tight,
+        ConcurrencyLimits {
+            total: 1,
+            claude: 1
+        }
+    );
+}
+
 #[tokio::test]
 async fn cancellation_interrupts_concurrency_queue() {
     let permits = Arc::new(tokio::sync::Semaphore::new(0));

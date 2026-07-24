@@ -1,0 +1,15 @@
+{
+  "state": "ok",
+  "agent_id": "claude-planner",
+  "agent_fingerprint": "abc",
+  "provider": "claude-code",
+  "model": "claude-opus-demo",
+  "turns": 1,
+  "input_tokens": 152,
+  "output_tokens": 6,
+  "last_activity": "complete",
+  "last_text": "Hello from Claude.",
+  "result": "Hello from Claude.",
+  "claude_session_id": "sess-success-001",
+  "total_cost_usd": 0.0123
+}

@@ -72,20 +72,20 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 
 | Command | Action |
 | --- | --- |
-| `/login [provider]` | Log in with a provider. No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
-| `/logout [provider]` | Delete stored provider credentials. No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
+| `/login [provider]` | Log in with a provider or the Claude Code runtime. No args opens a picker (including **claude code (subscription, external)**); direct args target a single [provider](/authentication-and-models#providers) or `/login claude-code`. |
+| `/logout [provider]` | Delete stored provider credentials, or sign out of Claude Code everywhere with `/logout claude-code` (after confirmation). No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
 | `/model [provider/model]` | Open a picker for models with available auth, or choose a provider/model and save it to [configuration](/configuration). When switching would drop provider-native context, or when the current model has completed a live turn and older context can be compacted, Rho asks how to continue. Compaction can summarize portable context first; it does not make native blocks sendable to the new model. Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. If the current model cannot use the session's provider-native context, Rho asks whether to resume with the session model, compact with that model first, or continue on the current model. |
 | `/tree` | Navigate completed turns and compaction states in the current session. Continuing from an older state creates a branch. |
 | `/config` | Open the [config](/configuration) category browser for models and reasoning, agent behavior, context limits, tools, providers, and updates. |
-| `/info` | Show the running Rho version, provider, model, reasoning level, and permission mode. |
+| `/info` | Show the running Rho version, provider, model, reasoning level, permission mode, and external runtime status (including Claude Code ownership). |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto compaction is disabled. |
 | `/goal [condition]` | Set a completion condition and start working immediately. Rho explicitly tells the agent that this is a goal-setting action, then evaluates the transcript after each turn and continues until the condition is met. Connection errors and other incomplete runs are retried automatically while the goal remains active. If only steps requiring user authority remain, the goal pauses as blocked and reports those steps. Run `/goal` for status, `/goal resume` after completing blocked steps, or `/goal clear` to cancel. |
 | `/skills` | Show available workspace skills and insert a `/skill:<name>` command for one. Running the inserted command loads the skill through the skill tool before the model responds. Add text after the command to include extra instructions in the same turn. |
-| `/agents` | Reload agent definitions and browse their descriptions, sources, model policies, reasoning levels, tools, prompt policies, and prompt previews. Select a reserved internal agent to configure its model. |
+| `/agents` | Reload agent definitions and browse their descriptions, sources, runtime (`rho` or `claude-cli`), model policies, reasoning levels, tools (Rho capabilities or Claude tool names), Claude config inheritance, prompt policies, and prompt previews. Select a reserved internal agent to configure its model. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
-| `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, and Herdr integration without displaying secrets. |
-| `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth, Kimi Code OAuth, and xAI OAuth are supported when logged in; absent windows are omitted. |
+| `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, Herdr integration, and Claude Code binary/auth health without displaying secrets. |
+| `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth, Kimi Code OAuth, and xAI OAuth are supported when logged in; absent windows are omitted. Also shows the last Claude Code rate-limit observation from a prior `claude-cli` run (window, status, reset, age) without percentages or a probe. |
 | `/export [path]` | Export the current session to a self-contained HTML transcript. Assistant Markdown, including inline `$...$` or `\(...\)` and display `$$...$$` or `\[...\]` LaTeX math, is rendered in the exported file. |
 | `/help` | Show keyboard shortcuts and composer controls in a searchable overlay. |
 | `/exit` | Quit the TUI. |
@@ -102,9 +102,11 @@ Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use
 
 ## Login and logout
 
-`/login` opens a readable provider picker. Providers with multiple methods open a second picker such as **API Key** or **OAuth**; providers with one method continue directly to their login flow. Passing an internal provider name (for example `/login openai`) targets that method directly. Each flow is documented on the [provider page](/authentication-and-models#providers). Credentials are stored in the configured credential backend, not in config or transcripts.
+`/login` opens a readable provider picker first. Providers with multiple methods open a second picker such as **API Key** or **OAuth**; providers with one method continue directly to their login flow. Passing an internal provider name (for example `/login openai`) targets that method directly. Each flow is documented on the [provider page](/authentication-and-models#providers). Credentials for normal providers are stored in the configured credential backend, not in config or transcripts. When the backend is still unset, Rho asks where to store secrets only after you select a normal provider.
 
-`/logout` opens a provider picker containing only providers with stored credentials that can be deleted, or targets one directly (for example `/logout openai`). Environment overrides are CI/development hatches and can keep a provider available after logout.
+The picker also includes **claude code (subscription, external)**. `/login claude-code` hands the terminal to the `claude` binary for `claude auth login --claudeai`. Claude Code owns that sign-in and stores the subscription credential. Rho never sees the token, never writes it to the Rho credential store, and never asks for a Rho store choice on this path.
+
+`/logout` opens a provider picker containing only providers with stored credentials that can be deleted, or targets one directly (for example `/logout openai`). Environment overrides are CI/development hatches and can keep a provider available after logout. `/logout claude-code` asks for explicit confirmation first because it signs out of Claude Code everywhere the `claude` binary is used, not only inside Rho. It does not delete a Rho-stored token.
 
 Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
 

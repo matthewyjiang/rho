@@ -120,11 +120,25 @@ pub(super) fn test_app() -> App {
     )
 }
 
-#[test]
-fn info_command_uses_runtime_diagnostics() {
+#[tokio::test]
+async fn info_command_uses_runtime_diagnostics() {
     let mut app = test_app();
+    // Inject a typed snapshot so this unit path never spawns host `claude`
+    // or reads personal Claude Code auth from the developer machine.
+    app.set_test_claude_probe_snapshot(crate::claude_runtime::auth::ClaudeProbeSnapshot {
+        auth: Ok(crate::claude_runtime::auth::ClaudeAuthStatus {
+            logged_in: false,
+            auth_method: None,
+            api_provider: None,
+            email: None,
+            org_id: None,
+            org_name: None,
+            subscription_type: None,
+        }),
+        version: Err("claude code: binary not found on PATH".into()),
+    });
 
-    app.execute_info_command().unwrap();
+    app.execute_info_command().await.unwrap();
 
     assert!(matches!(app.history.last(), Some(Entry::RuntimeInfo(_))));
     assert_eq!(app.status, "runtime info");
@@ -1148,13 +1162,15 @@ fn login_method_picker_uses_readable_auth_prompts() {
     assert_eq!(labels, vec!["API Key", "OAuth"]);
 }
 
-#[test]
-fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
+#[tokio::test]
+async fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
     let store = MemoryCredentialStore::default();
     save_provider_api_key(&store, "openai", "sk-test").unwrap();
     save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
 
-    let picker = provider_picker::logout_provider_picker(&store).unwrap();
+    let picker = provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ false)
+        .await
+        .unwrap();
     let values = picker
         .items
         .iter()
@@ -1164,9 +1180,31 @@ fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
     assert_eq!(values, vec!["anthropic", "openai"]);
 }
 
-#[test]
-fn logout_provider_picker_propagates_credential_store_errors() {
-    let error = provider_picker::logout_provider_picker(&FailingCredentialStore).unwrap_err();
+#[tokio::test]
+async fn logout_provider_picker_can_include_claude_code_when_signed_in() {
+    let store = MemoryCredentialStore::default();
+    save_provider_api_key(&store, "openai", "sk-test").unwrap();
+
+    let picker = provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ true)
+        .await
+        .unwrap();
+    let values = picker
+        .items
+        .iter()
+        .map(|item| item.value.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(values, vec!["claude-code", "openai"]);
+}
+
+#[tokio::test]
+async fn logout_provider_picker_propagates_credential_store_errors() {
+    let error = provider_picker::logout_provider_picker(
+        &FailingCredentialStore,
+        /*claude_signed_in*/ false,
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error.to_string(),

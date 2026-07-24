@@ -23,15 +23,22 @@ pub(super) struct DoctorContext<'a> {
     pub(super) herdr_enabled: bool,
     pub(super) herdr_socket_reachable: Option<bool>,
     pub(super) provider_health: &'a [(String, ProviderModelHealth)],
+    /// Claude Code binary/auth summary. Not a Rho credential.
+    pub(super) claude_code_auth: &'a str,
+    pub(super) claude_code_version: &'a str,
+    pub(super) claude_code_auth_healthy: bool,
+    pub(super) claude_code_binary_healthy: bool,
 }
 
 pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     const AUTHENTICATION: &str = "AUTHENTICATION";
     const CACHE: &str = "CACHE";
+    const EXTERNAL: &str = "EXTERNAL RUNTIMES";
     const MISC: &str = "MISC";
 
     let mut authentication_items = Vec::new();
     let mut cache_items = Vec::new();
+    let mut external_items = Vec::new();
     let mut misc_items = Vec::new();
     for descriptor in provider::providers() {
         let (healthy, status, detail) = if descriptor.auth_kind == ProviderAuthKind::None {
@@ -216,6 +223,28 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
         rtk,
         "Optional shell-command rewriting helper.".into(),
     ));
+    external_items.push(item(
+        EXTERNAL,
+        "Claude Code authentication",
+        if context.claude_code_auth_healthy {
+            "ok"
+        } else {
+            "attention"
+        },
+        context.claude_code_auth_healthy,
+        context.claude_code_auth.into(),
+    ));
+    external_items.push(item(
+        EXTERNAL,
+        "Claude Code binary",
+        if context.claude_code_binary_healthy {
+            "available"
+        } else {
+            "attention"
+        },
+        context.claude_code_binary_healthy,
+        context.claude_code_version.into(),
+    ));
     let (herdr_healthy, herdr_status, herdr_detail) =
         match (context.herdr_enabled, context.herdr_socket_reachable) {
             (false, _) => (true, "not configured", "Rho is not running inside Herdr."),
@@ -246,6 +275,7 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     let items = authentication_items
         .into_iter()
         .chain(cache_items)
+        .chain(external_items)
         .chain(misc_items)
         .collect();
 

@@ -84,19 +84,29 @@ impl App {
                     .await;
             provider_health.push((descriptor.name.to_string(), health));
         }
-        self.open_doctor_picker(&provider_health)
+        self.open_doctor_picker(&provider_health, /*probe_claude*/ true)
+            .await
     }
 
-    pub(super) fn execute_doctor_command(&mut self) -> anyhow::Result<()> {
-        self.open_doctor_picker(&[])
+    pub(super) async fn execute_doctor_command(&mut self) -> anyhow::Result<()> {
+        // During a turn, skip live Claude probes so stream draining is never
+        // blocked on a child process.
+        self.open_doctor_picker(&[], /*probe_claude*/ false).await
     }
 
-    fn open_doctor_picker(
+    async fn open_doctor_picker(
         &mut self,
         provider_health: &[(String, ProviderModelHealth)],
+        probe_claude: bool,
     ) -> anyhow::Result<()> {
         let config_path = self.info.services.config_repository.configured_path()?;
         let session_root = crate::paths::rho_dir()?.join("sessions");
+        let claude = if probe_claude {
+            let snapshot = self.claude_probe_snapshot().await;
+            crate::claude_runtime::auth::ClaudeDoctorHealth::from_snapshot(&snapshot)
+        } else {
+            crate::claude_runtime::auth::ClaudeDoctorHealth::unavailable_during_turn()
+        };
         let picker = doctor::picker(doctor::DoctorContext {
             provider: &self.info.runtime.provider,
             model: &self.info.runtime.model,
@@ -108,6 +118,10 @@ impl App {
             herdr_enabled: self.info.services.herdr.is_enabled(),
             herdr_socket_reachable: self.info.services.herdr.socket_is_reachable(),
             provider_health,
+            claude_code_auth: &claude.auth_detail,
+            claude_code_version: &claude.version_detail,
+            claude_code_auth_healthy: claude.auth_healthy,
+            claude_code_binary_healthy: claude.binary_healthy,
         });
         self.input_ui
             .set_composer(super::ComposerMode::Picker(picker));

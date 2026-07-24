@@ -441,7 +441,11 @@ async fn run_session_with_output(
         Arc::new(AppCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let mut capabilities = startup.agent.capabilities().clone();
+    let mut capabilities = startup
+        .agent
+        .rho_capabilities()
+        .cloned()
+        .unwrap_or_default();
     if startup.no_subagents {
         capabilities.remove(&ToolCapability::Agent);
         capabilities.remove(&ToolCapability::Agents);
@@ -659,7 +663,8 @@ impl RunReporter {
             model: Some(identity.model),
             ..RunStatus::default()
         };
-        subagent::write_status(&path, &status)?;
+        // Run boundary: deliberately replace any prior terminal result.json.
+        subagent::initialize_status(&path, &status)?;
         let attachment = match AttachmentWriter::new(&path, cwd, prompt) {
             Ok(attachment) => Some(attachment),
             Err(error) => {

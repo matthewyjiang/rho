@@ -186,21 +186,120 @@ pub enum ToolPolicy {
     Allow(ToolCapabilitySet),
 }
 
+/// Which harness executes an agent definition.
+///
+/// Runtime is independent of model selection. `Rho` uses Rho's own loop and
+/// tool vocabulary. `ClaudeCli` delegates the loop to the `claude` binary and
+/// uses Claude Code tool names.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AgentRuntime {
+    #[default]
+    Rho,
+    ClaudeCli,
+}
+
+impl AgentRuntime {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rho => "rho",
+            Self::ClaudeCli => "claude-cli",
+        }
+    }
+}
+
+impl fmt::Display for AgentRuntime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AgentRuntime {
+    type Err = AgentRuntimeError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "rho" => Ok(Self::Rho),
+            "claude-cli" => Ok(Self::ClaudeCli),
+            _ => Err(AgentRuntimeError {
+                value: value.to_string(),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[error("unknown runtime '{value}'; expected rho or claude-cli")]
+pub struct AgentRuntimeError {
+    value: String,
+}
+
+/// Tool policy keyed by runtime so Rho and Claude vocabularies cannot mix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentTools {
+    Rho(ToolPolicy),
+    Claude(Vec<String>),
+}
+
+impl Default for AgentTools {
+    fn default() -> Self {
+        Self::Rho(ToolPolicy::All)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentDefinition {
     pub id: AgentId,
     pub description: String,
     pub prompt: PromptPolicy,
     pub model: ModelPolicy,
-    pub tools: ToolPolicy,
+    pub runtime: AgentRuntime,
+    pub tools: AgentTools,
     pub reasoning: Option<ReasoningLevel>,
+    /// When true on `runtime: claude-cli`, widen Claude setting sources to the
+    /// user's full Claude config. Default is closed.
+    pub inherit_claude_config: bool,
 }
 
 impl AgentDefinition {
-    /// Hashes semantic fields only, using an unambiguous length-prefixed form.
+    /// Current semantic fingerprint (v2). New sessions store this value.
     pub fn fingerprint(&self) -> AgentFingerprint {
+        self.hash_semantic(FingerprintEncoding::V2)
+    }
+
+    /// Pre-runtime-axis v1 fingerprint for Rho definitions that still mean the
+    /// same thing under default runtime encoding.
+    ///
+    /// Present only when behavior maps to the historical shape: `runtime: rho`,
+    /// `inherit_claude_config: false`, and Rho tool policy. Used so sessions
+    /// created before the runtime axis can resume without treating unchanged
+    /// builtins as definition changes. Absent for Claude agents and any
+    /// definition that cannot be expressed in the old encoding.
+    pub fn legacy_v1_fingerprint(&self) -> Option<AgentFingerprint> {
+        if self.runtime != AgentRuntime::Rho || self.inherit_claude_config {
+            return None;
+        }
+        match &self.tools {
+            AgentTools::Rho(_) => Some(self.hash_semantic(FingerprintEncoding::LegacyV1)),
+            AgentTools::Claude(_) => None,
+        }
+    }
+
+    /// True when `stored` is the current fingerprint or an exact accepted
+    /// legacy v1 fingerprint for this definition.
+    pub fn accepts_stored_fingerprint(&self, stored: &str) -> bool {
+        if self.fingerprint().to_string() == stored {
+            return true;
+        }
+        self.legacy_v1_fingerprint()
+            .is_some_and(|fingerprint| fingerprint.to_string() == stored)
+    }
+
+    fn hash_semantic(&self, encoding: FingerprintEncoding) -> AgentFingerprint {
         let mut hash = Sha256::new();
-        hash_field(&mut hash, b"rho-agent-definition-v1");
+        match encoding {
+            FingerprintEncoding::V2 => hash_field(&mut hash, b"rho-agent-definition-v2"),
+            FingerprintEncoding::LegacyV1 => hash_field(&mut hash, b"rho-agent-definition-v1"),
+        }
         hash_field(&mut hash, self.id.as_str().as_bytes());
         hash_field(&mut hash, self.description.as_bytes());
         match &self.prompt {
@@ -221,14 +320,36 @@ impl AgentDefinition {
             }
             ModelPolicy::Select(selection) => hash_selection(&mut hash, b"model:select", selection),
         }
-        match &self.tools {
-            ToolPolicy::All => hash_field(&mut hash, b"tools:all"),
-            ToolPolicy::Allow(tools) => {
-                hash_field(&mut hash, b"tools:allow");
-                for tool in tools {
-                    hash_field(&mut hash, tool.as_str().as_bytes());
+        match encoding {
+            FingerprintEncoding::V2 => {
+                hash_field(&mut hash, b"runtime");
+                hash_field(&mut hash, self.runtime.as_str().as_bytes());
+                match &self.tools {
+                    AgentTools::Rho(ToolPolicy::All) => hash_field(&mut hash, b"tools:rho:all"),
+                    AgentTools::Rho(ToolPolicy::Allow(tools)) => {
+                        hash_field(&mut hash, b"tools:rho:allow");
+                        for tool in tools {
+                            hash_field(&mut hash, tool.as_str().as_bytes());
+                        }
+                    }
+                    AgentTools::Claude(tools) => {
+                        hash_field(&mut hash, b"tools:claude");
+                        for tool in tools {
+                            hash_field(&mut hash, tool.as_bytes());
+                        }
+                    }
                 }
             }
+            FingerprintEncoding::LegacyV1 => match &self.tools {
+                AgentTools::Rho(ToolPolicy::All) => hash_field(&mut hash, b"tools:all"),
+                AgentTools::Rho(ToolPolicy::Allow(tools)) => {
+                    hash_field(&mut hash, b"tools:allow");
+                    for tool in tools {
+                        hash_field(&mut hash, tool.as_str().as_bytes());
+                    }
+                }
+                AgentTools::Claude(_) => unreachable!("legacy v1 requires Rho tools"),
+            },
         }
         if let Some(reasoning) = self.reasoning {
             hash_field(&mut hash, b"reasoning:some");
@@ -236,8 +357,21 @@ impl AgentDefinition {
         } else {
             hash_field(&mut hash, b"reasoning:none");
         }
+        if encoding == FingerprintEncoding::V2 {
+            if self.inherit_claude_config {
+                hash_field(&mut hash, b"inherit_claude_config:true");
+            } else {
+                hash_field(&mut hash, b"inherit_claude_config:false");
+            }
+        }
         AgentFingerprint(hash.finalize().into())
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FingerprintEncoding {
+    V2,
+    LegacyV1,
 }
 
 fn hash_selection(hash: &mut Sha256, policy: &[u8], selection: &ModelSelection) {
