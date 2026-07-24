@@ -16,13 +16,41 @@ const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/matthewyjiang/rho
 const CRATE_NAME: &str = "rho-coding-agent";
 const PACMAN_PACKAGE_TARGET: &str = "mjiang-extras/rho-coding-agent";
 const SCOOP_PACKAGE: &str = "rho";
+/// Shell command that fetches and runs `install.sh` from `git_ref`. Pinned to
+/// the release tag being installed so an update runs reviewed, released code
+/// rather than whatever `main` holds at that moment.
 #[cfg(not(windows))]
-const SCRIPT_INSTALL_SH_COMMAND: &str = "tmp=$(mktemp) || exit; curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.sh -o \"$tmp\"; status=$?; if [ $status -eq 0 ]; then sh \"$tmp\"; status=$?; fi; rm -f \"$tmp\"; exit $status";
+fn script_install_sh_command(git_ref: &str) -> String {
+    format!(
+        "tmp=$(mktemp) || exit; curl --proto '=https' --tlsv1.2 -LsSf \
+         https://raw.githubusercontent.com/matthewyjiang/rho/{git_ref}/scripts/install.sh \
+         -o \"$tmp\"; status=$?; if [ $status -eq 0 ]; then sh \"$tmp\"; status=$?; fi; \
+         rm -f \"$tmp\"; exit $status"
+    )
+}
+
+/// PowerShell equivalent of [`script_install_sh_command`], pinned to `git_ref`.
 #[cfg(windows)]
-const SCRIPT_INSTALL_PS1_COMMAND: &str =
-    "irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex";
-#[cfg(windows)]
-const SCRIPT_INSTALL_PS1_DISPLAY_COMMAND: &str = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://raw.githubusercontent.com/matthewyjiang/rho/main/scripts/install.ps1 | iex\"";
+fn script_install_ps1_command(git_ref: &str) -> String {
+    format!(
+        "irm https://raw.githubusercontent.com/matthewyjiang/rho/{git_ref}/scripts/install.ps1 | iex"
+    )
+}
+
+/// Accepts a release tag for interpolation into the installer shell command only
+/// when it is a plain git ref. An unexpected tag (metacharacters, spaces) would
+/// otherwise inject into `sh -c`, so fall back to `main` rather than run it.
+fn install_script_ref(tag: String) -> String {
+    let is_plain_ref = !tag.is_empty()
+        && tag
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'/'));
+    if is_plain_ref {
+        tag
+    } else {
+        "main".to_string()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdateInfo {
@@ -51,13 +79,13 @@ impl InstallMethod {
         }
     }
 
-    pub fn update_command(self) -> String {
+    pub fn update_command(self, git_ref: &str) -> String {
         match self {
             Self::Cargo => cargo_update_command_display(),
             Self::Pacman => pacman_update_command_display(),
             Self::Scoop => scoop_update_command_display(ScoopInstallScope::User),
             Self::ScoopGlobal => scoop_update_command_display(ScoopInstallScope::Global),
-            Self::Script => script_update_command_display(),
+            Self::Script => script_update_command_display(git_ref),
         }
     }
 }
@@ -111,12 +139,16 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
     let method = detect_install_method();
     println!("detected install method: {}", method.label());
 
-    match available_update(current_version).await {
+    // Pin the install script to the release tag being installed. If the release
+    // check fails we cannot know the tag, so fall back to `main` rather than
+    // block the update entirely.
+    let git_ref = match available_update(current_version).await {
         Ok(Some(update)) => {
             println!(
                 "rho v{} is available (current v{}).",
                 update.latest_version, update.current_version
             );
+            install_script_ref(update.latest_tag)
         }
         Ok(None) => {
             println!("rho is up to date (v{current_version}).");
@@ -125,31 +157,32 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
         Err(err) => {
             eprintln!("warning: could not check latest release: {err}");
             println!("continuing with {} update command.", method.label());
+            "main".to_string()
         }
-    }
+    };
 
-    println!("update command: {}", method.update_command());
+    println!("update command: {}", method.update_command(&git_ref));
     if method == InstallMethod::Pacman {
         println!("pacman may prompt for your sudo password.");
     }
 
-    run_update_command(method).await
+    run_update_command(method, &git_ref).await
 }
 
-async fn run_update_command(method: InstallMethod) -> anyhow::Result<()> {
+async fn run_update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<()> {
     #[cfg(windows)]
     {
         println!(
             "automatic updates are disabled on Windows to avoid launching background shells that can trigger security software."
         );
         println!("copy and run this command yourself to update:");
-        println!("{}", method.update_command());
+        println!("{}", method.update_command(git_ref));
         return Ok(());
     }
 
     #[cfg(not(windows))]
     {
-        let status = update_command(method)
+        let status = update_command(method, git_ref)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -175,7 +208,7 @@ fn update_action_label() -> &'static str {
 }
 
 #[cfg(not(windows))]
-fn update_command(method: InstallMethod) -> Command {
+fn update_command(method: InstallMethod, git_ref: &str) -> Command {
     match method {
         InstallMethod::Cargo => {
             let mut command = Command::new("cargo");
@@ -192,10 +225,10 @@ fn update_command(method: InstallMethod) -> Command {
         }
         InstallMethod::Scoop | InstallMethod::ScoopGlobal => {
             let mut command = Command::new("sh");
-            command.args(["-c", &method.update_command()]);
+            command.args(["-c", &method.update_command(git_ref)]);
             command
         }
-        InstallMethod::Script => script_update_command(),
+        InstallMethod::Script => script_update_command(git_ref),
     }
 }
 
@@ -224,22 +257,26 @@ fn scoop_update_command_display(scope: ScoopInstallScope) -> String {
 }
 
 #[cfg(windows)]
-fn script_update_command_display() -> String {
+fn script_update_command_display(git_ref: &str) -> String {
+    let ps1 = script_install_ps1_command(git_ref);
     let Some(install_dir) = current_exe_parent() else {
-        return SCRIPT_INSTALL_PS1_DISPLAY_COMMAND.to_string();
+        return format!(
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command {}",
+            powershell_quote(&ps1)
+        );
     };
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -Command {command}",
         command = powershell_quote(&format!(
-            "$env:RHO_INSTALL_DIR={}; {SCRIPT_INSTALL_PS1_COMMAND}",
+            "$env:RHO_INSTALL_DIR={}; {ps1}",
             powershell_quote_path(&install_dir)
         ))
     )
 }
 
 #[cfg(not(windows))]
-fn script_update_command_display() -> String {
-    let command = format!("sh -c {}", shell_quote(SCRIPT_INSTALL_SH_COMMAND));
+fn script_update_command_display(git_ref: &str) -> String {
+    let command = format!("sh -c {}", shell_quote(&script_install_sh_command(git_ref)));
     let Some(install_dir) = current_exe_parent() else {
         return command;
     };
@@ -250,9 +287,9 @@ fn script_update_command_display() -> String {
 }
 
 #[cfg(not(windows))]
-fn script_update_command() -> Command {
+fn script_update_command(git_ref: &str) -> Command {
     let mut command = Command::new("sh");
-    command.args(["-c", SCRIPT_INSTALL_SH_COMMAND]);
+    command.args(["-c", &script_install_sh_command(git_ref)]);
     if let Some(install_dir) = current_exe_parent() {
         command.env("RHO_INSTALL_DIR", install_dir);
     }
@@ -495,9 +532,22 @@ mod tests {
 
     use super::{
         cargo_install_list_contains_crate, cargo_root_from_bin_path, cargo_update_root_for_exe,
-        pacman_update_command_display, release_tag_to_version, scoop_install_scope_for_path,
-        scoop_update_command_display, version_is_newer, InstallMethod, ScoopInstallScope,
+        install_script_ref, pacman_update_command_display, release_tag_to_version,
+        scoop_install_scope_for_path, scoop_update_command_display, version_is_newer,
+        InstallMethod, ScoopInstallScope,
     };
+
+    #[test]
+    fn install_script_ref_accepts_release_tags_and_rejects_shell_metacharacters() {
+        assert_eq!(
+            install_script_ref("rho-coding-agent-v1.13.0".into()),
+            "rho-coding-agent-v1.13.0"
+        );
+        // A tag that would inject into `sh -c` falls back to the safe `main` ref.
+        assert_eq!(install_script_ref("$(rm -rf ~)v1.0.0".into()), "main");
+        assert_eq!(install_script_ref("v1.0.0; echo pwned".into()), "main");
+        assert_eq!(install_script_ref(String::new()), "main");
+    }
 
     #[test]
     fn extracts_release_please_tag_version() {
@@ -517,7 +567,12 @@ mod tests {
 
     #[test]
     fn script_update_command_display_uses_platform_installer() {
-        let command = InstallMethod::Script.update_command();
+        let command = InstallMethod::Script.update_command("rho-coding-agent-v1.2.3");
+
+        // The install script is fetched from the targeted release tag, never
+        // from mutable `main`.
+        assert!(command.contains("rho-coding-agent-v1.2.3/scripts/install"));
+        assert!(!command.contains("/main/scripts/install"));
 
         #[cfg(windows)]
         {
@@ -537,7 +592,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn script_update_command_display_preserves_curl_failure_status() {
-        let command = InstallMethod::Script.update_command();
+        let command = InstallMethod::Script.update_command("rho-coding-agent-v1.2.3");
 
         assert!(command.contains("curl"));
         assert!(command.contains("--proto"));
@@ -562,7 +617,7 @@ mod tests {
             "scoop update; scoop update rho"
         );
         assert_eq!(
-            InstallMethod::Scoop.update_command(),
+            InstallMethod::Scoop.update_command("main"),
             "scoop update; scoop update rho"
         );
         assert_eq!(InstallMethod::Scoop.label(), "Scoop");
@@ -575,7 +630,7 @@ mod tests {
             "scoop update; scoop update -g rho"
         );
         assert_eq!(
-            InstallMethod::ScoopGlobal.update_command(),
+            InstallMethod::ScoopGlobal.update_command("main"),
             "scoop update; scoop update -g rho"
         );
         assert_eq!(InstallMethod::ScoopGlobal.label(), "Scoop (global)");
