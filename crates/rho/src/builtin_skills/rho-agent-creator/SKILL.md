@@ -47,10 +47,10 @@ If the answer is not `inherit`, ask for the model ID and optional provider. Both
 
 Ask whether the body should:
 
-- `extend` the standard Rho system prompt, which is the recommended default
+- `extend` the standard Rho system prompt
 - `replace` the system prompt completely
 
-Explain that `replace` needs a non-empty, self-contained body. Draft a concise body from the user's answers. It should state the role first, then give concrete operating rules, boundaries, and completion expectations. Do not repeat metadata merely to make the body longer.
+Use a choice questionnaire with `default: "extend"` and `default_selection: "focused"` so extend is recommended without being pre-selected. Explain that `replace` needs a non-empty, self-contained body. Draft a concise body from the user's answers. It should state the role first, then give concrete operating rules, boundaries, and completion expectations. Do not repeat metadata merely to make the body longer.
 
 ## 6. Draft and confirm
 

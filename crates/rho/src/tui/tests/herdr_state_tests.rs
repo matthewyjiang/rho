@@ -9,7 +9,7 @@ use rho_sdk::{
 
 use crate::{
     herdr::test_support::{reporter_for_socket, TestHerdrServer},
-    questionnaire::QuestionnaireQuestionKind,
+    questionnaire::{QuestionnaireDefaultSelection, QuestionnaireQuestionKind},
 };
 
 use super::super::{
@@ -42,6 +42,7 @@ async fn opening_questionnaire_reports_blocked_and_resume_reports_working() {
                 header: None,
                 help: None,
                 default: None,
+                default_selection: QuestionnaireDefaultSelection::Selected,
                 kind: QuestionnaireQuestionKind::Choice,
                 required: true,
                 choices: vec!["alpha".into(), "beta".into()],

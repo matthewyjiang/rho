@@ -265,6 +265,7 @@ pub(super) fn questionnaire_request(request: &HostInputRequest) -> Questionnaire
                     header: question.header_text().map(str::to_string),
                     help: question.help_text().map(str::to_string),
                     default: question.default_value_ref().cloned(),
+                    default_selection: question.default_selection_mode().into(),
                     kind: questionnaire_kind(question),
                     required: question.is_required(),
                     choices,

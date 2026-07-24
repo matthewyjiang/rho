@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{backend::TestBackend, Terminal};
 
 use crate::{
-    questionnaire::QuestionnaireQuestionKind,
+    questionnaire::{QuestionnaireDefaultSelection, QuestionnaireQuestionKind},
     tui::questionnaire::{QuestionnaireQuestion, QuestionnaireRequest},
 };
 
@@ -82,6 +82,7 @@ fn questionnaire_phase_is_a_temporary_overlay_on_tool_activity() {
                     header: None,
                     help: None,
                     default: None,
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::Confirm,
                     required: true,
                     choices: Vec::new(),

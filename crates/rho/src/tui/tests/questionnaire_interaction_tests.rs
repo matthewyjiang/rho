@@ -1,7 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
-    questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
+    questionnaire::{
+        QuestionnaireAnswer, QuestionnaireDefaultSelection, QuestionnaireQuestionKind,
+        QuestionnaireResponse,
+    },
     tui::questionnaire::{QuestionnaireQuestion, QuestionnaireRequest},
 };
 
@@ -14,6 +17,7 @@ fn choice_question(id: &str) -> QuestionnaireQuestion {
         header: None,
         help: None,
         default: None,
+        default_selection: QuestionnaireDefaultSelection::Selected,
         kind: QuestionnaireQuestionKind::Choice,
         required: true,
         choices: vec!["alpha".into(), "beta".into()],
@@ -28,6 +32,7 @@ fn confirm_question(id: &str) -> QuestionnaireQuestion {
         header: None,
         help: None,
         default: None,
+        default_selection: QuestionnaireDefaultSelection::Selected,
         kind: QuestionnaireQuestionKind::Confirm,
         required: true,
         choices: Vec::new(),
@@ -121,6 +126,7 @@ fn second_ctrl_c_cancels_questionnaire_without_exiting_tui() {
                     header: None,
                     help: None,
                     default: None,
+                    default_selection: QuestionnaireDefaultSelection::Selected,
                     kind: QuestionnaireQuestionKind::Confirm,
                     required: true,
                     choices: Vec::new(),
