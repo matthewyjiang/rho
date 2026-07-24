@@ -101,7 +101,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
         entry(
             editor,
             "Edit composer in external editor",
-            "Open the composer contents in VISUAL or EDITOR. Rho restores its screen when the editor exits.",
+            "Open the composer contents in VISUAL, falling back to EDITOR when VISUAL is unset or empty. Warns with EDITOR is not set when neither is configured. Rho restores its screen when the editor exits.",
         ),
         entry(
             jump,
