@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::BTreeMap, path::PathBuf};
+use std::{borrow::Cow, collections::BTreeMap, path::Path};
 
 use serde::Serialize;
 
@@ -10,7 +10,7 @@ use {
 
 use super::{provider_config::PersistedProviderConfigs, Config, SearchProvider};
 
-pub(super) fn write_config(path: &PathBuf, config: &Config) -> anyhow::Result<()> {
+pub(super) fn write_config(path: &Path, config: &Config) -> anyhow::Result<()> {
     let serialized = toml::to_string_pretty(&GroupedConfig::from(config))?;
     crate::config_writer::write_atomically(path, &serialized)
 }

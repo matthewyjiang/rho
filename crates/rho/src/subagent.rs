@@ -194,7 +194,9 @@ pub(crate) mod status_write_hooks {
     use super::*;
     use std::sync::Mutex;
 
-    static AFTER_READ: Mutex<Option<Box<dyn Fn(&Path, &RunStatus) + Send>>> = Mutex::new(None);
+    type AfterReadHook = Box<dyn Fn(&Path, &RunStatus) + Send>;
+
+    static AFTER_READ: Mutex<Option<AfterReadHook>> = Mutex::new(None);
 
     pub(crate) fn set_after_read(hook: impl Fn(&Path, &RunStatus) + Send + 'static) {
         *AFTER_READ
