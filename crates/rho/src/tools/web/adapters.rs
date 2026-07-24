@@ -70,7 +70,7 @@ impl Tool for WebSearch {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "web_search".into(),
-            description: "Search the web through a zero-config interface with optional provider credentials. Returns a concise summary, stored snippets by default, and a responseId; use get_search_content for stored snippets or fetched source content.".into(),
+            description: "Search the web through a zero-config interface with optional provider credentials. Returns a concise summary, stores snippets by default under a responseId, and stores full source pages only when includeContent succeeds. Use get_search_content with that responseId when you need stored snippets or source pages.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -162,7 +162,7 @@ impl Tool for WebSearch {
                 kind: "web_search".into(),
                 items,
             },
-        );
+        )?;
 
         let content = json!({
             "responseId": response_id,
@@ -174,7 +174,7 @@ impl Tool for WebSearch {
             "snippetContentAvailable": availability.snippets,
             "sourceContentAvailable": availability.sources,
             "fullContentAvailable": availability.sources,
-            "note": "Tool output is intentionally concise. get_search_content returns stored snippets by default; fetched full page content is available only when includeContent succeeds for at least one result."
+            "note": "Summary is inline. Call get_search_content with only responseId (or an exact original query / queryIndex / url / urlIndex) for stored snippets; full source pages exist only when includeContent succeeded."
         });
 
         Ok(ToolResult {
@@ -190,15 +190,15 @@ impl Tool for GetSearchContent {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "get_search_content".into(),
-            description: "Retrieve stored snippets, fetched source content, or fetch_content artifacts from a previous responseId by query, URL, or index.".into(),
+            description: "Retrieve stored web_search snippets/source pages or fetch_content bodies by responseId. Prefer responseId alone, or exact url/urlIndex/query/queryIndex selectors from the prior tool result. query is the original search query or fetch prompt, not a free-text content search.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "responseId": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-                    "query": {"type": "string"},
-                    "queryIndex": {"type": "integer", "minimum": 0},
-                    "url": {"type": "string"},
-                    "urlIndex": {"type": "integer", "minimum": 0}
+                    "responseId": {"type": "string", "pattern": "^[0-9a-f]{32}$", "description": "responseId returned by web_search or fetch_content."},
+                    "query": {"type": "string", "description": "Exact original web_search query or fetch_content prompt. Not a keyword search over page text."},
+                    "queryIndex": {"type": "integer", "minimum": 0, "description": "Index among stored items that have a query."},
+                    "url": {"type": "string", "description": "Exact stored URL to select."},
+                    "urlIndex": {"type": "integer", "minimum": 0, "description": "Index into the stored item list."}
                 },
                 "required": ["responseId"]
             }),
@@ -246,25 +246,38 @@ fn select_stored_item<'a>(
     stored: &'a StoredContent,
     args: &GetSearchContentArgs,
 ) -> Result<&'a StoredItem, ToolError> {
+    let available = || storage::available_selectors(stored);
     if let Some(url) = &args.url {
         return stored
             .items
             .iter()
             .find(|item| item.url.as_deref() == Some(url.as_str()))
-            .ok_or_else(|| ToolError::Message(format!("url not found for responseId: {url}")));
+            .ok_or_else(|| {
+                ToolError::Message(format!(
+                    "url not found for responseId: {url}. Available selectors:\n{}",
+                    available()
+                ))
+            });
     }
     if let Some(index) = args.url_index {
-        return stored
-            .items
-            .get(index)
-            .ok_or_else(|| ToolError::Message(format!("urlIndex out of range: {index}")));
+        return stored.items.get(index).ok_or_else(|| {
+            ToolError::Message(format!(
+                "urlIndex out of range: {index}. Available selectors:\n{}",
+                available()
+            ))
+        });
     }
     if let Some(query) = &args.query {
         return stored
             .items
             .iter()
             .find(|item| item.query.as_deref() == Some(query.as_str()))
-            .ok_or_else(|| ToolError::Message(format!("query not found for responseId: {query}")));
+            .ok_or_else(|| {
+                ToolError::Message(format!(
+                    "query not found for responseId: {query}. query must equal an original web_search query or fetch_content prompt, not page keywords. Available selectors:\n{}",
+                    available()
+                ))
+            });
     }
     if let Some(index) = args.query_index {
         return stored
@@ -272,7 +285,12 @@ fn select_stored_item<'a>(
             .iter()
             .filter(|item| item.query.is_some())
             .nth(index)
-            .ok_or_else(|| ToolError::Message(format!("queryIndex out of range: {index}")));
+            .ok_or_else(|| {
+                ToolError::Message(format!(
+                    "queryIndex out of range: {index}. Available selectors:\n{}",
+                    available()
+                ))
+            });
     }
     stored
         .items

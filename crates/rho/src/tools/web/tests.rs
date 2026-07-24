@@ -118,6 +118,42 @@ fn content_availability_matches_stored_content_kind() {
 }
 
 #[tokio::test]
+async fn get_search_content_lists_available_selectors_on_query_miss() {
+    let response_id = storage::new_response_id();
+    storage::store(
+        response_id.clone(),
+        storage::StoredContent {
+            kind: "fetch_content".into(),
+            items: vec![StoredItem {
+                url: Some("https://example.com/doc".into()),
+                query: Some("exact prompt".into()),
+                title: None,
+                content: "body".into(),
+                metadata: json!({}),
+            }],
+        },
+    )
+    .unwrap();
+
+    let err = GetSearchContent
+        .call(
+            json!({
+                "responseId": response_id,
+                "query": "--allowedTools"
+            }),
+            test_context(),
+            "call_1".into(),
+        )
+        .await
+        .unwrap_err();
+
+    let message = err.to_string();
+    assert!(message.contains("query must equal an original"));
+    assert!(message.contains("https://example.com/doc"));
+    assert!(message.contains("exact prompt"));
+}
+
+#[tokio::test]
 async fn get_search_content_rejects_invalid_response_id() {
     let err = GetSearchContent
         .call(

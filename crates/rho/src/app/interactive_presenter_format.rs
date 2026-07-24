@@ -465,18 +465,33 @@ pub(super) fn web_search_line(arguments: &serde_json::Value, content: &str) -> S
 }
 
 pub(super) fn fetch_content_line(content: &str) -> String {
-    let count = serde_json::from_str::<serde_json::Value>(content)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("items")
-                .and_then(|items| items.as_array())
-                .map(Vec::len)
-        });
-    count.map_or_else(
-        || "fetch content finished".into(),
-        |count| format!("fetch content: fetched {}", pluralized(count, "item", "")),
-    )
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return "fetch content finished".into();
+    };
+    if let Some(items) = value.get("items").and_then(|items| items.as_array()) {
+        return format!(
+            "fetch content: fetched {}",
+            pluralized(items.len(), "item", "")
+        );
+    }
+    if let Some(count) = value.get("itemCount").and_then(|count| count.as_u64()) {
+        return format!(
+            "fetch content: fetched {}",
+            pluralized(count as usize, "item", "")
+        );
+    }
+    if value.get("content").is_some() {
+        let truncated = value
+            .get("contentTruncated")
+            .and_then(|flag| flag.as_bool())
+            .unwrap_or(false);
+        return if truncated {
+            "fetch content: fetched 1 item (truncated)".into()
+        } else {
+            "fetch content: fetched 1 item".into()
+        };
+    }
+    "fetch content finished".into()
 }
 
 pub(super) fn get_search_content_line(content: &str) -> String {

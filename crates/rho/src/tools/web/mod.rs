@@ -4,6 +4,7 @@ use rho_sdk::tool::Tool as SdkTool;
 
 mod adapters;
 mod fetch;
+mod fetch_response;
 mod sdk_fetch_content;
 pub(super) mod sdk_get_search_content;
 pub(super) mod sdk_web_search;

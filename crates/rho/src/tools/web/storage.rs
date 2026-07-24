@@ -12,6 +12,7 @@ use uuid::Uuid;
 use rho_tools::tool::ToolError;
 
 static CONTENT_STORE: OnceLock<Mutex<HashMap<String, StoredContent>>> = OnceLock::new();
+static CACHE_ROOT_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct StoredContent {
@@ -48,12 +49,13 @@ pub(super) fn content_availability(items: &[StoredItem]) -> ContentAvailability 
     }
 }
 
-pub(super) fn store(response_id: String, content: StoredContent) {
-    let _ = write(&response_id, &content);
+pub(super) fn store(response_id: String, content: StoredContent) -> Result<(), ToolError> {
+    write(&response_id, &content)?;
     content_store()
         .lock()
         .expect("content store lock poisoned")
         .insert(response_id, content);
+    Ok(())
 }
 
 pub(super) fn load(response_id: &str) -> Result<StoredContent, ToolError> {
@@ -87,8 +89,20 @@ pub(super) fn validate_response_id(response_id: &str) -> Result<(), ToolError> {
     }
 }
 
+/// Durable sidecar root for web-access blobs and GitHub clones.
+///
+/// Lives under the Rho data directory when available so content survives process
+/// restarts without being stuffed into session transcripts. Falls back to the
+/// process temp directory only when the data root cannot be resolved.
 pub(super) fn web_access_cache_root() -> PathBuf {
-    std::env::temp_dir().join("rho-web-access")
+    if let Some(path) = CACHE_ROOT_OVERRIDE
+        .lock()
+        .expect("web access cache root lock poisoned")
+        .clone()
+    {
+        return path;
+    }
+    default_web_access_cache_root()
 }
 
 pub(super) fn create_private_dir_all(path: &Path) -> Result<(), ToolError> {
@@ -108,8 +122,43 @@ pub(super) fn create_private_dir_all(path: &Path) -> Result<(), ToolError> {
     Ok(())
 }
 
+/// Lists exact selector keys an agent may pass to `get_search_content`.
+pub(super) fn available_selectors(stored: &StoredContent) -> String {
+    let mut lines = Vec::new();
+    if stored.items.is_empty() {
+        return "no stored items".into();
+    }
+    for (index, item) in stored.items.iter().enumerate() {
+        let mut parts = vec![format!("urlIndex={index}")];
+        if let Some(url) = item.url.as_deref() {
+            parts.push(format!("url={url}"));
+        }
+        if let Some(query) = item.query.as_deref() {
+            parts.push(format!("query={query:?}"));
+        }
+        if item.query.is_some() {
+            let query_index = stored
+                .items
+                .iter()
+                .take(index + 1)
+                .filter(|candidate| candidate.query.is_some())
+                .count()
+                .saturating_sub(1);
+            parts.push(format!("queryIndex={query_index}"));
+        }
+        lines.push(format!("- {}", parts.join(" ")));
+    }
+    lines.join("\n")
+}
+
 fn content_store() -> &'static Mutex<HashMap<String, StoredContent>> {
     CONTENT_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn default_web_access_cache_root() -> PathBuf {
+    crate::paths::rho_dir()
+        .map(|dir| dir.join("web-access"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("rho-web-access"))
 }
 
 fn write(response_id: &str, content: &StoredContent) -> Result<(), ToolError> {
@@ -124,12 +173,27 @@ fn write(response_id: &str, content: &StoredContent) -> Result<(), ToolError> {
 
 fn read(response_id: &str) -> Result<StoredContent, ToolError> {
     let path = stored_content_path(response_id)?;
-    let content = fs::read_to_string(&path).map_err(|_| {
+    match fs::read_to_string(&path) {
+        Ok(content) => parse_stored_content(&content),
+        Err(_) => read_legacy_temp(response_id),
+    }
+}
+
+fn read_legacy_temp(response_id: &str) -> Result<StoredContent, ToolError> {
+    let legacy = std::env::temp_dir()
+        .join("rho-web-access")
+        .join("content")
+        .join(format!("{response_id}.json"));
+    let content = fs::read_to_string(&legacy).map_err(|_| {
         ToolError::Message(format!(
-            "unknown responseId: {response_id}. Stored web content is available only while its cache file exists."
+            "unknown responseId: {response_id}. Stored web content is a sidecar blob under the Rho data directory and is available only while that cache file exists. Re-run fetch_content or web_search for the original URL or query."
         ))
     })?;
-    serde_json::from_str(&content)
+    parse_stored_content(&content)
+}
+
+fn parse_stored_content(content: &str) -> Result<StoredContent, ToolError> {
+    serde_json::from_str(content)
         .map_err(|err| ToolError::Message(format!("stored content was not valid JSON: {err}")))
 }
 
@@ -163,3 +227,32 @@ fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), ToolError> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+pub(super) struct CacheRootGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl CacheRootGuard {
+    pub(super) fn set(path: PathBuf) -> Self {
+        let previous = CACHE_ROOT_OVERRIDE
+            .lock()
+            .expect("web access cache root lock poisoned")
+            .replace(path);
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for CacheRootGuard {
+    fn drop(&mut self) {
+        *CACHE_ROOT_OVERRIDE
+            .lock()
+            .expect("web access cache root lock poisoned") = self.previous.take();
+    }
+}
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;

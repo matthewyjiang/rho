@@ -10,12 +10,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use url::Url;
 
-use rho_tools::tool::truncate;
-
 use super::{
     fetch::{self, github, FetchedTarget},
+    fetch_response::build_fetch_content_output,
     storage::{self, StoredContent, StoredItem},
-    util::{self, to_pretty_json},
+    util,
 };
 
 mod github_clone;
@@ -211,20 +210,15 @@ impl FetchPlan {
             self.response_id.clone(),
             StoredContent {
                 kind: FETCH_CONTENT_TOOL.into(),
-                items,
+                items: items.clone(),
             },
-        );
-        let content = json!({
-            "responseId": self.response_id,
-            "type": FETCH_CONTENT_TOOL,
-            "items": previews,
-            "fullContentAvailable": true,
-            "note": "Large fetched content is stored out-of-band. Use get_search_content with responseId to retrieve it."
-        });
-        Ok(
-            ToolOutput::text(truncate(to_pretty_json(&content), max_output_bytes))
-                .metadata(ToolMetadata::new().operation(OperationKind::Network)),
         )
+        .map_err(map_app_tool_error)?;
+
+        let content =
+            build_fetch_content_output(&self.response_id, &items, &previews, max_output_bytes);
+        Ok(ToolOutput::text(content)
+            .metadata(ToolMetadata::new().operation(OperationKind::Network)))
     }
 }
 
@@ -391,12 +385,12 @@ impl Tool for SdkFetchContent {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: FETCH_CONTENT_TOOL.into(),
-            description: "Fetch URLs, GitHub repos/files, YouTube/local videos, PDFs, local files, or web pages. Returns previews, artifacts, and responseId handles instead of dumping large content.".into(),
+            description: "Fetch URLs, GitHub repos/files, YouTube/local videos, PDFs, local files, or web pages. A single successful target returns readable content inline when it fits the tool output limit. Oversized or multi-target results keep a responseId for get_search_content. Do not read_file cache paths.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "urls": {"type": "array", "items": {"type": "string"}, "description": "URLs or local paths. Use one item for a single fetch, or multiple items to fetch several targets."},
-                    "prompt": {"type": "string", "description": "Question for video or page analysis."},
+                    "prompt": {"type": "string", "description": "Question for video or page analysis. Also stored as the exact query selector for get_search_content."},
                     "timestamp": {"type": "string", "description": "Video frame timestamp or range, e.g. 23:41 or 23:41-25:00."},
                     "frames": {"type": "integer", "minimum": 1, "maximum": 12},
                     "forceClone": {"type": "boolean", "description": "Clone GitHub repos even over the 350MB threshold."}
