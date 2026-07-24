@@ -27,7 +27,7 @@ pub(crate) fn write_bytes_atomically(path: &Path, contents: &[u8]) -> std::io::R
     result
 }
 
-pub(super) fn write_atomically(path: &PathBuf, contents: &str) -> anyhow::Result<()> {
+pub(super) fn write_atomically(path: &Path, contents: &str) -> anyhow::Result<()> {
     write_bytes_atomically(path, contents.as_bytes()).map_err(Into::into)
 }
 

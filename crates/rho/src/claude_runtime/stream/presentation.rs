@@ -233,7 +233,7 @@ pub(crate) fn apply_status_patch(status: &mut RunStatus, patch: StatusPatch) {
     if let Some(state) = patch.state {
         // Never let stream patches demote a terminal state back to nonterminal.
         // Canonical disk writes also enforce this via `subagent::write_status`.
-        if !(status.state.is_terminal() && !state.is_terminal()) {
+        if !status.state.is_terminal() || state.is_terminal() {
             status.state = state;
         }
     }

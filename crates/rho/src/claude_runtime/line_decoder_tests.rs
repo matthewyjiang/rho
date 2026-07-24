@@ -100,7 +100,7 @@ fn rejects_unterminated_oversize_line_without_unbounded_growth() {
     // One more byte tips the incomplete tail over the cap.
     decoder.push(b"x");
     // Further bytes are ignored while the oversize error is still pending.
-    decoder.push(&vec![b'y'; 64]);
+    decoder.push(&[b'y'; 64]);
     let error = decoder
         .next_line()
         .expect_err("unterminated oversize must fail on next_line");

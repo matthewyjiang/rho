@@ -436,7 +436,7 @@ impl StatusSink {
     ) -> anyhow::Result<Self> {
         #[cfg(test)]
         {
-            return Self::build(path, identity, prompt, status_tx, PersistHooks::default());
+            Self::build(path, identity, prompt, status_tx, PersistHooks::default())
         }
         #[cfg(not(test))]
         {
@@ -790,10 +790,11 @@ impl StatusSink {
 
         let send_ok = if let Some(tx) = self.persist_tx.take() {
             // Blocking send off the runtime so a full queue can still drain.
-            match tokio::task::spawn_blocking(move || tx.send(command)).await {
-                Ok(Ok(())) => true,
-                _ => false,
-            }
+            // Map inside the closure so the JoinHandle does not carry SendError.
+            matches!(
+                tokio::task::spawn_blocking(move || tx.send(command).is_ok()).await,
+                Ok(true)
+            )
         } else {
             false
         };

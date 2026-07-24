@@ -611,10 +611,10 @@ fn parse_comma_separated_scalars(
 ) -> Result<Vec<String>, AgentCatalogError> {
     let mut items = Vec::new();
     let mut current = String::new();
-    let mut chars = inner.chars().peekable();
+    let chars = inner.chars();
     let mut in_single = false;
     let mut in_double = false;
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         match ch {
             '\'' if !in_double => {
                 in_single = !in_single;

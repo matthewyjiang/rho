@@ -28,7 +28,7 @@ pub(crate) struct AgentInvocation {
 #[derive(Clone, Debug)]
 pub(crate) enum BoundRuntime {
     Rho {
-        config: Config,
+        config: Box<Config>,
         capabilities: AgentCapabilities,
     },
     ClaudeCli {
@@ -72,7 +72,7 @@ impl BoundAgent {
     /// Rho-bound config. Claude-cli agents have no Rho provider/model config.
     pub(crate) fn rho_config(&self) -> Option<&Config> {
         match &self.runtime {
-            BoundRuntime::Rho { config, .. } => Some(config),
+            BoundRuntime::Rho { config, .. } => Some(config.as_ref()),
             BoundRuntime::ClaudeCli { .. } => None,
         }
     }
@@ -101,7 +101,7 @@ impl AgentBinder {
         let fingerprint = definition.fingerprint();
         let runtime = match definition.runtime {
             AgentRuntime::Rho => BoundRuntime::Rho {
-                config: bind_rho_config(&definition, host_config)?,
+                config: Box::new(bind_rho_config(&definition, host_config)?),
                 capabilities: bind_rho_capabilities(&definition, &invocation)?,
             },
             AgentRuntime::ClaudeCli => bind_claude_runtime(&definition, &invocation, host_config)?,

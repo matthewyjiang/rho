@@ -270,7 +270,7 @@ impl AgentExecutor {
                     config: bound_config,
                     ..
                 } => {
-                    let mut config = bound_config;
+                    let mut config = *bound_config;
                     super::cli_config::prepare_model_metadata(
                         &config,
                         &crate::credential_store::AppCredentialStore,

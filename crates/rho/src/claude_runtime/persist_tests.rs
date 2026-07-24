@@ -589,7 +589,7 @@ async fn barrier_drain_sticky_failure_never_publishes_ok_on_watch() {
     .await;
 
     assert!(
-        !states.iter().any(|state| *state == RunState::Ok),
+        !states.contains(&RunState::Ok),
         "watch must never observe Ok when sticky failure demotes: {states:?}"
     );
     assert_eq!(
