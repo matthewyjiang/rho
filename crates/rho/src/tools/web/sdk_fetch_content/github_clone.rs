@@ -8,7 +8,7 @@ use rho_sdk::{
 use tokio::process::Command;
 
 use super::{authorize, capability_source, map_app_tool_error};
-use crate::tools::web::{fetch::github, storage};
+use crate::tools::web::{fetch::github, storage::WebAccessStore};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -21,43 +21,52 @@ pub(super) struct GitHubClonePlan {
     max_output_bytes: usize,
     process_environment: ProcessEnvironment,
     processes: Vec<ProcessExecution>,
+    store: WebAccessStore,
+}
+
+pub(super) struct GitHubCloneConfig {
+    pub(super) response_id: String,
+    pub(super) target_index: usize,
+    pub(super) working_directory: PathBuf,
+    pub(super) max_output_bytes: usize,
+    pub(super) process_environment: ProcessEnvironment,
+    pub(super) store: WebAccessStore,
 }
 
 impl GitHubClonePlan {
     pub(super) fn new(
         requested: String,
         target: github::GitHubTarget,
-        response_id: &str,
-        target_index: usize,
-        working_directory: &std::path::Path,
-        max_output_bytes: usize,
-        process_environment: ProcessEnvironment,
+        config: GitHubCloneConfig,
     ) -> Self {
         let network_url = github::clone_url(&target);
         // Keep each force-cloned target under its own directory so multi-URL
         // fetches with a shared response id cannot collide.
-        let local_path = storage::web_access_cache_root()
+        let local_path = config
+            .store
+            .root()
             .join(std::process::id().to_string())
             .join("github")
-            .join(response_id)
-            .join(target_index.to_string());
+            .join(&config.response_id)
+            .join(config.target_index.to_string());
         let processes = process_plan(
-            working_directory,
+            &config.working_directory,
             &network_url,
             &local_path,
             target.ref_name.as_deref(),
-            max_output_bytes,
-            process_environment.clone(),
+            config.max_output_bytes,
+            config.process_environment.clone(),
         );
         Self {
             requested,
             target,
             network_url,
             local_path,
-            working_directory: working_directory.to_path_buf(),
-            max_output_bytes,
-            process_environment,
+            working_directory: config.working_directory,
+            max_output_bytes: config.max_output_bytes,
+            process_environment: config.process_environment,
             processes,
+            store: config.store,
         }
     }
 
@@ -86,7 +95,9 @@ impl GitHubClonePlan {
 
     pub(super) async fn execute(self) -> Result<super::FetchedTarget, ToolError> {
         if let Some(parent) = self.local_path.parent() {
-            storage::create_private_dir_all(parent).map_err(map_app_tool_error)?;
+            self.store
+                .create_private_dir_all(parent)
+                .map_err(map_app_tool_error)?;
         }
         // Authorize with the public clone URL, but inject a token-backed URL only
         // when executing so private repos can clone without leaking credentials

@@ -153,7 +153,8 @@ async fn preparation_rejects_invalid_resource_keys_and_actions() {
         rho_sdk::tool::ToolErrorKind::InvalidArguments
     );
 
-    let get_search_content = web::sdk_get_search_content::SdkGetSearchContent::new(12_000);
+    let get_search_content =
+        web::sdk_get_search_content::SdkGetSearchContent::new(12_000, web::WebAccessStore::new());
     let response_error = get_search_content
         .prepare(
             invocation(json!({"responseId": "../not-a-response"})),
@@ -183,7 +184,8 @@ async fn diagnostics_and_response_store_prepare_as_safe_reads() {
     };
     assert!(accesses.is_empty());
 
-    let get_search_content = web::sdk_get_search_content::SdkGetSearchContent::new(12_000);
+    let get_search_content =
+        web::sdk_get_search_content::SdkGetSearchContent::new(12_000, web::WebAccessStore::new());
     let stored = get_search_content
         .prepare(
             invocation(json!({"responseId": "0123456789abcdef0123456789abcdef"})),
@@ -201,7 +203,13 @@ async fn diagnostics_and_response_store_prepare_as_safe_reads() {
 async fn web_search_prepares_tool_managed_network() {
     use rho_sdk::{CapabilityKind, CapabilityOperation, CapabilitySource, NetworkTarget};
 
-    let tool = web::SdkWebSearch::new(web::access_tools(&crate::config::Config::default()), 12_000);
+    let tool = web::SdkWebSearch::new(
+        web::access_tools_with_store(
+            &crate::config::Config::default(),
+            web::WebAccessStore::new(),
+        ),
+        12_000,
+    );
     let prepared = tool
         .prepare(
             invocation(json!({"queries": ["rho web search"]})),

@@ -126,8 +126,9 @@ pub(in crate::tools::web) async fn read_clone(
             let tree = directory_listing(dir)?;
             let readme = find_readme(dir).and_then(|path| fs::read_to_string(path).ok());
             let content = format!(
-                "localPath: {}\n\n{}{}",
-                local_path.display(),
+                "GitHub repository {}/{}\n\n{}{}",
+                github.owner,
+                github.repo,
                 tree,
                 readme
                     .as_ref()
@@ -138,12 +139,11 @@ pub(in crate::tools::web) async fn read_clone(
                 title: Some(format!("{}/{}", github.owner, github.repo)),
                 preview: json!({
                     "type": "github_repo",
-                    "localPath": local_path,
                     "tree": tree,
                     "readmePreview": readme.map(|readme| truncate(readme, PREVIEW_BYTES))
                 }),
                 content,
-                metadata: json!({"mode": "clone", "localPath": local_path}),
+                metadata: json!({"mode": "clone"}),
             })
         }
         GitHubKind::Blob => {
@@ -152,11 +152,11 @@ pub(in crate::tools::web) async fn read_clone(
                 title: Some(github.path.clone()),
                 preview: json!({
                     "type": "github_file",
-                    "localPath": target_path,
+                    "path": github.path,
                     "preview": truncate(content.clone(), PREVIEW_BYTES)
                 }),
                 content,
-                metadata: json!({"mode": "clone", "localPath": local_path}),
+                metadata: json!({"mode": "clone"}),
             })
         }
         GitHubKind::Commit => Err(ToolError::Message(

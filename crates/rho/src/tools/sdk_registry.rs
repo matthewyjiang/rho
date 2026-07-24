@@ -90,6 +90,7 @@ pub struct AppToolSet {
     tools: Vec<Arc<dyn Tool>>,
     bundles: Vec<Box<dyn ToolBundle>>,
     subagents: Option<SubagentManager>,
+    web_access: super::web::WebAccessStore,
 }
 
 impl AppToolSet {
@@ -98,6 +99,7 @@ impl AppToolSet {
             tools: Vec::new(),
             bundles: Vec::new(),
             subagents: None,
+            web_access: super::web::WebAccessStore::new(),
         }
     }
 
@@ -140,10 +142,12 @@ impl AppToolSet {
                 tool_set.add_bundle(bundle);
             }
         }
+        let web_access = tool_set.web_access.clone();
         tool_set.add_bundle(super::web::sdk_bundle(
             config,
             &capabilities,
             process_environment,
+            web_access,
         ));
 
         let delegation_tools = DelegationToolSelection::from_capabilities(&capabilities);
@@ -183,6 +187,10 @@ impl AppToolSet {
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
+    }
+
+    pub fn web_access(&self) -> &super::web::WebAccessStore {
+        &self.web_access
     }
 
     pub async fn shutdown(&self) {

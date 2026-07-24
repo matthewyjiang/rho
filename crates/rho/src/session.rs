@@ -35,7 +35,8 @@ use persistence::{
     SessionEntry, SESSION_VERSION,
 };
 use persistence::{
-    parse_timestamp, session_root, unix_timestamp_secs, workspace_key, AppendCursor, SessionStore,
+    parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, workspace_key,
+    AppendCursor, SessionStore,
 };
 
 #[derive(Clone, Debug)]
@@ -329,6 +330,11 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Web-access sidecar directory for this session, when the on-disk layout supports one.
+    pub(crate) fn web_dir(&self) -> Option<PathBuf> {
+        session_web_dir(&self.path)
     }
 
     pub fn id(&self) -> &str {

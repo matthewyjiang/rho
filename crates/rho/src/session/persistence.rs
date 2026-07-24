@@ -23,6 +23,10 @@ use super::{index, Session, SessionHistories, SessionIndexRecord, SessionSummary
 
 const MIN_SESSION_VERSION: u32 = 1;
 pub(super) const SESSION_VERSION: u32 = 4;
+/// Canonical transcript name inside a session folder.
+pub(super) const SESSION_TRANSCRIPT_FILE_NAME: &str = "session.jsonl";
+/// Sidecar directory name for web-access blobs inside a session folder.
+pub(super) const SESSION_WEB_DIR_NAME: &str = "web";
 
 #[derive(Clone, Debug)]
 pub(super) struct ResolvedSession {
@@ -81,7 +85,12 @@ impl SessionStore {
     }
 
     pub(super) fn create_path(&self, id: &str, created_at: u64) -> anyhow::Result<PathBuf> {
-        Ok(self.ensure_dir()?.join(format!("{created_at}_{id}.jsonl")))
+        // New sessions are folders so transcripts and sidecars (web blobs, etc.)
+        // share one unit. Legacy flat `*.jsonl` files remain readable.
+        let session_dir = self.ensure_dir()?.join(format!("{created_at}_{id}"));
+        fs::create_dir_all(&session_dir)?;
+        set_private_dir_permissions(&session_dir)?;
+        Ok(session_dir.join(SESSION_TRANSCRIPT_FILE_NAME))
     }
 
     pub(super) fn list(&self) -> anyhow::Result<Vec<SessionSummary>> {
@@ -660,9 +669,9 @@ fn matching_session_files(dir: &Path, id_prefix: &str) -> anyhow::Result<Vec<Pat
     let mut files = fs::read_dir(dir)?
         .filter_map(Result::ok)
         .filter_map(|entry| {
-            let path = entry.path();
-            let id = session_id_from_path(&path)?;
-            id.starts_with(id_prefix).then_some(path)
+            let unit = SessionUnit::from_path(&entry.path())?;
+            let id = unit.id()?;
+            id.starts_with(id_prefix).then(|| unit.transcript_path())
         })
         .collect::<Vec<_>>();
     files.sort();
@@ -672,7 +681,10 @@ fn matching_session_files(dir: &Path, id_prefix: &str) -> anyhow::Result<Vec<Pat
 fn list_session_summaries_by_scan(dir: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
     let mut summaries = fs::read_dir(dir)?
         .filter_map(Result::ok)
-        .filter_map(|entry| summarize_session_file(&entry.path(), cwd).ok())
+        .filter_map(|entry| {
+            let unit = SessionUnit::from_path(&entry.path())?;
+            summarize_session_file(&unit.transcript_path(), cwd).ok()
+        })
         .map(|record| record.summary)
         .collect::<Vec<_>>();
     summaries.sort_by(|left, right| {
@@ -686,7 +698,8 @@ fn list_session_summaries_by_scan(dir: &Path, cwd: &Path) -> anyhow::Result<Vec<
 }
 
 pub(super) fn session_file_stats(path: &Path) -> (Option<i64>, Option<i64>) {
-    let Ok(metadata) = fs::metadata(path) else {
+    let stats_path = resolve_transcript_path(path).unwrap_or_else(|| path.to_path_buf());
+    let Ok(metadata) = fs::metadata(stats_path) else {
         return (None, None);
     };
     let file_size = Some(clamp_u64_to_i64(metadata.len()));
@@ -719,10 +732,7 @@ pub(super) fn clamp_u64_to_i64(value: u64) -> i64 {
 }
 
 fn timestamp_from_filename(path: &Path) -> Option<u64> {
-    path.file_stem()?
-        .to_str()?
-        .split_once('_')
-        .and_then(|(timestamp, _)| parse_timestamp(timestamp))
+    SessionUnit::from_path(path)?.created_at_from_name()
 }
 
 fn system_time_secs(time: SystemTime) -> i64 {
@@ -731,14 +741,104 @@ fn system_time_secs(time: SystemTime) -> i64 {
         .unwrap_or_default()
 }
 
-pub(super) fn session_id_from_path(path: &Path) -> Option<String> {
-    if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-        return None;
+/// One durable session unit on disk: folder layout or legacy flat transcript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum SessionUnit {
+    /// `<created-at>_<id>/session.jsonl` plus optional `web/` sidecar.
+    Folder { dir: PathBuf },
+    /// Legacy flat `<created-at>_<id>.jsonl` with optional `*.web/` companion.
+    LegacyFile { path: PathBuf },
+}
+
+impl SessionUnit {
+    /// Parses a workspace directory entry or an already-resolved transcript path.
+    pub(super) fn from_path(path: &Path) -> Option<Self> {
+        if path.is_dir() {
+            let transcript = path.join(SESSION_TRANSCRIPT_FILE_NAME);
+            return transcript.is_file().then(|| Self::Folder {
+                dir: path.to_path_buf(),
+            });
+        }
+        if is_folder_transcript(path) {
+            return Some(Self::Folder {
+                dir: path.parent()?.to_path_buf(),
+            });
+        }
+        if is_legacy_transcript(path) {
+            return Some(Self::LegacyFile {
+                path: path.to_path_buf(),
+            });
+        }
+        None
     }
-    path.file_stem()?
-        .to_str()?
-        .rsplit_once('_')
-        .map(|(_, id)| id.to_string())
+
+    pub(super) fn transcript_path(&self) -> PathBuf {
+        match self {
+            Self::Folder { dir } => dir.join(SESSION_TRANSCRIPT_FILE_NAME),
+            Self::LegacyFile { path } => path.clone(),
+        }
+    }
+
+    pub(super) fn web_dir(&self) -> PathBuf {
+        match self {
+            Self::Folder { dir } => dir.join(SESSION_WEB_DIR_NAME),
+            Self::LegacyFile { path } => {
+                let stem = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("session");
+                path.parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(format!("{stem}.web"))
+            }
+        }
+    }
+
+    pub(super) fn unit_name(&self) -> Option<&str> {
+        match self {
+            Self::Folder { dir } => dir.file_name()?.to_str(),
+            Self::LegacyFile { path } => path.file_stem()?.to_str(),
+        }
+    }
+
+    pub(super) fn id(&self) -> Option<String> {
+        self.unit_name()?
+            .rsplit_once('_')
+            .map(|(_, id)| id.to_string())
+    }
+
+    pub(super) fn created_at_from_name(&self) -> Option<u64> {
+        self.unit_name()?
+            .split_once('_')
+            .and_then(|(timestamp, _)| parse_timestamp(timestamp))
+    }
+}
+
+/// Resolves a workspace entry or transcript path to the session JSONL file.
+pub(super) fn resolve_transcript_path(path: &Path) -> Option<PathBuf> {
+    SessionUnit::from_path(path).map(|unit| unit.transcript_path())
+}
+
+/// Web-access sidecar directory for a session transcript path.
+pub(super) fn session_web_dir(transcript_path: &Path) -> Option<PathBuf> {
+    SessionUnit::from_path(transcript_path).map(|unit| unit.web_dir())
+}
+
+pub(super) fn session_id_from_path(path: &Path) -> Option<String> {
+    SessionUnit::from_path(path)?.id()
+}
+
+fn is_folder_transcript(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some(SESSION_TRANSCRIPT_FILE_NAME)
+}
+
+fn is_legacy_transcript(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+        && path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem.contains('_'))
+        && !is_folder_transcript(path)
 }
 
 pub(super) fn session_root() -> anyhow::Result<PathBuf> {

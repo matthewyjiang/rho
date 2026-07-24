@@ -9,7 +9,7 @@ use super::{
     adapters::GetSearchContent,
     fetch::github::{self, GitHubKind},
     search::{self, SearchItem},
-    storage::{self, StoredItem},
+    storage::{self, StoredItem, WebAccessStore},
 };
 
 fn test_context() -> ToolContext {
@@ -49,7 +49,8 @@ fn parses_github_root_tree_blob_and_commit_urls() {
 async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     let args = json!({"query": "rho web access", "provider": "tavily", "includeContent": true});
     let ctx = test_context();
-    let web_search = super::access_tools(&Config::default());
+    let store = WebAccessStore::new();
+    let web_search = super::access_tools_with_store(&Config::default(), store.clone());
     let result = web_search.call(args, ctx, "call_1".into()).await.unwrap();
     let value: Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(value["fullContentAvailable"], false);
@@ -57,7 +58,7 @@ async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     assert_eq!(value["storedContentAvailable"], true);
     let response_id = value["responseId"].as_str().unwrap();
 
-    let retrieved = GetSearchContent
+    let retrieved = GetSearchContent::new(store)
         .call(
             json!({"responseId": response_id, "queryIndex": 0}),
             test_context(),
@@ -118,8 +119,46 @@ fn content_availability_matches_stored_content_kind() {
 }
 
 #[tokio::test]
+async fn get_search_content_lists_available_selectors_on_query_miss() {
+    let store = WebAccessStore::new();
+    let response_id = storage::new_response_id();
+    store
+        .store(
+            response_id.clone(),
+            storage::StoredContent {
+                kind: "fetch_content".into(),
+                items: vec![StoredItem {
+                    url: Some("https://example.com/doc".into()),
+                    query: Some("exact prompt".into()),
+                    title: None,
+                    content: "body".into(),
+                    metadata: json!({}),
+                }],
+            },
+        )
+        .unwrap();
+
+    let err = GetSearchContent::new(store)
+        .call(
+            json!({
+                "responseId": response_id,
+                "query": "--allowedTools"
+            }),
+            test_context(),
+            "call_1".into(),
+        )
+        .await
+        .unwrap_err();
+
+    let message = err.to_string();
+    assert!(message.contains("query must equal an original"));
+    assert!(message.contains("https://example.com/doc"));
+    assert!(message.contains("exact prompt"));
+}
+
+#[tokio::test]
 async fn get_search_content_rejects_invalid_response_id() {
-    let err = GetSearchContent
+    let err = GetSearchContent::new(WebAccessStore::new())
         .call(
             json!({"responseId": "../00000000000000000000000000000000"}),
             test_context(),
@@ -149,14 +188,20 @@ fn search_provider_parses_tool_and_config_values() {
 
 #[test]
 fn tool_specs_and_fetch_security_preserve_public_contract() {
-    let web_search = super::SdkWebSearch::new(super::access_tools(&Config::default()), 12_000);
+    let web_search = super::SdkWebSearch::new(
+        super::access_tools_with_store(&Config::default(), WebAccessStore::new()),
+        12_000,
+    );
     assert_eq!(rho_sdk::tool::Tool::spec(&web_search).name, "web_search");
     assert_eq!(
         rho_sdk::tool::Tool::security(&web_search).capabilities(),
         [rho_sdk::CapabilityKind::Network]
     );
-    let fetch_content =
-        super::SdkFetchContent::new(12_000, rho_sdk::ProcessEnvironment::InheritAll);
+    let fetch_content = super::SdkFetchContent::new(
+        12_000,
+        rho_sdk::ProcessEnvironment::InheritAll,
+        WebAccessStore::new(),
+    );
     assert_eq!(
         rho_sdk::tool::Tool::spec(&fetch_content).name,
         "fetch_content"
@@ -169,7 +214,10 @@ fn tool_specs_and_fetch_security_preserve_public_contract() {
             rho_sdk::CapabilityKind::Network,
         ]
     );
-    assert_eq!(GetSearchContent.spec().name, "get_search_content");
+    assert_eq!(
+        GetSearchContent::new(WebAccessStore::new()).spec().name,
+        "get_search_content"
+    );
 }
 
 #[tokio::test]

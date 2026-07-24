@@ -3,7 +3,7 @@ use rho_sdk::{
     RunOutcome, Session, SessionId,
 };
 
-use crate::session::Session as StoredSession;
+use crate::{session::Session as StoredSession, tools::web::WebAccessStore};
 
 use super::interactive_run_controller::PendingTurn;
 
@@ -27,17 +27,30 @@ pub(crate) struct InteractiveSessionController {
     pending_session_id: Option<SessionId>,
     pending_omission: Option<HandoffReport>,
     persisted_pending_user: bool,
+    web_access: WebAccessStore,
 }
 
 impl InteractiveSessionController {
-    pub(crate) fn new(session: Session, storage: Option<StoredSession>) -> Self {
-        Self {
+    pub(crate) fn new(
+        session: Session,
+        storage: Option<StoredSession>,
+        web_access: WebAccessStore,
+    ) -> Self {
+        let controller = Self {
             session,
             storage,
             pending_session_id: None,
             pending_omission: None,
             persisted_pending_user: false,
-        }
+            web_access,
+        };
+        controller.sync_web_access();
+        controller
+    }
+
+    fn sync_web_access(&self) {
+        let root = self.storage.as_ref().and_then(StoredSession::web_dir);
+        self.web_access.bind_session(root);
     }
 
     pub(crate) fn session(&self) -> &Session {
@@ -76,6 +89,7 @@ impl InteractiveSessionController {
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
         self.persisted_pending_user = false;
+        self.sync_web_access();
     }
 
     pub(crate) fn storage(&self) -> Option<&StoredSession> {
@@ -116,6 +130,7 @@ impl InteractiveSessionController {
     pub(crate) fn reset(&mut self) -> anyhow::Result<SessionId> {
         self.session.reset()?;
         self.storage = None;
+        self.sync_web_access();
         self.persisted_pending_user = false;
         let session_id = SessionId::new();
         self.pending_session_id = Some(session_id.clone());
@@ -125,6 +140,7 @@ impl InteractiveSessionController {
     pub(crate) fn set_resumed_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
         self.persisted_pending_user = false;
+        self.sync_web_access();
     }
 
     pub(crate) fn sync_finished_turn(
