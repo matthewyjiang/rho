@@ -241,8 +241,7 @@ impl HistoryLineCache {
                 self.lines.push(Line::raw(""));
             }
             let entry_start = self.lines.len();
-            let trailing_blank =
-                !(self.open_stream_tail && entry_index + 1 == entries.len());
+            let trailing_blank = !(self.open_stream_tail && entry_index + 1 == entries.len());
             let mut rendered =
                 render_entry_with_options(entry, width, max_tool_output_lines, trailing_blank);
             if !rendered.image_sources.is_empty() {
