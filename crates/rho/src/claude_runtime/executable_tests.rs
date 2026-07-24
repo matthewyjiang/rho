@@ -224,9 +224,14 @@ fn resolve_named_absolute_file_uses_direct_invocation() {
 /// and assert exact round-trip of special characters.
 #[cfg(windows)]
 mod windows_round_trip {
-    use super::*;
     use std::process::Stdio;
     use std::time::Duration;
+
+    use pretty_assertions::assert_eq;
+
+    use super::{
+        ClaudeExecutable, ClaudeExecutableError, ClaudeInvocationKind, WindowsShimArgError,
+    };
 
     fn write_cmd_recorder(path: &std::path::Path, out_file: &std::path::Path) {
         // Dump %1..%9 after cmd parse. Delayed expansion off; extensions on
