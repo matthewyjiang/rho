@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.8.0...rho-sdk-v1.9.0) (2026-07-24)
+
+
+### Features
+
+* **questionnaire:** add focused default selection ([#530](https://github.com/matthewyjiang/rho/issues/530)) ([47d1853](https://github.com/matthewyjiang/rho/commit/47d185377a68881c96db18ee186b3173215e39ee))
+
 ## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.7.2...rho-sdk-v1.8.0) (2026-07-23)
 
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.8.0...rho-providers-v0.8.1) (2026-07-24)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.8.0 to 1.9.0
+
 ## [0.8.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.7.1...rho-providers-v0.8.0) (2026-07-23)
 
 
