@@ -78,7 +78,7 @@ pub(super) struct PendingOAuthLogin {
 
 #[derive(Clone, Debug)]
 pub(super) enum StoreChoiceNext {
-    OpenPicker,
+    /// Continue login for a normal Rho provider after the store is chosen.
     Provider(String),
 }
 
@@ -159,6 +159,9 @@ impl App {
             self.open_login_picker();
             return Ok(());
         }
+        if Self::is_claude_code_target(&invocation.args) {
+            return self.execute_claude_code_login(terminal).await;
+        }
         self.start_login_for_provider(&invocation.args, terminal, agent)
             .await
     }
@@ -169,7 +172,16 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
-            match provider_picker::logout_provider_picker(self.credential_store.as_ref()) {
+            let claude_signed_in = matches!(
+                crate::claude_runtime::auth::query().await,
+                Ok(status) if status.logged_in
+            );
+            match provider_picker::logout_provider_picker(
+                self.credential_store.as_ref(),
+                claude_signed_in,
+            )
+            .await
+            {
                 Ok(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(picker));
                     self.status = "select provider to logout".into();
@@ -181,13 +193,15 @@ impl App {
             }
             return Ok(());
         }
+        if Self::is_claude_code_target(&invocation.args) {
+            return self.execute_claude_code_logout().await;
+        }
         self.logout_provider(&invocation.args, agent).await
     }
 
     pub(super) fn open_login_picker(&mut self) {
-        if self.begin_store_choice_if_needed(StoreChoiceNext::OpenPicker) {
-            return;
-        }
+        // Always show the login group picker first. Credential-store choice
+        // happens only after a normal provider is selected, never for claude-code.
         self.input_ui
             .set_composer(ComposerMode::Picker(provider_picker::login_group_picker()));
         self.status = "select provider to login".into();
@@ -265,10 +279,6 @@ impl App {
                 self.start_login_for_provider(&provider, terminal, agent)
                     .await
             }
-            StoreChoiceNext::OpenPicker => {
-                self.open_login_picker();
-                Ok(())
-            }
         }
     }
 
@@ -278,6 +288,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if Self::is_claude_code_target(provider) {
+            return self.execute_claude_code_login(terminal).await;
+        }
         if self.begin_store_choice_if_needed(StoreChoiceNext::Provider(provider.to_string())) {
             return Ok(());
         }
@@ -298,7 +311,8 @@ impl App {
                 .collect::<Vec<_>>()
                 .join(", ");
             self.insert_entry(&Entry::Error(format!(
-                "unsupported login provider '{provider}'. Use {providers}"
+                "unsupported login provider '{provider}'. Use {providers}, /login {}",
+                claude_login::CLAUDE_CODE_TARGET
             )));
             self.status = "login failed".into();
             return Ok(());
@@ -695,11 +709,15 @@ impl App {
         provider: &str,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if Self::is_claude_code_target(provider) {
+            return self.execute_claude_code_logout().await;
+        }
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
             self.insert_entry(&Entry::Error(format!(
-                "unsupported logout provider '{provider}'. Use /logout {}",
-                catalog::implemented_providers().join(", /logout ")
+                "unsupported logout provider '{provider}'. Use /logout {}, /logout {}",
+                catalog::implemented_providers().join(", /logout "),
+                claude_login::CLAUDE_CODE_TARGET
             )));
             self.status = "logout failed".into();
             return Ok(());

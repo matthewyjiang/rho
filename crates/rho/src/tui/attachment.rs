@@ -4,4 +4,4 @@ mod app;
 mod journal;
 
 pub(crate) use app::run;
-pub(crate) use journal::AttachmentWriter;
+pub(crate) use journal::{AttachmentEvent, AttachmentWriter};

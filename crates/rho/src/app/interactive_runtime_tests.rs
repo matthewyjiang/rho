@@ -246,6 +246,24 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         permission_mode: PermissionMode::Auto,
         approval_handler: None,
         approval_receiver: None,
+        agent: crate::app::agent_binding::AgentBinder::bind(
+            std::sync::Arc::new(crate::agent::AgentDefinition {
+                id: crate::agent::AgentId::new("default").unwrap(),
+                description: "test".into(),
+                prompt: crate::agent::PromptPolicy::Extend(String::new()),
+                model: crate::agent::ModelPolicy::Inherit,
+                runtime: crate::agent::AgentRuntime::Rho,
+                tools: crate::agent::AgentTools::Rho(crate::agent::ToolPolicy::All),
+                reasoning: None,
+                inherit_claude_config: false,
+            }),
+            crate::app::agent_binding::AgentInvocation {
+                role: crate::app::agent_binding::AgentRole::InteractiveRoot,
+                available_tools: crate::agent::AgentCapabilities::all_host_tools(),
+            },
+            &crate::config::Config::default(),
+        )
+        .unwrap(),
         agent_id: "default".into(),
         agent_fingerprint: "test-fingerprint".into(),
         pending_persistence_error: None,

@@ -9,6 +9,7 @@ use super::{
     workspace::git_branch,
     App, Entry,
 };
+use crate::claude_runtime::auth::{self, ClaudeProbeSnapshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BillingInfo {
@@ -50,10 +51,12 @@ pub(super) struct RuntimeInfo {
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
     tree_error: Option<String>,
+    /// Claude Code auth summary. Outside provider credentials on purpose.
+    claude_code: String,
 }
 
 impl App {
-    pub(super) fn execute_info_command(&mut self) -> anyhow::Result<()> {
+    pub(super) async fn execute_info_command(&mut self) -> anyhow::Result<()> {
         let identity = self.info.services.diagnostics.identity();
         let (tree, tree_error) = match self.info.session.session_id.as_deref() {
             Some(_) if self.is_ui_busy() => (
@@ -66,6 +69,12 @@ impl App {
                 Err(error) => (None, Some(error.to_string())),
             },
             None => (None, None),
+        };
+        // During a turn never block stream draining on a Claude child probe.
+        let claude_code = if self.is_ui_busy() {
+            "claude code: status not refreshed during a model turn".into()
+        } else {
+            self.claude_probe_snapshot().await.auth_description()
         };
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
@@ -86,10 +95,21 @@ impl App {
             model_metadata: self.model_metadata.clone(),
             tree,
             tree_error,
+            claude_code,
         };
         self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
         self.status = "runtime info".into();
         Ok(())
+    }
+
+    /// Live Claude probe for idle surfaces. Tests inject a typed snapshot so
+    /// unit paths never spawn host `claude` or read personal auth.
+    pub(super) async fn claude_probe_snapshot(&self) -> ClaudeProbeSnapshot {
+        #[cfg(test)]
+        if let Some(snapshot) = self.test_claude_probe_snapshot.clone() {
+            return snapshot;
+        }
+        auth::probe_snapshot().await
     }
 }
 
@@ -103,6 +123,9 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     block.push_field("Reasoning", &info.reasoning);
     block.push_field("Permissions", &info.permission_mode);
     block.push_field("Billing", info.billing.description());
+
+    block.push_section("External runtimes");
+    block.push_note(&info.claude_code);
 
     block.push_section("Session");
     if let Some(tree) = &info.tree {

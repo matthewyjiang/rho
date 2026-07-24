@@ -1,0 +1,907 @@
+use std::{path::PathBuf, time::Duration};
+
+use crate::subagent::RunState;
+
+use super::*;
+
+fn definition() -> crate::agent::AgentDefinition {
+    crate::agent::AgentDefinition {
+        id: crate::agent::AgentId::new("claude-planner").unwrap(),
+        description: "plan".into(),
+        prompt: crate::agent::PromptPolicy::Replace("Be brief.".into()),
+        model: crate::agent::ModelPolicy::Inherit,
+        runtime: crate::agent::AgentRuntime::ClaudeCli,
+        tools: crate::agent::AgentTools::Claude(vec!["Read".into()]),
+        reasoning: None,
+        inherit_claude_config: false,
+    }
+}
+
+fn logged_in() -> ClaudeAuthStatus {
+    ClaudeAuthStatus {
+        logged_in: true,
+        auth_method: Some("oauth".into()),
+        api_provider: None,
+        email: Some("t@example.com".into()),
+        org_id: None,
+        org_name: None,
+        subscription_type: None,
+    }
+}
+
+fn exit_status(success: bool) -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        let program = if success { "true" } else { "false" };
+        std::process::Command::new(program).status().unwrap()
+    }
+    #[cfg(windows)]
+    {
+        let code = if success { "0" } else { "1" };
+        std::process::Command::new("cmd")
+            .args(["/C", &format!("exit {code}")])
+            .status()
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn cancelled_before_start_writes_stopped_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let cancellation = RunCancellation::new();
+    cancellation.cancel();
+    run_session(ClaudeSessionRequest {
+        definition: definition(),
+        identity: ClaudeRunIdentity {
+            agent_id: "claude-planner".into(),
+            agent_fingerprint: "fp".into(),
+            model: Some("opus".into()),
+        },
+        model: Some("opus".into()),
+        tools: vec!["Read".into()],
+        inherit_claude_config: false,
+        max_turns: 8,
+        prompt: "hi".into(),
+        output_file: output.clone(),
+        cwd: dir.path().to_path_buf(),
+        permission_mode: PermissionMode::Auto,
+        cancellation,
+        status_tx: None,
+        executable: None,
+        auth_status: Some(Ok(logged_in())),
+        persist_hooks: None,
+    })
+    .await
+    .unwrap();
+    let status = subagent::read_status(&output).expect("status");
+    assert_eq!(status.state, RunState::Stopped);
+    assert_eq!(status.provider.as_deref(), Some("claude-code"));
+    assert_eq!(status.model.as_deref(), Some("opus"));
+}
+
+#[test]
+fn decide_final_outcome_matrix() {
+    use crate::claude_runtime::stream::{TerminalClassification, TerminalResult};
+
+    let success = TerminalResult {
+        classification: TerminalClassification::Success {
+            subtype: "success".into(),
+        },
+        ok: true,
+        result_text: Some("ok".into()),
+        error: None,
+        session_id: Some("s".into()),
+        num_turns: Some(1),
+        usage: None,
+        context: None,
+        total_cost_usd: None,
+        permission_denials: Vec::new(),
+        stop_reason: None,
+        subtype: Some("success".into()),
+        is_error: Some(false),
+    };
+    let failure = TerminalResult {
+        classification: TerminalClassification::Failure {
+            subtype: "error_max_turns".into(),
+            is_error: true,
+        },
+        ok: false,
+        result_text: Some("hit max".into()),
+        error: Some("hit max".into()),
+        session_id: None,
+        num_turns: Some(3),
+        usage: None,
+        context: None,
+        total_cost_usd: None,
+        permission_denials: Vec::new(),
+        stop_reason: None,
+        subtype: Some("error_max_turns".into()),
+        is_error: Some(true),
+    };
+    let invalid = TerminalResult {
+        classification: TerminalClassification::Invalid {
+            reason: "missing subtype".into(),
+        },
+        ok: false,
+        result_text: None,
+        error: Some("missing subtype".into()),
+        session_id: None,
+        num_turns: None,
+        usage: None,
+        context: None,
+        total_cost_usd: None,
+        permission_denials: Vec::new(),
+        stop_reason: None,
+        subtype: None,
+        is_error: None,
+    };
+
+    let ok_status = exit_status(true);
+    let err_status = exit_status(false);
+
+    match decide_final_outcome(Some(&success), ok_status, "") {
+        FinalOutcome::Success(terminal) => assert!(terminal.ok),
+        FinalOutcome::Failure { .. } => panic!("expected success"),
+    }
+    match decide_final_outcome(Some(&success), err_status, "") {
+        FinalOutcome::Failure { .. } => {}
+        FinalOutcome::Success(_) => panic!("nonzero exit must not succeed"),
+    }
+    match decide_final_outcome(Some(&failure), ok_status, "") {
+        FinalOutcome::Failure { prefer_detail, .. } => assert!(!prefer_detail),
+        FinalOutcome::Success(_) => panic!("failure terminal must not succeed"),
+    }
+    match decide_final_outcome(Some(&invalid), ok_status, "") {
+        FinalOutcome::Failure { .. } => {}
+        FinalOutcome::Success(_) => panic!("invalid terminal must not succeed"),
+    }
+    match decide_final_outcome(None, ok_status, "") {
+        FinalOutcome::Failure {
+            terminal: None,
+            detail,
+            ..
+        } => assert!(detail.contains("without a terminal result")),
+        _ => panic!("missing terminal must fail"),
+    }
+    match decide_final_outcome(None, err_status, "error: unknown option '--max-turns'") {
+        FinalOutcome::Failure { detail, .. } => {
+            assert!(detail.contains("max-turns"));
+        }
+        FinalOutcome::Success(_) => panic!("max-turns rejection must fail"),
+    }
+}
+
+#[cfg(unix)]
+mod unix_fake_matrix {
+    use super::*;
+    use std::{os::unix::fs::PermissionsExt, path::Path};
+
+    use crate::tui::AttachmentEvent;
+
+    fn write_fake_claude(path: &Path, body: &str) {
+        std::fs::write(path, body).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn fixture(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/claude_runtime/fixtures")
+            .join(name);
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    fn read_attachment_events(output: &Path) -> Vec<AttachmentEvent> {
+        let path = output.with_file_name(crate::subagent::ATTACHMENT_FILE_NAME);
+        let body = std::fs::read_to_string(path).unwrap_or_default();
+        body.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("attachment event json"))
+            .collect()
+    }
+
+    fn count_terminal_events(events: &[AttachmentEvent]) -> usize {
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AttachmentEvent::Completed
+                        | AttachmentEvent::Failed(_)
+                        | AttachmentEvent::Cancelled
+                )
+            })
+            .count()
+    }
+
+    fn shell_quote(path: &Path) -> String {
+        format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+    }
+
+    fn install_streaming_fake(bin: &Path, ndjson: &str, exit_code: i32) {
+        let payload_path = bin.with_extension("payload.ndjson");
+        std::fs::write(&payload_path, ndjson).unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+cat >/dev/null
+cat {payload}
+exit {exit_code}
+"#,
+            payload = shell_quote(&payload_path),
+            exit_code = exit_code
+        );
+        write_fake_claude(bin, &script);
+    }
+
+    async fn run_with_fake(
+        output: &Path,
+        cwd: &Path,
+        fake: &Path,
+        max_turns: u64,
+        permission_mode: PermissionMode,
+        cancellation: RunCancellation,
+    ) {
+        // Keep rate-limit persistence off the host home directory.
+        let rho_home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("RHO_HOME");
+        // SAFETY: test-only RHO_HOME scoped to this async call.
+        std::env::set_var("RHO_HOME", rho_home.path());
+        let result = run_session(ClaudeSessionRequest {
+            definition: definition(),
+            identity: ClaudeRunIdentity {
+                agent_id: "claude-planner".into(),
+                agent_fingerprint: "fp".into(),
+                model: Some("opus".into()),
+            },
+            model: Some("opus".into()),
+            tools: vec!["Read".into()],
+            inherit_claude_config: false,
+            max_turns,
+            prompt: "hi".into(),
+            output_file: output.to_path_buf(),
+            cwd: cwd.to_path_buf(),
+            permission_mode,
+            cancellation,
+            status_tx: None,
+            executable: Some(ClaudeExecutable::from_path(fake)),
+            auth_status: Some(Ok(logged_in())),
+            persist_hooks: None,
+        })
+        .await;
+        match previous {
+            Some(value) => std::env::set_var("RHO_HOME", value),
+            None => std::env::remove_var("RHO_HOME"),
+        }
+        result.unwrap();
+    }
+
+    fn process_is_running(pid: i32) -> bool {
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
+            let Some((_, fields)) = stat.rsplit_once(") ") else {
+                return true;
+            };
+            return !fields.starts_with("Z ");
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn supervised_permission_mode_fails_before_spawn() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        write_fake_claude(&fake, "#!/bin/sh\necho 'should not spawn' >&2\nexit 1\n");
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Supervised,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("Supervised") || error.contains("supervised"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn success_stream_and_exit_zero_writes_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(&fake, &fixture("success.ndjson"), 0);
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Ok);
+        assert_eq!(status.result.as_deref(), Some("Hello from Claude."));
+        assert_eq!(
+            status.claude_session_id.as_deref(),
+            Some("sess-success-001")
+        );
+        assert_eq!(status.turns, 1);
+        assert!(status.input_tokens > 0);
+        assert_eq!(status.error, None);
+        let events = read_attachment_events(&output);
+        assert_eq!(
+            count_terminal_events(&events),
+            1,
+            "exactly one terminal attachment"
+        );
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AttachmentEvent::Completed)));
+    }
+
+    #[tokio::test]
+    async fn success_stream_with_nonzero_exit_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(&fake, &fixture("success.ndjson"), 2);
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("exited with") || error.contains("exit"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn failure_terminal_result_is_error_even_on_exit_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(&fake, &fixture("error_result.ndjson"), 0);
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("hit max turns") || error.contains("error_max_turns"),
+            "unexpected error: {error}"
+        );
+        let events = read_attachment_events(&output);
+        assert_eq!(
+            count_terminal_events(&events),
+            1,
+            "exactly one terminal Failed"
+        );
+        assert!(events.iter().any(|event| {
+            matches!(event, AttachmentEvent::Failed(text) if text.contains("hit max turns"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn success_result_with_nonzero_exit_emits_one_failed_not_completed() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(&fake, &fixture("success.ndjson"), 2);
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let events = read_attachment_events(&output);
+        assert_eq!(count_terminal_events(&events), 1);
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AttachmentEvent::Failed(_))));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, AttachmentEvent::Completed)));
+    }
+
+    #[tokio::test]
+    async fn protocol_type_error_emits_one_failed_overall() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(
+            &fake,
+            r#"{"type":"system","subtype":"init","session_id":"sess-err"}
+{"type":"error","result":"protocol boom"}
+"#,
+            0,
+        );
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let events = read_attachment_events(&output);
+        assert_eq!(
+            count_terminal_events(&events),
+            1,
+            "protocol error must not double-Failed with exit finalize"
+        );
+        assert!(events.iter().any(|event| {
+            matches!(event, AttachmentEvent::Failed(text) if text.contains("protocol boom"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn protocol_type_error_stays_nonterminal_until_child_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        let ready = dir.path().join("error-seen.ready");
+        let hold = dir.path().join("hold.exit");
+        let script = format!(
+            r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{{"type":"system","subtype":"init","session_id":"sess-err"}}'
+printf '%s\n' '{{"type":"error","result":"protocol boom"}}'
+# Close stdout so the session drain finishes, then stay alive until released.
+exec 1>&-
+touch {ready}
+while [ ! -f {hold} ]; do
+  sleep 0.05
+done
+exit 0
+"#,
+            ready = shell_quote(&ready),
+            hold = shell_quote(&hold),
+        );
+        write_fake_claude(&fake, &script);
+
+        let output_clone = output.clone();
+        let cwd = dir.path().to_path_buf();
+        let fake_clone = fake.clone();
+        let run = tokio::spawn(async move {
+            run_with_fake(
+                &output_clone,
+                &cwd,
+                &fake_clone,
+                8,
+                PermissionMode::Auto,
+                RunCancellation::new(),
+            )
+            .await;
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if ready.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("fake should emit type:error");
+
+        // Process remains alive after type:error; status/attachments stay nonterminal.
+        let mid = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(status) = subagent::read_status(&output) {
+                    if status
+                        .error
+                        .as_deref()
+                        .is_some_and(|text| text.contains("protocol boom"))
+                    {
+                        break status;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("pending protocol error metadata");
+        assert!(
+            !mid.state.is_terminal(),
+            "type:error must not terminalize before exit: {:?}",
+            mid.state
+        );
+        let mid_events = read_attachment_events(&output);
+        assert_eq!(
+            count_terminal_events(&mid_events),
+            0,
+            "no terminal attachment before exit: {mid_events:?}"
+        );
+
+        std::fs::write(&hold, b"go").unwrap();
+        tokio::time::timeout(Duration::from_secs(5), run)
+            .await
+            .expect("session should finish after child exit")
+            .unwrap();
+
+        let status = subagent::read_status(&output).expect("final status");
+        assert_eq!(status.state, RunState::Error);
+        let events = read_attachment_events(&output);
+        assert_eq!(count_terminal_events(&events), 1);
+        assert!(events.iter().any(|event| {
+            matches!(event, AttachmentEvent::Failed(text) if text.contains("protocol boom"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn cancel_after_stdout_eof_terminates_tree_and_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        let pid_file = dir.path().join("descendant.pid");
+        let script = format!(
+            r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{{"type":"system","subtype":"init","session_id":"sess-hang"}}'
+# Close stdout so the session leaves the drain loop, then sleep with a child.
+exec 1>&-
+sleep 300 &
+echo $! > {pid_file}
+wait
+"#,
+            pid_file = shell_quote(&pid_file),
+        );
+        write_fake_claude(&fake, &script);
+
+        let cancellation = RunCancellation::new();
+        let cancel = cancellation.clone();
+        let output_clone = output.clone();
+        let cwd = dir.path().to_path_buf();
+        let fake_clone = fake.clone();
+        let run = tokio::spawn(async move {
+            run_with_fake(
+                &output_clone,
+                &cwd,
+                &fake_clone,
+                8,
+                PermissionMode::Auto,
+                cancellation,
+            )
+            .await;
+        });
+
+        let pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(pid) = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|contents| contents.trim().parse::<i32>().ok())
+                {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("descendant pid");
+
+        // Child closed stdout and is sleeping; cancel must not hang on wait().
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(3), run)
+            .await
+            .expect("cancel after stdout EOF must finish promptly")
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !process_is_running(pid),
+            "descendant {pid} survived cancellation after stdout EOF"
+        );
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn missing_terminal_result_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(
+            &fake,
+            r#"{"type":"system","subtype":"init","session_id":"sess-x"}
+{"type":"assistant","session_id":"sess-x","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"hi"}]}}
+"#,
+            0,
+        );
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("without a terminal result"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_terminal_fields_are_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(
+            &fake,
+            r#"{"type":"result","result":"maybe","session_id":"sess-invalid"}
+"#,
+            0,
+        );
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("missing subtype") || error.contains("invalid"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_stdout_fails_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        let payload = dir.path().join("bad.bin");
+        std::fs::write(&payload, [0xff, b'\n']).unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+cat >/dev/null
+cat {}
+exit 0
+"#,
+            shell_quote(&payload)
+        );
+        write_fake_claude(&fake, &script);
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("UTF-8") || error.contains("utf-8") || error.contains("malformed"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn oversize_line_fails_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        let payload = dir.path().join("big.ndjson");
+        let mut bytes = vec![b'a'; crate::claude_runtime::line_decoder::MAX_NDJSON_LINE_BYTES + 8];
+        bytes.push(b'\n');
+        std::fs::write(&payload, bytes).unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+cat >/dev/null
+cat {}
+exit 0
+"#,
+            shell_quote(&payload)
+        );
+        write_fake_claude(&fake, &script);
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("oversize") || error.contains("exceeds"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn max_turns_unsupported_stderr_is_diagnosed() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        write_fake_claude(
+            &fake,
+            r#"#!/bin/sh
+cat >/dev/null
+echo "error: unknown option '--max-turns'" >&2
+exit 2
+"#,
+        );
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Error);
+        let error = status.error.unwrap_or_default();
+        assert!(
+            error.contains("max-turns") || error.contains("--max-turns"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn high_volume_stream_cancel_remains_responsive() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        write_fake_claude(
+            &fake,
+            r#"#!/bin/sh
+cat >/dev/null
+i=0
+while true; do
+  printf '%s\n' "{\"type\":\"assistant\",\"session_id\":\"s\",\"message\":{\"id\":\"m$i\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"chunk $i\"}]}}"
+  i=$((i+1))
+done
+"#,
+        );
+        let cancellation = RunCancellation::new();
+        let cancel = cancellation.clone();
+        let output_path = output.clone();
+        let cwd = dir.path().to_path_buf();
+        let fake_path = fake.clone();
+        let started = std::time::Instant::now();
+        let run = tokio::spawn(async move {
+            run_with_fake(
+                &output_path,
+                &cwd,
+                &fake_path,
+                8,
+                PermissionMode::Auto,
+                cancellation,
+            )
+            .await;
+        });
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(3), run)
+            .await
+            .expect("cancel should finish promptly")
+            .unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "cancel took too long: {:?}",
+            started.elapsed()
+        );
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn cancellation_kills_long_lived_descendant() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        let pid_file = dir.path().join("descendant.pid");
+        let script = format!(
+            r#"#!/bin/sh
+cat >/dev/null
+sleep 300 &
+echo $! > {pid_file}
+wait
+"#,
+            pid_file = shell_quote(&pid_file)
+        );
+        write_fake_claude(&fake, &script);
+
+        let cancellation = RunCancellation::new();
+        let cancel = cancellation.clone();
+        let output_clone = output.clone();
+        let cwd = dir.path().to_path_buf();
+        let fake_clone = fake.clone();
+        let run = tokio::spawn(async move {
+            run_with_fake(
+                &output_clone,
+                &cwd,
+                &fake_clone,
+                8,
+                PermissionMode::Auto,
+                cancellation,
+            )
+            .await;
+        });
+
+        let pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(pid) = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|contents| contents.trim().parse::<i32>().ok())
+                {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("descendant pid");
+
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(3), run)
+            .await
+            .expect("session should stop")
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !process_is_running(pid),
+            "descendant {pid} survived cancellation"
+        );
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Stopped);
+    }
+}

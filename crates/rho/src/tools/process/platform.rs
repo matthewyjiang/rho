@@ -1,11 +1,21 @@
 use std::time::Duration;
-use tokio::process::Child;
+
+use tokio::process::{Child, Command};
+
+/// Configure a command so the child owns an isolatable process tree.
+///
+/// On Unix the child becomes a new process-group leader before `exec`. On
+/// Windows the job object is attached after spawn via [`ProcessTree::attach`].
+pub(crate) fn prepare_child_command(command: &mut Command) {
+    #[cfg(unix)]
+    command.process_group(0);
+}
 
 #[cfg(unix)]
-pub(super) struct ProcessTree(i32);
+pub(crate) struct ProcessTree(i32);
 #[cfg(unix)]
 impl ProcessTree {
-    pub(super) fn attach(child: &Child) -> Result<Self, String> {
+    pub(crate) fn attach(child: &Child) -> Result<Self, String> {
         child
             .id()
             .and_then(|pid| i32::try_from(pid).ok())
@@ -17,7 +27,7 @@ impl ProcessTree {
             libc::kill(-self.0, signal);
         }
     }
-    pub(super) async fn terminate(&self, child: &mut Child, grace: Duration) {
+    pub(crate) async fn terminate(&self, child: &mut Child, grace: Duration) {
         self.signal(libc::SIGTERM);
         if tokio::time::timeout(grace, child.wait()).await.is_err() {
             self.signal(libc::SIGKILL);
@@ -27,20 +37,20 @@ impl ProcessTree {
             self.signal(libc::SIGKILL);
         }
     }
-    pub(super) fn kill(&self) {
+    pub(crate) fn kill(&self) {
         self.signal(libc::SIGKILL);
     }
 }
 
 #[cfg(windows)]
-pub(super) struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
 #[cfg(windows)]
 unsafe impl Send for ProcessTree {}
 #[cfg(windows)]
 unsafe impl Sync for ProcessTree {}
 #[cfg(windows)]
 impl ProcessTree {
-    pub(super) fn attach(child: &Child) -> Result<Self, String> {
+    pub(crate) fn attach(child: &Child) -> Result<Self, String> {
         use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
         let process = child
             .raw_handle()
@@ -67,11 +77,11 @@ impl ProcessTree {
             Ok(Self(job))
         }
     }
-    pub(super) async fn terminate(&self, child: &mut Child, _grace: Duration) {
+    pub(crate) async fn terminate(&self, child: &mut Child, _grace: Duration) {
         self.kill();
         let _ = child.wait().await;
     }
-    pub(super) fn kill(&self) {
+    pub(crate) fn kill(&self) {
         unsafe {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
         }

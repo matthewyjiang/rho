@@ -58,6 +58,10 @@ fn ollama_diagnostics_show_no_auth_and_each_connection_state() {
             session_root: &directory.path().join("sessions"),
             herdr_enabled: false,
             herdr_socket_reachable: None,
+            claude_code_auth: "claude code: not signed in - run /login claude-code",
+            claude_code_version: "claude code: binary not found on PATH",
+            claude_code_auth_healthy: false,
+            claude_code_binary_healthy: false,
             provider_health: &health,
         });
         assert_eq!(picker.layout, PickerLayout::Overlay);
@@ -92,7 +96,10 @@ fn ollama_diagnostics_show_no_auth_and_each_connection_state() {
                 }
                 sections
             });
-        assert_eq!(sections, ["AUTHENTICATION", "CACHE", "MISC"]);
+        assert_eq!(
+            sections,
+            ["AUTHENTICATION", "CACHE", "EXTERNAL RUNTIMES", "MISC"]
+        );
 
         let auth = picker
             .items

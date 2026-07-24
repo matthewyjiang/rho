@@ -54,6 +54,14 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
             }
         }
     }
+    if let Some(session_id) = &snapshot.status.claude_session_id {
+        lines.push(format!(
+            "claude session: {session_id} (resume with `claude --resume {session_id}`)"
+        ));
+    }
+    if let Some(cost) = snapshot.status.total_cost_usd {
+        lines.push(format!("claude cost: ${cost:.4}"));
+    }
     if matches!(format, SnapshotFormat::Completion) {
         if let Some(error) = &snapshot.status.error {
             lines.push(format!("error: {error}"));
@@ -173,6 +181,14 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         "turns: {} · tokens: {} in / {} out",
         snapshot.status.turns, snapshot.status.input_tokens, snapshot.status.output_tokens
     ));
+    if let Some(session_id) = &snapshot.status.claude_session_id {
+        lines.push(format!(
+            "claude session: {session_id} (resume with `claude --resume {session_id}`)"
+        ));
+    }
+    if let Some(cost) = snapshot.status.total_cost_usd {
+        lines.push(format!("claude cost: ${cost:.4}"));
+    }
     if let Some(error) = &snapshot.status.error {
         lines.push(format!(
             "error: {}",

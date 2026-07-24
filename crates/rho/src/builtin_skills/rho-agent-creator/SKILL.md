@@ -29,19 +29,29 @@ Validate the ID before continuing. It must contain 1-64 lowercase ASCII letters,
 
 Ask what the agent should accomplish and how it should behave. Use an Other response for the role/instructions. Ask follow-up choices when useful, such as whether it may modify files, what it should avoid, what its final response should contain, and when it should ask the user rather than proceed. Keep this conversational and do not ask for information the user already supplied.
 
-## 3. Capabilities
+## 3. Runtime and capabilities
 
-First ask whether the agent should receive all tools or a focused allowlist. If the user chooses an allowlist, use a multi-select questionnaire containing only these valid tool names:
+First ask which harness should run the agent:
 
-`agent`, `agents`, `bash`, `edit_file`, `fetch_content`, `get_search_content`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `web_search`, `write_file`
+- `rho` (default): Rho's own loop and Rho tool capabilities. Binding intersects requested tools with host capabilities.
+- `claude-cli`: the external `claude` binary and Claude Code tool names. Binding does not intersect with Rho host tools; values pass through to Claude `--allowedTools`.
 
-Then ask for reasoning level with these choices: inherit/default, off, minimal, low, medium, high, xhigh, max. Omitting `reasoning` means the selected model's normal default.
+Emit `runtime: rho` only when making the choice explicit; omit it to keep the default. For `claude-cli`, also ask whether to set `inherit_claude_config: true`. Default is `false` (closed). Explain that the opt-in loads the user's full Claude settings; Rho still does not store Claude credentials.
+
+Then ask whether the agent should receive all tools (Rho only) or a focused allowlist. Tool names depend on runtime:
+
+- `runtime: rho`: multi-select from `agent`, `agents`, `bash`, `edit_file`, `fetch_content`, `get_search_content`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `web_search`, `write_file`. `tools: all` is allowed.
+- `runtime: claude-cli`: collect Claude Code tool names such as `Read`, `Edit`, and patterns like `Bash(git *)`. Specifier interiors may contain nested parentheses, commas, and quotes. Do not use Rho capability names. Omitting `tools` means no Claude tools. `tools: all` is not valid.
+
+Never mix the two vocabularies. Then ask for reasoning level with these choices: inherit/default, off, minimal, low, medium, high, xhigh, max. Omitting `reasoning` means the selected model's normal default. Reasoning applies to Rho binding; Claude Code uses its own model defaults unless `model` is set.
 
 ## 4. Model policy
 
-Ask for one model policy: `inherit`, `prefer`, `require`, or `select`. Explain that `inherit` keeps the parent agent's provider and model, while every other policy names a model selection. Do not invent finer behavioral differences between the non-inherit policies.
+For `runtime: rho`, ask for one model policy: `inherit`, `prefer`, `require`, or `select`. Explain that `inherit` keeps the parent agent's provider and model, while every other policy names a model selection. Do not invent finer behavioral differences between the non-inherit policies.
 
-If the answer is not `inherit`, ask for the model ID and optional provider. Both values must be non-empty and contain no whitespace when present. A model is required for `prefer`, `require`, and `select`. Do not emit `model` or `provider` for `inherit`.
+If the answer is not `inherit`, ask for the model ID and optional provider. Both values must be non-empty and contain no whitespace when present. A model is required for `prefer`, `require`, and `select`. Do not emit `model` or `provider` for `inherit`. Rho may resolve `@alias` model values against `[model.aliases]`.
+
+For `runtime: claude-cli`, allow an optional `model` passed through byte-for-byte as Claude `--model`. Never emit `provider`. Prefer omitting `model-policy`, or use `inherit` / `select` only. Reject empty model values. Do not combine `model-policy: inherit` with an explicit `model`, and do not use `model-policy: select` without `model`. Claude models are not Rho aliases.
 
 ## 5. Prompt policy
 
@@ -54,13 +64,14 @@ Use a choice questionnaire with `default: "extend"` and `default_selection: "foc
 
 ## 6. Draft and confirm
 
-Construct valid content in this shape, omitting optional fields that were not selected:
+Construct valid content in this shape, omitting optional fields that were not selected. Rho example:
 
 ```markdown
 ---
 id: example-agent
 description: Use for ... Not for ...
 prompt: extend
+runtime: rho
 model-policy: inherit
 reasoning: medium
 tools: [read_file, list_dir]
@@ -71,7 +82,24 @@ You are ...
 - ...
 ```
 
-`prompt` must be `extend` or `replace`. `model-policy` must be `inherit`, `prefer`, `require`, or `select`. `tools` must be `all` or a YAML list of valid names. Present the exact destination path and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.
+Claude Code example:
+
+```markdown
+---
+id: claude-planner
+description: Use for planning with Claude Code. Not for Rho-native tools.
+runtime: claude-cli
+model: claude-opus-4-6
+tools: [Read, Edit, "Bash(git *)"]
+inherit_claude_config: false
+---
+
+You are ...
+
+- ...
+```
+
+`prompt` must be `extend` or `replace`. `runtime` must be `rho` or `claude-cli`. For Rho, `model-policy` must be `inherit`, `prefer`, `require`, or `select`, and `tools` must be `all` or a YAML list of Rho capability names. For Claude, never set `provider`, and `tools` must be a YAML list of Claude tool names or patterns. Present the exact destination path and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.
 
 ## 7. Write safely and verify
 

@@ -48,7 +48,7 @@ impl From<rho_providers::model::ModelError> for RunningTerminalError {
 }
 
 impl App {
-    pub(super) fn handle_key_during_turn(
+    pub(super) async fn handle_key_during_turn(
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
@@ -83,7 +83,10 @@ impl App {
         if self.handle_running_picker_key(key, terminal)? {
             return Ok(false);
         }
-        if self.handle_running_command_palette_key(key, terminal)? {
+        if self
+            .handle_running_command_palette_key(key, terminal)
+            .await?
+        {
             return Ok(false);
         }
         if self.handle_running_file_palette_key(key)? {
@@ -171,7 +174,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
-                self.submit_during_turn(terminal)?;
+                self.submit_during_turn(terminal).await?;
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Char(ch))
@@ -190,7 +193,7 @@ impl App {
         Ok(false)
     }
 
-    pub(super) fn submit_during_turn(
+    pub(super) async fn submit_during_turn(
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
@@ -213,7 +216,8 @@ impl App {
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
                 self.clear_submitted_input();
-                self.execute_command_during_turn(invocation, terminal)?;
+                self.execute_command_during_turn(invocation, terminal)
+                    .await?;
             }
             Ok(None) => {
                 self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
@@ -358,7 +362,7 @@ impl App {
         }
     }
 
-    pub(super) fn execute_command_during_turn(
+    pub(super) async fn execute_command_during_turn(
         &mut self,
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
@@ -366,12 +370,12 @@ impl App {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Config => self.execute_config_command(terminal),
-            CommandId::Info => self.execute_info_command(),
+            CommandId::Info => self.execute_info_command().await,
             CommandId::Help => self.execute_help_command(),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
             CommandId::Diff => self.execute_diff_command(),
-            CommandId::Doctor => self.execute_doctor_command(),
+            CommandId::Doctor => self.execute_doctor_command().await,
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),
@@ -395,7 +399,7 @@ impl App {
         }
     }
 
-    pub(super) fn handle_running_command_palette_key(
+    pub(super) async fn handle_running_command_palette_key(
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
@@ -440,7 +444,7 @@ impl App {
                     self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }
-                self.submit_during_turn(terminal)?;
+                self.submit_during_turn(terminal).await?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Esc) => {
@@ -725,13 +729,15 @@ impl App {
                     }
                     if input_mode == RunningInputMode::Turn {
                         let resolved =
-                            self.handle_key_during_turn(key, terminal).map_err(|err| {
-                                RunningTerminalError::Recoverable(
-                                    rho_providers::model::ModelError::InvalidResponse(
-                                        err.to_string(),
-                                    ),
-                                )
-                            })?;
+                            self.handle_key_during_turn(key, terminal)
+                                .await
+                                .map_err(|err| {
+                                    RunningTerminalError::Recoverable(
+                                        rho_providers::model::ModelError::InvalidResponse(
+                                            err.to_string(),
+                                        ),
+                                    )
+                                })?;
                         approval_resolved |= resolved;
                         if self.pending.input_action().is_some() {
                             break 'event;

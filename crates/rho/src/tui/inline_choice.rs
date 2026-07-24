@@ -73,6 +73,8 @@ pub(super) struct InlineChoiceModal {
 pub(super) enum InlineChoicePending {
     CredentialStore { next: super::login::StoreChoiceNext },
     ContextHandoff(Box<super::context_handoff::PendingContextHandoff>),
+    ClaudeCodeRelogin,
+    ClaudeCodeLogout,
 }
 
 impl InlineChoiceModal {

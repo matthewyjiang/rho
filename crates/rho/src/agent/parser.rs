@@ -1,16 +1,18 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, path::Path, str::FromStr};
 
 use rho_providers::reasoning::ReasoningLevel;
 
 use super::{
     catalog::AgentCatalogError,
     definition::{
-        AgentDefinition, AgentId, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability,
-        ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
+        AgentDefinition, AgentId, AgentRuntime, AgentTools, ModelPolicy, ModelSelection,
+        PromptPolicy, ToolCapability, ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
     },
 };
 
 const MAX_DESCRIPTION_LEN: usize = 1024;
+const RHO_TOOLS_EXAMPLE: &str = "tools: [read_file, shell]";
+const CLAUDE_TOOLS_EXAMPLE: &str = "tools: [Read, Edit, \"Bash(git *)\"]";
 
 #[derive(Default)]
 struct RawDefinition {
@@ -21,6 +23,8 @@ struct RawDefinition {
     provider: Option<String>,
     model_policy: Option<String>,
     reasoning: Option<String>,
+    runtime: Option<String>,
+    inherit_claude_config: Option<bool>,
     tools: Option<RawTools>,
 }
 
@@ -72,7 +76,26 @@ pub(crate) fn parse_definition(
             ))
         }
     };
-    let model = parse_model_policy(path, raw.model, raw.provider, raw.model_policy)?;
+
+    // Runtime is resolved before tools so tool vocabulary does not depend on
+    // frontmatter key order.
+    let runtime = match raw.runtime.as_deref() {
+        None => AgentRuntime::Rho,
+        Some(value) => AgentRuntime::from_str(value).map_err(|error| {
+            AgentCatalogError::at_field(path.to_path_buf(), "runtime", error.to_string())
+        })?,
+    };
+
+    let inherit_claude_config = raw.inherit_claude_config.unwrap_or(false);
+    if inherit_claude_config && runtime != AgentRuntime::ClaudeCli {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "inherit_claude_config",
+            "is only valid with runtime: claude-cli",
+        ));
+    }
+
+    let model = parse_model_policy(path, runtime, raw.model, raw.provider, raw.model_policy)?;
     let reasoning = raw
         .reasoning
         .map(|value| {
@@ -81,26 +104,85 @@ pub(crate) fn parse_definition(
             })
         })
         .transpose()?;
-    let tools = match raw.tools.unwrap_or(RawTools::All) {
-        RawTools::All => ToolPolicy::All,
-        RawTools::Names(names) => ToolPolicy::Allow(validate_tools(path, names)?),
-    };
+    if runtime == AgentRuntime::ClaudeCli && reasoning.is_some() {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "reasoning",
+            "is not supported with runtime: claude-cli; omit it to inherit Claude's default",
+        ));
+    }
+    let tools = parse_tools(path, runtime, raw.tools)?;
     Ok(AgentDefinition {
         id,
         description,
         prompt,
         model,
+        runtime,
         tools,
         reasoning,
+        inherit_claude_config,
     })
 }
 
 fn parse_model_policy(
     path: &Path,
+    runtime: AgentRuntime,
     model: Option<String>,
     provider: Option<String>,
     policy: Option<String>,
 ) -> Result<ModelPolicy, AgentCatalogError> {
+    if runtime == AgentRuntime::ClaudeCli {
+        if provider.is_some() {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "provider",
+                "is not valid with runtime: claude-cli; set model only (passed through as --model)",
+            ));
+        }
+        if policy
+            .as_deref()
+            .is_some_and(|value| value != "inherit" && value != "select")
+        {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "model-policy",
+                "with runtime: claude-cli expected inherit or select (or omit model-policy and set model)",
+            ));
+        }
+        // Empty quoted models such as model: "" fail in parse_scalar already.
+        // Still reject inherit + explicit model and select without model here.
+        return match (policy.as_deref(), model) {
+            (Some("inherit"), Some(_)) => Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "model-policy",
+                "inherit cannot specify model",
+            )),
+            (Some("select"), None) => Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "model",
+                "is required by model-policy 'select'",
+            )),
+            (_, None) => Ok(ModelPolicy::Inherit),
+            (_, Some(model)) => {
+                validate_model_name(path, &model)?;
+                if model.starts_with('@') {
+                    return Err(AgentCatalogError::at_field(
+                        path.to_path_buf(),
+                        "model",
+                        format!(
+                            "runtime: claude-cli does not resolve Rho model aliases; \
+set a Claude model name or alias (for example opus), not '{model}'"
+                        ),
+                    ));
+                }
+                Ok(ModelPolicy::Select(ModelSelection {
+                    provider: None,
+                    model,
+                }))
+            }
+        };
+    }
+
     let policy = policy
         .as_deref()
         .unwrap_or(if model.is_some() { "select" } else { "inherit" });
@@ -130,13 +212,7 @@ fn parse_model_policy(
                 format!("is required by model-policy '{policy}'"),
             )
         })?;
-    if model.chars().any(char::is_whitespace) {
-        return Err(AgentCatalogError::at_field(
-            path.to_path_buf(),
-            "model",
-            "must not contain whitespace",
-        ));
-    }
+    validate_model_name(path, &model)?;
     if provider
         .as_ref()
         .is_some_and(|value| value.is_empty() || value.chars().any(char::is_whitespace))
@@ -156,9 +232,67 @@ fn parse_model_policy(
     })
 }
 
-fn validate_tools(path: &Path, names: Vec<String>) -> Result<ToolCapabilitySet, AgentCatalogError> {
+fn validate_model_name(path: &Path, model: &str) -> Result<(), AgentCatalogError> {
+    if model.is_empty() {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "model",
+            "must not be empty",
+        ));
+    }
+    if model.chars().any(char::is_whitespace) {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "model",
+            "must not contain whitespace",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_tools(
+    path: &Path,
+    runtime: AgentRuntime,
+    tools: Option<RawTools>,
+) -> Result<AgentTools, AgentCatalogError> {
+    match runtime {
+        AgentRuntime::Rho => match tools.unwrap_or(RawTools::All) {
+            RawTools::All => Ok(AgentTools::Rho(ToolPolicy::All)),
+            RawTools::Names(names) => Ok(AgentTools::Rho(ToolPolicy::Allow(validate_rho_tools(
+                path, names,
+            )?))),
+        },
+        AgentRuntime::ClaudeCli => match tools {
+            None => Ok(AgentTools::Claude(Vec::new())),
+            Some(RawTools::All) => Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "tools",
+                format!(
+                    "runtime: claude-cli does not support tools: all; list Claude tool names, for example {CLAUDE_TOOLS_EXAMPLE}"
+                ),
+            )),
+            Some(RawTools::Names(names)) => {
+                Ok(AgentTools::Claude(validate_claude_tools(path, names)?))
+            }
+        },
+    }
+}
+
+fn validate_rho_tools(
+    path: &Path,
+    names: Vec<String>,
+) -> Result<ToolCapabilitySet, AgentCatalogError> {
     let mut capabilities = ToolCapabilitySet::new();
     for name in names {
+        if looks_like_claude_tool(&name) {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "tools",
+                format!(
+                    "tool '{name}' looks like a Claude Code tool name, but runtime is rho; use Rho capabilities, for example {RHO_TOOLS_EXAMPLE}"
+                ),
+            ));
+        }
         let capability = ToolCapability::parse(name.clone());
         if matches!(capability, ToolCapability::Extension(_)) {
             let known = BUILTIN_TOOL_CAPABILITIES
@@ -169,7 +303,9 @@ fn validate_tools(path: &Path, names: Vec<String>) -> Result<ToolCapabilitySet, 
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "tools",
-                format!("unknown tool '{name}'; known tools: {known}"),
+                format!(
+                    "unknown tool '{name}' for runtime: rho; known tools: {known}. Example: {RHO_TOOLS_EXAMPLE}"
+                ),
             ));
         }
         if !capabilities.insert(capability) {
@@ -181,6 +317,134 @@ fn validate_tools(path: &Path, names: Vec<String>) -> Result<ToolCapabilitySet, 
         }
     }
     Ok(capabilities)
+}
+
+fn validate_claude_tools(
+    path: &Path,
+    names: Vec<String>,
+) -> Result<Vec<String>, AgentCatalogError> {
+    let mut tools = Vec::with_capacity(names.len());
+    let mut seen = BTreeSet::new();
+    for name in names {
+        if looks_like_rho_tool(&name) {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "tools",
+                format!(
+                    "tool '{name}' is a Rho capability, but runtime is claude-cli; use Claude Code tool names, for example {CLAUDE_TOOLS_EXAMPLE}"
+                ),
+            ));
+        }
+        validate_claude_tool_shape(path, &name)?;
+        if !seen.insert(name.clone()) {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "tools",
+                format!("duplicate tool '{name}'"),
+            ));
+        }
+        tools.push(name);
+    }
+    Ok(tools)
+}
+
+fn looks_like_claude_tool(name: &str) -> bool {
+    name.contains('(')
+        || name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+}
+
+fn looks_like_rho_tool(name: &str) -> bool {
+    // Exact Rho capability names only. Claude/MCP names may contain underscores.
+    matches!(
+        ToolCapability::parse(name.to_string()),
+        capability if !matches!(capability, ToolCapability::Extension(_))
+    )
+}
+
+fn validate_claude_tool_shape(path: &Path, name: &str) -> Result<(), AgentCatalogError> {
+    let invalid = |reason: String| {
+        AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "tools",
+            format!(
+                "{reason}; Claude tools use names like Read, Edit, or Bash(git *). Example: {CLAUDE_TOOLS_EXAMPLE}"
+            ),
+        )
+    };
+    // Outer shape only: Tool or Tool(specifier). The interior of a specifier is
+    // opaque non-control text except for CLI list delimiters that cannot
+    // round-trip through `--allowedTools` unchanged. Reject control characters
+    // anywhere and malformed outer names.
+    if name.is_empty() {
+        return Err(invalid("invalid Claude tool name ''".into()));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(invalid(format!("invalid Claude tool name '{name}'")));
+    }
+    if let Some(open_idx) = name.find('(') {
+        if !name.ends_with(')') {
+            return Err(invalid(format!(
+                "invalid Claude tool name '{name}': specifier must end the name"
+            )));
+        }
+        if open_idx == 0 {
+            return Err(invalid(format!(
+                "invalid Claude tool name '{name}': missing tool name before specifier"
+            )));
+        }
+        // Only the first '(' opens the outer specifier; the matching final ')'
+        // closes it. Interior bytes may contain nested parentheses.
+        let tool = &name[..open_idx];
+        let specifier = &name[open_idx + 1..name.len() - 1];
+        validate_claude_base_name(path, tool)?;
+        if specifier.chars().any(char::is_control) {
+            return Err(invalid(format!(
+                "invalid Claude tool specifier in '{name}'"
+            )));
+        }
+        // Claude's CLI splits --allowedTools on commas and spaces. A pattern
+        // containing those delimiters cannot round-trip unchanged, so reject it
+        // at parse time with a clear error rather than silently reshaping it.
+        if specifier.contains(',') {
+            return Err(invalid(format!(
+                "invalid Claude tool pattern '{name}': commas cannot round-trip through Claude --allowedTools"
+            )));
+        }
+    } else if name.contains(')') {
+        return Err(invalid(format!(
+            "invalid Claude tool name '{name}': stray closing parenthesis"
+        )));
+    } else {
+        validate_claude_base_name(path, name)?;
+        if name.chars().any(char::is_whitespace) {
+            return Err(invalid(format!("invalid Claude tool name '{name}'")));
+        }
+    }
+    Ok(())
+}
+
+fn validate_claude_base_name(path: &Path, name: &str) -> Result<(), AgentCatalogError> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "tools",
+            format!(
+                "invalid Claude tool name '{name}'; Claude tools use names like Read, Edit, or Bash(git *). Example: {CLAUDE_TOOLS_EXAMPLE}"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn split_frontmatter<'a>(
@@ -238,6 +502,8 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
                 | "provider"
                 | "model-policy"
                 | "reasoning"
+                | "runtime"
+                | "inherit_claude_config"
                 | "tools"
         ) {
             return Err(AgentCatalogError::at_field(
@@ -275,12 +541,28 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
             "provider" => raw.provider = Some(value),
             "model-policy" => raw.model_policy = Some(value),
             "reasoning" => raw.reasoning = Some(value),
+            "runtime" => raw.runtime = Some(value),
+            "inherit_claude_config" => {
+                raw.inherit_claude_config = Some(parse_bool(path, "inherit_claude_config", &value)?)
+            }
             "tools" if value == "all" => raw.tools = Some(RawTools::All),
             "tools" => raw.tools = Some(RawTools::Names(parse_inline_list(path, &value)?)),
             _ => unreachable!(),
         }
     }
     Ok(raw)
+}
+
+fn parse_bool(path: &Path, field: &str, value: &str) -> Result<bool, AgentCatalogError> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            field,
+            format!("unknown value '{value}'; expected true or false"),
+        )),
+    }
 }
 
 fn parse_scalar(path: &Path, field: &str, value: &str) -> Result<String, AgentCatalogError> {
@@ -319,8 +601,52 @@ fn parse_inline_list(path: &Path, value: &str) -> Result<Vec<String>, AgentCatal
     if inner.trim().is_empty() {
         return Ok(Vec::new());
     }
-    inner
-        .split(',')
-        .map(|item| parse_scalar(path, "tools", item.trim()))
-        .collect()
+    // Support quoted items so Claude patterns like "Bash(git *)" round-trip.
+    parse_comma_separated_scalars(path, inner)
 }
+
+fn parse_comma_separated_scalars(
+    path: &Path,
+    inner: &str,
+) -> Result<Vec<String>, AgentCatalogError> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut chars = inner.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                // Keep quotes so parse_scalar owns quote stripping and empty
+                // quoted values such as "" still fail validation.
+                current.push(ch);
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                current.push(ch);
+            }
+            ',' if !in_single && !in_double => {
+                items.push(parse_scalar(path, "tools", current.trim())?);
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    if in_single || in_double {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "tools",
+            "unterminated quoted value",
+        ));
+    }
+    if !current.trim().is_empty() || !items.is_empty() {
+        // Trailing comma yields an empty final item, which parse_scalar rejects.
+        items.push(parse_scalar(path, "tools", current.trim())?);
+    }
+    Ok(items)
+}
+
+#[cfg(test)]
+#[path = "parser_tests.rs"]
+mod tests;

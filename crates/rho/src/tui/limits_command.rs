@@ -82,11 +82,16 @@ impl App {
     fn render_limits_result(&mut self, result: LimitsFetchResult) {
         match result {
             Ok((limits, errors)) if limits.providers.is_empty() && errors.is_empty() => {
-                self.insert_entry(&Entry::Notice(
-                    "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth"
-                        .into(),
-                ));
-                self.status = "no supported OAuth providers connected".into();
+                if let Some(claude) = claude_limits_notice() {
+                    self.insert_entry(&Entry::Notice(claude));
+                    self.status = "claude code limits only".into();
+                } else {
+                    self.insert_entry(&Entry::Notice(
+                        "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth. Claude Code limits appear after a claude-cli run reports them."
+                            .into(),
+                    ));
+                    self.status = "no supported OAuth providers connected".into();
+                }
             }
             Ok((limits, errors))
                 if limits
@@ -99,10 +104,16 @@ impl App {
                 self.insert_entry(&Entry::Notice(format!(
                     "{names} did not report any active usage limit windows"
                 )));
+                if let Some(claude) = claude_limits_notice() {
+                    self.insert_entry(&Entry::Notice(claude));
+                }
                 self.status = "no OAuth usage limits reported".into();
             }
             Ok((limits, errors)) => {
                 self.insert_entry(&Entry::UsageLimits(limits));
+                if let Some(claude) = claude_limits_notice() {
+                    self.insert_entry(&Entry::Notice(claude));
+                }
                 for error in &errors {
                     self.insert_entry(&Entry::Error(format!(
                         "could not check OAuth usage limits: {error}"
@@ -115,6 +126,9 @@ impl App {
                 };
             }
             Err(error) => {
+                if let Some(claude) = claude_limits_notice() {
+                    self.insert_entry(&Entry::Notice(claude));
+                }
                 self.insert_entry(&Entry::Error(format!(
                     "could not check OAuth usage limits: {error}"
                 )));
@@ -122,6 +136,12 @@ impl App {
             }
         }
     }
+}
+
+fn claude_limits_notice() -> Option<String> {
+    let observed = crate::claude_runtime::rate_limit::load()?;
+    let now = crate::claude_runtime::rate_limit::now_unix();
+    Some(observed.describe(now))
 }
 
 pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Line<'static>> {

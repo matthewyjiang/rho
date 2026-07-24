@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-mmid-001"}
+{"type":"assistant","session_id":"sess-mmid-001","message":{"role":"assistant","content":[{"type":"text","text":"first "}]}}
+{"type":"assistant","session_id":"sess-mmid-001","message":{"role":"assistant","content":[{"type":"text","text":"second"}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"first second","session_id":"sess-mmid-001","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}

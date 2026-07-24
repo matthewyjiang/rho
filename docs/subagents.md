@@ -24,6 +24,7 @@ Agent definitions are Markdown with strict frontmatter. The Markdown body extend
 ---
 id: security-review
 description: Reviews changes for security defects
+runtime: rho
 model-policy: inherit
 reasoning: high
 tools: [read_file, list_dir, bash]
@@ -39,20 +40,53 @@ Supported fields are:
 | --- | --- | --- |
 | `id` | no | Stable lowercase identifier; defaults to the file name |
 | `description` | yes | Description shown by the `agent` tool |
+| `runtime` | no | Execution harness: `rho` (default) or `claude-cli` |
 | `prompt` | no | `extend` (default) or `replace` |
-| `model-policy` | no | `inherit`, `prefer`, `require`, or `select` |
-| `model` | policy-dependent | Model selected by non-inherit policies; use `@name` to reference a [model alias](/configuration#model-aliases) |
-| `provider` | no | Provider selected with the model |
-| `reasoning` | no | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
-| `tools` | no | `all` or an explicit capability list; `shell` resolves to the platform shell |
+| `model-policy` | no | For `runtime: rho`: `inherit`, `prefer`, `require`, or `select`. For `runtime: claude-cli`: omit, `inherit`, or `select` |
+| `model` | policy-dependent | Model selected by non-inherit policies. On `runtime: rho`, use `@name` to reference a [model alias](/configuration#model-aliases). On `runtime: claude-cli`, the value is passed through as Claude's `--model` and must be a Claude model name or Claude alias such as `opus` (Rho `@alias` references are rejected) |
+| `provider` | no | Provider selected with the model. Valid only for `runtime: rho`; rejected on `runtime: claude-cli` |
+| `reasoning` | no | For `runtime: rho`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Rejected on `runtime: claude-cli` (Claude keeps its own default; Rho does not map this to `--effort`) |
+| `tools` | no | Tool allowlist. Vocabulary depends on `runtime` (see below) |
+| `inherit_claude_config` | no | `true` or `false` (default). Opt in only with `runtime: claude-cli` to load the user's full Claude settings (`user,project,local`). Default stays closed |
 
-Unknown fields, values, and tool references fail before provider execution. Definitions contain no credentials or mutable runtime state. A semantic fingerprint covers behaviorally relevant fields, not file paths or formatting.
+### Runtime and tool vocabulary
+
+`runtime` chooses the harness that runs the agent loop. It is independent of which model answers:
+
+- `rho` (default): Rho's own loop and Rho tool capabilities
+- `claude-cli`: the `claude` binary (`claude -p`). Sign-in is owned by Claude Code (`/login claude-code`); Rho does not store that credential
+
+`tools:` is parsed against the runtime's vocabulary. Runtime is resolved before tools, so field order in the file does not matter. The two vocabularies do not translate:
+
+| Runtime | `tools` values | Examples |
+| --- | --- | --- |
+| `rho` | `all` (default) or Rho capabilities | `tools: [read_file, list_dir, bash]`; `shell` resolves to the platform shell |
+| `claude-cli` | Claude Code tool names and patterns. Omitting `tools` means an empty allowlist. `tools: all` is rejected. Base names restrict availability via `--tools`; patterns with specifiers also go to `--allowedTools`. Patterns must round-trip Claude's list grammar (no commas inside a specifier). | `tools: [Read, Edit, "Bash(git *)"]` |
+
+Claude tool names are open-ended (plugins and MCP servers add more). Rho validates shape (`Tool` or `Tool(specifier)`), not membership in a fixed list. Mixing vocabularies is a parse error that names the runtime and shows a valid example.
+
+```markdown
+---
+id: claude-planner
+description: Plans with Claude Code on the user subscription
+runtime: claude-cli
+model: claude-opus-4-6
+tools: [Read, Edit, "Bash(git *)"]
+inherit_claude_config: false
+---
+Produce a short plan. Prefer reading before editing.
+```
+
+Unknown fields, values, and tool references fail before execution. Definitions contain no credentials or mutable runtime state. New sessions store a v2 semantic fingerprint over behaviorally relevant fields, including `runtime`, tools, and `inherit_claude_config`, not file paths or formatting. Resume also accepts the exact pre-runtime-axis v1 fingerprint for unchanged default Rho definitions (`runtime: rho`, `inherit_claude_config: false`, Rho tools encoding). Real definition changes still fail resume.
 
 ## Binding and security
 
-Every invocation goes through the same binder. It resolves model and reasoning policy, renders prompt policy, and intersects requested tools with capabilities supplied by the host. Host policy is always the upper authority boundary.
+Every invocation goes through the same binder. Binding is runtime-specific:
 
-Delegated invocations do not receive `agent` or `agents`, so they cannot recursively delegate. Background delegated agents under an interactive parent may use the questionnaire tool. The child pauses on that request, the parent TUI presents the structured form without blocking its active turn or goal loop, and the answer is routed back to the same child run. TUI approvals and questionnaires still use one shared interaction slot, so concurrent requests wait in order. Foreground delegated agents and headless automation omit questionnaire support. Each delegated run owns a fresh SDK runtime, session, tool registry, cancellation token, event stream, and usage accounting. Immutable configuration and provider infrastructure may be shared.
+- `runtime: rho`: resolve model aliases and reasoning against the host config, render prompt policy, and intersect requested Rho tools with host-supplied capabilities. Host policy remains the upper authority boundary.
+- `runtime: claude-cli`: copy `model` byte-for-byte (or omit it when inherited), keep the Claude tool list, and record `inherit_claude_config`. No Rho model-alias resolution and no mutation of the parent provider/model config. Rho-style `@alias` model values and any explicit `reasoning:` field are rejected. `runtime: claude-cli` is delegated-only: interactive and automation roots cannot bind it.
+
+Delegated Rho invocations do not receive `agent` or `agents`, so they cannot recursively delegate. Background delegated Rho agents under an interactive parent may use the questionnaire tool. The child pauses on that request, the parent TUI presents the structured form without blocking its active turn or goal loop, and the answer is routed back to the same child run. TUI approvals and questionnaires still use one shared interaction slot, so concurrent requests wait in order. Foreground delegated agents and headless automation omit questionnaire support. Each delegated run owns a fresh run status file, cancellation token, and attachment stream. Rho-runtime delegated runs also own a fresh SDK runtime, session, tool registry, and usage accounting. Claude-cli delegated runs spawn an external `claude` process instead of an in-process SDK loop. Immutable configuration and provider infrastructure may be shared for Rho runs.
 
 ## Delegating work
 
@@ -61,9 +95,56 @@ The `agent` tool accepts an `agent_id`, prompt, and optional `background` flag:
 - Foreground delegation waits on the run handle and returns its final result.
 - Background delegation returns a six-character run ID immediately and sends a completion notification later.
 
-Both modes use the same in-process `AgentExecutor`; Rho never starts a CLI child for internal delegation. The `agents` tool lists, inspects, or cancels handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by background agents surface in the parent session; approvals still cannot. In Supervised mode, delegated Write and Process operations therefore fail closed. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
+Both modes use the same `AgentExecutor`. Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude` binary and still report through the same status and attachment files. The `agents` tool lists, inspects, or cancels handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by background Rho agents surface in the parent session; approvals still cannot. In Supervised mode, Rho-runtime delegated Write and Process operations fail closed. Claude-cli agents refuse to spawn under Supervised mode entirely because `claude -p` cannot prompt for approval; use Plan or Auto instead. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
+
+## Claude CLI execution
+
+A `runtime: claude-cli` agent runs as `claude -p` with stream-json output. Rho owns the parent tree node; Claude owns the child loop and credential.
+
+Before spawn, Rho checks `claude auth status`. If the binary is missing or the user is signed out, the run fails immediately with a message pointing at `/login claude-code`. Rho never stores Claude tokens.
+
+Spawn flags are fixed and deliberate:
+
+| Flag | Behaviour |
+| --- | --- |
+| `--output-format stream-json --verbose --include-partial-messages` | NDJSON event stream with partial text |
+| `--permission-mode` | Always set. Plan maps to `plan`, Auto maps to `dontAsk`. Supervised refuses before spawn. Never `bypassPermissions` |
+| `--disallowedTools Task` | Blocks Claude nested subagents so fan-out stays under Rho |
+| `--tools` | Restricts built-in tool availability to the base Claude tool names from `tools:`. Empty allowlist still sets `--tools ""` so ambient tools are not inherited |
+| `--allowedTools` | Every declared non-`Task` tool entry from `tools:` as separate argv values (bare names such as `Read` and patterns such as `Bash(git *)`). `Task` is never listed here |
+| `--setting-sources` | `project` by default. `user,project,local` only when `inherit_claude_config: true` |
+| `--strict-mcp-config` | MCP servers only from what the spawn passes |
+| `--system-prompt-file` / `--append-system-prompt-file` | From the agent definition body. `prompt: replace` writes a private run-dir file and passes `--system-prompt-file`; nonempty `prompt: extend` uses `--append-system-prompt-file`. Empty extend omits both flags. Prompt body bytes never appear on argv |
+| `--model` | From the agent `model:` field when set, passed through unchanged. Omitted when the definition inherits Claude's model. Parent provider/model updates do not overwrite Claude agents |
+| `--max-turns` | Exact configured step/turn cap from the bound launch data. If the installed binary rejects the flag, the run fails with a clear error |
+| cwd | Explicit project directory |
+| prompt | Written on stdin, not argv |
+
+Stderr goes to `log.txt` in the run directory. Cancel kills the child. Terminal success or failure comes from the stream `result` message (`subtype` / `is_error`), not exit code alone.
+
+### Usage, limits, and resume
+
+Per-run usage (turns, tokens, cost) comes from Claude's terminal result and is stored on `result.json`. Cache read/write token fields stay separate on attachment usage events; `input_tokens` on the status file is the total input including cache so attach metrics stay consistent.
+
+`/limits` shows last-observed Claude rate-limit windows reported during a run (window name, status, reset time, age). It does not invent a remaining percentage and does not spawn a probe run. If nothing has been observed yet, Claude limits are absent until a claude-cli run reports them.
+
+When a run finishes, `result.json` may include `claude_session_id`. Attach and the parent completion entry show it so you can reopen the full Claude transcript with:
+
+```bash
+claude --resume <session-id>
+```
+
+Default concurrency is one global pool of 4 delegated runs (`RHO_AGENT_CONCURRENCY` overrides that total). Claude-cli runs also take a nested Claude permit capped at 2 by default (`min(total, 2)`), so one env override never opens a 2N fan-out window and Claude never exceeds 2 while the default total stays 4.
+
+### Auth ownership
+
+| Action | Owner |
+| --- | --- |
+| Sign in | Claude Code via `/login claude-code` (terminal handoff to `claude auth login --claudeai`) |
+| Sign out | Claude Code via `/logout claude-code` or `claude auth logout` (global, not Rho-only) |
+| Credential storage | Claude binary only. Rho never sees or stores the token |
 
 ## Attachment and artifacts
 
@@ -75,8 +156,9 @@ rho attach abc123
 
 The read-only attachment TUI follows durable artifacts under `~/.rho/subagents/<id>/`:
 
-- `result.json` - live status, agent ID, semantic fingerprint, usage, and final result
+- `result.json` - live status, agent ID, semantic fingerprint, usage, final result, and optional `claude_session_id`
 - `events.jsonl` - display events used by attachment
+- `log.txt` - Claude stderr for `runtime: claude-cli` runs
 
 Detaching does not cancel execution. Herdr panes also run `rho attach <id>` and never own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
 
@@ -86,4 +168,4 @@ A direct automation run can persist the same status contract:
 rho run --agent explorer --output-file /tmp/result.json "where is auth handled?"
 ```
 
-Root session metadata stores the selected agent ID and fingerprint. Resume fails explicitly when that identity is missing or when the selected definition changed.
+Root session metadata stores the selected agent ID and fingerprint. Resume fails explicitly when that identity is missing or when the selected definition changed. Unchanged default Rho definitions still resume when the session stores the pre-runtime-axis v1 fingerprint.

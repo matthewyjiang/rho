@@ -519,11 +519,29 @@ const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
         text: "select provider to login",
         timeout: SETTLE,
     },
+    // Overlay height caps visible rows; assert on-screen labels, then filter
+    // for providers that sit below the fold.
     Step::AssertText("OpenAI"),
     Step::AssertText("Anthropic"),
     Step::AssertText("Moonshot AI"),
-    Step::AssertText("xAI"),
+    Step::AssertText("claude code (subscription"),
+    Step::TypeText("xAI"),
+    Step::WaitText {
+        text: "xAI",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
     Step::Phase("open_openai_methods"),
+    Step::SubmitText("/login"),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::TypeText("OpenAI"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "select OpenAI login method",

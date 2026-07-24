@@ -281,10 +281,19 @@ impl AttachmentApp {
         let metrics = status.map_or_else(
             || format!("{agent_id}  |  {activity}"),
             |status| {
-                format!(
-                    "{agent_id}  |  {activity}  |  turn {}  |  tokens {}/{}",
-                    status.turns, status.input_tokens, status.output_tokens
-                )
+                let mut parts = vec![
+                    agent_id.to_string(),
+                    activity.to_string(),
+                    format!("turn {}", status.turns),
+                    format!("tokens {}/{}", status.input_tokens, status.output_tokens),
+                ];
+                if let Some(session_id) = status.claude_session_id.as_deref() {
+                    parts.push(format!("claude {session_id}"));
+                }
+                if let Some(cost) = status.total_cost_usd {
+                    parts.push(format!("${cost:.4}"));
+                }
+                parts.join("  |  ")
             },
         );
         let mut live_metrics = Vec::new();

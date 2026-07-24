@@ -1,7 +1,7 @@
 use crate::{
     agent::{
-        AgentCatalog, AgentCatalogEntry, AgentOrigin, ModelPolicy, ModelSelection, PromptPolicy,
-        ToolPolicy,
+        AgentCatalog, AgentCatalogEntry, AgentOrigin, AgentTools, ModelPolicy, ModelSelection,
+        PromptPolicy, ToolPolicy,
     },
     config::InternalAgentModelConfig,
 };
@@ -113,13 +113,21 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         .map(|level| level.to_string())
         .unwrap_or_else(|| "inherit".to_string());
     let tools = match &definition.tools {
-        ToolPolicy::All => "all".to_string(),
-        ToolPolicy::Allow(tools) if tools.is_empty() => "none".to_string(),
-        ToolPolicy::Allow(tools) => tools
+        AgentTools::Rho(ToolPolicy::All) => "all".to_string(),
+        AgentTools::Rho(ToolPolicy::Allow(tools)) if tools.is_empty() => "none".to_string(),
+        AgentTools::Rho(ToolPolicy::Allow(tools)) => tools
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", "),
+        AgentTools::Claude(tools) if tools.is_empty() => "none".to_string(),
+        AgentTools::Claude(tools) => tools.join(", "),
+    };
+    let runtime = definition.runtime.to_string();
+    let inherit_claude_config = if definition.inherit_claude_config {
+        "yes"
+    } else {
+        "no"
     };
     let prompt = match &definition.prompt {
         PromptPolicy::Extend(text) if text.is_empty() => "extend system prompt".to_string(),
@@ -138,7 +146,7 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
     };
 
     format!(
-        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{restrictions}",
+        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nRuntime\n{runtime}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}\n\nInherit Claude config\n{inherit_claude_config}{restrictions}",
         definition.description
     )
 }

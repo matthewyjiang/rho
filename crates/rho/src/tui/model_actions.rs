@@ -230,6 +230,9 @@ impl App {
                 Ok(())
             }
             PickerAction::LoginGroup => {
+                if super::App::is_claude_code_target(&value) {
+                    return self.execute_claude_code_login(terminal).await;
+                }
                 let Some(mut group) = catalog::login_group(&value) else {
                     self.insert_entry(&Entry::Error(format!(
                         "unsupported login provider group '{value}'"
