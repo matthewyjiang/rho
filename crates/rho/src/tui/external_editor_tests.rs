@@ -79,7 +79,7 @@ fn removes_only_the_editors_final_line_ending() {
 fn editor_command_rejects_whitespace_only_values() {
     let error = editor_command(OsStr::new("  ")).unwrap_err();
 
-    assert_eq!(error.to_string(), "EDITOR is empty");
+    assert_eq!(error.to_string(), "editor command is empty");
 }
 
 #[test]
@@ -87,40 +87,28 @@ fn resolve_editor_prefers_visual_over_editor() {
     let editor = resolve_editor(
         Some(OsString::from("visual-editor")),
         Some(OsString::from("fallback-editor")),
-    )
-    .unwrap();
+    );
 
-    assert_eq!(editor, OsString::from("visual-editor"));
+    assert_eq!(editor, Some(OsString::from("visual-editor")));
 }
 
 #[test]
 fn resolve_editor_uses_editor_when_visual_is_unset_or_empty() {
     assert_eq!(
-        resolve_editor(None, Some(OsString::from("only-editor"))).unwrap(),
-        OsString::from("only-editor")
+        resolve_editor(None, Some(OsString::from("only-editor"))),
+        Some(OsString::from("only-editor"))
     );
     assert_eq!(
-        resolve_editor(Some(OsString::new()), Some(OsString::from("only-editor"))).unwrap(),
-        OsString::from("only-editor")
+        resolve_editor(Some(OsString::new()), Some(OsString::from("only-editor"))),
+        Some(OsString::from("only-editor"))
     );
 }
 
 #[test]
 fn resolve_editor_requires_a_configured_editor() {
-    let error = resolve_editor(None, None).unwrap_err();
-
-    assert_eq!(error.to_string(), "EDITOR is not set");
-    assert_eq!(editor_setup_status(&error), "EDITOR is not set");
-}
-
-#[test]
-fn editor_setup_status_keeps_failure_prefix_for_other_errors() {
-    let error = anyhow!("could not create composer file");
-
-    assert_eq!(
-        editor_setup_status(&error),
-        "editor failed: could not create composer file"
-    );
+    assert_eq!(resolve_editor(None, None), None);
+    assert_eq!(resolve_editor(Some(OsString::new()), None), None);
+    assert_eq!(resolve_editor(None, Some(OsString::new())), None);
 }
 
 #[test]

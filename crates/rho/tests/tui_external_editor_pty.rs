@@ -144,16 +144,16 @@ fn external_editor_errors_preserve_the_composer() {
     std::fs::set_permissions(&failing_editor, std::fs::Permissions::from_mode(0o700)).unwrap();
     let cases = [
         ("unset", None, "EDITOR is not set"),
-        ("empty", Some(String::new()), "EDITOR is empty"),
+        ("empty", Some(String::new()), "EDITOR is not set"),
         (
             "missing",
             Some("/rho/does/not/exist".into()),
-            "could not start EDITOR",
+            "could not start editor",
         ),
         (
             "nonzero",
             Some(failing_editor.display().to_string()),
-            "EDITOR exited with exit status: 7",
+            "editor exited with exit status: 7",
         ),
     ];
 
@@ -191,6 +191,64 @@ fn external_editor_errors_preserve_the_composer() {
             .unwrap();
         assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
     }
+}
+
+#[test]
+fn visual_is_preferred_over_editor_at_launch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = IsolatedHome::new().unwrap();
+    let editor_dir = tempfile::tempdir().unwrap();
+    let visual = editor_dir.path().join("visual-editor");
+    let editor = editor_dir.path().join("fallback-editor");
+    std::fs::write(
+        &visual,
+        r#"#!/bin/sh
+printf 'edited by visual\n' > "$1"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &editor,
+        r#"#!/bin/sh
+printf 'edited by editor\n' > "$1"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&visual, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    )
+    .with_env("VISUAL", visual.display().to_string())
+    .with_env("EDITOR", editor.display().to_string());
+    let mut harness = PtyHarness::spawn_named(&plan, "external_editor_visual_pref").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.type_text("prefer visual").unwrap();
+    harness.inject_key(&Key::Ctrl('g')).unwrap();
+    harness
+        .wait_for_text(
+            "edited by visual",
+            WaitTimeout::secs(10, "visual editor return"),
+        )
+        .unwrap();
+    harness.settle_input();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            "fixture response: edited by visual",
+            WaitTimeout::secs(20, "visual preference response"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
 #[test]
