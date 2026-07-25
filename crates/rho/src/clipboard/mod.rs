@@ -35,10 +35,9 @@ impl ClipboardDoctorReport {
     pub fn image_detail(&self) -> String {
         if self.image_helpers.is_empty() {
             match self.session_label {
-                "remote" => {
-                    "Remote session detected. Image paste needs a local host clipboard helper and is unavailable over SSH/Mosh.".into()
-                }
-                _ => "Install a supported platform clipboard helper to paste images.".into(),
+                "remote" => image::missing_image_helper_message(SessionKind::Remote),
+                "wsl" => image::missing_image_helper_message(SessionKind::Wsl),
+                _ => image::missing_image_helper_message(SessionKind::Local),
             }
         } else {
             format!("Detected: {}", self.image_helpers.join(", "))
@@ -83,7 +82,26 @@ mod tests {
         };
         assert_eq!(report.image_status(), "not found");
         assert!(!report.image_healthy());
-        assert!(report.image_detail().contains("Install"));
+        let detail = report.image_detail();
+        assert!(
+            detail.contains("requires") || detail.contains("not supported"),
+            "doctor should name the missing helper path: {detail}"
+        );
+        assert!(!detail.contains("no supported image found on clipboard"));
+    }
+
+    #[test]
+    fn wsl_image_detail_names_helpers() {
+        let report = ClipboardDoctorReport {
+            session_label: "wsl",
+            text_write_status: "native",
+            text_write_healthy: true,
+            text_write_detail: "ok".into(),
+            image_helpers: Vec::new(),
+        };
+        let detail = report.image_detail();
+        assert!(detail.contains("wl-paste"));
+        assert!(detail.contains("powershell.exe"));
     }
 
     #[test]
