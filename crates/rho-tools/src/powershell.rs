@@ -1,13 +1,12 @@
 use crate::cancellation::RunCancellation;
-use crate::tool::*;
-use rho_sdk::{
-    ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation,
-    ProcessOutputLimits,
+use crate::shell_process::{
+    finished_result, interrupted, log_rtk_execution, read_stream, running_content, shell_command,
+    timeout_error, ShellArgs, StreamKind,
 };
-use serde::Deserialize;
+use crate::tool::*;
+use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use serde_json::json;
-use std::{process::Stdio, time::Instant};
-use tokio::{io::AsyncReadExt, process::Command};
+use std::time::Instant;
 
 pub struct PowerShell {
     rtk_enabled: bool,
@@ -17,18 +16,6 @@ impl PowerShell {
     pub const fn new(rtk_enabled: bool) -> Self {
         Self { rtk_enabled }
     }
-}
-
-#[derive(Deserialize)]
-struct Args {
-    command: String,
-    timeout_seconds: Option<u64>,
-}
-
-#[derive(Clone, Copy)]
-enum StreamKind {
-    Stdout,
-    Stderr,
 }
 
 #[async_trait::async_trait]
@@ -75,12 +62,7 @@ impl Tool for PowerShell {
         cancellation: RunCancellation,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
-        let mut args: Args = serde_json::from_value(args)?;
-        if self.rtk_enabled {
-            if let Some(command) = super::rtk::rewrite(&args.command).await {
-                args.command = command;
-            }
-        }
+        let args = ShellArgs::parse(args, self.rtk_enabled).await?;
         let execution = ProcessExecution::new(
             &ctx.cwd,
             ProcessInvocation::shell_from_path(
@@ -93,15 +75,10 @@ impl Tool for PowerShell {
                 wrapped_command(&args.command),
             ),
             ProcessEnvironment::InheritAll,
-            ProcessOutputLimits::new(
-                ctx.max_output_bytes,
-                args.timeout_seconds.map(std::time::Duration::from_secs),
-            ),
+            ProcessOutputLimits::new(ctx.max_output_bytes, args.timeout()),
         );
         let result = execute_process(execution, id, cancellation, on_update).await?;
-        if self.rtk_enabled {
-            super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
-        }
+        log_rtk_execution(self.rtk_enabled, &ctx.cwd, &args.command, &result).await;
         Ok(result)
     }
 }
@@ -112,29 +89,8 @@ pub(super) async fn execute_process(
     cancellation: RunCancellation,
     on_update: &mut (dyn FnMut(Vec<String>) + Send),
 ) -> Result<ToolResult, ToolError> {
-    let ProcessInvocation::Shell {
-        executable,
-        selection: ExecutableSelection::SearchPath,
-        arguments,
-        command: shell_command,
-    } = execution.invocation()
-    else {
-        return Err(ToolError::Message(
-            "PowerShell received an unsupported process plan".into(),
-        ));
-    };
+    let mut command = shell_command(&execution, "PowerShell")?;
     let start = Instant::now();
-    let mut command = Command::new(executable);
-    command
-        .kill_on_drop(true)
-        .args(arguments)
-        .arg(shell_command)
-        .current_dir(execution.working_directory())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    super::process_env::apply_process_environment(&mut command, execution.environment())
-        .map_err(ToolError::Message)?;
     let mut child = command.spawn()?;
     let mut process_tree = ProcessTreeGuard::attach(&child)?;
 
@@ -171,18 +127,19 @@ pub(super) async fn execute_process(
             process_tree.kill();
             let _ = child.wait().await;
             drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
-            let seconds = timeout.unwrap_or_default().as_secs();
-            return Err(ToolError::Message(truncate(
-                timeout_content(&stdout, &stderr, seconds),
+            return Err(timeout_error(
+                &stdout,
+                &stderr,
+                timeout.unwrap_or_default(),
                 execution.output_limits().max_output_bytes(),
-            )));
+            ));
         }
 
         tokio::select! {
             () = cancellation.cancelled() => {
                 process_tree.kill();
                 let _ = child.wait().await;
-                return Err(ToolError::Message("tool interrupted".into()));
+                return Err(interrupted());
             }
             () = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
         }
@@ -191,25 +148,14 @@ pub(super) async fn execute_process(
     process_tree.kill();
     drain_stream_chunks(&mut chunk_rx, &mut stdout, &mut stderr).await;
 
-    let elapsed_secs = start.elapsed().as_secs_f64();
-    let exit_code = status
-        .code()
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "signal".into());
-    let content = truncate(
-        finished_content(
-            String::from_utf8_lossy(&stdout).into_owned(),
-            String::from_utf8_lossy(&stderr).into_owned(),
-            elapsed_secs,
-            &exit_code,
-        ),
-        execution.output_limits().max_output_bytes(),
-    );
-    Ok(ToolResult {
+    Ok(finished_result(
         id,
-        ok: status.success(),
-        content,
-    })
+        status,
+        &stdout,
+        &stderr,
+        start.elapsed(),
+        execution.output_limits().max_output_bytes(),
+    ))
 }
 
 #[cfg(windows)]
@@ -267,24 +213,6 @@ impl Drop for ProcessTreeGuard {
     }
 }
 
-async fn read_stream<R>(
-    kind: StreamKind,
-    mut reader: R,
-    chunk_tx: tokio::sync::mpsc::UnboundedSender<(StreamKind, Vec<u8>)>,
-) where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut buffer = [0; 8192];
-    loop {
-        match reader.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                let _ = chunk_tx.send((kind, buffer[..n].to_vec()));
-            }
-        }
-    }
-}
-
 async fn drain_stream_chunks(
     chunk_rx: &mut tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
     stdout: &mut Vec<u8>,
@@ -296,28 +224,6 @@ async fn drain_stream_chunks(
             StreamKind::Stderr => stderr.extend(bytes),
         }
     }
-}
-
-fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
-    format!(
-        "stdout:\n{}\n\nstderr:\n{}\n\ntime: running",
-        String::from_utf8_lossy(stdout),
-        String::from_utf8_lossy(stderr)
-    )
-}
-
-fn finished_content(stdout: String, stderr: String, elapsed_secs: f64, exit_code: &str) -> String {
-    format!(
-        "stdout:\n{stdout}\n\nstderr:\n{stderr}\n\ntime: {elapsed_secs:.1}s  exit code: {exit_code}"
-    )
-}
-
-fn timeout_content(stdout: &[u8], stderr: &[u8], secs: u64) -> String {
-    format!(
-        "command timed out after {secs}s\n\nstdout:\n{}\n\nstderr:\n{}",
-        String::from_utf8_lossy(stdout),
-        String::from_utf8_lossy(stderr)
-    )
 }
 
 /// Wrap a PowerShell command with UTF-8 output and reliable exit-code handling.
