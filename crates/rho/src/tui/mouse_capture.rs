@@ -16,6 +16,33 @@ const ENABLE_WINDOW_INPUT: u32 = 0x0008;
 const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
 const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
 
+/// RAII guard that disables mouse capture on drop when enable succeeded.
+#[must_use]
+pub(super) struct Guard {
+    enabled: bool,
+}
+
+impl Guard {
+    pub(super) fn acquire() -> Self {
+        Self {
+            enabled: enable().is_ok(),
+        }
+    }
+
+    pub(super) fn release(&mut self) {
+        if self.enabled {
+            let _ = disable();
+            self.enabled = false;
+        }
+    }
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 pub(super) fn enable() -> std::io::Result<()> {
     execute!(std::io::stdout(), EnableMouseCapture)?;
     // Crossterm's Windows path only sets console mouse flags and intentionally

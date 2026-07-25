@@ -12,7 +12,7 @@ use ratatui::{
 
 use super::{
     activity, history_cache::HistoryLineSlice, App, CachedCodeBlock, CodeBlockCopyTarget,
-    ComposerMode, Entry, GoalStatus, HistoryScroll, HistoryScrollbar, LineFill, SessionHeaderCache,
+    ComposerMode, Entry, GoalStatus, HistoryScrollbar, LineFill, SessionHeaderCache,
     StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION, RECOVERED_HISTORY_LINE_LIMIT,
 };
 use super::{
@@ -20,7 +20,7 @@ use super::{
     message_history::{recovered_history_tail, transcript_entries_from_messages},
     picker_overlay::picker_overlay_frame,
     render::{pad_display_line, padded_content_width},
-    render_copy_notice, scroll_state_for_top_line, session_header_lines, styled_line,
+    render_copy_notice, session_header_lines, styled_line,
     tool_entry_lines,
     tool_output_ui::is_tool_entry,
 };
@@ -547,11 +547,9 @@ impl App {
     }
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
-        let max_start = history_len.saturating_sub(height);
-        match self.history.scroll() {
-            HistoryScroll::Bottom => max_start,
-            HistoryScroll::Manual { top_line } => top_line.min(max_start),
-        }
+        self.history
+            .scroll_chrome()
+            .visible_start(history_len, height)
     }
 
     #[cfg(test)]
@@ -601,14 +599,9 @@ impl App {
             composer_line_count,
             command_line_count,
         ));
-        let max_start = history_len.saturating_sub(content_height);
-        let current = self.visible_history_start(history_len, content_height);
-        let next = current.saturating_add_signed(delta).min(max_start);
         self.history
-            .set_scroll(scroll_state_for_top_line(history_len, content_height, next));
-        if matches!(self.history.scroll(), HistoryScroll::Bottom) {
-            self.hide_history_scrollbar();
-        }
+            .scroll_chrome_mut()
+            .scroll_by(history_len, content_height, delta);
     }
 
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
@@ -630,16 +623,12 @@ impl App {
         column: u16,
         row: u16,
     ) {
-        self.history.set_scrollbar_hovered(
-            scrollbar.is_some_and(|scrollbar| scrollbar.contains(column, row)),
-        );
+        self.history
+            .scroll_chrome_mut()
+            .update_hover(scrollbar, column, row);
     }
 
     pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
-        if matches!(self.history.scroll(), HistoryScroll::Bottom) {
-            self.history.set_scrollbar_drag(None);
-            return;
-        }
         let history_len = self.history_len(width, now);
         let composer_line_count = self.composer_lines(width).len();
         let command_line_count = self.command_suggestion_lines(width).len();
@@ -648,17 +637,9 @@ impl App {
             composer_line_count,
             command_line_count,
         ));
-        let max_start = history_len.saturating_sub(content_height);
-        if let HistoryScroll::Manual { top_line } = self.history.scroll() {
-            self.history.set_scroll(scroll_state_for_top_line(
-                history_len,
-                content_height,
-                top_line.min(max_start),
-            ));
-            if matches!(self.history.scroll(), HistoryScroll::Bottom) {
-                self.hide_history_scrollbar();
-            }
-        }
+        self.history
+            .scroll_chrome_mut()
+            .clamp(history_len, content_height);
     }
 
     pub(super) fn clamp_history_scroll_for_terminal<B: Backend>(

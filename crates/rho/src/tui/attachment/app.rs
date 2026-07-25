@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -24,17 +24,18 @@ use super::super::{
     mouse_capture,
     provider_attempt::ProviderAttempt,
     render::{entry_lines, truncate_one_line},
-    scrollbar::{scroll_state_for_top_line, HistoryScrollbar, HistoryScrollbarDrag},
+    scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     terminal_events::TerminalEvents,
     theme::Theme,
-    usage_cost::{format_usd, merge_usage, usage_difference},
-    Entry, HistoryScroll, ReasoningEntry, ToolEntry, ToolEntryState,
+    usage_cost::{
+        format_token_count, format_usd, format_usage_token_summary, AttemptAwareRunUsage,
+    },
+    Entry, HistoryScroll, ReasoningEntry, ToolEntry, ToolEntryState, HISTORY_MOUSE_SCROLL_LINES,
+    HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_TOOL_OUTPUT_LINES: usize = 20;
-const SCROLLBAR_REVEAL_DURATION: Duration = Duration::from_millis(1200);
-const MOUSE_SCROLL_LINES: usize = 3;
 
 pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -49,7 +50,7 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
 
     let mut terminal = ratatui::init();
     let _restore_terminal = RestoreTerminal {
-        mouse_capture_enabled: mouse_capture::enable().is_ok(),
+        mouse_capture: mouse_capture::Guard::acquire(),
     };
     Theme::initialize_from_terminal();
     let message = format!("attached to agent run {id}");
@@ -64,14 +65,13 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
 }
 
 struct RestoreTerminal {
-    mouse_capture_enabled: bool,
+    mouse_capture: mouse_capture::Guard,
 }
 
 impl Drop for RestoreTerminal {
     fn drop(&mut self) {
-        if self.mouse_capture_enabled {
-            let _ = mouse_capture::disable();
-        }
+        // Disable mouse capture before leaving the alternate screen.
+        self.mouse_capture.release();
         ratatui::restore();
     }
 }
@@ -83,20 +83,13 @@ struct AttachmentApp {
     transcript: Vec<Entry>,
     pending_tool: Option<ToolEntry>,
     context_usage: Option<ContextUsage>,
-    /// Accumulated usage for the attached run, including failed provider attempts.
-    run_usage: Option<ModelUsage>,
-    /// Usage committed before the current provider attempt (retry baseline).
-    usage_before_current_attempt: Option<ModelUsage>,
-    /// Usage committed before the current step (for last-step deltas).
-    usage_before_current_step: Option<ModelUsage>,
+    /// Latest provider usage for the attached run, including failed attempts.
+    run_usage: AttemptAwareRunUsage,
     provider_attempt: ProviderAttempt,
     status: Option<RunStatus>,
     reported_state: Option<RunState>,
     herdr: HerdrReporter,
-    scroll: HistoryScroll,
-    scrollbar_drag: Option<HistoryScrollbarDrag>,
-    scrollbar_visible_until: Option<Instant>,
-    scrollbar_hovered: bool,
+    scroll: HistoryScrollChrome,
     last_mouse_position: Option<(u16, u16)>,
     viewport_height: usize,
     history_area: Rect,
@@ -114,17 +107,12 @@ impl AttachmentApp {
             transcript: Vec::new(),
             pending_tool: None,
             context_usage: None,
-            run_usage: None,
-            usage_before_current_attempt: None,
-            usage_before_current_step: None,
+            run_usage: AttemptAwareRunUsage::default(),
             provider_attempt: ProviderAttempt::default(),
             status: None,
             reported_state: None,
             herdr,
-            scroll: HistoryScroll::Bottom,
-            scrollbar_drag: None,
-            scrollbar_visible_until: None,
-            scrollbar_hovered: false,
+            scroll: HistoryScrollChrome::default(),
             last_mouse_position: None,
             viewport_height: 0,
             history_area: Rect::default(),
@@ -146,7 +134,7 @@ impl AttachmentApp {
                 _ = refresh.tick() => {
                     let changed = self.refresh().await?;
                     // Keep redrawing while the auto-hide scrollbar is visible.
-                    changed || self.should_render_scrollbar(Instant::now())
+                    changed || self.scroll.should_render(Instant::now())
                 },
             };
             if redraw {
@@ -227,21 +215,17 @@ impl AttachmentApp {
             }
             AttachmentEvent::Notice(notice) => self.transcript.push(Entry::Notice(notice)),
             AttachmentEvent::ContextUsage(usage) => self.context_usage = Some(usage),
-            AttachmentEvent::Usage(usage) => self.record_usage(usage),
+            AttachmentEvent::Usage(usage) => {
+                self.run_usage.apply_snapshot(usage, |snapshot| snapshot);
+            }
             AttachmentEvent::StepStarted => {
                 self.provider_attempt.begin(self.transcript.len());
-                self.usage_before_current_step = self.run_usage.clone();
-                self.usage_before_current_attempt = None;
+                self.run_usage.step_started();
             }
             AttachmentEvent::ProviderStreamReset => {
                 self.provider_attempt.reset_output(&mut self.transcript);
                 self.pending_tool = None;
-                // Keep tokens already charged on the failed attempt, then accept
-                // the next usage snapshot as a fresh attempt total.
-                self.usage_before_current_attempt = self
-                    .run_usage
-                    .as_ref()
-                    .map(|usage| usage_difference(usage, self.usage_before_current_step.as_ref()));
+                self.run_usage.attempt_reset();
             }
             AttachmentEvent::Completed => {
                 self.pending_tool = None;
@@ -255,19 +239,6 @@ impl AttachmentApp {
                 self.transcript.push(Entry::Error(message));
             }
         }
-    }
-
-    fn record_usage(&mut self, usage: ModelUsage) {
-        // Provider usage snapshots are cumulative within the current attempt.
-        // Merge any prior failed-attempt tokens so retries do not drop cost.
-        let mut current_run_usage = usage;
-        if let Some(attempt_baseline) = &self.usage_before_current_attempt {
-            let mut combined = None;
-            merge_usage(&mut combined, attempt_baseline.clone());
-            merge_usage(&mut combined, current_run_usage);
-            current_run_usage = combined.expect("attempt baseline is present");
-        }
-        self.run_usage = Some(current_run_usage);
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -299,20 +270,42 @@ impl AttachmentApp {
                     true
                 }
                 KeyCode::Home => {
-                    self.reveal_scrollbar(now);
-                    self.scrollbar_drag = None;
-                    self.scroll =
-                        scroll_state_for_top_line(self.content_len, self.viewport_height, 0);
+                    self.scroll
+                        .set_top_line(self.content_len, self.viewport_height, 0);
+                    if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
+                        self.scroll
+                            .reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
+                    }
                     true
                 }
                 KeyCode::End => {
-                    self.scroll_to_bottom();
+                    self.scroll.scroll_to_bottom();
                     true
                 }
                 _ => false,
             },
             Event::Mouse(mouse) => {
-                self.handle_mouse(mouse.kind, mouse.column, mouse.row, now);
+                if matches!(mouse.kind, MouseEventKind::Moved)
+                    && self.last_mouse_position == Some((mouse.column, mouse.row))
+                {
+                    return false;
+                }
+                if matches!(mouse.kind, MouseEventKind::Moved) {
+                    self.last_mouse_position = Some((mouse.column, mouse.row));
+                }
+                self.scroll.handle_scrollbar_mouse(
+                    mouse.kind,
+                    mouse.column,
+                    mouse.row,
+                    ScrollbarMouseInput {
+                        now,
+                        reveal_duration: HISTORY_SCROLLBAR_REVEAL_DURATION,
+                        scrollbar: self.history_scrollbar(),
+                        content_len: self.content_len,
+                        viewport_len: self.viewport_height,
+                        wheel_lines: HISTORY_MOUSE_SCROLL_LINES,
+                    },
+                );
                 true
             }
             Event::FocusGained => {
@@ -324,113 +317,29 @@ impl AttachmentApp {
         }
     }
 
-    fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16, now: Instant) {
-        match kind {
-            MouseEventKind::ScrollUp => {
-                self.reveal_scrollbar(now);
-                self.scrollbar_drag = None;
-                self.scroll_lines(now, -(MOUSE_SCROLL_LINES as isize));
-            }
-            MouseEventKind::ScrollDown => {
-                self.reveal_scrollbar(now);
-                self.scrollbar_drag = None;
-                self.scroll_lines(now, MOUSE_SCROLL_LINES as isize);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                let scrollbar = self
-                    .history_scrollbar()
-                    .filter(|scrollbar| scrollbar.contains(column, row))
-                    .filter(|_| self.should_render_scrollbar(now));
-                self.update_scrollbar_hover(column, row);
-                if let Some(scrollbar) = scrollbar {
-                    self.reveal_scrollbar(now);
-                    let drag = scrollbar.begin_drag(row);
-                    self.scrollbar_drag = Some(drag);
-                    self.scroll = scrollbar.scroll_state_for_pointer(row, drag);
-                } else {
-                    self.scrollbar_drag = None;
-                }
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                self.update_scrollbar_hover(column, row);
-                if let (Some(drag), Some(scrollbar)) =
-                    (self.scrollbar_drag, self.history_scrollbar())
-                {
-                    self.scroll = scrollbar.scroll_state_for_pointer(row, drag);
-                }
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.scrollbar_drag = None;
-                self.update_scrollbar_hover(column, row);
-            }
-            MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
-            MouseEventKind::Moved => {
-                self.last_mouse_position = Some((column, row));
-                self.update_scrollbar_hover(column, row);
-            }
-            MouseEventKind::Down(MouseButton::Right)
-            | MouseEventKind::Down(MouseButton::Middle)
-            | MouseEventKind::Up(MouseButton::Right)
-            | MouseEventKind::Up(MouseButton::Middle)
-            | MouseEventKind::Drag(MouseButton::Right)
-            | MouseEventKind::Drag(MouseButton::Middle)
-            | MouseEventKind::ScrollLeft
-            | MouseEventKind::ScrollRight => {}
-        }
-    }
-
     fn scroll_lines(&mut self, now: Instant, delta: isize) {
-        let max_start = self.content_len.saturating_sub(self.viewport_height);
-        let current = self.visible_start();
-        let next = current.saturating_add_signed(delta).min(max_start);
-        self.scroll = scroll_state_for_top_line(self.content_len, self.viewport_height, next);
-        if matches!(self.scroll, HistoryScroll::Bottom) {
-            self.hide_scrollbar();
-        } else {
-            self.reveal_scrollbar(now);
-            self.scrollbar_drag = None;
-        }
-    }
-
-    fn scroll_to_bottom(&mut self) {
-        self.scroll = HistoryScroll::Bottom;
-        self.hide_scrollbar();
-    }
-
-    fn visible_start(&self) -> usize {
-        let max_start = self.content_len.saturating_sub(self.viewport_height);
-        match self.scroll {
-            HistoryScroll::Bottom => max_start,
-            HistoryScroll::Manual { top_line } => top_line.min(max_start),
+        self.scroll
+            .scroll_by(self.content_len, self.viewport_height, delta);
+        if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
+            self.scroll
+                .reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
         }
     }
 
     fn history_scrollbar(&self) -> Option<HistoryScrollbar> {
-        HistoryScrollbar::new(self.history_area, self.content_len, self.visible_start())
+        HistoryScrollbar::new(
+            self.history_area,
+            self.content_len,
+            self.scroll
+                .visible_start(self.content_len, self.viewport_height),
+        )
     }
 
-    fn reveal_scrollbar(&mut self, now: Instant) {
-        self.scrollbar_visible_until = Some(now + SCROLLBAR_REVEAL_DURATION);
-    }
-
-    fn hide_scrollbar(&mut self) {
-        self.scrollbar_drag = None;
-        self.scrollbar_visible_until = None;
-        self.scrollbar_hovered = false;
-    }
-
-    fn should_render_scrollbar(&self, now: Instant) -> bool {
-        self.scrollbar_drag.is_some()
-            || self.scrollbar_hovered
-            || self
-                .scrollbar_visible_until
-                .is_some_and(|visible_until| now < visible_until)
-    }
-
-    fn update_scrollbar_hover(&mut self, column: u16, row: u16) {
-        self.scrollbar_hovered = self
-            .history_scrollbar()
-            .is_some_and(|scrollbar| scrollbar.contains(column, row));
+    fn sync_history_geometry(&mut self, area: Rect, content_len: usize) {
+        self.history_area = area;
+        self.viewport_height = area.height as usize;
+        self.content_len = content_len;
+        self.scroll.clamp(self.content_len, self.viewport_height);
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>) {
@@ -450,9 +359,9 @@ impl AttachmentApp {
         let activity = status
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
-        let metrics = status_metrics_line(status, agent_id, activity, self.run_usage.as_ref());
+        let metrics = status_metrics_line(status, agent_id, activity, self.run_usage.current());
         let live_metrics =
-            live_metrics_line(self.context_usage.as_ref(), self.run_usage.as_ref(), status);
+            live_metrics_line(self.context_usage.as_ref(), self.run_usage.current(), status);
         let header = vec![
             Line::from(vec![
                 Span::styled("rho", Theme::brand()),
@@ -465,6 +374,33 @@ impl AttachmentApp {
         ];
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
+        let lines = self.history_lines(width, status);
+        self.sync_history_geometry(chunks[1], lines.len());
+        let start = self
+            .scroll
+            .visible_start(self.content_len, self.viewport_height);
+        let end = start.saturating_add(self.viewport_height).min(lines.len());
+        frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
+
+        let now = Instant::now();
+        if let Some(scrollbar) = self
+            .history_scrollbar()
+            .filter(|_| self.scroll.should_render(now))
+        {
+            scrollbar.render(frame, self.scroll.drag().is_some());
+        }
+
+        let footer = vec![
+            Line::styled("─".repeat(width.max(1)), Theme::dim()),
+            Line::styled(
+                truncate_one_line("read-only  |  scroll  |  home/end  |  q detach", width),
+                Theme::dim(),
+            ),
+        ];
+        frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
+    }
+
+    fn history_lines(&self, width: usize, status: Option<&RunStatus>) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for entry in &self.transcript {
             lines.extend(entry_lines(entry, width, MAX_TOOL_OUTPUT_LINES));
@@ -513,37 +449,7 @@ impl AttachmentApp {
         if lines.is_empty() {
             lines.push(Line::styled("waiting for agent output...", Theme::dim()));
         }
-
-        self.history_area = chunks[1];
-        self.viewport_height = chunks[1].height as usize;
-        self.content_len = lines.len();
-        if let HistoryScroll::Manual { top_line } = self.scroll {
-            self.scroll =
-                scroll_state_for_top_line(self.content_len, self.viewport_height, top_line);
-            if matches!(self.scroll, HistoryScroll::Bottom) {
-                self.hide_scrollbar();
-            }
-        }
-        let start = self.visible_start();
-        let end = start.saturating_add(self.viewport_height).min(lines.len());
-        frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
-
-        let now = Instant::now();
-        if let Some(scrollbar) = self
-            .history_scrollbar()
-            .filter(|_| self.should_render_scrollbar(now))
-        {
-            scrollbar.render(frame, self.scrollbar_drag.is_some());
-        }
-
-        let footer = vec![
-            Line::styled("─".repeat(width.max(1)), Theme::dim()),
-            Line::styled(
-                truncate_one_line("read-only  |  scroll  |  home/end  |  q detach", width),
-                Theme::dim(),
-            ),
-        ];
-        frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
+        lines
     }
 }
 
@@ -580,7 +486,7 @@ fn live_metrics_line(
         parts.push(context_summary);
     }
     if let Some(usage_summary) = run_usage
-        .and_then(format_usage_summary)
+        .and_then(format_usage_token_summary)
         .or_else(|| status.and_then(format_status_token_summary))
     {
         parts.push(usage_summary);
@@ -590,8 +496,12 @@ fn live_metrics_line(
 
 fn format_status_token_summary(status: &RunStatus) -> Option<String> {
     let mut parts = Vec::new();
-    push_token_part(&mut parts, "in", status.input_tokens);
-    push_token_part(&mut parts, "out", status.output_tokens);
+    if let Some(tokens) = status.input_tokens {
+        parts.push(format!("in {}", format_token_count(tokens)));
+    }
+    if let Some(tokens) = status.output_tokens {
+        parts.push(format!("out {}", format_token_count(tokens)));
+    }
     (!parts.is_empty()).then(|| format!("tokens {}", parts.join(" · ")))
 }
 
@@ -611,43 +521,14 @@ fn format_context_summary(context: Option<&ContextUsage>) -> Option<String> {
     }
 }
 
-fn format_usage_summary(usage: &ModelUsage) -> Option<String> {
-    let mut parts = Vec::new();
-    push_token_part(&mut parts, "in", usage.input_tokens);
-    push_token_part(&mut parts, "out", usage.output_tokens);
-    push_token_part(&mut parts, "cache r", usage.cache_read_tokens);
-    push_token_part(&mut parts, "cache w", usage.cache_write_tokens);
-    if parts.is_empty() {
-        // Fall back to total input when providers only report an aggregate.
-        push_token_part(&mut parts, "in", usage.total_input_tokens());
-        push_token_part(&mut parts, "out", usage.output_tokens);
-    }
-    (!parts.is_empty()).then(|| format!("tokens {}", parts.join(" · ")))
-}
-
-fn push_token_part(parts: &mut Vec<String>, label: &str, tokens: Option<u64>) {
-    if let Some(tokens) = tokens {
-        parts.push(format!("{label} {}", format_token_count(tokens)));
-    }
-}
-
 fn format_run_cost(status: &RunStatus, run_usage: Option<&ModelUsage>) -> Option<String> {
     if let Some(cost) = status.total_cost_usd {
-        return Some(format!("${cost:.4}"));
+        let micros = (cost * 1_000_000.0).round().clamp(0.0, u64::MAX as f64) as u64;
+        return Some(format_usd(micros));
     }
     run_usage
         .and_then(|usage| usage.cost_usd_micros)
         .map(format_usd)
-}
-
-fn format_token_count(tokens: u64) -> String {
-    if tokens < 1_000 {
-        tokens.to_string()
-    } else if tokens < 1_000_000 {
-        format!("{:.1}K", tokens as f64 / 1_000.0)
-    } else {
-        format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    }
 }
 
 #[derive(Clone, Copy)]

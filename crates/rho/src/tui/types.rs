@@ -28,7 +28,7 @@ use super::{
     questionnaire::QuestionnaireComposer,
     stream::AppendOnlyStream,
     theme::Theme,
-    usage_cost::UsageCostTracker,
+    usage_cost::{AttemptAwareRunUsage, UsageCostTracker},
 };
 
 #[cfg(test)]
@@ -90,9 +90,7 @@ pub(super) struct UsageUi {
     // SDK usage updates are cumulative within a run. These snapshots let the TUI
     // replace active usage while preserving totals from prior runs and steps.
     pub(in crate::tui) usage_before_current_run: Option<ModelUsage>,
-    pub(in crate::tui) usage_before_current_step: Option<ModelUsage>,
-    pub(in crate::tui) usage_before_current_attempt: Option<ModelUsage>,
-    pub(in crate::tui) current_run_usage: Option<ModelUsage>,
+    pub(in crate::tui) run_usage: AttemptAwareRunUsage,
     pub(in crate::tui) latest_usage: Option<ModelUsage>,
     pub(in crate::tui) current_context: Option<ContextUsage>,
 }

@@ -286,9 +286,7 @@ impl App {
         self.usage.cumulative_usage = None;
         self.usage.usage_cost_tracker.reset();
         self.usage.usage_before_current_run = None;
-        self.usage.usage_before_current_step = None;
-        self.usage.usage_before_current_attempt = None;
-        self.usage.current_run_usage = None;
+        self.usage.run_usage.clear();
         self.usage.latest_usage = None;
     }
 

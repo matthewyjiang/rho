@@ -77,3 +77,20 @@ fn bottom_position_uses_bottom_scroll_state() {
         HistoryScroll::Manual { top_line: 89 }
     );
 }
+
+#[test]
+fn scroll_chrome_scroll_by_clamps_to_bottom_without_auto_reveal() {
+    use std::time::{Duration, Instant};
+
+    let mut chrome = HistoryScrollChrome::default();
+    let now = Instant::now();
+    chrome.scroll_by(100, 10, -5);
+    assert_eq!(chrome.scroll(), HistoryScroll::Manual { top_line: 85 });
+    assert!(!chrome.should_render(now));
+    chrome.reveal(now, Duration::from_millis(1200));
+    assert!(chrome.should_render(now));
+
+    chrome.scroll_by(100, 10, 20);
+    assert_eq!(chrome.scroll(), HistoryScroll::Bottom);
+    assert!(!chrome.should_render(now));
+}

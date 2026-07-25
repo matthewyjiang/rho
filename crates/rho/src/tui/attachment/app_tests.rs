@@ -1,9 +1,12 @@
+use std::time::Instant;
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use pretty_assertions::assert_eq;
 use ratatui::{backend::TestBackend, Terminal};
 use tempfile::TempDir;
 
 use super::*;
+use crate::tui::usage_cost::format_usage_token_summary;
 
 #[test]
 fn provider_retry_replaces_output_but_preserves_presented_events() {
@@ -139,8 +142,8 @@ fn provider_retry_preserves_failed_attempt_usage() {
     }));
 
     assert_eq!(
-        app.run_usage,
-        Some(ModelUsage {
+        app.run_usage.current(),
+        Some(&ModelUsage {
             input_tokens: Some(140),
             output_tokens: Some(14),
             cache_read_tokens: Some(70),
@@ -175,8 +178,8 @@ fn multi_step_usage_replaces_live_run_snapshot() {
     }));
 
     assert_eq!(
-        app.run_usage,
-        Some(ModelUsage {
+        app.run_usage.current(),
+        Some(&ModelUsage {
             input_tokens: Some(200),
             output_tokens: Some(60),
             cache_read_tokens: Some(150),
@@ -202,7 +205,7 @@ fn scrolling_up_reveals_history_scrollbar() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
     terminal.draw(|frame| app.draw(frame)).unwrap();
-    assert!(!app.should_render_scrollbar(Instant::now()));
+    assert!(!app.scroll.should_render(Instant::now()));
 
     app.handle_event(Event::Key(KeyEvent::new(
         KeyCode::PageUp,
@@ -210,8 +213,8 @@ fn scrolling_up_reveals_history_scrollbar() {
     )));
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
-    assert!(matches!(app.scroll, HistoryScroll::Manual { .. }));
-    assert!(app.should_render_scrollbar(Instant::now()));
+    assert!(matches!(app.scroll.scroll(), HistoryScroll::Manual { .. }));
+    assert!(app.scroll.should_render(Instant::now()));
     assert!(app.history_scrollbar().is_some());
 
     let screen = terminal.backend().to_string();
@@ -244,8 +247,8 @@ fn mouse_wheel_scrolls_attached_transcript() {
         modifiers: KeyModifiers::NONE,
     }));
 
-    assert!(matches!(app.scroll, HistoryScroll::Manual { .. }));
-    assert!(app.should_render_scrollbar(Instant::now()));
+    assert!(matches!(app.scroll.scroll(), HistoryScroll::Manual { .. }));
+    assert!(app.scroll.should_render(Instant::now()));
 }
 
 #[test]
@@ -280,7 +283,7 @@ fn herdr_state_follows_attached_subagent_state() {
 
 #[test]
 fn format_usage_summary_keeps_cache_fields_separate() {
-    let summary = format_usage_summary(&ModelUsage {
+    let summary = format_usage_token_summary(&ModelUsage {
         input_tokens: Some(100),
         output_tokens: Some(20),
         cache_read_tokens: Some(700),

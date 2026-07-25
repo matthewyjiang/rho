@@ -161,7 +161,7 @@ use render::{
 };
 #[cfg(test)]
 use scrollbar::HistoryScrollbarDrag;
-use scrollbar::{scroll_state_for_top_line, HistoryScrollbar};
+use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
 use subagent_panel::SubagentPanel;
@@ -200,6 +200,7 @@ const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
 const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
 const STREAM_PREVIEW_MIN_CHARS: usize = 2;
 const HISTORY_SCROLLBAR_REVEAL_DURATION: Duration = Duration::from_millis(1200);
+const HISTORY_MOUSE_SCROLL_LINES: usize = 3;
 pub struct TuiBootstrap {
     pub runtime: RuntimeModelView,
     pub session: SessionBootstrap,
