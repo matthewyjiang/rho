@@ -38,6 +38,24 @@ pub(super) fn start_lines(view: &ToolView, cwd: &std::path::Path) -> Vec<String>
     preview_lines(view.kind, &view.name, Some(&view.arguments), cwd)
 }
 
+/// Live tool-call argument preview while the provider is still streaming JSON.
+///
+/// Most tools reuse the start layout. Agent is the exception: its payload is a
+/// long prompt, so streaming uses a live tail instead of the compact summary.
+pub(super) fn streaming_preview_lines(
+    kind: ToolKind,
+    name: &str,
+    arguments: Option<&serde_json::Value>,
+    cwd: &std::path::Path,
+) -> Vec<String> {
+    match (kind, arguments) {
+        (ToolKind::Agent, Some(arguments)) => {
+            agent_format::agent_streaming_preview_lines(arguments)
+        }
+        _ => preview_lines(kind, name, arguments, cwd),
+    }
+}
+
 pub(super) fn preview_lines(
     kind: ToolKind,
     name: &str,

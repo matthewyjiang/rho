@@ -1,21 +1,46 @@
 use super::ToolView;
 
 const TASK_PREVIEW_BYTES: usize = 160;
+/// Live agent prompts are long; show a trailing window so argument streaming keeps
+/// moving instead of freezing on a short prefix summary.
+const STREAMING_PROMPT_CHARS: usize = 400;
+const STREAMING_PROMPT_LINES: usize = 8;
+
+#[derive(Clone, Copy)]
+enum PromptLayout {
+    /// One-line collapsed prefix used after the call is fully known.
+    Compact,
+    /// Multi-line live tail used while arguments are still streaming.
+    LiveTail,
+}
 
 pub(super) fn agent_start_lines_for(arguments: &serde_json::Value) -> Vec<String> {
-    let agent_id = agent_identity(arguments).unwrap_or("agent");
-    let background = bool_value(arguments, "background");
-    let mode = if background {
-        "starting in background"
-    } else {
-        "starting"
-    };
-    task_lines(arguments, format!("● {agent_id}  {mode}"))
+    task_lines(
+        arguments,
+        starting_heading(arguments),
+        PromptLayout::Compact,
+    )
+}
+
+/// Streaming preview for an in-progress `agent` tool call.
+///
+/// Unlike the compact start/finish summary, this keeps the latest prompt text
+/// visible while arguments arrive so long delegated tasks still feel live.
+pub(super) fn agent_streaming_preview_lines(arguments: &serde_json::Value) -> Vec<String> {
+    task_lines(
+        arguments,
+        starting_heading(arguments),
+        PromptLayout::LiveTail,
+    )
 }
 
 pub(super) fn agent_interrupted_lines_for(arguments: &serde_json::Value) -> Vec<String> {
     let agent_id = agent_identity(arguments).unwrap_or("agent");
-    task_lines(arguments, format!("■ {agent_id}  interrupted"))
+    task_lines(
+        arguments,
+        format!("■ {agent_id}  interrupted"),
+        PromptLayout::Compact,
+    )
 }
 
 pub(super) fn agents_interrupted_lines_for(arguments: &serde_json::Value) -> Vec<String> {
@@ -29,7 +54,11 @@ pub(super) fn agents_interrupted_lines_for(arguments: &serde_json::Value) -> Vec
 
 pub(super) fn agent_progress_lines(view: &ToolView, content: &str) -> Vec<String> {
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
-    let mut lines = task_lines(&view.arguments, format!("● {agent_id}  running"));
+    let mut lines = task_lines(
+        &view.arguments,
+        format!("● {agent_id}  running"),
+        PromptLayout::Compact,
+    );
     if let Some(run_id) = run_id_from_agent_line(content.lines().next().unwrap_or_default()) {
         lines.push(String::new());
         lines.push(format!("  {run_id} · rho attach {run_id}"));
@@ -42,6 +71,7 @@ pub(super) fn agent_finished_lines(view: &ToolView, content: &str, ok: bool) -> 
         let mut lines = task_lines(
             &view.arguments,
             format!("● {}  running in background", receipt.agent_id),
+            PromptLayout::Compact,
         );
         lines.push(String::new());
         lines.push(format!(
@@ -55,13 +85,21 @@ pub(super) fn agent_finished_lines(view: &ToolView, content: &str, ok: bool) -> 
     }
     if !ok {
         let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
-        let mut lines = task_lines(&view.arguments, format!("✗ {agent_id}  failed"));
+        let mut lines = task_lines(
+            &view.arguments,
+            format!("✗ {agent_id}  failed"),
+            PromptLayout::Compact,
+        );
         push_content(&mut lines, content);
         return lines;
     }
 
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
-    let mut lines = task_lines(&view.arguments, format!("✓ {agent_id}  completed"));
+    let mut lines = task_lines(
+        &view.arguments,
+        format!("✓ {agent_id}  completed"),
+        PromptLayout::Compact,
+    );
     push_content(&mut lines, content);
     lines
 }
@@ -122,15 +160,69 @@ fn agents_result_fallback_lines(view: &ToolView, content: &str) -> Vec<String> {
     lines
 }
 
-fn task_lines(arguments: &serde_json::Value, heading: String) -> Vec<String> {
+fn starting_heading(arguments: &serde_json::Value) -> String {
+    let agent_id = agent_identity(arguments).unwrap_or("agent");
+    let mode = if bool_value(arguments, "background") {
+        "starting in background"
+    } else {
+        "starting"
+    };
+    format!("● {agent_id}  {mode}")
+}
+
+fn task_lines(
+    arguments: &serde_json::Value,
+    heading: String,
+    prompt_layout: PromptLayout,
+) -> Vec<String> {
     let mut lines = vec![heading];
-    if let Some(task) = string_value(arguments, "prompt") {
-        let task = task.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !task.is_empty() {
-            lines.push(format!("  {}", truncate_preview(&task)));
+    if let Some(task) = string_value(arguments, "prompt").filter(|task| !task.is_empty()) {
+        match prompt_layout {
+            PromptLayout::Compact => {
+                let task = task.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !task.is_empty() {
+                    lines.push(format!("  {}", truncate_preview(&task)));
+                }
+            }
+            PromptLayout::LiveTail => lines.extend(live_tail_prompt_lines(task)),
         }
     }
     lines
+}
+
+fn live_tail_prompt_lines(task: &str) -> Vec<String> {
+    let char_count = task.chars().count();
+    let dropped_chars = char_count > STREAMING_PROMPT_CHARS;
+    let body = if dropped_chars {
+        task.chars()
+            .skip(char_count - STREAMING_PROMPT_CHARS)
+            .collect::<String>()
+    } else {
+        task.to_string()
+    };
+
+    let raw_lines = body.lines().collect::<Vec<_>>();
+    let dropped_lines = raw_lines.len() > STREAMING_PROMPT_LINES;
+    let kept = if dropped_lines {
+        &raw_lines[raw_lines.len() - STREAMING_PROMPT_LINES..]
+    } else {
+        raw_lines.as_slice()
+    };
+    if kept.is_empty() {
+        return Vec::new();
+    }
+
+    let mark_omission = dropped_chars || dropped_lines;
+    kept.iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if index == 0 && mark_omission {
+                format!("  …{}", line.trim_start())
+            } else {
+                format!("  {line}")
+            }
+        })
+        .collect()
 }
 
 fn truncate_preview(text: &str) -> String {
@@ -256,6 +348,7 @@ fn snapshot_lines(
             display_state(snapshot.state),
             detail
         ),
+        PromptLayout::Compact,
     );
 
     let tokens = metrics.and_then(tokens_from_metrics);

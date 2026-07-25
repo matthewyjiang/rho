@@ -89,6 +89,18 @@ impl ToolKind {
     fn preview_uses_arguments(self) -> bool {
         !matches!(self, Self::WriteFile | Self::EditFile)
     }
+
+    /// How many new argument bytes to wait before re-rendering a live preview.
+    ///
+    /// Agent prompts are long and need frequent updates. Other tools keep the
+    /// cheaper exponential cadence so large inert payloads are not re-parsed
+    /// every few dozen bytes.
+    fn preview_parse_stride(self, arguments_len: usize) -> usize {
+        match self {
+            Self::Agent => 32,
+            _ => arguments_len.max(1),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -96,6 +108,7 @@ struct StreamedPreview {
     name: Option<String>,
     arguments: String,
     next_parse_length: usize,
+    last_lines: Option<Vec<String>>,
 }
 
 pub(crate) struct InteractiveToolPresenter {
@@ -136,6 +149,7 @@ impl InteractiveToolPresenter {
         if name_changed {
             preview.arguments.clear();
             preview.next_parse_length = 0;
+            preview.last_lines = None;
         }
         preview.arguments.push_str(arguments_delta);
         let name = preview.name.as_deref()?;
@@ -147,11 +161,15 @@ impl InteractiveToolPresenter {
             return None;
         }
         let arguments = parse_incomplete_json(&preview.arguments);
-        let lines = preview_lines(kind, name, arguments.as_ref(), &self.cwd);
+        let lines = streaming_preview_lines(kind, name, arguments.as_ref(), &self.cwd);
         preview.next_parse_length = preview
             .arguments
             .len()
-            .saturating_add(preview.arguments.len().max(1));
+            .saturating_add(kind.preview_parse_stride(preview.arguments.len()));
+        if preview.last_lines.as_ref() == Some(&lines) {
+            return None;
+        }
+        preview.last_lines = Some(lines.clone());
         Some(lines)
     }
 
