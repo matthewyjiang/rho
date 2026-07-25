@@ -103,16 +103,22 @@ Pass `--no-subagents` to remove delegation capabilities from a root invocation.
 
 Rho can hand a delegated agent to the installed `claude` binary instead of running Rho's own loop. The parent stays in Rho. The child uses Claude Code's harness and the user's Claude subscription. Model choice and runtime choice stay separate: picking an Anthropic model on the Rho runtime is not the same as `runtime: claude-cli`.
 
+### Subscription workaround
+
+Anthropic does not allow third-party clients to sign in with Claude.ai Free/Pro/Max credentials or to route those plans through their own API stacks. Rho's Anthropic provider path is API-key billing only.
+
+`runtime: claude-cli` is the supported **indirect** way to spend a Claude subscription from a Rho session: Rho stays the parent orchestrator, and the official `claude` binary owns sign-in, the child loop, and plan usage. Rho never sees or stores the subscription token. This is not a substitute for Anthropic API access inside Rho's own runtime, and it is not a root-session Claude Code mode.
+
 ### When this is useful
 
-Use `runtime: claude-cli` when you want a specialist subagent that runs on Claude Code while the main session stays on Rho:
+Use `runtime: claude-cli` when you want that subscription-backed child while the main session stays on Rho:
 
-- Spend a Claude Pro/Max subscription on planning, review, or research without making Claude Code the root harness
+- Use a Claude Pro/Max plan on planning, review, or research without making Claude Code the root harness
 - Keep Rho as the orchestrator (fan-out, attach, cancel, session tree) while Claude owns the child loop and credential
 - Reuse Claude Code tool names and permission behaviour for a bounded child task
 - Open the full Claude transcript later with `claude --resume <session-id>` after Rho finishes the run
 
-Skip this feature when you only need "a subagent on Opus" through Rho's normal provider path. Set `model:` / `provider:` on a `runtime: rho` agent instead. You do not need the `claude` binary for that.
+Skip this feature when you only need "a subagent on Opus" through Rho's normal provider path (API key or another provider). Set `model:` / `provider:` on a `runtime: rho` agent instead. You do not need the `claude` binary for that.
 
 Claude-cli agents are **delegated only**. The interactive root and `rho run` root cannot bind `runtime: claude-cli`. A Rho parent must launch them through the `agent` tool.
 
