@@ -81,7 +81,6 @@ fn decide_final_outcome_matrix() {
         classification: TerminalClassification::Success {
             subtype: "success".into(),
         },
-        ok: true,
         result_text: Some("ok".into()),
         error: None,
         session_id: Some("s".into()),
@@ -99,7 +98,6 @@ fn decide_final_outcome_matrix() {
             subtype: "error_max_turns".into(),
             is_error: true,
         },
-        ok: false,
         result_text: Some("hit max".into()),
         error: Some("hit max".into()),
         session_id: None,
@@ -116,7 +114,6 @@ fn decide_final_outcome_matrix() {
         classification: TerminalClassification::Invalid {
             reason: "missing subtype".into(),
         },
-        ok: false,
         result_text: None,
         error: Some("missing subtype".into()),
         session_id: None,
@@ -134,7 +131,7 @@ fn decide_final_outcome_matrix() {
     let err_status = exit_status(false);
 
     match decide_final_outcome(Some(&success), ok_status, "") {
-        FinalOutcome::Success(terminal) => assert!(terminal.ok),
+        FinalOutcome::Success(terminal) => assert!(terminal.classification.is_success()),
         FinalOutcome::Failure { .. } => panic!("expected success"),
     }
     match decide_final_outcome(Some(&success), err_status, "") {
@@ -170,7 +167,7 @@ mod unix_fake_matrix {
     use super::*;
     use std::{os::unix::fs::PermissionsExt, path::Path};
 
-    use crate::tui::AttachmentEvent;
+    use crate::run_artifacts::AttachmentEvent;
 
     fn write_fake_claude(path: &Path, body: &str) {
         // Fresh inode via tempfile rename; avoids overwriting a live text image.
@@ -249,7 +246,7 @@ exit {exit_code}
         // Keep rate-limit persistence off the host home directory without
         // mutating process env (unsafe under concurrent tests).
         let rho_home = tempfile::tempdir().unwrap();
-        let rate_limit_path = rho_home.path().join("claude-rate-limit.json");
+        let _rate_limit_path = rho_home.path().join("claude-rate-limit.json");
         run_session(ClaudeSessionRequest {
             system_prompt: system_prompt(),
             identity: ClaudeRunIdentity {
@@ -271,10 +268,6 @@ exit {exit_code}
             overrides: ClaudeSessionOverrides {
                 executable: Some(ClaudeExecutable::from_path(fake)),
                 auth_status: Some(Ok(logged_in())),
-                persist_hooks: PersistHooks {
-                    rate_limit_path: Some(rate_limit_path),
-                    ..PersistHooks::default()
-                },
             },
         })
         .await
@@ -291,7 +284,7 @@ exit {exit_code}
         cancellation: RunCancellation,
     ) {
         let rho_home = tempfile::tempdir().unwrap();
-        let rate_limit_path = rho_home.path().join("claude-rate-limit.json");
+        let _rate_limit_path = rho_home.path().join("claude-rate-limit.json");
         run_session(ClaudeSessionRequest {
             system_prompt: system_prompt(),
             identity: ClaudeRunIdentity {
@@ -313,10 +306,6 @@ exit {exit_code}
             overrides: ClaudeSessionOverrides {
                 executable: Some(ClaudeExecutable::from_path(fake)),
                 auth_status: Some(Ok(logged_in())),
-                persist_hooks: PersistHooks {
-                    rate_limit_path: Some(rate_limit_path),
-                    ..PersistHooks::default()
-                },
             },
         })
         .await

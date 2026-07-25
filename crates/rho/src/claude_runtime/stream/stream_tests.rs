@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use crate::{subagent::RunState, tui::AttachmentEvent};
+use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
 use super::*;
 

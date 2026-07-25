@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use super::*;
-use crate::{subagent, tui::attachment::journal::AttachmentReader};
+use crate::{run_artifacts::AttachmentReader, subagent};
 
 #[test]
 fn attachment_stream_round_trips_view_events() {

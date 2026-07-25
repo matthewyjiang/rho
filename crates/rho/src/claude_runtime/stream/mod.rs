@@ -35,7 +35,7 @@ use serde_json::Value;
 use rho_sdk::model::ModelUsage;
 use rho_tools::tool::ToolDisplayStyle;
 
-use crate::{subagent::RunState, tui::AttachmentEvent};
+use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
 use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
 use format::{
@@ -50,8 +50,8 @@ use presentation::{
     text_effects, tool_finished_effects, tool_started_effects, ContentBlockKind,
 };
 pub(crate) use types::{
-    classify_terminal_result, describe_rate_limit, RateLimitInfo, StatusPatch, StreamEffect,
-    TerminalClassification, TerminalResult,
+    classify_terminal_result, describe_rate_limit, notable_rate_limit_status, RateLimitInfo,
+    StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
 };
 #[cfg(test)]
 pub(crate) use types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS};
@@ -467,10 +467,8 @@ impl StreamMapper {
             ..StatusPatch::default()
         }));
 
-        let ok = classification.is_success();
         effects.push(StreamEffect::Terminal(TerminalResult {
             classification,
-            ok,
             result_text,
             error,
             session_id: message.session_id,

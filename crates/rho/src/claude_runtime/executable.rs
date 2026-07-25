@@ -85,16 +85,15 @@ impl ClaudeExecutable {
             ClaudeInvocationKind::Direct => Ok(ClaudeArgv {
                 program: self.program.clone(),
                 args,
-                windows_command_line: None,
             }),
             ClaudeInvocationKind::CmdScript => {
                 // Building the bat line is the same check std performs at spawn.
-                let line = bat_command_line(&self.program, &args)?;
+                // Validate the same values std refuses at spawn (CR/LF/NUL/...).
+                let _ = bat_command_line(&self.program, &args)?;
                 Ok(ClaudeArgv {
                     // Spawn image is the script; std rewrites to cmd.exe.
                     program: self.program.clone(),
                     args,
-                    windows_command_line: Some(line),
                 })
             }
             ClaudeInvocationKind::PowerShellScript => {
@@ -111,7 +110,6 @@ impl ClaudeExecutable {
                 Ok(ClaudeArgv {
                     program: PathBuf::from("powershell.exe"),
                     args: argv,
-                    windows_command_line: None,
                 })
             }
         }
@@ -181,17 +179,14 @@ where
         .collect()
 }
 
-/// A validated process plan: image, argv, and the bat command line std will
-/// build for `.cmd` / `.bat` shims.
+/// A validated process plan: image and argv.
 ///
-/// Production spawns and tests read the same value, so an argv assertion is an
-/// assertion about the process that actually runs.
+/// For `.cmd` / `.bat` shims, `plan` rejects values std cannot encode; spawn still
+/// uses `Command::args` so Rust's bat quoting is the source of truth.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClaudeArgv {
     pub(crate) program: PathBuf,
     pub(crate) args: Vec<OsString>,
-    /// Set for cmd shims: std-compatible bat encoding of the full command line.
-    pub(crate) windows_command_line: Option<OsString>,
 }
 
 impl ClaudeArgv {

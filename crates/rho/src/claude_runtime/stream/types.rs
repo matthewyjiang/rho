@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use rho_sdk::model::{ContextUsage, ModelUsage};
 
-use crate::{subagent::RunState, tui::AttachmentEvent};
+use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
 /// Soft cap for a single assistant text or reasoning delta retained/displayed.
 pub(crate) const MAX_TEXT_DELTA_CHARS: usize = 32 * 1024;
@@ -76,15 +76,11 @@ impl TerminalClassification {
 
 /// Terminal `result` payload for the session layer to combine with child exit.
 ///
-/// `ok` is a derived convenience equal to `classification.is_success()`. Session
-/// must still combine this with process exit and must not treat stream success
-/// alone as final run success when exit fails.
+/// Session must still combine this with process exit and must not treat stream
+/// success alone as final run success when exit fails.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TerminalResult {
     pub(crate) classification: TerminalClassification,
-    /// Derived from [`TerminalClassification::is_success`]. Prefer
-    /// `classification` in new code.
-    pub(crate) ok: bool,
     pub(crate) result_text: Option<String>,
     pub(crate) error: Option<String>,
     pub(crate) session_id: Option<String>,
@@ -99,7 +95,11 @@ pub(crate) struct TerminalResult {
 }
 
 /// Latest subscription rate-limit observation from a Claude stream.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// One event is one window (`five_hour`, `seven_day`, …). `utilization` is an
+/// optional used fraction in `0.0..=1.0`; Claude often omits it while status is
+/// plain `allowed`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RateLimitInfo {
     #[serde(default)]
@@ -108,12 +108,39 @@ pub(crate) struct RateLimitInfo {
     pub(crate) rate_limit_type: Option<String>,
     #[serde(default)]
     pub(crate) resets_at: Option<i64>,
+    /// Used fraction in `0.0..=1.0` when Claude includes it.
+    #[serde(default)]
+    pub(crate) utilization: Option<f64>,
     #[serde(default)]
     pub(crate) overage_status: Option<String>,
     #[serde(default)]
     pub(crate) overage_resets_at: Option<i64>,
     #[serde(default)]
     pub(crate) is_using_overage: Option<bool>,
+}
+
+impl RateLimitInfo {
+    /// Stable key for merging multi-window state. Missing type shares one bucket.
+    pub(crate) fn window_key(&self) -> &str {
+        self.rate_limit_type
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("usage_window")
+    }
+
+    /// Remaining percent derived from utilization, when present.
+    pub(crate) fn remaining_percent(&self) -> Option<f64> {
+        let used = self.utilization?;
+        if !used.is_finite() {
+            return None;
+        }
+        Some(((1.0 - used) * 100.0).clamp(0.0, 100.0))
+    }
+
+    /// Human window label (`five_hour` → `Five hour`).
+    pub(crate) fn window_label(&self) -> String {
+        humanize_rate_limit_type(self.window_key())
+    }
 }
 
 /// Classify a terminal result from required `subtype` + `is_error` fields.
@@ -154,13 +181,13 @@ pub(crate) fn classify_terminal_result(
 }
 
 pub(crate) fn describe_rate_limit(info: &RateLimitInfo) -> String {
-    let window = info
-        .rate_limit_type
-        .as_deref()
-        .map(humanize_rate_limit_type)
-        .unwrap_or_else(|| "usage window".into());
-    let status = info.status.as_deref().unwrap_or("unknown");
-    let mut parts = vec![format!("{window}, {status}")];
+    let mut parts = vec![info.window_label()];
+    if let Some(remaining) = info.remaining_percent() {
+        parts.push(format!("{}% left", remaining.round() as u8));
+    }
+    if let Some(status) = notable_rate_limit_status(info.status.as_deref()) {
+        parts.push(status);
+    }
     if let Some(resets_at) = info.resets_at {
         parts.push(format!("resets {}", format_unix_local(resets_at)));
     }
@@ -170,8 +197,27 @@ pub(crate) fn describe_rate_limit(info: &RateLimitInfo) -> String {
     parts.join(", ")
 }
 
+/// Status text worth showing. Plain `allowed` is noise and is omitted.
+pub(crate) fn notable_rate_limit_status(status: Option<&str>) -> Option<String> {
+    let status = status?.trim();
+    if status.is_empty() {
+        return None;
+    }
+    match status {
+        "allowed" => None,
+        "allowed_warning" => Some("warning".into()),
+        "rejected" => Some("limited".into()),
+        other => Some(other.replace('_', " ")),
+    }
+}
+
 fn humanize_rate_limit_type(value: &str) -> String {
-    value.replace('_', " ")
+    let replaced = value.replace('_', " ");
+    let mut chars = replaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => "Usage window".into(),
+    }
 }
 
 fn format_unix_local(unix: i64) -> String {

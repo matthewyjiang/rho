@@ -63,7 +63,7 @@ impl AttachmentWriter {
     }
 }
 
-pub(super) struct AttachmentReader {
+pub(crate) struct AttachmentReader {
     path: PathBuf,
     file: Option<File>,
     offset: u64,
@@ -71,7 +71,7 @@ pub(super) struct AttachmentReader {
 }
 
 impl AttachmentReader {
-    pub(super) fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         Self {
             path,
             file: None,
@@ -80,7 +80,7 @@ impl AttachmentReader {
         }
     }
 
-    pub(super) fn read_new(&mut self) -> anyhow::Result<Vec<AttachmentEvent>> {
+    pub(crate) fn read_new(&mut self) -> anyhow::Result<Vec<AttachmentEvent>> {
         if self.file.is_none() {
             self.file = match File::open(&self.path) {
                 Ok(file) => Some(file),

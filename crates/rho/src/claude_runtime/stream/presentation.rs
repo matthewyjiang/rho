@@ -3,8 +3,8 @@
 use serde_json::Value;
 
 use crate::{
+    run_artifacts::AttachmentEvent,
     subagent::{RunState, RunStatus},
-    tui::AttachmentEvent,
 };
 
 use super::format::{
@@ -350,7 +350,6 @@ pub(super) fn map_error_message(message: StreamEnvelope) -> Vec<StreamEffect> {
                 subtype: "error".into(),
                 is_error: true,
             },
-            ok: false,
             result_text: Some(detail.clone()),
             error: Some(detail),
             session_id: message.session_id,

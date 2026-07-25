@@ -1,7 +1,7 @@
 //! Rho runtime attachment recording: SDK events to journal lines.
 //!
-//! Keeps [`super::journal::AttachmentWriter`] free of SDK types. Only the Rho
-//! run path constructs this wrapper.
+//! Keeps [`crate::run_artifacts::AttachmentWriter`] free of SDK types. Only the
+//! Rho run path constructs this wrapper.
 
 use std::path::{Path, PathBuf};
 
@@ -9,7 +9,7 @@ use super::super::{
     compaction_display::running_display_lines,
     event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
 };
-use super::journal::{AttachmentEvent, AttachmentWriter};
+use crate::run_artifacts::{AttachmentEvent, AttachmentWriter};
 use rho_tools::tool::ToolDisplayStyle;
 
 /// Records Rho SDK run events into the generic attachment journal.

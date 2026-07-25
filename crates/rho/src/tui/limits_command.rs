@@ -3,7 +3,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use super::{command_block::fill_lines, theme::Theme, App, Entry};
+use super::{command_block::fill_lines, render::wrap_line_at_whitespace, theme::Theme, App, Entry};
 use crate::usage_limits::{
     fetch_connected_usage_limits, now_unix, ProviderLimits, ProviderUsageLimits, UsageLimitWindow,
     UsageLimitsError,
@@ -80,8 +80,8 @@ impl App {
     }
 
     fn render_limits_result(&mut self, result: LimitsFetchResult) {
-        // `/limits` never probes Claude. It only shows the last observation a
-        // prior claude-cli run persisted, or that none is known yet.
+        // `/limits` never probes Claude. It only shows windows a prior
+        // claude-cli run persisted, or that none are known yet.
         let view = present_limits_result(
             result,
             crate::claude_runtime::rate_limit::load().as_ref(),
@@ -92,7 +92,6 @@ impl App {
                 LimitsViewItem::UsageLimits(limits) => {
                     self.insert_entry(&Entry::UsageLimits(limits));
                 }
-                LimitsViewItem::Notice(text) => self.insert_entry(&Entry::Notice(text)),
                 LimitsViewItem::Error(text) => self.insert_entry(&Entry::Error(text)),
             }
         }
@@ -100,11 +99,18 @@ impl App {
     }
 }
 
+/// First-class `/limits` block: every source as a provider section.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LimitsDisplay {
+    pub(super) providers: Vec<ProviderUsageLimits>,
+    /// Empty-state copy when no provider reported usable windows.
+    pub(super) empty_note: Option<String>,
+}
+
 /// One history row produced by `/limits` presentation.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum LimitsViewItem {
-    UsageLimits(ProviderLimits),
-    Notice(String),
+    UsageLimits(LimitsDisplay),
     Error(String),
 }
 
@@ -117,74 +123,39 @@ pub(super) struct LimitsView {
 
 /// Build `/limits` history rows without I/O.
 ///
-/// `claude` is injected so tests do not mutate `HOME` / `RHO_HOME`. Claude is
-/// never probed here; missing cache becomes an explicit "not known yet" notice
-/// even when OAuth providers returned data or errors. Observed values never
-/// include a remaining percentage.
+/// Claude's cache is normalized into [`ProviderUsageLimits`] so one renderer
+/// owns every source. Remaining percent is shown only when reported.
 pub(super) fn present_limits_result(
     result: LimitsFetchResult,
-    claude: Option<&crate::claude_runtime::rate_limit::RateLimitObservation>,
+    claude: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
     now_unix: i64,
 ) -> LimitsView {
-    let claude_notice = claude_limits_line(claude, now_unix);
+    let claude_provider = claude_provider_limits(claude, now_unix);
+    let has_claude = claude_provider.is_some();
     match result {
-        Ok((limits, errors)) if limits.providers.is_empty() && errors.is_empty() => {
-            if claude.is_some() {
-                LimitsView {
-                    items: vec![LimitsViewItem::Notice(claude_notice)],
-                    status: "claude code limits only".into(),
-                }
-            } else {
-                LimitsView {
-                    items: vec![
-                        LimitsViewItem::Notice(
-                            "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth"
-                                .into(),
-                        ),
-                        LimitsViewItem::Notice(claude_notice),
-                    ],
-                    status: "no supported OAuth providers connected".into(),
-                }
+        Ok((mut limits, errors)) => {
+            if let Some(claude_provider) = claude_provider {
+                limits.providers.push(claude_provider);
             }
-        }
-        Ok((limits, errors))
-            if limits
-                .providers
-                .iter()
-                .all(|provider| provider.windows.is_empty())
-                && errors.is_empty() =>
-        {
-            let names = provider_names(&limits);
-            LimitsView {
-                items: vec![
-                    LimitsViewItem::Notice(format!(
-                        "{names} did not report any active usage limit windows"
-                    )),
-                    LimitsViewItem::Notice(claude_notice),
-                ],
-                status: "no OAuth usage limits reported".into(),
-            }
-        }
-        Ok((limits, errors)) => {
-            let mut items = vec![LimitsViewItem::UsageLimits(limits)];
-            items.push(LimitsViewItem::Notice(claude_notice));
+            let empty_note = empty_note_for(&limits);
+            let status = status_for(&limits, &errors, has_claude);
+            let mut items = vec![LimitsViewItem::UsageLimits(LimitsDisplay {
+                providers: limits.providers,
+                empty_note,
+            })];
             for error in &errors {
                 items.push(LimitsViewItem::Error(format!(
                     "could not check OAuth usage limits: {error}"
                 )));
             }
-            LimitsView {
-                items,
-                status: if errors.is_empty() {
-                    "OAuth usage limits updated".into()
-                } else {
-                    "OAuth usage limits partially updated".into()
-                },
-            }
+            LimitsView { items, status }
         }
         Err(error) => LimitsView {
             items: vec![
-                LimitsViewItem::Notice(claude_notice),
+                LimitsViewItem::UsageLimits(LimitsDisplay {
+                    providers: claude_provider.into_iter().collect(),
+                    empty_note: None,
+                }),
                 LimitsViewItem::Error(format!("could not check OAuth usage limits: {error}")),
             ],
             status: "OAuth usage limit check failed".into(),
@@ -192,33 +163,105 @@ pub(super) fn present_limits_result(
     }
 }
 
-fn claude_limits_line(
-    observed: Option<&crate::claude_runtime::rate_limit::RateLimitObservation>,
+fn claude_provider_limits(
+    state: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
     now_unix: i64,
-) -> String {
-    match observed {
-        Some(observed) => observed.describe(now_unix),
-        None => {
-            "claude code: no limit observation is known yet; it appears after a claude-cli run reports rate limits"
-                .into()
-        }
-    }
+) -> Option<ProviderUsageLimits> {
+    let state = state.filter(|state| !state.is_empty())?;
+    let windows = state
+        .sorted_windows()
+        .into_iter()
+        .map(|window| {
+            let mut note_parts = Vec::new();
+            if let Some(status) = crate::claude_runtime::stream::notable_rate_limit_status(
+                window.info.status.as_deref(),
+            ) {
+                note_parts.push(status);
+            }
+            if window.info.is_using_overage == Some(true) {
+                note_parts.push("using overage".into());
+            }
+            note_parts.push(format!(
+                "observed {}",
+                crate::claude_runtime::rate_limit::format_age(window.age_seconds(now_unix))
+            ));
+            UsageLimitWindow {
+                label: window.info.window_label(),
+                remaining_percent: window.info.remaining_percent(),
+                resets_at_unix: window.info.resets_at,
+                note: Some(note_parts.join(", ")),
+            }
+        })
+        .collect();
+    Some(ProviderUsageLimits {
+        provider: "Claude Code".into(),
+        windows,
+    })
 }
 
-pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Line<'static>> {
+fn empty_note_for(limits: &ProviderLimits) -> Option<String> {
+    if limits.providers.is_empty() {
+        return Some(
+            "no supported OAuth providers are connected and no Claude Code limits are known yet; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, xAI with /login xai-oauth, or run a claude-cli agent"
+                .into(),
+        );
+    }
+    if limits
+        .providers
+        .iter()
+        .all(|provider| provider.windows.is_empty())
+    {
+        let names = provider_names(limits);
+        return Some(format!(
+            "{names} did not report any active usage limit windows"
+        ));
+    }
+    None
+}
+
+fn status_for(limits: &ProviderLimits, errors: &[UsageLimitsError], has_claude: bool) -> String {
+    if !errors.is_empty() {
+        return "OAuth usage limits partially updated".into();
+    }
+    if limits.providers.is_empty() {
+        return "no usage limits available".into();
+    }
+    if limits
+        .providers
+        .iter()
+        .all(|provider| provider.windows.is_empty())
+    {
+        return "no usage limits reported".into();
+    }
+    if has_claude
+        && limits
+            .providers
+            .iter()
+            .all(|provider| provider.provider == "Claude Code")
+    {
+        return "claude code limits only".into();
+    }
+    "usage limits updated".into()
+}
+
+pub(super) fn usage_limit_lines(limits: &LimitsDisplay, width: usize) -> Vec<Line<'static>> {
     let now = now_unix();
     let block_style = Theme::command_block();
-    let mut lines = vec![
-        Line::from(Span::styled(
-            "OAuth usage limits",
-            block_style.add_modifier(ratatui::style::Modifier::BOLD),
-        )),
-        Line::from(Span::styled("", block_style)),
-    ];
-    for (index, provider) in limits.providers.iter().enumerate() {
-        if index > 0 {
-            lines.push(Line::from(Span::styled("", block_style)));
+    let mut lines = vec![Line::from(Span::styled(
+        "Usage limits",
+        block_style.add_modifier(ratatui::style::Modifier::BOLD),
+    ))];
+
+    if let Some(note) = &limits.empty_note {
+        lines.push(Line::from(Span::styled("", block_style)));
+        lines.extend(indented_note_lines(note, width, block_style));
+    }
+
+    for provider in &limits.providers {
+        if limits.empty_note.is_some() && provider.windows.is_empty() {
+            continue;
         }
+        lines.push(Line::from(Span::styled("", block_style)));
         lines.extend(provider_usage_limit_lines(
             provider,
             width,
@@ -226,6 +269,7 @@ pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Li
             block_style,
         ));
     }
+
     fill_lines(lines, width, block_style)
 }
 
@@ -267,15 +311,65 @@ fn usage_limit_window_lines(
     now: i64,
     block_style: Style,
 ) -> Vec<Line<'static>> {
-    let remaining = window.remaining_percent.round() as u8;
+    let reset = window
+        .resets_at_unix
+        .map(|resets_at| format!("resets {}", format_reset_at(resets_at, now)));
+    let note = window.note.as_deref();
+
+    if let Some(remaining) = window.remaining_percent {
+        return remaining_window_lines(
+            &window.label,
+            label_width,
+            remaining.round().clamp(0.0, 100.0) as u8,
+            reset.as_deref(),
+            note,
+            width,
+            block_style,
+        );
+    }
+
+    let mut detail = String::new();
+    if let Some(note) = note {
+        detail.push_str(note);
+    }
+    if let Some(reset) = &reset {
+        if !detail.is_empty() {
+            detail.push_str("  · ");
+        }
+        detail.push_str(reset);
+    }
+    let text = if detail.is_empty() {
+        format!("  {:label_width$}", window.label)
+    } else {
+        format!("  {:label_width$}   {detail}", window.label)
+    };
+    vec![Line::from(Span::styled(text, block_style))]
+}
+
+fn remaining_window_lines(
+    label: &str,
+    label_width: usize,
+    remaining: u8,
+    reset: Option<&str>,
+    note: Option<&str>,
+    width: usize,
+    block_style: Style,
+) -> Vec<Line<'static>> {
     let filled = (usize::from(remaining) * BAR_WIDTH + 50) / 100;
     let bar_style = block_style.patch(remaining_style(remaining));
-    let reset = format!("resets {}", format_reset(window, now));
-    let prefix = format!("  {:label_width$}   ", window.label);
+    let prefix = format!("  {label:label_width$}   ");
     let percent = format!("  {remaining}% left");
-    let reset_suffix = format!("  · {reset}");
-    let show_reset =
-        prefix.chars().count() + BAR_WIDTH + percent.chars().count() + reset_suffix.chars().count()
+    let mut suffix = String::new();
+    if let Some(reset) = reset {
+        suffix.push_str("  · ");
+        suffix.push_str(reset);
+    }
+    if let Some(note) = note {
+        suffix.push_str("  · ");
+        suffix.push_str(note);
+    }
+    let show_suffix =
+        prefix.chars().count() + BAR_WIDTH + percent.chars().count() + suffix.chars().count()
             <= width;
     let main_line = Line::from(vec![
         Span::styled(prefix, block_style),
@@ -286,25 +380,46 @@ fn usage_limit_window_lines(
         ),
         Span::styled(percent, block_style),
         Span::styled(
-            if show_reset {
-                reset_suffix.clone()
+            if show_suffix {
+                suffix.clone()
             } else {
                 String::new()
             },
             block_style,
         ),
     ]);
-    if show_reset {
-        vec![main_line]
-    } else {
-        vec![
-            main_line,
-            Line::from(Span::styled(
-                format!("  {reset}"),
-                block_style.patch(Theme::dim()),
-            )),
-        ]
+    if show_suffix {
+        return vec![main_line];
     }
+    let mut lines = vec![main_line];
+    if let Some(reset) = reset {
+        lines.push(Line::from(Span::styled(
+            format!("  {reset}"),
+            block_style.patch(Theme::dim()),
+        )));
+    }
+    if let Some(note) = note {
+        lines.extend(indented_note_lines(note, width, block_style));
+    }
+    lines
+}
+
+fn indented_note_lines(note: &str, width: usize, block_style: Style) -> Vec<Line<'static>> {
+    if width == 0 {
+        return vec![Line::from(Span::styled("", block_style))];
+    }
+    let indent_width = 2.min(width.saturating_sub(1));
+    let note_width = width.saturating_sub(indent_width).max(1);
+    let indent = " ".repeat(indent_width);
+    wrap_line_at_whitespace(note, note_width)
+        .into_iter()
+        .map(|part| {
+            Line::from(Span::styled(
+                format!("{indent}{}", part.trim_start()),
+                block_style.patch(Theme::dim()),
+            ))
+        })
+        .collect()
 }
 
 fn remaining_style(remaining: u8) -> Style {
@@ -317,8 +432,8 @@ fn remaining_style(remaining: u8) -> Style {
     }
 }
 
-fn format_reset(window: &UsageLimitWindow, now: i64) -> String {
-    let seconds = window.resets_at_unix.saturating_sub(now);
+fn format_reset_at(resets_at_unix: i64, now: i64) -> String {
+    let seconds = resets_at_unix.saturating_sub(now);
     if seconds <= 0 {
         return "now".into();
     }
@@ -332,30 +447,28 @@ fn format_reset(window: &UsageLimitWindow, now: i64) -> String {
         };
     }
 
-    chrono::DateTime::from_timestamp(window.resets_at_unix, 0)
+    chrono::DateTime::from_timestamp(resets_at_unix, 0)
         .map(|reset| {
             reset
                 .with_timezone(&chrono::Local)
                 .format("%b %d at %-I:%M %p")
                 .to_string()
         })
-        .unwrap_or_else(|| format!("at Unix time {}", window.resets_at_unix))
+        .unwrap_or_else(|| format!("at Unix time {resets_at_unix}"))
 }
 
 fn provider_names(limits: &ProviderLimits) -> String {
-    let names = limits
+    let names: Vec<&str> = limits
         .providers
         .iter()
         .map(|provider| provider.provider.as_str())
-        .collect::<Vec<_>>();
+        .collect();
     match names.as_slice() {
-        [] => "Connected providers".into(),
-        [name] => (*name).into(),
+        [] => "connected providers".into(),
+        [one] => (*one).into(),
         [first, second] => format!("{first} and {second}"),
-        [first, second, third] => format!("{first}, {second}, and {third}"),
-        _ => {
-            let (last, rest) = names.split_last().expect("non-empty names");
-            format!("{}, and {last}", rest.join(", "))
+        [first, second, rest @ ..] => {
+            format!("{first}, {second}, and {}", rest.join(", "))
         }
     }
 }

@@ -12,18 +12,16 @@ use rho_sdk::model::{ContextUsage, ModelUsage};
 
 use crate::{
     herdr::{HerdrReporter, HerdrState},
+    run_artifacts::{AttachmentEvent, AttachmentReader},
     subagent::{self, RunState, RunStatus},
 };
 
-use super::{
-    super::{
-        provider_attempt::ProviderAttempt,
-        render::{entry_lines, truncate_one_line},
-        terminal_events::TerminalEvents,
-        theme::Theme,
-        Entry, ReasoningEntry, ToolEntry, ToolEntryState,
-    },
-    journal::{AttachmentEvent, AttachmentReader},
+use super::super::{
+    provider_attempt::ProviderAttempt,
+    render::{entry_lines, truncate_one_line},
+    terminal_events::TerminalEvents,
+    theme::Theme,
+    Entry, ReasoningEntry, ToolEntry, ToolEntryState,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);

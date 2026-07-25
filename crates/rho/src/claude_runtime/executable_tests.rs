@@ -27,7 +27,6 @@ fn classifies_direct_unix_or_exe_paths() {
         ClaudeArgv {
             program: PathBuf::from("/usr/bin/claude"),
             args: vec![OsString::from("auth"), OsString::from("status")],
-            windows_command_line: None,
         }
     );
 
@@ -38,7 +37,6 @@ fn classifies_direct_unix_or_exe_paths() {
         ClaudeArgv {
             program: PathBuf::from(r"C:\Tools\claude.exe"),
             args: vec![OsString::from("--version")],
-            windows_command_line: None,
         }
     );
 }
@@ -56,11 +54,11 @@ fn classifies_cmd_shim_uses_script_image_and_bat_command_line() {
         plan.args,
         vec![OsString::from("auth"), OsString::from("logout")]
     );
-    let line = plan
-        .windows_command_line
-        .expect("cmd shim exposes bat command line")
-        .to_string_lossy()
-        .into_owned();
+    let line =
+        crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
+            .expect("cmd shim encodes bat command line")
+            .to_string_lossy()
+            .into_owned();
     // std-compatible wrapper: not bare `cmd /C` + separate unquoted argv.
     assert!(line.starts_with("cmd.exe /e:ON /v:OFF /d /c "), "{line}");
     assert!(
@@ -91,7 +89,6 @@ fn classifies_ps1_shim_as_fixed_argv_powershell_invocation() {
                 OsString::from("auth"),
                 OsString::from("status"),
             ],
-            windows_command_line: None,
         }
     );
 }
@@ -131,13 +128,12 @@ fn cmd_shim_argv_encodes_special_characters() {
         ("a=b", r#""a=b""#),
     ];
     for &(arg, needle) in cases {
-        let line = shim
-            .plan([arg])
-            .unwrap()
-            .windows_command_line
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
+        let plan = shim.plan([arg]).unwrap();
+        let line =
+            crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
         assert!(
             line.contains(needle),
             "arg={arg:?} needle={needle:?} line={line}"
@@ -155,11 +151,11 @@ fn cmd_shim_encodes_system_prompt_file_path_with_spaces() {
             r"C:\Users\me\AppData\Local\rho\runs\run 1\system-prompt.txt",
         ])
         .unwrap();
-    let line = plan
-        .windows_command_line
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
+    let line =
+        crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
     assert!(
         line.contains(r#""C:\Program Files\Claude\claude.cmd""#),
         "{line}"

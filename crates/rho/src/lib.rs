@@ -19,6 +19,7 @@ mod permission;
 mod prompt;
 mod prompt_templates;
 mod questionnaire;
+mod run_artifacts;
 mod session;
 mod skills;
 mod subagent;

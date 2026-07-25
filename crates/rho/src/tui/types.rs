@@ -20,6 +20,7 @@ use super::{
     info_command,
     inline_choice::InlineChoiceModal,
     inline_shell::InlineShellMode,
+    limits_command,
     login::SecretInput,
     markdown::CodeFenceState,
     picker::UiPicker,
@@ -262,7 +263,7 @@ pub(super) enum Entry {
     Tool(ToolEntry),
     Notice(String),
     RuntimeInfo(Box<info_command::RuntimeInfo>),
-    UsageLimits(crate::usage_limits::ProviderLimits),
+    UsageLimits(limits_command::LimitsDisplay),
     Error(String),
 }
 

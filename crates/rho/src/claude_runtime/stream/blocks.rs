@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use crate::tui::AttachmentEvent;
+use crate::run_artifacts::AttachmentEvent;
 
 use super::presentation::{
     content_block_kind, fidelity_notice, mark_and_reasoning, mark_and_text, mark_slot_emitted,

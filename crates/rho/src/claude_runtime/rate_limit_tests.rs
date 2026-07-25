@@ -15,6 +15,7 @@ fn sample_info(status: &str) -> RateLimitInfo {
         status: Some(status.into()),
         rate_limit_type: Some("five_hour".into()),
         resets_at: Some(1_800),
+        utilization: None,
         overage_status: None,
         overage_resets_at: None,
         is_using_overage: Some(false),
@@ -23,6 +24,17 @@ fn sample_info(status: &str) -> RateLimitInfo {
 
 fn secs(seconds: i64) -> u64 {
     seconds_to_nanos(seconds)
+}
+
+fn only(state: &RateLimitState) -> &RateLimitObservation {
+    assert_eq!(state.windows.len(), 1, "expected one window: {state:?}");
+    &state.windows[0]
+}
+
+fn sample_info_window(status: &str, window: &str) -> RateLimitInfo {
+    let mut info = sample_info(status);
+    info.rate_limit_type = Some(window.into());
+    info
 }
 
 fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
@@ -38,7 +50,7 @@ fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
 }
 
 #[test]
-fn describe_includes_window_status_and_age_without_percent() {
+fn describe_omits_allowed_and_percent_when_missing() {
     let observed = RateLimitObservation {
         observed_at_unix: 1_000,
         observed_seq: 1,
@@ -48,10 +60,91 @@ fn describe_includes_window_status_and_age_without_percent() {
     };
     let text = observed.describe(1_000 + 120);
     assert!(text.contains("claude code:"));
-    assert!(text.contains("five hour"));
-    assert!(text.contains("allowed"));
-    assert!(text.contains("last observed 2m ago"));
+    assert!(text.contains("Five hour"));
+    assert!(!text.contains("allowed"), "{text}");
+    assert!(text.contains("observed 2m ago"));
     assert!(!text.contains('%'));
+}
+
+#[test]
+fn describe_includes_remaining_percent_from_utilization() {
+    let mut info = sample_info("allowed");
+    info.utilization = Some(0.31);
+    let observed = RateLimitObservation::with_order(info, secs(1_000), 1, "a");
+    let text = observed.describe(1_000);
+    assert!(text.contains("69% left"), "{text}");
+    assert!(!text.contains("allowed"), "{text}");
+}
+
+#[test]
+fn multi_window_state_keeps_five_hour_and_seven_day() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rate-limits.json");
+    store_ordered(
+        &path,
+        sample_info_window("allowed", "five_hour"),
+        secs(1_000),
+        1,
+        "p1",
+    )
+    .unwrap();
+    store_ordered(
+        &path,
+        sample_info_window("allowed", "seven_day"),
+        secs(1_100),
+        1,
+        "p1",
+    )
+    .unwrap();
+    // Older five_hour must not clobber the newer five_hour or remove weekly.
+    store_ordered(
+        &path,
+        sample_info_window("stale", "five_hour"),
+        secs(900),
+        1,
+        "p2",
+    )
+    .unwrap();
+    let loaded = load_at(&path).expect("stored");
+    assert_eq!(loaded.windows.len(), 2);
+    let keys: Vec<_> = loaded
+        .sorted_windows()
+        .into_iter()
+        .map(|window| window.info.window_key().to_owned())
+        .collect();
+    assert_eq!(keys, vec!["five_hour".to_string(), "seven_day".to_string()]);
+    let five = loaded
+        .windows
+        .iter()
+        .find(|window| window.info.window_key() == "five_hour")
+        .unwrap();
+    assert_eq!(five.info.status.as_deref(), Some("allowed"));
+    assert_eq!(five.observed_at_unix, 1_000);
+}
+
+#[test]
+fn loads_legacy_single_observation_file_as_one_window() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy.json");
+    std::fs::write(
+        &path,
+        r#"{"observed_at_unix":1000,"info":{"status":"allowed","rateLimitType":"five_hour"}}"#,
+    )
+    .unwrap();
+    let loaded = load_at(&path).expect("legacy");
+    assert_eq!(loaded.windows.len(), 1);
+    assert_eq!(only(&loaded).info.window_key(), "five_hour");
+}
+
+#[test]
+fn default_state_path_lives_under_cache_claude_code() {
+    let path = default_state_path().unwrap();
+    let rendered = path.to_string_lossy();
+    assert!(
+        rendered.contains("cache/claude-code/rate-limits.json")
+            || rendered.contains("cache\\claude-code\\rate-limits.json"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -61,8 +154,8 @@ fn older_observation_does_not_overwrite_newer() {
     store_ordered(&path, sample_info("newer"), secs(2_000), 1, "p1").unwrap();
     store_ordered(&path, sample_info("older"), secs(1_000), 2, "p2").unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.observed_at_unix, 2_000);
-    assert_eq!(loaded.info.status.as_deref(), Some("newer"));
+    assert_eq!(only(&loaded).observed_at_unix, 2_000);
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("newer"));
 }
 
 #[test]
@@ -72,8 +165,8 @@ fn newer_observation_replaces_older() {
     store_ordered(&path, sample_info("older"), secs(1_000), 1, "p1").unwrap();
     store_ordered(&path, sample_info("newer"), secs(2_000), 1, "p1").unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.observed_at_unix, 2_000);
-    assert_eq!(loaded.info.status.as_deref(), Some("newer"));
+    assert_eq!(only(&loaded).observed_at_unix, 2_000);
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("newer"));
 }
 
 #[test]
@@ -85,16 +178,16 @@ fn equal_timestamps_prefer_higher_sequence_then_nonce() {
     store_ordered(&path, sample_info("second"), secs(1_000), 2, "n").unwrap();
     store_ordered(&path, sample_info("stale"), secs(1_000), 1, "n").unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.observed_at_unix, 1_000);
-    assert_eq!(loaded.observed_seq, 2);
-    assert_eq!(loaded.info.status.as_deref(), Some("second"));
+    assert_eq!(only(&loaded).observed_at_unix, 1_000);
+    assert_eq!(only(&loaded).observed_seq, 2);
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("second"));
 
     // Same nanos, different nonce: lexicographically greater nonce wins.
     store_ordered(&path, sample_info("nonce-low"), secs(1_000), 9, "aaa").unwrap();
     store_ordered(&path, sample_info("nonce-high"), secs(1_000), 1, "zzz").unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.observed_nonce, "zzz");
-    assert_eq!(loaded.info.status.as_deref(), Some("nonce-high"));
+    assert_eq!(only(&loaded).observed_nonce, "zzz");
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("nonce-high"));
 }
 
 #[test]
@@ -130,8 +223,8 @@ fn concurrent_writers_keep_latest_observation() {
     left.join().unwrap();
     right.join().unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.observed_at_unix, 39);
-    assert_eq!(loaded.info.status.as_deref(), Some("b39"));
+    assert_eq!(only(&loaded).observed_at_unix, 39);
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("b39"));
 }
 
 #[test]
@@ -150,8 +243,8 @@ fn out_of_order_writers_keep_highest_order_key() {
     first.join().unwrap();
     second.join().unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.observed_seq, 5);
-    assert_eq!(loaded.info.status.as_deref(), Some("fast-new"));
+    assert_eq!(only(&loaded).observed_seq, 5);
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("fast-new"));
 }
 
 #[test]
@@ -176,7 +269,7 @@ fn slot_keeps_latest_under_out_of_order_publish() {
         "n",
     ));
     let taken = slot.take().expect("observation");
-    assert_eq!(taken.info.status.as_deref(), Some("new"));
+    assert_eq!(only(&taken).info.status.as_deref(), Some("new"));
     assert!(slot.take().is_none());
 }
 
@@ -193,7 +286,7 @@ fn repeated_updates_use_unique_temp_and_replace() {
             "n",
         )
         .unwrap();
-        assert_eq!(load_at(&path).unwrap().observed_at_unix, stamp);
+        assert_eq!(only(&load_at(&path).unwrap()).observed_at_unix, stamp);
     }
 }
 
@@ -208,12 +301,12 @@ fn legacy_files_without_nanos_or_nonce_deserialize_and_lose_to_newer() {
     )
     .unwrap();
     let loaded = load_at(&path).expect("legacy");
-    assert_eq!(loaded.observed_seq, 0);
-    assert_eq!(loaded.observed_at_nanos, 0);
-    assert!(loaded.observed_nonce.is_empty());
+    assert_eq!(only(&loaded).observed_seq, 0);
+    assert_eq!(only(&loaded).observed_at_nanos, 0);
+    assert!(only(&loaded).observed_nonce.is_empty());
     store_ordered(&path, sample_info("replacement"), secs(1_000), 1, "p").unwrap();
     assert_eq!(
-        load_at(&path).unwrap().info.status.as_deref(),
+        only(&load_at(&path).unwrap()).info.status.as_deref(),
         Some("replacement")
     );
 
@@ -224,18 +317,18 @@ fn legacy_files_without_nanos_or_nonce_deserialize_and_lose_to_newer() {
     )
     .unwrap();
     let loaded = load_at(&path).expect("legacy-seq");
-    assert_eq!(loaded.observed_seq, 7);
-    assert_eq!(loaded.order_key().nanos, secs(2_000));
+    assert_eq!(only(&loaded).observed_seq, 7);
+    assert_eq!(only(&loaded).order_key().nanos, secs(2_000));
     // Older second must not replace legacy.
     store_ordered(&path, sample_info("too-old"), secs(1_999), 99, "z").unwrap();
     assert_eq!(
-        load_at(&path).unwrap().info.status.as_deref(),
+        only(&load_at(&path).unwrap()).info.status.as_deref(),
         Some("legacy-seq")
     );
     // Subsecond-newer observation replaces the legacy seconds+seq cache.
     store_ordered(&path, sample_info("fresh"), secs(2_000) + 1, 0, "a").unwrap();
     assert_eq!(
-        load_at(&path).unwrap().info.status.as_deref(),
+        only(&load_at(&path).unwrap()).info.status.as_deref(),
         Some("fresh")
     );
 }
@@ -254,9 +347,9 @@ fn independent_writer_instances_newer_wins_regardless_of_write_order() {
     store_observation(&path, newer.clone()).unwrap();
     store_observation(&path, older).unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.info.status.as_deref(), Some("newer"));
-    assert_eq!(loaded.observed_at_nanos, newer.observed_at_nanos);
-    assert_eq!(loaded.observed_nonce, "proc-b");
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("newer"));
+    assert_eq!(only(&loaded).observed_at_nanos, newer.observed_at_nanos);
+    assert_eq!(only(&loaded).observed_nonce, "proc-b");
 }
 
 #[test]
@@ -269,8 +362,8 @@ fn same_timestamp_tie_break_is_deterministic_across_writers() {
     store_ordered(&path, sample_info("high"), nanos, 1, "z-uuid").unwrap();
     store_ordered(&path, sample_info("low-again"), nanos, 99, "a-uuid").unwrap();
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.observed_nonce, "z-uuid");
-    assert_eq!(loaded.info.status.as_deref(), Some("high"));
+    assert_eq!(only(&loaded).observed_nonce, "z-uuid");
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("high"));
 }
 
 #[test]
@@ -317,8 +410,8 @@ fn lock_serializes_overlapping_writers() {
     b.join().unwrap();
     let loaded = load_at(&path).expect("stored");
     // Highest nanos is secs(100)+20 from b's last write (i=19 -> 100+20).
-    assert_eq!(loaded.observed_at_nanos, secs(100) + 20);
-    assert_eq!(loaded.info.status.as_deref(), Some("b19"));
+    assert_eq!(only(&loaded).observed_at_nanos, secs(100) + 20);
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("b19"));
 }
 
 #[test]
@@ -371,7 +464,7 @@ fn cross_process_lock_blocks_until_released_and_newer_wins() {
         "child should still be waiting on the lock"
     );
     assert_eq!(
-        load_at(&path).unwrap().info.status.as_deref(),
+        only(&load_at(&path).unwrap()).info.status.as_deref(),
         Some("parent-old")
     );
 
@@ -386,9 +479,9 @@ fn cross_process_lock_blocks_until_released_and_newer_wins() {
         String::from_utf8_lossy(&output.stderr)
     );
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.info.status.as_deref(), Some("child-new"));
-    assert_eq!(loaded.observed_nonce, "child");
-    assert_eq!(loaded.observed_at_nanos, secs(9_999));
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("child-new"));
+    assert_eq!(only(&loaded).observed_nonce, "child");
+    assert_eq!(only(&loaded).observed_at_nanos, secs(9_999));
 }
 
 /// Child helper for cross-process lock tests. Reads path + observation from stdin.
@@ -497,7 +590,7 @@ fn cross_process_out_of_order_writes_keep_newer() {
     );
 
     let loaded = load_at(&path).expect("stored");
-    assert_eq!(loaded.info.status.as_deref(), Some("from-new-proc"));
-    assert_eq!(loaded.observed_nonce, "proc-new");
-    assert_eq!(loaded.observed_at_nanos, secs(7_000) + 500);
+    assert_eq!(only(&loaded).info.status.as_deref(), Some("from-new-proc"));
+    assert_eq!(only(&loaded).observed_nonce, "proc-new");
+    assert_eq!(only(&loaded).observed_at_nanos, secs(7_000) + 500);
 }

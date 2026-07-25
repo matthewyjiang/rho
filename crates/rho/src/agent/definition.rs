@@ -243,7 +243,7 @@ pub enum AgentRuntimeSpec {
         tools: ToolPolicy,
     },
     ClaudeCli {
-        /// Claude Code tool names, empty for Claude's own default set.
+        /// Claude Code tool names. Empty means `--tools ""` (no tools), not Claude defaults.
         tools: Vec<String>,
         /// When true, widen Claude setting sources to the user's full Claude
         /// config. Default is closed.

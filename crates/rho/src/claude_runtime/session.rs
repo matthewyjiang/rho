@@ -24,7 +24,7 @@ use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
     executable::{self, ClaudeExecutable},
     line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
-    persist::{PersistHooks, SinkConfig, StatusSink},
+    persist::StatusSink,
     spawn::{self, ClaudeSpawnPlan, ClaudeSpawnRequest},
     stream::{StreamEffect, StreamMapper, TerminalResult},
 };
@@ -64,8 +64,6 @@ pub(crate) struct ClaudeSessionOverrides {
     pub(crate) executable: Option<ClaudeExecutable>,
     /// Auth preflight result. When set, production `auth::query` is not called.
     pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
-    /// Persistence instrumentation (stall/fail writer). No-op outside tests.
-    pub(crate) persist_hooks: PersistHooks,
 }
 
 struct OwnedChild {
@@ -146,10 +144,6 @@ pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Re
         &request.identity,
         &request.prompt,
         request.status_tx.take(),
-        SinkConfig {
-            hooks: std::mem::take(&mut request.overrides.persist_hooks),
-            ..SinkConfig::default()
-        },
     )?;
     let outcome = drive_session(&mut request, &mut sink).await;
     settle(sink, outcome).await;
@@ -172,10 +166,10 @@ enum SessionOutcome {
     },
 }
 
-/// Write exactly one terminal artifact for `outcome`, then stop persistence.
+/// Write exactly one terminal artifact for `outcome`.
 ///
 /// Every exit path in [`drive_session`] funnels through here, so "one terminal
-/// write, always shut down" is structural instead of repeated per branch.
+/// write" is structural instead of repeated per branch.
 async fn settle(mut sink: StatusSink, outcome: SessionOutcome) {
     match outcome {
         SessionOutcome::Cancelled(reason) => sink.stop(reason).await,
@@ -187,7 +181,7 @@ async fn settle(mut sink: StatusSink, outcome: SessionOutcome) {
         } => {
             // Protocol type:error is pending metadata only; final Failed/Completed
             // is chosen here after exit. Leave already-terminal state alone.
-            if !sink.status.state.is_terminal() {
+            if !sink.status().state.is_terminal() {
                 match decide_final_outcome(pending.as_deref(), status, &log_tail) {
                     FinalOutcome::Success(terminal) => {
                         sink.finalize_success_from_stream(&terminal).await;
@@ -204,10 +198,6 @@ async fn settle(mut sink: StatusSink, outcome: SessionOutcome) {
             }
         }
     }
-    // `stop` / `fail` are no-ops once the stream published a terminal state;
-    // this publishes that snapshot instead.
-    sink.flush_terminal_status().await;
-    sink.shutdown().await;
 }
 
 /// Preflight, spawn, and drain one Claude run without writing terminal state.
@@ -346,11 +336,7 @@ async fn drain_child(
     child: &mut OwnedChild,
     log_path: &std::path::Path,
 ) -> SessionOutcome {
-    if let Err(error) = sink.mark_running() {
-        return SessionOutcome::Failed(format!(
-            "claude code: could not persist running status: {error}"
-        ));
-    }
+    sink.mark_running();
 
     let Some(stdout) = child.stdout() else {
         return SessionOutcome::Failed("claude code: child stdout was not captured".into());
@@ -418,16 +404,12 @@ async fn drain_child(
                                     break;
                                 }
                             };
-                            if let Err(error) = apply_stream_line(
+                            apply_stream_line(
                                 &mut mapper,
                                 sink,
                                 &mut pending_terminal,
                                 &line,
-                            ) {
-                                // Fatal status persistence failure ends the run.
-                                stream_error = Some(error);
-                                break;
-                            }
+                            );
                         }
                         if stream_error.is_some() {
                             break;
@@ -453,11 +435,7 @@ async fn drain_child(
     if stream_error.is_none() {
         match decoder.finish() {
             Ok(Some(line)) => {
-                if let Err(error) =
-                    apply_stream_line(&mut mapper, sink, &mut pending_terminal, line)
-                {
-                    stream_error = Some(error);
-                }
+                apply_stream_line(&mut mapper, sink, &mut pending_terminal, line);
             }
             Ok(None) => {}
             Err(error) => {
@@ -567,16 +545,15 @@ fn apply_stream_line(
     sink: &mut StatusSink,
     pending_terminal: &mut Option<TerminalResult>,
     line: &str,
-) -> Result<(), String> {
+) {
     for effect in mapper.push_line(line) {
         if let StreamEffect::Terminal(terminal) = &effect {
             // Later terminals (for example a final `result`) replace earlier
             // pending protocol-error metadata.
             *pending_terminal = Some(terminal.clone());
         }
-        sink.apply_effect(effect)?;
+        sink.apply_effect(effect);
     }
-    Ok(())
 }
 
 fn format_line_error(error: &LineDecodeError) -> String {
