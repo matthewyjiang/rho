@@ -203,6 +203,10 @@ fn sample_claude(observed_at_unix: i64) -> crate::claude_runtime::rate_limit::Ob
     crate::claude_runtime::rate_limit::ObservedRateLimit {
         observed_at_unix,
         observed_seq: 1,
+        observed_at_nanos: u64::try_from(observed_at_unix.max(0))
+            .unwrap_or(0)
+            .saturating_mul(1_000_000_000),
+        observed_nonce: "test".into(),
         info: crate::claude_runtime::stream::RateLimitInfo {
             status: Some("allowed".into()),
             rate_limit_type: Some("five_hour".into()),
