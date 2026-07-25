@@ -27,9 +27,10 @@ use tokio::{
 };
 
 use super::{
-    classify_error, complete_run, prompt_from_reader, AutomationExit, HeadlessRunDeps,
-    HostInputRespondFuture, HostInputResponder, RunArtifactIdentity, RunReporter,
+    classify_error, complete_run, prompt_from_reader, AutomationExit, RunArtifactIdentity,
+    RunReporter,
 };
+use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::{
     app::{
         automation_protocol::TerminalReason,
@@ -90,9 +91,9 @@ fn reporter_discards_partial_text_when_provider_attempt_resets() {
         detail: "retrying".into(),
     });
 
-    assert_eq!(reporter.status.last_text, None);
+    assert_eq!(reporter.status().last_text, None);
     assert_eq!(
-        reporter.status.last_activity.as_deref(),
+        reporter.status().last_activity.as_deref(),
         Some("retrying provider response")
     );
 }

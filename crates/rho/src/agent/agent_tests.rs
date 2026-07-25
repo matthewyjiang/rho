@@ -26,6 +26,7 @@ fn rejects_unknown_tools_with_context() {
     assert_eq!(error.path, path);
     assert_eq!(error.field.as_deref(), Some("tools"));
     assert!(error.to_string().contains("unknown tool 'teleport'"));
+    assert!(error.to_string().contains("runtime: rho"));
 }
 
 #[test]
@@ -43,6 +44,102 @@ fn semantic_fingerprint_ignores_formatting_and_source() {
     )
     .unwrap();
     assert_eq!(a.fingerprint(), b.fingerprint());
+}
+
+#[test]
+fn current_fingerprint_uses_v2_marker_and_differs_from_legacy_v1() {
+    let definition = parse_definition(
+        Path::new("default.md"),
+        "default",
+        "---\ndescription: demo\ntools: all\n---\n",
+    )
+    .unwrap();
+    let current = definition.fingerprint().to_string();
+    let legacy = definition
+        .legacy_v1_fingerprint()
+        .expect("default rho definition encodes legacy v1")
+        .to_string();
+    assert_ne!(current, legacy);
+    assert!(definition.accepts_stored_fingerprint(&current));
+    assert!(definition.accepts_stored_fingerprint(&legacy));
+    assert!(!definition.accepts_stored_fingerprint("deadbeef"));
+}
+
+/// Golden pre-change v1 fingerprints for builtin agents. These are the exact
+/// values sessions stored before the runtime axis; resume must still accept them.
+#[test]
+fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
+    let root = tempfile::tempdir().unwrap();
+    let catalog = AgentCatalog::discover_with_home(root.path(), None).unwrap();
+    let expected = [
+        (
+            "default",
+            "ffc3f694800c9e3d284e457e63b2a61ad97f361f84ce3493314cc9c69892826d",
+        ),
+        (
+            "explorer",
+            "4bd78a085405f4b0e57d77ddf6b6879a4d0ae02e0181da13f15adb9a283510df",
+        ),
+        (
+            "reviewer",
+            "4d0667a7107a62ca45852898688e7cc5fc8f80e0606b78db689570c90d4b64a9",
+        ),
+        (
+            "worker",
+            "6a1f787c17442841a11703c25cb1ef48501be615656a22aba42237c8ccece071",
+        ),
+    ];
+    for (id, expected_legacy) in expected {
+        let definition = &catalog.find(id).unwrap().definition;
+        assert!(
+            matches!(definition.runtime, AgentRuntimeSpec::Rho { .. }),
+            "{id} must remain default Rho for legacy resume"
+        );
+        let legacy = definition
+            .legacy_v1_fingerprint()
+            .unwrap_or_else(|| panic!("{id} should expose legacy v1"))
+            .to_string();
+        assert_eq!(legacy, expected_legacy, "legacy v1 drift for {id}");
+        assert_ne!(
+            definition.fingerprint().to_string(),
+            legacy,
+            "{id} current fingerprint must be v2"
+        );
+        assert!(definition.accepts_stored_fingerprint(&legacy));
+    }
+}
+
+#[test]
+fn real_definition_change_still_rejects_resume() {
+    let original = parse_definition(
+        Path::new("worker.md"),
+        "worker",
+        "---\ndescription: work\ntools: [read_file]\n---\nship it\n",
+    )
+    .unwrap();
+    let changed = parse_definition(
+        Path::new("worker.md"),
+        "worker",
+        "---\ndescription: work\ntools: [read_file, write_file]\n---\nship it\n",
+    )
+    .unwrap();
+    let stored_v2 = original.fingerprint().to_string();
+    let stored_v1 = original.legacy_v1_fingerprint().unwrap().to_string();
+    assert!(!changed.accepts_stored_fingerprint(&stored_v2));
+    assert!(!changed.accepts_stored_fingerprint(&stored_v1));
+}
+
+#[test]
+fn claude_definitions_have_no_legacy_v1_fingerprint() {
+    let definition = parse_definition(
+        Path::new("claude.md"),
+        "claude",
+        "---\ndescription: demo\nruntime: claude-cli\ntools: [Read]\n---\n",
+    )
+    .unwrap();
+    assert!(definition.legacy_v1_fingerprint().is_none());
+    assert!(!definition.accepts_stored_fingerprint("anything"));
+    assert!(definition.accepts_stored_fingerprint(&definition.fingerprint().to_string()));
 }
 
 #[test]

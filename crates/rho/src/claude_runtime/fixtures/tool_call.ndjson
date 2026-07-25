@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-tool-001"}
+{"type":"assistant","session_id":"sess-tool-001","message":{"id":"msg_tool_1","role":"assistant","content":[{"type":"text","text":"Reading the file."},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"path":"README.md"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"# Demo\nline two"}]}}
+{"type":"assistant","session_id":"sess-tool-001","message":{"id":"msg_tool_2","role":"assistant","content":[{"type":"text","text":"Done."}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"Done.","session_id":"sess-tool-001","total_cost_usd":0.02,"permission_denials":[],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}

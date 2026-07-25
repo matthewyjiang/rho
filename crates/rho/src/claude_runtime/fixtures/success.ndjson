@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-success-001","cwd":"/tmp/demo"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","resetsAt":1784935800,"overageStatus":"allowed","overageResetsAt":1784921400,"isUsingOverage":false}}
+{"type":"assistant","session_id":"sess-success-001","message":{"id":"msg_success_1","role":"assistant","content":[{"type":"text","text":"Hello from Claude."}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"Hello from Claude.","stop_reason":"end_turn","session_id":"sess-success-001","total_cost_usd":0.0388,"permission_denials":[],"usage":{"input_tokens":2,"output_tokens":4,"cache_read_input_tokens":7294,"cache_creation_input_tokens":6095},"modelUsage":{"claude-opus-5":{"contextWindow":200000,"maxOutputTokens":32000,"inputTokens":2,"outputTokens":4,"costUSD":0.0388}}}

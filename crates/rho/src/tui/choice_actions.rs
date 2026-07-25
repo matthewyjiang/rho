@@ -28,6 +28,13 @@ impl App {
                         self.resolve_context_handoff(Some(&value), *pending, terminal, agent)
                             .await?;
                     }
+                    InlineChoicePending::ClaudeCodeRelogin => {
+                        self.submit_claude_code_relogin_choice(modal.choice, terminal)
+                            .await?;
+                    }
+                    InlineChoicePending::ClaudeCodeLogout => {
+                        self.submit_claude_code_logout_choice(modal.choice).await?;
+                    }
                 }
             }
             InlineChoiceKeyOutcome::Cancelled => {
@@ -35,7 +42,9 @@ impl App {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
-                    InlineChoicePending::CredentialStore { .. } => {
+                    InlineChoicePending::CredentialStore { .. }
+                    | InlineChoicePending::ClaudeCodeRelogin
+                    | InlineChoicePending::ClaudeCodeLogout => {
                         self.status = self.busy_status_label().into();
                     }
                     InlineChoicePending::ContextHandoff(pending) => {

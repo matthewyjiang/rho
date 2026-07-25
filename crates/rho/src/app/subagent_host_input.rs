@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use rho_sdk::{CancellationToken, Error, HostInputRequest, HostInputResponse, SessionId};
 use tokio::sync::{mpsc, oneshot};
 
-use super::automation::{HostInputRespondFuture, HostInputResponder};
+use super::headless_run::{HostInputRespondFuture, HostInputResponder};
 
 const HOST_INPUT_QUEUE_CAPACITY: usize = 32;
 

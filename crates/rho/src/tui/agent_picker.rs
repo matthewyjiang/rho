@@ -1,7 +1,7 @@
 use crate::{
     agent::{
-        AgentCatalog, AgentCatalogEntry, AgentOrigin, ModelPolicy, ModelSelection, PromptPolicy,
-        ToolPolicy,
+        AgentCatalog, AgentCatalogEntry, AgentOrigin, AgentRuntimeSpec, ModelPolicy,
+        ModelSelection, PromptPolicy, ToolPolicy,
     },
     config::InternalAgentModelConfig,
 };
@@ -101,7 +101,7 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
             rho_providers::provider::model_reference(provider, model)
         )
     } else {
-        match &definition.model {
+        match definition.model_policy().as_ref() {
             ModelPolicy::Inherit => "inherit".to_string(),
             ModelPolicy::Prefer(selection) => format!("prefer {}", model_name(selection)),
             ModelPolicy::Require(selection) => format!("require {}", model_name(selection)),
@@ -109,18 +109,43 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         }
     };
     let reasoning = definition
-        .reasoning
+        .reasoning()
         .map(|level| level.to_string())
         .unwrap_or_else(|| "inherit".to_string());
-    let tools = match &definition.tools {
-        ToolPolicy::All => "all".to_string(),
-        ToolPolicy::Allow(tools) if tools.is_empty() => "none".to_string(),
-        ToolPolicy::Allow(tools) => tools
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", "),
+    let (tools, inherit_claude_config) = match &definition.runtime {
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            ..
+        } => ("all".to_string(), None),
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(tools),
+            ..
+        } if tools.is_empty() => ("none".to_string(), None),
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(tools),
+            ..
+        } => (
+            tools
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            None,
+        ),
+        AgentRuntimeSpec::ClaudeCli(config) => (
+            if config.tools.as_slice().is_empty() {
+                "none".to_string()
+            } else {
+                config.tools.as_slice().join(", ")
+            },
+            Some(if config.inherit_claude_config {
+                "yes"
+            } else {
+                "no"
+            }),
+        ),
     };
+    let runtime = definition.runtime.runtime().to_string();
     let prompt = match &definition.prompt {
         PromptPolicy::Extend(text) if text.is_empty() => "extend system prompt".to_string(),
         PromptPolicy::Extend(text) => {
@@ -136,9 +161,12 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
     } else {
         ""
     };
+    let inherit_section = inherit_claude_config
+        .map(|value| format!("\n\nInherit Claude config\n{value}"))
+        .unwrap_or_default();
 
     format!(
-        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{restrictions}",
+        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nRuntime\n{runtime}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{inherit_section}{restrictions}",
         definition.description
     )
 }

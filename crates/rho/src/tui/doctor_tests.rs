@@ -58,6 +58,7 @@ fn ollama_diagnostics_show_no_auth_and_each_connection_state() {
             session_root: &directory.path().join("sessions"),
             herdr_enabled: false,
             herdr_socket_reachable: None,
+            claude: &ClaudeProbeSnapshot::not_refreshed_during_turn(),
             provider_health: &health,
         });
         assert_eq!(picker.layout, PickerLayout::Overlay);
@@ -92,7 +93,10 @@ fn ollama_diagnostics_show_no_auth_and_each_connection_state() {
                 }
                 sections
             });
-        assert_eq!(sections, ["AUTHENTICATION", "CACHE", "MISC"]);
+        assert_eq!(
+            sections,
+            ["AUTHENTICATION", "CACHE", "EXTERNAL RUNTIMES", "MISC"]
+        );
 
         let auth = picker
             .items

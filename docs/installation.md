@@ -79,4 +79,18 @@ If Cargo's bin directory is not on your `PATH`, add it before running the [inter
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+## Claude Code binary (optional)
+
+Agent definitions with `runtime: claude-cli` need the `claude` binary on `PATH`. Rho does not ship or install it. Install Claude Code from Anthropic's docs ([setup](https://code.claude.com/docs/en/setup)), for example:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+```
+
+Confirm with `claude --version`. Sign in from Rho with `/login claude-code` (terminal handoff; Claude Code stores the credential). Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in) and [Claude Code as a delegated runtime](/subagents#claude-code-as-a-delegated-runtime).
+
 Next, configure [authentication and models](/authentication-and-models). To embed Rho as a headless Rust library instead of installing the CLI, start with [SDK installation and support](/sdk/installation).

@@ -71,6 +71,7 @@ pub(crate) struct InteractiveRuntime {
     permission_mode: PermissionMode,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
+    agent: BoundAgent,
     agent_id: String,
     agent_fingerprint: String,
     pending_persistence_error: Option<anyhow::Error>,
@@ -114,7 +115,10 @@ impl InteractiveRuntime {
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
-        let mut capabilities = agent.capabilities().clone();
+        // Claude-cli agents bind no Rho host tools. Root interactive/automation
+        // still uses the Rho loop and parent config; Claude execution is via
+        // AgentExecutor for delegated runs.
+        let mut capabilities = agent.rho_capabilities().cloned().unwrap_or_default();
         if no_subagents {
             capabilities.remove(&ToolCapability::Agent);
             capabilities.remove(&ToolCapability::Agents);
@@ -238,6 +242,7 @@ impl InteractiveRuntime {
             permission_mode,
             approval_handler,
             approval_receiver,
+            agent,
             agent_id,
             agent_fingerprint,
             pending_persistence_error: None,
@@ -396,6 +401,10 @@ impl InteractiveRuntime {
 
     pub(crate) fn agent_identity(&self) -> (&str, &str) {
         (&self.agent_id, &self.agent_fingerprint)
+    }
+
+    pub(crate) fn bound_definition(&self) -> &crate::agent::AgentDefinition {
+        self.agent.definition()
     }
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {

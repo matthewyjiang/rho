@@ -1,0 +1,8 @@
+{"type":"prompt","data":"Say hello in one short sentence."}
+{"type":"notice","data":"claude system: init"}
+{"type":"notice","data":"claude limits: five hour, allowed, resets 14:30"}
+{"type":"step_started"}
+{"type":"assistant_text_delta","data":"Hello from Claude."}
+{"type":"usage","data":{"input_tokens":2,"output_tokens":6,"cache_read_tokens":100,"cache_write_tokens":50}}
+{"type":"context_usage","data":{"tokens":8,"context_window":200000,"source":"ProviderReported"}}
+{"type":"completed"}
