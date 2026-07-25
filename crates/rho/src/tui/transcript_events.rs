@@ -275,12 +275,16 @@ impl App {
             ViewModelEvent::Usage(usage) => {
                 let current_cost_source = self.usage.usage_cost_tracker.record_usage(&usage);
                 let model_metadata = self.model_metadata.as_ref();
-                let mut current_run_usage = self.usage.run_usage.apply_snapshot(usage, |snapshot| {
-                    usage_with_estimated_cost(snapshot, model_metadata)
-                });
-                let step_baseline = self.usage.run_usage.before_step().cloned().map(|usage| {
-                    usage_with_estimated_cost(usage, model_metadata)
-                });
+                let mut current_run_usage =
+                    self.usage.run_usage.apply_snapshot(usage, |snapshot| {
+                        usage_with_estimated_cost(snapshot, model_metadata)
+                    });
+                let step_baseline = self
+                    .usage
+                    .run_usage
+                    .before_step()
+                    .cloned()
+                    .map(|usage| usage_with_estimated_cost(usage, model_metadata));
                 let mut latest_usage = usage_difference(&current_run_usage, step_baseline.as_ref());
                 latest_usage = usage_with_estimated_cost(latest_usage, model_metadata);
                 if current_cost_source == CostSource::Estimated {

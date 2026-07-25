@@ -12,16 +12,15 @@ use ratatui::{
 
 use super::{
     activity, history_cache::HistoryLineSlice, App, CachedCodeBlock, CodeBlockCopyTarget,
-    ComposerMode, Entry, GoalStatus, HistoryScrollbar, LineFill, SessionHeaderCache,
-    StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION, RECOVERED_HISTORY_LINE_LIMIT,
+    ComposerMode, Entry, GoalStatus, HistoryScrollbar, LineFill, SessionHeaderCache, StreamKind,
+    Theme, HISTORY_SCROLLBAR_REVEAL_DURATION, RECOVERED_HISTORY_LINE_LIMIT,
 };
 use super::{
     highlight_selection,
     message_history::{recovered_history_tail, transcript_entries_from_messages},
     picker_overlay::picker_overlay_frame,
     render::{pad_display_line, padded_content_width},
-    render_copy_notice, session_header_lines, styled_line,
-    tool_entry_lines,
+    render_copy_notice, session_header_lines, styled_line, tool_entry_lines,
     tool_output_ui::is_tool_entry,
 };
 #[cfg(test)]

@@ -28,8 +28,8 @@ use super::super::{
     terminal_events::TerminalEvents,
     theme::Theme,
     usage_cost::{
-        format_token_count, format_usd, format_usage_token_summary,
-        resolved_usage_cost_usd_micros, AttemptAwareRunUsage,
+        format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
+        AttemptAwareRunUsage,
     },
     Entry, HistoryScroll, ReasoningEntry, ToolEntry, ToolEntryState, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
@@ -274,8 +274,7 @@ impl AttachmentApp {
                     self.scroll
                         .set_top_line(self.content_len, self.viewport_height, 0);
                     if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
-                        self.scroll
-                            .reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
+                        self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
                     }
                     true
                 }
@@ -322,8 +321,7 @@ impl AttachmentApp {
         self.scroll
             .scroll_by(self.content_len, self.viewport_height, delta);
         if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
-            self.scroll
-                .reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
+            self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
         }
     }
 
@@ -361,8 +359,11 @@ impl AttachmentApp {
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
         let metrics = status_metrics_line(status, agent_id, activity, self.run_usage.current());
-        let live_metrics =
-            live_metrics_line(self.context_usage.as_ref(), self.run_usage.current(), status);
+        let live_metrics = live_metrics_line(
+            self.context_usage.as_ref(),
+            self.run_usage.current(),
+            status,
+        );
         let header = vec![
             Line::from(vec![
                 Span::styled("rho", Theme::brand()),
@@ -488,9 +489,7 @@ fn live_metrics_line(
     }
     if let Some(usage_summary) = run_usage
         .and_then(format_usage_token_summary)
-        .or_else(|| {
-            status.and_then(|status| format_usage_token_summary(&run_status_usage(status)))
-        })
+        .or_else(|| status.and_then(|status| format_usage_token_summary(&run_status_usage(status))))
     {
         parts.push(usage_summary);
     }

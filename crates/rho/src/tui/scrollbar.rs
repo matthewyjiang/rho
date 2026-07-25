@@ -74,12 +74,7 @@ impl HistoryScrollChrome {
         self.hide();
     }
 
-    pub(super) fn scroll_by(
-        &mut self,
-        content_len: usize,
-        viewport_len: usize,
-        delta: isize,
-    ) {
+    pub(super) fn scroll_by(&mut self, content_len: usize, viewport_len: usize, delta: isize) {
         let max_start = content_len.saturating_sub(viewport_len);
         let next = self
             .visible_start(content_len, viewport_len)
@@ -115,11 +110,22 @@ impl HistoryScrollChrome {
         }
     }
 
-    pub(super) fn update_hover(&mut self, scrollbar: Option<HistoryScrollbar>, column: u16, row: u16) {
+    pub(super) fn update_hover(
+        &mut self,
+        scrollbar: Option<HistoryScrollbar>,
+        column: u16,
+        row: u16,
+    ) {
         self.hovered = scrollbar.is_some_and(|scrollbar| scrollbar.contains(column, row));
     }
 
-    pub(super) fn begin_scrollbar_drag(&mut self, scrollbar: HistoryScrollbar, row: u16, now: Instant, reveal_duration: Duration) {
+    pub(super) fn begin_scrollbar_drag(
+        &mut self,
+        scrollbar: HistoryScrollbar,
+        row: u16,
+        now: Instant,
+        reveal_duration: Duration,
+    ) {
         self.reveal(now, reveal_duration);
         let drag = scrollbar.begin_drag(row);
         self.drag = Some(drag);

@@ -34,13 +34,23 @@ impl App {
                 self.history.set_hovered_code_block_copy(None);
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                self.scroll_history_lines(width, height, now, -(super::HISTORY_MOUSE_SCROLL_LINES as isize));
+                self.scroll_history_lines(
+                    width,
+                    height,
+                    now,
+                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
+                );
             }
             MouseEventKind::ScrollDown => {
                 self.history.set_hovered_code_block_copy(None);
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                self.scroll_history_lines(width, height, now, super::HISTORY_MOUSE_SCROLL_LINES as isize);
+                self.scroll_history_lines(
+                    width,
+                    height,
+                    now,
+                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
+                );
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);

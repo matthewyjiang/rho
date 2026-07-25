@@ -159,9 +159,9 @@ use render::{
     labeled_divider_line, picker_lines, session_header_lines, styled_line, tool_entry_lines,
     truncate_one_line, LineFill,
 };
+use scrollbar::HistoryScrollbar;
 #[cfg(test)]
 use scrollbar::HistoryScrollbarDrag;
-use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
 use subagent_panel::SubagentPanel;
