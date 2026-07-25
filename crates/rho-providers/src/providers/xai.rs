@@ -17,6 +17,8 @@ use crate::{credentials::CredentialStore, provider_backend::stream_timeout::prov
 
 #[path = "xai/reasoning.rs"]
 mod reasoning;
+#[path = "xai/remote_compaction.rs"]
+mod remote_compaction;
 
 pub struct XaiProvider {
     client: reqwest::Client,
@@ -25,6 +27,13 @@ pub struct XaiProvider {
     auth: XaiAuthManager,
     api_base: String,
     reasoning: reasoning::XaiReasoningProfile,
+}
+
+/// Whether an xAI Responses body is a streaming create or unary compact call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum XaiResponsesMode {
+    Create,
+    Compact,
 }
 
 impl XaiProvider {
@@ -72,7 +81,13 @@ impl XaiProvider {
                       + Send),
         >,
     ) -> Result<reqwest::Response, ModelError> {
-        let body = build_xai_responses_body(self.provider, &self.model, &self.reasoning, request)?;
+        let body = build_xai_responses_body(
+            self.provider,
+            &self.model,
+            &self.reasoning,
+            request,
+            XaiResponsesMode::Create,
+        )?;
         let auth = self.auth.auth_material().await?;
         let response = self
             .send_request_with_token(&body, &auth.access_token)
@@ -156,40 +171,66 @@ impl XaiProvider {
             () = cancellation.cancelled() => Err(ModelError::Interrupted),
         }
     }
+
+    async fn native_compact_turn(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<rho_sdk::provider::NativeCompactionResponse, ModelError> {
+        Ok(remote_compaction::compact_with_http(
+            &self.client,
+            &self.api_base,
+            &self.auth,
+            self.provider,
+            &self.model,
+            &self.reasoning,
+            request,
+        )
+        .await)
+    }
 }
 
-crate::impl_sdk_model_provider!(XaiProvider);
+crate::impl_sdk_model_provider!(XaiProvider, native_compact);
 
 fn build_xai_responses_body(
     provider: &'static str,
     model: &str,
     reasoning: &reasoning::XaiReasoningProfile,
     request: ModelRequest<'_>,
+    mode: XaiResponsesMode,
 ) -> Result<Value, ModelError> {
     let reasoning_effort = reasoning.effort(request.reasoning_level);
     let mut instructions = Vec::new();
     let target = crate::model::ModelIdentity::new(provider, "openai-responses", model);
     let input =
         codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(&target))?;
-    let tools = request
-        .tools
-        .iter()
-        .cloned()
-        .map(to_responses_lite_tool)
-        .collect::<Vec<_>>();
     let mut body = json!({
         "model": model,
         "input": input,
         "store": false,
-        "stream": true,
     });
+    match mode {
+        XaiResponsesMode::Create => {
+            body["stream"] = json!(true);
+            // Preserve encrypted reasoning across turns so later server-side
+            // compaction can fold prior thinking into the opaque artifact.
+            body["include"] = json!(["reasoning.encrypted_content"]);
+            let tools = request
+                .tools
+                .iter()
+                .cloned()
+                .map(to_responses_lite_tool)
+                .collect::<Vec<_>>();
+            if !tools.is_empty() {
+                body["tools"] = json!(tools);
+                body["tool_choice"] = json!("auto");
+            }
+        }
+        // Compact is unary and never advertises tools.
+        XaiResponsesMode::Compact => {}
+    }
     let instructions = instructions.join("\n\n");
     if !instructions.is_empty() {
         body["instructions"] = json!(instructions);
-    }
-    if !tools.is_empty() {
-        body["tools"] = json!(tools);
-        body["tool_choice"] = json!("auto");
     }
     if let Some(prompt_cache_key) = request.prompt_cache_key {
         body["prompt_cache_key"] = json!(prompt_cache_key);
