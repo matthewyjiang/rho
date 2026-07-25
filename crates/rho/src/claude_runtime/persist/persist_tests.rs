@@ -800,3 +800,88 @@ async fn stop_path_publishes_exactly_one_terminal_stopped_on_watch() {
         .iter()
         .any(|event| matches!(event, AttachmentEvent::Cancelled)));
 }
+
+fn sample_rate_limit(status: &str) -> crate::claude_runtime::stream::RateLimitInfo {
+    crate::claude_runtime::stream::RateLimitInfo {
+        status: Some(status.into()),
+        rate_limit_type: Some("five_hour".into()),
+        resets_at: Some(1_800),
+        overage_status: None,
+        overage_resets_at: None,
+        is_using_overage: Some(false),
+    }
+}
+
+/// Rate-limit observations ride a coalescing slot, not the bounded transcript
+/// queue, so saturation must not drop the latest observation before barrier.
+#[tokio::test]
+async fn rate_limit_survives_queue_saturation_and_flushes_on_barrier() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let rate_path = dir.path().join("claude-rate-limit.json");
+    let stall = WriterStall::new_stalled();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let hooks = PersistHooks {
+        stall: Some(Arc::clone(&stall)),
+        log: Arc::clone(&log),
+        rate_limit_path: Some(rate_path.clone()),
+        ..PersistHooks::default()
+    };
+    let mut sink =
+        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+
+    // Fill the bounded queue with attachment events while the worker is stalled.
+    for index in 0..2_000 {
+        let _ = sink.apply_effect(StreamEffect::Attachment(
+            AttachmentEvent::AssistantTextDelta(format!("chunk {index}")),
+        ));
+    }
+    // Observation arrives after saturation; slot must retain it through barrier.
+    sink.apply_effect(StreamEffect::RateLimit(sample_rate_limit("allowed")))
+        .unwrap();
+    sink.apply_effect(StreamEffect::RateLimit(sample_rate_limit("latest")))
+        .unwrap();
+
+    stall.release();
+    sink.finalize_success_from_stream(&success_terminal()).await;
+    sink.shutdown().await;
+
+    let loaded = crate::claude_runtime::rate_limit::load_at(&rate_path).expect("rate limit");
+    assert_eq!(loaded.info.status.as_deref(), Some("latest"));
+
+    let log = log.lock().unwrap().clone();
+    assert!(
+        log.iter()
+            .any(|entry| matches!(entry, PersistLogEntry::RateLimit)),
+        "worker must flush rate limit: {log:?}"
+    );
+    assert!(
+        log.iter()
+            .any(|entry| matches!(entry, PersistLogEntry::BarrierDone)),
+        "barrier must run: {log:?}"
+    );
+}
+
+#[tokio::test]
+async fn rate_limit_flushes_on_abort_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let rate_path = dir.path().join("claude-rate-limit.json");
+    let stall = WriterStall::new_stalled();
+    let hooks = PersistHooks {
+        stall: Some(Arc::clone(&stall)),
+        rate_limit_path: Some(rate_path.clone()),
+        ..PersistHooks::default()
+    };
+    let mut sink =
+        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+
+    sink.apply_effect(StreamEffect::RateLimit(sample_rate_limit("on-abort")))
+        .unwrap();
+    sink.abort_detached();
+    stall.release();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let loaded = crate::claude_runtime::rate_limit::load_at(&rate_path).expect("rate limit");
+    assert_eq!(loaded.info.status.as_deref(), Some("on-abort"));
+}

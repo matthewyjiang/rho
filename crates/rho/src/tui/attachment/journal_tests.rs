@@ -1,23 +1,17 @@
-use std::path::PathBuf;
-
 use tempfile::TempDir;
 
 use super::*;
 
 #[test]
-fn attachment_stream_round_trips_view_events() {
+fn attachment_stream_writes_and_reads_events() {
     let directory = TempDir::new().unwrap();
     let result_path = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut writer = AttachmentWriter::new(
-        &result_path,
-        PathBuf::from("/workspace"),
-        "inspect the code",
-    )
-    .unwrap();
+    let mut writer = AttachmentWriter::create(&result_path).unwrap();
     writer
-        .on_event(&rho_sdk::RunEvent::AssistantTextDelta {
-            text: "found it".into(),
-        })
+        .write_event(&AttachmentEvent::Prompt("inspect the code".into()))
+        .unwrap();
+    writer
+        .write_event(&AttachmentEvent::AssistantTextDelta("found it".into()))
         .unwrap();
     drop(writer);
 
@@ -33,51 +27,6 @@ fn attachment_stream_round_trips_view_events() {
         AttachmentEvent::AssistantTextDelta(text) if text == "found it"
     ));
     assert!(reader.read_new().unwrap().is_empty());
-}
-
-#[test]
-fn attachment_stream_ignores_pending_input_acknowledgements() {
-    assert!(attachment_update(ViewModelEvent::SteeringApplied(Vec::new())).is_none());
-}
-
-#[test]
-fn attachment_stream_preserves_compaction_tool_blocks() {
-    assert!(matches!(
-        attachment_update(ViewModelEvent::CompactionStarted),
-        Some(AttachmentEvent::ToolStarted { display_lines })
-            if display_lines == ["compact".to_string(), "shrinking context…".to_string()]
-    ));
-    assert!(matches!(
-        attachment_update(ViewModelEvent::CompactionFinished {
-            outcome: super::super::super::compaction_display::CompactionUiOutcome::Completed(
-                super::super::super::compaction_display::CompactionDisplayFacts {
-                    previous_messages: 12,
-                    current_messages: 4,
-                    previous_tokens: 12_400,
-                    current_tokens: 3_100,
-                    cost_usd_micros: None,
-                },
-            ),
-        }),
-        Some(AttachmentEvent::ToolFinished {
-            ok: true,
-            display_lines,
-            ..
-        }) if display_lines.iter().any(|line| line.contains("12.4K → 3.1K tokens"))
-            && display_lines.iter().any(|line| line.contains("12 → 4 messages"))
-    ));
-    assert!(matches!(
-        attachment_update(ViewModelEvent::CompactionFinished {
-            outcome: super::super::super::compaction_display::CompactionUiOutcome::Failed {
-                detail: "boom".into(),
-            },
-        }),
-        Some(AttachmentEvent::ToolFinished {
-            ok: false,
-            display_lines,
-            ..
-        }) if display_lines.iter().any(|line| line == "failed")
-    ));
 }
 
 #[test]

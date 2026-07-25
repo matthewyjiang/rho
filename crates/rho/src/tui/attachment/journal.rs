@@ -9,11 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use {crate::subagent, rho_tools::tool::ToolDisplayStyle};
 
-use super::super::{
-    compaction_display::running_display_lines,
-    event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
-};
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub(crate) enum AttachmentEvent {
@@ -41,34 +36,24 @@ pub(crate) enum AttachmentEvent {
     Failed(String),
 }
 
-/// Persists the same presentation events consumed by the interactive TUI so a
-/// separate `rho attach` process can render a subagent without controlling it.
+/// Generic attachment journal mechanics for `rho attach`.
 ///
-/// File mechanics are generic. The Rho SDK adapter is optional so the Claude
-/// runtime can write the same `AttachmentEvent` stream without SDK events.
+/// Owns private file creation, `AttachmentEvent` serialization, and per-write
+/// flush. Runtime-specific translation (SDK events, Claude stream-json) stays
+/// outside this type so callers cannot mix event vocabularies by accident.
 pub(crate) struct AttachmentWriter {
     file: File,
-    adapter: Option<SdkEventAdapter>,
 }
 
 impl AttachmentWriter {
-    pub(crate) fn new(result_path: &Path, cwd: PathBuf, prompt: &str) -> anyhow::Result<Self> {
-        let mut writer = Self::open(result_path)?;
-        writer.adapter = Some(SdkEventAdapter::new(cwd));
-        writer.write_event(&AttachmentEvent::Prompt(prompt.to_string()))?;
-        Ok(writer)
-    }
-
-    /// Open the attachment journal without an SDK adapter (Claude runtime).
-    pub(crate) fn open(result_path: &Path) -> anyhow::Result<Self> {
+    /// Open `events.jsonl` beside `result_path` as a private file.
+    pub(crate) fn create(result_path: &Path) -> anyhow::Result<Self> {
         let path = result_path.with_file_name(subagent::ATTACHMENT_FILE_NAME);
         let file = subagent::create_private_file(&path)?;
-        Ok(Self {
-            file,
-            adapter: None,
-        })
+        Ok(Self { file })
     }
 
+    /// Serialize one presentation event and flush so attach readers see it.
     pub(crate) fn write_event(&mut self, event: &AttachmentEvent) -> anyhow::Result<()> {
         let mut line = serde_json::to_vec(event)?;
         line.push(b'\n');
@@ -76,71 +61,8 @@ impl AttachmentWriter {
         self.file.flush()?;
         Ok(())
     }
-
-    pub(crate) fn on_event(&mut self, event: &rho_sdk::RunEvent) -> anyhow::Result<()> {
-        let Some(adapter) = self.adapter.as_mut() else {
-            anyhow::bail!("attachment writer has no SDK adapter");
-        };
-        for view_event in adapter.translate(event.clone()) {
-            let attachment = match view_event {
-                ViewEvent::Update(update) => attachment_update(update),
-                ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
-                ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
-                    "input requested but unavailable in a delegated agent: {}",
-                    request.title()
-                ))),
-                ViewEvent::Completed => Some(AttachmentEvent::Completed),
-                ViewEvent::Cancelled => Some(AttachmentEvent::Cancelled),
-                ViewEvent::Failed(message) => Some(AttachmentEvent::Failed(message)),
-            };
-            if let Some(attachment) = attachment {
-                self.write_event(&attachment)?;
-            }
-        }
-        Ok(())
-    }
 }
 
-fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
-    match update {
-        ViewModelEvent::OutputDelta(text) => Some(AttachmentEvent::AssistantTextDelta(text)),
-        ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
-        ViewModelEvent::ToolStarted { display_lines, .. }
-        | ViewModelEvent::ToolCallUpdated { display_lines, .. } => {
-            Some(AttachmentEvent::ToolStarted { display_lines })
-        }
-        ViewModelEvent::ToolUpdated { display_lines, .. } => {
-            Some(AttachmentEvent::ToolUpdated { display_lines })
-        }
-        ViewModelEvent::ToolFinished {
-            ok,
-            display_style,
-            display_lines,
-            ..
-        } => Some(AttachmentEvent::ToolFinished {
-            ok,
-            display_style,
-            display_lines,
-        }),
-        ViewModelEvent::RunStarted => None,
-        ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
-        // This acknowledgement reconciles the interactive TUI's pending-input
-        // controls. Read-only attachments have no corresponding state.
-        ViewModelEvent::SteeringApplied(_) => None,
-        ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
-        ViewModelEvent::ProviderRetry => None,
-        ViewModelEvent::CompactionStarted => Some(AttachmentEvent::ToolStarted {
-            display_lines: running_display_lines(),
-        }),
-        ViewModelEvent::CompactionFinished { outcome } => Some(AttachmentEvent::ToolFinished {
-            ok: outcome.ok(),
-            display_style: ToolDisplayStyle::default_tool(),
-            display_lines: outcome.display_lines(),
-        }),
-        ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
-        ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
-    }
-}
 pub(super) struct AttachmentReader {
     path: PathBuf,
     file: Option<File>,

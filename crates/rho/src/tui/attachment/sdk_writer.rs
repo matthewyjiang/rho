@@ -1,0 +1,95 @@
+//! Rho runtime attachment recording: SDK events to journal lines.
+//!
+//! Keeps [`super::journal::AttachmentWriter`] free of SDK types. Only the Rho
+//! run path constructs this wrapper.
+
+use std::path::{Path, PathBuf};
+
+use super::super::{
+    compaction_display::running_display_lines,
+    event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
+};
+use super::journal::{AttachmentEvent, AttachmentWriter};
+use rho_tools::tool::ToolDisplayStyle;
+
+/// Records Rho SDK run events into the generic attachment journal.
+pub(crate) struct SdkAttachmentWriter {
+    writer: AttachmentWriter,
+    adapter: SdkEventAdapter,
+}
+
+impl SdkAttachmentWriter {
+    pub(crate) fn new(result_path: &Path, cwd: PathBuf, prompt: &str) -> anyhow::Result<Self> {
+        let mut writer = AttachmentWriter::create(result_path)?;
+        writer.write_event(&AttachmentEvent::Prompt(prompt.to_string()))?;
+        Ok(Self {
+            writer,
+            adapter: SdkEventAdapter::new(cwd),
+        })
+    }
+
+    pub(crate) fn on_event(&mut self, event: &rho_sdk::RunEvent) -> anyhow::Result<()> {
+        for view_event in self.adapter.translate(event.clone()) {
+            let attachment = match view_event {
+                ViewEvent::Update(update) => attachment_update(update),
+                ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
+                ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
+                    "input requested but unavailable in a delegated agent: {}",
+                    request.title()
+                ))),
+                ViewEvent::Completed => Some(AttachmentEvent::Completed),
+                ViewEvent::Cancelled => Some(AttachmentEvent::Cancelled),
+                ViewEvent::Failed(message) => Some(AttachmentEvent::Failed(message)),
+            };
+            if let Some(attachment) = attachment {
+                self.writer.write_event(&attachment)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
+    match update {
+        ViewModelEvent::OutputDelta(text) => Some(AttachmentEvent::AssistantTextDelta(text)),
+        ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
+        ViewModelEvent::ToolStarted { display_lines, .. }
+        | ViewModelEvent::ToolCallUpdated { display_lines, .. } => {
+            Some(AttachmentEvent::ToolStarted { display_lines })
+        }
+        ViewModelEvent::ToolUpdated { display_lines, .. } => {
+            Some(AttachmentEvent::ToolUpdated { display_lines })
+        }
+        ViewModelEvent::ToolFinished {
+            ok,
+            display_style,
+            display_lines,
+            ..
+        } => Some(AttachmentEvent::ToolFinished {
+            ok,
+            display_style,
+            display_lines,
+        }),
+        ViewModelEvent::RunStarted => None,
+        ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
+        // This acknowledgement reconciles the interactive TUI's pending-input
+        // controls. Read-only attachments have no corresponding state.
+        ViewModelEvent::SteeringApplied(_) => None,
+        ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
+        ViewModelEvent::ProviderRetry => None,
+        ViewModelEvent::CompactionStarted => Some(AttachmentEvent::ToolStarted {
+            display_lines: running_display_lines(),
+        }),
+        ViewModelEvent::CompactionFinished { outcome } => Some(AttachmentEvent::ToolFinished {
+            ok: outcome.ok(),
+            display_style: ToolDisplayStyle::default_tool(),
+            display_lines: outcome.display_lines(),
+        }),
+        ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
+        ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
+    }
+}
+
+#[cfg(test)]
+#[path = "sdk_writer_tests.rs"]
+mod tests;

@@ -1,20 +1,8 @@
-//! Blocking persistence worker for Claude CLI session artifacts.
-//!
-//! Owns `result.json`, attachment JSONL, and rate-limit writes on a dedicated
-//! OS thread so the stdout drain task never blocks on disk. Stream events
-//! enqueue without awaits; the terminal barrier flushes prior work, acks the
-//! final status, and only then publishes the single terminal watch update.
+//! StatusSink orchestration for one Claude CLI run.
 
 use std::{
-    collections::VecDeque,
     sync::{mpsc as std_mpsc, Arc, Mutex},
     thread::JoinHandle,
-};
-
-#[cfg(test)]
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Condvar,
 };
 
 use tokio::sync::{oneshot, watch};
@@ -24,395 +12,18 @@ use crate::{
     tui::{AttachmentEvent, AttachmentWriter},
 };
 
-use super::{
-    rate_limit,
+use super::super::{
+    rate_limit::{RateLimitObservation, RateLimitSlot},
     stream::{self, StreamEffect, TerminalResult},
 };
+#[cfg(test)]
+use super::worker::PersistHooks;
+use super::worker::{
+    demote_completed_attachment, demote_status_for_sticky_error, spawn_persist_worker, BarrierAck,
+    ClaudeRunIdentity, PersistCommand, PersistFeedback,
+};
 
-const PERSISTENCE_QUEUE_CAPACITY: usize = 64;
 const MAX_SINK_TEXT_BYTES: usize = 256 * 1024;
-
-/// Test hooks for stalling or failing durable writes without disk sleeps.
-#[cfg(test)]
-#[derive(Clone, Default)]
-pub(crate) struct PersistHooks {
-    pub(crate) stall: Option<Arc<WriterStall>>,
-    pub(crate) fail_status_writes: Arc<AtomicUsize>,
-    pub(crate) fail_attachment_writes: Arc<AtomicUsize>,
-    pub(crate) log: Arc<Mutex<Vec<PersistLogEntry>>>,
-}
-
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct WriterStall {
-    lock: Mutex<bool>,
-    cv: Condvar,
-}
-
-#[cfg(test)]
-impl WriterStall {
-    pub(crate) fn new_stalled() -> Arc<Self> {
-        Arc::new(Self {
-            lock: Mutex::new(true),
-            cv: Condvar::new(),
-        })
-    }
-
-    pub(crate) fn release(&self) {
-        let mut stalled = self
-            .lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *stalled = false;
-        self.cv.notify_all();
-    }
-
-    fn wait_if_stalled(&self) {
-        let mut stalled = self
-            .lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while *stalled {
-            stalled = self
-                .cv
-                .wait(stalled)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
-    }
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PersistLogEntry {
-    Status { force: bool, state: RunState },
-    Attachment(AttachmentKind),
-    RateLimit,
-    BarrierDone,
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AttachmentKind {
-    Prompt,
-    AssistantTextDelta,
-    Other,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
-#[cfg(test)]
-impl AttachmentKind {
-    fn from_event(event: &AttachmentEvent) -> Self {
-        match event {
-            AttachmentEvent::Prompt(_) => Self::Prompt,
-            AttachmentEvent::AssistantTextDelta(_) => Self::AssistantTextDelta,
-            AttachmentEvent::Completed => Self::Completed,
-            AttachmentEvent::Failed(_) => Self::Failed,
-            AttachmentEvent::Cancelled => Self::Cancelled,
-            _ => Self::Other,
-        }
-    }
-}
-
-enum PersistCommand {
-    Status {
-        status: RunStatus,
-        force: bool,
-    },
-    Attachment(AttachmentEvent),
-    RateLimit(stream::RateLimitInfo),
-    /// Final ordered write: status, optional terminal attachment, then stop.
-    Barrier {
-        status: RunStatus,
-        terminal_attachment: Option<AttachmentEvent>,
-        ack: oneshot::Sender<BarrierAck>,
-    },
-    /// Stop without a terminal barrier (session abort/drop).
-    Abort,
-}
-
-/// Final status + sticky error after ordered barrier flush.
-struct BarrierAck {
-    status: RunStatus,
-    first_status_error: Option<String>,
-}
-
-#[derive(Default)]
-struct PersistFeedback {
-    first_status_error: Option<String>,
-    attachment_error: Option<String>,
-}
-
-struct PersistWorker {
-    path: std::path::PathBuf,
-    attachment: Option<AttachmentWriter>,
-    last_written: Option<RunStatus>,
-    feedback: Arc<Mutex<PersistFeedback>>,
-    #[cfg(test)]
-    hooks: PersistHooks,
-}
-
-impl PersistWorker {
-    fn run(mut self, rx: std_mpsc::Receiver<PersistCommand>) {
-        let mut pending = VecDeque::new();
-        loop {
-            let next = match pending.pop_front() {
-                Some(command) => command,
-                None => match rx.recv() {
-                    Ok(command) => command,
-                    Err(_) => break,
-                },
-            };
-            let command = coalesce_nonterminal_status(next, &rx, &mut pending);
-            match command {
-                PersistCommand::Status { status, force } => {
-                    self.perform_status(status, force);
-                }
-                PersistCommand::Attachment(event) => {
-                    self.perform_attachment(event);
-                }
-                PersistCommand::RateLimit(info) => {
-                    #[cfg(test)]
-                    {
-                        self.note_log(PersistLogEntry::RateLimit);
-                        self.wait_hook();
-                    }
-                    // Rate-limit failures are non-fatal.
-                    let _ = rate_limit::store(info);
-                }
-                PersistCommand::Barrier {
-                    status,
-                    terminal_attachment,
-                    ack,
-                } => {
-                    // Sticky first, then terminal write; re-resolve if that write fails.
-                    let (mut status, mut terminal_attachment) =
-                        self.resolve_barrier_terminal(status, terminal_attachment);
-                    self.perform_status(status.clone(), /*force*/ true);
-                    let resolved = self.resolve_barrier_terminal(status, terminal_attachment);
-                    status = resolved.0;
-                    terminal_attachment = resolved.1;
-                    if matches!(status.state, RunState::Error | RunState::Stopped)
-                        && self.last_written.as_ref().is_none_or(|last| {
-                            last.state != status.state || last.error != status.error
-                        })
-                    {
-                        self.perform_status(status.clone(), /*force*/ true);
-                    }
-                    if let Some(event) = terminal_attachment {
-                        self.perform_attachment(event);
-                    }
-                    #[cfg(test)]
-                    self.note_log(PersistLogEntry::BarrierDone);
-                    let first_status_error = self
-                        .feedback
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .first_status_error
-                        .clone();
-                    let _ = ack.send(BarrierAck {
-                        status,
-                        first_status_error,
-                    });
-                    break;
-                }
-                PersistCommand::Abort => break,
-            }
-        }
-    }
-
-    fn perform_status(&mut self, status: RunStatus, force: bool) {
-        #[cfg(test)]
-        {
-            self.note_log(PersistLogEntry::Status {
-                force,
-                state: status.state,
-            });
-            self.wait_hook();
-        }
-        // Worker-local monotonicity mirrors `subagent::write_status`: never
-        // demote an already-terminal snapshot with a queued nonterminal update.
-        if let Some(last) = &self.last_written {
-            if last.state.is_terminal() && !status.state.is_terminal() {
-                return;
-            }
-        }
-        if !force && self.last_written.as_ref() == Some(&status) {
-            return;
-        }
-        #[cfg(test)]
-        if self.hooks.fail_status_writes.load(Ordering::SeqCst) > 0 {
-            self.hooks.fail_status_writes.fetch_sub(1, Ordering::SeqCst);
-            self.record_status_error("injected status write failure".into());
-            return;
-        }
-        match subagent::write_status(&self.path, &status) {
-            Ok(()) => {
-                self.last_written = Some(status);
-            }
-            Err(error) => {
-                self.record_status_error(error.to_string());
-            }
-        }
-    }
-
-    /// Demote Ok/Completed when sticky status writes failed. Disk is caller's job.
-    fn resolve_barrier_terminal(
-        &mut self,
-        mut status: RunStatus,
-        mut terminal_attachment: Option<AttachmentEvent>,
-    ) -> (RunStatus, Option<AttachmentEvent>) {
-        let Some(error) = self
-            .feedback
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .first_status_error
-            .clone()
-        else {
-            return (status, terminal_attachment);
-        };
-        let detail = demote_status_for_sticky_error(&mut status, &error);
-        demote_completed_attachment(
-            &mut terminal_attachment,
-            status.error.clone().unwrap_or(detail),
-        );
-        (status, terminal_attachment)
-    }
-
-    fn perform_attachment(&mut self, event: AttachmentEvent) {
-        #[cfg(test)]
-        {
-            self.note_log(PersistLogEntry::Attachment(AttachmentKind::from_event(
-                &event,
-            )));
-            self.wait_hook();
-        }
-        let Some(writer) = self.attachment.as_mut() else {
-            return;
-        };
-        #[cfg(test)]
-        if self.hooks.fail_attachment_writes.load(Ordering::SeqCst) > 0 {
-            self.hooks
-                .fail_attachment_writes
-                .fetch_sub(1, Ordering::SeqCst);
-            self.attachment = None;
-            self.record_attachment_error("injected attachment write failure".into());
-            return;
-        }
-        match writer.write_event(&event) {
-            Ok(()) => {}
-            Err(error) => {
-                self.attachment = None;
-                self.record_attachment_error(error.to_string());
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn wait_hook(&self) {
-        if let Some(stall) = &self.hooks.stall {
-            stall.wait_if_stalled();
-        }
-    }
-
-    #[cfg(test)]
-    fn note_log(&self, entry: PersistLogEntry) {
-        if let Ok(mut log) = self.hooks.log.lock() {
-            log.push(entry);
-        }
-    }
-
-    fn record_status_error(&self, error: String) {
-        let mut feedback = self
-            .feedback
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if feedback.first_status_error.is_none() {
-            feedback.first_status_error = Some(error);
-        }
-    }
-
-    fn record_attachment_error(&self, error: String) {
-        let mut feedback = self
-            .feedback
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if feedback.attachment_error.is_none() {
-            feedback.attachment_error = Some(format!("could not record attach output: {error}"));
-        }
-    }
-}
-
-fn coalesce_nonterminal_status(
-    first: PersistCommand,
-    rx: &std_mpsc::Receiver<PersistCommand>,
-    pending: &mut VecDeque<PersistCommand>,
-) -> PersistCommand {
-    let PersistCommand::Status {
-        mut status,
-        force: false,
-    } = first
-    else {
-        return first;
-    };
-    loop {
-        match rx.try_recv() {
-            Ok(PersistCommand::Status {
-                status: next,
-                force: false,
-            }) => {
-                status = next;
-            }
-            Ok(other) => {
-                pending.push_back(other);
-                break;
-            }
-            Err(std_mpsc::TryRecvError::Empty | std_mpsc::TryRecvError::Disconnected) => break,
-        }
-    }
-    PersistCommand::Status {
-        status,
-        force: false,
-    }
-}
-
-fn spawn_persist_worker(
-    path: std::path::PathBuf,
-    attachment: Option<AttachmentWriter>,
-    last_written: Option<RunStatus>,
-    #[cfg(test)] hooks: PersistHooks,
-) -> (
-    std_mpsc::SyncSender<PersistCommand>,
-    Arc<Mutex<PersistFeedback>>,
-    JoinHandle<()>,
-) {
-    let (tx, rx) = std_mpsc::sync_channel(PERSISTENCE_QUEUE_CAPACITY);
-    let feedback = Arc::new(Mutex::new(PersistFeedback::default()));
-    let feedback_worker = Arc::clone(&feedback);
-    let join = std::thread::Builder::new()
-        .name("rho-claude-persist".into())
-        .spawn(move || {
-            PersistWorker {
-                path,
-                attachment,
-                last_written,
-                feedback: feedback_worker,
-                #[cfg(test)]
-                hooks,
-            }
-            .run(rx);
-        })
-        .expect("spawn claude persist worker");
-    (tx, feedback, join)
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ClaudeRunIdentity {
-    pub(crate) agent_id: String,
-    pub(crate) agent_fingerprint: String,
-    pub(crate) model: Option<String>,
-}
 
 /// In-memory + durable sink for one Claude CLI run.
 pub(crate) struct StatusSink {
@@ -422,6 +33,7 @@ pub(crate) struct StatusSink {
     persist_tx: Option<std_mpsc::SyncSender<PersistCommand>>,
     persist_join: Option<JoinHandle<()>>,
     feedback: Arc<Mutex<PersistFeedback>>,
+    rate_limit_slot: Arc<RateLimitSlot>,
     attachment_enabled: bool,
     first_status_error: Option<String>,
     closed: bool,
@@ -478,7 +90,7 @@ impl StatusSink {
 
         // Opening the attachment journal is local startup work. Stream drain
         // later stays free of sync file I/O on the async task.
-        let (attachment, attachment_error) = match AttachmentWriter::open(&path) {
+        let (attachment, attachment_error) = match AttachmentWriter::create(&path) {
             Ok(mut writer) => {
                 match writer.write_event(&AttachmentEvent::Prompt(prompt.to_string())) {
                     Ok(()) => (Some(writer), None),
@@ -502,10 +114,12 @@ impl StatusSink {
             tx.send_replace(status.clone());
         }
 
+        let rate_limit_slot = Arc::new(RateLimitSlot::new());
         let (persist_tx, feedback, persist_join) = spawn_persist_worker(
             path.clone(),
             attachment,
             Some(status.clone()),
+            Arc::clone(&rate_limit_slot),
             #[cfg(test)]
             hooks,
         );
@@ -517,6 +131,7 @@ impl StatusSink {
             persist_tx: Some(persist_tx),
             persist_join: Some(persist_join),
             feedback,
+            rate_limit_slot,
             attachment_enabled,
             first_status_error: None,
             closed: false,
@@ -640,11 +255,16 @@ impl StatusSink {
         if self.closed {
             return;
         }
+        // Capture order at the stream effect boundary, outside the bounded
+        // transcript queue, so saturation cannot drop the observation.
+        let observation = RateLimitObservation::capture(info);
+        self.rate_limit_slot.publish(observation);
         let Some(tx) = self.persist_tx.as_ref() else {
             return;
         };
-        // Best-effort: drop when full; latest observation is enough for /limits.
-        let _ = tx.try_send(PersistCommand::RateLimit(info));
+        // Wake the worker when possible. If the queue is full the slot still
+        // holds the latest value for the next wake or terminal barrier.
+        let _ = tx.try_send(PersistCommand::FlushRateLimit);
     }
 
     pub(crate) fn apply_effect(&mut self, effect: StreamEffect) -> Result<(), String> {
@@ -802,6 +422,19 @@ impl StatusSink {
         if !send_ok {
             self.note_send_failure("status");
             self.apply_local_sticky_demotion();
+            // Best-effort: still persist the latest rate-limit observation.
+            // Tests inject an explicit path through hooks on the worker; without
+            // a live worker, skip default home writes under cfg(test).
+            #[cfg(not(test))]
+            if let Some(observation) = self.rate_limit_slot.take() {
+                if let Ok(path) = super::super::rate_limit::default_state_path() {
+                    let _ = super::super::rate_limit::store_observation(&path, observation);
+                }
+            }
+            #[cfg(test)]
+            {
+                let _ = self.rate_limit_slot.take();
+            }
             self.emergency_write_status().await;
             self.join_worker().await;
             self.publish_watch();
@@ -921,34 +554,6 @@ impl Drop for StatusSink {
     }
 }
 
-fn demote_status_for_sticky_error(status: &mut RunStatus, error: &str) -> String {
-    let detail = format!("claude code: status persistence failed: {error}");
-    match status.state {
-        RunState::Starting | RunState::Running | RunState::Ok => {
-            status.state = RunState::Error;
-            status.last_activity = Some("failed".into());
-            if status.error.is_none() {
-                status.error = Some(detail.clone());
-            }
-        }
-        RunState::Error | RunState::Stopped => {
-            if status.error.is_none() {
-                status.error = Some(detail.clone());
-            }
-        }
-    }
-    detail
-}
-
-fn demote_completed_attachment(
-    terminal_attachment: &mut Option<AttachmentEvent>,
-    failed_detail: String,
-) {
-    if matches!(terminal_attachment, Some(AttachmentEvent::Completed)) {
-        *terminal_attachment = Some(AttachmentEvent::Failed(failed_detail));
-    }
-}
-
 fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
     if let Some(session_id) = terminal.session_id.clone() {
         status.claude_session_id = Some(session_id);
@@ -985,7 +590,3 @@ fn bound_text(text: String) -> String {
     }
     format!("{}…", &text[..cut])
 }
-
-#[cfg(test)]
-#[path = "persist_tests.rs"]
-mod tests;

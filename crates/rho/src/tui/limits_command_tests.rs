@@ -202,6 +202,7 @@ fn formats_provider_names_for_empty_window_notice() {
 fn sample_claude(observed_at_unix: i64) -> crate::claude_runtime::rate_limit::ObservedRateLimit {
     crate::claude_runtime::rate_limit::ObservedRateLimit {
         observed_at_unix,
+        observed_seq: 1,
         info: crate::claude_runtime::stream::RateLimitInfo {
             status: Some("allowed".into()),
             rate_limit_type: Some("five_hour".into()),

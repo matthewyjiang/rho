@@ -22,7 +22,7 @@ use {
         agent::BackgroundSubagents,
         sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
     },
-    crate::tui::AttachmentWriter,
+    crate::tui::SdkAttachmentWriter,
     rho_providers::providers::build_automation_provider,
 };
 
@@ -752,7 +752,7 @@ pub(crate) struct RunArtifactIdentity {
 pub(crate) struct RunReporter {
     path: PathBuf,
     status: RunStatus,
-    attachment: Option<AttachmentWriter>,
+    attachment: Option<SdkAttachmentWriter>,
     stream_output: bool,
     status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
     last_write: std::time::Instant,
@@ -783,7 +783,7 @@ impl RunReporter {
         };
         // Run boundary: deliberately replace any prior terminal result.json.
         subagent::initialize_status(&path, &status)?;
-        let attachment = match AttachmentWriter::new(&path, cwd, prompt) {
+        let attachment = match SdkAttachmentWriter::new(&path, cwd, prompt) {
             Ok(attachment) => Some(attachment),
             Err(error) => {
                 let mut status = status;
