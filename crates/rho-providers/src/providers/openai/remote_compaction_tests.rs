@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::ToolSpec;
+use crate::model::{Message, ToolSpec};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 

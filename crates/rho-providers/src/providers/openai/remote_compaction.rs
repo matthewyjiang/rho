@@ -7,8 +7,10 @@
 
 use serde_json::Value;
 
-use crate::model::{Message, ModelError, ModelRequest, ModelUsage};
-use crate::protocol::openai_responses::parse_compact_response;
+use crate::model::{ModelError, ModelRequest, ModelUsage};
+use crate::protocol::openai_responses::{
+    native_compact_failure, native_compact_from_response_body, retained_system_messages,
+};
 
 use super::auth::Auth;
 use super::codex_request::{build_responses_compact_body, ResponsesProfile};
@@ -41,16 +43,6 @@ fn native_failed_attempts(
         .collect()
 }
 
-fn failure_response(
-    error: ModelError,
-    failed_attempts: Vec<rho_sdk::provider::NativeCompactionFailedAttempt>,
-) -> rho_sdk::provider::NativeCompactionResponse {
-    rho_sdk::provider::NativeCompactionResponse::failure(
-        crate::providers::sdk_contract::provider_error_from_model_error(error),
-    )
-    .with_failed_attempts(failed_attempts)
-}
-
 /// Runs native compaction through the shared Responses HTTP transport.
 pub(super) async fn compact_with_http(
     auth: &Auth,
@@ -64,15 +56,10 @@ pub(super) async fn compact_with_http(
     let identity = profile.identity().clone();
     // Only system messages are preserved from the source history; capture those
     // alone so the full conversation is not cloned across the HTTP round-trip.
-    let retained_system_messages = request
-        .messages
-        .iter()
-        .filter(|message| matches!(message, Message::System(_)))
-        .cloned()
-        .collect::<Vec<_>>();
+    let retained_system_messages = retained_system_messages(request.messages);
     let body = match build_compact_request_body(profile, reasoning_profile, request) {
         Ok(body) => body,
-        Err(error) => return failure_response(error, Vec::new()),
+        Err(error) => return native_compact_failure(error, Vec::new()),
     };
 
     let http_result = http
@@ -81,26 +68,24 @@ pub(super) async fn compact_with_http(
     let failed_attempts = native_failed_attempts(http_result.failed_attempts);
     let response = match http_result.response {
         Ok(response) => response,
-        Err(error) => return failure_response(error, failed_attempts),
+        Err(error) => return native_compact_failure(error, failed_attempts),
     };
     if !response.status().is_success() {
-        return rho_sdk::provider::NativeCompactionResponse::failure(
-            crate::providers::sdk_contract::provider_error_from_model_error(
-                crate::provider_backend::http_error::from_response(response).await,
-            ),
-        )
-        .with_failed_attempts(failed_attempts);
+        return native_compact_failure(
+            crate::provider_backend::http_error::from_response(response).await,
+            failed_attempts,
+        );
     }
 
     let body = tokio::select! {
         result = response.json::<Value>() => match result {
             Ok(body) => body,
             Err(error) => {
-                return failure_response(ModelError::from(error), failed_attempts);
+                return native_compact_failure(ModelError::from(error), failed_attempts);
             }
         },
         () = cancellation.cancelled() => {
-            return failure_response(ModelError::Interrupted, failed_attempts);
+            return native_compact_failure(ModelError::Interrupted, failed_attempts);
         }
     };
 
@@ -109,26 +94,13 @@ pub(super) async fn compact_with_http(
         codex_ws.reset().await;
     }
 
-    let (messages, usage) = match parse_compact_response(
+    native_compact_from_response_body(
         identity,
         &retained_system_messages,
         &body,
         PORTABLE_HANDOFF_NOTICE,
-    ) {
-        Ok(parsed) => parsed,
-        Err(error) => return failure_response(error, failed_attempts),
-    };
-    let output = match rho_sdk::CompactionOutput::with_usage(messages, usage) {
-        Ok(output) => output,
-        Err(error) => {
-            return failure_response(
-                ModelError::InvalidResponse(error.to_string()),
-                failed_attempts,
-            );
-        }
-    };
-    rho_sdk::provider::NativeCompactionResponse::success(output)
-        .with_failed_attempts(failed_attempts)
+        failed_attempts,
+    )
 }
 
 /// Builds a unary `/responses/compact` request body from the live turn snapshot.

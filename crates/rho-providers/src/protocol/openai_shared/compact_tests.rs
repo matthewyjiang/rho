@@ -125,6 +125,57 @@ fn parse_compact_response_malformed_output_is_invalid() {
 }
 
 #[test]
+fn retained_system_messages_filters_non_system() {
+    let messages = [
+        Message::System("sys".into()),
+        Message::user_text("hi"),
+        Message::System("sys2".into()),
+        Message::assistant_text("yo"),
+    ];
+    let retained = retained_system_messages(&messages);
+    assert_eq!(retained.len(), 2);
+    assert!(matches!(&retained[0], Message::System(text) if text == "sys"));
+    assert!(matches!(&retained[1], Message::System(text) if text == "sys2"));
+}
+
+#[test]
+fn native_compact_from_response_body_success_and_failure() {
+    let identity = ModelIdentity::new("xai", "openai-responses", "grok-4.5");
+    let ok = native_compact_from_response_body(
+        identity.clone(),
+        &[Message::System("tutor".into())],
+        &json!({
+            "output": [{
+                "type": "compaction",
+                "encrypted_content": "blob"
+            }],
+            "usage": { "input_tokens": 3, "output_tokens": 1, "total_tokens": 4 }
+        }),
+        NOTICE,
+        Vec::new(),
+    );
+    let (result, failed) = ok.into_parts();
+    assert!(failed.is_empty());
+    let output = result.expect("success");
+    assert_eq!(output.messages().len(), 2);
+    assert_eq!(output.usage().input_tokens, Some(3));
+
+    let err = native_compact_from_response_body(
+        identity,
+        &[],
+        &json!({ "output": { "not": "array" } }),
+        NOTICE,
+        vec![rho_sdk::provider::NativeCompactionFailedAttempt::new(
+            rho_sdk::ProviderErrorKind::Authentication,
+            ModelUsage::default(),
+        )],
+    );
+    let (result, failed) = err.into_parts();
+    assert!(result.is_err());
+    assert_eq!(failed.len(), 1);
+}
+
+#[test]
 fn xai_single_compaction_item_replaces_history() {
     let identity = ModelIdentity::new("xai", "openai-responses", "grok-4.5");
     let body = json!({

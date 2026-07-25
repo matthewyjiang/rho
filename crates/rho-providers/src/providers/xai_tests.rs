@@ -74,7 +74,6 @@ fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        XaiResponsesMode::Create,
     )
     .unwrap();
 
@@ -110,7 +109,6 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: Some("rho:session"),
         },
-        XaiResponsesMode::Create,
     )
     .unwrap();
 
@@ -145,7 +143,6 @@ fn responses_body_uses_each_request_reasoning_level() {
             reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
         },
-        XaiResponsesMode::Create,
     )
     .unwrap();
     let high = build_xai_responses_body(
@@ -159,12 +156,75 @@ fn responses_body_uses_each_request_reasoning_level() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: None,
         },
-        XaiResponsesMode::Create,
     )
     .unwrap();
 
     assert_eq!(low["reasoning"], json!({"effort": "low"}));
     assert_eq!(high["reasoning"], json!({"effort": "high"}));
+}
+
+#[test]
+fn compact_body_is_unary_without_tools_or_include() {
+    let messages = [
+        Message::System("be helpful".into()),
+        Message::user_text("hello"),
+    ];
+    let tools = [ToolSpec {
+        name: "read_file".into(),
+        description: "read a file".into(),
+        input_schema: json!({"type": "object"}),
+    }];
+    let profile = reasoning::XaiReasoningProfile::exact([
+        ReasoningLevel::Low,
+        ReasoningLevel::Medium,
+        ReasoningLevel::High,
+    ]);
+    let body = build_xai_compact_body(
+        "xai",
+        "grok-4.5",
+        &profile,
+        ModelRequest {
+            messages: &messages,
+            tools: &tools,
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::High,
+            prompt_cache_key: Some("session-1"),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(body["model"], "grok-4.5");
+    assert_eq!(body["instructions"], "be helpful");
+    assert_eq!(body["input"][0]["role"], "user");
+    assert_eq!(body["store"], false);
+    assert_eq!(body["prompt_cache_key"], "session-1");
+    assert_eq!(body["reasoning"], json!({"effort": "high"}));
+    assert!(body.get("stream").is_none());
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+    assert!(body.get("include").is_none());
+}
+
+#[test]
+fn compact_body_works_for_oauth_identity() {
+    let body = build_xai_compact_body(
+        "xai-oauth",
+        "grok-4.5",
+        &reasoning::XaiReasoningProfile::not_configurable(),
+        ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: Default::default(),
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(body["model"], "grok-4.5");
+    assert_eq!(body["input"][0]["role"], "user");
+    assert!(body.get("reasoning").is_none());
+    assert!(body.get("include").is_none());
 }
 
 #[tokio::test]
