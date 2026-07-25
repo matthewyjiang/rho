@@ -503,20 +503,22 @@ impl Tool for AgentTool {
         if self.background_subagents.is_enabled() {
             properties["background"] = json!({
                 "type": "boolean",
-                "description": "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Several agent calls in one batch run together either way."
+                "description": "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Independent agent calls in the same batch run together either way."
             });
         }
-        // Behavioral guidance must match registered capabilities: describe
-        // background delivery only when background runs can actually start.
+        // Parallel batch behavior is always true; background delivery text is
+        // capability-gated so disabled runs do not advertise a missing path.
+        let parallel_guidance =
+            " Independent agent calls in the same batch run together - issue them in one turn for parallel work.";
         let background_guidance = if self.background_subagents.is_enabled() {
-            " Foreground calls wait for completion; several in the same batch run together. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
+            " Foreground calls wait for completion. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
         } else {
-            ""
+            " Calls wait for completion."
         };
         rho_sdk::model::ToolSpec {
             name: AGENT_TOOL.into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent.{background_guidance}\n\nAgents:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent.{parallel_guidance}{background_guidance}\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",

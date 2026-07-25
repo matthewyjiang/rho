@@ -120,13 +120,22 @@ fn background_guidance_is_gated_by_capability() {
     assert!(enabled
         .spec()
         .description
-        .contains("several in the same batch run together"));
+        .contains("Independent agent calls in the same batch run together"));
+    assert!(enabled
+        .spec()
+        .description
+        .contains("issue them in one turn for parallel work"));
+    assert!(disabled
+        .spec()
+        .description
+        .contains("Independent agent calls in the same batch run together"));
+    assert!(!disabled.spec().description.contains("background=true"));
     assert_eq!(
         enabled.spec().input_schema["properties"]["background"]["description"],
-        "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Several agent calls in one batch run together either way."
+        "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Independent agent calls in the same batch run together either way."
     );
     let disabled_spec = disabled.spec();
-    assert!(!disabled_spec.description.contains("background"));
+    assert!(!disabled_spec.description.contains("background=true"));
     assert!(disabled_spec.input_schema["properties"]
         .get("background")
         .is_none());
