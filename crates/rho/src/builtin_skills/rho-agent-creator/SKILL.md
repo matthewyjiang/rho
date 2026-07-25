@@ -85,15 +85,23 @@ For `runtime: rho`, ask for one model policy: `inherit`, `prefer`, `require`, or
 
 If the answer is not `inherit`, ask for the model ID and optional provider. Both values must be non-empty and contain no whitespace when present. A model is required for `prefer`, `require`, and `select`. Do not emit `model` or `provider` for `inherit`. Rho may resolve `@alias` model values against `[model.aliases]`.
 
-For `runtime: claude-cli`, do **not** invent or guess Claude model IDs from memory, marketing names, or Rho provider catalogs. Claude `--model` is an opaque pass-through string. Ask with a choice questionnaire:
+For `runtime: claude-cli`, do **not** invent or guess Claude model IDs from memory, marketing names, or Rho provider catalogs beyond the recommended list below. Claude `--model` is an opaque pass-through string. Ask with a choice questionnaire that names the default explicitly:
 
-1. **Opus 5 (default)** - emit `model: opus`
-2. **Inherit Claude default** - omit `model` (and omit `model-policy`, or use `inherit` without a model)
-3. **Other** - let the user type any non-empty model string with no whitespace (Claude model id or Claude alias). Emit that exact string as `model`. Do not rewrite, normalize, or "correct" it.
+1. **Use default (`claude-opus-5`)** - emit `model: claude-opus-5`. Always say the default id in the label/help so the user knows exactly what will be written.
+2. **`claude-sonnet-5`** - emit `model: claude-sonnet-5`
+3. **`claude-fable-5`** - emit `model: claude-fable-5`
+4. **Inherit Claude default** - omit `model` (and omit `model-policy`, or use `inherit` without a model). Explain this leaves model selection to the installed `claude` binary, not Rho.
+5. **Other** - let the user type any non-empty model string with no whitespace (Claude model id or Claude alias). Emit that exact string as `model`. Do not rewrite, normalize, or "correct" it.
+
+Recommended preset ids only (do not expand this list from memory):
+
+- `claude-opus-5` (default when the user accepts the default)
+- `claude-sonnet-5`
+- `claude-fable-5`
 
 Never emit `provider`. Prefer omitting `model-policy` when a model is set (parser treats that as select). If you emit `model-policy`, only `inherit` or `select` are valid. Reject empty model values. Do not combine `model-policy: inherit` with an explicit `model`, and do not use `model-policy: select` without `model`. Claude models are not Rho `@alias` values (`@name` is rejected).
 
-If the user already named a specific Claude model earlier in the conversation, offer that string as a focused choice alongside Opus 5 and Other, still without inventing additional options.
+If the user already named a specific Claude model earlier in the conversation, offer that exact string as a focused choice alongside the recommended presets and Other, still without inventing additional options.
 
 ## 5. Prompt policy
 
@@ -133,7 +141,7 @@ Claude Code example (subscription-backed delegated specialist):
 id: claude-planner
 description: Plans with Claude Code on the user subscription. Requires /login claude-code. Not for Rho-native tools or root sessions.
 runtime: claude-cli
-model: opus
+model: claude-opus-5
 reasoning: high
 tools: [Read, Glob, Grep]
 inherit_claude_config: false
