@@ -4,7 +4,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     ActivityPhase, App, CommandId, CommandInvocation, ComposerMode, Entry, InteractiveRuntime,
-    LoadingSpinner, RunningInputMode, StreamControl, ViewModelEvent,
+    LoadingSpinner, RunningInputMode, StreamControl, ToolEntry, ToolEntryState, ViewModelEvent,
 };
 
 impl App {
@@ -65,12 +65,20 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
+        use super::compaction_display::{
+            completed_display_lines, compaction_call_id, failed_display_lines,
+            running_display_lines, unchanged_display_lines, CompactionDisplayFacts,
+        };
+        use rho_tools::tool::ToolDisplayStyle;
+
         self.pending.steering_prompts_mut().clear();
         self.pending_input_changed();
         self.status = "compacting context".into();
         self.begin_compact_ui();
         self.turn.set_activity_phase(ActivityPhase::Compacting);
         self.turn.start_loading();
+        self.turn
+            .tool_started(compaction_call_id(), running_display_lines());
         terminal.draw(|frame| self.draw(frame))?;
 
         let interrupt_requested = AtomicBool::new(false);
@@ -111,25 +119,48 @@ impl App {
         }
         self.end_busy_ui();
         self.turn.stop_loading();
+        let expanded = self.turn.tool_finished(&compaction_call_id());
 
         let succeeded = match compacted {
-            Ok(true) => {
-                self.insert_entry(&Entry::Notice("compacted conversation context".into()));
+            Ok(Some(outcome)) => {
+                let facts = CompactionDisplayFacts::from_outcome(&outcome);
+                self.insert_entry(&Entry::Tool(ToolEntry {
+                    state: ToolEntryState::Finished {
+                        ok: true,
+                        display_style: ToolDisplayStyle::default_tool(),
+                    },
+                    display_lines: completed_display_lines(facts),
+                    expanded,
+                    image: None,
+                }));
                 self.status = "context compacted".into();
                 true
             }
-            Ok(false) => {
-                self.insert_entry(&Entry::Notice(
-                    "not enough conversation history to compact, or the model context window is unknown"
-                        .into(),
-                ));
+            Ok(None) => {
+                self.insert_entry(&Entry::Tool(ToolEntry {
+                    state: ToolEntryState::Finished {
+                        ok: false,
+                        display_style: ToolDisplayStyle::default_tool(),
+                    },
+                    display_lines: unchanged_display_lines(
+                        "not enough conversation history to compact, or the model context window is unknown",
+                    ),
+                    expanded,
+                    image: None,
+                }));
                 self.status = "context not compacted".into();
                 false
             }
             Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "failed to compact conversation context: {err}"
-                )));
+                self.insert_entry(&Entry::Tool(ToolEntry {
+                    state: ToolEntryState::Finished {
+                        ok: false,
+                        display_style: ToolDisplayStyle::default_tool(),
+                    },
+                    display_lines: failed_display_lines(err.to_string()),
+                    expanded,
+                    image: None,
+                }));
                 self.status = "context compaction failed".into();
                 false
             }

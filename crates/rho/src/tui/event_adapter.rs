@@ -14,14 +14,7 @@ use super::{
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
-pub(super) const COMPACTION_STARTED_NOTICE: &str = "compacting conversation context";
-
-pub(super) fn compaction_completed_notice(
-    previous_messages: usize,
-    current_messages: usize,
-) -> String {
-    format!("compacted conversation context ({previous_messages} to {current_messages} messages)")
-}
+pub(super) use super::compaction_display::CompactionDisplayFacts;
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
@@ -36,8 +29,7 @@ pub(super) enum ViewModelEvent {
     ProviderRetry,
     CompactionStarted,
     CompactionCompleted {
-        previous_messages: usize,
-        current_messages: usize,
+        facts: CompactionDisplayFacts,
     },
     OutputDelta(String),
     ReasoningDelta(String),
@@ -228,8 +220,7 @@ impl SdkEventAdapter {
             }
             RunEvent::CompactionCompleted { outcome, .. } => {
                 ViewEvent::Update(ViewModelEvent::CompactionCompleted {
-                    previous_messages: outcome.previous_messages(),
-                    current_messages: outcome.current_messages(),
+                    facts: CompactionDisplayFacts::from_outcome(&outcome),
                 })
             }
             RunEvent::Completed { .. } => ViewEvent::Completed,

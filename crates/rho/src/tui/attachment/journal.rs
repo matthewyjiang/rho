@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use {crate::subagent, rho_tools::tool::ToolDisplayStyle};
 
-use super::super::event_adapter::{
-    compaction_completed_notice, SdkEventAdapter, ViewEvent, ViewModelEvent,
-    COMPACTION_STARTED_NOTICE,
+use super::super::{
+    compaction_display::{completed_display_lines, running_display_lines},
+    event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -116,16 +116,14 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
         ViewModelEvent::ProviderRetry => None,
-        ViewModelEvent::CompactionStarted => {
-            Some(AttachmentEvent::Notice(COMPACTION_STARTED_NOTICE.into()))
-        }
-        ViewModelEvent::CompactionCompleted {
-            previous_messages,
-            current_messages,
-        } => Some(AttachmentEvent::Notice(compaction_completed_notice(
-            previous_messages,
-            current_messages,
-        ))),
+        ViewModelEvent::CompactionStarted => Some(AttachmentEvent::ToolStarted {
+            display_lines: running_display_lines(),
+        }),
+        ViewModelEvent::CompactionCompleted { facts } => Some(AttachmentEvent::ToolFinished {
+            ok: true,
+            display_style: ToolDisplayStyle::default_tool(),
+            display_lines: completed_display_lines(facts),
+        }),
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
     }

@@ -14,7 +14,8 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
 use super::{
     activity::ActivityPhase,
-    event_adapter::{self, ViewModelEvent},
+    compaction_display::{completed_display_lines, compaction_call_id, running_display_lines},
+    event_adapter::ViewModelEvent,
     markdown::{update_code_block_state, CodeFenceState},
     render::padded_content_width,
     stream::StreamFragment,
@@ -44,13 +45,12 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::SteeringApplied(_)
         | ViewModelEvent::ProviderStreamReset
         | ViewModelEvent::ProviderRetry
-        | ViewModelEvent::CompactionStarted
-        | ViewModelEvent::CompactionCompleted { .. }
         | ViewModelEvent::OutputDelta(_)
         | ViewModelEvent::ReasoningDelta(_)
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
         | ViewModelEvent::ToolUpdated { .. } => false,
+        ViewModelEvent::CompactionStarted | ViewModelEvent::CompactionCompleted { .. } => true,
     }
 }
 
@@ -275,16 +275,23 @@ impl App {
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
-            ViewModelEvent::CompactionStarted => Some(Entry::Notice(
-                event_adapter::COMPACTION_STARTED_NOTICE.into(),
-            )),
-            ViewModelEvent::CompactionCompleted {
-                previous_messages,
-                current_messages,
-            } => Some(Entry::Notice(event_adapter::compaction_completed_notice(
-                previous_messages,
-                current_messages,
-            ))),
+            ViewModelEvent::CompactionStarted => {
+                self.turn
+                    .tool_started(compaction_call_id(), running_display_lines());
+                None
+            }
+            ViewModelEvent::CompactionCompleted { facts } => {
+                let expanded = self.turn.tool_finished(&compaction_call_id());
+                Some(Entry::Tool(ToolEntry {
+                    state: ToolEntryState::Finished {
+                        ok: true,
+                        display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
+                    },
+                    display_lines: completed_display_lines(facts),
+                    expanded,
+                    image: None,
+                }))
+            }
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
                 self.usage.current_context = Some(usage);
