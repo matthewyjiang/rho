@@ -157,11 +157,12 @@ impl SubagentManager {
     }
 
     pub fn status(&self, id: &str) -> Option<SubagentSnapshot> {
+        let id = crate::subagent::normalize_id(id).ok()?;
         self.inner
             .lock()
             .expect("delegated registry lock")
-            .get(id)
-            .map(|entry| entry.snapshot(id))
+            .get(&id)
+            .map(|entry| entry.snapshot(&id))
     }
 
     pub fn list(&self) -> Vec<SubagentSnapshot> {
@@ -231,9 +232,10 @@ impl SubagentManager {
     /// automatic notification will not repeat a result the parent already
     /// read through `status` or `stop`.
     pub fn observe(&self, id: &str) -> Option<SubagentSnapshot> {
+        let id = crate::subagent::normalize_id(id).ok()?;
         let mut entries = self.inner.lock().expect("delegated registry lock");
-        let entry = entries.get_mut(id)?;
-        let snapshot = entry.snapshot(id);
+        let entry = entries.get_mut(&id)?;
+        let snapshot = entry.snapshot(&id);
         if snapshot.done {
             entry.observed = true;
         }
@@ -241,23 +243,25 @@ impl SubagentManager {
     }
 
     pub async fn wait_done(&self, id: &str) -> Option<SubagentSnapshot> {
+        let id = crate::subagent::normalize_id(id).ok()?;
         let mut handle = self
             .inner
             .lock()
             .expect("delegated registry lock")
-            .get(id)?
+            .get(&id)?
             .handle
             .clone();
         handle.wait().await;
-        self.status(id)
+        self.status(&id)
     }
 
     pub async fn stop(&self, id: &str) -> anyhow::Result<SubagentSnapshot> {
+        let id = crate::subagent::normalize_id(id)?;
         let mut handle = self
             .inner
             .lock()
             .expect("delegated registry lock")
-            .get(id)
+            .get(&id)
             .ok_or_else(|| anyhow::anyhow!("unknown delegated run '{id}'"))?
             .handle
             .clone();
@@ -267,7 +271,7 @@ impl SubagentManager {
             .map_err(|_| anyhow::anyhow!("timed out stopping delegated run '{id}'"))?;
         // Stopping hands the terminal snapshot to the caller, so it counts
         // as delivered and is not repeated by automatic notification.
-        self.observe(id)
+        self.observe(&id)
             .ok_or_else(|| anyhow::anyhow!("delegated run '{id}' disappeared"))
     }
 

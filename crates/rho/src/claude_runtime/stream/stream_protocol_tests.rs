@@ -42,8 +42,8 @@ fn maps_success_result_with_plan_high_cache_context_usage() {
     // Result messages no longer publish terminal Ok/Error on the status patch.
     assert_ne!(status.state, RunState::Ok);
     assert_ne!(status.state, RunState::Error);
-    assert_eq!(status.input_tokens, 2 + 7294 + 6095);
-    assert_eq!(status.output_tokens, 4);
+    assert_eq!(status.input_tokens, Some(2 + 7294 + 6095));
+    assert_eq!(status.output_tokens, Some(4));
     assert_eq!(
         status.claude_session_id.as_deref(),
         Some("sess-success-001")
@@ -130,8 +130,8 @@ fn maps_live_success_capture_round_trip() {
     }
     assert_ne!(status.state, RunState::Ok);
     assert_ne!(status.state, RunState::Error);
-    assert_eq!(status.input_tokens, 2 + 3289 + 5413);
-    assert_eq!(status.output_tokens, 14);
+    assert_eq!(status.input_tokens, Some(2 + 3289 + 5413));
+    assert_eq!(status.output_tokens, Some(14));
     assert_eq!(
         status.claude_session_id.as_deref(),
         Some("11111111-2222-4333-8444-555555555555")
@@ -525,5 +525,24 @@ fn system_status_heartbeat_is_quiet_but_init_is_noticed() {
     assert!(init.iter().any(|effect| matches!(
         effect,
         StreamEffect::Attachment(AttachmentEvent::Notice(text)) if text.contains("claude system: init")
+    )));
+}
+
+#[test]
+fn system_thinking_tokens_heartbeat_is_quiet() {
+    let effects =
+        map_line(r#"{"type":"system","subtype":"thinking_tokens","session_id":"sess-think"}"#);
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, StreamEffect::Attachment(AttachmentEvent::Notice(_)))),
+        "thinking_tokens must not spam notices: {effects:?}"
+    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        StreamEffect::Status(StatusPatch {
+            claude_session_id: Some(id),
+            ..
+        }) if id == "sess-think"
     )));
 }

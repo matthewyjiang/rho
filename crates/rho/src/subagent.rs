@@ -67,10 +67,13 @@ pub struct RunStatus {
     pub model: Option<String>,
     #[serde(default)]
     pub turns: u64,
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
+    /// Cumulative input tokens when known. Absent means unknown (for example a
+    /// cancelled Claude run that never emitted a terminal usage payload).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Cumulative output tokens when known. Absent means unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,15 +140,20 @@ pub fn read_status(path: &Path) -> Option<RunStatus> {
 }
 
 pub fn directory(id: &str) -> anyhow::Result<PathBuf> {
-    validate_id(id)?;
+    let id = normalize_id(id)?;
     Ok(crate::paths::rho_dir()?.join("subagents").join(id))
 }
 
-fn validate_id(id: &str) -> anyhow::Result<()> {
+/// Validate a 6-char hex run id and return its canonical lowercase form.
+///
+/// Creation always uses lowercase paths. Accepting mixed case and normalizing
+/// keeps `rho attach` portable across case-insensitive (macOS default) and
+/// case-sensitive (typical Linux) filesystems.
+pub fn normalize_id(id: &str) -> anyhow::Result<String> {
     if id.len() != 6 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         anyhow::bail!("invalid subagent id '{id}': expected 6 hexadecimal characters");
     }
-    Ok(())
+    Ok(id.to_ascii_lowercase())
 }
 
 pub(crate) fn create_private_file(path: &Path) -> std::io::Result<File> {

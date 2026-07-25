@@ -216,7 +216,7 @@ async fn success_stream_and_exit_zero_writes_ok() {
         Some("sess-success-001")
     );
     assert_eq!(status.turns, 1);
-    assert!(status.input_tokens > 0);
+    assert!(status.input_tokens.unwrap_or(0) > 0);
     assert_eq!(status.error, None);
     let events = read_attachment_events(&output);
     assert_eq!(
@@ -252,8 +252,8 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
         Some("22222222-3333-4444-8555-666666666666")
     );
     assert_eq!(status.turns, 2);
-    assert_eq!(status.input_tokens, 4 + 14452 + 5604);
-    assert_eq!(status.output_tokens, 102);
+    assert_eq!(status.input_tokens, Some(4 + 14452 + 5604));
+    assert_eq!(status.output_tokens, Some(102));
     assert_eq!(status.error, None);
 
     let events = read_attachment_events(&output);

@@ -31,7 +31,8 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!("rho attach requires an interactive terminal");
     }
-    let directory = subagent::directory(id)?;
+    let id = subagent::normalize_id(id)?;
+    let directory = subagent::directory(&id)?;
     if !directory.is_dir() {
         anyhow::bail!("unknown delegated run '{id}'");
     }
@@ -42,9 +43,9 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     Theme::initialize_from_terminal();
     let message = format!("attached to agent run {id}");
     herdr
-        .report_state(HerdrState::Working, Some(&message), Some(id))
+        .report_state(HerdrState::Working, Some(&message), Some(&id))
         .await;
-    let result = AttachmentApp::new(id, directory, herdr.clone())
+    let result = AttachmentApp::new(&id, directory, herdr.clone())
         .run(&mut terminal)
         .await;
     herdr.release().await;
@@ -283,7 +284,15 @@ impl AttachmentApp {
                     agent_id.to_string(),
                     activity.to_string(),
                     format!("turn {}", status.turns),
-                    format!("tokens {}/{}", status.input_tokens, status.output_tokens),
+                    format!(
+                        "tokens {}/{}",
+                        status
+                            .input_tokens
+                            .map_or_else(|| "?".into(), |tokens| tokens.to_string()),
+                        status
+                            .output_tokens
+                            .map_or_else(|| "?".into(), |tokens| tokens.to_string()),
+                    ),
                 ];
                 if let Some(session_id) = status.claude_session_id.as_deref() {
                     parts.push(format!("claude {session_id}"));

@@ -282,3 +282,33 @@ fn concurrent_terminal_wins_over_stale_running_after_read() {
     assert_eq!(loaded.state, RunState::Error);
     assert_eq!(loaded.error.as_deref(), Some("fallback error"));
 }
+
+#[test]
+fn normalize_id_lowercases_hex_and_rejects_invalid() {
+    assert_eq!(normalize_id("26BC7E").unwrap(), "26bc7e");
+    assert_eq!(normalize_id("abcdef").unwrap(), "abcdef");
+    assert!(normalize_id("26bc7").is_err());
+    assert!(normalize_id("26bc7g").is_err());
+    assert!(normalize_id("zzzzzz").is_err());
+}
+
+#[test]
+fn write_status_omits_unknown_token_counters() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    write_status(
+        &path,
+        &RunStatus {
+            state: RunState::Stopped,
+            last_activity: Some("cancelled".into()),
+            ..RunStatus::default()
+        },
+    )
+    .unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(!raw.contains("input_tokens"), "{raw}");
+    assert!(!raw.contains("output_tokens"), "{raw}");
+    let loaded = read_status(&path).unwrap();
+    assert_eq!(loaded.input_tokens, None);
+    assert_eq!(loaded.output_tokens, None);
+}

@@ -36,7 +36,9 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
     )];
     let metrics = format!(
         "turns: {} · tokens: {} in / {} out",
-        snapshot.status.turns, snapshot.status.input_tokens, snapshot.status.output_tokens
+        snapshot.status.turns,
+        format_token_count(snapshot.status.input_tokens),
+        format_token_count(snapshot.status.output_tokens)
     );
     match format {
         SnapshotFormat::Completion => lines.push(metrics),
@@ -179,7 +181,9 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
     )];
     lines.push(format!(
         "turns: {} · tokens: {} in / {} out",
-        snapshot.status.turns, snapshot.status.input_tokens, snapshot.status.output_tokens
+        snapshot.status.turns,
+        format_token_count(snapshot.status.input_tokens),
+        format_token_count(snapshot.status.output_tokens)
     ));
     if let Some(session_id) = &snapshot.status.claude_session_id {
         lines.push(format!(
@@ -261,6 +265,10 @@ fn format_elapsed(seconds: u64) -> String {
     let hours = minutes / 60;
     let minutes = minutes % 60;
     format!("{hours}h {minutes:02}m")
+}
+
+fn format_token_count(tokens: Option<u64>) -> String {
+    tokens.map_or_else(|| "?".into(), |tokens| tokens.to_string())
 }
 
 #[cfg(test)]

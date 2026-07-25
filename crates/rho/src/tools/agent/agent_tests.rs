@@ -73,7 +73,7 @@ fn delegated_manager_starts_empty() {
 #[tokio::test]
 async fn stopping_unknown_run_is_actionable() {
     let root = tempfile::tempdir().unwrap();
-    let error = manager(root.path()).stop("missing").await.unwrap_err();
+    let error = manager(root.path()).stop("abcdef").await.unwrap_err();
     assert!(error.to_string().contains("unknown delegated run"));
 }
 
@@ -137,8 +137,8 @@ fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotificati
             status: crate::subagent::RunStatus {
                 state,
                 turns: 1,
-                input_tokens: 10,
-                output_tokens: 2,
+                input_tokens: Some(10),
+                output_tokens: Some(2),
                 result: Some(format!("{id} result")),
                 ..crate::subagent::RunStatus::default()
             },

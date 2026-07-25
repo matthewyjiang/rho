@@ -169,8 +169,12 @@ fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
         status.turns = turns;
     }
     if let Some(usage) = &terminal.usage {
-        status.input_tokens = usage.total_input_tokens().unwrap_or(0);
-        status.output_tokens = usage.output_tokens.unwrap_or(0);
+        if let Some(tokens) = usage.total_input_tokens() {
+            status.input_tokens = Some(tokens);
+        }
+        if let Some(tokens) = usage.output_tokens {
+            status.output_tokens = Some(tokens);
+        }
     }
     if let Some(cost) = terminal.total_cost_usd {
         status.total_cost_usd = Some(cost);

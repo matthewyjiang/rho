@@ -116,6 +116,8 @@ async fn sink_fail_and_stop_are_terminal() {
     sink.stop("cancelled").await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Stopped);
+    assert_eq!(status.input_tokens, None);
+    assert_eq!(status.output_tokens, None);
     assert!(read_attachment_events(&output)
         .iter()
         .any(|event| matches!(event, AttachmentEvent::Cancelled)));

@@ -491,13 +491,21 @@ fn cross_process_lock_blocks_until_released_and_newer_wins() {
 /// Child helper for cross-process lock tests. Reads path + observation from stdin.
 ///
 /// When stdin is empty (normal `cargo test` collection/run without a parent),
-/// the helper exits successfully without touching the filesystem.
+/// the helper exits successfully without touching the filesystem. A TTY stdin
+/// would block on EOF, so interactive `cargo test` runs bail out immediately.
 #[test]
 fn child_store_observation_helper() {
+    use std::io::IsTerminal;
+
+    // Parent tests always pipe stdin. A terminal means this helper was
+    // discovered/run directly under an interactive harness - exit without
+    // blocking on EOF.
+    if std::io::stdin().is_terminal() {
+        return;
+    }
     let mut stdin = std::io::stdin().lock();
     let mut buf = String::new();
-    // Non-blocking-ish: if nothing is piped, read_to_string returns quickly
-    // with empty content on most platforms when stdin is /dev/null.
+    // Piped or /dev/null stdin returns immediately (empty when no parent).
     if stdin.read_to_string(&mut buf).is_err() || buf.trim().is_empty() {
         return;
     }

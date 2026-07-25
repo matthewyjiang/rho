@@ -295,13 +295,17 @@ pub(super) fn fidelity_notice(message: &str) -> Vec<StreamEffect> {
 
 pub(super) fn map_system(message: SystemMessage) -> Vec<StreamEffect> {
     let mut effects = Vec::new();
-    // `system`/`status` is a progress heartbeat under the system envelope.
-    // Keep session id if present, but do not emit a notice per pulse.
-    let is_status_heartbeat = message.subtype.as_deref() == Some("status");
+    // High-frequency system subtypes are progress noise under the system
+    // envelope. Keep session id if present, but do not emit a notice per pulse.
+    // `thinking_tokens` in particular can fire dozens of times per turn.
+    let is_quiet_subtype = matches!(
+        message.subtype.as_deref(),
+        Some("status" | "thinking_tokens")
+    );
     let is_init = message.subtype.as_deref() == Some("init");
 
     if let Some(session_id) = message.session_id {
-        let last_activity = if is_status_heartbeat {
+        let last_activity = if is_quiet_subtype {
             None
         } else if is_init {
             Some("claude init".into())
@@ -316,7 +320,7 @@ pub(super) fn map_system(message: SystemMessage) -> Vec<StreamEffect> {
         }));
     }
     if let Some(subtype) = message.subtype {
-        if !is_status_heartbeat {
+        if !is_quiet_subtype {
             effects.push(StreamEffect::Attachment(AttachmentEvent::Notice(format!(
                 "claude system: {subtype}"
             ))));
@@ -466,10 +470,10 @@ pub(crate) fn apply_status_patch(status: &mut RunStatus, patch: StatusPatch) {
         status.turns = turns;
     }
     if let Some(input_tokens) = patch.input_tokens {
-        status.input_tokens = input_tokens;
+        status.input_tokens = Some(input_tokens);
     }
     if let Some(output_tokens) = patch.output_tokens {
-        status.output_tokens = output_tokens;
+        status.output_tokens = Some(output_tokens);
     }
     if let Some(activity) = patch.last_activity {
         status.last_activity = Some(activity);

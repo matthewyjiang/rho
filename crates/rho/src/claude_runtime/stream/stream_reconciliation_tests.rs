@@ -417,8 +417,8 @@ fn maps_live_tool_roundtrip_capture() {
     assert_ne!(status.state, RunState::Ok);
     assert_ne!(status.state, RunState::Error);
     assert_eq!(status.turns, 2);
-    assert_eq!(status.input_tokens, 4 + 14452 + 5604);
-    assert_eq!(status.output_tokens, 102);
+    assert_eq!(status.input_tokens, Some(4 + 14452 + 5604));
+    assert_eq!(status.output_tokens, Some(102));
     assert_eq!(
         status.claude_session_id.as_deref(),
         Some("22222222-3333-4444-8555-666666666666")
