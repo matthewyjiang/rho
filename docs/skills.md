@@ -76,4 +76,4 @@ Rho includes two built-in skills:
 | `rho-agent-creator` | Define an agent through a guided questionnaire, including `runtime: claude-cli` Claude Code specialists |
 
 See [Tools and workspace](/tools-workspace) for details about the `skill` tool.
-See [Agents and delegation](/subagents) to learn how to define agents.
+See [Agents and delegation](/subagents) to learn how to define agents, including the [agent definition schema](/subagents#agent-definition-schema).

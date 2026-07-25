@@ -53,6 +53,7 @@ features:
 - [Tools and workspace](/tools-workspace)
 - [Skills](/skills)
 - [Subagents](/subagents)
+  - [Agent definition schema](/subagents#agent-definition-schema)
 - [Sessions](/sessions)
 - [Usage ledger](/usage-ledger)
 - [Rust SDK](/sdk/)
