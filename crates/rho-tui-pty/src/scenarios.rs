@@ -4,6 +4,7 @@ mod config;
 mod conversation_tree;
 mod goal;
 mod id;
+mod login;
 mod pickers;
 mod runtime_info;
 
@@ -13,6 +14,7 @@ use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
+use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
@@ -525,76 +527,6 @@ const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_markdown_headings_rendered),
-    Step::ExitCommand,
-];
-
-const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
-    Step::Phase("open_group_picker"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("/login"),
-    Step::WaitText {
-        text: "select provider to login",
-        timeout: SETTLE,
-    },
-    // Overlay height caps visible rows; assert on-screen labels, then filter
-    // for providers that sit below the fold.
-    Step::AssertText("OpenAI"),
-    Step::AssertText("Anthropic"),
-    Step::AssertText("Moonshot AI"),
-    Step::AssertText("claude code (subscription"),
-    Step::TypeText("xAI"),
-    Step::WaitText {
-        text: "xAI",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Phase("open_openai_methods"),
-    Step::SubmitText("/login"),
-    Step::WaitText {
-        text: "select provider to login",
-        timeout: SETTLE,
-    },
-    Step::TypeText("OpenAI"),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "select OpenAI login method",
-        timeout: SETTLE,
-    },
-    Step::AssertText("API Key"),
-    Step::AssertText("OAuth"),
-    Step::AssertText("Esc to back"),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "select provider to login",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Esc to cancel"),
-    Step::Phase("close_group_picker"),
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Phase("single_method_provider"),
-    Step::SubmitText("/login"),
-    Step::WaitText {
-        text: "select provider to login",
-        timeout: SETTLE,
-    },
-    Step::TypeText("Anthropic"),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "enter Anthropic API key",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
 
