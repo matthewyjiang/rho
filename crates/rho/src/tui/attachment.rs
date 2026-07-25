@@ -1,7 +1,10 @@
 //! Read-only observation of persisted subagent presentation events.
+//!
+//! Journal types live in [`crate::run_artifacts`]. This module owns the attach
+//! TUI and the Rho SDK event translator.
 
 mod app;
-mod journal;
+pub(crate) mod sdk_writer;
 
 pub(crate) use app::run;
-pub(crate) use journal::AttachmentWriter;
+pub(crate) use sdk_writer::translate_run_event;

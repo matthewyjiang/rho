@@ -522,8 +522,12 @@ impl App {
         self.status = "select provider to login".into();
     }
 
-    pub(super) fn open_config_logout_picker(&mut self) {
-        match provider_picker::logout_provider_picker(self.credential_store.as_ref()) {
+    pub(super) async fn open_config_logout_picker(&mut self) -> anyhow::Result<()> {
+        let claude_signed_in = Self::claude_signed_in().await;
+        match provider_picker::logout_provider_picker(
+            self.credential_store.as_ref(),
+            claude_signed_in,
+        ) {
             Ok(picker) if picker.items.is_empty() => {
                 self.insert_entry(&Entry::Notice(
                     "no stored provider credentials to delete".into(),
@@ -539,6 +543,7 @@ impl App {
                 self.status = "provider credentials unavailable".into();
             }
         }
+        Ok(())
     }
 }
 

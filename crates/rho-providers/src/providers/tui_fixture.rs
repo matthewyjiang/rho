@@ -24,6 +24,8 @@ const CONCURRENT_SLOW_CALL_ID: &str = "tui-fixture-concurrent-slow";
 const CONCURRENT_FAST_CALL_ID: &str = "tui-fixture-concurrent-fast";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
 const BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID: &str = "tui-fixture-background-questionnaire-agent";
+const CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-claude-agent";
+const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
 const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
@@ -309,6 +311,32 @@ async fn fixture_stream(
                 }),
             )
         }
+        "fixture claude agent" if tool_result(&request, CLAUDE_AGENT_CALL_ID).is_none() => {
+            // Foreground delegation into a runtime: claude-cli agent definition.
+            // The PTY E2E installs that definition and a fake `claude` on PATH.
+            completed_tool_call(
+                CLAUDE_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "claude-planner",
+                    "prompt": "Say hello in one short sentence.",
+                    "background": false,
+                }),
+            )
+        }
+        "fixture claude agent error"
+            if tool_result(&request, CLAUDE_AGENT_ERROR_CALL_ID).is_none() =>
+        {
+            completed_tool_call(
+                CLAUDE_AGENT_ERROR_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "claude-planner",
+                    "prompt": "Force a deterministic Claude error path.",
+                    "background": false,
+                }),
+            )
+        }
         "fixture background questionnaire"
             if tool_result(&request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none() =>
         {
@@ -528,6 +556,19 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         // turn so completion arrives through automatic delivery.
         let receipt = result.content.lines().next().unwrap_or_default();
         return completed(format!("background agent dispatched: {receipt}"));
+    }
+    if let Some(result) = tool_result(request, CLAUDE_AGENT_CALL_ID) {
+        // Foreground Claude runs return the full completion snapshot as the tool
+        // result. Echo a short marker so the parent turn ends cleanly after the
+        // user-visible completion text is already on screen.
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return completed(format!("claude agent tool finished: {receipt}"));
+    }
+    if let Some(result) = tool_result(request, CLAUDE_AGENT_ERROR_CALL_ID) {
+        // Foreground failures surface as tool errors; the fixture still ends the
+        // parent turn so the PTY can observe the failed agent presentation.
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return completed(format!("claude agent tool error observed: {receipt}"));
     }
     if let Some(result) = tool_result(request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID) {
         let receipt = result.content.lines().next().unwrap_or_default();

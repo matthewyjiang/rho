@@ -22,7 +22,7 @@ mod agent_picker;
 mod app_construct;
 mod app_state;
 mod approval;
-mod attachment;
+pub(crate) mod attachment;
 mod background_polls;
 mod clipboard;
 mod command_actions;
@@ -37,7 +37,7 @@ mod config_picker;
 mod context_handoff;
 mod copy_interaction;
 mod doctor;
-mod event_adapter;
+pub(crate) mod event_adapter;
 mod external_editor;
 mod feed_image;
 mod file_palette;
@@ -47,6 +47,7 @@ mod goal;
 mod subagent_questionnaires;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod choice_actions;
+mod claude_login;
 mod during_turn;
 mod goal_command;
 mod help_picker;
@@ -241,7 +242,7 @@ pub struct TuiResult {
     pub resume_session_id: Option<String>,
     exit_summary: Option<String>,
 }
-pub(crate) use attachment::{run as run_attachment, AttachmentWriter};
+pub(crate) use attachment::{run as run_attachment, translate_run_event};
 
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
@@ -329,6 +330,10 @@ struct App {
     pending_session_title: Option<PendingSessionTitle>,
     clipboard: Box<dyn ClipboardWriter + Send>,
     last_mouse_position: Option<(u16, u16)>,
+    /// Test-only Claude probe override so `/info` and `/doctor` never spawn
+    /// host `claude` or read personal auth from unit tests.
+    #[cfg(test)]
+    test_claude_probe_snapshot: Option<crate::claude_runtime::auth::ClaudeProbeSnapshot>,
 }
 
 struct PendingSubagentQuestionnaire {

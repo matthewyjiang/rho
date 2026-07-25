@@ -1,0 +1,18 @@
+{"type":"system","subtype":"init","session_id":"sess-mixed-001"}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"message_start","message":{"id":"msg_mixed_1","role":"assistant","model":"claude-opus-demo"}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan "}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"step"}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Reading "}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"now."}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_stop","index":1}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_mixed_1","name":"Read","input":{}}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\""}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":":\"README.md\"}"}}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"content_block_stop","index":2}}
+{"type":"stream_event","session_id":"sess-mixed-001","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-mixed-001","message":{"id":"msg_mixed_1","role":"assistant","content":[{"type":"thinking","thinking":"plan step"},{"type":"text","text":"Reading now."},{"type":"tool_use","id":"toolu_mixed_1","name":"Read","input":{"path":"README.md"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_mixed_1","content":"# Demo"}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"Reading now.","session_id":"sess-mixed-001","total_cost_usd":0.01,"permission_denials":[],"usage":{"input_tokens":3,"output_tokens":5,"cache_read_input_tokens":10,"cache_creation_input_tokens":7},"modelUsage":{"claude-opus-demo":{"contextWindow":200000,"inputTokens":3,"outputTokens":5,"cacheReadInputTokens":10,"cacheCreationInputTokens":7}}}

@@ -1,0 +1,4 @@
+{"type":"future_message_kind","foo":1}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"chunk-"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"two"}}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"chunk-two","session_id":"sess-partial-001","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}

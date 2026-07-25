@@ -230,27 +230,50 @@ impl App {
                 Ok(())
             }
             PickerAction::LoginGroup => {
-                let Some(mut group) = catalog::login_group(&value) else {
+                // A single-method group short-circuits to that method's value,
+                // which may name the external runtime rather than a group id.
+                if let super::claude_login::SignInTarget::ClaudeCode =
+                    super::claude_login::SignInTarget::parse(&value)
+                {
+                    return self.execute_claude_code_login(terminal).await;
+                }
+                let Some(group) = catalog::login_group(&value) else {
                     self.insert_entry(&Entry::Error(format!(
                         "unsupported login provider group '{value}'"
                     )));
                     self.status = "login failed".into();
                     return Ok(());
                 };
-                if group.methods.len() == 1 {
-                    let target = group.methods.remove(0).target;
-                    self.start_login_for_provider(&target.provider, terminal, agent)
-                        .await
-                } else {
-                    let child = provider_picker::login_method_picker(group);
-                    self.open_child_picker(child);
-                    Ok(())
+                match provider_picker::login_group_next(group) {
+                    provider_picker::LoginGroupNext::Provider(provider) => {
+                        self.start_login_for_provider(&provider, terminal, agent)
+                            .await
+                    }
+                    provider_picker::LoginGroupNext::MethodPicker(child) => {
+                        self.open_child_picker(*child);
+                        Ok(())
+                    }
                 }
             }
-            PickerAction::LoginProvider => {
-                self.start_login_for_provider(&value, terminal, agent).await
+            PickerAction::LoginProvider => match super::claude_login::SignInTarget::parse(&value) {
+                super::claude_login::SignInTarget::ClaudeCode => {
+                    self.execute_claude_code_login(terminal).await
+                }
+                super::claude_login::SignInTarget::Provider(provider) => {
+                    self.start_login_for_provider(&provider, terminal, agent)
+                        .await
+                }
+            },
+            PickerAction::LogoutProvider => {
+                match super::claude_login::SignInTarget::parse(&value) {
+                    super::claude_login::SignInTarget::ClaudeCode => {
+                        self.execute_claude_code_logout().await
+                    }
+                    super::claude_login::SignInTarget::Provider(provider) => {
+                        self.logout_provider(&provider, agent).await
+                    }
+                }
             }
-            PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input_ui.set_shell_mode(None);

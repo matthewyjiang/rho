@@ -28,6 +28,7 @@ fn test_info() -> RuntimeInfo {
         model_metadata: None,
         tree: None,
         tree_error: None,
+        claude_code: "claude code: not signed in - run /login claude-code".into(),
     }
 }
 
@@ -55,6 +56,13 @@ fn runtime_info_groups_model_usage_and_workspace_details() {
     assert!(text.contains("rho  v1.9.0"), "{text}");
     assert!(text.contains("Model\n"), "{text}");
     assert!(text.contains("Provider      openai"), "{text}");
+    assert!(text.contains("Billing"), "{text}");
+    assert!(text.contains("metered API"), "{text}");
+    assert!(text.contains("External runtimes"), "{text}");
+    assert!(
+        text.contains("claude code: not signed in - run /login claude-code"),
+        "{text}"
+    );
     assert!(text.contains("Session usage\n"), "{text}");
     assert!(
         text.contains("25,000 / 100,000 tokens (25.0%, estimated)"),

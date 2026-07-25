@@ -13,7 +13,9 @@ use rho_sdk::{
 use serde_json::json;
 
 use super::*;
-use crate::agent::{AgentId, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy};
+use crate::agent::{
+    AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
+};
 
 #[derive(Clone, Default)]
 struct CapturingRecorder(Arc<Mutex<Vec<ProviderRequestUsageEvent>>>);
@@ -30,9 +32,11 @@ fn definition() -> AgentDefinition {
         id: AgentId::new("test-agent").unwrap(),
         description: "test".into(),
         prompt: PromptPolicy::Replace("system prompt".into()),
-        model: ModelPolicy::Inherit,
-        tools: ToolPolicy::Allow(BTreeSet::new()),
-        reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(BTreeSet::new()),
+            model: ModelPolicy::Inherit,
+            reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+        },
     }
 }
 
@@ -99,7 +103,11 @@ fn rejects_definitions_that_do_not_replace_the_prompt() {
 #[test]
 fn rejects_definitions_with_tools() {
     let mut definition = definition();
-    definition.tools = ToolPolicy::Allow(BTreeSet::from([ToolCapability::ReadFile]));
+    definition.runtime = AgentRuntimeSpec::Rho {
+        tools: ToolPolicy::Allow(BTreeSet::from([ToolCapability::ReadFile])),
+        model: ModelPolicy::Inherit,
+        reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+    };
     assert!(validate_definition(&definition)
         .unwrap_err()
         .to_string()
@@ -109,10 +117,12 @@ fn rejects_definitions_with_tools() {
 #[test]
 fn rejects_definitions_that_select_a_model() {
     let mut definition = definition();
-    definition.model = ModelPolicy::Select(crate::agent::ModelSelection {
-        provider: None,
-        model: "other-model".into(),
-    });
+    if let AgentRuntimeSpec::Rho { model, .. } = &mut definition.runtime {
+        *model = ModelPolicy::Select(crate::agent::ModelSelection {
+            provider: None,
+            model: "other-model".into(),
+        });
+    }
     assert!(validate_definition(&definition)
         .unwrap_err()
         .to_string()
@@ -122,7 +132,9 @@ fn rejects_definitions_that_select_a_model() {
 #[test]
 fn rejects_definitions_without_reasoning() {
     let mut definition = definition();
-    definition.reasoning = None;
+    if let AgentRuntimeSpec::Rho { reasoning, .. } = &mut definition.runtime {
+        *reasoning = None;
+    }
     assert!(validate_definition(&definition)
         .unwrap_err()
         .to_string()

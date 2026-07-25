@@ -5,6 +5,9 @@
 
 #![cfg(unix)]
 
+#[path = "support/claude_e2e.rs"]
+mod claude_e2e;
+
 use std::{
     fs::OpenOptions,
     io::{BufRead, BufReader, Write},
@@ -65,9 +68,69 @@ fn smoke_terminal_restoration() {
 }
 
 #[test]
-fn login_prompts_for_credential_store_before_provider_picker() {
+fn claude_code_login_hands_terminal_to_fake_claude() {
     let home = IsolatedHome::new().unwrap();
-    // Deliberately leave behavior.credential_store unset so first /login must choose.
+    // Ensure /login claude-code does not stop at credential-store choice.
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+
+[behavior]
+credential_store = "file"
+"#,
+    )
+    .unwrap();
+
+    let fake = claude_e2e::install_fake_claude_login();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    )
+    .with_env("PATH", &fake.path);
+    let mut harness = PtyHarness::spawn_named(&plan, "claude_code_login").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness.submit_text("/login claude-code").unwrap();
+    harness
+        .wait_for_text(
+            "handing the terminal to the claude binary",
+            WaitTimeout::secs(10, "handoff notice"),
+        )
+        .unwrap();
+    // The fake claude process exits immediately, so its stdout may only appear on
+    // the suspended main screen. Prefer the post-status source of truth.
+    harness
+        .wait_for_text(
+            "signed in as fake@example.com",
+            WaitTimeout::secs(10, "post-login status"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "Managed by the claude binary",
+            WaitTimeout::secs(10, "ownership copy"),
+        )
+        .unwrap();
+    assert!(fake.marker.exists(), "fake claude login should have run");
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+#[test]
+fn login_shows_provider_picker_before_credential_store_choice() {
+    let home = IsolatedHome::new().unwrap();
+    // Deliberately leave behavior.credential_store unset so first normal
+    // provider login must choose a store after the group picker.
     std::fs::write(
         &home.config_path,
         r#"provider = "openai"
@@ -87,18 +150,52 @@ web_search_provider = "disabled"
             cols: 100,
         },
     );
-    let mut harness = PtyHarness::spawn_named(&plan, "login_credential_store_choice").unwrap();
+    let mut harness = PtyHarness::spawn_named(&plan, "login_provider_then_store").unwrap();
 
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
         .unwrap();
 
-    // Cancel path: chooser appears, esc returns to the prompt.
+    // Bare /login opens the group picker first, not the store chooser.
     harness.submit_text("/login").unwrap();
     harness
         .wait_for_text(
+            "select provider to login",
+            WaitTimeout::secs(10, "group picker first"),
+        )
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(
+        !screen.contains("Where should Rho store provider credentials?"),
+        "store chooser must wait until a normal provider is selected:\n{screen}"
+    );
+    assert!(
+        !screen.contains("Claude Code (delegation only)"),
+        "claude-code belongs under Anthropic methods, not the top-level group picker:\n{screen}"
+    );
+    assert!(
+        screen.contains("Anthropic"),
+        "Anthropic group must remain in the bare login picker:\n{screen}"
+    );
+
+    // Filter to OpenAI so the test does not depend on picker sort order.
+    harness.type_text("openai").unwrap();
+    harness
+        .wait_for_text("OpenAI", WaitTimeout::secs(5, "openai filtered"))
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            "select OpenAI login method",
+            WaitTimeout::secs(10, "openai methods"),
+        )
+        .unwrap();
+    // API Key is the first method.
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
             "Where should Rho store provider credentials?",
-            WaitTimeout::secs(10, "chooser open"),
+            WaitTimeout::secs(10, "store after provider"),
         )
         .unwrap();
     harness
@@ -112,12 +209,12 @@ web_search_provider = "disabled"
         )
         .unwrap();
 
-    // Choose file via stable shortcut, then land on the provider picker.
-    harness.submit_text("/login").unwrap();
+    // Direct provider args still prompt for the store before secrets.
+    harness.submit_text("/login openai").unwrap();
     harness
         .wait_for_text(
             "Where should Rho store provider credentials?",
-            WaitTimeout::secs(10, "chooser reopen"),
+            WaitTimeout::secs(10, "store for direct provider"),
         )
         .unwrap();
     harness.inject_key(&Key::Char('2')).unwrap();
@@ -128,10 +225,7 @@ web_search_provider = "disabled"
         )
         .unwrap();
     harness
-        .wait_for_text(
-            "select provider to login",
-            WaitTimeout::secs(10, "provider picker"),
-        )
+        .wait_for_text("enter", WaitTimeout::secs(10, "api key prompt"))
         .unwrap();
     harness.inject_key(&Key::Esc).unwrap();
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
@@ -152,8 +246,7 @@ web_search_provider = "disabled"
             cols: 100,
         },
     );
-    let mut harness =
-        PtyHarness::spawn_named(&plan, "login_credential_store_choice_again").unwrap();
+    let mut harness = PtyHarness::spawn_named(&plan, "login_provider_then_store_again").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup again"))
         .unwrap();
@@ -170,6 +263,65 @@ web_search_provider = "disabled"
         "chooser should not reappear after config is set:\n{screen}"
     );
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+#[test]
+fn login_claude_code_skips_credential_store_when_unset() {
+    let home = IsolatedHome::new().unwrap();
+    // Leave credential_store unset. Claude login must never ask for it.
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+"#,
+    )
+    .unwrap();
+
+    let fake = claude_e2e::install_fake_claude_login();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    )
+    .with_env("PATH", &fake.path);
+    let mut harness = PtyHarness::spawn_named(&plan, "claude_code_login_no_store").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness.submit_text("/login claude-code").unwrap();
+    harness
+        .wait_for_text(
+            "handing the terminal to the claude binary",
+            WaitTimeout::secs(10, "handoff notice"),
+        )
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(
+        !screen.contains("Where should Rho store provider credentials?"),
+        "claude-code must never open the Rho store chooser:\n{screen}"
+    );
+    harness
+        .wait_for_text(
+            "signed in as fake@example.com",
+            WaitTimeout::secs(10, "post-login status"),
+        )
+        .unwrap();
+    assert!(fake.marker.exists(), "fake claude login should have run");
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+
+    let config = std::fs::read_to_string(&home.config_path).unwrap();
+    assert!(
+        !config.contains("credential_store"),
+        "claude login must not write Rho credential_store:\n{config}"
+    );
 }
 
 #[test]
@@ -444,6 +596,284 @@ fn attach_is_read_only_and_updates_live() {
     assert_eq!(requests[2]["method"], "pane.report_agent");
     assert_eq!(requests[2]["params"]["state"], "idle");
     assert_eq!(requests[3]["method"], "pane.release_agent");
+}
+
+#[test]
+fn attach_replays_finished_claude_run_from_fixtures() {
+    let home = IsolatedHome::new().unwrap();
+    let directory = home.home.join(".rho/subagents/c1a0de");
+    std::fs::create_dir_all(&directory).unwrap();
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/claude_attach");
+    std::fs::copy(fixtures.join("result.json"), directory.join("result.json")).unwrap();
+    std::fs::copy(
+        fixtures.join("events.jsonl"),
+        directory.join("events.jsonl"),
+    )
+    .unwrap();
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 24,
+            cols: 100,
+        },
+    )
+    .with_arg("attach")
+    .with_arg("c1a0de");
+    let mut harness = PtyHarness::spawn_named(&plan, "claude_attach_replay").unwrap();
+
+    harness
+        .wait_for_text(
+            "attached to c1a0de",
+            WaitTimeout::secs(10, "attach startup"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "Say hello in one short sentence.",
+            WaitTimeout::secs(5, "prompt"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text("Hello from Claude.", WaitTimeout::secs(5, "assistant text"))
+        .unwrap();
+    harness
+        .wait_for_text(
+            "claude sess-success-001",
+            WaitTimeout::secs(5, "session id"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text("claude-planner", WaitTimeout::secs(5, "agent id"))
+        .unwrap();
+    assert!(harness.screen().contains_text("read-only"));
+    assert!(harness.screen().contains_text("ok"));
+
+    harness.inject_key(&Key::Char('q')).unwrap();
+    assert_eq!(
+        harness
+            .wait_for_exit(WaitTimeout::secs(5, "detach"))
+            .unwrap(),
+        0
+    );
+}
+
+/// Full fake-Claude runtime path: matrix parent -> agent tool -> binder/executor
+/// -> `claude -p` spawn -> stream-json -> result/events persistence -> parent
+/// completion UI -> `rho attach` replay. Never touches a real Claude binary or
+/// the network.
+#[test]
+fn fake_claude_runtime_end_to_end_success() {
+    let home = IsolatedHome::new().unwrap();
+    claude_e2e::install_claude_planner_agent(&home.home);
+
+    let fake_root = home.path().join("fake-claude");
+    let fake = claude_e2e::install_fake_claude(&fake_root, claude_e2e::FakeClaudeMode::Success);
+    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+
+    // Prove the isolated PATH cannot resolve a host Claude: only our stub.
+    assert!(fake.claude.is_file());
+    assert_eq!(
+        which_on_path("claude", &path).as_deref(),
+        Some(fake.claude.as_path()),
+        "PATH must resolve the fake claude first"
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path);
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    // Real agent-tool path via matrix fixture prompt (foreground delegation).
+    harness.submit_text("fixture claude agent").unwrap();
+    harness
+        .wait_for_text(
+            "claude-planner",
+            WaitTimeout::secs(15, "agent tool started"),
+        )
+        .unwrap();
+
+    claude_e2e::wait_for_spawn(&fake, Duration::from_secs(15));
+    let record = fake.read_spawn_record();
+    claude_e2e::assert_success_spawn(&record, &home.workspace);
+
+    // Parent UI shows final text and Claude session id from the live fixture.
+    harness
+        .wait_for_text(
+            "rho-claude-e2e-ok",
+            WaitTimeout::secs(20, "final assistant text"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "11111111-2222-4333-8444-555555555555",
+            WaitTimeout::secs(10, "claude session id"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "claude agent tool finished:",
+            WaitTimeout::secs(15, "parent turn closed"),
+        )
+        .unwrap();
+
+    let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
+    let run_id = run_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("run id")
+        .to_string();
+    let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
+    claude_e2e::assert_success_result(&status, &run_dir);
+
+    // Offline proof: only the fake binary ran; spawn marker is under the temp root.
+    assert!(
+        fake.spawn_marker.starts_with(home.path()),
+        "spawn marker escaped isolated root: {}",
+        fake.spawn_marker.display()
+    );
+    assert!(
+        record.args.iter().all(|arg| !arg.contains("anthropic.com")),
+        "spawn argv must not reference network endpoints: {:?}",
+        record.args
+    );
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+
+    // Replay the real on-disk artifacts through `rho attach`.
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 120,
+        },
+    )
+    .with_arg("attach")
+    .with_arg(&run_id);
+    let mut attach = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_attach").unwrap();
+    attach
+        .wait_for_text(
+            &format!("attached to {run_id}"),
+            WaitTimeout::secs(10, "attach startup"),
+        )
+        .unwrap();
+    attach
+        .wait_for_text(
+            "Say hello in one short sentence.",
+            WaitTimeout::secs(5, "attach prompt"),
+        )
+        .unwrap();
+    // Partial deltas are stored separately; the live fixture splits the final
+    // phrase across two assistant_text_delta events ("r" + "ho-claude-e2e-ok").
+    attach
+        .wait_for_text(
+            "ho-claude-e2e-ok",
+            WaitTimeout::secs(5, "attach final text tail"),
+        )
+        .unwrap();
+    attach
+        .wait_for_text(
+            "claude 11111111-2222-4333-8444-555555555555",
+            WaitTimeout::secs(5, "attach session id"),
+        )
+        .unwrap();
+    attach
+        .wait_for_text("claude-planner", WaitTimeout::secs(5, "attach agent id"))
+        .unwrap();
+    assert!(attach.screen().contains_text("read-only"));
+    assert!(attach.screen().contains_text("ok") || attach.screen().contains_text("complete"));
+    // Joined final text lives in result.json (asserted earlier); attach stream
+    // fidelity keeps the partial pieces visible.
+    let attach_screen = attach.screen().contents();
+    assert!(
+        attach_screen.contains('r') && attach_screen.contains("ho-claude-e2e-ok"),
+        "attach should replay streamed halves:\n{attach_screen}"
+    );
+    attach.inject_key(&Key::Char('q')).unwrap();
+    assert_eq!(
+        attach
+            .wait_for_exit(WaitTimeout::secs(5, "detach"))
+            .unwrap(),
+        0
+    );
+}
+
+/// Sibling error path: fake Claude emits a terminal error stream and nonzero
+/// exit; the parent surfaces a failed delegated run without network access.
+#[test]
+fn fake_claude_runtime_end_to_end_error() {
+    let home = IsolatedHome::new().unwrap();
+    claude_e2e::install_claude_planner_agent(&home.home);
+
+    let fake_root = home.path().join("fake-claude");
+    let fake = claude_e2e::install_fake_claude(&fake_root, claude_e2e::FakeClaudeMode::Error);
+    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path);
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_error").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.submit_text("fixture claude agent error").unwrap();
+    harness
+        .wait_for_text(
+            "claude-planner",
+            WaitTimeout::secs(15, "agent tool started"),
+        )
+        .unwrap();
+
+    claude_e2e::wait_for_spawn(&fake, Duration::from_secs(15));
+
+    // Failed foreground agent should show failed presentation and/or error text.
+    harness
+        .wait_for_text("failed", WaitTimeout::secs(20, "failed agent state"))
+        .unwrap();
+
+    let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
+    let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
+    claude_e2e::assert_error_result(&status);
+    assert!(
+        fake.spawn_marker.exists(),
+        "error path must still have spawned the fake binary"
+    );
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+/// Resolve `program` on a PATH string the same way a shell would (first hit).
+fn which_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
+    for dir in path_var.split(':').filter(|dir| !dir.is_empty()) {
+        let candidate = PathBuf::from(dir).join(program);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[test]

@@ -12,18 +12,16 @@ use rho_sdk::model::{ContextUsage, ModelUsage};
 
 use crate::{
     herdr::{HerdrReporter, HerdrState},
+    run_artifacts::{AttachmentEvent, AttachmentReader},
     subagent::{self, RunState, RunStatus},
 };
 
-use super::{
-    super::{
-        provider_attempt::ProviderAttempt,
-        render::{entry_lines, truncate_one_line},
-        terminal_events::TerminalEvents,
-        theme::Theme,
-        Entry, ReasoningEntry, ToolEntry, ToolEntryState,
-    },
-    journal::{AttachmentEvent, AttachmentReader},
+use super::super::{
+    provider_attempt::ProviderAttempt,
+    render::{entry_lines, truncate_one_line},
+    terminal_events::TerminalEvents,
+    theme::Theme,
+    Entry, ReasoningEntry, ToolEntry, ToolEntryState,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
@@ -33,7 +31,8 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!("rho attach requires an interactive terminal");
     }
-    let directory = subagent::directory(id)?;
+    let id = subagent::normalize_id(id)?;
+    let directory = subagent::directory(&id)?;
     if !directory.is_dir() {
         anyhow::bail!("unknown delegated run '{id}'");
     }
@@ -44,9 +43,9 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     Theme::initialize_from_terminal();
     let message = format!("attached to agent run {id}");
     herdr
-        .report_state(HerdrState::Working, Some(&message), Some(id))
+        .report_state(HerdrState::Working, Some(&message), Some(&id))
         .await;
-    let result = AttachmentApp::new(id, directory, herdr.clone())
+    let result = AttachmentApp::new(&id, directory, herdr.clone())
         .run(&mut terminal)
         .await;
     herdr.release().await;
@@ -281,10 +280,27 @@ impl AttachmentApp {
         let metrics = status.map_or_else(
             || format!("{agent_id}  |  {activity}"),
             |status| {
-                format!(
-                    "{agent_id}  |  {activity}  |  turn {}  |  tokens {}/{}",
-                    status.turns, status.input_tokens, status.output_tokens
-                )
+                let mut parts = vec![
+                    agent_id.to_string(),
+                    activity.to_string(),
+                    format!("turn {}", status.turns),
+                    format!(
+                        "tokens {}/{}",
+                        status
+                            .input_tokens
+                            .map_or_else(|| "?".into(), |tokens| tokens.to_string()),
+                        status
+                            .output_tokens
+                            .map_or_else(|| "?".into(), |tokens| tokens.to_string()),
+                    ),
+                ];
+                if let Some(session_id) = status.claude_session_id.as_deref() {
+                    parts.push(format!("claude {session_id}"));
+                }
+                if let Some(cost) = status.total_cost_usd {
+                    parts.push(format!("${cost:.4}"));
+                }
+                parts.join("  |  ")
             },
         );
         let mut live_metrics = Vec::new();

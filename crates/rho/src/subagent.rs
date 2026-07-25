@@ -2,8 +2,8 @@
 
 use std::{
     fs::{File, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,16 @@ use serde::{Deserialize, Serialize};
 pub const RESULT_FILE_NAME: &str = "result.json";
 pub const LOG_FILE_NAME: &str = "log.txt";
 pub const ATTACHMENT_FILE_NAME: &str = "events.jsonl";
+
+/// Process-wide ownership for monotonic status read-check-replace.
+///
+/// Status I/O is already off hot async paths, so one lock is enough to keep a
+/// stale Running writer from racing past a terminal Error write. Callers must
+/// not re-enter status writers while holding this lock (hooks included).
+fn status_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 /// State machine for a subagent run, persisted in the result file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,10 +67,13 @@ pub struct RunStatus {
     pub model: Option<String>,
     #[serde(default)]
     pub turns: u64,
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
+    /// Cumulative input tokens when known. Absent means unknown (for example a
+    /// cancelled Claude run that never emitted a terminal usage payload).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Cumulative output tokens when known. Absent means unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,32 +84,56 @@ pub struct RunStatus {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_error: Option<String>,
+    /// Claude Code session id from a `runtime: claude-cli` run. Resume with
+    /// `claude --resume <id>`. Absent for Rho runtime runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_session_id: Option<String>,
+    /// Terminal `total_cost_usd` from Claude's result message when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
 }
 
-/// Writes the status file atomically (temp file + rename) so readers never
-/// observe a torn write.
+/// Writes the status file atomically (unique temp + replace) so readers never
+/// observe a torn write. Repeated updates replace an existing `result.json`.
+///
+/// Terminal states are sticky on disk: a nonterminal snapshot never replaces an
+/// already-terminal status file. This is the shared monotonicity guard used by
+/// Claude persistence, executor panic fallback, and other writers so a detached
+/// worker cannot overwrite `Error`/`Ok`/`Stopped` with a queued `Running`.
+///
+/// The existing-status read, terminal check, and atomic replace are serialized
+/// under process-wide ownership so concurrent writers in the same process cannot
+/// interleave a stale nonterminal replace after a terminal write. This
+/// monotonicity is single-process only: concurrent `rho` processes can still
+/// demote a terminal status if they write the same path.
 pub fn write_status(path: &Path, status: &RunStatus) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    write_status_inner(path, status, /*force*/ false)
+}
+
+/// Begin a new run on `path`, deliberately replacing any prior terminal file.
+///
+/// Use only at run boundaries (executor start, automation reporter start,
+/// Claude status sink start). Same-run updates must keep using [`write_status`].
+pub fn initialize_status(path: &Path, status: &RunStatus) -> std::io::Result<()> {
+    write_status_inner(path, status, /*force*/ true)
+}
+
+fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::Result<()> {
+    let _guard = status_write_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !force && !status.state.is_terminal() {
+        if let Some(existing) = read_status(path) {
+            if existing.state.is_terminal() {
+                return Ok(());
+            }
+        }
     }
-    let contents = serde_json::to_vec_pretty(status)?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(RESULT_FILE_NAME);
-    let temp = path.with_file_name(format!(
-        ".{file_name}.{}.tmp",
-        uuid::Uuid::new_v4().simple()
-    ));
-    let result = (|| {
-        let mut file = create_private_file(&temp)?;
-        file.write_all(&contents)?;
-        std::fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
+    #[cfg(test)]
+    status_write_hooks::run_after_read(path, status);
+    let contents = serde_json::to_vec_pretty(status)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    crate::config_writer::write_bytes_atomically(path, &contents)
 }
 
 pub fn read_status(path: &Path) -> Option<RunStatus> {
@@ -105,15 +142,20 @@ pub fn read_status(path: &Path) -> Option<RunStatus> {
 }
 
 pub fn directory(id: &str) -> anyhow::Result<PathBuf> {
-    validate_id(id)?;
+    let id = normalize_id(id)?;
     Ok(crate::paths::rho_dir()?.join("subagents").join(id))
 }
 
-fn validate_id(id: &str) -> anyhow::Result<()> {
+/// Validate a 6-char hex run id and return its canonical lowercase form.
+///
+/// Creation always uses lowercase paths. Accepting mixed case and normalizing
+/// keeps `rho attach` portable across case-insensitive (macOS default) and
+/// case-sensitive (typical Linux) filesystems.
+pub fn normalize_id(id: &str) -> anyhow::Result<String> {
     if id.len() != 6 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         anyhow::bail!("invalid subagent id '{id}': expected 6 hexadecimal characters");
     }
-    Ok(())
+    Ok(id.to_ascii_lowercase())
 }
 
 pub(crate) fn create_private_file(path: &Path) -> std::io::Result<File> {
@@ -152,3 +194,42 @@ pub(crate) fn create_private_directory(path: &Path) -> std::io::Result<()> {
     }
     builder.create(path)
 }
+
+/// Test-only hooks for deterministic status-write interleaving.
+///
+/// Hooks run while the status-write lock is held, so they must not call
+/// [`write_status`] / [`initialize_status`] (that would deadlock).
+#[cfg(test)]
+pub(crate) mod status_write_hooks {
+    use super::*;
+    use std::sync::Mutex;
+
+    type AfterReadHook = Box<dyn Fn(&Path, &RunStatus) + Send>;
+
+    static AFTER_READ: Mutex<Option<AfterReadHook>> = Mutex::new(None);
+
+    pub(crate) fn set_after_read(hook: impl Fn(&Path, &RunStatus) + Send + 'static) {
+        *AFTER_READ
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+    }
+
+    pub(crate) fn clear() {
+        *AFTER_READ
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    pub(crate) fn run_after_read(path: &Path, status: &RunStatus) {
+        let hook = AFTER_READ
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(hook) = hook.as_ref() {
+            hook(path, status);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "subagent_tests.rs"]
+mod tests;

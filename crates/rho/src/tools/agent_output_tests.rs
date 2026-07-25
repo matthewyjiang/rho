@@ -17,8 +17,8 @@ fn snapshot(done: bool) -> SubagentSnapshot {
                 RunState::Running
             },
             turns: 3,
-            input_tokens: 1_200,
-            output_tokens: 300,
+            input_tokens: Some(1_200),
+            output_tokens: Some(300),
             last_activity: Some("searching files".into()),
             last_text: Some("streamed partial answer".into()),
             result: done.then(|| "found it".into()),
@@ -74,6 +74,24 @@ fn formats_stopped_completion_as_unverified() {
          \n\
          (partial, stopped before finishing)\n\
          found it"
+    );
+}
+
+#[test]
+fn formats_unknown_tokens_as_question_marks() {
+    let mut snapshot = snapshot(true);
+    snapshot.status.state = RunState::Stopped;
+    snapshot.status.input_tokens = None;
+    snapshot.status.output_tokens = None;
+    snapshot.status.result = Some("partial".into());
+
+    assert_eq!(
+        format_snapshot(&snapshot, SnapshotFormat::Completion),
+        "agent abc123 (explorer): stopped\n\
+         turns: 3 · tokens: ? in / ? out\n\
+         this delegated task did not complete; treat its work as unverified\n\
+         \n\
+         partial"
     );
 }
 

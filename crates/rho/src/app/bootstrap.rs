@@ -130,7 +130,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         },
         &config,
     )?;
-    config = bound_agent.config().clone();
+    config = bound_agent.rho_config().cloned().unwrap_or(config);
 
     validate_terminal_mode(&cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;

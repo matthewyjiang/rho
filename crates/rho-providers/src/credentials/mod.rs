@@ -17,7 +17,6 @@
 mod backend;
 mod file;
 mod file_document;
-mod file_lock;
 mod file_permissions;
 #[cfg(windows)]
 mod file_windows;

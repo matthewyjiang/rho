@@ -33,8 +33,12 @@ pub struct ProviderUsageLimits {
 #[derive(Clone, Debug, PartialEq)]
 pub struct UsageLimitWindow {
     pub label: String,
-    pub remaining_percent: f64,
-    pub resets_at_unix: i64,
+    /// Remaining percent when the source reported utilization.
+    pub remaining_percent: Option<f64>,
+    /// Reset instant when the source reported one.
+    pub resets_at_unix: Option<i64>,
+    /// Optional status note (warning, overage, observation age, …).
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -561,8 +565,9 @@ impl From<CodexLimitWindow> for UsageLimitWindow {
     fn from(window: CodexLimitWindow) -> Self {
         Self {
             label: window_label(window.limit_window_seconds),
-            remaining_percent: (100.0 - window.used_percent).clamp(0.0, 100.0),
-            resets_at_unix: window.reset_at,
+            remaining_percent: Some((100.0 - window.used_percent).clamp(0.0, 100.0)),
+            resets_at_unix: Some(window.reset_at),
+            note: None,
         }
     }
 }
@@ -666,8 +671,9 @@ impl KimiUsageDetail {
             })?;
         Some(UsageLimitWindow {
             label,
-            remaining_percent: (remaining / limit * 100.0).clamp(0.0, 100.0),
-            resets_at_unix: parse_unix_timestamp(&self.reset_time)?,
+            remaining_percent: Some((remaining / limit * 100.0).clamp(0.0, 100.0)),
+            resets_at_unix: Some(parse_unix_timestamp(&self.reset_time)?),
+            note: None,
         })
     }
 }
@@ -716,8 +722,9 @@ impl XaiBillingPayload {
         };
         vec![UsageLimitWindow {
             label: label.into(),
-            remaining_percent: (100.0 - used_percent).clamp(0.0, 100.0),
-            resets_at_unix,
+            remaining_percent: Some((100.0 - used_percent).clamp(0.0, 100.0)),
+            resets_at_unix: Some(resets_at_unix),
+            note: None,
         }]
     }
 }
