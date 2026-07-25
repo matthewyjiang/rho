@@ -92,12 +92,12 @@ impl ToolKind {
 
     /// How many new argument bytes to wait before re-rendering a live preview.
     ///
-    /// Agent prompts need frequent updates early and a gentler cadence once the
-    /// payload is long. Other tools keep the cheaper exponential backoff so
-    /// large inert payloads are not re-parsed every few dozen bytes.
+    /// Agent re-evaluates on every growth: streaming reads a few known fields from
+    /// the raw buffer, and identical renders are suppressed by `last_lines`. Other
+    /// tools keep exponential backoff around full incomplete-JSON parses.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
         match self {
-            Self::Agent => (arguments_len / 8).max(32),
+            Self::Agent => 0,
             Self::Agents
             | Self::Bash
             | Self::PowerShell
@@ -173,8 +173,7 @@ impl InteractiveToolPresenter {
         {
             return None;
         }
-        let arguments = parse_incomplete_json(&preview.arguments);
-        let lines = streaming_preview_lines(kind, name, arguments.as_ref(), &self.cwd);
+        let lines = streaming_preview_lines(kind, name, &preview.arguments, &self.cwd);
         preview.next_parse_length = preview
             .arguments
             .len()

@@ -317,6 +317,19 @@ fn agent_prompt_streaming_keeps_updating_past_the_compact_summary_window() {
 }
 
 #[test]
+fn agent_streaming_preview_ignores_field_names_inside_prompt_text() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    let raw = r#"{"prompt":"discuss \"agent_id\":\"forged\" values","agent_id":"explorer","background":true}"#;
+    assert_eq!(
+        presenter.preview(0, Some("agent".into()), raw),
+        Some(vec![
+            "● explorer  starting in background".into(),
+            r#"  discuss "agent_id":"forged" values"#.into(),
+        ])
+    );
+}
+
+#[test]
 fn agent_progress_and_completion_keep_task_state_and_result_distinct() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
     let id = ToolCallId::from_string("call-agent-foreground").unwrap();
