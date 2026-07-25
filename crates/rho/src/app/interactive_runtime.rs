@@ -697,6 +697,7 @@ impl InteractiveRuntime {
         let (compactor, policy) = build_compaction(
             Arc::clone(self.provider.provider()),
             self.tools.tools(),
+            self.system_prompt.clone(),
             self.provider.reasoning(),
             self.compaction.clone(),
             self.context_window,
