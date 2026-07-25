@@ -38,6 +38,26 @@ pub(super) fn start_lines(view: &ToolView, cwd: &std::path::Path) -> Vec<String>
     preview_lines(view.kind, &view.name, Some(&view.arguments), cwd)
 }
 
+/// Live tool-call argument preview while the provider is still streaming JSON.
+///
+/// Most tools parse incomplete JSON and reuse the start layout. Agent is
+/// different: its payload is a long prompt, so streaming reads fields from the
+/// raw argument buffer and shows a live tail without rebuilding a JSON value.
+pub(super) fn streaming_preview_lines(
+    kind: ToolKind,
+    name: &str,
+    raw_arguments: &str,
+    cwd: &std::path::Path,
+) -> Vec<String> {
+    match kind {
+        ToolKind::Agent => agent_format::agent_streaming_preview_from_raw(raw_arguments),
+        _ => {
+            let arguments = parse_incomplete_json(raw_arguments);
+            preview_lines(kind, name, arguments.as_ref(), cwd)
+        }
+    }
+}
+
 pub(super) fn preview_lines(
     kind: ToolKind,
     name: &str,

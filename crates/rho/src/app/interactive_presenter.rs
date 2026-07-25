@@ -89,6 +89,31 @@ impl ToolKind {
     fn preview_uses_arguments(self) -> bool {
         !matches!(self, Self::WriteFile | Self::EditFile)
     }
+
+    /// How many new argument bytes to wait before re-rendering a live preview.
+    ///
+    /// Agent re-evaluates on every growth: streaming reads a few known fields from
+    /// the raw buffer, and identical renders are suppressed by `last_lines`. Other
+    /// tools keep exponential backoff around full incomplete-JSON parses.
+    fn preview_parse_stride(self, arguments_len: usize) -> usize {
+        match self {
+            Self::Agent => 0,
+            Self::Agents
+            | Self::Bash
+            | Self::PowerShell
+            | Self::Process
+            | Self::ListDir
+            | Self::ReadFile
+            | Self::WriteFile
+            | Self::EditFile
+            | Self::Skill
+            | Self::WebSearch
+            | Self::FetchContent
+            | Self::GetSearchContent
+            | Self::Questionnaire
+            | Self::Other => arguments_len.max(1),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -96,6 +121,7 @@ struct StreamedPreview {
     name: Option<String>,
     arguments: String,
     next_parse_length: usize,
+    last_lines: Option<Vec<String>>,
 }
 
 pub(crate) struct InteractiveToolPresenter {
@@ -136,6 +162,7 @@ impl InteractiveToolPresenter {
         if name_changed {
             preview.arguments.clear();
             preview.next_parse_length = 0;
+            preview.last_lines = None;
         }
         preview.arguments.push_str(arguments_delta);
         let name = preview.name.as_deref()?;
@@ -146,12 +173,15 @@ impl InteractiveToolPresenter {
         {
             return None;
         }
-        let arguments = parse_incomplete_json(&preview.arguments);
-        let lines = preview_lines(kind, name, arguments.as_ref(), &self.cwd);
+        let lines = streaming_preview_lines(kind, name, &preview.arguments, &self.cwd);
         preview.next_parse_length = preview
             .arguments
             .len()
-            .saturating_add(preview.arguments.len().max(1));
+            .saturating_add(kind.preview_parse_stride(preview.arguments.len()));
+        if preview.last_lines.as_ref() == Some(&lines) {
+            return None;
+        }
+        preview.last_lines = Some(lines.clone());
         Some(lines)
     }
 

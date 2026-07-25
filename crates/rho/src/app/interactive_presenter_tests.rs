@@ -202,7 +202,8 @@ fn agent_tools_use_status_first_presentations() {
         presenter.preview(0, Some("agent".into()), &arguments.to_string()),
         Some(vec![
             "● explorer  starting in background".into(),
-            "  Audit the repository for architecture issues".into(),
+            "  Audit the repository".into(),
+            "  for architecture issues".into(),
         ])
     );
     presenter.proposed(call(id.as_str(), "agent", arguments));
@@ -257,8 +258,75 @@ fn agent_tools_use_status_first_presentations() {
             &serde_json::json!({"agent_id": "explorer", "prompt": long_prompt}).to_string(),
         )
         .unwrap();
-    assert!(long_preview[1].ends_with('…'));
-    assert!(!long_preview[1].contains("tail marker"));
+    assert!(
+        long_preview[1].contains("tail marker"),
+        "streaming agent previews should keep the live prompt tail visible: {long_preview:?}"
+    );
+    assert!(
+        long_preview[1].starts_with("  …"),
+        "long streaming prompts should mark omitted leading text: {long_preview:?}"
+    );
+
+    // Compact start/finish summaries still prefer a short prefix, not the live tail.
+    let started_long = presenter.proposed(call(
+        "call-agent-long",
+        "agent",
+        serde_json::json!({
+            "agent_id": "explorer",
+            "prompt": format!("{}tail marker", "architecture ".repeat(30)),
+        }),
+    ));
+    assert!(started_long[1].ends_with('…'));
+    assert!(!started_long[1].contains("tail marker"));
+}
+
+#[test]
+fn agent_prompt_streaming_keeps_updating_past_the_compact_summary_window() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    assert_eq!(
+        presenter.preview(
+            0,
+            Some("agent".into()),
+            r#"{"agent_id":"explorer","prompt":""#
+        ),
+        Some(vec!["● explorer  starting".into()])
+    );
+
+    let mut last_prompt_line = None;
+    let mut updates = 0;
+    for chunk in std::iter::repeat_n("delegated task context ", 40) {
+        if let Some(lines) = presenter.preview(0, None, chunk) {
+            updates += 1;
+            let prompt_line = lines.get(1).cloned().unwrap_or_default();
+            if let Some(previous) = last_prompt_line.replace(prompt_line.clone()) {
+                assert_ne!(
+                    previous, prompt_line,
+                    "each emitted agent preview should advance the live prompt text"
+                );
+            }
+            assert!(
+                prompt_line.contains("delegated") || prompt_line.contains("task"),
+                "{lines:?}"
+            );
+        }
+    }
+    assert!(
+        updates >= 8,
+        "long agent prompts should emit many streaming previews, got {updates}"
+    );
+}
+
+#[test]
+fn agent_streaming_preview_ignores_field_names_inside_prompt_text() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    let raw = r#"{"prompt":"discuss \"agent_id\":\"forged\" values","agent_id":"explorer","background":true}"#;
+    assert_eq!(
+        presenter.preview(0, Some("agent".into()), raw),
+        Some(vec![
+            "● explorer  starting in background".into(),
+            r#"  discuss "agent_id":"forged" values"#.into(),
+        ])
+    );
 }
 
 #[test]
