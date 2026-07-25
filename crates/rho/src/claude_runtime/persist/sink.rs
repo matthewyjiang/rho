@@ -1,8 +1,12 @@
 //! StatusSink orchestration for one Claude CLI run.
 
 use std::{
-    sync::{mpsc as std_mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc as std_mpsc, Arc, Mutex,
+    },
     thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use tokio::sync::{oneshot, watch};
@@ -16,14 +20,44 @@ use super::super::{
     rate_limit::{RateLimitObservation, RateLimitSlot},
     stream::{self, StreamEffect, TerminalResult},
 };
-#[cfg(test)]
-use super::worker::PersistHooks;
 use super::worker::{
     demote_completed_attachment, demote_status_for_sticky_error, spawn_persist_worker, BarrierAck,
     ClaudeRunIdentity, PersistCommand, PersistFeedback,
 };
+#[cfg(test)]
+use super::worker::{PersistHooks, WriterStall};
 
 const MAX_SINK_TEXT_BYTES: usize = 256 * 1024;
+
+/// Explicit deadlines for terminal persistence shutdown work.
+///
+/// Production defaults favor durability. Tests inject short budgets so
+/// `finish_with_barrier` cannot hang the async runtime.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PersistShutdownBudgets {
+    pub(crate) queue_send: Duration,
+    pub(crate) barrier_ack: Duration,
+    pub(crate) worker_join: Duration,
+    pub(crate) emergency_write: Duration,
+}
+
+impl Default for PersistShutdownBudgets {
+    fn default() -> Self {
+        Self {
+            queue_send: Duration::from_secs(2),
+            barrier_ack: Duration::from_secs(5),
+            worker_join: Duration::from_secs(2),
+            emergency_write: Duration::from_secs(2),
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct EmergencyWriteHooks {
+    stall: Option<Arc<WriterStall>>,
+    fail_writes: Arc<std::sync::atomic::AtomicUsize>,
+}
 
 /// In-memory + durable sink for one Claude CLI run.
 pub(crate) struct StatusSink {
@@ -34,9 +68,15 @@ pub(crate) struct StatusSink {
     persist_join: Option<JoinHandle<()>>,
     feedback: Arc<Mutex<PersistFeedback>>,
     rate_limit_slot: Arc<RateLimitSlot>,
+    /// Set when shutdown abandons the worker so later barrier writes cannot
+    /// overwrite an emergency terminal status.
+    abandon: Arc<AtomicBool>,
+    shutdown_budgets: PersistShutdownBudgets,
     attachment_enabled: bool,
     first_status_error: Option<String>,
     closed: bool,
+    #[cfg(test)]
+    emergency_hooks: EmergencyWriteHooks,
 }
 
 impl StatusSink {
@@ -48,7 +88,15 @@ impl StatusSink {
     ) -> anyhow::Result<Self> {
         #[cfg(test)]
         {
-            Self::build(path, identity, prompt, status_tx, PersistHooks::default())
+            Self::build(
+                path,
+                identity,
+                prompt,
+                status_tx,
+                PersistHooks::default(),
+                PersistShutdownBudgets::default(),
+                EmergencyWriteHooks::default(),
+            )
         }
         #[cfg(not(test))]
         {
@@ -64,7 +112,61 @@ impl StatusSink {
         status_tx: Option<watch::Sender<RunStatus>>,
         hooks: PersistHooks,
     ) -> anyhow::Result<Self> {
-        Self::build(path, identity, prompt, status_tx, hooks)
+        Self::build(
+            path,
+            identity,
+            prompt,
+            status_tx,
+            hooks,
+            PersistShutdownBudgets::default(),
+            EmergencyWriteHooks::default(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_hooks_and_budgets(
+        path: std::path::PathBuf,
+        identity: &ClaudeRunIdentity,
+        prompt: &str,
+        status_tx: Option<watch::Sender<RunStatus>>,
+        hooks: PersistHooks,
+        budgets: PersistShutdownBudgets,
+    ) -> anyhow::Result<Self> {
+        Self::build(
+            path,
+            identity,
+            prompt,
+            status_tx,
+            hooks,
+            budgets,
+            EmergencyWriteHooks::default(),
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_shutdown_hooks(
+        path: std::path::PathBuf,
+        identity: &ClaudeRunIdentity,
+        prompt: &str,
+        status_tx: Option<watch::Sender<RunStatus>>,
+        hooks: PersistHooks,
+        budgets: PersistShutdownBudgets,
+        emergency_stall: Option<Arc<WriterStall>>,
+        emergency_fail_writes: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> anyhow::Result<Self> {
+        Self::build(
+            path,
+            identity,
+            prompt,
+            status_tx,
+            hooks,
+            budgets,
+            EmergencyWriteHooks {
+                stall: emergency_stall,
+                fail_writes: emergency_fail_writes,
+            },
+        )
     }
 
     fn build(
@@ -73,6 +175,8 @@ impl StatusSink {
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
         #[cfg(test)] hooks: PersistHooks,
+        #[cfg(test)] budgets: PersistShutdownBudgets,
+        #[cfg(test)] emergency_hooks: EmergencyWriteHooks,
     ) -> anyhow::Result<Self> {
         let model = identity
             .model
@@ -115,11 +219,13 @@ impl StatusSink {
         }
 
         let rate_limit_slot = Arc::new(RateLimitSlot::new());
+        let abandon = Arc::new(AtomicBool::new(false));
         let (persist_tx, feedback, persist_join) = spawn_persist_worker(
             path.clone(),
             attachment,
             Some(status.clone()),
             Arc::clone(&rate_limit_slot),
+            Arc::clone(&abandon),
             #[cfg(test)]
             hooks,
         );
@@ -132,9 +238,16 @@ impl StatusSink {
             persist_join: Some(persist_join),
             feedback,
             rate_limit_slot,
+            abandon,
+            #[cfg(test)]
+            shutdown_budgets: budgets,
+            #[cfg(not(test))]
+            shutdown_budgets: PersistShutdownBudgets::default(),
             attachment_enabled,
             first_status_error: None,
             closed: false,
+            #[cfg(test)]
+            emergency_hooks,
         })
     }
 
@@ -381,6 +494,11 @@ impl StatusSink {
     }
 
     /// Flush final status/attachment, then publish one terminal watch update.
+    ///
+    /// Every blocking phase has an explicit budget from
+    /// [`PersistShutdownBudgets`]. On timeout the sink abandons the worker
+    /// (non-blocking), records a diagnostic, best-effort-writes terminal
+    /// status under its own budget, and returns.
     async fn finish_with_barrier(
         &mut self,
         mut terminal_attachment: Option<AttachmentEvent>,
@@ -408,47 +526,64 @@ impl StatusSink {
             ack: ack_tx,
         };
 
-        let send_ok = if let Some(tx) = self.persist_tx.take() {
-            // Blocking send off the runtime so a full queue can still drain.
-            // Map inside the closure so the JoinHandle does not carry SendError.
-            matches!(
-                tokio::task::spawn_blocking(move || tx.send(command).is_ok()).await,
-                Ok(true)
-            )
+        let send_result = if let Some(tx) = self.persist_tx.take() {
+            self.send_barrier_bounded(tx, command).await
         } else {
-            false
+            BarrierSendResult::Disconnected
         };
 
-        if !send_ok {
-            self.note_send_failure("status");
-            self.apply_local_sticky_demotion();
-            // Best-effort: still persist the latest rate-limit observation.
-            // Tests inject an explicit path through hooks on the worker; without
-            // a live worker, skip default home writes under cfg(test).
-            #[cfg(not(test))]
-            if let Some(observation) = self.rate_limit_slot.take() {
-                if let Ok(path) = super::super::rate_limit::default_state_path() {
-                    let _ = super::super::rate_limit::store_observation(&path, observation);
+        match send_result {
+            BarrierSendResult::Sent => {}
+            BarrierSendResult::Full => {
+                self.note_shutdown_failure(
+                    "status persistence barrier could not be queued before deadline",
+                );
+                return self.finish_after_shutdown_failure().await;
+            }
+            BarrierSendResult::Disconnected => {
+                self.note_send_failure("status");
+                return self.finish_after_shutdown_failure().await;
+            }
+        }
+
+        let barrier_ack = match tokio::time::timeout(self.shutdown_budgets.barrier_ack, ack_rx)
+            .await
+        {
+            Ok(Ok(ack)) => ack,
+            Ok(Err(_)) => BarrierAck {
+                status: self.status.clone(),
+                first_status_error: Some("status persistence worker stopped before barrier".into()),
+            },
+            Err(_) => {
+                self.note_shutdown_failure("status persistence barrier acknowledgment timed out");
+                return self.finish_after_shutdown_failure().await;
+            }
+        };
+
+        if !self.join_worker_bounded().await {
+            self.note_shutdown_failure("status persistence worker join timed out");
+            // Barrier already acked final status; keep that snapshot and only
+            // detach the join so the async task cannot hang.
+            self.abandon_worker(/*detach_sender*/ false);
+            self.take_attachment_feedback();
+            let attachment_error = self.status.attachment_error.clone();
+            self.status = barrier_ack.status;
+            if self.status.attachment_error.is_none() {
+                self.status.attachment_error = attachment_error;
+            }
+            if let Some(error) = barrier_ack.first_status_error {
+                if self.first_status_error.is_none() {
+                    self.first_status_error = Some(error);
                 }
             }
-            #[cfg(test)]
-            {
-                let _ = self.rate_limit_slot.take();
+            self.pull_status_error_feedback();
+            if self.status.attachment_error.is_some() || self.first_status_error.is_some() {
+                self.emergency_write_status().await;
             }
-            self.emergency_write_status().await;
-            self.join_worker().await;
             self.publish_watch();
             return self.status_error_result();
         }
 
-        let barrier_ack = match ack_rx.await {
-            Ok(ack) => ack,
-            Err(_) => BarrierAck {
-                status: self.status.clone(),
-                first_status_error: Some("status persistence worker stopped before barrier".into()),
-            },
-        };
-        self.join_worker().await;
         self.take_attachment_feedback();
         let attachment_error = self.status.attachment_error.clone();
 
@@ -468,6 +603,59 @@ impl StatusSink {
         self.publish_watch();
 
         self.status_error_result()
+    }
+
+    async fn send_barrier_bounded(
+        &self,
+        tx: std_mpsc::SyncSender<PersistCommand>,
+        mut command: PersistCommand,
+    ) -> BarrierSendResult {
+        let deadline = Instant::now() + self.shutdown_budgets.queue_send;
+        loop {
+            match tx.try_send(command) {
+                Ok(()) => return BarrierSendResult::Sent,
+                Err(std_mpsc::TrySendError::Disconnected(_)) => {
+                    return BarrierSendResult::Disconnected;
+                }
+                Err(std_mpsc::TrySendError::Full(returned)) => {
+                    if Instant::now() >= deadline {
+                        // Drop the sender without a detached blocked thread so
+                        // a stalled worker cannot pin queue resources forever.
+                        drop(tx);
+                        return BarrierSendResult::Full;
+                    }
+                    command = returned;
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            }
+        }
+    }
+
+    async fn finish_after_shutdown_failure(&mut self) -> Result<(), String> {
+        self.apply_local_sticky_demotion();
+        // Best-effort: still persist the latest rate-limit observation.
+        // Tests inject an explicit path through hooks on the worker; without
+        // a live worker, skip default home writes under cfg(test).
+        #[cfg(not(test))]
+        if let Some(observation) = self.rate_limit_slot.take() {
+            if let Ok(path) = super::super::rate_limit::default_state_path() {
+                let _ = super::super::rate_limit::store_observation(&path, observation);
+            }
+        }
+        #[cfg(test)]
+        {
+            let _ = self.rate_limit_slot.take();
+        }
+        self.abandon_worker(/*detach_sender*/ true);
+        self.emergency_write_status().await;
+        self.publish_watch();
+        self.status_error_result()
+    }
+
+    fn note_shutdown_failure(&mut self, message: &str) {
+        if self.first_status_error.is_none() {
+            self.first_status_error = Some(message.to_string());
+        }
     }
 
     fn apply_local_sticky_demotion(&mut self) {
@@ -495,16 +683,75 @@ impl StatusSink {
     async fn emergency_write_status(&self) {
         let path = self.path.clone();
         let status = self.status.clone();
-        let _ = tokio::task::spawn_blocking(move || subagent::write_status(&path, &status)).await;
+        #[cfg(test)]
+        let emergency_hooks = self.emergency_hooks.clone();
+        // Dedicated OS thread: a stalled write must not pin Tokio's blocking pool.
+        let (done_tx, done_rx) = oneshot::channel();
+        let spawn_ok = std::thread::Builder::new()
+            .name("rho-claude-persist-emergency".into())
+            .spawn(move || {
+                #[cfg(test)]
+                {
+                    if let Some(stall) = &emergency_hooks.stall {
+                        stall.wait_if_stalled();
+                    }
+                    if emergency_hooks.fail_writes.load(Ordering::SeqCst) > 0 {
+                        emergency_hooks.fail_writes.fetch_sub(1, Ordering::SeqCst);
+                        let _ = done_tx.send(Err(std::io::Error::other(
+                            "injected emergency write failure",
+                        )));
+                        return;
+                    }
+                }
+                let result = subagent::write_status(&path, &status);
+                let _ = done_tx.send(result);
+            })
+            .is_ok();
+        if !spawn_ok {
+            return;
+        }
+        match tokio::time::timeout(self.shutdown_budgets.emergency_write, done_rx).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(_))) | Ok(Err(_)) | Err(_) => {
+                // Best-effort only. The in-memory/watch status still carries the
+                // terminal snapshot even when disk cannot be updated in budget.
+            }
+        }
     }
 
-    async fn join_worker(&mut self) {
-        if let Some(join) = self.persist_join.take() {
-            let _ = tokio::task::spawn_blocking(move || {
+    /// Wait up to the join budget. Returns false when the worker must be abandoned.
+    async fn join_worker_bounded(&mut self) -> bool {
+        let Some(join) = self.persist_join.take() else {
+            return true;
+        };
+        // Use an OS helper thread rather than `spawn_blocking` so a worker that
+        // never exits cannot pin a Tokio blocking-pool slot forever.
+        let (done_tx, done_rx) = oneshot::channel();
+        let spawn_ok = std::thread::Builder::new()
+            .name("rho-claude-persist-join".into())
+            .spawn(move || {
                 let _ = join.join();
+                let _ = done_tx.send(());
             })
-            .await;
+            .is_ok();
+        if !spawn_ok {
+            // Helper spawn failed; treat as abandon without blocking.
+            return false;
         }
+        matches!(
+            tokio::time::timeout(self.shutdown_budgets.worker_join, done_rx).await,
+            Ok(Ok(()))
+        )
+    }
+
+    fn abandon_worker(&mut self, detach_sender: bool) {
+        self.abandon.store(true, Ordering::SeqCst);
+        if detach_sender {
+            // Dropping the sender unblocks a worker sitting in recv without
+            // creating a blocked sender thread.
+            self.persist_tx.take();
+        }
+        self.detach_worker_join();
     }
 
     /// Abort without waiting. Best-effort terminal disk write; no second watch
@@ -520,6 +767,7 @@ impl StatusSink {
         } else {
             self.persist_tx.take();
         }
+        self.abandon.store(true, Ordering::SeqCst);
         if self.status.state.is_terminal() {
             let _ = subagent::write_status(&self.path, &self.status);
             if !already_closed {
@@ -542,10 +790,21 @@ impl StatusSink {
     pub(crate) async fn shutdown(mut self) {
         if !self.closed {
             let _ = self.finish_with_barrier(None).await;
-        } else {
-            self.join_worker().await;
+        } else if !self.join_worker_bounded().await {
+            self.abandon_worker(/*detach_sender*/ false);
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn first_status_error_for_test(&self) -> Option<String> {
+        self.first_status_error.clone()
+    }
+}
+
+enum BarrierSendResult {
+    Sent,
+    Full,
+    Disconnected,
 }
 
 impl Drop for StatusSink {

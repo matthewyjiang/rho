@@ -2,7 +2,10 @@
 
 use std::{
     collections::VecDeque,
-    sync::{mpsc as std_mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        mpsc as std_mpsc, Arc, Mutex,
+    },
     thread::JoinHandle,
 };
 
@@ -28,6 +31,8 @@ pub(super) const PERSISTENCE_QUEUE_CAPACITY: usize = 64;
 #[derive(Clone, Default)]
 pub(crate) struct PersistHooks {
     pub(crate) stall: Option<Arc<WriterStall>>,
+    /// Stall after barrier ack is sent so join can time out while work is done.
+    pub(crate) post_barrier_stall: Option<Arc<WriterStall>>,
     pub(crate) fail_status_writes: Arc<AtomicUsize>,
     pub(crate) fail_attachment_writes: Arc<AtomicUsize>,
     pub(crate) log: Arc<Mutex<Vec<PersistLogEntry>>>,
@@ -59,7 +64,7 @@ impl WriterStall {
         self.cv.notify_all();
     }
 
-    fn wait_if_stalled(&self) {
+    pub(crate) fn wait_if_stalled(&self) {
         let mut stalled = self
             .lock
             .lock()
@@ -143,14 +148,25 @@ struct PersistWorker {
     last_written: Option<RunStatus>,
     feedback: Arc<Mutex<PersistFeedback>>,
     rate_limit_slot: Arc<RateLimitSlot>,
+    abandon: Arc<AtomicBool>,
     #[cfg(test)]
     hooks: PersistHooks,
 }
 
 impl PersistWorker {
+    fn abandoned(&self) -> bool {
+        self.abandon.load(AtomicOrdering::SeqCst)
+    }
+
     fn run(mut self, rx: std_mpsc::Receiver<PersistCommand>) {
         let mut pending = VecDeque::new();
         loop {
+            if self.abandoned() {
+                // Still publish the latest rate-limit observation on abandon so
+                // transcript stalls cannot drop it after Abort/timeout.
+                self.flush_rate_limit();
+                break;
+            }
             let next = match pending.pop_front() {
                 Some(command) => command,
                 None => match rx.recv() {
@@ -161,6 +177,12 @@ impl PersistWorker {
                     }
                 },
             };
+            if self.abandoned() {
+                // Sink already performed emergency terminal write; do not race
+                // status/attachment, but still flush coalesced rate-limit state.
+                self.flush_rate_limit();
+                break;
+            }
             // Flush coalesced rate-limit state whenever the worker is awake so a
             // saturated transcript queue cannot indefinitely delay the latest
             // observation.
@@ -168,10 +190,14 @@ impl PersistWorker {
             let command = coalesce_nonterminal_status(next, &rx, &mut pending);
             match command {
                 PersistCommand::Status { status, force } => {
-                    self.perform_status(status, force);
+                    if !self.abandoned() {
+                        self.perform_status(status, force);
+                    }
                 }
                 PersistCommand::Attachment(event) => {
-                    self.perform_attachment(event);
+                    if !self.abandoned() {
+                        self.perform_attachment(event);
+                    }
                 }
                 PersistCommand::FlushRateLimit => {
                     // Already flushed at the top of the loop.
@@ -181,10 +207,38 @@ impl PersistWorker {
                     terminal_attachment,
                     ack,
                 } => {
+                    if self.abandoned() {
+                        self.flush_rate_limit();
+                        let first_status_error = self
+                            .feedback
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .first_status_error
+                            .clone();
+                        let _ = ack.send(BarrierAck {
+                            status,
+                            first_status_error,
+                        });
+                        break;
+                    }
                     // Sticky first, then terminal write; re-resolve if that write fails.
                     let (mut status, mut terminal_attachment) =
                         self.resolve_barrier_terminal(status, terminal_attachment);
                     self.perform_status(status.clone(), /*force*/ true);
+                    if self.abandoned() {
+                        self.flush_rate_limit();
+                        let first_status_error = self
+                            .feedback
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .first_status_error
+                            .clone();
+                        let _ = ack.send(BarrierAck {
+                            status,
+                            first_status_error,
+                        });
+                        break;
+                    }
                     let resolved = self.resolve_barrier_terminal(status, terminal_attachment);
                     status = resolved.0;
                     terminal_attachment = resolved.1;
@@ -194,6 +248,20 @@ impl PersistWorker {
                         })
                     {
                         self.perform_status(status.clone(), /*force*/ true);
+                    }
+                    if self.abandoned() {
+                        self.flush_rate_limit();
+                        let first_status_error = self
+                            .feedback
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .first_status_error
+                            .clone();
+                        let _ = ack.send(BarrierAck {
+                            status,
+                            first_status_error,
+                        });
+                        break;
                     }
                     if let Some(event) = terminal_attachment {
                         self.perform_attachment(event);
@@ -212,6 +280,10 @@ impl PersistWorker {
                         status,
                         first_status_error,
                     });
+                    #[cfg(test)]
+                    if let Some(stall) = &self.hooks.post_barrier_stall {
+                        stall.wait_if_stalled();
+                    }
                     break;
                 }
                 PersistCommand::Abort => {
@@ -251,6 +323,9 @@ impl PersistWorker {
                 state: status.state,
             });
             self.wait_hook();
+        }
+        if self.abandoned() {
+            return;
         }
         // Worker-local monotonicity mirrors `subagent::write_status`: never
         // demote an already-terminal snapshot with a queued nonterminal update.
@@ -308,6 +383,9 @@ impl PersistWorker {
                 &event,
             )));
             self.wait_hook();
+        }
+        if self.abandoned() {
+            return;
         }
         let Some(writer) = self.attachment.as_mut() else {
             return;
@@ -403,6 +481,7 @@ pub(super) fn spawn_persist_worker(
     attachment: Option<AttachmentWriter>,
     last_written: Option<RunStatus>,
     rate_limit_slot: Arc<RateLimitSlot>,
+    abandon: Arc<AtomicBool>,
     #[cfg(test)] hooks: PersistHooks,
 ) -> (
     std_mpsc::SyncSender<PersistCommand>,
@@ -421,6 +500,7 @@ pub(super) fn spawn_persist_worker(
                 last_written,
                 feedback: feedback_worker,
                 rate_limit_slot,
+                abandon,
                 #[cfg(test)]
                 hooks,
             }

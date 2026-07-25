@@ -885,3 +885,275 @@ async fn rate_limit_flushes_on_abort_path() {
     let loaded = crate::claude_runtime::rate_limit::load_at(&rate_path).expect("rate limit");
     assert_eq!(loaded.info.status.as_deref(), Some("on-abort"));
 }
+
+fn tight_shutdown_budgets() -> PersistShutdownBudgets {
+    PersistShutdownBudgets {
+        queue_send: Duration::from_millis(40),
+        barrier_ack: Duration::from_millis(40),
+        worker_join: Duration::from_millis(40),
+        emergency_write: Duration::from_millis(40),
+    }
+}
+
+/// Full queue + stalled worker: barrier enqueue must time out and finish must
+/// still return a terminal emergency status without parking the runtime.
+#[tokio::test]
+async fn finish_returns_when_barrier_queue_is_full() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let stall = WriterStall::new_stalled();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let hooks = PersistHooks {
+        stall: Some(Arc::clone(&stall)),
+        log: Arc::clone(&log),
+        ..PersistHooks::default()
+    };
+    let mut sink = StatusSink::new_with_hooks_and_budgets(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        hooks,
+        tight_shutdown_budgets(),
+    )
+    .unwrap();
+
+    // Ensure the worker has taken one command and is parked inside it so the
+    // channel free-slot count is stable before we fill to capacity.
+    sink.apply_effect(StreamEffect::Attachment(
+        AttachmentEvent::AssistantTextDelta("hold".into()),
+    ))
+    .unwrap();
+    let started_wait = std::time::Instant::now();
+    loop {
+        let seen = log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| matches!(entry, PersistLogEntry::Attachment(_)));
+        if seen {
+            break;
+        }
+        assert!(
+            started_wait.elapsed() < Duration::from_millis(500),
+            "worker never took the hold attachment"
+        );
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // Fill every remaining channel slot while the worker stays stalled.
+    for index in 0..super::worker::PERSISTENCE_QUEUE_CAPACITY + 8 {
+        let _ = sink.apply_effect(StreamEffect::Attachment(
+            AttachmentEvent::AssistantTextDelta(format!("chunk {index}")),
+        ));
+    }
+
+    let started = std::time::Instant::now();
+    sink.finalize_success_from_stream(&success_terminal()).await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(400),
+        "full-queue finish must stay bounded: {elapsed:?}"
+    );
+
+    assert_eq!(sink.status.state, RunState::Error);
+    let diagnostic = sink.first_status_error_for_test();
+    assert!(
+        diagnostic.as_deref().is_some_and(|text| {
+            text.contains("could not be queued")
+                || text.contains("deadline")
+                || text.contains("acknowledgment timed out")
+        }),
+        "expected bounded shutdown diagnostic, got {diagnostic:?}"
+    );
+
+    let disk = subagent::read_status(&output).expect("status");
+    assert_eq!(disk.state, RunState::Error);
+
+    stall.release();
+    sink.shutdown().await;
+}
+
+/// Worker stalled before barrier ack: finish must abandon after the ack budget
+/// and still publish a terminal emergency status.
+#[tokio::test]
+async fn finish_returns_when_worker_stalls_before_ack() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let stall = WriterStall::new_stalled();
+    let hooks = PersistHooks {
+        stall: Some(Arc::clone(&stall)),
+        ..PersistHooks::default()
+    };
+    let mut sink = StatusSink::new_with_hooks_and_budgets(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        hooks,
+        tight_shutdown_budgets(),
+    )
+    .unwrap();
+
+    sink.mark_running().ok();
+
+    let started = std::time::Instant::now();
+    sink.finalize_success_from_stream(&success_terminal()).await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(400),
+        "ack-timeout finish must stay bounded: {elapsed:?}"
+    );
+
+    assert_eq!(sink.status.state, RunState::Error);
+    assert!(
+        sink.first_status_error_for_test()
+            .is_some_and(|text| text.contains("acknowledgment timed out")),
+        "expected ack timeout diagnostic, got {:?}",
+        sink.first_status_error_for_test()
+    );
+
+    let disk = subagent::read_status(&output).expect("status");
+    assert_eq!(disk.state, RunState::Error);
+
+    stall.release();
+    sink.shutdown().await;
+}
+
+/// Barrier can ack while the worker thread refuses to exit: join must time out
+/// without hanging finish, keeping the acked terminal snapshot.
+#[tokio::test]
+async fn finish_returns_when_worker_never_joins() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let post_stall = WriterStall::new_stalled();
+    let hooks = PersistHooks {
+        post_barrier_stall: Some(Arc::clone(&post_stall)),
+        ..PersistHooks::default()
+    };
+    let budgets = PersistShutdownBudgets {
+        queue_send: Duration::from_millis(200),
+        barrier_ack: Duration::from_millis(200),
+        worker_join: Duration::from_millis(40),
+        emergency_write: Duration::from_millis(200),
+    };
+    let mut sink = StatusSink::new_with_hooks_and_budgets(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        hooks,
+        budgets,
+    )
+    .unwrap();
+
+    sink.mark_running().unwrap();
+
+    let started = std::time::Instant::now();
+    sink.finalize_success_from_stream(&success_terminal()).await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "join-timeout finish must stay bounded: {elapsed:?}"
+    );
+
+    assert_eq!(sink.status.state, RunState::Ok);
+    assert_eq!(sink.status.result.as_deref(), Some("done"));
+
+    let disk = subagent::read_status(&output).expect("status");
+    assert_eq!(disk.state, RunState::Ok);
+
+    post_stall.release();
+    sink.shutdown().await;
+}
+
+/// Emergency terminal write stall must not hang finish beyond its own budget.
+#[tokio::test]
+async fn finish_returns_when_emergency_write_stalls() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let worker_stall = WriterStall::new_stalled();
+    let emergency_stall = WriterStall::new_stalled();
+    let hooks = PersistHooks {
+        stall: Some(Arc::clone(&worker_stall)),
+        ..PersistHooks::default()
+    };
+    let mut sink = StatusSink::new_with_shutdown_hooks(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        hooks,
+        tight_shutdown_budgets(),
+        Some(Arc::clone(&emergency_stall)),
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .unwrap();
+
+    sink.mark_running().ok();
+
+    let started = std::time::Instant::now();
+    sink.finalize_success_from_stream(&success_terminal()).await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "emergency-write stall must stay bounded: {elapsed:?}"
+    );
+
+    // In-memory status is still terminal even if the emergency disk write stalled.
+    assert!(sink.status.state.is_terminal());
+    assert_eq!(sink.status.state, RunState::Error);
+
+    emergency_stall.release();
+    worker_stall.release();
+    sink.shutdown().await;
+}
+
+/// Emergency write failure still returns in budget with terminal in-memory status.
+#[tokio::test]
+async fn finish_returns_when_emergency_write_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let stall = WriterStall::new_stalled();
+    let hooks = PersistHooks {
+        stall: Some(Arc::clone(&stall)),
+        ..PersistHooks::default()
+    };
+    let mut sink = StatusSink::new_with_shutdown_hooks(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        hooks,
+        tight_shutdown_budgets(),
+        None,
+        Arc::new(AtomicUsize::new(1)),
+    )
+    .unwrap();
+
+    sink.mark_running().ok();
+
+    let started = std::time::Instant::now();
+    sink.finalize_success_from_stream(&success_terminal()).await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(400),
+        "emergency-write failure must stay bounded: {elapsed:?}"
+    );
+
+    assert_eq!(sink.status.state, RunState::Error);
+    // Starting status may remain on disk if emergency write was injected to fail.
+    let disk = subagent::read_status(&output).expect("status");
+    assert!(
+        matches!(
+            disk.state,
+            RunState::Starting | RunState::Running | RunState::Error
+        ),
+        "unexpected disk state: {:?}",
+        disk.state
+    );
+
+    stall.release();
+    sink.shutdown().await;
+}

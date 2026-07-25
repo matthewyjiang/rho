@@ -9,6 +9,8 @@
 mod sink;
 mod worker;
 
+#[cfg(test)]
+pub(crate) use sink::PersistShutdownBudgets;
 pub(crate) use sink::StatusSink;
 pub(crate) use worker::ClaudeRunIdentity;
 #[cfg(test)]
