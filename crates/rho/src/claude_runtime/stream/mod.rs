@@ -16,11 +16,13 @@
 //!
 //! # Partial messages
 //!
-//! With `--include-partial-messages`, Claude emits `stream_event` deltas and a
-//! complete `assistant` envelope for the same turn. [`StreamMapper`] reconciles
-//! per message id and content-block index: deltas own presentation for blocks
-//! they emit; the complete envelope emits only blocks that were not streamed.
+//! With `--include-partial-messages`, Claude emits `stream_event` deltas and one
+//! or more `assistant` snapshots for the same turn, ending at `message_stop`.
+//! [`StreamMapper`] keeps one lifecycle per message id through stream stop:
+//! deltas and ordered content-block slots own presentation for blocks they
+//! emit; later snapshots and the final envelope emit only blocks not yet shown.
 
+mod blocks;
 mod format;
 mod presentation;
 mod types;
@@ -35,16 +37,17 @@ use rho_tools::tool::ToolDisplayStyle;
 
 use crate::{subagent::RunState, tui::AttachmentEvent};
 
+use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
 use format::{
     bound_result_text, context_usage_from_result, format_permission_denial, raw_usage_to_model,
     stringify_content, RawUsage,
 };
 pub(crate) use presentation::apply_status_patch;
 use presentation::{
-    block_index, clear_all_open_indexless, clear_open_indexless, consume_indexless_complete_block,
-    fidelity_notice, map_error_message, map_rate_limit, map_system, mark_and_reasoning,
-    mark_and_text, reasoning_effects, record_block, resolve_partial_block_index, stable_message_id,
-    text_effects, tool_finished_effects, tool_started_effects, IndexlessBlockKind,
+    block_index, clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,
+    map_rate_limit, map_system, mark_and_text, mark_slot_emitted, push_block_slot,
+    reasoning_effects, reconcile_complete_block, resolve_partial_slot, stable_message_id,
+    text_effects, tool_finished_effects, tool_started_effects, ContentBlockKind,
 };
 pub(crate) use types::{
     classify_terminal_result, describe_rate_limit, RateLimitInfo, StatusPatch, StreamEffect,
@@ -64,9 +67,10 @@ const MAX_ACTIVE_TOOLS: usize = 256;
 
 /// Stateful mapper for one Claude stream-json stdout session.
 ///
-/// Reconciliation is keyed by stable message id + content-block index. Only
-/// blocks that actually emitted presentation are recorded, so a complete
-/// assistant envelope can still surface blocks that never streamed.
+/// Reconciliation is keyed by stable message id, real content-block index, and
+/// ordered content-block slots from `content_block_start`. Assistant snapshots
+/// that arrive while the partial stream is still open keep the same lifecycle
+/// so `StepStarted` fires once per message.
 #[derive(Debug, Default)]
 pub(crate) struct StreamMapper {
     /// Per-message presentation state for open / recently partial turns.
@@ -85,30 +89,17 @@ pub(crate) struct StreamMapper {
 #[derive(Debug, Default)]
 struct MessageStreamState {
     step_started: bool,
-    /// Content-block indices that produced text, reasoning, or tool-start output.
-    ///
-    /// Real Claude indices stay in `0..`. Index-less partials use synthetic
-    /// indices from [`SYNTHETIC_BLOCK_INDEX_BASE`] so mixed indexed streams keep
-    /// stable real keys while index-less emissions still consume the block cap.
+    /// Real content-block indices that produced text, reasoning, or tool output.
     emitted_blocks: HashSet<usize>,
-    /// Monotonic offset for the next index-less synthetic block index.
-    next_synthetic_index: usize,
-    /// Open index-less text block, when partial deltas omitted `index`.
+    /// Every `content_block_start` in stream order, including empty bodies.
+    block_slots: Vec<presentation::ContentBlockSlot>,
+    /// Open index-less text slot ordinal, when partials omitted `index`.
     open_indexless_text: Option<usize>,
-    /// Open index-less reasoning block, when partial deltas omitted `index`.
+    /// Open index-less reasoning slot ordinal, when partials omitted `index`.
     open_indexless_reasoning: Option<usize>,
-    /// Distinct index-less text blocks that already presented. Complete
-    /// envelopes consume these before re-emitting same-kind blocks.
-    indexless_text_blocks: usize,
-    /// Distinct index-less reasoning blocks that already presented.
-    indexless_reasoning_blocks: usize,
+    /// Open index-less tool slot ordinal, when partials omitted `index`.
+    open_indexless_tool: Option<usize>,
 }
-
-/// Base for synthetic content-block indices assigned to index-less partials.
-///
-/// Kept far above normal Claude block indices so mixed indexed + index-less
-/// streams cannot collide in `emitted_blocks`.
-const SYNTHETIC_BLOCK_INDEX_BASE: usize = usize::MAX / 2;
 
 /// Result of allocating or resolving the open partial message.
 enum OpenMessage {
@@ -260,8 +251,13 @@ impl StreamMapper {
         // fallback key that would collide across messages.
         let state_key = match message_id {
             Some(id) => Some(id),
-            None => self.take_anonymous_open_key(),
+            None => self.anonymous_open_key(),
         };
+        // Progressive assistant snapshots can arrive before message_stop for the
+        // same open stream. Keep one lifecycle until the stream is no longer open.
+        let keep_lifecycle = state_key
+            .as_ref()
+            .is_some_and(|key| self.open_message_id.as_ref() == Some(key));
 
         if let Some(session_id) = message.session_id.clone() {
             effects.push(StreamEffect::Status(StatusPatch {
@@ -274,10 +270,12 @@ impl StreamMapper {
             .as_ref()
             .and_then(|key| self.messages.remove(key))
             .unwrap_or_default();
-        if let Some(key) = &state_key {
-            self.message_order.retain(|entry| entry != key);
-            if self.open_message_id.as_ref() == Some(key) {
-                self.open_message_id = None;
+        if !keep_lifecycle {
+            if let Some(key) = &state_key {
+                self.message_order.retain(|entry| entry != key);
+                if self.open_message_id.as_ref() == Some(key) {
+                    self.open_message_id = None;
+                }
             }
         }
 
@@ -292,39 +290,40 @@ impl StreamMapper {
         }));
 
         let Some(body) = message.message.as_ref() else {
-            // Complete envelope consumed; drop state.
+            self.finish_assistant_state(state_key, state, keep_lifecycle);
             return effects;
         };
 
         if let Some(blocks) = body.get("content").and_then(Value::as_array) {
-            for (index, block) in blocks.iter().enumerate() {
-                if state.emitted_blocks.contains(&index) {
-                    continue;
-                }
-                // Index-less partials never occupied this real index. Suppress
-                // re-emission of same-kind complete blocks they already showed.
-                let kind = block.get("type").and_then(Value::as_str).unwrap_or("");
-                let suppressed = match kind {
-                    "text" => consume_indexless_complete_block(
+            if keep_lifecycle {
+                // Progressive snapshots can list only newly finished blocks, so
+                // array indices are not stable stream indices. Reconcile by
+                // slot/tool identity and never drop the open lifecycle.
+                for block in blocks {
+                    effects.extend(emit_open_snapshot_block(
                         &mut state,
-                        IndexlessBlockKind::Text,
-                        index,
-                    ),
-                    "thinking" => consume_indexless_complete_block(
-                        &mut state,
-                        IndexlessBlockKind::Reasoning,
-                        index,
-                    ),
-                    _ => false,
-                };
-                if suppressed {
-                    continue;
+                        block,
+                        &mut self.active_tools,
+                        MAX_ACTIVE_TOOLS,
+                    ));
                 }
-                effects.extend(self.emit_complete_block(block, index, &mut state));
+            } else {
+                for (index, block) in blocks.iter().enumerate() {
+                    let kind =
+                        content_block_kind(block.get("type").and_then(Value::as_str).unwrap_or(""));
+                    if reconcile_complete_block(&mut state, kind, index) {
+                        continue;
+                    }
+                    effects.extend(emit_complete_block(
+                        &mut state,
+                        block,
+                        index,
+                        &mut self.active_tools,
+                        MAX_ACTIVE_TOOLS,
+                    ));
+                }
             }
-        } else if !state.emitted_blocks.contains(&0)
-            && !consume_indexless_complete_block(&mut state, IndexlessBlockKind::Text, 0)
-        {
+        } else if !reconcile_complete_block(&mut state, ContentBlockKind::Text, 0) {
             // Rare shape: top-level text without a content array.
             if let Some(text) = body.get("text").and_then(Value::as_str) {
                 if let Some(block_effects) = mark_and_text(&mut state, 0, text) {
@@ -333,72 +332,24 @@ impl StreamMapper {
             }
         }
 
-        // Message is complete: do not retain its block set.
+        self.finish_assistant_state(state_key, state, keep_lifecycle);
         effects
     }
 
-    fn emit_complete_block(
+    fn finish_assistant_state(
         &mut self,
-        block: &Value,
-        index: usize,
-        state: &mut MessageStreamState,
-    ) -> Vec<StreamEffect> {
-        let kind = block.get("type").and_then(Value::as_str).unwrap_or("");
-        match kind {
-            "text" => {
-                let Some(text) = block.get("text").and_then(Value::as_str) else {
-                    return Vec::new();
-                };
-                mark_and_text(state, index, text).unwrap_or_else(|| {
-                    fidelity_notice(
-                        "claude stream: dropped complete text block; tracked block cap reached",
-                    )
-                })
-            }
-            "thinking" => {
-                let Some(text) = block
-                    .get("thinking")
-                    .or_else(|| block.get("text"))
-                    .and_then(Value::as_str)
-                else {
-                    return Vec::new();
-                };
-                mark_and_reasoning(state, index, text).unwrap_or_else(|| {
-                    fidelity_notice(
-                        "claude stream: dropped complete reasoning block; tracked block cap reached",
-                    )
-                })
-            }
-            "tool_use" => {
-                let tool_id = block
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                if !tool_id.is_empty() && self.active_tools.contains(&tool_id) {
-                    // Started via partials; still mark this complete index seen.
-                    let _ = record_block(state, index);
-                    return Vec::new();
-                }
-                if !record_block(state, index) {
-                    return fidelity_notice(
-                        "claude stream: dropped complete tool block; tracked block cap reached",
-                    );
-                }
-                let mut effects = Vec::new();
-                if let Some(notice) = self.note_tool_started(&tool_id) {
-                    effects.extend(notice);
-                }
-                effects.extend(tool_started_effects(block));
-                effects
-            }
-            other if !other.is_empty() => {
-                vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
-                    "claude stream: ignored assistant block `{other}`"
-                )))]
-            }
-            _ => Vec::new(),
+        state_key: Option<String>,
+        state: MessageStreamState,
+        keep_lifecycle: bool,
+    ) {
+        if !keep_lifecycle {
+            return;
         }
+        let Some(key) = state_key else {
+            return;
+        };
+        // `message_order` still tracks this open stream; only reinsert state.
+        self.messages.insert(key, state);
     }
 
     fn map_user_tool_result(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
@@ -543,14 +494,17 @@ impl StreamMapper {
             }
             "message_delta" => Vec::new(),
             "message_stop" => {
-                // Keep message state until the complete assistant envelope
-                // reconciles; only clear the open cursor and index-less slots.
-                if let Some(key) = self.open_message_id.clone() {
-                    if let Some(state) = self.messages.get_mut(&key) {
+                // Keep named message state until a later complete assistant
+                // envelope reconciles. Drop anonymous keys here: after stop they
+                // cannot pair with a later envelope and would only leak.
+                if let Some(key) = self.open_message_id.take() {
+                    if key.starts_with("anon:") {
+                        self.messages.remove(&key);
+                        self.message_order.retain(|entry| entry != &key);
+                    } else if let Some(state) = self.messages.get_mut(&key) {
                         clear_all_open_indexless(state);
                     }
                 }
-                self.open_message_id = None;
                 Vec::new()
             }
             other if !other.is_empty() => vec![StreamEffect::Attachment(AttachmentEvent::Notice(
@@ -615,49 +569,36 @@ impl StreamMapper {
             .or(top_level_block)
             .cloned()
             .unwrap_or(Value::Null);
+        let kind = content_block_kind(block.get("type").and_then(Value::as_str).unwrap_or(""));
 
-        match block.get("type").and_then(Value::as_str) {
-            Some("tool_use") => {
+        {
+            let Some(state) = self.messages.get_mut(&message_key) else {
+                return effects;
+            };
+            // Track every start, including empty bodies, so complete envelopes
+            // reconcile against the exact ordered slots Claude opened.
+            if push_block_slot(state, kind, index).is_none() {
+                effects.extend(fidelity_notice(
+                    "claude stream: dropped content_block_start; tracked block cap reached",
+                ));
+                return effects;
+            }
+        }
+
+        match kind {
+            ContentBlockKind::Tool => {
                 let tool_id = block
                     .get("id")
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
                 if !tool_id.is_empty() && self.active_tools.contains(&tool_id) {
-                    return effects;
-                }
-                if let Some(index) = index {
-                    let Some(state) = self.messages.get_mut(&message_key) else {
-                        return effects;
-                    };
-                    if state.emitted_blocks.contains(&index) {
-                        return effects;
-                    }
-                    if !record_block(state, index) {
-                        effects.extend(fidelity_notice(
-                            "claude stream: dropped partial tool start; tracked block cap reached",
-                        ));
-                        return effects;
-                    }
-                }
-                if let Some(notice) = self.note_tool_started(&tool_id) {
-                    effects.extend(notice);
-                }
-                effects.extend(tool_started_effects(&block));
-                effects
-            }
-            Some("text") => {
-                // Opening a text block does not count as emission until content
-                // arrives (delta or non-empty initial text).
-                let Some(text) = block.get("text").and_then(Value::as_str) else {
-                    return effects;
-                };
-                if text.is_empty() {
-                    // Indexed empty start just opens the real index path.
-                    // Index-less empty starts wait for the first non-empty delta.
-                    if index.is_some() {
-                        if let Some(state) = self.messages.get_mut(&message_key) {
-                            clear_open_indexless(state, IndexlessBlockKind::Text);
+                    // Already started; slot was recorded above for order tracking.
+                    if let Some(state) = self.messages.get_mut(&message_key) {
+                        if let Some(ordinal) =
+                            resolve_partial_slot(state, index, ContentBlockKind::Tool)
+                        {
+                            let _ = mark_slot_emitted(state, ordinal, index);
                         }
                     }
                     return effects;
@@ -665,23 +606,54 @@ impl StreamMapper {
                 let Some(state) = self.messages.get_mut(&message_key) else {
                     return effects;
                 };
-                let Some(resolved) =
-                    resolve_partial_block_index(state, index, IndexlessBlockKind::Text)
+                let Some(ordinal) = resolve_partial_slot(state, index, ContentBlockKind::Tool)
+                else {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped partial tool start; tracked block cap reached",
+                    ));
+                    return effects;
+                };
+                if !mark_slot_emitted(state, ordinal, index) {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped partial tool start; tracked block cap reached",
+                    ));
+                    return effects;
+                }
+                if let Some(notice) =
+                    note_tool_started(&mut self.active_tools, MAX_ACTIVE_TOOLS, &tool_id)
+                {
+                    effects.extend(notice);
+                }
+                effects.extend(tool_started_effects(&block));
+                effects
+            }
+            ContentBlockKind::Text => {
+                let Some(text) = block.get("text").and_then(Value::as_str) else {
+                    return effects;
+                };
+                if text.is_empty() {
+                    return effects;
+                }
+                let Some(state) = self.messages.get_mut(&message_key) else {
+                    return effects;
+                };
+                let Some(ordinal) = resolve_partial_slot(state, index, ContentBlockKind::Text)
                 else {
                     effects.extend(fidelity_notice(
                         "claude stream: dropped partial text; tracked block cap reached",
                     ));
                     return effects;
                 };
-                match mark_and_text(state, resolved, text) {
-                    Some(block_effects) => effects.extend(block_effects),
-                    None => effects.extend(fidelity_notice(
+                if !mark_slot_emitted(state, ordinal, index) {
+                    effects.extend(fidelity_notice(
                         "claude stream: dropped partial text; tracked block cap reached",
-                    )),
+                    ));
+                    return effects;
                 }
+                effects.extend(text_effects(text));
                 effects
             }
-            Some("thinking") => {
+            ContentBlockKind::Reasoning => {
                 let Some(text) = block
                     .get("thinking")
                     .or_else(|| block.get("text"))
@@ -690,33 +662,28 @@ impl StreamMapper {
                     return effects;
                 };
                 if text.is_empty() {
-                    if index.is_some() {
-                        if let Some(state) = self.messages.get_mut(&message_key) {
-                            clear_open_indexless(state, IndexlessBlockKind::Reasoning);
-                        }
-                    }
                     return effects;
                 }
                 let Some(state) = self.messages.get_mut(&message_key) else {
                     return effects;
                 };
-                let Some(resolved) =
-                    resolve_partial_block_index(state, index, IndexlessBlockKind::Reasoning)
+                let Some(ordinal) = resolve_partial_slot(state, index, ContentBlockKind::Reasoning)
                 else {
                     effects.extend(fidelity_notice(
                         "claude stream: dropped partial reasoning; tracked block cap reached",
                     ));
                     return effects;
                 };
-                match mark_and_reasoning(state, resolved, text) {
-                    Some(block_effects) => effects.extend(block_effects),
-                    None => effects.extend(fidelity_notice(
+                if !mark_slot_emitted(state, ordinal, index) {
+                    effects.extend(fidelity_notice(
                         "claude stream: dropped partial reasoning; tracked block cap reached",
-                    )),
+                    ));
+                    return effects;
                 }
+                effects.extend(reasoning_effects(text));
                 effects
             }
-            _ => effects,
+            ContentBlockKind::Other => effects,
         }
     }
 
@@ -752,16 +719,14 @@ impl StreamMapper {
                 let Some(state) = self.messages.get_mut(&message_key) else {
                     return effects;
                 };
-                // First delta marks the block as streamed; later deltas still emit.
-                let Some(resolved) =
-                    resolve_partial_block_index(state, index, IndexlessBlockKind::Text)
+                let Some(ordinal) = resolve_partial_slot(state, index, ContentBlockKind::Text)
                 else {
                     effects.extend(fidelity_notice(
                         "claude stream: dropped text delta; tracked block cap reached",
                     ));
                     return effects;
                 };
-                if !record_block(state, resolved) {
+                if !mark_slot_emitted(state, ordinal, index) {
                     effects.extend(fidelity_notice(
                         "claude stream: dropped text delta; tracked block cap reached",
                     ));
@@ -784,15 +749,14 @@ impl StreamMapper {
                 let Some(state) = self.messages.get_mut(&message_key) else {
                     return effects;
                 };
-                let Some(resolved) =
-                    resolve_partial_block_index(state, index, IndexlessBlockKind::Reasoning)
+                let Some(ordinal) = resolve_partial_slot(state, index, ContentBlockKind::Reasoning)
                 else {
                     effects.extend(fidelity_notice(
                         "claude stream: dropped reasoning delta; tracked block cap reached",
                     ));
                     return effects;
                 };
-                if !record_block(state, resolved) {
+                if !mark_slot_emitted(state, ordinal, index) {
                     effects.extend(fidelity_notice(
                         "claude stream: dropped reasoning delta; tracked block cap reached",
                     ));
@@ -801,7 +765,7 @@ impl StreamMapper {
                 effects.extend(reasoning_effects(text));
                 effects
             }
-            "input_json_delta" => effects,
+            "input_json_delta" | "signature_delta" => effects,
             other if !other.is_empty() => {
                 effects.push(StreamEffect::Attachment(AttachmentEvent::Notice(format!(
                     "claude stream: ignored delta `{other}`"
@@ -876,35 +840,13 @@ impl StreamMapper {
         notices
     }
 
-    fn take_anonymous_open_key(&mut self) -> Option<String> {
+    fn anonymous_open_key(&self) -> Option<String> {
         let key = self.open_message_id.clone()?;
         if key.starts_with("anon:") {
-            self.open_message_id = None;
             Some(key)
         } else {
             None
         }
-    }
-
-    fn note_tool_started(&mut self, tool_id: &str) -> Option<Vec<StreamEffect>> {
-        if tool_id.is_empty() {
-            return None;
-        }
-        if self.active_tools.contains(tool_id) {
-            return None;
-        }
-        if self.active_tools.len() >= MAX_ACTIVE_TOOLS {
-            // Drop an arbitrary active id so pathological streams stay bounded.
-            if let Some(old) = self.active_tools.iter().next().cloned() {
-                self.active_tools.remove(&old);
-                self.active_tools.insert(tool_id.to_string());
-                return Some(fidelity_notice(
-                    "claude stream: evicted active tool id; tool finish pairing may be imperfect",
-                ));
-            }
-        }
-        self.active_tools.insert(tool_id.to_string());
-        None
     }
 }
 

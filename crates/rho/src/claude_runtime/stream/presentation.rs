@@ -45,90 +45,184 @@ pub(super) fn record_block(state: &mut MessageStreamState, index: usize) -> bool
     true
 }
 
-/// Kind of presentation carried by an index-less partial block.
+/// Presentation kind for an ordered content-block slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum IndexlessBlockKind {
+pub(super) enum ContentBlockKind {
     Text,
     Reasoning,
+    Tool,
+    Other,
 }
 
-/// Resolve the block index for a partial event, allocating a stable synthetic
-/// index when Claude omits `index`.
+/// One content block opened by a partial `content_block_start`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ContentBlockSlot {
+    pub(super) kind: ContentBlockKind,
+    /// Explicit stream index when Claude provided one.
+    pub(super) index: Option<usize>,
+    /// True once this slot produced text, reasoning, or tool-start output.
+    pub(super) emitted: bool,
+}
+
+pub(super) fn content_block_kind(type_name: &str) -> ContentBlockKind {
+    match type_name {
+        "text" => ContentBlockKind::Text,
+        "thinking" => ContentBlockKind::Reasoning,
+        "tool_use" => ContentBlockKind::Tool,
+        _ => ContentBlockKind::Other,
+    }
+}
+
+/// Record a `content_block_start` in stream order, including empty bodies.
 ///
-/// Indexed events use the real index and clear any open index-less slot of the
-/// same kind. Index-less deltas reuse the open synthetic index for the active
-/// block; the first emission of a new index-less block allocates, records via
-/// [`record_block`], and increments the per-kind complete-envelope suppress
-/// count so a later full assistant message does not re-emit the same content.
-pub(super) fn resolve_partial_block_index(
+/// Starts always append so index-less and indexed blocks share one ordered
+/// timeline. Returns the slot ordinal, or `None` when the per-message block cap
+/// is hit.
+pub(super) fn push_block_slot(
+    state: &mut MessageStreamState,
+    kind: ContentBlockKind,
+    index: Option<usize>,
+) -> Option<usize> {
+    if state.block_slots.len() >= MAX_BLOCKS_PER_MESSAGE {
+        return None;
+    }
+    if let Some(index) = index {
+        if let Some(ordinal) = state
+            .block_slots
+            .iter()
+            .position(|slot| slot.index == Some(index))
+        {
+            // Duplicate start for the same real index reuses the existing slot.
+            state.block_slots[ordinal].kind = kind;
+            clear_open_indexless(state, kind);
+            return Some(ordinal);
+        }
+    }
+    let ordinal = state.block_slots.len();
+    state.block_slots.push(ContentBlockSlot {
+        kind,
+        index,
+        emitted: false,
+    });
+    if index.is_none() {
+        match kind {
+            ContentBlockKind::Text => state.open_indexless_text = Some(ordinal),
+            ContentBlockKind::Reasoning => state.open_indexless_reasoning = Some(ordinal),
+            ContentBlockKind::Tool => state.open_indexless_tool = Some(ordinal),
+            ContentBlockKind::Other => {}
+        }
+    } else {
+        clear_open_indexless(state, kind);
+    }
+    Some(ordinal)
+}
+
+/// Resolve the ordered slot for a partial delta or non-empty start body.
+///
+/// Indexed events match the slot with that real index, or allocate a late slot
+/// when Claude skipped `content_block_start`. Index-less events reuse the open
+/// same-kind slot, or allocate one when start was omitted.
+pub(super) fn resolve_partial_slot(
     state: &mut MessageStreamState,
     explicit_index: Option<usize>,
-    kind: IndexlessBlockKind,
+    kind: ContentBlockKind,
 ) -> Option<usize> {
     if let Some(index) = explicit_index {
-        clear_open_indexless(state, kind);
-        return Some(index);
+        if let Some(ordinal) = state
+            .block_slots
+            .iter()
+            .position(|slot| slot.index == Some(index))
+        {
+            clear_open_indexless(state, kind);
+            return Some(ordinal);
+        }
+        return push_block_slot(state, kind, Some(index));
     }
 
     let existing = match kind {
-        IndexlessBlockKind::Text => state.open_indexless_text,
-        IndexlessBlockKind::Reasoning => state.open_indexless_reasoning,
+        ContentBlockKind::Text => state.open_indexless_text,
+        ContentBlockKind::Reasoning => state.open_indexless_reasoning,
+        ContentBlockKind::Tool => state.open_indexless_tool,
+        ContentBlockKind::Other => None,
     };
-    if let Some(index) = existing {
-        return Some(index);
+    if let Some(ordinal) = existing {
+        return Some(ordinal);
     }
-
-    let offset = state.next_synthetic_index;
-    if offset >= MAX_BLOCKS_PER_MESSAGE {
-        return None;
-    }
-    let index = super::SYNTHETIC_BLOCK_INDEX_BASE.saturating_add(offset);
-    if !record_block(state, index) {
-        return None;
-    }
-    state.next_synthetic_index = offset.saturating_add(1);
-    match kind {
-        IndexlessBlockKind::Text => {
-            state.open_indexless_text = Some(index);
-            state.indexless_text_blocks = state.indexless_text_blocks.saturating_add(1);
-        }
-        IndexlessBlockKind::Reasoning => {
-            state.open_indexless_reasoning = Some(index);
-            state.indexless_reasoning_blocks = state.indexless_reasoning_blocks.saturating_add(1);
-        }
-    }
-    Some(index)
+    push_block_slot(state, kind, None)
 }
 
-pub(super) fn clear_open_indexless(state: &mut MessageStreamState, kind: IndexlessBlockKind) {
+pub(super) fn mark_slot_emitted(
+    state: &mut MessageStreamState,
+    ordinal: usize,
+    explicit_index: Option<usize>,
+) -> bool {
+    let Some(slot) = state.block_slots.get_mut(ordinal) else {
+        return false;
+    };
+    slot.emitted = true;
+    if let Some(index) = explicit_index.or(slot.index) {
+        return record_block(state, index);
+    }
+    true
+}
+
+pub(super) fn clear_open_indexless(state: &mut MessageStreamState, kind: ContentBlockKind) {
     match kind {
-        IndexlessBlockKind::Text => state.open_indexless_text = None,
-        IndexlessBlockKind::Reasoning => state.open_indexless_reasoning = None,
+        ContentBlockKind::Text => state.open_indexless_text = None,
+        ContentBlockKind::Reasoning => state.open_indexless_reasoning = None,
+        ContentBlockKind::Tool => state.open_indexless_tool = None,
+        ContentBlockKind::Other => {}
     }
 }
 
 pub(super) fn clear_all_open_indexless(state: &mut MessageStreamState) {
     state.open_indexless_text = None;
     state.open_indexless_reasoning = None;
+    state.open_indexless_tool = None;
 }
 
-/// When a complete envelope block was not streamed under a real index, consume
-/// one matching index-less emission so partial text/reasoning is not duplicated.
-pub(super) fn consume_indexless_complete_block(
+/// Decide whether a complete-envelope block was already presented by a slot.
+///
+/// Prefer a slot that carries this real stream index. Otherwise use the ordered
+/// slot at the same content position when it has no real index (index-less
+/// partials). Empty starts still occupy a slot, so complete-only bodies align
+/// ahead of later streamed same-kind blocks.
+pub(super) fn reconcile_complete_block(
     state: &mut MessageStreamState,
-    kind: IndexlessBlockKind,
+    kind: ContentBlockKind,
     complete_index: usize,
 ) -> bool {
-    let slot = match kind {
-        IndexlessBlockKind::Text => &mut state.indexless_text_blocks,
-        IndexlessBlockKind::Reasoning => &mut state.indexless_reasoning_blocks,
-    };
-    if *slot == 0 {
+    if state.emitted_blocks.contains(&complete_index) {
+        return true;
+    }
+    if let Some(slot) = state
+        .block_slots
+        .iter()
+        .find(|slot| slot.index == Some(complete_index))
+    {
+        if slot.emitted {
+            let _ = record_block(state, complete_index);
+            return true;
+        }
+        // Slot opened but never presented; complete envelope owns emission.
         return false;
     }
-    *slot = slot.saturating_sub(1);
-    let _ = record_block(state, complete_index);
-    true
+    let Some(slot) = state.block_slots.get(complete_index) else {
+        return false;
+    };
+    // Index-less slots align by stream order with complete content positions.
+    if slot.index.is_some() {
+        return false;
+    }
+    if slot.kind != kind && slot.kind != ContentBlockKind::Other {
+        return false;
+    }
+    if slot.emitted {
+        let _ = record_block(state, complete_index);
+        true
+    } else {
+        false
+    }
 }
 
 pub(super) fn mark_and_text(
