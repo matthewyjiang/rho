@@ -40,7 +40,6 @@ const AGENTS_TOOL: &str = "agents";
 pub struct SubagentSnapshot {
     pub id: String,
     pub agent_id: String,
-    pub background: bool,
     pub elapsed: Duration,
     pub status: RunStatus,
     pub done: bool,
@@ -61,7 +60,6 @@ impl AgentEntry {
         SubagentSnapshot {
             id: id.to_string(),
             agent_id: self.agent_id.clone(),
-            background: self.background,
             elapsed: self.started.elapsed(),
             done: status.state.is_terminal(),
             status,

@@ -9,7 +9,6 @@ fn snapshot(done: bool) -> SubagentSnapshot {
     SubagentSnapshot {
         id: "abc123".into(),
         agent_id: "explorer".into(),
-        background: true,
         elapsed: Duration::from_secs(90),
         status: RunStatus {
             state: if done {
