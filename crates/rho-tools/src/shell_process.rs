@@ -1,18 +1,21 @@
-//! Mechanics shared by the platform shell tools (`bash`, `powershell`).
+//! Shared shell-tool process runner.
 //!
-//! Each platform tool keeps its own process supervision policy (Unix process
-//! groups versus Windows job objects) and provides the shell invocation, while
-//! argument parsing, child stream reading, and result formatting live here so
-//! both tools report identical output.
+//! Platform tools supply only process-supervision policy (Unix process groups
+//! versus Windows job objects). Argument shapes, stream collection, the run
+//! loop, and result formatting live here so bash and PowerShell cannot drift.
 
+use crate::cancellation::RunCancellation;
 use crate::process_env::apply_process_environment;
 use crate::tool::{truncate, ToolError, ToolResult};
 use rho_sdk::{ExecutableSelection, ProcessExecution, ProcessInvocation};
 use serde::Deserialize;
-use std::{path::Path, process::Stdio, time::Duration};
+use std::{process::Stdio, time::Duration, time::Instant};
 use tokio::{io::AsyncReadExt, process::Command};
 
-/// Arguments accepted by every shell tool.
+const FINAL_OUTPUT_GRACE: Duration = Duration::from_millis(250);
+const UPDATE_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Arguments accepted by the application shell tools.
 #[derive(Deserialize)]
 pub(crate) struct ShellArgs {
     pub command: String,
@@ -20,18 +23,8 @@ pub(crate) struct ShellArgs {
 }
 
 impl ShellArgs {
-    /// Parses tool arguments, applying the RTK command rewrite when enabled.
-    pub(crate) async fn parse(
-        args: serde_json::Value,
-        rtk_enabled: bool,
-    ) -> Result<Self, ToolError> {
-        let mut parsed: Self = serde_json::from_value(args)?;
-        if rtk_enabled {
-            if let Some(command) = crate::rtk::rewrite(&parsed.command).await {
-                parsed.command = command;
-            }
-        }
-        Ok(parsed)
+    pub(crate) fn parse(args: serde_json::Value) -> Result<Self, ToolError> {
+        Ok(serde_json::from_value(args)?)
     }
 
     pub(crate) fn timeout(&self) -> Option<Duration> {
@@ -39,28 +32,84 @@ impl ShellArgs {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum StreamKind {
-    Stdout,
-    Stderr,
+/// Platform-specific child supervision (process groups, job objects).
+pub(crate) trait ProcessSupervisor: Sized {
+    fn prepare(command: &mut Command);
+
+    fn attach(child: &tokio::process::Child) -> Result<Self, ToolError>;
+
+    fn kill(&mut self);
 }
 
-pub(crate) type ChunkSender = tokio::sync::mpsc::UnboundedSender<(StreamKind, Vec<u8>)>;
-
-/// Builds the child process for a shell execution, leaving supervision setup
-/// (process groups, job objects) to the caller.
-///
-/// Returns an error when the execution does not describe a shell command found
-/// on `PATH`, so tools fail closed on unsupported process plans.
-pub(crate) fn shell_command(
-    execution: &ProcessExecution,
+/// Spawns `execution`, supervises it with `S`, and streams output updates.
+pub(crate) async fn run<S: ProcessSupervisor>(
+    execution: ProcessExecution,
+    id: String,
     tool_name: &str,
-) -> Result<Command, ToolError> {
+    cancellation: RunCancellation,
+    on_update: &mut (dyn FnMut(Vec<String>) + Send),
+) -> Result<ToolResult, ToolError> {
+    let mut command = build_command(&execution, tool_name)?;
+    S::prepare(&mut command);
+    let mut child = command.spawn()?;
+    let mut supervisor = S::attach(&child)?;
+
+    let start = Instant::now();
+    let mut streams = StreamSession::attach(&mut child);
+    let timeout = execution.output_limits().timeout();
+    let mut timeout_sleep = Box::pin(tokio::time::sleep(timeout.unwrap_or(Duration::MAX)));
+    let mut update_tick = tokio::time::interval(UPDATE_INTERVAL);
+    update_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    update_tick.tick().await;
+
+    let status = loop {
+        tokio::select! {
+            () = cancellation.cancelled() => {
+                supervisor.kill();
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                return Err(ToolError::Message("tool interrupted".into()));
+            }
+            status = child.wait() => break status?,
+            chunk = streams.recv(), if streams.output_open => {
+                streams.apply_chunk(chunk);
+            }
+            _ = update_tick.tick() => {
+                on_update(vec![running_content(&streams.stdout, &streams.stderr)]);
+            }
+            _ = &mut timeout_sleep, if timeout.is_some() => {
+                supervisor.kill();
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                let output = streams.finish().await;
+                return Err(timeout_error(
+                    &output.stdout,
+                    &output.stderr,
+                    timeout.unwrap_or_default(),
+                    execution.output_limits().max_output_bytes(),
+                ));
+            }
+        }
+    };
+
+    supervisor.kill();
+    let output = streams.finish().await;
+    Ok(finished_result(
+        id,
+        status,
+        &output.stdout,
+        &output.stderr,
+        start.elapsed(),
+        execution.output_limits().max_output_bytes(),
+    ))
+}
+
+fn build_command(execution: &ProcessExecution, tool_name: &str) -> Result<Command, ToolError> {
     let ProcessInvocation::Shell {
         executable,
         selection: ExecutableSelection::SearchPath,
         arguments,
-        command: shell_command,
+        command: shell_script,
     } = execution.invocation()
     else {
         return Err(ToolError::Message(format!(
@@ -70,7 +119,7 @@ pub(crate) fn shell_command(
     let mut command = Command::new(executable);
     command
         .args(arguments)
-        .arg(shell_command)
+        .arg(shell_script)
         .current_dir(execution.working_directory())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -80,8 +129,102 @@ pub(crate) fn shell_command(
     Ok(command)
 }
 
-pub(crate) async fn read_stream<R>(kind: StreamKind, mut reader: R, chunk_tx: ChunkSender)
-where
+#[derive(Clone, Copy)]
+enum StreamKind {
+    Stdout,
+    Stderr,
+}
+
+/// Collects child stdout/stderr and owns reader teardown.
+///
+/// `finish` is the only graceful shutdown path. Drop aborts any still-running
+/// readers so cancel/error returns cannot leak tasks behind a live pipe writer.
+struct StreamSession {
+    chunk_rx: tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
+    readers: Vec<tokio::task::JoinHandle<()>>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    output_open: bool,
+}
+
+struct CollectedOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+impl StreamSession {
+    fn attach(child: &mut tokio::process::Child) -> Self {
+        let (chunk_tx, chunk_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut readers = Vec::new();
+        if let Some(stdout) = child.stdout.take() {
+            readers.push(tokio::spawn(read_stream(
+                StreamKind::Stdout,
+                stdout,
+                chunk_tx.clone(),
+            )));
+        }
+        if let Some(stderr) = child.stderr.take() {
+            readers.push(tokio::spawn(read_stream(
+                StreamKind::Stderr,
+                stderr,
+                chunk_tx,
+            )));
+        }
+        Self {
+            chunk_rx,
+            readers,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            output_open: true,
+        }
+    }
+
+    fn recv(&mut self) -> impl std::future::Future<Output = Option<(StreamKind, Vec<u8>)>> + '_ {
+        self.chunk_rx.recv()
+    }
+
+    fn apply_chunk(&mut self, chunk: Option<(StreamKind, Vec<u8>)>) {
+        match chunk {
+            Some((StreamKind::Stdout, bytes)) => self.stdout.extend(bytes),
+            Some((StreamKind::Stderr, bytes)) => self.stderr.extend(bytes),
+            None => self.output_open = false,
+        }
+    }
+
+    async fn finish(mut self) -> CollectedOutput {
+        let drain = async {
+            while let Some(chunk) = self.chunk_rx.recv().await {
+                self.apply_chunk(Some(chunk));
+            }
+        };
+        let _ = tokio::time::timeout(FINAL_OUTPUT_GRACE, drain).await;
+        while let Ok(chunk) = self.chunk_rx.try_recv() {
+            self.apply_chunk(Some(chunk));
+        }
+        CollectedOutput {
+            stdout: std::mem::take(&mut self.stdout),
+            stderr: std::mem::take(&mut self.stderr),
+        }
+    }
+
+    fn abort_readers(&mut self) {
+        for handle in self.readers.drain(..) {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for StreamSession {
+    fn drop(&mut self) {
+        self.abort_readers();
+    }
+}
+
+async fn read_stream<R>(
+    kind: StreamKind,
+    mut reader: R,
+    chunk_tx: tokio::sync::mpsc::UnboundedSender<(StreamKind, Vec<u8>)>,
+) where
     R: tokio::io::AsyncRead + Unpin,
 {
     let mut buffer = [0; 8192];
@@ -99,7 +242,7 @@ where
     }
 }
 
-pub(crate) fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
+fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
     format!(
         "stdout:\n{}\n\nstderr:\n{}\n\ntime: running",
         String::from_utf8_lossy(stdout),
@@ -107,8 +250,7 @@ pub(crate) fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
     )
 }
 
-/// Formats the terminal output of a completed command.
-pub(crate) fn finished_result(
+fn finished_result(
     id: String,
     status: std::process::ExitStatus,
     stdout: &[u8],
@@ -135,8 +277,7 @@ pub(crate) fn finished_result(
     }
 }
 
-/// Formats the error returned when a command exceeds its timeout.
-pub(crate) fn timeout_error(
+fn timeout_error(
     stdout: &[u8],
     stderr: &[u8],
     timeout: Duration,
@@ -151,20 +292,4 @@ pub(crate) fn timeout_error(
         ),
         max_output_bytes,
     ))
-}
-
-pub(crate) fn interrupted() -> ToolError {
-    ToolError::Message("tool interrupted".into())
-}
-
-/// Records a completed shell run for RTK when the feature is enabled.
-pub(crate) async fn log_rtk_execution(
-    rtk_enabled: bool,
-    cwd: &Path,
-    command: &str,
-    result: &ToolResult,
-) {
-    if rtk_enabled {
-        crate::rtk::log_execution(cwd, command, result).await;
-    }
 }

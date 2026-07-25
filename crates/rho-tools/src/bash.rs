@@ -1,14 +1,9 @@
 use crate::cancellation::RunCancellation;
-use crate::shell_process::{
-    finished_result, interrupted, log_rtk_execution, read_stream, running_content, shell_command,
-    timeout_error, ShellArgs, StreamKind,
-};
+use crate::shell_process::{self, ProcessSupervisor, ShellArgs};
 use crate::tool::*;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use serde_json::json;
-use std::time::Instant;
-
-const FINAL_OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
+use tokio::process::Command;
 
 pub struct Bash {
     rtk_enabled: bool,
@@ -64,7 +59,12 @@ impl Tool for Bash {
         cancellation: RunCancellation,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
     ) -> Result<ToolResult, ToolError> {
-        let args = ShellArgs::parse(args, self.rtk_enabled).await?;
+        let mut args = ShellArgs::parse(args)?;
+        if self.rtk_enabled {
+            if let Some(command) = super::rtk::rewrite(&args.command).await {
+                args.command = command;
+            }
+        }
         let execution = ProcessExecution::new(
             &ctx.cwd,
             ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], &args.command),
@@ -72,7 +72,9 @@ impl Tool for Bash {
             ProcessOutputLimits::new(ctx.max_output_bytes, args.timeout()),
         );
         let result = execute_process(execution, id, cancellation, on_update).await?;
-        log_rtk_execution(self.rtk_enabled, &ctx.cwd, &args.command, &result).await;
+        if self.rtk_enabled {
+            super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
+        }
         Ok(result)
     }
 }
@@ -83,67 +85,20 @@ pub(super) async fn execute_process(
     cancellation: RunCancellation,
     on_update: &mut (dyn FnMut(Vec<String>) + Send),
 ) -> Result<ToolResult, ToolError> {
-    let mut command = shell_command(&execution, "bash")?;
-    command.process_group(0);
-    let mut child = command.spawn()?;
-    let mut process_group = ProcessGroupGuard::new(child.id());
-
-    let start = Instant::now();
-    let mut streams = StreamSession::attach(&mut child);
-    let timeout = execution.output_limits().timeout();
-    let mut timeout_sleep = Box::pin(tokio::time::sleep(
-        timeout.unwrap_or(std::time::Duration::MAX),
-    ));
-    let mut update_tick = tokio::time::interval(std::time::Duration::from_millis(50));
-    update_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    update_tick.tick().await;
-    let status = loop {
-        tokio::select! {
-            () = cancellation.cancelled() => {
-                return Err(interrupted());
-            }
-            status = child.wait() => break status?,
-            chunk = streams.recv(), if streams.output_open => {
-                streams.apply_chunk(chunk);
-            }
-            _ = update_tick.tick() => {
-                on_update(vec![streams.running_content()]);
-            }
-            _ = &mut timeout_sleep, if timeout.is_some() => {
-                process_group.kill();
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-                let output = streams.finish().await;
-                return Err(timeout_error(
-                    &output.stdout,
-                    &output.stderr,
-                    timeout.unwrap_or_default(),
-                    execution.output_limits().max_output_bytes(),
-                ));
-            }
-        }
-    };
-
-    process_group.kill();
-    let output = streams.finish().await;
-
-    Ok(finished_result(
-        id,
-        status,
-        &output.stdout,
-        &output.stderr,
-        start.elapsed(),
-        execution.output_limits().max_output_bytes(),
-    ))
+    shell_process::run::<ProcessGroupGuard>(execution, id, "bash", cancellation, on_update).await
 }
 
 struct ProcessGroupGuard {
     pid: Option<u32>,
 }
 
-impl ProcessGroupGuard {
-    const fn new(pid: Option<u32>) -> Self {
-        Self { pid }
+impl ProcessSupervisor for ProcessGroupGuard {
+    fn prepare(command: &mut Command) {
+        command.process_group(0);
+    }
+
+    fn attach(child: &tokio::process::Child) -> Result<Self, ToolError> {
+        Ok(Self { pid: child.id() })
     }
 
     fn kill(&mut self) {
@@ -154,95 +109,6 @@ impl ProcessGroupGuard {
 impl Drop for ProcessGroupGuard {
     fn drop(&mut self) {
         self.kill();
-    }
-}
-
-/// Collects child stdout/stderr and owns reader teardown.
-///
-/// `finish` is the only graceful shutdown path. Drop aborts any still-running
-/// readers so cancel/error returns cannot leak tasks behind a live pipe writer.
-struct StreamSession {
-    chunk_rx: tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
-    readers: Vec<tokio::task::JoinHandle<()>>,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    output_open: bool,
-}
-
-struct CollectedOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-}
-
-impl StreamSession {
-    fn attach(child: &mut tokio::process::Child) -> Self {
-        let (chunk_tx, chunk_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut readers = Vec::new();
-        if let Some(stdout) = child.stdout.take() {
-            readers.push(tokio::spawn(read_stream(
-                StreamKind::Stdout,
-                stdout,
-                chunk_tx.clone(),
-            )));
-        }
-        if let Some(stderr) = child.stderr.take() {
-            readers.push(tokio::spawn(read_stream(
-                StreamKind::Stderr,
-                stderr,
-                chunk_tx,
-            )));
-        }
-        Self {
-            chunk_rx,
-            readers,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            output_open: true,
-        }
-    }
-
-    fn recv(&mut self) -> impl std::future::Future<Output = Option<(StreamKind, Vec<u8>)>> + '_ {
-        self.chunk_rx.recv()
-    }
-
-    fn apply_chunk(&mut self, chunk: Option<(StreamKind, Vec<u8>)>) {
-        match chunk {
-            Some((StreamKind::Stdout, bytes)) => self.stdout.extend(bytes),
-            Some((StreamKind::Stderr, bytes)) => self.stderr.extend(bytes),
-            None => self.output_open = false,
-        }
-    }
-
-    fn running_content(&self) -> String {
-        running_content(&self.stdout, &self.stderr)
-    }
-
-    async fn finish(mut self) -> CollectedOutput {
-        let drain = async {
-            while let Some(chunk) = self.chunk_rx.recv().await {
-                self.apply_chunk(Some(chunk));
-            }
-        };
-        let _ = tokio::time::timeout(FINAL_OUTPUT_GRACE, drain).await;
-        while let Ok(chunk) = self.chunk_rx.try_recv() {
-            self.apply_chunk(Some(chunk));
-        }
-        CollectedOutput {
-            stdout: std::mem::take(&mut self.stdout),
-            stderr: std::mem::take(&mut self.stderr),
-        }
-    }
-
-    fn abort_readers(&mut self) {
-        for handle in self.readers.drain(..) {
-            handle.abort();
-        }
-    }
-}
-
-impl Drop for StreamSession {
-    fn drop(&mut self) {
-        self.abort_readers();
     }
 }
 
