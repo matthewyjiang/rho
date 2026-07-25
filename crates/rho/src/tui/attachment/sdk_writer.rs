@@ -3,24 +3,28 @@
 //! Keeps [`crate::run_artifacts::AttachmentWriter`] free of SDK types. Only the
 //! Rho run path constructs this wrapper.
 
-use std::path::{Path, PathBuf};
-
 use super::super::{
     compaction_display::running_display_lines,
     event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
 };
-use crate::run_artifacts::{AttachmentEvent, AttachmentWriter};
+use crate::run_artifacts::AttachmentEvent;
 use rho_tools::tool::ToolDisplayStyle;
 
 /// Records Rho SDK run events into the generic attachment journal.
+#[cfg(test)]
 pub(crate) struct SdkAttachmentWriter {
-    writer: AttachmentWriter,
+    writer: crate::run_artifacts::AttachmentWriter,
     adapter: SdkEventAdapter,
 }
 
+#[cfg(test)]
 impl SdkAttachmentWriter {
-    pub(crate) fn new(result_path: &Path, cwd: PathBuf, prompt: &str) -> anyhow::Result<Self> {
-        let mut writer = AttachmentWriter::create(result_path)?;
+    pub(crate) fn new(
+        result_path: &std::path::Path,
+        cwd: std::path::PathBuf,
+        prompt: &str,
+    ) -> anyhow::Result<Self> {
+        let mut writer = crate::run_artifacts::AttachmentWriter::create(result_path)?;
         writer.write_event(&AttachmentEvent::Prompt(prompt.to_string()))?;
         Ok(Self {
             writer,

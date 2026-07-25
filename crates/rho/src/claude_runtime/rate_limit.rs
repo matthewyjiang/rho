@@ -25,9 +25,10 @@ use serde::{Deserialize, Serialize};
 
 use rho_providers::file_lock::FileLock;
 
-use super::stream::{describe_rate_limit, RateLimitInfo};
+#[cfg(test)]
+use super::stream::describe_rate_limit;
+use super::stream::RateLimitInfo;
 
-const STATE_DIR: &str = "cache/claude-code";
 const STATE_FILE_NAME: &str = "rate-limits.json";
 /// Pre-cache top-level file; still read once so existing observations survive.
 const LEGACY_STATE_FILE_NAME: &str = "claude-rate-limit.json";
@@ -107,6 +108,7 @@ impl RateLimitObservation {
     }
 
     /// One-line body for a single window: label, optional %, notable status, reset.
+    #[cfg(test)]
     pub(crate) fn window_summary(&self, now_unix: i64) -> String {
         let body = describe_rate_limit(&self.info);
         let age = format_age(self.age_seconds(now_unix));
@@ -114,6 +116,7 @@ impl RateLimitObservation {
     }
 
     /// One-line display with a `claude code:` prefix (single-window fallback).
+    #[cfg(test)]
     pub(crate) fn describe(&self, now_unix: i64) -> String {
         format!("claude code: {}", self.window_summary(now_unix))
     }
@@ -236,11 +239,13 @@ fn window_sort_key(key: &str) -> u8 {
 }
 
 /// Coalescing multi-window slot. Never drops a newer window under load.
+#[cfg(test)]
 #[derive(Default)]
 pub(crate) struct RateLimitSlot {
     pending: Mutex<RateLimitState>,
 }
 
+#[cfg(test)]
 impl RateLimitSlot {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -271,7 +276,8 @@ impl RateLimitSlot {
 
 pub(crate) fn default_state_path() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::rho_dir()?
-        .join(STATE_DIR)
+        .join("cache")
+        .join("claude-code")
         .join(STATE_FILE_NAME))
 }
 
@@ -342,6 +348,7 @@ fn set_private_path_permissions(_path: &Path) -> io::Result<()> {
 }
 
 /// Persist one window, merging into any multi-window state already on disk.
+#[cfg(test)]
 pub(crate) fn store_observation(
     path: &Path,
     observation: RateLimitObservation,

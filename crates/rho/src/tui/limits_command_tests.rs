@@ -282,7 +282,7 @@ fn formats_provider_names_for_empty_window_notice() {
     );
 }
 
-fn claude_provider<'a>(display: &'a LimitsDisplay) -> &'a ProviderUsageLimits {
+fn claude_provider(display: &LimitsDisplay) -> &ProviderUsageLimits {
     display
         .providers
         .iter()

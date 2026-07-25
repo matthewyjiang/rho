@@ -692,6 +692,7 @@ impl RunReporter {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn status(&self) -> &RunStatus {
         &self.sink.status
     }

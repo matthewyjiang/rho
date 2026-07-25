@@ -139,11 +139,15 @@ fn loads_legacy_single_observation_file_as_one_window() {
 #[test]
 fn default_state_path_lives_under_cache_claude_code() {
     let path = default_state_path().unwrap();
-    let rendered = path.to_string_lossy();
+    let components = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
     assert!(
-        rendered.contains("cache/claude-code/rate-limits.json")
-            || rendered.contains("cache\\claude-code\\rate-limits.json"),
-        "{rendered}"
+        components
+            .windows(3)
+            .any(|window| { window == ["cache", "claude-code", "rate-limits.json"] }),
+        "{path:?}"
     );
 }
 

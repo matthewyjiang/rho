@@ -284,11 +284,7 @@ impl RunArtifactSink {
             Ok(()) => true,
             Err(mpsc::TrySendError::Full(command)) => {
                 // Status is replaceable: drop oldest-equivalent by skipping.
-                if matches!(command, WriterCommand::Status(_)) {
-                    true
-                } else {
-                    false
-                }
+                matches!(command, WriterCommand::Status(_))
             }
             Err(mpsc::TrySendError::Disconnected(_)) => false,
         }
