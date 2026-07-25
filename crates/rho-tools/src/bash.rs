@@ -1,4 +1,5 @@
 use crate::cancellation::RunCancellation;
+use crate::process_stream::{capture_failure_notice, StreamKind};
 use crate::tool::*;
 use rho_sdk::{
     ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation,
@@ -24,12 +25,6 @@ impl Bash {
 struct Args {
     command: String,
     timeout_seconds: Option<u64>,
-}
-
-#[derive(Clone, Copy)]
-enum StreamKind {
-    Stdout,
-    Stderr,
 }
 
 #[async_trait::async_trait]
@@ -318,7 +313,16 @@ async fn read_stream<R>(
     let mut buffer = [0; 8192];
     loop {
         match reader.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
+            Err(error) => {
+                // Report the truncation instead of returning a silently short
+                // capture that reads like complete command output.
+                let _ = chunk_tx.send((
+                    StreamKind::Stderr,
+                    capture_failure_notice(kind, &error).into_bytes(),
+                ));
+                break;
+            }
             Ok(n) => {
                 // Stop once the consumer is gone so escaped writers cannot keep
                 // these tasks allocating and discarding output forever.

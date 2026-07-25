@@ -226,7 +226,14 @@ fn read_at(root: &Path, response_id: &str) -> Result<StoredContent, ToolError> {
     let path = stored_content_path(root, response_id)?;
     match fs::read_to_string(&path) {
         Ok(content) => parse_stored_content(&content),
-        Err(_) => read_legacy_temp(response_id),
+        // Only a missing blob means the id may still live in the legacy location.
+        // Other failures describe a real problem with the current blob and are
+        // reported instead of being reduced to "unknown responseId".
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => read_legacy_temp(response_id),
+        Err(error) => Err(ToolError::Message(format!(
+            "failed to read stored web content {}: {error}",
+            path.display()
+        ))),
     }
 }
 

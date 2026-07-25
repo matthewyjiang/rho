@@ -752,6 +752,7 @@ pub(crate) struct RunReporter {
     stream_output: bool,
     status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
     last_write: std::time::Instant,
+    status_write_failed: bool,
 }
 
 /// Longest a status-file write is deferred while text streams.
@@ -791,6 +792,7 @@ impl RunReporter {
                     stream_output,
                     status_tx,
                     last_write: std::time::Instant::now(),
+                    status_write_failed: false,
                 });
             }
         };
@@ -801,6 +803,7 @@ impl RunReporter {
             stream_output,
             status_tx,
             last_write: std::time::Instant::now(),
+            status_write_failed: false,
         })
     }
 
@@ -910,7 +913,22 @@ impl RunReporter {
         if let Some(status_tx) = &self.status_tx {
             status_tx.send_replace(self.status.clone());
         }
-        let _ = subagent::write_status(&self.path, &self.status);
+        if let Err(error) = subagent::write_status(&self.path, &self.status) {
+            self.warn_status_write_failure(&error);
+        }
+    }
+
+    /// Attached hosts poll the status file, so an unreported write failure
+    /// freezes the run state they observe. Warn once to keep the remaining
+    /// writes best-effort without flooding the terminal.
+    fn warn_status_write_failure(&mut self, error: &std::io::Error) {
+        if std::mem::replace(&mut self.status_write_failed, true) {
+            return;
+        }
+        eprintln!(
+            "warning: could not update run status {}: {error}",
+            self.path.display()
+        );
     }
 }
 

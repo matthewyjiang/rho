@@ -22,6 +22,18 @@ impl App {
         }
     }
 
+    fn apply_context_window(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        context_window: Option<u64>,
+    ) {
+        if let Err(err) = agent.set_context_window(context_window) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not apply the model context window: {err}"
+            )));
+        }
+    }
+
     pub(super) fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
@@ -31,14 +43,14 @@ impl App {
             &self.info.runtime.provider,
             &self.info.runtime.model,
         ) {
-            agent.set_context_window(metadata.display_context_window());
+            self.apply_context_window(agent, metadata.display_context_window());
             let reasoning_metadata_complete = metadata.reasoning_metadata_complete;
             self.model_metadata = Some(metadata);
             if reasoning_metadata_complete && metadata_is_current {
                 return;
             }
         } else {
-            agent.set_context_window(None);
+            self.apply_context_window(agent, None);
             self.model_metadata = None;
         }
         let provider = self.info.runtime.provider.clone();
@@ -62,7 +74,7 @@ impl App {
         if let Some(handle) = self.pending_model_metadata.take() {
             let reasoning_at_fetch_start = self.pending_model_metadata_reasoning.take();
             if let Some(Ok(Some(metadata))) = handle.now_or_never() {
-                agent.set_context_window(metadata.display_context_window());
+                self.apply_context_window(agent, metadata.display_context_window());
                 let capabilities = metadata.reasoning_capabilities();
                 let resolved = reasoning_metadata::resolve_fetched_reasoning(
                     &capabilities,

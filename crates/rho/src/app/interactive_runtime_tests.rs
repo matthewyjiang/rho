@@ -126,7 +126,7 @@ async fn set_context_window_installs_automatic_compaction_when_idle() {
         None
     );
 
-    interactive.set_context_window(Some(1_000));
+    interactive.set_context_window(Some(1_000)).unwrap();
 
     assert_eq!(
         interactive

@@ -763,10 +763,18 @@ impl App {
         let error = registry::missing_credentials_error(&target.provider);
         self.info.services.auth_unavailable = Some(error.to_string());
         self.using_unavailable_provider = true;
-        let _ = agent.replace_provider(
+        if let Err(swap_error) = agent.replace_provider(
             std::sync::Arc::new(UnavailableProvider::new(error)),
             self.info.runtime.reasoning,
-        );
+        ) {
+            // The runtime still holds the logged-out provider, so say so rather
+            // than implying the session is safely parked on a stub provider.
+            self.insert_entry(&Entry::Error(format!(
+                "could not detach the logged-out provider: {swap_error}"
+            )));
+            self.status = "logout complete; provider detach failed".into();
+            return true;
+        }
         self.status = "no providers configured; run /login".into();
         true
     }

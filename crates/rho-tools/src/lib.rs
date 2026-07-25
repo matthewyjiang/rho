@@ -13,6 +13,7 @@ pub mod cancellation;
 pub mod image_format;
 mod paths;
 mod process_env;
+mod process_stream;
 pub mod tool;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

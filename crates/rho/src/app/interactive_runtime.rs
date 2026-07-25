@@ -366,11 +366,14 @@ impl InteractiveRuntime {
         self.workspace.root()
     }
 
-    pub(crate) fn set_context_window(&mut self, context_window: Option<u64>) {
+    /// Rebuilds compaction against the new window so a failure surfaces instead
+    /// of leaving the session compacting for the previous model's limits.
+    pub(crate) fn set_context_window(&mut self, context_window: Option<u64>) -> Result<(), Error> {
         self.context_window = context_window;
-        if !self.runs.is_active() {
-            let _ = self.refresh_compaction();
+        if self.runs.is_active() {
+            return Ok(());
         }
+        self.refresh_compaction()
     }
 
     pub(crate) fn take_context_usage(&mut self) -> Option<rho_sdk::model::ContextUsage> {
