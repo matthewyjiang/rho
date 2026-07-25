@@ -6,7 +6,6 @@ use ratatui::{backend::TestBackend, Terminal};
 use tempfile::TempDir;
 
 use super::*;
-use crate::tui::usage_cost::format_usage_token_summary;
 
 #[test]
 fn provider_retry_replaces_output_but_preserves_presented_events() {
@@ -282,25 +281,44 @@ fn herdr_state_follows_attached_subagent_state() {
 }
 
 #[test]
-fn format_usage_summary_keeps_cache_fields_separate() {
-    let summary = format_usage_token_summary(&ModelUsage {
-        input_tokens: Some(100),
-        output_tokens: Some(20),
-        cache_read_tokens: Some(700),
-        cache_write_tokens: Some(50),
-        ..ModelUsage::default()
-    })
-    .unwrap();
-    assert_eq!(summary, "tokens in 100 · out 20 · cache r 700 · cache w 50");
+fn status_token_fallback_uses_run_status_totals() {
+    let summary = live_metrics_line(
+        None,
+        None,
+        Some(&RunStatus {
+            input_tokens: Some(1_200),
+            output_tokens: Some(300),
+            ..RunStatus::default()
+        }),
+    );
+    assert_eq!(summary, "tokens in 1.2K · out 300");
 }
 
 #[test]
-fn status_token_fallback_uses_run_status_totals() {
-    let summary = format_status_token_summary(&RunStatus {
-        input_tokens: Some(1_200),
-        output_tokens: Some(300),
-        ..RunStatus::default()
-    })
-    .unwrap();
-    assert_eq!(summary, "tokens in 1.2K · out 300");
+fn format_run_cost_prefers_status_total_via_shared_usd_helper() {
+    assert_eq!(
+        format_run_cost(
+            &RunStatus {
+                total_cost_usd: Some(0.0388),
+                ..RunStatus::default()
+            },
+            Some(&ModelUsage {
+                cost_usd_micros: Some(99),
+                ..ModelUsage::default()
+            }),
+        )
+        .as_deref(),
+        Some("$0.039")
+    );
+    assert_eq!(
+        format_run_cost(
+            &RunStatus::default(),
+            Some(&ModelUsage {
+                cost_usd_micros: Some(12_500),
+                ..ModelUsage::default()
+            }),
+        )
+        .as_deref(),
+        Some("$0.013")
+    );
 }

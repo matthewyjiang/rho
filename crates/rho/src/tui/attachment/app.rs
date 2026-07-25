@@ -28,7 +28,8 @@ use super::super::{
     terminal_events::TerminalEvents,
     theme::Theme,
     usage_cost::{
-        format_token_count, format_usd, format_usage_token_summary, AttemptAwareRunUsage,
+        format_token_count, format_usd, format_usage_token_summary,
+        resolved_usage_cost_usd_micros, AttemptAwareRunUsage,
     },
     Entry, HistoryScroll, ReasoningEntry, ToolEntry, ToolEntryState, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
@@ -487,22 +488,21 @@ fn live_metrics_line(
     }
     if let Some(usage_summary) = run_usage
         .and_then(format_usage_token_summary)
-        .or_else(|| status.and_then(format_status_token_summary))
+        .or_else(|| {
+            status.and_then(|status| format_usage_token_summary(&run_status_usage(status)))
+        })
     {
         parts.push(usage_summary);
     }
     parts.join("  |  ")
 }
 
-fn format_status_token_summary(status: &RunStatus) -> Option<String> {
-    let mut parts = Vec::new();
-    if let Some(tokens) = status.input_tokens {
-        parts.push(format!("in {}", format_token_count(tokens)));
+fn run_status_usage(status: &RunStatus) -> ModelUsage {
+    ModelUsage {
+        input_tokens: status.input_tokens,
+        output_tokens: status.output_tokens,
+        ..ModelUsage::default()
     }
-    if let Some(tokens) = status.output_tokens {
-        parts.push(format!("out {}", format_token_count(tokens)));
-    }
-    (!parts.is_empty()).then(|| format!("tokens {}", parts.join(" · ")))
 }
 
 fn format_context_summary(context: Option<&ContextUsage>) -> Option<String> {
@@ -523,11 +523,11 @@ fn format_context_summary(context: Option<&ContextUsage>) -> Option<String> {
 
 fn format_run_cost(status: &RunStatus, run_usage: Option<&ModelUsage>) -> Option<String> {
     if let Some(cost) = status.total_cost_usd {
-        let micros = (cost * 1_000_000.0).round().clamp(0.0, u64::MAX as f64) as u64;
-        return Some(format_usd(micros));
+        return Some(format_usd(subagent::usd_to_micros(cost)));
     }
+    // Attach has no model metadata, so this resolves provider-reported cost only.
     run_usage
-        .and_then(|usage| usage.cost_usd_micros)
+        .and_then(|usage| resolved_usage_cost_usd_micros(usage, None))
         .map(format_usd)
 }
 

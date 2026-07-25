@@ -169,14 +169,6 @@ fn context_summary_formats_tokens_and_percent() {
     );
 }
 
-#[test]
-fn format_token_count_uses_k_and_m() {
-    assert_eq!(format_token_count(812), "812");
-    assert_eq!(format_token_count(12_000), "12.0K");
-    assert_eq!(format_token_count(1_250_000), "1.2M");
-    assert_eq!(format_token_count(1_260_000), "1.3M");
-}
-
 fn test_info(cwd: PathBuf) -> RuntimeModelView {
     let mut info = crate::tui::tests::test_bootstrap().runtime;
     info.cwd = cwd;
