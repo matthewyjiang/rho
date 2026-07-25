@@ -60,7 +60,7 @@ Successful login normally stores credentials only. It does not switch the active
 
 ### Claude Code runtime sign-in
 
-Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic API-key provider](/providers/anthropic). Use it when an agent definition sets `runtime: claude-cli` (see [Agents and delegation](/subagents#claude-cli-execution)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
+Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic API-key provider](/providers/anthropic). Use it when an agent definition sets `runtime: claude-cli` (see [when this is useful and how to use it](/subagents#claude-code-as-a-delegated-runtime)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
 
 - `/login claude-code` (or **Anthropic** → **claude code (delegation only)** in the picker) hands the terminal to `claude auth login --claudeai`. Rho suspends its TUI for that process and resumes when it exits.
 - Claude Code runs the sign-in UI, stores the subscription credential, and remains the owner of that state. Rho never sees or stores the token and never writes a Rho credential-store entry for it.

@@ -99,7 +99,104 @@ Both modes use the same `AgentExecutor`. Rho-runtime agents stay in-process. `ru
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
 
-## Claude CLI execution
+## Claude Code as a delegated runtime
+
+Rho can hand a delegated agent to the installed `claude` binary instead of running Rho's own loop. The parent stays in Rho. The child uses Claude Code's harness and the user's Claude subscription. Model choice and runtime choice stay separate: picking an Anthropic model on the Rho runtime is not the same as `runtime: claude-cli`.
+
+### When this is useful
+
+Use `runtime: claude-cli` when you want a specialist subagent that runs on Claude Code while the main session stays on Rho:
+
+- Spend a Claude Pro/Max subscription on planning, review, or research without making Claude Code the root harness
+- Keep Rho as the orchestrator (fan-out, attach, cancel, session tree) while Claude owns the child loop and credential
+- Reuse Claude Code tool names and permission behaviour for a bounded child task
+- Open the full Claude transcript later with `claude --resume <session-id>` after Rho finishes the run
+
+Skip this feature when you only need "a subagent on Opus" through Rho's normal provider path. Set `model:` / `provider:` on a `runtime: rho` agent instead. You do not need the `claude` binary for that.
+
+Claude-cli agents are **delegated only**. The interactive root and `rho run` root cannot bind `runtime: claude-cli`. A Rho parent must launch them through the `agent` tool.
+
+### How to use it
+
+1. **Install the binary** (Rho does not ship it):
+
+   ```bash
+   curl -fsSL https://claude.ai/install.sh | bash
+   claude --version
+   ```
+
+   See [Claude Code binary](/installation#claude-code-binary-optional).
+
+2. **Sign in from Rho** so Claude Code stores the subscription credential:
+
+   ```text
+   /login claude-code
+   ```
+
+   Or open bare `/login`, pick **Anthropic**, then **claude code (delegation only)**. Rho hands the terminal to `claude auth login --claudeai` and never sees or stores the token. Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in).
+
+3. **Write a delegated agent definition**, for example `~/.rho/agents/claude-planner.md`:
+
+   ```markdown
+   ---
+   id: claude-planner
+   description: Plans with Claude Code on the user subscription
+   runtime: claude-cli
+   model: claude-opus-4-6
+   tools: [Read, Glob, Grep]
+   inherit_claude_config: false
+   ---
+   Produce a short plan. Prefer reading before editing.
+   ```
+
+   Notes:
+
+   - `tools:` uses Claude Code names (`Read`, `Edit`, `Bash(git *)`), not Rho capabilities
+   - Omitting `tools` means no tools. There is no `tools: all`
+   - `model:` is a Claude model name or Claude alias such as `opus`, not a Rho `@alias`
+   - Keep permission mode at Plan or Auto before launch. Supervised refuses Claude-cli spawn because `claude -p` cannot prompt through Rho
+
+4. **Confirm setup** in the TUI:
+
+   ```text
+   /doctor
+   /agents
+   /info
+   ```
+
+   `/doctor` checks binary and auth health. `/agents` shows runtime and Claude tool lists. `/info` shows Claude Code ownership wording when signed in.
+
+5. **Delegate from a Rho root session** (interactive or automation parent on `runtime: rho`):
+
+   Ask the parent to call the `agent` tool with `agent_id: claude-planner` and a clear prompt. Use foreground for a blocking result, or background for a run ID plus later completion notification.
+
+6. **Watch, cancel, and resume**:
+
+   ```bash
+   rho attach <run-id>
+   ```
+
+   Cancel through the `agents` tool or parent shutdown. When the run finishes, attach and the completion entry may show `claude_session_id`. Reopen the Claude-side transcript with:
+
+   ```bash
+   claude --resume <session-id>
+   ```
+
+   After at least one Claude-cli run has reported limits, `/limits` shows the last observed Claude rate-limit windows (no live probe, no invented percentage).
+
+### Quick checklist
+
+| Step | Command or field |
+| --- | --- |
+| Install | `claude` on `PATH` |
+| Sign in | `/login claude-code` |
+| Define | `runtime: claude-cli` + Claude `tools:` / `model:` |
+| Permission mode | Plan or Auto (not Supervised) |
+| Launch | Rho parent `agent` tool, delegated only |
+| Inspect | `rho attach <id>`, `/agents`, `/limits` |
+| Full Claude transcript | `claude --resume <session-id>` |
+
+### Claude CLI execution details
 
 A `runtime: claude-cli` agent runs as `claude -p` with stream-json output. Rho owns the parent tree node; Claude owns the child loop and credential.
 
