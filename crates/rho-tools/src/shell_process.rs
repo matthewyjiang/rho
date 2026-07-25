@@ -33,6 +33,12 @@ impl ShellArgs {
 }
 
 /// Platform-specific child supervision (process groups, job objects).
+///
+/// `run` calls [`Self::kill`] on completion, cancellation, and timeout. Drop
+/// implementations typically call `kill` again, so implementors must make
+/// `kill` idempotent and safe under repeated invocation. `kill` must terminate
+/// the full supervised tree (process group or job object), not only the direct
+/// child, so background descendants cannot outlive the tool call.
 pub(crate) trait ProcessSupervisor: Sized {
     fn prepare(command: &mut Command);
 
@@ -55,7 +61,8 @@ pub(crate) async fn run<S: ProcessSupervisor>(
     let mut supervisor = S::attach(&child)?;
 
     let start = Instant::now();
-    let mut streams = StreamSession::attach(&mut child);
+    let max_output_bytes = execution.output_limits().max_output_bytes();
+    let mut streams = StreamSession::attach(&mut child, max_output_bytes);
     let timeout = execution.output_limits().timeout();
     let mut timeout_sleep = Box::pin(tokio::time::sleep(timeout.unwrap_or(Duration::MAX)));
     let mut update_tick = tokio::time::interval(UPDATE_INTERVAL);
@@ -86,7 +93,7 @@ pub(crate) async fn run<S: ProcessSupervisor>(
                     &output.stdout,
                     &output.stderr,
                     timeout.unwrap_or_default(),
-                    execution.output_limits().max_output_bytes(),
+                    max_output_bytes,
                 ));
             }
         }
@@ -100,7 +107,7 @@ pub(crate) async fn run<S: ProcessSupervisor>(
         &output.stdout,
         &output.stderr,
         start.elapsed(),
-        execution.output_limits().max_output_bytes(),
+        max_output_bytes,
     ))
 }
 
@@ -135,15 +142,24 @@ enum StreamKind {
     Stderr,
 }
 
+/// In-flight chunk queue bound. Keeps producer backpressure without allowing
+/// unbounded allocation between the OS pipes and the retained output budget.
+const CHUNK_CHANNEL_CAPACITY: usize = 32;
+
 /// Collects child stdout/stderr and owns reader teardown.
 ///
-/// `finish` is the only graceful shutdown path. Drop aborts any still-running
-/// readers so cancel/error returns cannot leak tasks behind a live pipe writer.
+/// Retained stdout+stderr never exceed `max_output_bytes`. Readers keep draining
+/// the pipes after that budget is full so a noisy command cannot exhaust memory
+/// before timeout or completion. `finish` is the only graceful shutdown path;
+/// Drop aborts any still-running readers so cancel/error returns cannot leak
+/// tasks behind a live pipe writer.
 struct StreamSession {
-    chunk_rx: tokio::sync::mpsc::UnboundedReceiver<(StreamKind, Vec<u8>)>,
+    chunk_rx: tokio::sync::mpsc::Receiver<(StreamKind, Vec<u8>)>,
     readers: Vec<tokio::task::JoinHandle<()>>,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    retained_bytes: usize,
+    max_output_bytes: usize,
     output_open: bool,
 }
 
@@ -153,8 +169,8 @@ struct CollectedOutput {
 }
 
 impl StreamSession {
-    fn attach(child: &mut tokio::process::Child) -> Self {
-        let (chunk_tx, chunk_rx) = tokio::sync::mpsc::unbounded_channel();
+    fn attach(child: &mut tokio::process::Child, max_output_bytes: usize) -> Self {
+        let (chunk_tx, chunk_rx) = tokio::sync::mpsc::channel(CHUNK_CHANNEL_CAPACITY);
         let mut readers = Vec::new();
         if let Some(stdout) = child.stdout.take() {
             readers.push(tokio::spawn(read_stream(
@@ -175,6 +191,8 @@ impl StreamSession {
             readers,
             stdout: Vec::new(),
             stderr: Vec::new(),
+            retained_bytes: 0,
+            max_output_bytes: max_output_bytes.max(1),
             output_open: true,
         }
     }
@@ -185,8 +203,18 @@ impl StreamSession {
 
     fn apply_chunk(&mut self, chunk: Option<(StreamKind, Vec<u8>)>) {
         match chunk {
-            Some((StreamKind::Stdout, bytes)) => self.stdout.extend(bytes),
-            Some((StreamKind::Stderr, bytes)) => self.stderr.extend(bytes),
+            Some((kind, bytes)) => {
+                let remaining = self.max_output_bytes.saturating_sub(self.retained_bytes);
+                if remaining == 0 {
+                    return;
+                }
+                let take = bytes.len().min(remaining);
+                match kind {
+                    StreamKind::Stdout => self.stdout.extend_from_slice(&bytes[..take]),
+                    StreamKind::Stderr => self.stderr.extend_from_slice(&bytes[..take]),
+                }
+                self.retained_bytes += take;
+            }
             None => self.output_open = false,
         }
     }
@@ -223,7 +251,7 @@ impl Drop for StreamSession {
 async fn read_stream<R>(
     kind: StreamKind,
     mut reader: R,
-    chunk_tx: tokio::sync::mpsc::UnboundedSender<(StreamKind, Vec<u8>)>,
+    chunk_tx: tokio::sync::mpsc::Sender<(StreamKind, Vec<u8>)>,
 ) where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -234,7 +262,7 @@ async fn read_stream<R>(
             Ok(n) => {
                 // Stop once the consumer is gone so escaped writers cannot keep
                 // these tasks allocating and discarding output forever.
-                if chunk_tx.send((kind, buffer[..n].to_vec())).is_err() {
+                if chunk_tx.send((kind, buffer[..n].to_vec())).await.is_err() {
                     break;
                 }
             }

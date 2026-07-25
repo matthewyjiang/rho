@@ -125,9 +125,35 @@ fn finished_result_uses_signal_when_exit_code_is_absent() {
     assert!(result.content.contains("exit code: signal"));
 }
 
+#[test]
+fn stream_session_caps_retained_stdout_and_stderr() {
+    let (_tx, chunk_rx) = tokio::sync::mpsc::channel(4);
+    let mut streams = StreamSession {
+        chunk_rx,
+        readers: Vec::new(),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        retained_bytes: 0,
+        max_output_bytes: 10,
+        output_open: true,
+    };
+
+    streams.apply_chunk(Some((StreamKind::Stdout, b"hello-world".to_vec())));
+    streams.apply_chunk(Some((StreamKind::Stderr, b"more".to_vec())));
+    streams.apply_chunk(Some((StreamKind::Stdout, b"extra".to_vec())));
+
+    assert_eq!(streams.stdout, b"hello-worl");
+    assert!(streams.stderr.is_empty());
+    assert_eq!(streams.retained_bytes, 10);
+    assert_eq!(
+        streams.stdout.len() + streams.stderr.len(),
+        streams.max_output_bytes
+    );
+}
+
 #[tokio::test]
 async fn read_stream_stops_when_consumer_disconnects() {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
     drop(rx);
 
     let (mut writer, reader) = tokio::io::duplex(1024);
