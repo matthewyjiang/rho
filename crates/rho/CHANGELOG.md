@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.15.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.14.0...rho-coding-agent-v1.15.0) (2026-07-25)
+
+
+### Features
+
+* **agents:** add Claude Code subagent runtime ([#541](https://github.com/matthewyjiang/rho/issues/541)) ([c1385ec](https://github.com/matthewyjiang/rho/commit/c1385ecae9b2eb967ae73ecc09c20cc80bc63479))
+* **providers:** add xAI server-side context compaction ([#542](https://github.com/matthewyjiang/rho/issues/542)) ([2d43f13](https://github.com/matthewyjiang/rho/commit/2d43f134669414b3d9b7332a4c9d17aaa1346d9f))
+* **subagents:** route background questionnaires to parent ([#539](https://github.com/matthewyjiang/rho/issues/539)) ([e0cab31](https://github.com/matthewyjiang/rho/commit/e0cab3182e9fc833fbf304c7dad5714f73b89952))
+* **tui:** include subagent costs in status and info ([#548](https://github.com/matthewyjiang/rho/issues/548)) ([9517f00](https://github.com/matthewyjiang/rho/commit/9517f0012dd2001213fd10294287f8a0739e5d2c))
+
+
+### Bug Fixes
+
+* **errors:** surface failures that were silently swallowed ([#546](https://github.com/matthewyjiang/rho/issues/546)) ([1d4eee3](https://github.com/matthewyjiang/rho/commit/1d4eee3ea2e45d459897198d48babbe3ded3bf19))
+* **subagents:** run multi-agent batches in parallel ([#544](https://github.com/matthewyjiang/rho/issues/544)) ([7dd6706](https://github.com/matthewyjiang/rho/commit/7dd6706f6aade0a45d70336a42d259b4a3c12a4f))
+* **tools:** allow file paths outside workspace ([#537](https://github.com/matthewyjiang/rho/issues/537)) ([8a3cc24](https://github.com/matthewyjiang/rho/commit/8a3cc24468e89bb509fefbefced738b706b1e43d))
+* **tui:** correct attach token breakdown and add scrollbar ([#550](https://github.com/matthewyjiang/rho/issues/550)) ([fbe18e7](https://github.com/matthewyjiang/rho/commit/fbe18e750d180ab911ce85f12301735cea6246e1))
+* **tui:** stream live agent tool-call prompt previews ([#543](https://github.com/matthewyjiang/rho/issues/543)) ([bca0596](https://github.com/matthewyjiang/rho/commit/bca059632b80b87708e4a32f66c7a77375f3ad3d))
+* **update:** fetch the install script from the release tag, not main ([#536](https://github.com/matthewyjiang/rho/issues/536)) ([332401a](https://github.com/matthewyjiang/rho/commit/332401a5d14e93d1b609c5a667aa45e9d4276bb1)), closes [#497](https://github.com/matthewyjiang/rho/issues/497)
+* **web:** keep github tokens out of git argv and harden fetch targets ([#547](https://github.com/matthewyjiang/rho/issues/547)) ([7b32573](https://github.com/matthewyjiang/rho/commit/7b3257399ea75223531859323142a17c6d000500))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.9.0 to 1.10.0
+    * rho-providers bumped from 0.8.1 to 0.9.0
+
 ## [1.14.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.13.0...rho-coding-agent-v1.14.0) (2026-07-24)
 
 

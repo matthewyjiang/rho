@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.8.1...rho-providers-v0.9.0) (2026-07-25)
+
+
+### Features
+
+* **agents:** add Claude Code subagent runtime ([#541](https://github.com/matthewyjiang/rho/issues/541)) ([c1385ec](https://github.com/matthewyjiang/rho/commit/c1385ecae9b2eb967ae73ecc09c20cc80bc63479))
+* **providers:** add xAI server-side context compaction ([#542](https://github.com/matthewyjiang/rho/issues/542)) ([2d43f13](https://github.com/matthewyjiang/rho/commit/2d43f134669414b3d9b7332a4c9d17aaa1346d9f))
+* **subagents:** route background questionnaires to parent ([#539](https://github.com/matthewyjiang/rho/issues/539)) ([e0cab31](https://github.com/matthewyjiang/rho/commit/e0cab3182e9fc833fbf304c7dad5714f73b89952))
+* **tui:** include subagent costs in status and info ([#548](https://github.com/matthewyjiang/rho/issues/548)) ([9517f00](https://github.com/matthewyjiang/rho/commit/9517f0012dd2001213fd10294287f8a0739e5d2c))
+
+
+### Bug Fixes
+
+* **tools:** allow file paths outside workspace ([#537](https://github.com/matthewyjiang/rho/issues/537)) ([8a3cc24](https://github.com/matthewyjiang/rho/commit/8a3cc24468e89bb509fefbefced738b706b1e43d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.9.0 to 1.10.0
+
 ## [0.8.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.8.0...rho-providers-v0.8.1) (2026-07-24)
 
 
