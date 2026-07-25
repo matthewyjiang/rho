@@ -63,8 +63,17 @@ async fn stalled_writer_does_not_block_high_volume_effects() {
         log: Arc::clone(&log),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     let started = std::time::Instant::now();
     for index in 0..2_000 {
@@ -119,8 +128,17 @@ async fn terminal_barrier_preserves_order_and_single_completed() {
         log: Arc::clone(&log),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     sink.mark_running().unwrap();
     sink.apply_effect(StreamEffect::Attachment(
@@ -182,8 +200,17 @@ async fn early_status_failure_is_reported_after_later_success() {
         fail_status_writes: Arc::new(AtomicUsize::new(1)),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     // First forced running write is injected to fail on the worker thread.
     let _ = sink.mark_running();
@@ -253,8 +280,17 @@ async fn barrier_drain_status_failure_demotes_completed_to_failed() {
         log: Arc::clone(&log),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     // Queue a running write that will fail only after the stall is released,
     // i.e. during barrier drain when the sink has already preselected Completed.
@@ -337,8 +373,17 @@ async fn attachment_failure_degrades_without_killing_run() {
         fail_attachment_writes: Arc::new(AtomicUsize::new(1)),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     sink.mark_running().unwrap();
     sink.apply_effect(StreamEffect::Attachment(
@@ -376,8 +421,17 @@ async fn stalled_writer_cancel_path_stays_responsive() {
         stall: Some(Arc::clone(&stall)),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     for index in 0..500 {
         let _ = sink.apply_effect(StreamEffect::Attachment(
@@ -410,8 +464,17 @@ async fn abort_detached_does_not_block_and_preserves_terminal() {
         stall: Some(Arc::clone(&stall)),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
     sink.mark_running().ok();
     sink.status.state = RunState::Error;
     sink.status.error = Some("session panicked".into());
@@ -445,8 +508,17 @@ async fn drop_aborts_without_blocking_tokio_worker() {
         stall: Some(Arc::clone(&stall)),
         ..PersistHooks::default()
     };
-    let sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     let started = std::time::Instant::now();
     drop(sink);
@@ -470,8 +542,17 @@ async fn panic_fallback_like_race_keeps_terminal_error() {
         log: Arc::clone(&log),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     // Queue a nonterminal running update that the stalled worker has not written.
     sink.mark_running().ok();
@@ -552,12 +633,15 @@ async fn barrier_drain_sticky_failure_never_publishes_ok_on_watch() {
         ..PersistHooks::default()
     };
     let (status_tx, status_rx) = watch::channel(RunStatus::default());
-    let mut sink = StatusSink::new_with_hooks(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         Some(status_tx),
-        hooks,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
     )
     .unwrap();
 
@@ -652,12 +736,15 @@ async fn success_path_publishes_exactly_one_terminal_ok_after_barrier() {
         ..PersistHooks::default()
     };
     let (status_tx, status_rx) = watch::channel(RunStatus::default());
-    let mut sink = StatusSink::new_with_hooks(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         Some(status_tx),
-        hooks,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
     )
     .unwrap();
 
@@ -754,12 +841,15 @@ async fn stop_path_publishes_exactly_one_terminal_stopped_on_watch() {
         ..PersistHooks::default()
     };
     let (status_tx, status_rx) = watch::channel(RunStatus::default());
-    let mut sink = StatusSink::new_with_hooks(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         Some(status_tx),
-        hooks,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
     )
     .unwrap();
 
@@ -827,8 +917,17 @@ async fn rate_limit_survives_queue_saturation_and_flushes_on_barrier() {
         rate_limit_path: Some(rate_path.clone()),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     // Fill the bounded queue with attachment events while the worker is stalled.
     for index in 0..2_000 {
@@ -873,8 +972,17 @@ async fn rate_limit_flushes_on_abort_path() {
         rate_limit_path: Some(rate_path.clone()),
         ..PersistHooks::default()
     };
-    let mut sink =
-        StatusSink::new_with_hooks(output.clone(), &identity(), "prompt", None, hooks).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        SinkConfig {
+            hooks,
+            ..SinkConfig::default()
+        },
+    )
+    .unwrap();
 
     sink.apply_effect(StreamEffect::RateLimit(sample_rate_limit("on-abort")))
         .unwrap();
@@ -908,13 +1016,16 @@ async fn finish_returns_when_barrier_queue_is_full() {
         log: Arc::clone(&log),
         ..PersistHooks::default()
     };
-    let mut sink = StatusSink::new_with_hooks_and_budgets(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         None,
-        hooks,
-        tight_shutdown_budgets(),
+        SinkConfig {
+            budgets: tight_shutdown_budgets(),
+            hooks,
+            ..SinkConfig::default()
+        },
     )
     .unwrap();
 
@@ -986,13 +1097,16 @@ async fn finish_returns_when_worker_stalls_before_ack() {
         stall: Some(Arc::clone(&stall)),
         ..PersistHooks::default()
     };
-    let mut sink = StatusSink::new_with_hooks_and_budgets(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         None,
-        hooks,
-        tight_shutdown_budgets(),
+        SinkConfig {
+            budgets: tight_shutdown_budgets(),
+            hooks,
+            ..SinkConfig::default()
+        },
     )
     .unwrap();
 
@@ -1038,13 +1152,16 @@ async fn finish_returns_when_worker_never_joins() {
         worker_join: Duration::from_millis(40),
         emergency_write: Duration::from_millis(200),
     };
-    let mut sink = StatusSink::new_with_hooks_and_budgets(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         None,
-        hooks,
-        budgets,
+        SinkConfig {
+            budgets,
+            hooks,
+            ..SinkConfig::default()
+        },
     )
     .unwrap();
 
@@ -1079,15 +1196,19 @@ async fn finish_returns_when_emergency_write_stalls() {
         stall: Some(Arc::clone(&worker_stall)),
         ..PersistHooks::default()
     };
-    let mut sink = StatusSink::new_with_shutdown_hooks(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         None,
-        hooks,
-        tight_shutdown_budgets(),
-        Some(Arc::clone(&emergency_stall)),
-        Arc::new(AtomicUsize::new(0)),
+        SinkConfig {
+            budgets: tight_shutdown_budgets(),
+            hooks,
+            emergency: EmergencyWriteHooks {
+                stall: Some(Arc::clone(&emergency_stall)),
+                fail_writes: Arc::new(AtomicUsize::new(0)),
+            },
+        },
     )
     .unwrap();
 
@@ -1120,15 +1241,19 @@ async fn finish_returns_when_emergency_write_fails() {
         stall: Some(Arc::clone(&stall)),
         ..PersistHooks::default()
     };
-    let mut sink = StatusSink::new_with_shutdown_hooks(
+    let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         None,
-        hooks,
-        tight_shutdown_budgets(),
-        None,
-        Arc::new(AtomicUsize::new(1)),
+        SinkConfig {
+            budgets: tight_shutdown_budgets(),
+            hooks,
+            emergency: EmergencyWriteHooks {
+                stall: None,
+                fail_writes: Arc::new(AtomicUsize::new(1)),
+            },
+        },
     )
     .unwrap();
 

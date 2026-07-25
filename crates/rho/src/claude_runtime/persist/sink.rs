@@ -20,12 +20,12 @@ use super::super::{
     rate_limit::{RateLimitObservation, RateLimitSlot},
     stream::{self, StreamEffect, TerminalResult},
 };
+#[cfg(test)]
+use super::worker::WriterStall;
 use super::worker::{
     demote_completed_attachment, demote_status_for_sticky_error, spawn_persist_worker, BarrierAck,
-    ClaudeRunIdentity, PersistCommand, PersistFeedback,
+    ClaudeRunIdentity, PersistCommand, PersistFeedback, PersistHooks,
 };
-#[cfg(test)]
-use super::worker::{PersistHooks, WriterStall};
 
 const MAX_SINK_TEXT_BYTES: usize = 256 * 1024;
 
@@ -52,11 +52,43 @@ impl Default for PersistShutdownBudgets {
     }
 }
 
-#[cfg(test)]
+/// Instrumentation for the emergency terminal write. Empty outside tests.
 #[derive(Clone, Default)]
-struct EmergencyWriteHooks {
-    stall: Option<Arc<WriterStall>>,
-    fail_writes: Arc<std::sync::atomic::AtomicUsize>,
+pub(crate) struct EmergencyWriteHooks {
+    #[cfg(test)]
+    pub(crate) stall: Option<Arc<WriterStall>>,
+    #[cfg(test)]
+    pub(crate) fail_writes: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl EmergencyWriteHooks {
+    /// Gate before the emergency disk write: block while a scenario holds the
+    /// writer and consume one injected failure. Always `Ok` outside tests.
+    fn intercept(&self) -> std::io::Result<()> {
+        #[cfg(test)]
+        {
+            if let Some(stall) = &self.stall {
+                stall.wait_if_stalled();
+            }
+            if self.fail_writes.load(Ordering::SeqCst) > 0 {
+                self.fail_writes.fetch_sub(1, Ordering::SeqCst);
+                return Err(std::io::Error::other("injected emergency write failure"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Deadlines and instrumentation for one [`StatusSink`].
+///
+/// Production passes `SinkConfig::default()`: production budgets and no-op
+/// hooks. Tests override only the fields a scenario needs, so the sink keeps a
+/// single constructor whose signature does not change with build mode.
+#[derive(Clone, Default)]
+pub(crate) struct SinkConfig {
+    pub(crate) budgets: PersistShutdownBudgets,
+    pub(crate) hooks: PersistHooks,
+    pub(crate) emergency: EmergencyWriteHooks,
 }
 
 /// In-memory + durable sink for one Claude CLI run.
@@ -75,7 +107,6 @@ pub(crate) struct StatusSink {
     attachment_enabled: bool,
     first_status_error: Option<String>,
     closed: bool,
-    #[cfg(test)]
     emergency_hooks: EmergencyWriteHooks,
 }
 
@@ -85,98 +116,7 @@ impl StatusSink {
         identity: &ClaudeRunIdentity,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
-    ) -> anyhow::Result<Self> {
-        #[cfg(test)]
-        {
-            Self::build(
-                path,
-                identity,
-                prompt,
-                status_tx,
-                PersistHooks::default(),
-                PersistShutdownBudgets::default(),
-                EmergencyWriteHooks::default(),
-            )
-        }
-        #[cfg(not(test))]
-        {
-            Self::build(path, identity, prompt, status_tx)
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_with_hooks(
-        path: std::path::PathBuf,
-        identity: &ClaudeRunIdentity,
-        prompt: &str,
-        status_tx: Option<watch::Sender<RunStatus>>,
-        hooks: PersistHooks,
-    ) -> anyhow::Result<Self> {
-        Self::build(
-            path,
-            identity,
-            prompt,
-            status_tx,
-            hooks,
-            PersistShutdownBudgets::default(),
-            EmergencyWriteHooks::default(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_with_hooks_and_budgets(
-        path: std::path::PathBuf,
-        identity: &ClaudeRunIdentity,
-        prompt: &str,
-        status_tx: Option<watch::Sender<RunStatus>>,
-        hooks: PersistHooks,
-        budgets: PersistShutdownBudgets,
-    ) -> anyhow::Result<Self> {
-        Self::build(
-            path,
-            identity,
-            prompt,
-            status_tx,
-            hooks,
-            budgets,
-            EmergencyWriteHooks::default(),
-        )
-    }
-
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_with_shutdown_hooks(
-        path: std::path::PathBuf,
-        identity: &ClaudeRunIdentity,
-        prompt: &str,
-        status_tx: Option<watch::Sender<RunStatus>>,
-        hooks: PersistHooks,
-        budgets: PersistShutdownBudgets,
-        emergency_stall: Option<Arc<WriterStall>>,
-        emergency_fail_writes: Arc<std::sync::atomic::AtomicUsize>,
-    ) -> anyhow::Result<Self> {
-        Self::build(
-            path,
-            identity,
-            prompt,
-            status_tx,
-            hooks,
-            budgets,
-            EmergencyWriteHooks {
-                stall: emergency_stall,
-                fail_writes: emergency_fail_writes,
-            },
-        )
-    }
-
-    fn build(
-        path: std::path::PathBuf,
-        identity: &ClaudeRunIdentity,
-        prompt: &str,
-        status_tx: Option<watch::Sender<RunStatus>>,
-        #[cfg(test)] hooks: PersistHooks,
-        #[cfg(test)] budgets: PersistShutdownBudgets,
-        #[cfg(test)] emergency_hooks: EmergencyWriteHooks,
+        config: SinkConfig,
     ) -> anyhow::Result<Self> {
         let model = identity
             .model
@@ -226,8 +166,7 @@ impl StatusSink {
             Some(status.clone()),
             Arc::clone(&rate_limit_slot),
             Arc::clone(&abandon),
-            #[cfg(test)]
-            hooks,
+            config.hooks,
         );
 
         Ok(Self {
@@ -239,15 +178,11 @@ impl StatusSink {
             feedback,
             rate_limit_slot,
             abandon,
-            #[cfg(test)]
-            shutdown_budgets: budgets,
-            #[cfg(not(test))]
-            shutdown_budgets: PersistShutdownBudgets::default(),
+            shutdown_budgets: config.budgets,
             attachment_enabled,
             first_status_error: None,
             closed: false,
-            #[cfg(test)]
-            emergency_hooks,
+            emergency_hooks: config.emergency,
         })
     }
 
@@ -272,11 +207,15 @@ impl StatusSink {
         }
     }
 
-    fn note_send_failure(&mut self, kind: &str) {
-        let message = format!("{kind} persistence worker stopped");
+    /// Record the first status-durability failure. Later ones never replace it.
+    fn record_status_error(&mut self, error: impl Into<String>) {
         if self.first_status_error.is_none() {
-            self.first_status_error = Some(message);
+            self.first_status_error = Some(error.into());
         }
+    }
+
+    fn note_send_failure(&mut self, kind: &str) {
+        self.record_status_error(format!("{kind} persistence worker stopped"));
     }
 
     /// Enqueue status without blocking. Nonterminal watch updates stay live;
@@ -319,9 +258,7 @@ impl StatusSink {
             .first_status_error
             .clone();
         if let Some(error) = error {
-            if self.first_status_error.is_none() {
-                self.first_status_error = Some(error);
-            }
+            self.record_status_error(error);
         }
     }
 
@@ -565,44 +502,30 @@ impl StatusSink {
             // Barrier already acked final status; keep that snapshot and only
             // detach the join so the async task cannot hang.
             self.abandon_worker(/*detach_sender*/ false);
-            self.take_attachment_feedback();
-            let attachment_error = self.status.attachment_error.clone();
-            self.status = barrier_ack.status;
-            if self.status.attachment_error.is_none() {
-                self.status.attachment_error = attachment_error;
-            }
-            if let Some(error) = barrier_ack.first_status_error {
-                if self.first_status_error.is_none() {
-                    self.first_status_error = Some(error);
-                }
-            }
-            self.pull_status_error_feedback();
-            if self.status.attachment_error.is_some() || self.first_status_error.is_some() {
-                self.emergency_write_status().await;
-            }
-            self.publish_watch();
-            return self.status_error_result();
         }
+        self.adopt_barrier_ack(barrier_ack).await;
+        self.status_error_result()
+    }
 
+    /// Take the worker's acked terminal snapshot as the sink's own.
+    ///
+    /// Local attachment/status errors observed while the barrier was in flight
+    /// survive the swap, and a durability miss forces one emergency disk write.
+    async fn adopt_barrier_ack(&mut self, barrier_ack: BarrierAck) {
         self.take_attachment_feedback();
         let attachment_error = self.status.attachment_error.clone();
-
         self.status = barrier_ack.status;
         if self.status.attachment_error.is_none() {
             self.status.attachment_error = attachment_error;
         }
         if let Some(error) = barrier_ack.first_status_error {
-            if self.first_status_error.is_none() {
-                self.first_status_error = Some(error);
-            }
+            self.record_status_error(error);
         }
         self.pull_status_error_feedback();
         if self.status.attachment_error.is_some() || self.first_status_error.is_some() {
             self.emergency_write_status().await;
         }
         self.publish_watch();
-
-        self.status_error_result()
     }
 
     async fn send_barrier_bounded(
@@ -653,9 +576,7 @@ impl StatusSink {
     }
 
     fn note_shutdown_failure(&mut self, message: &str) {
-        if self.first_status_error.is_none() {
-            self.first_status_error = Some(message.to_string());
-        }
+        self.record_status_error(message);
     }
 
     fn apply_local_sticky_demotion(&mut self) {
@@ -683,27 +604,15 @@ impl StatusSink {
     async fn emergency_write_status(&self) {
         let path = self.path.clone();
         let status = self.status.clone();
-        #[cfg(test)]
         let emergency_hooks = self.emergency_hooks.clone();
         // Dedicated OS thread: a stalled write must not pin Tokio's blocking pool.
         let (done_tx, done_rx) = oneshot::channel();
         let spawn_ok = std::thread::Builder::new()
             .name("rho-claude-persist-emergency".into())
             .spawn(move || {
-                #[cfg(test)]
-                {
-                    if let Some(stall) = &emergency_hooks.stall {
-                        stall.wait_if_stalled();
-                    }
-                    if emergency_hooks.fail_writes.load(Ordering::SeqCst) > 0 {
-                        emergency_hooks.fail_writes.fetch_sub(1, Ordering::SeqCst);
-                        let _ = done_tx.send(Err(std::io::Error::other(
-                            "injected emergency write failure",
-                        )));
-                        return;
-                    }
-                }
-                let result = subagent::write_status(&path, &status);
+                let result = emergency_hooks
+                    .intercept()
+                    .and_then(|()| subagent::write_status(&path, &status));
                 let _ = done_tx.send(result);
             })
             .is_ok();

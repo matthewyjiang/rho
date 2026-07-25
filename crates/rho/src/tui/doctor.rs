@@ -10,6 +10,7 @@ use super::{
     picker_overlay::OverlayChrome, PickerAction, PickerBadge, PickerBadgePlacement,
     PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
 };
+use crate::claude_runtime::auth::ClaudeProbeSnapshot;
 use crate::clipboard::doctor_report as clipboard_doctor_report;
 
 pub(super) struct DoctorContext<'a> {
@@ -23,11 +24,8 @@ pub(super) struct DoctorContext<'a> {
     pub(super) herdr_enabled: bool,
     pub(super) herdr_socket_reachable: Option<bool>,
     pub(super) provider_health: &'a [(String, ProviderModelHealth)],
-    /// Claude Code binary/auth summary. Not a Rho credential.
-    pub(super) claude_code_auth: &'a str,
-    pub(super) claude_code_version: &'a str,
-    pub(super) claude_code_auth_healthy: bool,
-    pub(super) claude_code_binary_healthy: bool,
+    /// Claude Code binary and auth probe. Not a Rho credential.
+    pub(super) claude: &'a ClaudeProbeSnapshot,
 }
 
 pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
@@ -223,27 +221,29 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
         rtk,
         "Optional shell-command rewriting helper.".into(),
     ));
+    let claude_auth_healthy = context.claude.auth_healthy();
     external_items.push(item(
         EXTERNAL,
         "Claude Code authentication",
-        if context.claude_code_auth_healthy {
+        if claude_auth_healthy {
             "ok"
         } else {
             "attention"
         },
-        context.claude_code_auth_healthy,
-        context.claude_code_auth.into(),
+        claude_auth_healthy,
+        context.claude.auth_description(),
     ));
+    let claude_binary_healthy = context.claude.binary_healthy();
     external_items.push(item(
         EXTERNAL,
         "Claude Code binary",
-        if context.claude_code_binary_healthy {
+        if claude_binary_healthy {
             "available"
         } else {
             "attention"
         },
-        context.claude_code_binary_healthy,
-        context.claude_code_version.into(),
+        claude_binary_healthy,
+        context.claude.version_description(),
     ));
     let (herdr_healthy, herdr_status, herdr_detail) =
         match (context.herdr_enabled, context.herdr_socket_reachable) {

@@ -20,10 +20,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use super::auth::{ClaudeAuthError, CLAUDE_PROGRAM};
-use super::windows_shim_args::{validate_cmd_args, validate_powershell_args, WindowsShimArgError};
-
-#[cfg(test)]
-use super::windows_shim_args::bat_command_line;
+use super::windows_shim_args::{bat_command_line, validate_powershell_args, WindowsShimArgError};
 
 /// How to invoke a resolved Claude Code binary or shim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,63 +69,61 @@ impl ClaudeExecutable {
         self.kind
     }
 
-    /// Build a process command without pre-spawn validation.
+    /// Resolve the exact process plan for `args`.
     ///
-    /// Auth/login use this for fixed short argv that never carries untrusted or
-    /// multiline agent data. Production subagent spawns must use
-    /// [`Self::try_command`] so Windows shim validation becomes a typed error.
-    pub(crate) fn command<I, S>(&self, args: I) -> Command
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        build_command(self.kind, &self.program, args)
-    }
-
-    /// Fallible command build with typed pre-spawn validation for Windows shims.
-    ///
-    /// Production session spawns use this path so CR/LF/NUL (and other
-    /// non-representable bat values) become [`ClaudeExecutableError`] before
-    /// `CreateProcess`, not a generic I/O failure.
-    pub(crate) fn try_command<I, S>(&self, args: I) -> Result<Command, ClaudeExecutableError>
+    /// This is the only place invocation rules live. CR/LF/NUL (and other
+    /// values a bat wrapper cannot represent) become
+    /// [`ClaudeExecutableError`] here, before `CreateProcess`, rather than a
+    /// generic I/O failure at spawn.
+    pub(crate) fn plan<I, S>(&self, args: I) -> Result<ClaudeArgv, ClaudeExecutableError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
         let args = collect_args(args);
         match self.kind {
-            ClaudeInvocationKind::Direct => Ok(build_command(self.kind, &self.program, &args)),
+            ClaudeInvocationKind::Direct => Ok(ClaudeArgv {
+                program: self.program.clone(),
+                args,
+                windows_command_line: None,
+            }),
             ClaudeInvocationKind::CmdScript => {
-                validate_cmd_args(&self.program, &args)?;
-                Ok(build_command(self.kind, &self.program, &args))
+                // Building the bat line is the same check std performs at spawn.
+                let line = bat_command_line(&self.program, &args)?;
+                Ok(ClaudeArgv {
+                    // Spawn image is the script; std rewrites to cmd.exe.
+                    program: self.program.clone(),
+                    args,
+                    windows_command_line: Some(line),
+                })
             }
             ClaudeInvocationKind::PowerShellScript => {
                 validate_powershell_args(&args)?;
-                Ok(build_command(self.kind, &self.program, &args))
+                let mut argv = vec![
+                    OsString::from("-NoProfile"),
+                    OsString::from("-NonInteractive"),
+                    OsString::from("-ExecutionPolicy"),
+                    OsString::from("Bypass"),
+                    OsString::from("-File"),
+                    self.program.as_os_str().to_os_string(),
+                ];
+                argv.extend(args);
+                Ok(ClaudeArgv {
+                    program: PathBuf::from("powershell.exe"),
+                    args: argv,
+                    windows_command_line: None,
+                })
             }
         }
     }
 
-    /// Pure argv / command-line plan (tests and diagnostics).
-    #[cfg(test)]
-    pub(crate) fn try_argv<I, S>(&self, args: I) -> Result<ClaudeArgv, ClaudeExecutableError>
+    /// Plan and build the process command in one step.
+    pub(crate) fn try_command<I, S>(&self, args: I) -> Result<Command, ClaudeExecutableError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let args = collect_args(args);
-        argv_for(self.kind, &self.program, &args)
-    }
-
-    /// Infallible argv plan for tests that only use safe args.
-    #[cfg(test)]
-    pub(crate) fn argv<I, S>(&self, args: I) -> ClaudeArgv
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        self.try_argv(args)
-            .expect("argv plan should succeed for safe test args")
+        Ok(self.plan(args)?.command())
     }
 }
 
@@ -186,79 +181,26 @@ where
         .collect()
 }
 
-fn build_command<I, S>(kind: ClaudeInvocationKind, program: &Path, args: I) -> Command
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    match kind {
-        ClaudeInvocationKind::Direct | ClaudeInvocationKind::CmdScript => {
-            let mut command = Command::new(program);
-            command.args(args);
-            command
-        }
-        ClaudeInvocationKind::PowerShellScript => {
-            let mut command = Command::new("powershell.exe");
-            command.arg("-NoProfile");
-            command.arg("-NonInteractive");
-            command.arg("-ExecutionPolicy");
-            command.arg("Bypass");
-            command.arg("-File");
-            command.arg(program);
-            command.args(args);
-            command
-        }
-    }
-}
-
-/// Pure process plan: program image plus argv, or a bat-encoded command line.
-#[cfg(test)]
+/// A validated process plan: image, argv, and the bat command line std will
+/// build for `.cmd` / `.bat` shims.
+///
+/// Production spawns and tests read the same value, so an argv assertion is an
+/// assertion about the process that actually runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClaudeArgv {
     pub(crate) program: PathBuf,
     pub(crate) args: Vec<OsString>,
-    /// When set, Windows bat encoding of the full command line (std-compatible).
+    /// Set for cmd shims: std-compatible bat encoding of the full command line.
     pub(crate) windows_command_line: Option<OsString>,
 }
 
-#[cfg(test)]
-fn argv_for(
-    kind: ClaudeInvocationKind,
-    program: &Path,
-    args: &[OsString],
-) -> Result<ClaudeArgv, ClaudeExecutableError> {
-    match kind {
-        ClaudeInvocationKind::Direct => Ok(ClaudeArgv {
-            program: program.to_path_buf(),
-            args: args.to_vec(),
-            windows_command_line: None,
-        }),
-        ClaudeInvocationKind::CmdScript => {
-            let line = bat_command_line(program, args)?;
-            Ok(ClaudeArgv {
-                // Spawn image is the script; std rewrites to cmd.exe at spawn.
-                program: program.to_path_buf(),
-                args: args.to_vec(),
-                windows_command_line: Some(line),
-            })
-        }
-        ClaudeInvocationKind::PowerShellScript => {
-            validate_powershell_args(args)?;
-            let mut argv = vec![
-                OsString::from("-NoProfile"),
-                OsString::from("-NonInteractive"),
-                OsString::from("-ExecutionPolicy"),
-                OsString::from("Bypass"),
-                OsString::from("-File"),
-                program.as_os_str().to_os_string(),
-            ];
-            argv.extend(args.iter().cloned());
-            Ok(ClaudeArgv {
-                program: PathBuf::from("powershell.exe"),
-                args: argv,
-                windows_command_line: None,
-            })
-        }
+impl ClaudeArgv {
+    /// Build the process command. Invocation rules are already resolved, so
+    /// every kind spawns the same way: image plus argv.
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.args);
+        command
     }
 }
 

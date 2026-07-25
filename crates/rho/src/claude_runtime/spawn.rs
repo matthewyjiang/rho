@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rho_providers::reasoning::ReasoningLevel;
 
-use crate::{
-    agent::{AgentDefinition, AgentRuntime, PromptPolicy},
-    permission::PermissionMode,
-};
+use crate::{agent::PromptPolicy, permission::PermissionMode};
 
 /// File name for the materialized system prompt inside a run directory.
 pub(crate) const SYSTEM_PROMPT_FILE_NAME: &str = "system-prompt.txt";
@@ -19,7 +16,9 @@ pub(crate) const SYSTEM_PROMPT_FILE_NAME: &str = "system-prompt.txt";
 /// from re-interpreting parent provider/model config.
 #[derive(Clone, Debug)]
 pub(crate) struct ClaudeSpawnRequest {
-    pub(crate) definition: AgentDefinition,
+    /// Agent system prompt policy. Spawn needs no other definition field, so a
+    /// mismatched runtime cannot reach here.
+    pub(crate) system_prompt: PromptPolicy,
     /// Claude `--model` value. `None` means omit the flag (Claude inherit).
     pub(crate) model: Option<String>,
     /// Full Claude tool entries from the definition (`Read`, `Bash(git *)`, …).
@@ -66,6 +65,8 @@ impl SystemPromptPlan {
     }
 }
 
+/// The full spawn contract: argv is the only carrier of flag decisions, so
+/// tests and production read the same values.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClaudeSpawnPlan {
     /// Argv without system-prompt flags. Call [`finalize_spawn_args`] to attach
@@ -73,13 +74,6 @@ pub(crate) struct ClaudeSpawnPlan {
     pub(crate) args: Vec<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) system_prompt: SystemPromptPlan,
-    pub(crate) model: Option<String>,
-    pub(crate) effort: Option<&'static str>,
-    pub(crate) permission_mode: String,
-    pub(crate) setting_sources: String,
-    pub(crate) tool_base_names: Vec<String>,
-    /// Full non-Task tool entries for `--allowedTools` (bare names and patterns).
-    pub(crate) allowed_tool_entries: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -89,8 +83,6 @@ pub(crate) enum ClaudeSpawnError {
 claude -p cannot prompt for approval. Switch to Plan or Auto, or change the agent."
     )]
     SupervisedUnsupported,
-    #[error("internal: Claude spawn requested for non-claude-cli agent")]
-    WrongRuntime,
 }
 
 /// Failures while writing the private system-prompt file for a run.
@@ -141,17 +133,12 @@ pub(crate) fn claude_effort_flag(level: ReasoningLevel) -> Option<&'static str> 
 pub(crate) fn build_spawn_plan(
     request: &ClaudeSpawnRequest,
 ) -> Result<ClaudeSpawnPlan, ClaudeSpawnError> {
-    if request.definition.runtime != AgentRuntime::ClaudeCli {
-        return Err(ClaudeSpawnError::WrongRuntime);
-    }
-    let permission_mode = map_permission_mode(request.permission_mode)?.to_string();
-    let system_prompt = system_prompt_plan(&request.definition.prompt);
-    // Bound model is already byte-for-byte; do not resolve aliases here.
-    let model = request.model.clone();
+    let permission_mode = map_permission_mode(request.permission_mode)?;
+    let system_prompt = system_prompt_plan(&request.system_prompt);
     let setting_sources = if request.inherit_claude_config {
-        "user,project,local".to_string()
+        "user,project,local"
     } else {
-        "project".to_string()
+        "project"
     };
 
     // `--tools` controls availability from Claude's built-in set (base names).
@@ -168,14 +155,15 @@ pub(crate) fn build_spawn_plan(
         "--verbose".into(),
         "--include-partial-messages".into(),
         "--permission-mode".into(),
-        permission_mode.clone(),
+        permission_mode.into(),
         "--disallowedTools".into(),
         "Task".into(),
         "--setting-sources".into(),
-        setting_sources.clone(),
+        setting_sources.into(),
         "--strict-mcp-config".into(),
     ];
-    if let Some(model) = &model {
+    // Bound model is already byte-for-byte; do not resolve aliases here.
+    if let Some(model) = &request.model {
         args.push("--model".into());
         args.push(model.clone());
     }
@@ -208,12 +196,6 @@ pub(crate) fn build_spawn_plan(
         args,
         cwd: request.cwd.clone(),
         system_prompt,
-        model,
-        effort: request.effort,
-        permission_mode,
-        setting_sources,
-        tool_base_names,
-        allowed_tool_entries,
     })
 }
 

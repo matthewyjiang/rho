@@ -37,8 +37,8 @@ pub(super) fn login_group_picker() -> UiPicker {
 
 /// Resolve whether a login group continues directly or opens a method picker.
 ///
-/// Runtime options that are not catalog providers (Claude Code) are injected here
-/// so group short-circuiting stays honest about the full method list.
+/// Built from the same item list the picker would show, so a group with one
+/// method short-circuits only when that really is the only way in.
 pub(super) fn login_group_next(group: catalog::LoginGroup) -> LoginGroupNext {
     let picker = login_method_picker(group);
     match picker.items.as_slice() {
@@ -47,6 +47,8 @@ pub(super) fn login_group_next(group: catalog::LoginGroup) -> LoginGroupNext {
     }
 }
 
+/// Methods for one login group: catalog providers plus any external runtime
+/// offered under the same group.
 pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
     let title = format!("select {} login method", group.prompt);
     let group_id = group.id.clone();
@@ -62,21 +64,19 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
             value: method.target.provider,
         })
         .collect::<Vec<_>>();
-    // Claude Code is an Anthropic-family runtime for delegation, not a separate
-    // top-level provider group. Keep it beside the Anthropic API key method.
-    if group_id == "anthropic" {
-        items.push(PickerItem {
-            section: None,
-            label: "Claude Code (delegation only)".into(),
-            detail: Some(
-                "External Claude binary subscription, not Anthropic API billing. Credentials are managed by Claude Code, not Rho."
-                    .into(),
-            ),
-            preview: None,
-            badge: None,
-            value: super::claude_login::CLAUDE_CODE_TARGET.into(),
-        });
-    }
+    items.extend(
+        super::claude_login::EXTERNAL_LOGIN_METHODS
+            .iter()
+            .filter(|method| method.group_id == group_id)
+            .map(|method| PickerItem {
+                section: None,
+                label: method.label.into(),
+                detail: Some(method.detail.into()),
+                preview: None,
+                badge: None,
+                value: method.value.into(),
+            }),
+    );
     UiPicker::new(
         title,
         "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
@@ -120,7 +120,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
     )
 }
 
-pub(super) async fn logout_provider_picker(
+pub(super) fn logout_provider_picker(
     store: &dyn CredentialStore,
     claude_signed_in: bool,
 ) -> rho_providers::credentials::CredentialResult<UiPicker> {

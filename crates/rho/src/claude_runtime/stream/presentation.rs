@@ -54,6 +54,47 @@ pub(super) enum ContentBlockKind {
     Other,
 }
 
+impl ContentBlockKind {
+    /// Slot index in [`OpenIndexlessSlots`]. `Other` is never tracked.
+    fn indexless_position(self) -> Option<usize> {
+        match self {
+            Self::Text => Some(0),
+            Self::Reasoning => Some(1),
+            Self::Tool => Some(2),
+            Self::Other => None,
+        }
+    }
+}
+
+/// Open index-less slot ordinal per tracked kind.
+///
+/// Partial events may omit `index`; the open slot for that kind absorbs later
+/// deltas until a `content_block_stop` (or an indexed start) closes it.
+#[derive(Debug, Default)]
+pub(super) struct OpenIndexlessSlots([Option<usize>; 3]);
+
+impl OpenIndexlessSlots {
+    fn get(&self, kind: ContentBlockKind) -> Option<usize> {
+        self.0[kind.indexless_position()?]
+    }
+
+    fn open(&mut self, kind: ContentBlockKind, ordinal: usize) {
+        if let Some(position) = kind.indexless_position() {
+            self.0[position] = Some(ordinal);
+        }
+    }
+
+    fn close(&mut self, kind: ContentBlockKind) {
+        if let Some(position) = kind.indexless_position() {
+            self.0[position] = None;
+        }
+    }
+
+    fn close_all(&mut self) {
+        self.0 = [None; 3];
+    }
+}
+
 /// One content block opened by a partial `content_block_start`.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ContentBlockSlot {
@@ -105,14 +146,9 @@ pub(super) fn push_block_slot(
         emitted: false,
     });
     if index.is_none() {
-        match kind {
-            ContentBlockKind::Text => state.open_indexless_text = Some(ordinal),
-            ContentBlockKind::Reasoning => state.open_indexless_reasoning = Some(ordinal),
-            ContentBlockKind::Tool => state.open_indexless_tool = Some(ordinal),
-            ContentBlockKind::Other => {}
-        }
+        state.open_indexless.open(kind, ordinal);
     } else {
-        clear_open_indexless(state, kind);
+        state.open_indexless.close(kind);
     }
     Some(ordinal)
 }
@@ -139,13 +175,7 @@ pub(super) fn resolve_partial_slot(
         return push_block_slot(state, kind, Some(index));
     }
 
-    let existing = match kind {
-        ContentBlockKind::Text => state.open_indexless_text,
-        ContentBlockKind::Reasoning => state.open_indexless_reasoning,
-        ContentBlockKind::Tool => state.open_indexless_tool,
-        ContentBlockKind::Other => None,
-    };
-    if let Some(ordinal) = existing {
+    if let Some(ordinal) = state.open_indexless.get(kind) {
         return Some(ordinal);
     }
     push_block_slot(state, kind, None)
@@ -166,19 +196,12 @@ pub(super) fn mark_slot_emitted(
     true
 }
 
-pub(super) fn clear_open_indexless(state: &mut MessageStreamState, kind: ContentBlockKind) {
-    match kind {
-        ContentBlockKind::Text => state.open_indexless_text = None,
-        ContentBlockKind::Reasoning => state.open_indexless_reasoning = None,
-        ContentBlockKind::Tool => state.open_indexless_tool = None,
-        ContentBlockKind::Other => {}
-    }
+fn clear_open_indexless(state: &mut MessageStreamState, kind: ContentBlockKind) {
+    state.open_indexless.close(kind);
 }
 
 pub(super) fn clear_all_open_indexless(state: &mut MessageStreamState) {
-    state.open_indexless_text = None;
-    state.open_indexless_reasoning = None;
-    state.open_indexless_tool = None;
+    state.open_indexless.close_all();
 }
 
 /// Decide whether a complete-envelope block was already presented by a slot.

@@ -159,11 +159,15 @@ impl App {
             self.open_login_picker();
             return Ok(());
         }
-        if Self::is_claude_code_target(&invocation.args) {
-            return self.execute_claude_code_login(terminal).await;
+        match claude_login::SignInTarget::parse(&invocation.args) {
+            claude_login::SignInTarget::ClaudeCode => {
+                self.execute_claude_code_login(terminal).await
+            }
+            claude_login::SignInTarget::Provider(provider) => {
+                self.start_login_for_provider(&provider, terminal, agent)
+                    .await
+            }
         }
-        self.start_login_for_provider(&invocation.args, terminal, agent)
-            .await
     }
 
     pub(super) async fn execute_logout_command(
@@ -179,9 +183,7 @@ impl App {
             match provider_picker::logout_provider_picker(
                 self.credential_store.as_ref(),
                 claude_signed_in,
-            )
-            .await
-            {
+            ) {
                 Ok(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(picker));
                     self.status = "select provider to logout".into();
@@ -193,10 +195,12 @@ impl App {
             }
             return Ok(());
         }
-        if Self::is_claude_code_target(&invocation.args) {
-            return self.execute_claude_code_logout().await;
+        match claude_login::SignInTarget::parse(&invocation.args) {
+            claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
+            claude_login::SignInTarget::Provider(provider) => {
+                self.logout_provider(&provider, agent).await
+            }
         }
-        self.logout_provider(&invocation.args, agent).await
     }
 
     pub(super) fn open_login_picker(&mut self) {
@@ -282,15 +286,16 @@ impl App {
         }
     }
 
+    /// Begin login for a Rho provider credential.
+    ///
+    /// Callers resolve [`claude_login::SignInTarget`] first, so the external
+    /// Claude Code runtime never reaches this path.
     pub(super) async fn start_login_for_provider(
         &mut self,
         provider: &str,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if Self::is_claude_code_target(provider) {
-            return self.execute_claude_code_login(terminal).await;
-        }
         if self.begin_store_choice_if_needed(StoreChoiceNext::Provider(provider.to_string())) {
             return Ok(());
         }
@@ -704,14 +709,13 @@ impl App {
         Ok(true)
     }
 
+    /// Delete a Rho provider credential. See [`Self::start_login_for_provider`]
+    /// for why the external runtime cannot arrive here.
     pub(super) async fn logout_provider(
         &mut self,
         provider: &str,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if Self::is_claude_code_target(provider) {
-            return self.execute_claude_code_logout().await;
-        }
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
             self.insert_entry(&Entry::Error(format!(

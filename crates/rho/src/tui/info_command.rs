@@ -72,7 +72,7 @@ impl App {
         };
         // During a turn never block stream draining on a Claude child probe.
         let claude_code = if self.is_ui_busy() {
-            "claude code: status not refreshed during a model turn".into()
+            ClaudeProbeSnapshot::not_refreshed_during_turn().auth_description()
         } else {
             self.claude_probe_snapshot().await.auth_description()
         };

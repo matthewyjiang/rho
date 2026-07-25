@@ -24,6 +24,52 @@ pub(super) const KEEP_LOGIN_VALUE: &str = "keep";
 pub(super) const CONFIRM_LOGOUT_VALUE: &str = "confirm";
 pub(super) const CANCEL_LOGOUT_VALUE: &str = "cancel";
 
+/// Login methods that are not Rho provider credentials.
+///
+/// The picker renders whatever it is handed; which group Claude Code belongs to
+/// is this feature's policy, not the picker's.
+pub(super) const EXTERNAL_LOGIN_METHODS: &[ExternalLoginMethod] = &[ExternalLoginMethod {
+    // Claude Code is an Anthropic-family runtime for delegation, not a separate
+    // top-level provider group. Keep it beside the Anthropic API key method.
+    group_id: "anthropic",
+    value: CLAUDE_CODE_TARGET,
+    label: "Claude Code (delegation only)",
+    detail: "External Claude binary subscription, not Anthropic API billing. \
+Credentials are managed by Claude Code, not Rho.",
+}];
+
+/// One login method backed by an external runtime rather than a Rho credential.
+pub(super) struct ExternalLoginMethod {
+    /// Login group this method is offered under.
+    pub(super) group_id: &'static str,
+    /// Picker value, which is also the `/login` argument.
+    pub(super) value: &'static str,
+    pub(super) label: &'static str,
+    pub(super) detail: &'static str,
+}
+
+/// What a `/login` or `/logout` argument names.
+///
+/// Parsed once at each command or picker boundary so the provider flows never
+/// re-sniff for the external runtime.
+pub(super) enum SignInTarget {
+    /// Claude Code, whose credential the `claude` binary owns.
+    ClaudeCode,
+    /// A Rho provider credential.
+    Provider(String),
+}
+
+impl SignInTarget {
+    pub(super) fn parse(value: &str) -> Self {
+        let value = value.trim();
+        if value.eq_ignore_ascii_case(CLAUDE_CODE_TARGET) {
+            Self::ClaudeCode
+        } else {
+            Self::Provider(value.to_string())
+        }
+    }
+}
+
 /// Post-login status outcome recorded in the transcript.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ClaudeLoginAuthOutcome {
@@ -43,10 +89,6 @@ impl ClaudeLoginAuthOutcome {
 }
 
 impl App {
-    pub(super) fn is_claude_code_target(target: &str) -> bool {
-        target.trim().eq_ignore_ascii_case(CLAUDE_CODE_TARGET)
-    }
-
     pub(super) async fn execute_claude_code_login(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -231,7 +273,9 @@ impl App {
         let suspended_run = terminal_session
             .run_suspended(terminal, "Signing in to Claude Code…", || async move {
                 let executable = executable::resolve().map_err(anyhow::Error::new)?;
-                let mut command = executable.command(auth::login_args().iter().copied());
+                let mut command = executable
+                    .try_command(auth::login_args().iter().copied())
+                    .map_err(anyhow::Error::new)?;
                 command
                     .stdin(std::process::Stdio::inherit())
                     .stdout(std::process::Stdio::inherit())

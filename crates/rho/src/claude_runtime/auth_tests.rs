@@ -145,7 +145,7 @@ fn parses_optional_auth_fields_and_requires_logged_in() {
 }
 
 #[test]
-fn doctor_health_uses_typed_flags_not_display_strings() {
+fn probe_snapshot_reports_typed_health_not_display_strings() {
     let signed_in = ClaudeProbeSnapshot {
         auth: Ok(ClaudeAuthStatus {
             logged_in: true,
@@ -158,20 +158,28 @@ fn doctor_health_uses_typed_flags_not_display_strings() {
         }),
         version: Ok("1.2.3".into()),
     };
-    let health = ClaudeDoctorHealth::from_snapshot(&signed_in);
-    assert!(health.auth_healthy);
-    assert!(health.binary_healthy);
-    assert!(health.auth_detail.contains("signed in"));
-    assert_eq!(health.version_detail, "1.2.3");
+    assert!(signed_in.auth_healthy());
+    assert!(signed_in.binary_healthy());
+    assert!(signed_in.auth_description().contains("signed in"));
+    assert_eq!(signed_in.version_description(), "1.2.3");
 
     let missing = ClaudeProbeSnapshot {
         auth: Err(ClaudeAuthError::BinaryMissing.to_string()),
         version: Err(ClaudeAuthError::BinaryMissing.to_string()),
     };
-    let health = ClaudeDoctorHealth::from_snapshot(&missing);
-    assert!(!health.auth_healthy);
-    assert!(!health.binary_healthy);
-    assert_eq!(health.auth_detail, "claude code: binary not found on PATH");
+    assert!(!missing.auth_healthy());
+    assert!(!missing.binary_healthy());
+    assert_eq!(
+        missing.auth_description(),
+        "claude code: binary not found on PATH"
+    );
+
+    let not_refreshed = ClaudeProbeSnapshot::not_refreshed_during_turn();
+    assert!(!not_refreshed.auth_healthy());
+    assert!(!not_refreshed.binary_healthy());
+    assert!(not_refreshed
+        .auth_description()
+        .contains("not refreshed during a model turn"));
 }
 
 #[cfg(unix)]

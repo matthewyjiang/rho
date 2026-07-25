@@ -530,9 +530,7 @@ impl App {
         match provider_picker::logout_provider_picker(
             self.credential_store.as_ref(),
             claude_signed_in,
-        )
-        .await
-        {
+        ) {
             Ok(picker) if picker.items.is_empty() => {
                 self.insert_entry(&Entry::Notice(
                     "no stored provider credentials to delete".into(),

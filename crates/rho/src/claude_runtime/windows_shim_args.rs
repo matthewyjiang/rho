@@ -53,8 +53,10 @@ pub(crate) enum WindowsShimArgError {
 }
 
 /// Full `lpCommandLine` including the `cmd.exe` image name, matching Rust std's
-/// `make_bat_command_line` encoding (for pure tests and diagnostics).
-#[cfg(test)]
+/// `make_bat_command_line` encoding.
+///
+/// Building this line is also how cmd/bat args are validated: anything std
+/// would refuse at spawn fails here instead.
 pub(crate) fn bat_command_line(
     script: &Path,
     args: &[impl AsRef<OsStr>],
@@ -84,14 +86,6 @@ pub(crate) fn bat_raw_arg_tail(
     }
     line.push('"');
     Ok(OsString::from(line))
-}
-
-/// Reject cmd/bat args that std also refuses before spawn.
-pub(crate) fn validate_cmd_args(
-    script: &Path,
-    args: &[impl AsRef<OsStr>],
-) -> Result<(), WindowsShimArgError> {
-    bat_raw_arg_tail(script, args).map(|_| ())
 }
 
 /// Validate PowerShell `-File` trailing args (structured argv; only NUL is fatal).

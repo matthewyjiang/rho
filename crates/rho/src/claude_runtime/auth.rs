@@ -75,8 +75,16 @@ pub(crate) enum ClaudeAuthError {
         stream: &'static str,
         cap: usize,
     },
+    #[error("claude code: `{program}` cannot be invoked safely: {source}")]
+    Invocation {
+        program: String,
+        #[source]
+        source: super::executable::ClaudeExecutableError,
+    },
     #[error("claude code: auth status output was not valid UTF-8")]
     InvalidUtf8,
+    #[error("claude code: `{program}` produced no auth status output")]
+    EmptyOutput { program: String },
     #[error("claude code: could not parse auth status JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
 }
@@ -106,11 +114,9 @@ impl ClaudeAuthError {
 }
 
 impl ClaudeAuthStatus {
-    /// One-line summary for `/info`, `/doctor`, and login/logout notices.
-    pub(crate) fn describe(&self) -> String {
-        if !self.logged_in {
-            return "claude code: not signed in - run /login claude-code".into();
-        }
+    /// `claude code: signed in[ as EMAIL][ (PLAN)]`, the shared prefix of every
+    /// signed-in summary.
+    fn signed_in_summary(&self) -> String {
         let mut summary = String::from("claude code: signed in");
         if let Some(email) = self.email.as_deref().filter(|value| !value.is_empty()) {
             summary.push_str(" as ");
@@ -125,32 +131,25 @@ impl ClaudeAuthStatus {
             summary.push_str(subscription);
             summary.push(')');
         }
+        summary
+    }
+
+    /// One-line summary for `/info`, `/doctor`, and login/logout notices.
+    pub(crate) fn describe(&self) -> String {
+        if !self.logged_in {
+            return "claude code: not signed in - run /login claude-code".into();
+        }
+        let mut summary = self.signed_in_summary();
         summary.push_str(" - managed by the claude binary");
         summary
     }
 
     /// Post-login success copy that keeps ownership with Claude Code.
     pub(crate) fn describe_login_success(&self) -> String {
-        let mut lines = Vec::with_capacity(2);
-        let mut summary = String::from("claude code: signed in");
-        if let Some(email) = self.email.as_deref().filter(|value| !value.is_empty()) {
-            summary.push_str(" as ");
-            summary.push_str(email);
-        }
-        if let Some(subscription) = self
-            .subscription_type
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            summary.push_str(" (");
-            summary.push_str(subscription);
-            summary.push(')');
-        }
-        lines.push(summary);
-        lines.push(
-            "Managed by the claude binary. Rho reads this state with `claude auth status`.".into(),
-        );
-        lines.join("\n")
+        format!(
+            "{}\nManaged by the claude binary. Rho reads this state with `claude auth status`.",
+            self.signed_in_summary()
+        )
     }
 }
 
@@ -169,6 +168,15 @@ impl ClaudeProbeSnapshot {
         Self {
             auth: auth.map_err(|error| error.to_string()),
             version: version.map_err(|error| error.to_string()),
+        }
+    }
+
+    /// Snapshot for surfaces that skip live probes during a model turn, so a
+    /// child process never blocks stream draining.
+    pub(crate) fn not_refreshed_during_turn() -> Self {
+        Self {
+            auth: Err("claude code: status not refreshed during a model turn".into()),
+            version: Err("claude code: version not refreshed during a model turn".into()),
         }
     }
 
@@ -192,35 +200,6 @@ impl ClaudeProbeSnapshot {
 
     pub(crate) fn binary_healthy(&self) -> bool {
         self.version.is_ok()
-    }
-}
-
-/// Typed doctor inputs so health is never inferred from display strings.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ClaudeDoctorHealth {
-    pub(crate) auth_detail: String,
-    pub(crate) auth_healthy: bool,
-    pub(crate) version_detail: String,
-    pub(crate) binary_healthy: bool,
-}
-
-impl ClaudeDoctorHealth {
-    pub(crate) fn from_snapshot(snapshot: &ClaudeProbeSnapshot) -> Self {
-        Self {
-            auth_detail: snapshot.auth_description(),
-            auth_healthy: snapshot.auth_healthy(),
-            version_detail: snapshot.version_description(),
-            binary_healthy: snapshot.binary_healthy(),
-        }
-    }
-
-    pub(crate) fn unavailable_during_turn() -> Self {
-        Self {
-            auth_detail: "claude code: status not refreshed during a model turn".into(),
-            auth_healthy: false,
-            version_detail: "claude code: version not refreshed during a model turn".into(),
-            binary_healthy: false,
-        }
     }
 }
 
@@ -336,8 +315,14 @@ async fn run_bounded_probe_with_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> Result<BoundedOutput, ClaudeAuthError> {
-    let command = executable.command(args.iter().copied());
-    run_bounded_command_with_timeout(command, executable.display(), timeout).await
+    let program = executable.display();
+    let command = executable
+        .try_command(args.iter().copied())
+        .map_err(|source| ClaudeAuthError::Invocation {
+            program: program.clone(),
+            source,
+        })?;
+    run_bounded_command_with_timeout(command, program, timeout).await
 }
 
 /// Run an already-built probe command with the standard bounds.
@@ -471,9 +456,9 @@ fn parse_auth_status_output(
             stderr: output.stderr_lossy_trimmed(),
         });
     }
-    Err(ClaudeAuthError::InvalidJson(
-        serde_json::from_str::<ClaudeAuthStatus>("").expect_err("empty json"),
-    ))
+    Err(ClaudeAuthError::EmptyOutput {
+        program: program.into(),
+    })
 }
 
 fn first_nonempty_line(text: &str) -> Option<&str> {

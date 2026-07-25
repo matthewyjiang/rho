@@ -1,7 +1,7 @@
 use crate::{
     agent::{
-        AgentCatalog, AgentCatalogEntry, AgentOrigin, AgentTools, ModelPolicy, ModelSelection,
-        PromptPolicy, ToolPolicy,
+        AgentCatalog, AgentCatalogEntry, AgentOrigin, AgentRuntimeSpec, ModelPolicy,
+        ModelSelection, PromptPolicy, ToolPolicy,
     },
     config::InternalAgentModelConfig,
 };
@@ -112,23 +112,36 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         .reasoning
         .map(|level| level.to_string())
         .unwrap_or_else(|| "inherit".to_string());
-    let tools = match &definition.tools {
-        AgentTools::Rho(ToolPolicy::All) => "all".to_string(),
-        AgentTools::Rho(ToolPolicy::Allow(tools)) if tools.is_empty() => "none".to_string(),
-        AgentTools::Rho(ToolPolicy::Allow(tools)) => tools
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", "),
-        AgentTools::Claude(tools) if tools.is_empty() => "none".to_string(),
-        AgentTools::Claude(tools) => tools.join(", "),
+    let (tools, inherit_claude_config) = match &definition.runtime {
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+        } => ("all".to_string(), "no"),
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(tools),
+        } if tools.is_empty() => ("none".to_string(), "no"),
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(tools),
+        } => (
+            tools
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            "no",
+        ),
+        AgentRuntimeSpec::ClaudeCli {
+            tools,
+            inherit_claude_config,
+        } => (
+            if tools.is_empty() {
+                "none".to_string()
+            } else {
+                tools.join(", ")
+            },
+            if *inherit_claude_config { "yes" } else { "no" },
+        ),
     };
-    let runtime = definition.runtime.to_string();
-    let inherit_claude_config = if definition.inherit_claude_config {
-        "yes"
-    } else {
-        "no"
-    };
+    let runtime = definition.runtime.runtime().to_string();
     let prompt = match &definition.prompt {
         PromptPolicy::Extend(text) if text.is_empty() => "extend system prompt".to_string(),
         PromptPolicy::Extend(text) => {

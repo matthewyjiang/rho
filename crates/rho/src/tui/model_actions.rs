@@ -230,7 +230,11 @@ impl App {
                 Ok(())
             }
             PickerAction::LoginGroup => {
-                if super::App::is_claude_code_target(&value) {
+                // A single-method group short-circuits to that method's value,
+                // which may name the external runtime rather than a group id.
+                if let super::claude_login::SignInTarget::ClaudeCode =
+                    super::claude_login::SignInTarget::parse(&value)
+                {
                     return self.execute_claude_code_login(terminal).await;
                 }
                 let Some(group) = catalog::login_group(&value) else {
@@ -251,10 +255,25 @@ impl App {
                     }
                 }
             }
-            PickerAction::LoginProvider => {
-                self.start_login_for_provider(&value, terminal, agent).await
+            PickerAction::LoginProvider => match super::claude_login::SignInTarget::parse(&value) {
+                super::claude_login::SignInTarget::ClaudeCode => {
+                    self.execute_claude_code_login(terminal).await
+                }
+                super::claude_login::SignInTarget::Provider(provider) => {
+                    self.start_login_for_provider(&provider, terminal, agent)
+                        .await
+                }
+            },
+            PickerAction::LogoutProvider => {
+                match super::claude_login::SignInTarget::parse(&value) {
+                    super::claude_login::SignInTarget::ClaudeCode => {
+                        self.execute_claude_code_logout().await
+                    }
+                    super::claude_login::SignInTarget::Provider(provider) => {
+                        self.logout_provider(&provider, agent).await
+                    }
+                }
             }
-            PickerAction::LogoutProvider => self.logout_provider(&value, agent).await,
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input_ui.set_shell_mode(None);

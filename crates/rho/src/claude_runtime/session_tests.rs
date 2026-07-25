@@ -4,17 +4,8 @@ use crate::subagent::RunState;
 
 use super::*;
 
-fn definition() -> crate::agent::AgentDefinition {
-    crate::agent::AgentDefinition {
-        id: crate::agent::AgentId::new("claude-planner").unwrap(),
-        description: "plan".into(),
-        prompt: crate::agent::PromptPolicy::Replace("Be brief.".into()),
-        model: crate::agent::ModelPolicy::Inherit,
-        runtime: crate::agent::AgentRuntime::ClaudeCli,
-        tools: crate::agent::AgentTools::Claude(vec!["Read".into()]),
-        reasoning: None,
-        inherit_claude_config: false,
-    }
+fn system_prompt() -> PromptPolicy {
+    PromptPolicy::Replace("Be brief.".into())
 }
 
 fn logged_in() -> ClaudeAuthStatus {
@@ -52,7 +43,7 @@ async fn cancelled_before_start_writes_stopped_status() {
     let cancellation = RunCancellation::new();
     cancellation.cancel();
     run_session(ClaudeSessionRequest {
-        definition: definition(),
+        system_prompt: system_prompt(),
         identity: ClaudeRunIdentity {
             agent_id: "claude-planner".into(),
             agent_fingerprint: "fp".into(),
@@ -69,9 +60,10 @@ async fn cancelled_before_start_writes_stopped_status() {
         permission_mode: PermissionMode::Auto,
         cancellation,
         status_tx: None,
-        executable: None,
-        auth_status: Some(Ok(logged_in())),
-        persist_hooks: None,
+        overrides: ClaudeSessionOverrides {
+            auth_status: Some(Ok(logged_in())),
+            ..ClaudeSessionOverrides::default()
+        },
     })
     .await
     .unwrap();
@@ -259,7 +251,7 @@ exit {exit_code}
         let rho_home = tempfile::tempdir().unwrap();
         let rate_limit_path = rho_home.path().join("claude-rate-limit.json");
         run_session(ClaudeSessionRequest {
-            definition: definition(),
+            system_prompt: system_prompt(),
             identity: ClaudeRunIdentity {
                 agent_id: "claude-planner".into(),
                 agent_fingerprint: "fp".into(),
@@ -276,12 +268,14 @@ exit {exit_code}
             permission_mode,
             cancellation,
             status_tx: None,
-            executable: Some(ClaudeExecutable::from_path(fake)),
-            auth_status: Some(Ok(logged_in())),
-            persist_hooks: Some(persist::PersistHooks {
-                rate_limit_path: Some(rate_limit_path),
-                ..Default::default()
-            }),
+            overrides: ClaudeSessionOverrides {
+                executable: Some(ClaudeExecutable::from_path(fake)),
+                auth_status: Some(Ok(logged_in())),
+                persist_hooks: PersistHooks {
+                    rate_limit_path: Some(rate_limit_path),
+                    ..PersistHooks::default()
+                },
+            },
         })
         .await
         .unwrap();
@@ -299,7 +293,7 @@ exit {exit_code}
         let rho_home = tempfile::tempdir().unwrap();
         let rate_limit_path = rho_home.path().join("claude-rate-limit.json");
         run_session(ClaudeSessionRequest {
-            definition: definition(),
+            system_prompt: system_prompt(),
             identity: ClaudeRunIdentity {
                 agent_id: "claude-planner".into(),
                 agent_fingerprint: "fp".into(),
@@ -316,12 +310,14 @@ exit {exit_code}
             permission_mode: PermissionMode::Auto,
             cancellation,
             status_tx: None,
-            executable: Some(ClaudeExecutable::from_path(fake)),
-            auth_status: Some(Ok(logged_in())),
-            persist_hooks: Some(persist::PersistHooks {
-                rate_limit_path: Some(rate_limit_path),
-                ..Default::default()
-            }),
+            overrides: ClaudeSessionOverrides {
+                executable: Some(ClaudeExecutable::from_path(fake)),
+                auth_status: Some(Ok(logged_in())),
+                persist_hooks: PersistHooks {
+                    rate_limit_path: Some(rate_limit_path),
+                    ..PersistHooks::default()
+                },
+            },
         })
         .await
         .unwrap();

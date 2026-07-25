@@ -199,8 +199,8 @@ fn formats_provider_names_for_empty_window_notice() {
     );
 }
 
-fn sample_claude(observed_at_unix: i64) -> crate::claude_runtime::rate_limit::ObservedRateLimit {
-    crate::claude_runtime::rate_limit::ObservedRateLimit {
+fn sample_claude(observed_at_unix: i64) -> crate::claude_runtime::rate_limit::RateLimitObservation {
+    crate::claude_runtime::rate_limit::RateLimitObservation {
         observed_at_unix,
         observed_seq: 1,
         observed_at_nanos: u64::try_from(observed_at_unix.max(0))

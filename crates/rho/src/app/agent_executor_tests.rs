@@ -515,8 +515,7 @@ async fn rho_skips_claude_pool_entirely() {
 #[test]
 fn update_model_does_not_alter_bound_claude_runtime() {
     use crate::agent::{
-        AgentDefinition, AgentId, AgentRuntime, AgentTools, ModelPolicy, ModelSelection,
-        PromptPolicy,
+        AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy,
     };
     use crate::app::agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime};
 
@@ -540,10 +539,11 @@ fn update_model_does_not_alter_bound_claude_runtime() {
             provider: None,
             model: "opus".into(),
         }),
-        runtime: AgentRuntime::ClaudeCli,
-        tools: AgentTools::Claude(vec!["Read".into()]),
+        runtime: AgentRuntimeSpec::ClaudeCli {
+            tools: vec!["Read".into()],
+            inherit_claude_config: false,
+        },
         reasoning: None,
-        inherit_claude_config: false,
     });
 
     // Bind before the parent model changes.

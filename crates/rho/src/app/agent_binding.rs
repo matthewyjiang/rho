@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     agent::{
-        AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, AgentRuntime, AgentTools,
+        AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, AgentRuntimeSpec,
         ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
     },
     config::Config,
@@ -102,12 +102,23 @@ impl AgentBinder {
         host_config: &Config,
     ) -> anyhow::Result<BoundAgent> {
         let fingerprint = definition.fingerprint();
-        let runtime = match definition.runtime {
-            AgentRuntime::Rho => BoundRuntime::Rho {
+        let runtime = match &definition.runtime {
+            AgentRuntimeSpec::Rho { tools } => BoundRuntime::Rho {
                 config: Box::new(bind_rho_config(&definition, host_config)?),
-                capabilities: bind_rho_capabilities(&definition, &invocation)?,
+                capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
             },
-            AgentRuntime::ClaudeCli => bind_claude_runtime(&definition, &invocation, host_config)?,
+            AgentRuntimeSpec::ClaudeCli {
+                tools,
+                inherit_claude_config,
+            } => bind_claude_runtime(
+                &definition,
+                ClaudeRuntimeSettings {
+                    tools,
+                    inherit_claude_config: *inherit_claude_config,
+                },
+                &invocation,
+                host_config,
+            )?,
         };
         Ok(BoundAgent {
             definition,
@@ -119,6 +130,7 @@ impl AgentBinder {
 
 fn bind_rho_capabilities(
     definition: &AgentDefinition,
+    tools: &ToolPolicy,
     invocation: &AgentInvocation,
 ) -> anyhow::Result<AgentCapabilities> {
     let mut capabilities = invocation.available_tools.clone();
@@ -130,12 +142,12 @@ fn bind_rho_capabilities(
         capabilities.remove(&ToolCapability::Agents);
     }
 
-    match &definition.tools {
-        AgentTools::Rho(ToolPolicy::All) => {
+    match tools {
+        ToolPolicy::All => {
             capabilities.remove(&ToolCapability::Shell);
             Ok(capabilities)
         }
-        AgentTools::Rho(ToolPolicy::Allow(requested)) => {
+        ToolPolicy::Allow(requested) => {
             let mut resolved = crate::agent::ToolCapabilitySet::new();
             let mut unavailable = Vec::new();
             for tool in requested {
@@ -168,10 +180,6 @@ fn bind_rho_capabilities(
             }
             Ok(AgentCapabilities::new(resolved))
         }
-        AgentTools::Claude(_) => anyhow::bail!(
-            "agent '{}': internal tools/runtime mismatch (rho / claude tools)",
-            definition.id
-        ),
     }
 }
 
@@ -216,8 +224,16 @@ fn bind_rho_config(definition: &AgentDefinition, host_config: &Config) -> anyhow
     Ok(config)
 }
 
+/// Claude-only definition settings, already separated from Rho tool policy by
+/// [`AgentRuntimeSpec`].
+struct ClaudeRuntimeSettings<'a> {
+    tools: &'a [String],
+    inherit_claude_config: bool,
+}
+
 fn bind_claude_runtime(
     definition: &AgentDefinition,
+    settings: ClaudeRuntimeSettings<'_>,
     invocation: &AgentInvocation,
     host_config: &Config,
 ) -> anyhow::Result<BoundRuntime> {
@@ -232,13 +248,6 @@ use it through the agent tool, not as an interactive or automation root",
         }
     }
 
-    let tools = match &definition.tools {
-        AgentTools::Claude(tools) => tools.clone(),
-        AgentTools::Rho(_) => anyhow::bail!(
-            "agent '{}': internal tools/runtime mismatch (claude-cli / rho tools)",
-            definition.id
-        ),
-    };
     // Claude model is pass-through only. No alias resolution and no parent
     // provider/model mutation. Rho-style `@alias` references are rejected
     // rather than resolved through the host alias table.
@@ -274,8 +283,8 @@ effort level; use one of: low, medium, high, xhigh, max (or omit for Claude defa
     };
     Ok(BoundRuntime::ClaudeCli {
         model,
-        tools,
-        inherit_claude_config: definition.inherit_claude_config,
+        tools: settings.tools.to_vec(),
+        inherit_claude_config: settings.inherit_claude_config,
         permission_mode: host_config.permission_mode,
         // Same application step budget Rho delegated agents use when no
         // explicit max_steps override is present.

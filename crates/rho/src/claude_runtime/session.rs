@@ -1,6 +1,6 @@
 //! Execute a `runtime: claude-cli` delegated run via `claude -p`.
 
-use std::{process::Stdio, sync::Arc, time::Duration};
+use std::{process::Stdio, time::Duration};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
@@ -10,36 +10,41 @@ use tokio::{
 
 use rho_tools::cancellation::RunCancellation;
 
+#[cfg(test)]
+use crate::subagent;
+
 use crate::{
-    agent::AgentDefinition,
+    agent::PromptPolicy,
     permission::PermissionMode,
     subagent::RunStatus,
     tools::process::{prepare_child_command, ProcessTree},
 };
 
-#[cfg(test)]
-use crate::subagent;
-
 use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
     executable::{self, ClaudeExecutable},
     line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
-    persist::{self, StatusSink},
-    spawn::{self, ClaudeSpawnRequest},
+    persist::{PersistHooks, SinkConfig, StatusSink},
+    spawn::{self, ClaudeSpawnPlan, ClaudeSpawnRequest},
     stream::{StreamEffect, StreamMapper, TerminalResult},
 };
 
-pub(crate) use persist::ClaudeRunIdentity;
+pub(crate) use super::persist::ClaudeRunIdentity;
 
 /// Inputs for one Claude CLI subagent run, including bound runtime values.
+///
+/// `AgentExecutor` builds this directly after typed binding; tests build the
+/// same shape and fill [`Self::overrides`].
 pub(crate) struct ClaudeSessionRequest {
-    pub(crate) definition: AgentDefinition,
+    /// Agent system prompt policy. The only definition field a spawn needs.
+    pub(crate) system_prompt: PromptPolicy,
     pub(crate) identity: ClaudeRunIdentity,
     /// Bound Claude `--model`. `None` means omit the flag.
     pub(crate) model: Option<String>,
     pub(crate) tools: Vec<String>,
     pub(crate) inherit_claude_config: bool,
-    /// Exact `--max-turns` value from the bound step budget.
+    /// Exact `--max-turns` value. Always set from the configured/definition step
+    /// cap at bind/launch time; never recomputed inside the session adapter.
     pub(crate) max_turns: u64,
     /// Claude `--effort` from definition `reasoning:`. `None` omits the flag.
     pub(crate) effort: Option<&'static str>,
@@ -49,34 +54,18 @@ pub(crate) struct ClaudeSessionRequest {
     pub(crate) permission_mode: PermissionMode,
     pub(crate) cancellation: RunCancellation,
     pub(crate) status_tx: Option<watch::Sender<RunStatus>>,
-    /// Optional test/production override for the Claude binary.
-    pub(crate) executable: Option<ClaudeExecutable>,
-    /// Optional auth preflight override. When set, production `auth::query` is
-    /// not called. Useful for fake-child tests.
-    pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
-    /// Optional persistence test hooks (stall/fail writer).
-    #[cfg(test)]
-    pub(crate) persist_hooks: Option<persist::PersistHooks>,
+    pub(crate) overrides: ClaudeSessionOverrides,
 }
 
-/// Bound launch package from `AgentExecutor` after typed binding.
-pub(crate) struct ClaudeBoundLaunch {
-    pub(crate) definition: Arc<AgentDefinition>,
-    pub(crate) identity: ClaudeRunIdentity,
-    pub(crate) model: Option<String>,
-    pub(crate) tools: Vec<String>,
-    pub(crate) inherit_claude_config: bool,
-    pub(crate) permission_mode: PermissionMode,
-    /// Exact `--max-turns` value. Always set from the configured/definition step
-    /// cap at bind/launch time; never recomputed inside the session adapter.
-    pub(crate) max_turns: u64,
-    /// Claude `--effort` from definition `reasoning:`. `None` omits the flag.
-    pub(crate) effort: Option<&'static str>,
-    pub(crate) prompt: String,
-    pub(crate) output_file: std::path::PathBuf,
-    pub(crate) cwd: std::path::PathBuf,
-    pub(crate) cancellation: RunCancellation,
-    pub(crate) status_tx: watch::Sender<RunStatus>,
+/// Seams a session may replace. Production leaves every field unset.
+#[derive(Default)]
+pub(crate) struct ClaudeSessionOverrides {
+    /// Claude binary to run instead of the resolved one.
+    pub(crate) executable: Option<ClaudeExecutable>,
+    /// Auth preflight result. When set, production `auth::query` is not called.
+    pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
+    /// Persistence instrumentation (stall/fail writer). No-op outside tests.
+    pub(crate) persist_hooks: PersistHooks,
 }
 
 struct OwnedChild {
@@ -148,87 +137,128 @@ impl Drop for OwnedChild {
 }
 
 /// Run one Claude CLI session to completion, writing the subagent contract.
-pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result<()> {
-    let mut identity = request.identity;
-    if identity.model.is_none() {
-        identity.model = request.model.clone();
+pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Result<()> {
+    if request.identity.model.is_none() {
+        request.identity.model = request.model.clone();
     }
-    let mut sink = {
-        #[cfg(test)]
-        {
-            match request.persist_hooks {
-                Some(hooks) => StatusSink::new_with_hooks(
-                    request.output_file.clone(),
-                    &identity,
-                    &request.prompt,
-                    request.status_tx,
-                    hooks,
-                )?,
-                None => StatusSink::new(
-                    request.output_file.clone(),
-                    &identity,
-                    &request.prompt,
-                    request.status_tx,
-                )?,
+    let mut sink = StatusSink::new(
+        request.output_file.clone(),
+        &request.identity,
+        &request.prompt,
+        request.status_tx.take(),
+        SinkConfig {
+            hooks: std::mem::take(&mut request.overrides.persist_hooks),
+            ..SinkConfig::default()
+        },
+    )?;
+    let outcome = drive_session(&mut request, &mut sink).await;
+    settle(sink, outcome).await;
+    Ok(())
+}
+
+/// What one session decided, before any terminal artifact was written.
+enum SessionOutcome {
+    /// Cancellation observed. The reason becomes the stop activity.
+    Cancelled(&'static str),
+    /// Setup, stdin, or stream failure. Ignored when the stream already
+    /// published a terminal state.
+    Failed(String),
+    /// The child ran and was reaped. Final Ok/Error combines pending terminal
+    /// metadata with the exit status.
+    Exited {
+        pending: Option<Box<TerminalResult>>,
+        status: std::process::ExitStatus,
+        log_tail: String,
+    },
+}
+
+/// Write exactly one terminal artifact for `outcome`, then stop persistence.
+///
+/// Every exit path in [`drive_session`] funnels through here, so "one terminal
+/// write, always shut down" is structural instead of repeated per branch.
+async fn settle(mut sink: StatusSink, outcome: SessionOutcome) {
+    match outcome {
+        SessionOutcome::Cancelled(reason) => sink.stop(reason).await,
+        SessionOutcome::Failed(error) => sink.fail(error).await,
+        SessionOutcome::Exited {
+            pending,
+            status,
+            log_tail,
+        } => {
+            // Protocol type:error is pending metadata only; final Failed/Completed
+            // is chosen here after exit. Leave already-terminal state alone.
+            if !sink.status.state.is_terminal() {
+                match decide_final_outcome(pending.as_deref(), status, &log_tail) {
+                    FinalOutcome::Success(terminal) => {
+                        sink.finalize_success_from_stream(&terminal).await;
+                    }
+                    FinalOutcome::Failure {
+                        terminal,
+                        detail,
+                        prefer_detail,
+                    } => {
+                        sink.finalize_failure_from_stream(terminal.as_ref(), detail, prefer_detail)
+                            .await;
+                    }
+                }
             }
         }
-        #[cfg(not(test))]
-        {
-            StatusSink::new(
-                request.output_file.clone(),
-                &identity,
-                &request.prompt,
-                request.status_tx,
-            )?
-        }
-    };
-
-    if request.cancellation.is_cancelled() {
-        sink.stop("cancelled before execution").await;
-        sink.shutdown().await;
-        return Ok(());
     }
+    // `stop` / `fail` are no-ops once the stream published a terminal state;
+    // this publishes that snapshot instead.
+    sink.flush_terminal_status().await;
+    sink.shutdown().await;
+}
 
-    // Preflight auth. An unauthenticated claude may block rather than exit.
-    let auth_result = match request.auth_status {
+/// Preflight, spawn, and drain one Claude run without writing terminal state.
+async fn drive_session(
+    request: &mut ClaudeSessionRequest,
+    sink: &mut StatusSink,
+) -> SessionOutcome {
+    if request.cancellation.is_cancelled() {
+        return SessionOutcome::Cancelled("cancelled before execution");
+    }
+    match prepare_launch(request).await {
+        Ok(launch) => run_child(request, sink, launch).await,
+        Err(error) => SessionOutcome::Failed(error),
+    }
+}
+
+/// Everything needed to spawn, resolved before the child exists.
+struct Launch {
+    executable: ClaudeExecutable,
+    plan: ClaudeSpawnPlan,
+    spawn_args: Vec<std::ffi::OsString>,
+    log_path: std::path::PathBuf,
+    log_file: std::fs::File,
+}
+
+/// Check auth, resolve the binary, and materialize argv plus the log file.
+///
+/// Every failure is already user-facing text; the caller turns it into
+/// [`RunState::Error`](crate::subagent::RunState::Error).
+async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, String> {
+    // An unauthenticated claude may block rather than exit, so preflight first.
+    let auth_result = match request.overrides.auth_status.take() {
         Some(result) => result,
         None => auth::query().await,
     };
     match auth_result {
         Ok(status) if status.logged_in => {}
-        Ok(_) => {
-            sink.fail("claude code: not signed in - run /login claude-code")
-                .await;
-            sink.shutdown().await;
-            return Ok(());
-        }
+        Ok(_) => return Err("claude code: not signed in - run /login claude-code".into()),
         Err(ClaudeAuthError::BinaryMissing) => {
-            sink.fail(ClaudeAuthError::BinaryMissing.to_string()).await;
-            sink.shutdown().await;
-            return Ok(());
+            return Err(ClaudeAuthError::BinaryMissing.to_string())
         }
-        Err(error) => {
-            sink.fail(format!("claude code: auth preflight failed: {error}"))
-                .await;
-            sink.shutdown().await;
-            return Ok(());
-        }
+        Err(error) => return Err(format!("claude code: auth preflight failed: {error}")),
     }
 
-    let executable = match request.executable {
+    let executable = match request.overrides.executable.take() {
         Some(executable) => executable,
-        None => match executable::resolve() {
-            Ok(executable) => executable,
-            Err(error) => {
-                sink.fail(error.to_string()).await;
-                sink.shutdown().await;
-                return Ok(());
-            }
-        },
+        None => executable::resolve().map_err(|error| error.to_string())?,
     };
 
-    let plan = match spawn::build_spawn_plan(&ClaudeSpawnRequest {
-        definition: request.definition.clone(),
+    let plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
+        system_prompt: request.system_prompt.clone(),
         model: request.model.clone(),
         tools: request.tools.clone(),
         inherit_claude_config: request.inherit_claude_config,
@@ -236,50 +266,49 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         cwd: request.cwd.clone(),
         max_turns: request.max_turns,
         effort: request.effort,
-    }) {
-        Ok(plan) => plan,
-        Err(error) => {
-            sink.fail(error.to_string()).await;
-            sink.shutdown().await;
-            return Ok(());
-        }
-    };
+    })
+    .map_err(|error| error.to_string())?;
 
-    // Materialize system prompt next to the status file (kept as a run artifact).
-    // File flags keep multiline prompt bytes out of shell/cmd argv.
-    let spawn_args = match spawn::finalize_spawn_args(&plan, &request.output_file) {
-        Ok(args) => args,
-        Err(error) => {
-            sink.fail(error.to_string()).await;
-            sink.shutdown().await;
-            return Ok(());
-        }
-    };
+    // Materialize the system prompt next to the status file (kept as a run
+    // artifact). File flags keep multiline prompt bytes out of shell/cmd argv.
+    let spawn_args = spawn::finalize_spawn_args(&plan, &request.output_file)
+        .map_err(|error| error.to_string())?;
 
     let log_path = spawn::log_path(&request.output_file);
-    let log_file = match std::fs::OpenOptions::new()
+    let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)
-    {
-        Ok(file) => file,
-        Err(error) => {
-            sink.fail(format!("could not open claude log file: {error}"))
-                .await;
-            sink.shutdown().await;
-            return Ok(());
-        }
-    };
+        .map_err(|error| format!("could not open claude log file: {error}"))?;
+
+    Ok(Launch {
+        executable,
+        plan,
+        spawn_args,
+        log_path,
+        log_file,
+    })
+}
+
+/// Spawn the child and drain it, leaving no live process tree behind.
+async fn run_child(
+    request: &ClaudeSessionRequest,
+    sink: &mut StatusSink,
+    launch: Launch,
+) -> SessionOutcome {
+    let Launch {
+        executable,
+        plan,
+        spawn_args,
+        log_path,
+        log_file,
+    } = launch;
 
     // Typed fallible builder: Windows shim validation becomes RunState::Error
     // before spawn instead of a generic I/O failure at CreateProcess.
     let mut command = match executable.try_command(&spawn_args) {
         Ok(command) => command,
-        Err(error) => {
-            sink.fail(error.to_string()).await;
-            sink.shutdown().await;
-            return Ok(());
-        }
+        Err(error) => return SessionOutcome::Failed(error.to_string()),
     };
     command
         .current_dir(&plan.cwd)
@@ -291,38 +320,40 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
     let mut child = match OwnedChild::spawn(command) {
         Ok(child) => child,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            sink.fail(auth::ClaudeAuthError::BinaryMissing.to_string())
-                .await;
-            sink.shutdown().await;
-            return Ok(());
+            return SessionOutcome::Failed(ClaudeAuthError::BinaryMissing.to_string());
         }
         Err(error) => {
-            sink.fail(format!(
+            return SessionOutcome::Failed(format!(
                 "claude code: failed to spawn `{}`: {error}",
                 executable.display()
-            ))
-            .await;
-            sink.shutdown().await;
-            return Ok(());
+            ));
         }
     };
 
-    if let Err(error) = sink.mark_running() {
+    let outcome = drain_child(request, sink, &mut child, &log_path).await;
+    // Only a reaped exit guarantees the tree is gone; every other outcome
+    // leaves the child mid-protocol.
+    if !matches!(outcome, SessionOutcome::Exited { .. }) {
         child.terminate().await;
-        sink.fail(format!(
+    }
+    outcome
+}
+
+/// Write the prompt, map stdout, and wait for exit.
+async fn drain_child(
+    request: &ClaudeSessionRequest,
+    sink: &mut StatusSink,
+    child: &mut OwnedChild,
+    log_path: &std::path::Path,
+) -> SessionOutcome {
+    if let Err(error) = sink.mark_running() {
+        return SessionOutcome::Failed(format!(
             "claude code: could not persist running status: {error}"
-        ))
-        .await;
-        sink.shutdown().await;
-        return Ok(());
+        ));
     }
 
     let Some(stdout) = child.stdout() else {
-        child.terminate().await;
-        sink.fail("claude code: child stdout was not captured")
-            .await;
-        sink.shutdown().await;
-        return Ok(());
+        return SessionOutcome::Failed("claude code: child stdout was not captured".into());
     };
 
     // Prompt on stdin so shell metacharacters cannot break the command line.
@@ -358,12 +389,9 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         tokio::select! {
             biased;
             () = request.cancellation.cancelled() => {
-                // Dropping the pinned stdin future closes ChildStdin; terminate
-                // then reaps the process tree so nothing is left orphaned.
-                child.terminate().await;
-                sink.stop("cancelled").await;
-                sink.shutdown().await;
-                return Ok(());
+                // Dropping the pinned stdin future closes ChildStdin; the caller
+                // reaps the tree so nothing is left orphaned.
+                return SessionOutcome::Cancelled("cancelled");
             }
             result = &mut stdin_write, if !stdin_done => {
                 stdin_done = true;
@@ -392,7 +420,7 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
                             };
                             if let Err(error) = apply_stream_line(
                                 &mut mapper,
-                                &mut sink,
+                                sink,
                                 &mut pending_terminal,
                                 &line,
                             ) {
@@ -419,21 +447,14 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
     // Stdin write failures take precedence over later stream noise: the child
     // often exits uncleanly once its stdin pipe is dropped mid-protocol.
     if let Some(error) = stdin_error {
-        child.terminate().await;
-        if !sink.status.state.is_terminal() {
-            sink.fail(error).await;
-        } else {
-            sink.flush_terminal_status().await;
-        }
-        sink.shutdown().await;
-        return Ok(());
+        return SessionOutcome::Failed(error);
     }
 
     if stream_error.is_none() {
         match decoder.finish() {
             Ok(Some(line)) => {
                 if let Err(error) =
-                    apply_stream_line(&mut mapper, &mut sink, &mut pending_terminal, line)
+                    apply_stream_line(&mut mapper, sink, &mut pending_terminal, line)
                 {
                     stream_error = Some(error);
                 }
@@ -445,76 +466,28 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         }
     }
 
-    // Fatal stream decode/persistence failures terminate the tree immediately.
-    // OwnedChild::terminate consumes the handle, so there is no later wait.
     if let Some(error) = stream_error {
-        child.terminate().await;
-        if !sink.status.state.is_terminal() {
-            sink.fail(error).await;
-        } else {
-            sink.flush_terminal_status().await;
-        }
-        sink.shutdown().await;
-        return Ok(());
+        return SessionOutcome::Failed(error);
     }
 
     // After stdout EOF, wait for the process while honoring cancellation. A hang
     // here would strand the full tree after the child closed stdout and slept.
     let exit_status = tokio::select! {
         biased;
-        () = request.cancellation.cancelled() => {
-            child.terminate().await;
-            if !sink.status.state.is_terminal() {
-                sink.stop("cancelled").await;
-            } else {
-                sink.flush_terminal_status().await;
-            }
-            sink.shutdown().await;
-            return Ok(());
-        }
+        () = request.cancellation.cancelled() => return SessionOutcome::Cancelled("cancelled"),
         status = child.wait() => status,
     };
 
-    let exit_status = match exit_status {
-        Ok(status) => status,
+    match exit_status {
+        Ok(status) => SessionOutcome::Exited {
+            pending: pending_terminal.map(Box::new),
+            status,
+            log_tail: read_log_tail(log_path),
+        },
         Err(error) => {
-            if !sink.status.state.is_terminal() {
-                sink.fail(format!("claude code: failed waiting for child: {error}"))
-                    .await;
-            } else {
-                sink.flush_terminal_status().await;
-            }
-            sink.shutdown().await;
-            return Ok(());
-        }
-    };
-
-    // Protocol type:error is pending metadata only; final Failed/Completed is
-    // chosen here after exit. Leave any already-terminal sink state alone.
-    if sink.status.state.is_terminal() {
-        sink.flush_terminal_status().await;
-        sink.shutdown().await;
-        return Ok(());
-    }
-
-    let log_tail = read_log_tail(&log_path);
-    let final_outcome = decide_final_outcome(pending_terminal.as_ref(), exit_status, &log_tail);
-    match final_outcome {
-        FinalOutcome::Success(terminal) => {
-            sink.finalize_success_from_stream(&terminal).await;
-        }
-        FinalOutcome::Failure {
-            terminal,
-            detail,
-            prefer_detail,
-        } => {
-            sink.finalize_failure_from_stream(terminal.as_ref(), detail, prefer_detail)
-                .await;
+            SessionOutcome::Failed(format!("claude code: failed waiting for child: {error}"))
         }
     }
-
-    sink.shutdown().await;
-    Ok(())
 }
 
 enum FinalOutcome {
@@ -630,30 +603,6 @@ fn read_log_tail(path: &std::path::Path) -> String {
         .find(|index| trimmed.is_char_boundary(*index))
         .unwrap_or(cut);
     format!("…{}", &trimmed[boundary..])
-}
-
-/// Shared helper used by the executor task after acquiring a Claude permit.
-pub(crate) async fn run_bound_session(launch: ClaudeBoundLaunch) -> anyhow::Result<()> {
-    run_session(ClaudeSessionRequest {
-        definition: (*launch.definition).clone(),
-        identity: launch.identity,
-        model: launch.model,
-        tools: launch.tools,
-        inherit_claude_config: launch.inherit_claude_config,
-        max_turns: launch.max_turns,
-        effort: launch.effort,
-        prompt: launch.prompt,
-        output_file: launch.output_file,
-        cwd: launch.cwd,
-        permission_mode: launch.permission_mode,
-        cancellation: launch.cancellation,
-        status_tx: Some(launch.status_tx),
-        executable: None,
-        auth_status: None,
-        #[cfg(test)]
-        persist_hooks: None,
-    })
-    .await
 }
 
 #[cfg(test)]

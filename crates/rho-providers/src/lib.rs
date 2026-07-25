@@ -37,6 +37,7 @@ pub(crate) fn rho_user_agent() -> String {
 
 pub mod auth;
 pub mod credentials;
+pub mod file_lock;
 pub mod model;
 pub mod paths;
 pub mod protocol;

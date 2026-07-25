@@ -1,6 +1,6 @@
 use super::*;
 use crate::agent::{
-    AgentRuntime, AgentTools, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability, ToolPolicy,
+    AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability, ToolPolicy,
 };
 
 fn capability_set(names: &[&str]) -> AgentCapabilities {
@@ -18,10 +18,8 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
         description: "test".into(),
         prompt: PromptPolicy::Extend("instructions".into()),
         model: ModelPolicy::Inherit,
-        runtime: AgentRuntime::Rho,
-        tools: AgentTools::Rho(tools),
+        runtime: AgentRuntimeSpec::Rho { tools },
         reasoning: None,
-        inherit_claude_config: false,
     })
 }
 
@@ -256,10 +254,11 @@ fn claude_definition(model: ModelPolicy) -> Arc<AgentDefinition> {
         description: "claude".into(),
         prompt: PromptPolicy::Replace("plan".into()),
         model,
-        runtime: AgentRuntime::ClaudeCli,
-        tools: AgentTools::Claude(vec!["Read".into(), "Bash(git *)".into()]),
+        runtime: AgentRuntimeSpec::ClaudeCli {
+            tools: vec!["Read".into(), "Bash(git *)".into()],
+            inherit_claude_config: true,
+        },
         reasoning: None,
-        inherit_claude_config: true,
     })
 }
 

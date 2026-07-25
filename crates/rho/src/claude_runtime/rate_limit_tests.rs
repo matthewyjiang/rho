@@ -26,7 +26,7 @@ fn secs(seconds: i64) -> u64 {
 }
 
 fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
-    let observed = ObservedRateLimit {
+    let observed = RateLimitObservation {
         observed_at_unix: observation.observed_at_unix,
         observed_seq: observation.observed_seq,
         observed_at_nanos: observation.observed_at_nanos,
@@ -39,7 +39,7 @@ fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
 
 #[test]
 fn describe_includes_window_status_and_age_without_percent() {
-    let observed = ObservedRateLimit {
+    let observed = RateLimitObservation {
         observed_at_unix: 1_000,
         observed_seq: 1,
         observed_at_nanos: secs(1_000),
@@ -330,7 +330,7 @@ fn cross_process_lock_blocks_until_released_and_newer_wins() {
     // Hold the exclusive lock from this process. Write the older state without
     // going through store_observation so we do not re-enter the same lock.
     let lock_file = open_lock_file(&lock_path).expect("open lock");
-    try_lock_exclusive(&lock_file).expect("hold lock");
+    let lock_guard = rho_providers::file_lock::FileLock::acquire(lock_file).expect("hold lock");
     write_state_unlocked(
         &path,
         &RateLimitObservation::with_order(sample_info("parent-old"), secs(1), 1, "parent"),
@@ -376,7 +376,7 @@ fn cross_process_lock_blocks_until_released_and_newer_wins() {
     );
 
     // Release the lock; child compare-and-replace should proceed and win.
-    drop(lock_file);
+    drop(lock_guard);
     let output = child.wait_with_output().expect("wait child");
     assert!(
         output.status.success(),

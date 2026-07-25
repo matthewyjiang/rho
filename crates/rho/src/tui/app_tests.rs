@@ -1168,9 +1168,8 @@ async fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
     save_provider_api_key(&store, "openai", "sk-test").unwrap();
     save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
 
-    let picker = provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ false)
-        .await
-        .unwrap();
+    let picker =
+        provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ false).unwrap();
     let values = picker
         .items
         .iter()
@@ -1185,9 +1184,8 @@ async fn logout_provider_picker_can_include_claude_code_when_signed_in() {
     let store = MemoryCredentialStore::default();
     save_provider_api_key(&store, "openai", "sk-test").unwrap();
 
-    let picker = provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ true)
-        .await
-        .unwrap();
+    let picker =
+        provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ true).unwrap();
     let values = picker
         .items
         .iter()
@@ -1203,7 +1201,6 @@ async fn logout_provider_picker_propagates_credential_store_errors() {
         &FailingCredentialStore,
         /*claude_signed_in*/ false,
     )
-    .await
     .unwrap_err();
 
     assert_eq!(

@@ -4,17 +4,24 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
     resolve_claude_login_after_suspend, resolve_claude_login_auth_outcome, ClaudeLoginAfterSuspend,
-    ClaudeLoginAuthOutcome, CANCEL_LOGOUT_VALUE, CLAUDE_CODE_TARGET, CONFIRM_LOGOUT_VALUE,
-    KEEP_LOGIN_VALUE, RELAY_LOGIN_VALUE,
+    ClaudeLoginAuthOutcome, SignInTarget, CANCEL_LOGOUT_VALUE, CLAUDE_CODE_TARGET,
+    CONFIRM_LOGOUT_VALUE, KEEP_LOGIN_VALUE, RELAY_LOGIN_VALUE,
 };
 use crate::claude_runtime::auth::{self, ClaudeAuthError, ClaudeAuthStatus};
 
 #[test]
-fn claude_code_target_is_stable() {
+fn sign_in_target_routes_claude_code_case_insensitively() {
     assert_eq!(CLAUDE_CODE_TARGET, "claude-code");
-    assert!(super::App::is_claude_code_target("claude-code"));
-    assert!(super::App::is_claude_code_target(" Claude-Code "));
-    assert!(!super::App::is_claude_code_target("anthropic"));
+    for value in ["claude-code", " Claude-Code "] {
+        assert!(
+            matches!(SignInTarget::parse(value), SignInTarget::ClaudeCode),
+            "{value} must route to the external runtime"
+        );
+    }
+    assert!(matches!(
+        SignInTarget::parse(" anthropic "),
+        SignInTarget::Provider(provider) if provider == "anthropic"
+    ));
 }
 
 #[test]

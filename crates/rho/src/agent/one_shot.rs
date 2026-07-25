@@ -9,7 +9,7 @@ use rho_sdk::{
 
 use crate::credential_store::build_provider;
 
-use super::{AgentDefinition, AgentTools, ModelPolicy, PromptPolicy, ToolPolicy};
+use super::{AgentDefinition, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
 pub(crate) struct OneShotAgentRequest<'a> {
     pub definition: &'a AgentDefinition,
@@ -89,8 +89,10 @@ fn validate_definition(
         );
     }
     if !matches!(
-        &definition.tools,
-        AgentTools::Rho(ToolPolicy::Allow(tools)) if tools.is_empty()
+        &definition.runtime,
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(tools),
+        } if tools.is_empty()
     ) {
         bail!(
             "one-shot agent definition '{}' must allow no tools",

@@ -10,11 +10,11 @@ mod sink;
 mod worker;
 
 #[cfg(test)]
-pub(crate) use sink::PersistShutdownBudgets;
-pub(crate) use sink::StatusSink;
-pub(crate) use worker::ClaudeRunIdentity;
+pub(crate) use sink::{EmergencyWriteHooks, PersistShutdownBudgets};
+pub(crate) use sink::{SinkConfig, StatusSink};
 #[cfg(test)]
-pub(crate) use worker::{AttachmentKind, PersistHooks, PersistLogEntry, WriterStall};
+pub(crate) use worker::{AttachmentKind, PersistLogEntry, WriterStall};
+pub(crate) use worker::{ClaudeRunIdentity, PersistHooks};
 
 #[cfg(test)]
 #[path = "persist_tests.rs"]

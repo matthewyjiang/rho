@@ -22,10 +22,10 @@ fn sample_definition(id: &str) -> crate::agent::AgentDefinition {
         description: "test".into(),
         prompt: crate::agent::PromptPolicy::Extend(String::new()),
         model: crate::agent::ModelPolicy::Inherit,
-        runtime: crate::agent::AgentRuntime::Rho,
-        tools: crate::agent::AgentTools::Rho(crate::agent::ToolPolicy::All),
+        runtime: crate::agent::AgentRuntimeSpec::Rho {
+            tools: crate::agent::ToolPolicy::All,
+        },
         reasoning: None,
-        inherit_claude_config: false,
     }
 }
 

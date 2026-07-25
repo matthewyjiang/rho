@@ -121,7 +121,7 @@ async fn child_cancellation_ends_a_waiting_request() {
 #[tokio::test]
 async fn responder_adapter_reports_parent_send_failure() {
     use crate::app::{
-        automation::HostInputResponder,
+        headless_run::HostInputResponder,
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
     };
 
@@ -149,7 +149,7 @@ async fn responder_adapter_reports_parent_send_failure() {
 #[tokio::test]
 async fn responder_adapter_reports_dropped_queued_request() {
     use crate::app::{
-        automation::HostInputResponder,
+        headless_run::HostInputResponder,
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
     };
 
@@ -184,7 +184,7 @@ async fn responder_adapter_reports_dropped_queued_request() {
 #[tokio::test]
 async fn responder_adapter_forwards_identity_to_parent_bridge() {
     use crate::app::{
-        automation::HostInputResponder,
+        headless_run::HostInputResponder,
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
     };
 

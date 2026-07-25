@@ -14,11 +14,11 @@ fn registers_internal_agent_definitions() {
         assert_eq!(definition.model, ModelPolicy::Inherit);
         assert_eq!(definition.reasoning, Some(ReasoningLevel::Low));
         assert!(matches!(
-            &definition.tools,
-            AgentTools::Rho(ToolPolicy::Allow(tools)) if tools.is_empty()
+            &definition.runtime,
+            AgentRuntimeSpec::Rho {
+                tools: ToolPolicy::Allow(tools),
+            } if tools.is_empty()
         ));
-        assert_eq!(definition.runtime, AgentRuntime::Rho);
-        assert!(!definition.inherit_claude_config);
     }
     assert_eq!(
         definitions[0].prompt,

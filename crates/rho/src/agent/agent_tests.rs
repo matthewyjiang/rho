@@ -91,12 +91,10 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
     ];
     for (id, expected_legacy) in expected {
         let definition = &catalog.find(id).unwrap().definition;
-        assert_eq!(
-            definition.runtime,
-            AgentRuntime::Rho,
+        assert!(
+            matches!(definition.runtime, AgentRuntimeSpec::Rho { .. }),
             "{id} must remain default Rho for legacy resume"
         );
-        assert!(!definition.inherit_claude_config);
         let legacy = definition
             .legacy_v1_fingerprint()
             .unwrap_or_else(|| panic!("{id} should expose legacy v1"))

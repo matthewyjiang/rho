@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 
 use super::parse_definition;
 use crate::agent::{
-    AgentRuntime, AgentTools, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability, ToolPolicy,
+    AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability, ToolPolicy,
 };
 
 fn parse(contents: &str) -> Result<crate::agent::AgentDefinition, crate::agent::AgentCatalogError> {
@@ -14,21 +14,23 @@ fn parse(contents: &str) -> Result<crate::agent::AgentDefinition, crate::agent::
 #[test]
 fn defaults_runtime_to_rho() {
     let definition = parse("---\ndescription: demo\n---\nbody\n").unwrap();
-    assert_eq!(definition.runtime, AgentRuntime::Rho);
-    assert_eq!(definition.tools, AgentTools::Rho(ToolPolicy::All));
-    assert!(!definition.inherit_claude_config);
+    assert_eq!(
+        definition.runtime,
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All
+        }
+    );
 }
 
 #[test]
 fn parses_explicit_rho_runtime() {
     let definition =
         parse("---\ndescription: demo\nruntime: rho\ntools: [read_file]\n---\n").unwrap();
-    assert_eq!(definition.runtime, AgentRuntime::Rho);
     assert_eq!(
-        definition.tools,
-        AgentTools::Rho(ToolPolicy::Allow(
-            [ToolCapability::ReadFile].into_iter().collect()
-        ))
+        definition.runtime,
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow([ToolCapability::ReadFile].into_iter().collect()),
+        }
     );
 }
 
@@ -43,10 +45,12 @@ fn parses_claude_cli_runtime_and_tools_independent_of_key_order() {
     )
     .unwrap();
 
-    assert_eq!(tools_first.runtime, AgentRuntime::ClaudeCli);
     assert_eq!(
-        tools_first.tools,
-        AgentTools::Claude(vec!["Read".into(), "Edit".into(), "Bash(git *)".into(),])
+        tools_first.runtime,
+        AgentRuntimeSpec::ClaudeCli {
+            tools: vec!["Read".into(), "Edit".into(), "Bash(git *)".into()],
+            inherit_claude_config: false,
+        }
     );
     assert_eq!(tools_first.fingerprint(), runtime_first.fingerprint());
 }
@@ -94,11 +98,14 @@ fn allows_nested_parentheses_inside_claude_tool_specifier() {
     )
     .unwrap();
     assert_eq!(
-        definition.tools,
-        AgentTools::Claude(vec![
-            "Bash(git log --format=%(refname))".into(),
-            "Bash(git *)".into(),
-        ])
+        definition.runtime,
+        AgentRuntimeSpec::ClaudeCli {
+            tools: vec![
+                "Bash(git log --format=%(refname))".into(),
+                "Bash(git *)".into(),
+            ],
+            inherit_claude_config: false,
+        }
     );
 }
 
@@ -174,7 +181,13 @@ fn rho_model_policy_inherit_with_model_still_rejected() {
 #[test]
 fn omits_claude_tools_as_empty_allowlist() {
     let definition = parse("---\ndescription: demo\nruntime: claude-cli\n---\n").unwrap();
-    assert_eq!(definition.tools, AgentTools::Claude(Vec::new()));
+    assert_eq!(
+        definition.runtime,
+        AgentRuntimeSpec::ClaudeCli {
+            tools: Vec::new(),
+            inherit_claude_config: false,
+        }
+    );
 }
 
 #[test]
@@ -215,7 +228,13 @@ fn inherit_claude_config_is_opt_in_for_claude_runtime_only() {
         "---\ndescription: demo\nruntime: claude-cli\ninherit_claude_config: true\ntools: [Read]\n---\n",
     )
     .unwrap();
-    assert!(definition.inherit_claude_config);
+    assert!(matches!(
+        definition.runtime,
+        AgentRuntimeSpec::ClaudeCli {
+            inherit_claude_config: true,
+            ..
+        }
+    ));
 
     let rejected =
         parse("---\ndescription: demo\nruntime: rho\ninherit_claude_config: true\n---\n")
@@ -269,8 +288,11 @@ fn parses_claude_indented_tool_list_with_patterns() {
     )
     .unwrap();
     assert_eq!(
-        definition.tools,
-        AgentTools::Claude(vec!["Read".into(), "Bash(git *)".into()])
+        definition.runtime,
+        AgentRuntimeSpec::ClaudeCli {
+            tools: vec!["Read".into(), "Bash(git *)".into()],
+            inherit_claude_config: false,
+        }
     );
     assert!(matches!(definition.prompt, PromptPolicy::Extend(_)));
 }

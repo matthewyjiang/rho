@@ -29,36 +29,13 @@ use {
 use super::{
     agent_binding::BoundAgent,
     automation_protocol::{write_event, JsonlAdapter, TerminalReason, WireEvent},
+    headless_run::{self, HeadlessRunDeps, HostInputResponder},
     policy::AppPolicy,
     runtime_builder::{
         build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
     },
     sdk_config::SdkBootstrapOptions,
 };
-
-/// Future returned by [`HostInputResponder`] implementations.
-pub(crate) type HostInputRespondFuture<'a> = std::pin::Pin<
-    Box<
-        dyn std::future::Future<Output = Result<rho_sdk::HostInputResponse, rho_sdk::Error>>
-            + Send
-            + 'a,
-    >,
->;
-
-type HostInputAckFuture =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), rho_sdk::Error>> + Send>>;
-
-/// Answers structured host questionnaires for a headless automation run.
-///
-/// Direct CLI automation leaves this unset and fails closed. Interactive hosts
-/// supply an implementation that forwards requests to a parent session or UI.
-pub(crate) trait HostInputResponder: Send + Sync {
-    fn respond<'a>(
-        &'a self,
-        request: rho_sdk::HostInputRequest,
-        cancellation: &'a rho_sdk::CancellationToken,
-    ) -> HostInputRespondFuture<'a>;
-}
 
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
 #[derive(Debug)]
@@ -350,7 +327,7 @@ fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow
     })
 }
 
-fn emit(event: WireEvent) -> anyhow::Result<()> {
+pub(super) fn emit(event: WireEvent) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
     write_event(&mut stdout, &event).map_err(|error| {
         AutomationExit::new(
@@ -577,13 +554,6 @@ async fn run_session_with_output(
     result
 }
 
-struct HeadlessRunDeps<'a> {
-    reporter: Option<&'a mut RunReporter>,
-    external_cancellation: Option<rho_tools::cancellation::RunCancellation>,
-    jsonl: Option<&'a mut JsonlAdapter>,
-    host_input: Option<&'a dyn HostInputResponder>,
-}
-
 async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
@@ -599,7 +569,7 @@ async fn complete_run(
     let cancellation = run.cancellation_handle();
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
-        outcome = drive_headless_run(&mut run, reporter, jsonl, host_input) => outcome,
+        outcome = headless_run::drive(&mut run, reporter, jsonl, host_input) => outcome,
         signal = shutdown_signal() => {
             let signal = signal?;
             cancellation.cancel();
@@ -612,132 +582,6 @@ async fn complete_run(
             Err(SubagentCancelled.into())
         }
     }
-}
-
-/// Drives a run without a local TUI attached.
-///
-/// Direct automation cannot answer host questionnaires. When a responder is
-/// configured, this loop keeps draining [`rho_sdk::RunEvent`]s and reporter
-/// heartbeats while waiting for the parent answer and the runtime ack so bounded
-/// event channels cannot deadlock the worker.
-async fn drive_headless_run(
-    run: &mut rho_sdk::Run,
-    mut reporter: Option<&mut RunReporter>,
-    mut jsonl: Option<&mut JsonlAdapter>,
-    host_input: Option<&dyn HostInputResponder>,
-) -> anyhow::Result<rho_sdk::RunOutcome> {
-    let cancellation = run.cancellation_handle();
-    let mut heartbeat = tokio::time::interval(REPORT_HEARTBEAT);
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut pending_requests: std::collections::VecDeque<rho_sdk::HostInputRequest> =
-        std::collections::VecDeque::new();
-    let mut parent_wait: Option<(rho_sdk::HostInputId, HostInputRespondFuture<'_>)> = None;
-    let mut ack_wait: Option<HostInputAckFuture> = None;
-    let mut events_open = true;
-
-    loop {
-        if parent_wait.is_none() && ack_wait.is_none() {
-            if let Some(request) = pending_requests.pop_front() {
-                match host_input {
-                    Some(responder) => {
-                        let request_id = request.id().clone();
-                        parent_wait = Some((request_id, responder.respond(request, &cancellation)));
-                    }
-                    None => {
-                        run.cancel();
-                        let _ = run.outcome().await;
-                        anyhow::bail!(
-                            "rho run cannot answer host input request '{}' ({}); run without tools that require interactive input",
-                            request.id(),
-                            request.title(),
-                        );
-                    }
-                }
-            }
-        }
-
-        if !events_open
-            && parent_wait.is_none()
-            && ack_wait.is_none()
-            && pending_requests.is_empty()
-        {
-            break;
-        }
-
-        tokio::select! {
-            biased;
-
-            result = async {
-                parent_wait
-                    .as_mut()
-                    .expect("parent wait guarded")
-                    .1
-                    .as_mut()
-                    .await
-            }, if parent_wait.is_some() => {
-                let (request_id, _) = parent_wait.take().expect("parent wait guarded");
-                match result {
-                    Ok(response) => match run.request_respond(request_id, response) {
-                        Ok(ack) => ack_wait = Some(Box::pin(ack)),
-                        Err(error) => {
-                            run.cancel();
-                            let _ = run.outcome().await;
-                            return Err(error.into());
-                        }
-                    },
-                    Err(error) => {
-                        run.cancel();
-                        let _ = run.outcome().await;
-                        return Err(error.into());
-                    }
-                }
-            }
-
-            result = async {
-                ack_wait.as_mut().expect("ack wait guarded").await
-            }, if ack_wait.is_some() => {
-                ack_wait = None;
-                if let Err(error) = result {
-                    run.cancel();
-                    let _ = run.outcome().await;
-                    return Err(error.into());
-                }
-            }
-
-            event = run.next_event(), if events_open => {
-                let Some(event) = event else {
-                    events_open = false;
-                    continue;
-                };
-                if let Some(reporter) = reporter.as_deref_mut() {
-                    reporter.on_event(&event);
-                }
-                if let Some(adapter) = jsonl.as_deref_mut() {
-                    if let Some(wire_event) = adapter.event(&event) {
-                        if let Err(error) = emit(wire_event) {
-                            run.cancel();
-                            let _ = run.outcome().await;
-                            return Err(error);
-                        }
-                    }
-                }
-                match event {
-                    rho_sdk::RunEvent::HostInputRequested { request }
-                    | rho_sdk::RunEvent::ToolHostInputRequested { request, .. } => {
-                        pending_requests.push_back(request);
-                    }
-                    _ => {}
-                }
-            }
-
-            _ = heartbeat.tick(), if reporter.is_some() => {
-                if let Some(reporter) = reporter.as_deref_mut() {
-                    reporter.write();
-                }
-            }
-        }
-    }
-    Ok(run.outcome().await?)
 }
 
 pub(crate) struct RunArtifactIdentity {
@@ -760,8 +604,6 @@ pub(crate) struct RunReporter {
 
 /// Longest a status-file write is deferred while text streams.
 const REPORT_THROTTLE: std::time::Duration = std::time::Duration::from_secs(2);
-/// Keeps the status file fresh while a provider or tool call emits no events.
-const REPORT_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
 const LAST_TEXT_BYTES: usize = 400;
 
 impl RunReporter {
@@ -809,7 +651,7 @@ impl RunReporter {
         })
     }
 
-    fn on_event(&mut self, event: &rho_sdk::RunEvent) {
+    pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {
         use rho_sdk::RunEvent;
 
         if let Some(attachment) = self.attachment.as_mut() {
@@ -910,7 +752,7 @@ impl RunReporter {
         }
     }
 
-    fn write(&mut self) {
+    pub(super) fn write(&mut self) {
         self.last_write = std::time::Instant::now();
         if let Some(status_tx) = &self.status_tx {
             status_tx.send_replace(self.status.clone());

@@ -27,9 +27,10 @@ use tokio::{
 };
 
 use super::{
-    classify_error, complete_run, prompt_from_reader, AutomationExit, HeadlessRunDeps,
-    HostInputRespondFuture, HostInputResponder, RunArtifactIdentity, RunReporter,
+    classify_error, complete_run, prompt_from_reader, AutomationExit, RunArtifactIdentity,
+    RunReporter,
 };
+use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::{
     app::{
         automation_protocol::TerminalReason,

@@ -1,35 +1,9 @@
 use pretty_assertions::assert_eq;
 
-use crate::agent::{
-    AgentDefinition, AgentId, AgentRuntime, AgentTools, ModelPolicy, ModelSelection, PromptPolicy,
-};
+use crate::agent::PromptPolicy;
 use rho_providers::reasoning::ReasoningLevel;
 
 use super::*;
-
-fn definition(
-    tools: Vec<&str>,
-    inherit: bool,
-    model: Option<&str>,
-    prompt: PromptPolicy,
-) -> AgentDefinition {
-    AgentDefinition {
-        id: AgentId::new("claude-planner").unwrap(),
-        description: "plan".into(),
-        prompt,
-        model: match model {
-            Some(model) => ModelPolicy::Select(ModelSelection {
-                provider: None,
-                model: model.into(),
-            }),
-            None => ModelPolicy::Inherit,
-        },
-        runtime: AgentRuntime::ClaudeCli,
-        tools: AgentTools::Claude(tools.into_iter().map(str::to_string).collect()),
-        reasoning: None,
-        inherit_claude_config: inherit,
-    }
-}
 
 fn request(
     tools: Vec<&str>,
@@ -60,7 +34,7 @@ fn request_with_effort(
     effort: Option<&'static str>,
 ) -> ClaudeSpawnRequest {
     ClaudeSpawnRequest {
-        definition: definition(tools.clone(), inherit, model, prompt),
+        system_prompt: prompt,
         model: model.map(str::to_string),
         tools: tools.into_iter().map(str::to_string).collect(),
         inherit_claude_config: inherit,
@@ -69,6 +43,13 @@ fn request_with_effort(
         max_turns,
         effort,
     }
+}
+
+/// Sole value following `flag` in argv, or `None` when the flag is absent.
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    let values = flag_values(args, flag);
+    assert!(values.len() <= 1, "{flag} carried {} values", values.len());
+    values.into_iter().next()
 }
 
 fn flag_values(args: &[String], flag: &str) -> Vec<String> {
@@ -108,20 +89,9 @@ fn builds_explicit_safe_spawn_args() {
     ))
     .unwrap();
 
-    assert_eq!(plan.permission_mode, "dontAsk");
-    assert_eq!(plan.setting_sources, "project");
-    assert_eq!(plan.model.as_deref(), Some("opus"));
     assert_eq!(
         plan.system_prompt,
         SystemPromptPlan::Replace("Plan carefully.".into())
-    );
-    assert_eq!(
-        plan.tool_base_names.as_slice(),
-        ["Read", "Edit", "Bash"].as_slice()
-    );
-    assert_eq!(
-        plan.allowed_tool_entries.as_slice(),
-        ["Read", "Edit", "Bash(git *)"].as_slice()
     );
     assert!(plan
         .args
@@ -155,7 +125,6 @@ fn builds_explicit_safe_spawn_args() {
         .windows(2)
         .any(|pair| pair == ["--max-turns", "8"]));
     assert!(plan.args.windows(2).any(|pair| pair == ["--model", "opus"]));
-    assert!(plan.effort.is_none());
     assert!(!plan.args.iter().any(|arg| arg == "--effort"));
     // Prompt text stays out of the base argv; file flag is attached on finalize.
     assert!(!plan.args.iter().any(|arg| arg.contains("Plan carefully.")));
@@ -363,9 +332,14 @@ fn inherit_config_widens_setting_sources() {
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
     .unwrap();
-    assert_eq!(plan.permission_mode, "plan");
-    assert_eq!(plan.setting_sources, "user,project,local");
-    assert!(plan.model.is_none());
+    assert_eq!(
+        flag_value(&plan.args, "--permission-mode").as_deref(),
+        Some("plan")
+    );
+    assert_eq!(
+        flag_value(&plan.args, "--setting-sources").as_deref(),
+        Some("user,project,local")
+    );
     assert!(!plan.args.iter().any(|arg| arg == "--model"));
     assert!(plan
         .args
@@ -415,8 +389,7 @@ fn empty_tools_sets_tools_flag_to_empty_string() {
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
     .unwrap();
-    assert!(plan.tool_base_names.is_empty());
-    assert!(plan.allowed_tool_entries.is_empty());
+    assert_eq!(flag_value(&plan.args, "--tools").as_deref(), Some(""));
     assert!(plan.args.windows(2).any(|pair| pair == ["--tools", ""]));
     assert!(!plan.args.iter().any(|arg| arg == "--allowedTools"));
 }
@@ -432,8 +405,6 @@ fn read_only_tools_go_to_tools_and_allowed_tools() {
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
     .unwrap();
-    assert_eq!(plan.tool_base_names.as_slice(), ["Read"].as_slice());
-    assert_eq!(plan.allowed_tool_entries.as_slice(), ["Read"].as_slice());
     assert!(plan.args.windows(2).any(|pair| pair == ["--tools", "Read"]));
     let allowed = flag_values(&plan.args, "--allowedTools");
     assert_eq!(allowed, vec!["Read".to_string()]);
@@ -450,11 +421,6 @@ fn edit_and_read_each_become_allowed_tools_argv_items() {
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
     .unwrap();
-    assert_eq!(plan.tool_base_names.as_slice(), ["Edit", "Read"].as_slice());
-    assert_eq!(
-        plan.allowed_tool_entries.as_slice(),
-        ["Edit", "Read"].as_slice()
-    );
     assert!(plan
         .args
         .windows(2)
@@ -474,11 +440,6 @@ fn bash_pattern_uses_tools_base_and_allowed_tools_pattern() {
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
     .unwrap();
-    assert_eq!(plan.tool_base_names.as_slice(), ["Bash"].as_slice());
-    assert_eq!(
-        plan.allowed_tool_entries.as_slice(),
-        ["Bash(git *)"].as_slice()
-    );
     assert!(plan.args.windows(2).any(|pair| pair == ["--tools", "Bash"]));
     let allowed = flag_values(&plan.args, "--allowedTools");
     assert_eq!(allowed, vec!["Bash(git *)".to_string()]);
@@ -496,8 +457,8 @@ fn mixed_bare_and_pattern_tools_all_allowed_separately() {
     ))
     .unwrap();
     assert_eq!(
-        plan.tool_base_names.as_slice(),
-        ["Read", "Bash", "Edit"].as_slice()
+        flag_value(&plan.args, "--tools").as_deref(),
+        Some("Read,Bash,Edit")
     );
     let allowed = flag_values(&plan.args, "--allowedTools");
     assert_eq!(
@@ -522,8 +483,7 @@ fn task_is_never_made_available_even_if_listed() {
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
     .unwrap();
-    assert_eq!(plan.tool_base_names.as_slice(), ["Read"].as_slice());
-    assert_eq!(plan.allowed_tool_entries.as_slice(), ["Read"].as_slice());
+    assert_eq!(flag_value(&plan.args, "--tools").as_deref(), Some("Read"));
     assert!(plan
         .args
         .windows(2)
@@ -574,7 +534,6 @@ fn reasoning_maps_to_claude_effort_flag() {
             Some(expected),
         ))
         .unwrap();
-        assert_eq!(plan.effort, Some(expected));
         assert!(
             plan.args
                 .windows(2)

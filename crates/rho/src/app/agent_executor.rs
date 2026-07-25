@@ -233,9 +233,9 @@ impl AgentExecutor {
                     max_turns,
                     effort,
                 } => {
-                    crate::claude_runtime::session::run_bound_session(
-                        crate::claude_runtime::session::ClaudeBoundLaunch {
-                            definition: Arc::new(bound.definition().clone()),
+                    crate::claude_runtime::session::run_session(
+                        crate::claude_runtime::session::ClaudeSessionRequest {
+                            system_prompt: bound.definition().prompt.clone(),
                             identity: crate::claude_runtime::session::ClaudeRunIdentity {
                                 agent_id: bound.id().to_string(),
                                 agent_fingerprint: bound.fingerprint().to_string(),
@@ -251,7 +251,8 @@ impl AgentExecutor {
                             output_file,
                             cwd,
                             cancellation: task_cancellation,
-                            status_tx: task_status_tx,
+                            status_tx: Some(task_status_tx),
+                            overrides: Default::default(),
                         },
                     )
                     .await
@@ -260,65 +261,21 @@ impl AgentExecutor {
                     config: bound_config,
                     ..
                 } => {
-                    let mut config = *bound_config;
-                    super::cli_config::prepare_model_metadata(
-                        &config,
-                        &crate::credential_store::AppCredentialStore,
-                        &super::cli_config::ProviderRefreshStatus::NotAttempted,
-                    )
-                    .await;
-                    super::cli_config::normalize_reasoning(&mut config);
-                    let diagnostics = RuntimeDiagnostics::new(&config);
-                    diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
-                    let mut reporter = RunReporter::new(
-                        output_file,
-                        RunArtifactIdentity {
-                            agent_id: bound.id().to_string(),
-                            agent_fingerprint: bound.fingerprint().to_string(),
-                            provider: config.provider.clone(),
-                            model: config.model.clone(),
-                        },
-                        cwd.clone(),
-                        &prompt,
-                        /* stream_output */ false,
-                        Some(task_status_tx),
-                    )?;
-                    let agent_id = bound.id().to_string();
-                    let startup = automation::Startup {
-                        config: &config,
+                    run_rho_agent(RhoAgentRun {
+                        bound,
+                        config: *bound_config,
                         config_path,
                         cwd,
-                        no_system_prompt: false,
-                        no_tools: false,
-                        no_subagents: true,
-                        usage_purpose: "subagent",
-                        parent_session_id: parent_session_id.clone(),
-                        agent: bound,
-                        output_file: None,
-                        output: OutputFormat::Text,
-                        max_steps: None,
-                        timeout: None,
-                        diagnostics,
-                        herdr: HerdrReporter::default(),
-                        host_input: questionnaire_available.then(|| {
-                            Arc::new(SubagentHostInputResponder::new(
-                                run_id,
-                                agent_id,
-                                parent_session_id
-                                    .expect("questionnaire bridge requires a parent session"),
-                                host_input,
-                            )) as Arc<dyn automation::HostInputResponder>
-                        }),
-                    };
-                    let result = automation::run_session(
                         prompt,
-                        &startup,
-                        Some(&mut reporter),
-                        Some(task_cancellation),
-                    )
-                    .await;
-                    reporter.finish(&result);
-                    result.map(|_| ())
+                        output_file,
+                        run_id,
+                        parent_session_id,
+                        questionnaire_available,
+                        host_input,
+                        cancellation: task_cancellation,
+                        status_tx: task_status_tx,
+                    })
+                    .await
                 }
             }
         });
@@ -349,6 +306,93 @@ impl AgentExecutor {
             completion,
         })
     }
+}
+
+/// One delegated run on the Rho runtime, after binding and permit acquisition.
+struct RhoAgentRun {
+    bound: super::agent_binding::BoundAgent,
+    config: Config,
+    config_path: PathBuf,
+    cwd: PathBuf,
+    prompt: String,
+    output_file: PathBuf,
+    run_id: String,
+    parent_session_id: Option<rho_sdk::SessionId>,
+    questionnaire_available: bool,
+    host_input: SubagentHostInputBridge,
+    cancellation: RunCancellation,
+    status_tx: tokio::sync::watch::Sender<RunStatus>,
+}
+
+/// Drive a delegated run through Rho's own automation loop.
+async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
+    let RhoAgentRun {
+        bound,
+        mut config,
+        config_path,
+        cwd,
+        prompt,
+        output_file,
+        run_id,
+        parent_session_id,
+        questionnaire_available,
+        host_input,
+        cancellation,
+        status_tx,
+    } = run;
+
+    super::cli_config::prepare_model_metadata(
+        &config,
+        &crate::credential_store::AppCredentialStore,
+        &super::cli_config::ProviderRefreshStatus::NotAttempted,
+    )
+    .await;
+    super::cli_config::normalize_reasoning(&mut config);
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
+    let mut reporter = RunReporter::new(
+        output_file,
+        RunArtifactIdentity {
+            agent_id: bound.id().to_string(),
+            agent_fingerprint: bound.fingerprint().to_string(),
+            provider: config.provider.clone(),
+            model: config.model.clone(),
+        },
+        cwd.clone(),
+        &prompt,
+        /* stream_output */ false,
+        Some(status_tx),
+    )?;
+    let agent_id = bound.id().to_string();
+    let startup = automation::Startup {
+        config: &config,
+        config_path,
+        cwd,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: true,
+        usage_purpose: "subagent",
+        parent_session_id: parent_session_id.clone(),
+        agent: bound,
+        output_file: None,
+        output: OutputFormat::Text,
+        max_steps: None,
+        timeout: None,
+        diagnostics,
+        herdr: HerdrReporter::default(),
+        host_input: questionnaire_available.then(|| {
+            Arc::new(SubagentHostInputResponder::new(
+                run_id,
+                agent_id,
+                parent_session_id.expect("questionnaire bridge requires a parent session"),
+                host_input,
+            )) as Arc<dyn super::headless_run::HostInputResponder>
+        }),
+    };
+    let result =
+        automation::run_session(prompt, &startup, Some(&mut reporter), Some(cancellation)).await;
+    reporter.finish(&result);
+    result.map(|_| ())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

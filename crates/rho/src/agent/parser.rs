@@ -5,7 +5,7 @@ use rho_providers::reasoning::ReasoningLevel;
 use super::{
     catalog::AgentCatalogError,
     definition::{
-        AgentDefinition, AgentId, AgentRuntime, AgentTools, ModelPolicy, ModelSelection,
+        AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, ModelPolicy, ModelSelection,
         PromptPolicy, ToolCapability, ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
     },
 };
@@ -86,15 +86,6 @@ pub(crate) fn parse_definition(
         })?,
     };
 
-    let inherit_claude_config = raw.inherit_claude_config.unwrap_or(false);
-    if inherit_claude_config && runtime != AgentRuntime::ClaudeCli {
-        return Err(AgentCatalogError::at_field(
-            path.to_path_buf(),
-            "inherit_claude_config",
-            "is only valid with runtime: claude-cli",
-        ));
-    }
-
     let model = parse_model_policy(path, runtime, raw.model, raw.provider, raw.model_policy)?;
     let reasoning = raw
         .reasoning
@@ -119,16 +110,18 @@ expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default
             }
         }
     }
-    let tools = parse_tools(path, runtime, raw.tools)?;
     Ok(AgentDefinition {
         id,
         description,
         prompt,
         model,
-        runtime,
-        tools,
+        runtime: parse_runtime_spec(
+            path,
+            runtime,
+            raw.tools,
+            raw.inherit_claude_config.unwrap_or(false),
+        )?,
         reasoning,
-        inherit_claude_config,
     })
 }
 
@@ -258,31 +251,48 @@ fn validate_model_name(path: &Path, model: &str) -> Result<(), AgentCatalogError
     Ok(())
 }
 
-fn parse_tools(
+/// Collects the runtime axis into one value: the harness plus the tool
+/// vocabulary and settings only that harness accepts.
+fn parse_runtime_spec(
     path: &Path,
     runtime: AgentRuntime,
     tools: Option<RawTools>,
-) -> Result<AgentTools, AgentCatalogError> {
+    inherit_claude_config: bool,
+) -> Result<AgentRuntimeSpec, AgentCatalogError> {
     match runtime {
-        AgentRuntime::Rho => match tools.unwrap_or(RawTools::All) {
-            RawTools::All => Ok(AgentTools::Rho(ToolPolicy::All)),
-            RawTools::Names(names) => Ok(AgentTools::Rho(ToolPolicy::Allow(validate_rho_tools(
-                path, names,
-            )?))),
-        },
-        AgentRuntime::ClaudeCli => match tools {
-            None => Ok(AgentTools::Claude(Vec::new())),
-            Some(RawTools::All) => Err(AgentCatalogError::at_field(
-                path.to_path_buf(),
-                "tools",
-                format!(
-                    "runtime: claude-cli does not support tools: all; list Claude tool names, for example {CLAUDE_TOOLS_EXAMPLE}"
-                ),
-            )),
-            Some(RawTools::Names(names)) => {
-                Ok(AgentTools::Claude(validate_claude_tools(path, names)?))
+        AgentRuntime::Rho => {
+            if inherit_claude_config {
+                return Err(AgentCatalogError::at_field(
+                    path.to_path_buf(),
+                    "inherit_claude_config",
+                    "is only valid with runtime: claude-cli",
+                ));
             }
-        },
+            let tools = match tools.unwrap_or(RawTools::All) {
+                RawTools::All => ToolPolicy::All,
+                RawTools::Names(names) => ToolPolicy::Allow(validate_rho_tools(path, names)?),
+            };
+            Ok(AgentRuntimeSpec::Rho { tools })
+        }
+        AgentRuntime::ClaudeCli => {
+            let tools = match tools {
+                None => Vec::new(),
+                Some(RawTools::All) => {
+                    return Err(AgentCatalogError::at_field(
+                        path.to_path_buf(),
+                        "tools",
+                        format!(
+                            "runtime: claude-cli does not support tools: all; list Claude tool names, for example {CLAUDE_TOOLS_EXAMPLE}"
+                        ),
+                    ))
+                }
+                Some(RawTools::Names(names)) => validate_claude_tools(path, names)?,
+            };
+            Ok(AgentRuntimeSpec::ClaudeCli {
+                tools,
+                inherit_claude_config,
+            })
+        }
     }
 }
 

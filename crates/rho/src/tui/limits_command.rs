@@ -123,7 +123,7 @@ pub(super) struct LimitsView {
 /// include a remaining percentage.
 pub(super) fn present_limits_result(
     result: LimitsFetchResult,
-    claude: Option<&crate::claude_runtime::rate_limit::ObservedRateLimit>,
+    claude: Option<&crate::claude_runtime::rate_limit::RateLimitObservation>,
     now_unix: i64,
 ) -> LimitsView {
     let claude_notice = claude_limits_line(claude, now_unix);
@@ -193,7 +193,7 @@ pub(super) fn present_limits_result(
 }
 
 fn claude_limits_line(
-    observed: Option<&crate::claude_runtime::rate_limit::ObservedRateLimit>,
+    observed: Option<&crate::claude_runtime::rate_limit::RateLimitObservation>,
     now_unix: i64,
 ) -> String {
     match observed {

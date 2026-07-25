@@ -23,7 +23,7 @@ fn classifies_direct_unix_or_exe_paths() {
     let unix = ClaudeExecutable::from_path("/usr/bin/claude");
     assert_eq!(unix.kind(), ClaudeInvocationKind::Direct);
     assert_eq!(
-        unix.argv(["auth", "status"]),
+        unix.plan(["auth", "status"]).unwrap(),
         ClaudeArgv {
             program: PathBuf::from("/usr/bin/claude"),
             args: vec![OsString::from("auth"), OsString::from("status")],
@@ -34,7 +34,7 @@ fn classifies_direct_unix_or_exe_paths() {
     let exe = ClaudeExecutable::from_path(r"C:\Tools\claude.exe");
     assert_eq!(exe.kind(), ClaudeInvocationKind::Direct);
     assert_eq!(
-        exe.argv(["--version"]),
+        exe.plan(["--version"]).unwrap(),
         ClaudeArgv {
             program: PathBuf::from(r"C:\Tools\claude.exe"),
             args: vec![OsString::from("--version")],
@@ -47,7 +47,7 @@ fn classifies_direct_unix_or_exe_paths() {
 fn classifies_cmd_shim_uses_script_image_and_bat_command_line() {
     let shim = ClaudeExecutable::from_path(r"C:\Users\me\scoop\shims\claude.cmd");
     assert_eq!(shim.kind(), ClaudeInvocationKind::CmdScript);
-    let plan = shim.argv(["auth", "logout"]);
+    let plan = shim.plan(["auth", "logout"]).unwrap();
     assert_eq!(
         plan.program,
         PathBuf::from(r"C:\Users\me\scoop\shims\claude.cmd")
@@ -78,7 +78,7 @@ fn classifies_ps1_shim_as_fixed_argv_powershell_invocation() {
     let shim = ClaudeExecutable::from_path(r"C:\Tools\claude.ps1");
     assert_eq!(shim.kind(), ClaudeInvocationKind::PowerShellScript);
     assert_eq!(
-        shim.argv(["auth", "status"]),
+        shim.plan(["auth", "status"]).unwrap(),
         ClaudeArgv {
             program: PathBuf::from("powershell.exe"),
             args: vec![
@@ -132,7 +132,8 @@ fn cmd_shim_argv_encodes_special_characters() {
     ];
     for &(arg, needle) in cases {
         let line = shim
-            .argv([arg])
+            .plan([arg])
+            .unwrap()
             .windows_command_line
             .unwrap()
             .to_string_lossy()
@@ -148,7 +149,7 @@ fn cmd_shim_argv_encodes_special_characters() {
 fn cmd_shim_encodes_system_prompt_file_path_with_spaces() {
     let shim = ClaudeExecutable::from_path(r"C:\Program Files\Claude\claude.cmd");
     let plan = shim
-        .try_argv([
+        .plan([
             "-p",
             "--system-prompt-file",
             r"C:\Users\me\AppData\Local\rho\runs\run 1\system-prompt.txt",
@@ -173,7 +174,7 @@ fn cmd_shim_encodes_system_prompt_file_path_with_spaces() {
 #[test]
 fn cmd_shim_rejects_cr_lf_before_spawn() {
     let shim = ClaudeExecutable::from_path(r"C:\shims\claude.cmd");
-    let err = shim.try_argv(["ok\nbad"]).unwrap_err();
+    let err = shim.plan(["ok\nbad"]).unwrap_err();
     assert!(matches!(
         err,
         ClaudeExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
@@ -188,7 +189,7 @@ fn cmd_shim_rejects_cr_lf_before_spawn() {
 #[test]
 fn powershell_try_command_accepts_metacharacters() {
     let shim = ClaudeExecutable::from_path(r"C:\Tools\claude.ps1");
-    let plan = shim.try_argv(["a&b", "%PATH%", "x y", "模型", ""]).unwrap();
+    let plan = shim.plan(["a&b", "%PATH%", "x y", "模型", ""]).unwrap();
     assert_eq!(plan.program, PathBuf::from("powershell.exe"));
     assert!(plan.args.iter().any(|a| a == "a&b"));
     assert!(plan.args.iter().any(|a| a == "%PATH%"));
@@ -200,8 +201,8 @@ fn powershell_try_command_accepts_metacharacters() {
 #[test]
 fn direct_command_builder_preserves_args() {
     let exe = ClaudeExecutable::from_path("/usr/bin/claude");
-    // Construction must not panic; spawn is not required here.
-    let _ = exe.command(["auth", "status"]);
+    // Construction must not fail; spawn is not required here.
+    let _ = exe.try_command(["auth", "status"]).unwrap();
     let _ = exe.try_command(["--version"]).unwrap();
 }
 

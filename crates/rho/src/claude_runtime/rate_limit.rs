@@ -15,11 +15,12 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Mutex, OnceLock,
     },
-    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
+
+use rho_providers::file_lock::FileLock;
 
 use super::stream::{describe_rate_limit, RateLimitInfo};
 
@@ -36,47 +37,6 @@ static PROCESS_NONCE: OnceLock<String> = OnceLock::new();
 
 /// Process-local order when capture nanoseconds collide inside one process.
 static OBSERVATION_SEQ: AtomicU64 = AtomicU64::new(1);
-
-/// Observed Claude rate-limit info plus when Rho saw it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ObservedRateLimit {
-    /// Whole seconds since epoch; kept for age display and legacy files.
-    pub(crate) observed_at_unix: i64,
-    /// Legacy process-local sequence. Missing on older files; treated as zero.
-    /// Used for order only when `observed_at_nanos` is absent.
-    #[serde(default)]
-    pub(crate) observed_seq: u64,
-    /// Subsecond capture time as unix-epoch nanoseconds. Zero means legacy:
-    /// derive nanoseconds from `observed_at_unix` seconds.
-    #[serde(default)]
-    pub(crate) observed_at_nanos: u64,
-    /// Per-process nonce (UUID). Empty on legacy files.
-    #[serde(default)]
-    pub(crate) observed_nonce: String,
-    pub(crate) info: RateLimitInfo,
-}
-
-impl ObservedRateLimit {
-    pub(crate) fn age_seconds(&self, now_unix: i64) -> i64 {
-        now_unix.saturating_sub(self.observed_at_unix).max(0)
-    }
-
-    /// One-line display for `/limits`: window, status, reset, age. No percent.
-    pub(crate) fn describe(&self, now_unix: i64) -> String {
-        let body = describe_rate_limit(&self.info);
-        let age = format_age(self.age_seconds(now_unix));
-        format!("claude code: {body} (last observed {age})")
-    }
-
-    fn order_key(&self) -> ObservationOrder {
-        ObservationOrder::from_parts(
-            self.observed_at_unix,
-            self.observed_seq,
-            self.observed_at_nanos,
-            &self.observed_nonce,
-        )
-    }
-}
 
 /// Globally sortable observation key.
 ///
@@ -109,12 +69,23 @@ impl ObservationOrder {
     }
 }
 
-/// Observation ready for durable store, ordered by capture time + tie-break.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One observed Claude rate-limit reading, in memory and on disk.
+///
+/// Ordering fields carry `#[serde(default)]` so files written before subsecond
+/// ordering existed still load: a zero `observed_at_nanos` falls back to
+/// `observed_at_unix` seconds, and an empty nonce sorts below any stamped one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RateLimitObservation {
+    /// Whole seconds since epoch; used for age display.
     pub(crate) observed_at_unix: i64,
+    /// Subsecond capture time as unix-epoch nanoseconds. Zero means legacy.
+    #[serde(default)]
     pub(crate) observed_at_nanos: u64,
+    /// Process-local order when capture nanoseconds collide.
+    #[serde(default)]
     pub(crate) observed_seq: u64,
+    /// Per-process nonce (UUID). Empty on legacy files.
+    #[serde(default)]
     pub(crate) observed_nonce: String,
     pub(crate) info: RateLimitInfo,
 }
@@ -123,6 +94,17 @@ impl RateLimitObservation {
     /// Stamp `info` with the current wall clock and a fresh order key.
     pub(crate) fn capture(info: RateLimitInfo) -> Self {
         Self::capture_at_nanos(info, now_unix_nanos())
+    }
+
+    pub(crate) fn age_seconds(&self, now_unix: i64) -> i64 {
+        now_unix.saturating_sub(self.observed_at_unix).max(0)
+    }
+
+    /// One-line display for `/limits`: window, status, reset, age. No percent.
+    pub(crate) fn describe(&self, now_unix: i64) -> String {
+        let body = describe_rate_limit(&self.info);
+        let age = format_age(self.age_seconds(now_unix));
+        format!("claude code: {body} (last observed {age})")
     }
 
     /// Stamp `info` at an explicit unix-epoch nanosecond instant.
@@ -219,13 +201,7 @@ fn lock_path_for(state_path: &Path) -> PathBuf {
 /// Holds the process mutex and exclusive cross-process file lock.
 struct StateLock {
     _process_guard: std::sync::MutexGuard<'static, ()>,
-    file: File,
-}
-
-impl Drop for StateLock {
-    fn drop(&mut self) {
-        let _ = unlock_file(&self.file);
-    }
+    _file_guard: FileLock,
 }
 
 fn acquire_state_lock(state_path: &Path) -> anyhow::Result<StateLock> {
@@ -237,10 +213,9 @@ fn acquire_state_lock(state_path: &Path) -> anyhow::Result<StateLock> {
     }
     let lock_path = lock_path_for(state_path);
     let file = open_lock_file(&lock_path)?;
-    lock_exclusive_with_retry(&file)?;
     Ok(StateLock {
         _process_guard: process_guard,
-        file,
+        _file_guard: FileLock::acquire_with_retry(file, LOCK_RETRY_LIMIT, LOCK_RETRY_DELAY)?,
     })
 }
 
@@ -255,127 +230,6 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
     let file = options.open(path)?;
     set_private_path_permissions(path)?;
     Ok(file)
-}
-
-fn lock_exclusive_with_retry(file: &File) -> io::Result<()> {
-    let mut attempts = 0;
-    loop {
-        match try_lock_exclusive(file) {
-            Ok(()) => return Ok(()),
-            Err(error) if is_lock_busy(&error) && attempts < LOCK_RETRY_LIMIT => {
-                attempts += 1;
-                thread::sleep(LOCK_RETRY_DELAY);
-            }
-            Err(error)
-                if error.kind() == io::ErrorKind::Interrupted && attempts < LOCK_RETRY_LIMIT =>
-            {
-                attempts += 1;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn try_lock_exclusive(file: &File) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result == 0 {
-            return Ok(());
-        }
-        Err(io::Error::last_os_error())
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::{
-            Foundation::GetLastError,
-            Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY},
-            System::IO::OVERLAPPED,
-        };
-
-        let mut overlapped = OVERLAPPED::default();
-        let result = unsafe {
-            LockFileEx(
-                file.as_raw_handle(),
-                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
-                0,
-                1,
-                0,
-                &mut overlapped,
-            )
-        };
-        if result != 0 {
-            return Ok(());
-        }
-        let err = unsafe { GetLastError() };
-        Err(io::Error::from_raw_os_error(err as i32))
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = file;
-        Ok(())
-    }
-}
-
-fn unlock_file(file: &File) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
-        if result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::{Storage::FileSystem::UnlockFileEx, System::IO::OVERLAPPED};
-
-        let mut overlapped = OVERLAPPED::default();
-        let result = unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut overlapped) };
-        if result == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = file;
-        Ok(())
-    }
-}
-
-fn is_lock_busy(error: &io::Error) -> bool {
-    match error.kind() {
-        io::ErrorKind::WouldBlock => true,
-        // Windows ERROR_LOCK_VIOLATION / ERROR_BUSY often map as Other.
-        _ => {
-            #[cfg(windows)]
-            {
-                const ERROR_LOCK_VIOLATION: i32 = 33;
-                const ERROR_BUSY: i32 = 170;
-                matches!(
-                    error.raw_os_error(),
-                    Some(ERROR_LOCK_VIOLATION | ERROR_BUSY)
-                )
-            }
-            #[cfg(unix)]
-            {
-                // EWOULDBLOCK and EAGAIN are identical on many unix targets.
-                matches!(
-                    error.raw_os_error(),
-                    Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN
-                )
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                false
-            }
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -400,14 +254,7 @@ pub(crate) fn store_observation(
             return Ok(());
         }
     }
-    let observed = ObservedRateLimit {
-        observed_at_unix: observation.observed_at_unix,
-        observed_seq: observation.observed_seq,
-        observed_at_nanos: observation.observed_at_nanos,
-        observed_nonce: observation.observed_nonce,
-        info: observation.info,
-    };
-    let contents = serde_json::to_vec_pretty(&observed)?;
+    let contents = serde_json::to_vec_pretty(&observation)?;
     crate::config_writer::write_bytes_atomically(path, &contents)?;
     Ok(())
 }
@@ -427,11 +274,11 @@ pub(crate) fn store_ordered(
     )
 }
 
-pub(crate) fn load() -> Option<ObservedRateLimit> {
+pub(crate) fn load() -> Option<RateLimitObservation> {
     load_at(&default_state_path().ok()?)
 }
 
-pub(crate) fn load_at(path: &Path) -> Option<ObservedRateLimit> {
+pub(crate) fn load_at(path: &Path) -> Option<RateLimitObservation> {
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
 }
