@@ -336,20 +336,40 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "Permission mode",
+        text: "Config / Agent behavior",
         timeout: SETTLE,
     },
+    Step::AssertText("Permission mode"),
     Step::Key(Key::Enter),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
+    // Nested mode list shows one selected detail at a time.
     Step::WaitText {
-        text: "permissions: Supervised",
+        text: "No permission checks",
         timeout: SETTLE,
     },
+    Step::AssertText("Auto"),
+    Step::AssertText("Plan"),
+    Step::AssertText("Supervised"),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::WaitText {
+        text: "Ask before writes and processes",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    // Selection returns to the agent-behavior category with the label badge.
+    Step::WaitText {
+        text: "Config / Agent behavior",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Permission mode"),
+    Step::AssertText("Supervised"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Models & reasoning",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "permissions: supervised",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
