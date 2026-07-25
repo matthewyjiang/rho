@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use crate::tui::{
     history_cache::HistoryLineCache,
     markdown_image,
-    scrollbar::HistoryScrollbarDrag,
+    scrollbar::{HistoryScrollChrome, HistoryScrollbarDrag},
     text_selection::{CopyNotice, TextSelection},
     Entry, HistoryScroll, SessionHeaderCache,
 };
@@ -22,10 +22,7 @@ pub(in crate::tui) struct HistoryUi {
     last_inserted_was_tool: bool,
     images: markdown_image::MarkdownImageCache,
     images_dirty_from: Option<usize>,
-    scroll: HistoryScroll,
-    scrollbar_drag: Option<HistoryScrollbarDrag>,
-    scrollbar_visible_until: Option<Instant>,
-    scrollbar_hovered: bool,
+    scroll: HistoryScrollChrome,
     hovered_code_block_copy: Option<usize>,
     text_selection: Option<TextSelection>,
     copy_notice: Option<CopyNotice>,
@@ -94,55 +91,53 @@ impl HistoryUi {
         );
     }
 
-    pub(in crate::tui) fn scroll(&self) -> HistoryScroll {
-        self.scroll
+    pub(in crate::tui) fn scroll_chrome(&self) -> &HistoryScrollChrome {
+        &self.scroll
     }
 
+    pub(in crate::tui) fn scroll_chrome_mut(&mut self) -> &mut HistoryScrollChrome {
+        &mut self.scroll
+    }
+
+    pub(in crate::tui) fn scroll(&self) -> HistoryScroll {
+        self.scroll.scroll()
+    }
+
+    #[cfg(test)]
     pub(in crate::tui) fn set_scroll(&mut self, scroll: HistoryScroll) {
-        self.scroll = scroll;
+        self.scroll.set_scroll(scroll);
     }
 
     pub(in crate::tui) fn scroll_to_bottom(&mut self) {
-        self.scroll = HistoryScroll::Bottom;
-        self.hide_scrollbar();
+        self.scroll.scroll_to_bottom();
     }
 
     pub(in crate::tui) fn scrollbar_drag(&self) -> Option<HistoryScrollbarDrag> {
-        self.scrollbar_drag
+        self.scroll.drag()
     }
 
     pub(in crate::tui) fn set_scrollbar_drag(&mut self, drag: Option<HistoryScrollbarDrag>) {
-        self.scrollbar_drag = drag;
+        self.scroll.set_drag(drag);
     }
 
     pub(in crate::tui) fn scrollbar_visible_until(&self) -> Option<Instant> {
-        self.scrollbar_visible_until
+        self.scroll.visible_until()
     }
 
     pub(in crate::tui) fn reveal_scrollbar(&mut self, now: Instant, duration: Duration) {
-        self.scrollbar_visible_until = Some(now + duration);
+        self.scroll.reveal(now, duration);
     }
 
     pub(in crate::tui) fn hide_scrollbar(&mut self) {
-        self.scrollbar_drag = None;
-        self.scrollbar_visible_until = None;
-        self.scrollbar_hovered = false;
+        self.scroll.hide();
     }
 
     pub(in crate::tui) fn scrollbar_hovered(&self) -> bool {
-        self.scrollbar_hovered
-    }
-
-    pub(in crate::tui) fn set_scrollbar_hovered(&mut self, hovered: bool) {
-        self.scrollbar_hovered = hovered;
+        self.scroll.hovered()
     }
 
     pub(in crate::tui) fn should_render_scrollbar(&self, now: Instant) -> bool {
-        self.scrollbar_drag.is_some()
-            || self.scrollbar_hovered
-            || self
-                .scrollbar_visible_until
-                .is_some_and(|visible_until| now < visible_until)
+        self.scroll.should_render(now)
     }
 
     pub(in crate::tui) fn text_selection(&self) -> Option<TextSelection> {

@@ -34,13 +34,23 @@ impl App {
                 self.history.set_hovered_code_block_copy(None);
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                self.scroll_history_lines(width, height, now, -3);
+                self.scroll_history_lines(
+                    width,
+                    height,
+                    now,
+                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
+                );
             }
             MouseEventKind::ScrollDown => {
                 self.history.set_hovered_code_block_copy(None);
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                self.scroll_history_lines(width, height, now, 3);
+                self.scroll_history_lines(
+                    width,
+                    height,
+                    now,
+                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
+                );
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
@@ -58,11 +68,12 @@ impl App {
                     .set_hovered_code_block_copy(code_target.as_ref().map(|target| target.line));
                 if let Some(scrollbar) = scrollbar {
                     self.history.clear_text_selection();
-                    self.reveal_history_scrollbar(now);
-                    let drag = scrollbar.begin_drag(row);
-                    self.history.set_scrollbar_drag(Some(drag));
-                    self.history
-                        .set_scroll(scrollbar.scroll_state_for_pointer(row, drag));
+                    self.history.scroll_chrome_mut().begin_scrollbar_drag(
+                        scrollbar,
+                        row,
+                        now,
+                        super::HISTORY_SCROLLBAR_REVEAL_DURATION,
+                    );
                 } else if layout.jump_to_bottom.is_some_and(|rect| {
                     rect.contains(ratatui::layout::Position { x: column, y: row })
                 }) {
@@ -84,12 +95,11 @@ impl App {
             MouseEventKind::Drag(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                if let Some(drag) = self.history.scrollbar_drag() {
+                if self.history.scrollbar_drag().is_some() {
                     self.history.clear_text_selection();
                     self.history.set_hovered_code_block_copy(None);
                     if let Some(scrollbar) = layout.history_scrollbar {
-                        self.history
-                            .set_scroll(scrollbar.scroll_state_for_pointer(row, drag));
+                        self.history.scroll_chrome_mut().drag_to(scrollbar, row);
                     }
                 } else {
                     let (history, history_start) =

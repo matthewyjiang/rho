@@ -8,7 +8,10 @@ use ratatui::text::{Line, Span};
 use super::{
     render::{display_width, truncate_one_line},
     theme::Theme,
-    usage_cost::{format_usd, resolved_usage_cost_usd_micros, session_total_cost_usd_micros},
+    usage_cost::{
+        format_token_count, format_usd, resolved_usage_cost_usd_micros,
+        session_total_cost_usd_micros,
+    },
     workspace::git_branch,
     RuntimeModelView,
 };
@@ -291,16 +294,6 @@ fn format_context_summary(state: &StatusLineState) -> String {
     };
     let percent = tokens as f64 * 100.0 / window as f64;
     format!("{} ({percent:.1}%)", format_token_count(tokens))
-}
-
-fn format_token_count(tokens: u64) -> String {
-    if tokens < 1_000 {
-        tokens.to_string()
-    } else if tokens < 1_000_000 {
-        format!("{:.1}K", tokens as f64 / 1_000.0)
-    } else {
-        format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    }
 }
 
 fn status_cost(state: &StatusLineState) -> Option<String> {

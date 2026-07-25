@@ -8,6 +8,15 @@ use std::thread;
 use std::time::Duration;
 
 #[test]
+fn converts_usd_amounts_to_micros() {
+    assert_eq!(usd_to_micros(0.0388), 38_800);
+    assert_eq!(usd_to_micros(1.5), 1_500_000);
+    assert_eq!(usd_to_micros(0.0), 0);
+    assert_eq!(usd_to_micros(-1.0), 0);
+    assert_eq!(usd_to_micros(f64::NAN), 0);
+}
+
+#[test]
 fn write_status_repeatedly_replaces_existing_result_json() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join(RESULT_FILE_NAME);

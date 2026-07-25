@@ -52,7 +52,9 @@ Capture verbose output in temporary logs and inspect only relevant excerpts.
 ### Required after Rust changes
 
 ```bash
-cargo fmt
+cargo fmt --all
+# CI equivalent: cargo fmt --all -- --check
+# (also enforced by: python3 scripts/check_sdk_compatibility.py --test-downstream)
 
 ARCH_LOG=$(mktemp /tmp/rho-architecture.XXXXXX.log)
 python3 scripts/check_architecture.py >"$ARCH_LOG" 2>&1
@@ -63,9 +65,16 @@ cargo test <focused-filter-or-target> >"$TEST_LOG" 2>&1
 
 Choose the test target from the changed modules rather than copying the placeholder. Run broader `cargo test` only when changes cross boundaries or focused coverage is insufficient.
 
+When the change touches `rho-sdk`, downstream fixtures, or SDK packaging metadata, also run:
+
+```bash
+python3 scripts/check_sdk_compatibility.py --test-features
+python3 scripts/check_sdk_compatibility.py --test-downstream
+```
+
 Do not raise architecture line budgets merely to pass. Extract cohesive modules instead. Run `scripts/check_architecture.py --self-test` only when changing the checker, its policy, related documentation, or fixtures.
 
-Run `cargo check` or `cargo clippy --all-targets --all-features` when requested or when they add meaningful coverage. Never claim a check passed unless it was run.
+Run `cargo check` or `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` when requested or when they add meaningful coverage. Never claim a check passed unless it was run.
 
 For interactive TUI behavior, load and follow `rho-tui-pty-testing` first. Run the PTY smoke suite or a named scenario when the change touches interactive flows. Fall back to `rho-tui-herdr-testing` only for exploratory validation or when a PTY scenario cannot cover the behavior yet. Record the path used and its result here.
 

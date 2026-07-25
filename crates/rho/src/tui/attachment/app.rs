@@ -1,8 +1,12 @@
-use std::{io::IsTerminal, path::PathBuf, time::Duration};
+use std::{
+    io::IsTerminal,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::Paragraph,
@@ -17,11 +21,18 @@ use crate::{
 };
 
 use super::super::{
+    mouse_capture,
     provider_attempt::ProviderAttempt,
     render::{entry_lines, truncate_one_line},
+    scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     terminal_events::TerminalEvents,
     theme::Theme,
-    Entry, ReasoningEntry, ToolEntry, ToolEntryState,
+    usage_cost::{
+        format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
+        AttemptAwareRunUsage,
+    },
+    Entry, HistoryScroll, ReasoningEntry, ToolEntry, ToolEntryState, HISTORY_MOUSE_SCROLL_LINES,
+    HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
@@ -39,7 +50,9 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     subagent::secure_directory(&directory)?;
 
     let mut terminal = ratatui::init();
-    let _restore_terminal = RestoreTerminal;
+    let _restore_terminal = RestoreTerminal {
+        mouse_capture: mouse_capture::Guard::acquire(),
+    };
     Theme::initialize_from_terminal();
     let message = format!("attached to agent run {id}");
     herdr
@@ -52,10 +65,14 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
     result
 }
 
-struct RestoreTerminal;
+struct RestoreTerminal {
+    mouse_capture: mouse_capture::Guard,
+}
 
 impl Drop for RestoreTerminal {
     fn drop(&mut self) {
+        // Disable mouse capture before leaving the alternate screen.
+        self.mouse_capture.release();
         ratatui::restore();
     }
 }
@@ -67,13 +84,17 @@ struct AttachmentApp {
     transcript: Vec<Entry>,
     pending_tool: Option<ToolEntry>,
     context_usage: Option<ContextUsage>,
-    usage: Option<ModelUsage>,
+    /// Latest provider usage for the attached run, including failed attempts.
+    run_usage: AttemptAwareRunUsage,
     provider_attempt: ProviderAttempt,
     status: Option<RunStatus>,
     reported_state: Option<RunState>,
     herdr: HerdrReporter,
-    scroll_from_bottom: usize,
+    scroll: HistoryScrollChrome,
+    last_mouse_position: Option<(u16, u16)>,
     viewport_height: usize,
+    history_area: Rect,
+    content_len: usize,
     should_quit: bool,
 }
 
@@ -87,13 +108,16 @@ impl AttachmentApp {
             transcript: Vec::new(),
             pending_tool: None,
             context_usage: None,
-            usage: None,
+            run_usage: AttemptAwareRunUsage::default(),
             provider_attempt: ProviderAttempt::default(),
             status: None,
             reported_state: None,
             herdr,
-            scroll_from_bottom: 0,
+            scroll: HistoryScrollChrome::default(),
+            last_mouse_position: None,
             viewport_height: 0,
+            history_area: Rect::default(),
+            content_len: 0,
             should_quit: false,
         }
     }
@@ -108,7 +132,11 @@ impl AttachmentApp {
         while !self.should_quit {
             let redraw = tokio::select! {
                 event = terminal_events.next() => self.handle_event(event?),
-                _ = refresh.tick() => self.refresh().await?,
+                _ = refresh.tick() => {
+                    let changed = self.refresh().await?;
+                    // Keep redrawing while the auto-hide scrollbar is visible.
+                    changed || self.scroll.should_render(Instant::now())
+                },
             };
             if redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -188,13 +216,17 @@ impl AttachmentApp {
             }
             AttachmentEvent::Notice(notice) => self.transcript.push(Entry::Notice(notice)),
             AttachmentEvent::ContextUsage(usage) => self.context_usage = Some(usage),
-            AttachmentEvent::Usage(usage) => self.usage = Some(usage),
+            AttachmentEvent::Usage(usage) => {
+                self.run_usage.apply_snapshot(usage, |snapshot| snapshot);
+            }
             AttachmentEvent::StepStarted => {
                 self.provider_attempt.begin(self.transcript.len());
+                self.run_usage.step_started();
             }
             AttachmentEvent::ProviderStreamReset => {
                 self.provider_attempt.reset_output(&mut self.transcript);
                 self.pending_tool = None;
+                self.run_usage.attempt_reset();
             }
             AttachmentEvent::Completed => {
                 self.pending_tool = None;
@@ -211,6 +243,7 @@ impl AttachmentApp {
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
+        let now = Instant::now();
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -222,42 +255,90 @@ impl AttachmentApp {
                     true
                 }
                 KeyCode::Up => {
-                    self.scroll_up(1);
+                    self.scroll_lines(now, -1);
                     true
                 }
                 KeyCode::Down => {
-                    self.scroll_down(1);
+                    self.scroll_lines(now, 1);
                     true
                 }
                 KeyCode::PageUp => {
-                    self.scroll_up(self.viewport_height.max(1));
+                    self.scroll_lines(now, -(self.viewport_height.max(1) as isize));
                     true
                 }
                 KeyCode::PageDown => {
-                    self.scroll_down(self.viewport_height.max(1));
+                    self.scroll_lines(now, self.viewport_height.max(1) as isize);
                     true
                 }
                 KeyCode::Home => {
-                    self.scroll_from_bottom = usize::MAX;
+                    self.scroll
+                        .set_top_line(self.content_len, self.viewport_height, 0);
+                    if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
+                        self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
+                    }
                     true
                 }
                 KeyCode::End => {
-                    self.scroll_from_bottom = 0;
+                    self.scroll.scroll_to_bottom();
                     true
                 }
                 _ => false,
             },
+            Event::Mouse(mouse) => {
+                if matches!(mouse.kind, MouseEventKind::Moved)
+                    && self.last_mouse_position == Some((mouse.column, mouse.row))
+                {
+                    return false;
+                }
+                if matches!(mouse.kind, MouseEventKind::Moved) {
+                    self.last_mouse_position = Some((mouse.column, mouse.row));
+                }
+                self.scroll.handle_scrollbar_mouse(
+                    mouse.kind,
+                    mouse.column,
+                    mouse.row,
+                    ScrollbarMouseInput {
+                        now,
+                        reveal_duration: HISTORY_SCROLLBAR_REVEAL_DURATION,
+                        scrollbar: self.history_scrollbar(),
+                        content_len: self.content_len,
+                        viewport_len: self.viewport_height,
+                        wheel_lines: HISTORY_MOUSE_SCROLL_LINES,
+                    },
+                );
+                true
+            }
+            Event::FocusGained => {
+                mouse_capture::reassert();
+                false
+            }
             Event::Resize(_, _) => true,
             _ => false,
         }
     }
 
-    fn scroll_up(&mut self, lines: usize) {
-        self.scroll_from_bottom = self.scroll_from_bottom.saturating_add(lines);
+    fn scroll_lines(&mut self, now: Instant, delta: isize) {
+        self.scroll
+            .scroll_by(self.content_len, self.viewport_height, delta);
+        if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
+            self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
+        }
     }
 
-    fn scroll_down(&mut self, lines: usize) {
-        self.scroll_from_bottom = self.scroll_from_bottom.saturating_sub(lines);
+    fn history_scrollbar(&self) -> Option<HistoryScrollbar> {
+        HistoryScrollbar::new(
+            self.history_area,
+            self.content_len,
+            self.scroll
+                .visible_start(self.content_len, self.viewport_height),
+        )
+    }
+
+    fn sync_history_geometry(&mut self, area: Rect, content_len: usize) {
+        self.history_area = area;
+        self.viewport_height = area.height as usize;
+        self.content_len = content_len;
+        self.scroll.clamp(self.content_len, self.viewport_height);
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>) {
@@ -277,51 +358,12 @@ impl AttachmentApp {
         let activity = status
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
-        let metrics = status.map_or_else(
-            || format!("{agent_id}  |  {activity}"),
-            |status| {
-                let mut parts = vec![
-                    agent_id.to_string(),
-                    activity.to_string(),
-                    format!("turn {}", status.turns),
-                    format!(
-                        "tokens {}/{}",
-                        status
-                            .input_tokens
-                            .map_or_else(|| "?".into(), |tokens| tokens.to_string()),
-                        status
-                            .output_tokens
-                            .map_or_else(|| "?".into(), |tokens| tokens.to_string()),
-                    ),
-                ];
-                if let Some(session_id) = status.claude_session_id.as_deref() {
-                    parts.push(format!("claude {session_id}"));
-                }
-                if let Some(cost) = status.total_cost_usd {
-                    parts.push(format!("${cost:.4}"));
-                }
-                parts.join("  |  ")
-            },
+        let metrics = status_metrics_line(status, agent_id, activity, self.run_usage.current());
+        let live_metrics = live_metrics_line(
+            self.context_usage.as_ref(),
+            self.run_usage.current(),
+            status,
         );
-        let mut live_metrics = Vec::new();
-        if let Some(context) = &self.context_usage {
-            let tokens = context
-                .tokens
-                .map_or_else(|| "?".into(), |tokens| tokens.to_string());
-            let window = context
-                .context_window
-                .map_or_else(|| "?".into(), |tokens| tokens.to_string());
-            live_metrics.push(format!("context {tokens}/{window}"));
-        }
-        if let Some(usage) = &self.usage {
-            let input = usage
-                .total_input_tokens()
-                .map_or_else(|| "?".into(), |tokens| tokens.to_string());
-            let output = usage
-                .output_tokens
-                .map_or_else(|| "?".into(), |tokens| tokens.to_string());
-            live_metrics.push(format!("step tokens {input}/{output}"));
-        }
         let header = vec![
             Line::from(vec![
                 Span::styled("rho", Theme::brand()),
@@ -329,14 +371,38 @@ impl AttachmentApp {
                 Span::styled(format!("  {state}"), state_style(status)),
             ]),
             Line::styled(truncate_one_line(&metrics, width), Theme::dim()),
-            Line::styled(
-                truncate_one_line(&live_metrics.join("  |  "), width),
-                Theme::dim(),
-            ),
+            Line::styled(truncate_one_line(&live_metrics, width), Theme::dim()),
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
         ];
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
+        let lines = self.history_lines(width, status);
+        self.sync_history_geometry(chunks[1], lines.len());
+        let start = self
+            .scroll
+            .visible_start(self.content_len, self.viewport_height);
+        let end = start.saturating_add(self.viewport_height).min(lines.len());
+        frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
+
+        let now = Instant::now();
+        if let Some(scrollbar) = self
+            .history_scrollbar()
+            .filter(|_| self.scroll.should_render(now))
+        {
+            scrollbar.render(frame, self.scroll.drag().is_some());
+        }
+
+        let footer = vec![
+            Line::styled("─".repeat(width.max(1)), Theme::dim()),
+            Line::styled(
+                truncate_one_line("read-only  |  scroll  |  home/end  |  q detach", width),
+                Theme::dim(),
+            ),
+        ];
+        frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
+    }
+
+    fn history_lines(&self, width: usize, status: Option<&RunStatus>) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for entry in &self.transcript {
             lines.extend(entry_lines(entry, width, MAX_TOOL_OUTPUT_LINES));
@@ -385,26 +451,83 @@ impl AttachmentApp {
         if lines.is_empty() {
             lines.push(Line::styled("waiting for agent output...", Theme::dim()));
         }
-
-        self.viewport_height = chunks[1].height as usize;
-        let max_scroll = lines.len().saturating_sub(self.viewport_height);
-        self.scroll_from_bottom = self.scroll_from_bottom.min(max_scroll);
-        let start = max_scroll.saturating_sub(self.scroll_from_bottom);
-        let end = start.saturating_add(self.viewport_height).min(lines.len());
-        frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
-
-        let footer = vec![
-            Line::styled("─".repeat(width.max(1)), Theme::dim()),
-            Line::styled(
-                truncate_one_line(
-                    "read-only  |  up/down scroll  |  home/end  |  q detach",
-                    width,
-                ),
-                Theme::dim(),
-            ),
-        ];
-        frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
+        lines
     }
+}
+
+fn status_metrics_line(
+    status: Option<&RunStatus>,
+    agent_id: &str,
+    activity: &str,
+    run_usage: Option<&ModelUsage>,
+) -> String {
+    let Some(status) = status else {
+        return format!("{agent_id}  |  {activity}");
+    };
+    let mut parts = vec![
+        agent_id.to_string(),
+        activity.to_string(),
+        format!("turn {}", status.turns),
+    ];
+    if let Some(session_id) = status.claude_session_id.as_deref() {
+        parts.push(format!("claude {session_id}"));
+    }
+    if let Some(cost) = format_run_cost(status, run_usage) {
+        parts.push(cost);
+    }
+    parts.join("  |  ")
+}
+
+fn live_metrics_line(
+    context: Option<&ContextUsage>,
+    run_usage: Option<&ModelUsage>,
+    status: Option<&RunStatus>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(context_summary) = format_context_summary(context) {
+        parts.push(context_summary);
+    }
+    if let Some(usage_summary) = run_usage
+        .and_then(format_usage_token_summary)
+        .or_else(|| status.and_then(|status| format_usage_token_summary(&run_status_usage(status))))
+    {
+        parts.push(usage_summary);
+    }
+    parts.join("  |  ")
+}
+
+fn run_status_usage(status: &RunStatus) -> ModelUsage {
+    ModelUsage {
+        input_tokens: status.input_tokens,
+        output_tokens: status.output_tokens,
+        ..ModelUsage::default()
+    }
+}
+
+fn format_context_summary(context: Option<&ContextUsage>) -> Option<String> {
+    let context = context?;
+    let tokens = context.tokens?;
+    match context.context_window.filter(|window| *window > 0) {
+        Some(window) => {
+            let percent = tokens as f64 * 100.0 / window as f64;
+            Some(format!(
+                "context {}/{} ({percent:.1}%)",
+                format_token_count(tokens),
+                format_token_count(window)
+            ))
+        }
+        None => Some(format!("context {}", format_token_count(tokens))),
+    }
+}
+
+fn format_run_cost(status: &RunStatus, run_usage: Option<&ModelUsage>) -> Option<String> {
+    if let Some(cost) = status.total_cost_usd {
+        return Some(format_usd(subagent::usd_to_micros(cost)));
+    }
+    // Attach has no model metadata, so this resolves provider-reported cost only.
+    run_usage
+        .and_then(|usage| resolved_usage_cost_usd_micros(usage, None))
+        .map(format_usd)
 }
 
 #[derive(Clone, Copy)]

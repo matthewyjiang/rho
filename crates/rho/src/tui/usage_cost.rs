@@ -1,5 +1,68 @@
 use rho_providers::model::{ModelMetadata, ModelUsage};
 
+/// Attempt-aware provider usage snapshots for a single run.
+///
+/// Provider usage is cumulative within the current attempt. Failed attempts keep
+/// their already-charged tokens via [`Self::before_attempt`], while step
+/// boundaries are tracked so callers can derive last-step deltas.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct AttemptAwareRunUsage {
+    before_step: Option<ModelUsage>,
+    before_attempt: Option<ModelUsage>,
+    current: Option<ModelUsage>,
+}
+
+impl AttemptAwareRunUsage {
+    pub(super) fn current(&self) -> Option<&ModelUsage> {
+        self.current.as_ref()
+    }
+
+    pub(super) fn current_mut(&mut self) -> Option<&mut ModelUsage> {
+        self.current.as_mut()
+    }
+
+    pub(super) fn before_step(&self) -> Option<&ModelUsage> {
+        self.before_step.as_ref()
+    }
+
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub(super) fn step_started(&mut self) {
+        self.before_step = self.current.clone();
+        self.before_attempt = None;
+    }
+
+    pub(super) fn attempt_reset(&mut self) {
+        self.before_attempt = self
+            .current
+            .as_ref()
+            .map(|usage| usage_difference(usage, self.before_step.as_ref()));
+    }
+
+    /// Apply a provider usage snapshot for the active attempt.
+    ///
+    /// `prepare_retry_snapshot` runs only when merging onto failed-attempt
+    /// tokens (main TUI uses it to estimate missing costs before merge).
+    pub(super) fn apply_snapshot(
+        &mut self,
+        usage: ModelUsage,
+        prepare_retry_snapshot: impl FnOnce(ModelUsage) -> ModelUsage,
+    ) -> ModelUsage {
+        let mut current_run_usage = usage;
+        if let Some(attempt_baseline) = &self.before_attempt {
+            current_run_usage = prepare_retry_snapshot(current_run_usage);
+            let mut combined = None;
+            merge_usage(&mut combined, attempt_baseline.clone());
+            merge_usage(&mut combined, current_run_usage);
+            current_run_usage = combined.expect("attempt baseline is present");
+        }
+        self.current = Some(current_run_usage.clone());
+        current_run_usage
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum CostSource {
     #[default]
@@ -93,6 +156,37 @@ pub(super) fn format_usd(micros: u64) -> String {
         format!("${dollars:.2}")
     } else {
         format!("${dollars:.3}")
+    }
+}
+
+pub(super) fn format_token_count(tokens: u64) -> String {
+    if tokens < 1_000 {
+        tokens.to_string()
+    } else if tokens < 1_000_000 {
+        format!("{:.1}K", tokens as f64 / 1_000.0)
+    } else {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    }
+}
+
+/// Compact in/out/cache breakdown for status and attach headers.
+pub(super) fn format_usage_token_summary(usage: &ModelUsage) -> Option<String> {
+    let mut parts = Vec::new();
+    push_token_part(&mut parts, "in", usage.input_tokens);
+    push_token_part(&mut parts, "out", usage.output_tokens);
+    push_token_part(&mut parts, "cache r", usage.cache_read_tokens);
+    push_token_part(&mut parts, "cache w", usage.cache_write_tokens);
+    if parts.is_empty() {
+        // Fall back to total input when providers only report an aggregate.
+        push_token_part(&mut parts, "in", usage.total_input_tokens());
+        push_token_part(&mut parts, "out", usage.output_tokens);
+    }
+    (!parts.is_empty()).then(|| format!("tokens {}", parts.join(" · ")))
+}
+
+fn push_token_part(parts: &mut Vec<String>, label: &str, tokens: Option<u64>) {
+    if let Some(tokens) = tokens {
+        parts.push(format!("{label} {}", format_token_count(tokens)));
     }
 }
 

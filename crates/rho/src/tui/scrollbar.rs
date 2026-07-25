@@ -1,6 +1,212 @@
+use std::time::{Duration, Instant};
+
+use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{layout::Rect, style::Modifier, Frame};
 
 use super::{theme::Theme, HistoryScroll};
+
+/// Shared history scroll + auto-hide scrollbar interaction state.
+///
+/// Owned by the main transcript UI and the read-only attach view so both paths
+/// share one reveal/drag/hover/clamp policy.
+#[derive(Clone, Debug, Default)]
+pub(super) struct HistoryScrollChrome {
+    scroll: HistoryScroll,
+    drag: Option<HistoryScrollbarDrag>,
+    visible_until: Option<Instant>,
+    hovered: bool,
+}
+
+impl HistoryScrollChrome {
+    pub(super) fn scroll(&self) -> HistoryScroll {
+        self.scroll
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_scroll(&mut self, scroll: HistoryScroll) {
+        self.scroll = scroll;
+    }
+
+    pub(super) fn drag(&self) -> Option<HistoryScrollbarDrag> {
+        self.drag
+    }
+
+    pub(super) fn set_drag(&mut self, drag: Option<HistoryScrollbarDrag>) {
+        self.drag = drag;
+    }
+
+    pub(super) fn hovered(&self) -> bool {
+        self.hovered
+    }
+
+    pub(super) fn visible_until(&self) -> Option<Instant> {
+        self.visible_until
+    }
+
+    pub(super) fn reveal(&mut self, now: Instant, duration: Duration) {
+        self.visible_until = Some(now + duration);
+    }
+
+    pub(super) fn hide(&mut self) {
+        self.drag = None;
+        self.visible_until = None;
+        self.hovered = false;
+    }
+
+    pub(super) fn should_render(&self, now: Instant) -> bool {
+        self.drag.is_some()
+            || self.hovered
+            || self
+                .visible_until
+                .is_some_and(|visible_until| now < visible_until)
+    }
+
+    pub(super) fn visible_start(&self, content_len: usize, viewport_len: usize) -> usize {
+        let max_start = content_len.saturating_sub(viewport_len);
+        match self.scroll {
+            HistoryScroll::Bottom => max_start,
+            HistoryScroll::Manual { top_line } => top_line.min(max_start),
+        }
+    }
+
+    pub(super) fn scroll_to_bottom(&mut self) {
+        self.scroll = HistoryScroll::Bottom;
+        self.hide();
+    }
+
+    pub(super) fn scroll_by(&mut self, content_len: usize, viewport_len: usize, delta: isize) {
+        let max_start = content_len.saturating_sub(viewport_len);
+        let next = self
+            .visible_start(content_len, viewport_len)
+            .saturating_add_signed(delta)
+            .min(max_start);
+        self.set_top_line(content_len, viewport_len, next);
+    }
+
+    pub(super) fn set_top_line(
+        &mut self,
+        content_len: usize,
+        viewport_len: usize,
+        top_line: usize,
+    ) {
+        self.scroll = scroll_state_for_top_line(content_len, viewport_len, top_line);
+        if matches!(self.scroll, HistoryScroll::Bottom) {
+            self.hide();
+        } else {
+            self.drag = None;
+        }
+    }
+
+    pub(super) fn clamp(&mut self, content_len: usize, viewport_len: usize) {
+        if matches!(self.scroll, HistoryScroll::Bottom) {
+            self.drag = None;
+            return;
+        }
+        if let HistoryScroll::Manual { top_line } = self.scroll {
+            self.scroll = scroll_state_for_top_line(content_len, viewport_len, top_line);
+            if matches!(self.scroll, HistoryScroll::Bottom) {
+                self.hide();
+            }
+        }
+    }
+
+    pub(super) fn update_hover(
+        &mut self,
+        scrollbar: Option<HistoryScrollbar>,
+        column: u16,
+        row: u16,
+    ) {
+        self.hovered = scrollbar.is_some_and(|scrollbar| scrollbar.contains(column, row));
+    }
+
+    pub(super) fn begin_scrollbar_drag(
+        &mut self,
+        scrollbar: HistoryScrollbar,
+        row: u16,
+        now: Instant,
+        reveal_duration: Duration,
+    ) {
+        self.reveal(now, reveal_duration);
+        let drag = scrollbar.begin_drag(row);
+        self.drag = Some(drag);
+        self.scroll = scrollbar.scroll_state_for_pointer(row, drag);
+    }
+
+    pub(super) fn drag_to(&mut self, scrollbar: HistoryScrollbar, row: u16) {
+        if let Some(drag) = self.drag {
+            self.scroll = scrollbar.scroll_state_for_pointer(row, drag);
+        }
+    }
+}
+
+/// Inputs for scrollbar-only mouse handling (attach view).
+pub(super) struct ScrollbarMouseInput {
+    pub(super) now: Instant,
+    pub(super) reveal_duration: Duration,
+    pub(super) scrollbar: Option<HistoryScrollbar>,
+    pub(super) content_len: usize,
+    pub(super) viewport_len: usize,
+    pub(super) wheel_lines: usize,
+}
+
+impl HistoryScrollChrome {
+    /// Scrollbar-only mouse handling used by the read-only attach view.
+    pub(super) fn handle_scrollbar_mouse(
+        &mut self,
+        kind: MouseEventKind,
+        column: u16,
+        row: u16,
+        input: ScrollbarMouseInput,
+    ) {
+        let ScrollbarMouseInput {
+            now,
+            reveal_duration,
+            scrollbar,
+            content_len,
+            viewport_len,
+            wheel_lines,
+        } = input;
+        match kind {
+            MouseEventKind::ScrollUp => {
+                self.scroll_by(content_len, viewport_len, -(wheel_lines as isize));
+                if !matches!(self.scroll, HistoryScroll::Bottom) {
+                    self.reveal(now, reveal_duration);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_by(content_len, viewport_len, wheel_lines as isize);
+                if !matches!(self.scroll, HistoryScroll::Bottom) {
+                    self.reveal(now, reveal_duration);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let hit = scrollbar
+                    .filter(|scrollbar| scrollbar.contains(column, row))
+                    .filter(|_| self.should_render(now));
+                self.update_hover(scrollbar, column, row);
+                if let Some(scrollbar) = hit {
+                    self.begin_scrollbar_drag(scrollbar, row, now, reveal_duration);
+                } else {
+                    self.drag = None;
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                self.update_hover(scrollbar, column, row);
+                if let Some(scrollbar) = scrollbar {
+                    self.drag_to(scrollbar, row);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.drag = None;
+                self.update_hover(scrollbar, column, row);
+            }
+            MouseEventKind::Moved => {
+                self.update_hover(scrollbar, column, row);
+            }
+            _ => {}
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct HistoryScrollbar {

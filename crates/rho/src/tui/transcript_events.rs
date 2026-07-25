@@ -218,15 +218,12 @@ impl App {
             ViewModelEvent::RunStarted => {
                 self.usage.usage_cost_tracker.run_started();
                 self.usage.usage_before_current_run = self.usage.cumulative_usage.clone();
-                self.usage.usage_before_current_step = None;
-                self.usage.usage_before_current_attempt = None;
-                self.usage.current_run_usage = None;
+                self.usage.run_usage.clear();
                 None
             }
             ViewModelEvent::StepStarted(step) => {
                 self.usage.usage_cost_tracker.step_started();
-                self.usage.usage_before_current_step = self.usage.current_run_usage.clone();
-                self.usage.usage_before_current_attempt = None;
+                self.usage.run_usage.step_started();
                 self.reset_streams();
                 self.turn.provider_attempt_mut().begin(self.history.len());
                 self.turn
@@ -266,10 +263,7 @@ impl App {
             }
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
                 self.usage.usage_cost_tracker.attempt_restarted();
-                self.usage.usage_before_current_attempt =
-                    self.usage.current_run_usage.as_ref().map(|usage| {
-                        usage_difference(usage, self.usage.usage_before_current_step.as_ref())
-                    });
+                self.usage.run_usage.attempt_reset();
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
@@ -280,22 +274,19 @@ impl App {
             }
             ViewModelEvent::Usage(usage) => {
                 let current_cost_source = self.usage.usage_cost_tracker.record_usage(&usage);
-                let mut current_run_usage = usage;
-                if let Some(attempt_baseline) = &self.usage.usage_before_current_attempt {
-                    current_run_usage =
-                        usage_with_estimated_cost(current_run_usage, self.model_metadata.as_ref());
-                    let mut combined = None;
-                    merge_usage(&mut combined, attempt_baseline.clone());
-                    merge_usage(&mut combined, current_run_usage);
-                    current_run_usage = combined.expect("attempt baseline is present");
-                }
-                let step_baseline =
-                    self.usage.usage_before_current_step.clone().map(|usage| {
-                        usage_with_estimated_cost(usage, self.model_metadata.as_ref())
+                let model_metadata = self.model_metadata.as_ref();
+                let mut current_run_usage =
+                    self.usage.run_usage.apply_snapshot(usage, |snapshot| {
+                        usage_with_estimated_cost(snapshot, model_metadata)
                     });
+                let step_baseline = self
+                    .usage
+                    .run_usage
+                    .before_step()
+                    .cloned()
+                    .map(|usage| usage_with_estimated_cost(usage, model_metadata));
                 let mut latest_usage = usage_difference(&current_run_usage, step_baseline.as_ref());
-                latest_usage =
-                    usage_with_estimated_cost(latest_usage, self.model_metadata.as_ref());
+                latest_usage = usage_with_estimated_cost(latest_usage, model_metadata);
                 if current_cost_source == CostSource::Estimated {
                     current_run_usage.cost_usd_micros = add_optional(
                         step_baseline
@@ -303,8 +294,10 @@ impl App {
                             .and_then(|usage| usage.cost_usd_micros),
                         latest_usage.cost_usd_micros,
                     );
+                    if let Some(current) = self.usage.run_usage.current_mut() {
+                        current.cost_usd_micros = current_run_usage.cost_usd_micros;
+                    }
                 }
-                self.usage.current_run_usage = Some(current_run_usage.clone());
                 self.usage.latest_usage = Some(latest_usage);
                 self.usage
                     .cumulative_usage

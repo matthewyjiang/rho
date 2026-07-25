@@ -41,7 +41,13 @@ For PRs:
 - For async traits, return an explicit future with a `Send` bound. Do not use `#[async_trait]` or `#[allow(async_fn_in_trait)]`.
 - Avoid one-use helpers unless they materially improve readability or isolate a clear invariant.
 - Follow Clippy and rustfmt style: collapse nested `if` statements when possible, inline format arguments (`format!("hello {name}")`), and prefer method references to redundant closures.
-- After Rust changes, run `cargo fmt`, `python3 scripts/check_architecture.py`, and the narrowest relevant tests when practical. Use the `rho-rust-change-validation` skill for the full workflow.
+- After Rust changes, run the local checks that match CI quality gates when practical:
+  - `cargo fmt --all` (CI enforces `cargo fmt --all -- --check`, including via `python3 scripts/check_sdk_compatibility.py --test-downstream`)
+  - `python3 scripts/check_architecture.py`
+  - the narrowest relevant tests
+  - when touching `rho-sdk`, fixtures, or SDK packaging: `python3 scripts/check_sdk_compatibility.py --test-features` and `python3 scripts/check_sdk_compatibility.py --test-downstream`
+  - before opening or updating a PR: `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` when the change is broad enough to warrant it
+- Use the `rho-rust-change-validation` skill for the full workflow.
 
 ## Architecture and module boundaries
 

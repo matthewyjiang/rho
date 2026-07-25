@@ -5,7 +5,7 @@
 
 use rho_sdk::ToolCallId;
 
-use super::usage_cost::format_usd;
+use super::usage_cost::{format_token_count, format_usd};
 
 /// Stable synthetic call id so live compaction can occupy the tool-call batch.
 pub(super) fn compaction_call_id() -> ToolCallId {
@@ -156,16 +156,6 @@ fn reduction_percent(previous: u64, removed: u64) -> u64 {
         return 0;
     }
     ((removed as f64 * 100.0) / previous as f64).round() as u64
-}
-
-fn format_token_count(tokens: u64) -> String {
-    if tokens < 1_000 {
-        tokens.to_string()
-    } else if tokens < 1_000_000 {
-        format!("{:.1}K", tokens as f64 / 1_000.0)
-    } else {
-        format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    }
 }
 
 #[cfg(test)]
