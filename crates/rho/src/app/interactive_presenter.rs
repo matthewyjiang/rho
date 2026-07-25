@@ -92,13 +92,26 @@ impl ToolKind {
 
     /// How many new argument bytes to wait before re-rendering a live preview.
     ///
-    /// Agent prompts are long and need frequent updates. Other tools keep the
-    /// cheaper exponential cadence so large inert payloads are not re-parsed
-    /// every few dozen bytes.
+    /// Agent prompts need frequent updates early and a gentler cadence once the
+    /// payload is long. Other tools keep the cheaper exponential backoff so
+    /// large inert payloads are not re-parsed every few dozen bytes.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
         match self {
-            Self::Agent => 32,
-            _ => arguments_len.max(1),
+            Self::Agent => (arguments_len / 8).max(32),
+            Self::Agents
+            | Self::Bash
+            | Self::PowerShell
+            | Self::Process
+            | Self::ListDir
+            | Self::ReadFile
+            | Self::WriteFile
+            | Self::EditFile
+            | Self::Skill
+            | Self::WebSearch
+            | Self::FetchContent
+            | Self::GetSearchContent
+            | Self::Questionnaire
+            | Self::Other => arguments_len.max(1),
         }
     }
 }

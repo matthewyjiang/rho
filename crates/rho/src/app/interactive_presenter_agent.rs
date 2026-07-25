@@ -191,15 +191,19 @@ fn task_lines(
 }
 
 fn live_tail_prompt_lines(task: &str) -> Vec<String> {
-    let char_count = task.chars().count();
-    let dropped_chars = char_count > STREAMING_PROMPT_CHARS;
-    let body = if dropped_chars {
-        task.chars()
-            .skip(char_count - STREAMING_PROMPT_CHARS)
-            .collect::<String>()
-    } else {
-        task.to_string()
-    };
+    // Walk backward once so long prompts do not pay a full char count + rescan.
+    let mut kept_chars = 0usize;
+    let mut start = 0usize;
+    let mut dropped_chars = false;
+    for (index, _) in task.char_indices().rev() {
+        kept_chars += 1;
+        start = index;
+        if kept_chars == STREAMING_PROMPT_CHARS {
+            dropped_chars = index > 0;
+            break;
+        }
+    }
+    let body = &task[start..];
 
     let raw_lines = body.lines().collect::<Vec<_>>();
     let dropped_lines = raw_lines.len() > STREAMING_PROMPT_LINES;
