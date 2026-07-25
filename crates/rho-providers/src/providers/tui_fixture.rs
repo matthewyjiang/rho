@@ -26,6 +26,7 @@ const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
 const BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID: &str = "tui-fixture-background-questionnaire-agent";
 const CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-claude-agent";
 const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
+const BACKGROUND_CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-background-claude-agent";
 const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
@@ -324,6 +325,21 @@ async fn fixture_stream(
                 }),
             )
         }
+        "fixture background claude agent"
+            if tool_result(&request, BACKGROUND_CLAUDE_AGENT_CALL_ID).is_none() =>
+        {
+            // Background Claude run so terminal cost lands through automatic
+            // completion delivery rather than the foreground tool result path.
+            completed_tool_call(
+                BACKGROUND_CLAUDE_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "claude-planner",
+                    "prompt": "Say hello in one short sentence.",
+                    "background": true,
+                }),
+            )
+        }
         "fixture claude agent error"
             if tool_result(&request, CLAUDE_AGENT_ERROR_CALL_ID).is_none() =>
         {
@@ -564,6 +580,10 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         let receipt = result.content.lines().next().unwrap_or_default();
         return completed(format!("claude agent tool finished: {receipt}"));
     }
+    if let Some(result) = tool_result(request, BACKGROUND_CLAUDE_AGENT_CALL_ID) {
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return completed(format!("background claude agent dispatched: {receipt}"));
+    }
     if let Some(result) = tool_result(request, CLAUDE_AGENT_ERROR_CALL_ID) {
         // Foreground failures surface as tool errors; the fixture still ends the
         // parent turn so the PTY can observe the failed agent presentation.
@@ -731,6 +751,10 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
                 "background agent completion received with delegated result (delivery {deliveries})"
             )
         }
+    } else if prompt.contains("(claude-planner): ok") && prompt.contains("rho-claude-e2e-ok") {
+        format!(
+            "background claude agent completion received with delegated result (delivery {deliveries})"
+        )
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }

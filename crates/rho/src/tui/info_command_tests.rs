@@ -93,6 +93,19 @@ fn runtime_info_splits_main_and_subagent_costs() {
 }
 
 #[test]
+fn runtime_info_shows_subagent_cost_without_parent_usage() {
+    let mut info = test_info();
+    info.usage = None;
+    info.latest_usage = None;
+    info.subagent_total_cost_usd_micros = 34_271;
+
+    let text = rendered_text(&info, 80);
+
+    assert!(text.contains("Subagent cost $0.034"), "{text}");
+    assert!(!text.contains("No token usage recorded yet."), "{text}");
+}
+
+#[test]
 fn runtime_info_uses_full_width_contrasting_background() {
     let lines = runtime_info_lines(&test_info(), 80);
 

@@ -166,7 +166,11 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        block.push_note("No token usage recorded yet.");
+        if info.subagent_total_cost_usd_micros > 0 {
+            push_subagent_only_cost(block, info);
+        } else {
+            block.push_note("No token usage recorded yet.");
+        }
         return;
     };
 
@@ -187,11 +191,7 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
         } else {
             ""
         };
-        let equivalent = if info.billing == BillingInfo::Subscription {
-            " API equivalent"
-        } else {
-            ""
-        };
+        let equivalent = cost_equivalent_suffix(info.billing);
 
         if info.subagent_total_cost_usd_micros > 0 {
             block.push_field(
@@ -211,18 +211,26 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
             );
         }
     } else if info.subagent_total_cost_usd_micros > 0 {
-        let equivalent = if info.billing == BillingInfo::Subscription {
-            " API equivalent"
-        } else {
-            ""
-        };
-        block.push_field(
-            "Subagent cost",
-            &format!(
-                "{}{equivalent}",
-                format_usd(info.subagent_total_cost_usd_micros)
-            ),
-        );
+        push_subagent_only_cost(block, info);
+    }
+}
+
+fn push_subagent_only_cost(block: &mut CommandBlock, info: &RuntimeInfo) {
+    let equivalent = cost_equivalent_suffix(info.billing);
+    block.push_field(
+        "Subagent cost",
+        &format!(
+            "{}{equivalent}",
+            format_usd(info.subagent_total_cost_usd_micros)
+        ),
+    );
+}
+
+fn cost_equivalent_suffix(billing: BillingInfo) -> &'static str {
+    if billing == BillingInfo::Subscription {
+        " API equivalent"
+    } else {
+        ""
     }
 }
 

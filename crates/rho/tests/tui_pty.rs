@@ -813,6 +813,87 @@ fn fake_claude_runtime_end_to_end_success() {
     );
 }
 
+/// Background Claude completion path: terminal `total_cost_usd` must fold into
+/// the parent session total shown by `/info` after automatic delivery.
+#[test]
+fn fake_claude_background_cost_appears_in_info() {
+    let home = IsolatedHome::new().unwrap();
+    claude_e2e::install_claude_planner_agent(&home.home);
+
+    let fake_root = home.path().join("fake-claude");
+    let fake = claude_e2e::install_fake_claude(&fake_root, claude_e2e::FakeClaudeMode::Success);
+    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 36,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path);
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_background_cost_info").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness
+        .submit_text("fixture background claude agent")
+        .unwrap();
+    harness
+        .wait_for_text(
+            "background claude agent dispatched:",
+            WaitTimeout::secs(15, "background dispatch"),
+        )
+        .unwrap();
+
+    claude_e2e::wait_for_spawn(&fake, Duration::from_secs(15));
+    let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
+    let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
+    claude_e2e::assert_success_result(&status, &run_dir);
+
+    harness
+        .wait_for_text(
+            "background claude agent completion received with delegated result (delivery 1)",
+            WaitTimeout::secs(20, "completion delivery"),
+        )
+        .unwrap();
+
+    // Delivery should include the fixture cost on the statusline total.
+    harness
+        .wait_for_text("$0.034", WaitTimeout::secs(10, "statusline subagent cost"))
+        .unwrap();
+
+    harness.submit_text("/info").unwrap();
+    harness
+        .wait_for_text("Session usage", WaitTimeout::secs(10, "info opened"))
+        .unwrap();
+    harness
+        .wait_for_text(
+            "Subagent cost",
+            WaitTimeout::secs(10, "subagent cost label"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text("$0.034", WaitTimeout::secs(10, "subagent cost value"))
+        .unwrap();
+
+    let screen = harness.screen().contents();
+    assert!(
+        screen.contains("Subagent cost") && screen.contains("$0.034"),
+        "expected /info to show delivered subagent cost:\n{screen}"
+    );
+    assert!(
+        !screen.contains("No token usage recorded yet."),
+        "subagent cost should replace the empty-usage note:\n{screen}"
+    );
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
 /// Sibling error path: fake Claude emits a terminal error stream and nonzero
 /// exit; the parent surfaces a failed delegated run without network access.
 #[test]
