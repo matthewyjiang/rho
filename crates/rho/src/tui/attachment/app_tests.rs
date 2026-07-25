@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use pretty_assertions::assert_eq;
 use ratatui::{backend::TestBackend, Terminal};
 use tempfile::TempDir;
@@ -92,9 +92,12 @@ fn attached_view_renders_transcript_without_a_composer() {
     app.apply_event(AttachmentEvent::Usage(ModelUsage {
         input_tokens: Some(10),
         output_tokens: Some(5),
+        cache_read_tokens: Some(700),
+        cache_write_tokens: Some(20),
+        cost_usd_micros: Some(12_500),
         ..ModelUsage::default()
     }));
-    let mut terminal = Terminal::new(TestBackend::new(80, 18)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
 
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
@@ -103,9 +106,146 @@ fn attached_view_renders_transcript_without_a_composer() {
     assert!(screen.contains("delegated task"));
     assert!(screen.contains("watchable answer"));
     assert!(screen.contains("context 123/456"));
-    assert!(screen.contains("step tokens 10/5"));
+    assert!(screen.contains("tokens in 10 · out 5 · cache r 700 · cache w 20"));
+    assert!(screen.contains("$0.013"));
     assert!(screen.contains("read-only"));
     assert!(!screen.contains("Type a message"));
+    assert!(!screen.contains("step tokens"));
+    assert!(!screen.contains("tokens 10/5"));
+}
+
+#[test]
+fn provider_retry_preserves_failed_attempt_usage() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        HerdrReporter::default(),
+    );
+
+    app.apply_event(AttachmentEvent::StepStarted);
+    app.apply_event(AttachmentEvent::Usage(ModelUsage {
+        input_tokens: Some(100),
+        output_tokens: Some(10),
+        cache_read_tokens: Some(50),
+        ..ModelUsage::default()
+    }));
+    app.apply_event(AttachmentEvent::ProviderStreamReset);
+    app.apply_event(AttachmentEvent::Usage(ModelUsage {
+        input_tokens: Some(40),
+        output_tokens: Some(4),
+        cache_read_tokens: Some(20),
+        ..ModelUsage::default()
+    }));
+
+    assert_eq!(
+        app.run_usage,
+        Some(ModelUsage {
+            input_tokens: Some(140),
+            output_tokens: Some(14),
+            cache_read_tokens: Some(70),
+            total_tokens: Some(224),
+            ..ModelUsage::default()
+        })
+    );
+}
+
+#[test]
+fn multi_step_usage_replaces_live_run_snapshot() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        HerdrReporter::default(),
+    );
+
+    app.apply_event(AttachmentEvent::StepStarted);
+    app.apply_event(AttachmentEvent::Usage(ModelUsage {
+        input_tokens: Some(100),
+        output_tokens: Some(20),
+        cache_read_tokens: Some(50),
+        ..ModelUsage::default()
+    }));
+    app.apply_event(AttachmentEvent::StepStarted);
+    app.apply_event(AttachmentEvent::Usage(ModelUsage {
+        input_tokens: Some(200),
+        output_tokens: Some(60),
+        cache_read_tokens: Some(150),
+        ..ModelUsage::default()
+    }));
+
+    assert_eq!(
+        app.run_usage,
+        Some(ModelUsage {
+            input_tokens: Some(200),
+            output_tokens: Some(60),
+            cache_read_tokens: Some(150),
+            ..ModelUsage::default()
+        })
+    );
+}
+
+#[test]
+fn scrolling_up_reveals_history_scrollbar() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        HerdrReporter::default(),
+    );
+    for index in 0..40 {
+        app.apply_event(AttachmentEvent::AssistantTextDelta(format!(
+            "line {index} of a long attached transcript"
+        )));
+        app.apply_event(AttachmentEvent::Notice(format!("notice {index}")));
+    }
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    assert!(!app.should_render_scrollbar(Instant::now()));
+
+    app.handle_event(Event::Key(KeyEvent::new(
+        KeyCode::PageUp,
+        KeyModifiers::NONE,
+    )));
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    assert!(matches!(app.scroll, HistoryScroll::Manual { .. }));
+    assert!(app.should_render_scrollbar(Instant::now()));
+    assert!(app.history_scrollbar().is_some());
+
+    let screen = terminal.backend().to_string();
+    assert!(
+        screen.contains('│') || screen.contains('█'),
+        "expected scrollbar glyphs in attached view:\n{screen}"
+    );
+}
+
+#[test]
+fn mouse_wheel_scrolls_attached_transcript() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        HerdrReporter::default(),
+    );
+    for index in 0..40 {
+        app.apply_event(AttachmentEvent::Notice(format!(
+            "scrollable notice {index}"
+        )));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+
+    app.handle_event(Event::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: 10,
+        row: 8,
+        modifiers: KeyModifiers::NONE,
+    }));
+
+    assert!(matches!(app.scroll, HistoryScroll::Manual { .. }));
+    assert!(app.should_render_scrollbar(Instant::now()));
 }
 
 #[test]
@@ -136,4 +276,28 @@ fn herdr_state_follows_attached_subagent_state() {
         herdr_status("abc123", &status(RunState::Error)).0,
         HerdrState::Blocked
     );
+}
+
+#[test]
+fn format_usage_summary_keeps_cache_fields_separate() {
+    let summary = format_usage_summary(&ModelUsage {
+        input_tokens: Some(100),
+        output_tokens: Some(20),
+        cache_read_tokens: Some(700),
+        cache_write_tokens: Some(50),
+        ..ModelUsage::default()
+    })
+    .unwrap();
+    assert_eq!(summary, "tokens in 100 · out 20 · cache r 700 · cache w 50");
+}
+
+#[test]
+fn status_token_fallback_uses_run_status_totals() {
+    let summary = format_status_token_summary(&RunStatus {
+        input_tokens: Some(1_200),
+        output_tokens: Some(300),
+        ..RunStatus::default()
+    })
+    .unwrap();
+    assert_eq!(summary, "tokens in 1.2K · out 300");
 }
