@@ -80,3 +80,12 @@ fn formats_usd_for_compact_display() {
     assert_eq!(super::format_usd(12_340_000), "$12.34");
     assert_eq!(super::format_usd(123_400_000), "$123");
 }
+
+#[test]
+fn converts_usd_amounts_to_micros() {
+    assert_eq!(super::usd_to_micros(0.0388), 38_800);
+    assert_eq!(super::usd_to_micros(1.5), 1_500_000);
+    assert_eq!(super::usd_to_micros(0.0), 0);
+    assert_eq!(super::usd_to_micros(-1.0), 0);
+    assert_eq!(super::usd_to_micros(f64::NAN), 0);
+}

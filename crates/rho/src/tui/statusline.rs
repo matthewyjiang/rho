@@ -32,6 +32,7 @@ pub(super) struct StatusLineState {
     reasoning_configurable: bool,
     permission_mode: PermissionMode,
     model_metadata: Option<ModelMetadata>,
+    subagent_total_cost_usd_micros: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,6 +70,7 @@ impl Default for StatusLineState {
             reasoning_configurable: true,
             permission_mode: PermissionMode::default(),
             model_metadata: None,
+            subagent_total_cost_usd_micros: 0,
         }
     }
 }
@@ -86,6 +88,7 @@ impl StatusLineState {
             reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
             permission_mode: info.permission_mode,
             model_metadata: None,
+            subagent_total_cost_usd_micros: 0,
         }
     }
 
@@ -151,6 +154,13 @@ impl StatusLine {
         {
             self.state.model_metadata = model_metadata.cloned();
             self.state.reasoning_configurable = reasoning_configurable;
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn update_subagent_cost(&mut self, subagent_total_cost_usd_micros: u64) {
+        if self.state.subagent_total_cost_usd_micros != subagent_total_cost_usd_micros {
+            self.state.subagent_total_cost_usd_micros = subagent_total_cost_usd_micros;
             self.invalidate();
         }
     }
@@ -297,11 +307,15 @@ fn format_token_count(tokens: u64) -> String {
 }
 
 fn status_cost(state: &StatusLineState) -> Option<String> {
-    let usage = state.usage.as_ref()?;
-    usage
-        .cost_usd_micros
-        .or_else(|| estimated_cost_usd_micros(usage, state.model_metadata.as_ref()))
-        .map(format_usd)
+    let main_cost_micros = state.usage.as_ref().and_then(|usage| {
+        usage
+            .cost_usd_micros
+            .or_else(|| estimated_cost_usd_micros(usage, state.model_metadata.as_ref()))
+    });
+    match (main_cost_micros, state.subagent_total_cost_usd_micros) {
+        (None, 0) => None,
+        (main, subagent) => Some(format_usd(main.unwrap_or(0).saturating_add(subagent))),
+    }
 }
 
 fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {

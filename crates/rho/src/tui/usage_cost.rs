@@ -96,6 +96,19 @@ pub(super) fn format_usd(micros: u64) -> String {
     }
 }
 
+/// Convert a provider-reported USD amount into microdollars for TUI totals.
+pub(super) fn usd_to_micros(usd: f64) -> u64 {
+    if !usd.is_finite() || usd <= 0.0 {
+        return 0;
+    }
+    let micros = (usd * 1_000_000.0).round();
+    if micros >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        micros as u64
+    }
+}
+
 fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
     tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
 }

@@ -53,6 +53,8 @@ pub(super) struct RuntimeInfo {
     tree_error: Option<String>,
     /// Claude Code auth summary. Outside provider credentials on purpose.
     claude_code: String,
+    /// Cumulative cost from all completed subagents, including failed/canceled ones.
+    subagent_total_cost_usd_micros: u64,
 }
 
 impl App {
@@ -96,6 +98,7 @@ impl App {
             tree,
             tree_error,
             claude_code,
+            subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
         };
         self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
         self.status = "runtime info".into();
@@ -175,10 +178,10 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
         block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
     }
 
-    let cost = usage
+    let main_cost_micros = usage
         .cost_usd_micros
         .or_else(|| estimated_cost_usd_micros(usage, info.model_metadata.as_ref()));
-    if let Some(cost) = cost {
+    if let Some(main_cost_micros) = main_cost_micros {
         let qualifier = if info.cost_source == CostSource::Estimated {
             " estimated"
         } else {
@@ -189,9 +192,36 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
         } else {
             ""
         };
+
+        if info.subagent_total_cost_usd_micros > 0 {
+            block.push_field(
+                "Main cost",
+                &format!("{}{qualifier}{equivalent}", format_usd(main_cost_micros)),
+            );
+            let total_cost_micros =
+                main_cost_micros.saturating_add(info.subagent_total_cost_usd_micros);
+            block.push_field(
+                "Total cost",
+                &format!("{}{equivalent}", format_usd(total_cost_micros)),
+            );
+        } else {
+            block.push_field(
+                "Cost",
+                &format!("{}{qualifier}{equivalent}", format_usd(main_cost_micros)),
+            );
+        }
+    } else if info.subagent_total_cost_usd_micros > 0 {
+        let equivalent = if info.billing == BillingInfo::Subscription {
+            " API equivalent"
+        } else {
+            ""
+        };
         block.push_field(
-            "Cost",
-            &format!("{}{qualifier}{equivalent}", format_usd(cost)),
+            "Subagent cost",
+            &format!(
+                "{}{equivalent}",
+                format_usd(info.subagent_total_cost_usd_micros)
+            ),
         );
     }
 }

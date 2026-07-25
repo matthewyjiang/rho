@@ -748,6 +748,8 @@ impl App {
         );
         self.statusline
             .update_model_metadata(self.model_metadata.as_ref());
+        self.statusline
+            .update_subagent_cost(self.usage.subagent_total_cost_usd_micros);
     }
 
     pub(super) fn statusline_lines(&mut self, width: usize) -> &[Line<'static>] {

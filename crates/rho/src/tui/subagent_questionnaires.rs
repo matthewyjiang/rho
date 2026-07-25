@@ -285,6 +285,15 @@ impl App {
         if notifications.is_empty() {
             return Ok(None);
         }
+        // Fold terminal subagent costs into the parent session total.
+        for notification in &notifications {
+            if let Some(cost) = notification.snapshot.status.total_cost_usd {
+                self.usage.subagent_total_cost_usd_micros = self
+                    .usage
+                    .subagent_total_cost_usd_micros
+                    .saturating_add(super::usage_cost::usd_to_micros(cost));
+            }
+        }
         // The whole drained batch is one message and one model request, no
         // matter how many runs finished while the parent was busy.
         let (model_prompt, display_prompt) =

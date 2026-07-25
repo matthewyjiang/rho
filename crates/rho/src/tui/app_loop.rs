@@ -287,6 +287,7 @@ impl App {
         self.usage.usage_cost_tracker.reset();
         self.usage.usage_before_current_run = None;
         self.usage.usage_before_current_step = None;
+        self.usage.subagent_total_cost_usd_micros = 0;
         self.usage.usage_before_current_attempt = None;
         self.usage.current_run_usage = None;
         self.usage.latest_usage = None;

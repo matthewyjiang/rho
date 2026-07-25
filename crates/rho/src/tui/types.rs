@@ -95,6 +95,8 @@ pub(super) struct UsageUi {
     pub(in crate::tui) current_run_usage: Option<ModelUsage>,
     pub(in crate::tui) latest_usage: Option<ModelUsage>,
     pub(in crate::tui) current_context: Option<ContextUsage>,
+    // Cumulative cost from all completed subagents, including failed/canceled ones.
+    pub(in crate::tui) subagent_total_cost_usd_micros: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

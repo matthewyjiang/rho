@@ -28,6 +28,7 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
         reasoning_configurable: true,
         permission_mode: crate::permission::PermissionMode::Auto,
         model_metadata: Some(priced_metadata()),
+        subagent_total_cost_usd_micros: 0,
     }
 }
 
@@ -64,6 +65,32 @@ fn wide_statusline_keeps_only_summary_fields() {
     assert!(!bottom.contains("300.0k"), "{bottom}");
     assert!(!bottom.contains("CH"), "{bottom}");
     assert!(!bottom.contains("openai"), "{bottom}");
+}
+
+#[test]
+fn statusline_includes_subagent_cost_in_total() {
+    let usage = ModelUsage {
+        cost_usd_micros: Some(570_000),
+        ..ModelUsage::default()
+    };
+    let mut state = test_state(usage);
+    state.subagent_total_cost_usd_micros = 430_000;
+
+    let bottom = line_text(&statusline_lines(&state, 80, None)[1]);
+
+    assert!(bottom.contains("$1.000"), "{bottom}");
+    assert!(!bottom.contains("$0.570"), "{bottom}");
+}
+
+#[test]
+fn statusline_can_show_subagent_cost_without_main_usage_cost() {
+    let mut state = test_state(ModelUsage::default());
+    state.usage = Some(ModelUsage::default());
+    state.subagent_total_cost_usd_micros = 250_000;
+
+    let bottom = line_text(&statusline_lines(&state, 80, None)[1]);
+
+    assert!(bottom.contains("$0.250"), "{bottom}");
 }
 
 #[test]
