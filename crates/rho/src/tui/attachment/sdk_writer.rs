@@ -1,7 +1,10 @@
 //! Rho runtime attachment recording: SDK events to journal lines.
 //!
-//! Keeps [`crate::run_artifacts::AttachmentWriter`] free of SDK types. Only the
-//! Rho run path constructs this wrapper.
+//! Keeps [`crate::run_artifacts::AttachmentWriter`] free of SDK types.
+//!
+//! Production Rho runs translate events with [`translate_run_event`] and feed
+//! [`crate::run_artifacts::RunArtifactSink`]. [`SdkAttachmentWriter`] is a
+//! test-only convenience that owns a journal writer for unit coverage.
 
 use super::super::{
     compaction_display::running_display_lines,
@@ -10,7 +13,9 @@ use super::super::{
 use crate::run_artifacts::AttachmentEvent;
 use rho_tools::tool::ToolDisplayStyle;
 
-/// Records Rho SDK run events into the generic attachment journal.
+/// Test-only helper that records Rho SDK run events into a journal writer.
+///
+/// Production uses [`translate_run_event`] with [`crate::run_artifacts::RunArtifactSink`].
 #[cfg(test)]
 pub(crate) struct SdkAttachmentWriter {
     writer: crate::run_artifacts::AttachmentWriter,

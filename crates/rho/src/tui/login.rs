@@ -149,6 +149,14 @@ fn selected_credential_store_backend(
 }
 
 impl App {
+    /// Whether the external Claude Code binary currently reports signed in.
+    pub(super) async fn claude_signed_in() -> bool {
+        matches!(
+            crate::claude_runtime::auth::query().await,
+            Ok(status) if status.logged_in
+        )
+    }
+
     pub(super) async fn execute_login_command(
         &mut self,
         invocation: CommandInvocation,
@@ -176,10 +184,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
-            let claude_signed_in = matches!(
-                crate::claude_runtime::auth::query().await,
-                Ok(status) if status.logged_in
-            );
+            let claude_signed_in = Self::claude_signed_in().await;
             match provider_picker::logout_provider_picker(
                 self.credential_store.as_ref(),
                 claude_signed_in,

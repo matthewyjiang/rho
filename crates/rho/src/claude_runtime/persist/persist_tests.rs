@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::sync::watch;
@@ -48,7 +46,7 @@ fn read_attachment_events(output: &std::path::Path) -> Vec<AttachmentEvent> {
 async fn sink_writes_prompt_and_starting_status() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let sink = StatusSink::new(output.clone(), &identity(), "plan this", None).unwrap();
+    let sink = StatusSink::new(output.clone(), &identity(), "plan this", None, None).unwrap();
     assert_eq!(sink.status().state, RunState::Starting);
     assert_eq!(sink.status().provider.as_deref(), Some("claude-code"));
     assert_eq!(sink.status().model.as_deref(), Some("opus"));
@@ -67,7 +65,7 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
     let (tx, rx) = watch::channel(RunStatus::default());
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", Some(tx)).unwrap();
+    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", Some(tx), None).unwrap();
 
     sink.mark_running();
     sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::StepStarted));
@@ -101,7 +99,7 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
 async fn sink_fail_and_stop_are_terminal() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None).unwrap();
+    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
     sink.fail("boom").await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Error);
@@ -112,8 +110,8 @@ async fn sink_fail_and_stop_are_terminal() {
 
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None).unwrap();
-    sink.stop("cancelled").await;
+    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
+    sink.stop("cancelled", None).await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Stopped);
     assert_eq!(status.input_tokens, None);
@@ -126,15 +124,16 @@ async fn sink_fail_and_stop_are_terminal() {
 #[tokio::test]
 async fn sink_collects_rate_limits_until_settle() {
     let directory = TempDir::new().unwrap();
-    let home = directory.path().join("home");
-    std::fs::create_dir_all(&home).unwrap();
-    let previous_home = std::env::var_os("HOME");
-    let previous_rho = std::env::var_os("RHO_HOME");
-    std::env::set_var("HOME", &home);
-    std::env::remove_var("RHO_HOME");
-
+    let rate_limit_path = directory.path().join("rate-limits.json");
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        Some(rate_limit_path.clone()),
+    )
+    .unwrap();
     sink.apply_effect(StreamEffect::RateLimit(
         crate::claude_runtime::stream::RateLimitInfo {
             status: Some("allowed".into()),
@@ -147,28 +146,18 @@ async fn sink_collects_rate_limits_until_settle() {
         },
     ));
     // Cache is empty until settle.
-    assert!(crate::claude_runtime::rate_limit::load().is_none());
+    assert!(crate::claude_runtime::rate_limit::load_at(&rate_limit_path).is_none());
     sink.finalize_success_from_stream(&success_terminal()).await;
-    let state = crate::claude_runtime::rate_limit::load().expect("cached");
+    let state = crate::claude_runtime::rate_limit::load_at(&rate_limit_path).expect("cached");
     assert_eq!(state.windows.len(), 1);
     assert_eq!(state.windows[0].info.window_key(), "five_hour");
-
-    match previous_home {
-        Some(value) => std::env::set_var("HOME", value),
-        None => std::env::remove_var("HOME"),
-    }
-    match previous_rho {
-        Some(value) => std::env::set_var("RHO_HOME", value),
-        None => std::env::remove_var("RHO_HOME"),
-    }
-    let _ = Arc::new(home); // keep temp root until end
 }
 
 #[tokio::test]
 async fn second_terminal_finish_is_ignored() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None).unwrap();
+    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
     sink.finalize_success_from_stream(&success_terminal()).await;
     sink.fail("later").await;
     let status = subagent::read_status(&output).expect("status");

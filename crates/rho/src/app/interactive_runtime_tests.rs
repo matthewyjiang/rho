@@ -246,30 +246,34 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         permission_mode: PermissionMode::Auto,
         approval_handler: None,
         approval_receiver: None,
-        agent: crate::app::agent_binding::AgentBinder::bind(
-            std::sync::Arc::new(crate::agent::AgentDefinition {
-                id: crate::agent::AgentId::new("default").unwrap(),
-                description: "test".into(),
-                prompt: crate::agent::PromptPolicy::Extend(String::new()),
-                runtime: crate::agent::AgentRuntimeSpec::Rho {
-                    tools: crate::agent::ToolPolicy::All,
-                    model: crate::agent::ModelPolicy::Inherit,
-                    reasoning: None,
-                },
-            }),
-            crate::app::agent_binding::AgentInvocation {
-                role: crate::app::agent_binding::AgentRole::InteractiveRoot,
-                available_tools: crate::agent::AgentCapabilities::all_host_tools(),
-            },
-            &crate::config::Config::default(),
-        )
-        .unwrap(),
+        agent: test_bound_agent(),
         agent_id: "default".into(),
         agent_fingerprint: "test-fingerprint".into(),
         pending_persistence_error: None,
         pending_persistence_checkpoint: None,
         live_context_warm: false,
     }
+}
+
+fn test_bound_agent() -> crate::app::agent_binding::BoundAgent {
+    crate::app::agent_binding::AgentBinder::bind(
+        std::sync::Arc::new(crate::agent::AgentDefinition {
+            id: crate::agent::AgentId::new("default").unwrap(),
+            description: "test".into(),
+            prompt: crate::agent::PromptPolicy::Extend(String::new()),
+            runtime: crate::agent::AgentRuntimeSpec::Rho {
+                tools: crate::agent::ToolPolicy::All,
+                model: crate::agent::ModelPolicy::Inherit,
+                reasoning: None,
+            },
+        }),
+        crate::app::agent_binding::AgentInvocation {
+            role: crate::app::agent_binding::AgentRole::InteractiveRoot,
+            available_tools: crate::agent::AgentCapabilities::all_host_tools(),
+        },
+        &crate::config::Config::default(),
+    )
+    .unwrap()
 }
 
 async fn pending_compaction_runtime(response: &str) -> InteractiveRuntime {

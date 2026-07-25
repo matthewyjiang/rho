@@ -7,12 +7,22 @@ use crate::{keys::Key, scenario::Step, PtyHarness};
 use super::{SETTLE, STARTUP};
 
 fn assert_claude_code_absent_from_login_groups(harness: &mut PtyHarness) -> Result<()> {
+    // Type a claude filter so only matching groups remain; Claude Code must not
+    // surface as its own top-level group.
+    harness.type_text("claude")?;
     let screen = harness.screen().contents();
     let lower = screen.to_ascii_lowercase();
-    if lower.contains("claude code") || lower.contains("claude-code") {
+    if lower.contains("claude code")
+        || lower.contains("claude-code")
+        || lower.contains("delegation only")
+    {
         anyhow::bail!(
             "claude code belongs under Anthropic methods, not top-level login groups:\n{screen}"
         );
+    }
+    // Clear the filter before the xAI step.
+    for _ in 0.."claude".len() {
+        harness.inject_key(&Key::Backspace)?;
     }
     Ok(())
 }

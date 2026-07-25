@@ -35,7 +35,10 @@ fn formats_agent_metadata_with_prompt_extension() {
     assert!(detail.contains("high"));
     assert!(detail.contains("Runtime\nrho"));
     assert!(detail.contains("bash, read_file"));
-    assert!(detail.contains("Inherit Claude config\nno"));
+    assert!(
+        !detail.contains("Inherit Claude config"),
+        "rho agents omit Claude config inheritance: {detail}"
+    );
     assert!(detail.contains("extend system prompt"));
     assert!(detail.contains("Prompt extension"));
     assert!(detail.contains("SECRET PROMPT BODY"));

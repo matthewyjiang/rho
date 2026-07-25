@@ -116,11 +116,11 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::All,
             ..
-        } => ("all".to_string(), "no"),
+        } => ("all".to_string(), None),
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(tools),
             ..
-        } if tools.is_empty() => ("none".to_string(), "no"),
+        } if tools.is_empty() => ("none".to_string(), None),
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(tools),
             ..
@@ -130,7 +130,7 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", "),
-            "no",
+            None,
         ),
         AgentRuntimeSpec::ClaudeCli(config) => (
             if config.tools.as_slice().is_empty() {
@@ -138,11 +138,11 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
             } else {
                 config.tools.as_slice().join(", ")
             },
-            if config.inherit_claude_config {
+            Some(if config.inherit_claude_config {
                 "yes"
             } else {
                 "no"
-            },
+            }),
         ),
     };
     let runtime = definition.runtime.runtime().to_string();
@@ -161,9 +161,12 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
     } else {
         ""
     };
+    let inherit_section = inherit_claude_config
+        .map(|value| format!("\n\nInherit Claude config\n{value}"))
+        .unwrap_or_default();
 
     format!(
-        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nRuntime\n{runtime}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}\n\nInherit Claude config\n{inherit_claude_config}{restrictions}",
+        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nRuntime\n{runtime}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{inherit_section}{restrictions}",
         definition.description
     )
 }

@@ -523,10 +523,7 @@ impl App {
     }
 
     pub(super) async fn open_config_logout_picker(&mut self) -> anyhow::Result<()> {
-        let claude_signed_in = matches!(
-            crate::claude_runtime::auth::query().await,
-            Ok(status) if status.logged_in
-        );
+        let claude_signed_in = Self::claude_signed_in().await;
         match provider_picker::logout_provider_picker(
             self.credential_store.as_ref(),
             claude_signed_in,

@@ -88,17 +88,23 @@ fn validate_definition(
             definition.id
         );
     }
-    if !matches!(
-        &definition.runtime,
+    match &definition.runtime {
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(tools),
             ..
-        } if tools.is_empty()
-    ) {
-        bail!(
-            "one-shot agent definition '{}' must allow no tools",
-            definition.id
-        );
+        } if tools.is_empty() => {}
+        AgentRuntimeSpec::Rho { .. } => {
+            bail!(
+                "one-shot agent definition '{}' must allow no tools",
+                definition.id
+            );
+        }
+        AgentRuntimeSpec::ClaudeCli(_) => {
+            bail!(
+                "one-shot agent definition '{}' must use the rho runtime",
+                definition.id
+            );
+        }
     }
     definition.reasoning().ok_or_else(|| {
         anyhow::anyhow!(

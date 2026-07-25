@@ -207,7 +207,8 @@ fn indexless_partials_preserve_mixed_indexed_complete_only_blocks() {
 #[test]
 fn ordered_indexless_slots_preserve_complete_only_then_streamed_text() {
     // Two same-kind text blocks: first is complete-only (empty start, no deltas),
-    // second streams indexless. Ordered slots must emit each once in order.
+    // second streams indexless. Emissions follow arrival time (streamed body
+    // before the complete-only body), not ordered slot position.
     let lines = [
         r#"{"type":"stream_event","session_id":"s","event":{"type":"message_start","message":{"id":"msg_ord_text","role":"assistant"}}}"#,
         r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_start","content_block":{"type":"text","text":""}}}"#,
@@ -237,6 +238,8 @@ fn ordered_indexless_slots_preserve_complete_only_then_streamed_text() {
 
 #[test]
 fn ordered_indexless_slots_preserve_complete_only_then_streamed_reasoning() {
+    // Emissions follow arrival time (streamed body before the complete-only
+    // body), not ordered slot position.
     let lines = [
         r#"{"type":"stream_event","session_id":"s","event":{"type":"message_start","message":{"id":"msg_ord_reason","role":"assistant"}}}"#,
         r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_start","content_block":{"type":"thinking","thinking":""}}}"#,

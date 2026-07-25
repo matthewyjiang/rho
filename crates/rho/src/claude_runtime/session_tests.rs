@@ -1,5 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
+use pretty_assertions::assert_eq;
+
 use crate::subagent::RunState;
 
 use super::*;

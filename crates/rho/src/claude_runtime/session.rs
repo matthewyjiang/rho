@@ -67,6 +67,9 @@ pub(crate) struct ClaudeSessionOverrides {
     pub(crate) executable: Option<ClaudeExecutable>,
     /// Auth preflight result. When set, production `auth::query` is not called.
     pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
+    /// Rate-limit cache path. Tests inject a temp path so settle never touches
+    /// the host default cache.
+    pub(crate) rate_limit_state_path: Option<std::path::PathBuf>,
 }
 
 struct OwnedChild {
@@ -148,12 +151,14 @@ pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Re
             status,
             &request.prompt,
             request.status_tx.take(),
+            request.overrides.rate_limit_state_path.clone(),
         )?,
         None => StatusSink::new(
             request.output_file.clone(),
             &request.identity,
             &request.prompt,
             request.status_tx.take(),
+            request.overrides.rate_limit_state_path.clone(),
         )?,
     };
     let outcome = drive_session(&mut request, &mut sink).await;
@@ -164,7 +169,13 @@ pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Re
 /// What one session decided, before any terminal artifact was written.
 enum SessionOutcome {
     /// Cancellation observed. The reason becomes the stop activity.
-    Cancelled(&'static str),
+    ///
+    /// When a terminal `result` already arrived, keep it so settle can still
+    /// apply turns/usage/cost while reporting cancelled state.
+    Cancelled {
+        reason: &'static str,
+        pending: Option<Box<TerminalResult>>,
+    },
     /// Setup, stdin, or stream failure. Ignored when the stream already
     /// published a terminal state.
     Failed(String),
@@ -183,7 +194,9 @@ enum SessionOutcome {
 /// write" is structural instead of repeated per branch.
 async fn settle(mut sink: StatusSink, outcome: SessionOutcome) {
     match outcome {
-        SessionOutcome::Cancelled(reason) => sink.stop(reason).await,
+        SessionOutcome::Cancelled { reason, pending } => {
+            sink.stop(reason, pending.as_deref()).await
+        }
         SessionOutcome::Failed(error) => sink.fail(error).await,
         SessionOutcome::Exited {
             pending,
@@ -217,7 +230,10 @@ async fn drive_session(
     sink: &mut StatusSink,
 ) -> SessionOutcome {
     if request.cancellation.is_cancelled() {
-        return SessionOutcome::Cancelled("cancelled before execution");
+        return SessionOutcome::Cancelled {
+            reason: "cancelled before execution",
+            pending: None,
+        };
     }
     match prepare_launch(request).await {
         Ok(launch) => run_child(request, sink, launch).await,
@@ -276,11 +292,14 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         .map_err(|error| error.to_string())?;
 
     let log_path = spawn::log_path(&request.output_file);
-    let log_file = std::fs::OpenOptions::new()
+    let log_file = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)
-        .map_err(|error| format!("could not open claude log file: {error}"))?;
+        .await
+        .map_err(|error| format!("could not open claude log file: {error}"))?
+        .into_std()
+        .await;
 
     Ok(Launch {
         executable,
@@ -388,7 +407,10 @@ async fn drain_child(
             () = request.cancellation.cancelled() => {
                 // Dropping the pinned stdin future closes ChildStdin; the caller
                 // reaps the tree so nothing is left orphaned.
-                return SessionOutcome::Cancelled("cancelled");
+                return SessionOutcome::Cancelled {
+                    reason: "cancelled",
+                    pending: pending_terminal.map(Box::new),
+                };
             }
             result = &mut stdin_write, if !stdin_done => {
                 stdin_done = true;
@@ -463,7 +485,12 @@ async fn drain_child(
     // here would strand the full tree after the child closed stdout and slept.
     let exit_status = tokio::select! {
         biased;
-        () = request.cancellation.cancelled() => return SessionOutcome::Cancelled("cancelled"),
+        () = request.cancellation.cancelled() => {
+            return SessionOutcome::Cancelled {
+                reason: "cancelled",
+                pending: pending_terminal.map(Box::new),
+            };
+        }
         status = child.wait() => status,
     };
 
@@ -471,7 +498,7 @@ async fn drain_child(
         Ok(status) => SessionOutcome::Exited {
             pending: pending_terminal.map(Box::new),
             status,
-            log_tail: read_log_tail(log_path),
+            log_tail: read_log_tail(log_path).await,
         },
         Err(error) => {
             SessionOutcome::Failed(format!("claude code: failed waiting for child: {error}"))
@@ -578,8 +605,8 @@ fn format_line_error(error: &LineDecodeError) -> String {
     }
 }
 
-fn read_log_tail(path: &std::path::Path) -> String {
-    let Ok(contents) = std::fs::read_to_string(path) else {
+async fn read_log_tail(path: &std::path::Path) -> String {
+    let Ok(contents) = tokio::fs::read_to_string(path).await else {
         return String::new();
     };
     let trimmed = contents.trim();

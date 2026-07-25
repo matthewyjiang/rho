@@ -63,9 +63,9 @@ fn replace_file(temp_path: &Path, path: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_WRITE_THROUGH};
 
-    if !path.exists() {
-        return fs::rename(temp_path, path);
-    }
+    // Call ReplaceFileW directly. Checking path.exists() first is a TOCTOU race
+    // against another writer creating or deleting the destination.
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
     let replaced = path
         .as_os_str()
         .encode_wide()
@@ -86,10 +86,14 @@ fn replace_file(temp_path: &Path, path: &Path) -> std::io::Result<()> {
             std::ptr::null_mut(),
         )
     };
-    if result == 0 {
-        return Err(std::io::Error::last_os_error());
+    if result != 0 {
+        return Ok(());
     }
-    Ok(())
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND) {
+        return fs::rename(temp_path, path);
+    }
+    Err(error)
 }
 
 #[cfg(unix)]

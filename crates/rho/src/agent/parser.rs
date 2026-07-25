@@ -398,9 +398,9 @@ fn looks_like_claude_tool(name: &str) -> bool {
 
 fn looks_like_rho_tool(name: &str) -> bool {
     // Exact Rho capability names only. Claude/MCP names may contain underscores.
-    matches!(
+    !matches!(
         ToolCapability::parse(name.to_string()),
-        capability if !matches!(capability, ToolCapability::Extension(_))
+        ToolCapability::Extension(_)
     )
 }
 
@@ -458,10 +458,8 @@ fn validate_claude_tool_shape(path: &Path, name: &str) -> Result<(), AgentCatalo
             "invalid Claude tool name '{name}': stray closing parenthesis"
         )));
     } else {
+        // Base-name charset already rejects whitespace.
         validate_claude_base_name(path, name)?;
-        if name.chars().any(char::is_whitespace) {
-            return Err(invalid(format!("invalid Claude tool name '{name}'")));
-        }
     }
     Ok(())
 }

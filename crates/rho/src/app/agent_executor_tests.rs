@@ -236,7 +236,7 @@ async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
     let active_claude = acquire_runtime_permits(
         Arc::clone(&total),
         Arc::clone(&claude),
-        /* needs_claude_permit */ true,
+        CapacityClass::Claude,
         &RunCancellation::new(),
     )
     .await
@@ -255,7 +255,7 @@ async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
             acquire_runtime_permits(
                 total,
                 claude,
-                /* needs_claude_permit */ true,
+                CapacityClass::Claude,
                 &RunCancellation::new(),
             )
             .await
@@ -278,7 +278,7 @@ async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
     let rho = acquire_runtime_permits(
         Arc::clone(&total),
         Arc::clone(&claude),
-        /* needs_claude_permit */ false,
+        CapacityClass::Rho,
         &RunCancellation::new(),
     )
     .await
@@ -321,7 +321,7 @@ async fn claude_waits_on_global_after_taking_claude_capacity() {
     let rho_a = acquire_runtime_permits(
         Arc::clone(&total),
         Arc::clone(&claude),
-        /* needs_claude_permit */ false,
+        CapacityClass::Rho,
         &RunCancellation::new(),
     )
     .await
@@ -330,7 +330,7 @@ async fn claude_waits_on_global_after_taking_claude_capacity() {
     let rho_b = acquire_runtime_permits(
         Arc::clone(&total),
         Arc::clone(&claude),
-        /* needs_claude_permit */ false,
+        CapacityClass::Rho,
         &RunCancellation::new(),
     )
     .await
@@ -346,7 +346,7 @@ async fn claude_waits_on_global_after_taking_claude_capacity() {
             acquire_runtime_permits(
                 total,
                 claude,
-                /* needs_claude_permit */ true,
+                CapacityClass::Claude,
                 &RunCancellation::new(),
             )
             .await
@@ -386,15 +386,7 @@ async fn cancellation_during_claude_wait_releases_nothing() {
         let total = Arc::clone(&total);
         let claude = Arc::clone(&claude);
         let cancellation = cancellation.clone();
-        async move {
-            acquire_runtime_permits(
-                total,
-                claude,
-                /* needs_claude_permit */ true,
-                &cancellation,
-            )
-            .await
-        }
+        async move { acquire_runtime_permits(total, claude, CapacityClass::Claude, &cancellation).await }
     });
 
     for _ in 0..32 {
@@ -422,15 +414,7 @@ async fn cancellation_during_global_wait_releases_claude_permit() {
         let total = Arc::clone(&total);
         let claude = Arc::clone(&claude);
         let cancellation = cancellation.clone();
-        async move {
-            acquire_runtime_permits(
-                total,
-                claude,
-                /* needs_claude_permit */ true,
-                &cancellation,
-            )
-            .await
-        }
+        async move { acquire_runtime_permits(total, claude, CapacityClass::Claude, &cancellation).await }
     });
 
     // Let the task take the Claude permit and block on global.
@@ -464,15 +448,7 @@ async fn cancellation_during_rho_global_wait_holds_nothing() {
         let total = Arc::clone(&total);
         let claude = Arc::clone(&claude);
         let cancellation = cancellation.clone();
-        async move {
-            acquire_runtime_permits(
-                total,
-                claude,
-                /* needs_claude_permit */ false,
-                &cancellation,
-            )
-            .await
-        }
+        async move { acquire_runtime_permits(total, claude, CapacityClass::Rho, &cancellation).await }
     });
 
     for _ in 0..32 {
@@ -499,7 +475,7 @@ async fn rho_skips_claude_pool_entirely() {
     let rho = acquire_runtime_permits(
         Arc::clone(&total),
         Arc::clone(&claude),
-        /* needs_claude_permit */ false,
+        CapacityClass::Rho,
         &RunCancellation::new(),
     )
     .await

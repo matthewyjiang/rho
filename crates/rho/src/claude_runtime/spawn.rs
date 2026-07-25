@@ -94,11 +94,6 @@ pub(crate) enum ClaudeSpawnMaterializeError {
         #[source]
         source: std::io::Error,
     },
-    #[error(
-        "claude code: system prompt path is not valid UTF-8 (`{}`); refusing lossy argv conversion",
-        crate::paths::display(.path)
-    )]
-    NonUtf8Path { path: PathBuf },
 }
 
 /// Map Rho permission mode onto Claude's `--permission-mode`.
@@ -208,8 +203,7 @@ pub(crate) fn build_spawn_plan(
 /// Replace vs Extend semantics. User prompt stays on stdin.
 ///
 /// Args stay as [`OsString`] so native paths are not forced through lossy UTF-8
-/// conversion. When the run directory path is not valid UTF-8, materialization
-/// fails before writing so the session can surface [`RunState::Error`] clearly.
+/// conversion. The path token is appended via [`Path::into_os_string`].
 pub(crate) fn finalize_spawn_args(
     plan: &ClaudeSpawnPlan,
     output_file: &Path,
@@ -223,11 +217,6 @@ pub(crate) fn finalize_spawn_args(
         .text()
         .expect("file flag implies prompt text");
     let path = system_prompt_path(output_file);
-    // Reject before writing so a private prompt file is never left beside a
-    // run that cannot spawn with an exact path argv token.
-    if path.to_str().is_none() {
-        return Err(ClaudeSpawnMaterializeError::NonUtf8Path { path });
-    }
     crate::config_writer::write_bytes_atomically(&path, text.as_bytes()).map_err(|source| {
         ClaudeSpawnMaterializeError::Write {
             path: path.clone(),

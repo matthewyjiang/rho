@@ -282,8 +282,10 @@ impl App {
                     .stderr(std::process::Stdio::inherit());
                 #[cfg(unix)]
                 let _signal_guard =
-                    external_editor::unix_editor_signals::EditorSignalGuard::install(&mut command)
-                        .context("could not prepare claude login signal handling")?;
+                    external_editor::unix_suspended_child_signals::SuspendedChildSignalGuard::install(
+                        &mut command,
+                    )
+                    .context("could not prepare claude login signal handling")?;
                 let status = command.status().await.map_err(|source| {
                     if source.kind() == std::io::ErrorKind::NotFound {
                         anyhow::Error::new(ClaudeAuthError::BinaryMissing)

@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::*;
@@ -18,14 +19,13 @@ fn attachment_stream_writes_and_reads_events() {
     let mut reader = AttachmentReader::new(directory.path().join(subagent::ATTACHMENT_FILE_NAME));
     let events = reader.read_new().unwrap();
 
-    assert!(matches!(
-        &events[0],
-        AttachmentEvent::Prompt(prompt) if prompt == "inspect the code"
-    ));
-    assert!(matches!(
-        &events[1],
-        AttachmentEvent::AssistantTextDelta(text) if text == "found it"
-    ));
+    assert_eq!(
+        events,
+        vec![
+            AttachmentEvent::Prompt("inspect the code".into()),
+            AttachmentEvent::AssistantTextDelta("found it".into()),
+        ]
+    );
     assert!(reader.read_new().unwrap().is_empty());
 }
 
@@ -45,12 +45,18 @@ fn attachment_stream_skips_malformed_events() {
 
     let events = reader.read_new().unwrap();
 
-    assert!(matches!(
-        &events[0],
-        AttachmentEvent::Notice(message) if message.contains("skipped invalid attachment event")
-    ));
-    assert!(matches!(
-        &events[1],
-        AttachmentEvent::AssistantTextDelta(text) if text == "valid"
-    ));
+    assert_eq!(events.len(), 2);
+    match &events[0] {
+        AttachmentEvent::Notice(message) => {
+            assert!(
+                message.contains("skipped invalid attachment event"),
+                "{message}"
+            );
+        }
+        other => panic!("expected notice for malformed event, got {other:?}"),
+    }
+    assert_eq!(
+        events[1],
+        AttachmentEvent::AssistantTextDelta("valid".into())
+    );
 }

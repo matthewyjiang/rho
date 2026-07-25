@@ -362,16 +362,8 @@ async fn run_bounded_command_with_timeout(
             }
         };
         let (stdout, stderr) = tokio::join!(stdout_task, stderr_task);
-        let stdout = stdout.map_err(|_| ClaudeAuthError::OutputTooLarge {
-            program: program.clone(),
-            stream: "stdout",
-            cap: PROBE_OUTPUT_CAP_BYTES,
-        })?;
-        let stderr = stderr.map_err(|_| ClaudeAuthError::OutputTooLarge {
-            program: program.clone(),
-            stream: "stderr",
-            cap: PROBE_OUTPUT_CAP_BYTES,
-        })?;
+        let stdout = map_capped_read(stdout, &program, "stdout")?;
+        let stderr = map_capped_read(stderr, &program, "stderr")?;
         let status = child
             .wait()
             .await
@@ -401,21 +393,46 @@ async fn run_bounded_command_with_timeout(
     }
 }
 
-async fn read_capped<R>(mut reader: R, cap: usize) -> Result<Vec<u8>, ()>
+/// Bounded-read failure: I/O errors stay distinct from the hard size cap.
+enum CappedReadError {
+    Io(io::Error),
+    TooLarge,
+}
+
+async fn read_capped<R>(mut reader: R, cap: usize) -> Result<Vec<u8>, CappedReadError>
 where
     R: AsyncRead + Unpin,
 {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 2048];
     loop {
-        let read = reader.read(&mut chunk).await.map_err(|_| ())?;
+        let read = reader.read(&mut chunk).await.map_err(CappedReadError::Io)?;
         if read == 0 {
             return Ok(buffer);
         }
         if buffer.len().saturating_add(read) > cap {
-            return Err(());
+            return Err(CappedReadError::TooLarge);
         }
         buffer.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn map_capped_read(
+    result: Result<Vec<u8>, CappedReadError>,
+    program: &str,
+    stream: &'static str,
+) -> Result<Vec<u8>, ClaudeAuthError> {
+    match result {
+        Ok(bytes) => Ok(bytes),
+        Err(CappedReadError::TooLarge) => Err(ClaudeAuthError::OutputTooLarge {
+            program: program.into(),
+            stream,
+            cap: PROBE_OUTPUT_CAP_BYTES,
+        }),
+        Err(CappedReadError::Io(source)) => Err(ClaudeAuthError::Spawn {
+            program: program.into(),
+            source,
+        }),
     }
 }
 

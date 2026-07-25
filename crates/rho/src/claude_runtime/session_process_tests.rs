@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 use std::{os::unix::fs::PermissionsExt, path::Path};
 
 use crate::run_artifacts::AttachmentEvent;
@@ -64,7 +65,6 @@ cat {payload}
 exit {exit_code}
 "#,
         payload = shell_quote(&payload_path),
-        exit_code = exit_code
     );
     write_fake_claude(bin, &script);
 }
@@ -79,8 +79,8 @@ async fn run_with_fake(
 ) {
     // Keep rate-limit persistence off the host home directory without
     // mutating process env (unsafe under concurrent tests).
-    let rho_home = tempfile::tempdir().unwrap();
-    let _rate_limit_path = rho_home.path().join("claude-rate-limit.json");
+    let rate_limit_dir = tempfile::tempdir().unwrap();
+    let rate_limit_state_path = rate_limit_dir.path().join("rate-limits.json");
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
         identity: ClaudeRunIdentity {
@@ -103,12 +103,13 @@ async fn run_with_fake(
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
             auth_status: Some(Ok(logged_in())),
+            rate_limit_state_path: Some(rate_limit_state_path),
         },
     })
     .await
     .unwrap();
     // Keep the temp root alive through the session await above.
-    drop(rho_home);
+    drop(rate_limit_dir);
 }
 
 async fn run_with_fake_prompt(
@@ -118,8 +119,8 @@ async fn run_with_fake_prompt(
     prompt: &str,
     cancellation: RunCancellation,
 ) {
-    let rho_home = tempfile::tempdir().unwrap();
-    let _rate_limit_path = rho_home.path().join("claude-rate-limit.json");
+    let rate_limit_dir = tempfile::tempdir().unwrap();
+    let rate_limit_state_path = rate_limit_dir.path().join("rate-limits.json");
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
         identity: ClaudeRunIdentity {
@@ -142,11 +143,12 @@ async fn run_with_fake_prompt(
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
             auth_status: Some(Ok(logged_in())),
+            rate_limit_state_path: Some(rate_limit_state_path),
         },
     })
     .await
     .unwrap();
-    drop(rho_home);
+    drop(rate_limit_dir);
 }
 
 fn process_is_running(pid: i32) -> bool {

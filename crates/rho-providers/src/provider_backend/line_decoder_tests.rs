@@ -166,7 +166,16 @@ fn rejects_unterminated_oversize_line_without_unbounded_growth() {
             ..
         }
     ));
-    assert_eq!(decoder.finish().unwrap(), None);
+    // Pending LineTooLong is terminal: finish keeps reporting it.
+    assert!(matches!(
+        decoder
+            .finish()
+            .expect_err("pending oversize stays terminal"),
+        LineDecodeError::LineTooLong {
+            limit: BOUNDED_LIMIT,
+            ..
+        }
+    ));
 }
 
 #[test]

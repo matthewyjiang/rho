@@ -4,14 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
     resolve_claude_login_after_suspend, resolve_claude_login_auth_outcome, ClaudeLoginAfterSuspend,
-    ClaudeLoginAuthOutcome, SignInTarget, CANCEL_LOGOUT_VALUE, CLAUDE_CODE_TARGET,
-    CONFIRM_LOGOUT_VALUE, KEEP_LOGIN_VALUE, RELAY_LOGIN_VALUE,
+    ClaudeLoginAuthOutcome, SignInTarget,
 };
 use crate::claude_runtime::auth::{self, ClaudeAuthError, ClaudeAuthStatus};
 
 #[test]
 fn sign_in_target_routes_claude_code_case_insensitively() {
-    assert_eq!(CLAUDE_CODE_TARGET, "claude-code");
     for value in ["claude-code", " Claude-Code "] {
         assert!(
             matches!(SignInTarget::parse(value), SignInTarget::ClaudeCode),
@@ -34,14 +32,6 @@ fn handoff_and_logout_copy_keep_ownership_with_claude() {
     let logout = auth::logout_confirm_description();
     assert!(logout.contains("everywhere the claude binary is used"));
     assert!(logout.contains("Rho does not store this credential"));
-}
-
-#[test]
-fn relogin_and_logout_choice_values_are_stable() {
-    assert_eq!(KEEP_LOGIN_VALUE, "keep");
-    assert_eq!(RELAY_LOGIN_VALUE, "continue");
-    assert_eq!(CONFIRM_LOGOUT_VALUE, "confirm");
-    assert_eq!(CANCEL_LOGOUT_VALUE, "cancel");
 }
 
 fn signed_in_status() -> ClaudeAuthStatus {

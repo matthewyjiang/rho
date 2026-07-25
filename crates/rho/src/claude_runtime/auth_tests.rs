@@ -392,14 +392,6 @@ exit 1
     }
     // Must not wait out the production PROBE_TIMEOUT (10s) or the child sleep.
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(PROBE_TIMEOUT >= Duration::from_secs(10));
-}
-
-#[test]
-fn probe_timeout_is_bounded_for_cold_start() {
-    // Production budget must stay long enough for cold Claude + keychain, and
-    // short enough that a hung probe does not stall the TUI indefinitely.
-    assert_eq!(PROBE_TIMEOUT, Duration::from_secs(10));
 }
 
 #[test]

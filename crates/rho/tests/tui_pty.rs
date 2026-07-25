@@ -69,8 +69,6 @@ fn smoke_terminal_restoration() {
 
 #[test]
 fn claude_code_login_hands_terminal_to_fake_claude() {
-    use std::os::unix::fs::PermissionsExt;
-
     let home = IsolatedHome::new().unwrap();
     // Ensure /login claude-code does not stop at credential-store choice.
     std::fs::write(
@@ -87,44 +85,7 @@ credential_store = "file"
     )
     .unwrap();
 
-    let bin_dir = tempfile::tempdir().unwrap();
-    let claude = bin_dir.path().join("claude");
-    let marker = bin_dir.path().join("login-ran");
-    std::fs::write(
-        &claude,
-        format!(
-            r#"#!/bin/sh
-if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  if [ -f "{marker}" ]; then
-    printf '%s\n' '{{"loggedIn":true,"email":"fake@example.com","subscriptionType":"pro"}}'
-  else
-    printf '%s\n' '{{"loggedIn":false}}'
-  fi
-  exit 0
-fi
-if [ "$1" = "auth" ] && [ "$2" = "login" ] && [ "$3" = "--claudeai" ]; then
-  printf 'FAKE_CLAUDE_LOGIN_READY\n'
-  touch "{marker}"
-  exit 0
-fi
-if [ "$1" = "--version" ]; then
-  printf '%s\n' '0.0.0-fake'
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 1
-"#,
-            marker = marker.display(),
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    let path = format!(
-        "{}:{}",
-        bin_dir.path().display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let fake = claude_e2e::install_fake_claude_login();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
     let plan = RhoLaunchPlan::matrix(
         binary,
@@ -134,7 +95,7 @@ exit 1
             cols: 100,
         },
     )
-    .with_env("PATH", path);
+    .with_env("PATH", &fake.path);
     let mut harness = PtyHarness::spawn_named(&plan, "claude_code_login").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -161,7 +122,7 @@ exit 1
             WaitTimeout::secs(10, "ownership copy"),
         )
         .unwrap();
-    assert!(marker.exists(), "fake claude login should have run");
+    assert!(fake.marker.exists(), "fake claude login should have run");
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
@@ -306,8 +267,6 @@ web_search_provider = "disabled"
 
 #[test]
 fn login_claude_code_skips_credential_store_when_unset() {
-    use std::os::unix::fs::PermissionsExt;
-
     let home = IsolatedHome::new().unwrap();
     // Leave credential_store unset. Claude login must never ask for it.
     std::fs::write(
@@ -321,44 +280,7 @@ web_search_provider = "disabled"
     )
     .unwrap();
 
-    let bin_dir = tempfile::tempdir().unwrap();
-    let claude = bin_dir.path().join("claude");
-    let marker = bin_dir.path().join("login-ran");
-    std::fs::write(
-        &claude,
-        format!(
-            r#"#!/bin/sh
-if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  if [ -f "{marker}" ]; then
-    printf '%s\n' '{{"loggedIn":true,"email":"fake@example.com","subscriptionType":"pro"}}'
-  else
-    printf '%s\n' '{{"loggedIn":false}}'
-  fi
-  exit 0
-fi
-if [ "$1" = "auth" ] && [ "$2" = "login" ] && [ "$3" = "--claudeai" ]; then
-  printf 'FAKE_CLAUDE_LOGIN_READY\n'
-  touch "{marker}"
-  exit 0
-fi
-if [ "$1" = "--version" ]; then
-  printf '%s\n' '0.0.0-fake'
-  exit 0
-fi
-echo "unexpected args: $*" >&2
-exit 1
-"#,
-            marker = marker.display(),
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    let path = format!(
-        "{}:{}",
-        bin_dir.path().display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    let fake = claude_e2e::install_fake_claude_login();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
     let plan = RhoLaunchPlan::matrix(
         binary,
@@ -368,7 +290,7 @@ exit 1
             cols: 100,
         },
     )
-    .with_env("PATH", path);
+    .with_env("PATH", &fake.path);
     let mut harness = PtyHarness::spawn_named(&plan, "claude_code_login_no_store").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -392,7 +314,7 @@ exit 1
             WaitTimeout::secs(10, "post-login status"),
         )
         .unwrap();
-    assert!(marker.exists(), "fake claude login should have run");
+    assert!(fake.marker.exists(), "fake claude login should have run");
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 
     let config = std::fs::read_to_string(&home.config_path).unwrap();

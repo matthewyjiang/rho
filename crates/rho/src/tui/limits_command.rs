@@ -12,6 +12,17 @@ use crate::usage_limits::{
 const BAR_WIDTH: usize = 10;
 const RELATIVE_RESET_CUTOFF_SECONDS: i64 = 24 * 60 * 60;
 
+/// Display label for Claude Code limits. Presentation only - identity uses
+/// [`LimitsSource::ClaudeCode`].
+const CLAUDE_CODE_PROVIDER_LABEL: &str = "Claude Code";
+
+/// Semantic origin of a `/limits` provider section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LimitsSource {
+    Oauth,
+    ClaudeCode,
+}
+
 pub(super) type LimitsFetchResult =
     Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError>;
 
@@ -150,16 +161,22 @@ pub(super) fn present_limits_result(
             }
             LimitsView { items, status }
         }
-        Err(error) => LimitsView {
-            items: vec![
-                LimitsViewItem::UsageLimits(LimitsDisplay {
-                    providers: claude_provider.into_iter().collect(),
+        Err(error) => {
+            let mut items = Vec::new();
+            if let Some(claude_provider) = claude_provider {
+                items.push(LimitsViewItem::UsageLimits(LimitsDisplay {
+                    providers: vec![claude_provider],
                     empty_note: None,
-                }),
-                LimitsViewItem::Error(format!("could not check OAuth usage limits: {error}")),
-            ],
-            status: "OAuth usage limit check failed".into(),
-        },
+                }));
+            }
+            items.push(LimitsViewItem::Error(format!(
+                "could not check OAuth usage limits: {error}"
+            )));
+            LimitsView {
+                items,
+                status: "OAuth usage limit check failed".into(),
+            }
+        }
     }
 }
 
@@ -194,9 +211,24 @@ fn claude_provider_limits(
         })
         .collect();
     Some(ProviderUsageLimits {
-        provider: "Claude Code".into(),
+        provider: CLAUDE_CODE_PROVIDER_LABEL.into(),
         windows,
     })
+}
+
+fn is_claude_code_provider(provider: &ProviderUsageLimits) -> bool {
+    limits_source_for(provider) == LimitsSource::ClaudeCode
+}
+
+fn limits_source_for(provider: &ProviderUsageLimits) -> LimitsSource {
+    // ProviderUsageLimits carries only a display name today; map the Claude
+    // Code presentation label to the semantic source so status logic does not
+    // compare UI copy inline.
+    if provider.provider == CLAUDE_CODE_PROVIDER_LABEL {
+        LimitsSource::ClaudeCode
+    } else {
+        LimitsSource::Oauth
+    }
 }
 
 fn empty_note_for(limits: &ProviderLimits) -> Option<String> {
@@ -233,12 +265,7 @@ fn status_for(limits: &ProviderLimits, errors: &[UsageLimitsError], has_claude: 
     {
         return "no usage limits reported".into();
     }
-    if has_claude
-        && limits
-            .providers
-            .iter()
-            .all(|provider| provider.provider == "Claude Code")
-    {
+    if has_claude && limits.providers.iter().all(is_claude_code_provider) {
         return "claude code limits only".into();
     }
     "usage limits updated".into()

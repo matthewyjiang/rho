@@ -54,6 +54,8 @@ pub(crate) struct RunArtifactSink {
     closed: bool,
     attachment_enabled: bool,
     tx: Option<SyncSender<WriterCommand>>,
+    /// Signaled once when the background writer exits.
+    done_rx: Option<mpsc::Receiver<()>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -128,10 +130,14 @@ impl RunArtifactSink {
         }
 
         let (tx, rx) = mpsc::sync_channel::<WriterCommand>(QUEUE_CAPACITY);
+        let (done_tx, done_rx) = mpsc::channel();
         let worker_path = path.clone();
         let join = std::thread::Builder::new()
             .name("rho-run-artifacts".into())
-            .spawn(move || writer_loop(worker_path, attachment, rx))
+            .spawn(move || {
+                writer_loop(worker_path, attachment, rx);
+                let _ = done_tx.send(());
+            })
             .ok();
 
         Ok(Self {
@@ -142,6 +148,7 @@ impl RunArtifactSink {
             closed: false,
             attachment_enabled,
             tx: Some(tx),
+            done_rx: Some(done_rx),
             join,
         })
     }
@@ -251,22 +258,30 @@ impl RunArtifactSink {
             // Dropping the sender closes the queue after Finish.
             drop(tx);
         }
+        let done_rx = self.done_rx.take();
         if let Some(join) = self.join.take() {
-            let deadline = Instant::now() + FINISH_JOIN_BUDGET;
-            loop {
-                if join.is_finished() {
+            let finished = match done_rx {
+                Some(done_rx) => !matches!(
+                    done_rx.recv_timeout(FINISH_JOIN_BUDGET),
+                    Err(RecvTimeoutError::Timeout)
+                ),
+                // No completion signal (thread failed to start wiring): fall back to join budget.
+                None => {
+                    let deadline = Instant::now() + FINISH_JOIN_BUDGET;
+                    while !join.is_finished() && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    join.is_finished()
+                }
+            };
+            if finished {
+                let _ = join.join();
+            } else {
+                // Detach: best-effort direct status write so attach sees terminal.
+                let _ = subagent::write_status(&self.path, &self.status);
+                std::thread::spawn(move || {
                     let _ = join.join();
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    // Detach: best-effort direct status write so attach sees terminal.
-                    let _ = subagent::write_status(&self.path, &self.status);
-                    std::thread::spawn(move || {
-                        let _ = join.join();
-                    });
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(1));
+                });
             }
         } else {
             let _ = subagent::write_status(&self.path, &self.status);

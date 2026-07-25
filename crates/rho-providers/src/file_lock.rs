@@ -32,13 +32,15 @@ impl FileLock {
         loop {
             match try_lock_exclusive(&file) {
                 Ok(()) => return Ok(Self { file }),
-                Err(error) if remaining == 0 => return Err(error),
+                // Interruptions are transient: retry immediately without
+                // consuming the busy-retry budget or sleeping.
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(error) if is_lock_busy(&error) => {
+                    if remaining == 0 {
+                        return Err(error);
+                    }
                     remaining -= 1;
                     thread::sleep(delay);
-                }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                    remaining -= 1;
                 }
                 Err(error) => return Err(error),
             }
@@ -69,7 +71,8 @@ fn lock_exclusive_blocking(file: &File) -> io::Result<()> {
             System::IO::OVERLAPPED,
         };
 
-        let mut overlapped = OVERLAPPED::default();
+        // OVERLAPPED must be zeroed; Default is not guaranteed to zero reserved fields.
+        let mut overlapped = unsafe { std::mem::zeroed::<OVERLAPPED>() };
         let result = unsafe {
             LockFileEx(
                 file.as_raw_handle(),
@@ -110,7 +113,7 @@ fn try_lock_exclusive(file: &File) -> io::Result<()> {
             System::IO::OVERLAPPED,
         };
 
-        let mut overlapped = OVERLAPPED::default();
+        let mut overlapped = unsafe { std::mem::zeroed::<OVERLAPPED>() };
         let result = unsafe {
             LockFileEx(
                 file.as_raw_handle(),
@@ -148,7 +151,7 @@ fn unlock_file(file: &File) -> io::Result<()> {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::{Storage::FileSystem::UnlockFileEx, System::IO::OVERLAPPED};
 
-        let mut overlapped = OVERLAPPED::default();
+        let mut overlapped = unsafe { std::mem::zeroed::<OVERLAPPED>() };
         let result = unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut overlapped) };
         if result == 0 {
             return Err(io::Error::last_os_error());

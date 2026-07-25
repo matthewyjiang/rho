@@ -178,22 +178,22 @@ pub(crate) async fn collect_codex_sse_response(
             break;
         };
         decoder.push(&chunk?);
-        while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
+        while let Some(line) = decoder.next_line().map_err(line_decode_error)? {
             if handle_codex_sse_line(line, &mut state, on_event)? {
                 idle_deadline.record_activity();
             }
         }
     }
-    if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
+    if let Some(line) = decoder.finish().map_err(line_decode_error)? {
         handle_codex_sse_line(line, &mut state, on_event)?;
     }
     state.into_response()
 }
 
-pub(crate) fn invalid_stream_utf8(
+pub(crate) fn line_decode_error(
     err: crate::provider_backend::line_decoder::LineDecodeError,
 ) -> ModelError {
-    ModelError::InvalidResponse(format!("streamed response contained invalid utf-8: {err}"))
+    ModelError::InvalidResponse(format!("streamed response could not be decoded: {err}"))
 }
 
 fn sse_data(line: &str) -> Option<&str> {

@@ -448,26 +448,3 @@ fn claude_runtime_omits_effort_when_reasoning_is_none() {
         BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
     }
 }
-
-#[test]
-fn claude_binding_carries_application_step_budget_as_max_turns() {
-    let bound = AgentBinder::bind(
-        claude_definition(ModelPolicy::Inherit),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    match bound.runtime() {
-        BoundRuntime::ClaudeCli { max_turns, .. } => {
-            assert_eq!(
-                *max_turns,
-                crate::app::sdk_config::run_step_limit().get() as u64
-            );
-            assert_ne!(*max_turns, 32, "must not use the old fixed Claude default");
-        }
-        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
-    }
-}

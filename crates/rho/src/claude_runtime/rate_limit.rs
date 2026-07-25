@@ -49,19 +49,19 @@ static OBSERVATION_SEQ: AtomicU64 = AtomicU64::new(1);
 ///
 /// Newer observations always sort higher. Equal capture times break ties by
 /// process nonce, then by process-local sequence.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct ObservationOrder {
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ObservationOrder<'a> {
     nanos: u64,
-    nonce: String,
+    nonce: &'a str,
     seq: u64,
 }
 
-impl ObservationOrder {
+impl<'a> ObservationOrder<'a> {
     fn from_parts(
         observed_at_unix: i64,
         observed_seq: u64,
         observed_at_nanos: u64,
-        nonce: &str,
+        nonce: &'a str,
     ) -> Self {
         let nanos = if observed_at_nanos > 0 {
             observed_at_nanos
@@ -70,7 +70,7 @@ impl ObservationOrder {
         };
         Self {
             nanos,
-            nonce: nonce.to_owned(),
+            nonce,
             seq: observed_seq,
         }
     }
@@ -149,7 +149,7 @@ impl RateLimitObservation {
         }
     }
 
-    fn order_key(&self) -> ObservationOrder {
+    fn order_key(&self) -> ObservationOrder<'_> {
         ObservationOrder::from_parts(
             self.observed_at_unix,
             self.observed_seq,

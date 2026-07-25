@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use rho_providers::model::catalog;
 
 use super::{

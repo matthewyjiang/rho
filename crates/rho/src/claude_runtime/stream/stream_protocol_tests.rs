@@ -366,7 +366,7 @@ fn aggregates_multiple_model_usage_entries_deterministically() {
         "type":"result",
         "subtype":"success",
         "is_error":false,
-        "usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4},
+        "usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":20,"cache_creation_input_tokens":5},
         "modelUsage":{
             "z-model":{"contextWindow":100000,"inputTokens":9},
             "a-model":{"contextWindow":200000,"inputTokens":1,"cacheReadInputTokens":3,"cacheCreationInputTokens":4}
@@ -381,16 +381,18 @@ fn aggregates_multiple_model_usage_entries_deterministically() {
         })
         .expect("terminal");
     // Prefer top-level usage total so RunStatus and ContextUsage match.
+    // Top-level total (10+20+5=35) differs from every modelUsage entry total
+    // (z-model=9, a-model=1+3+4=8) and from their sum (17).
     assert_eq!(
         terminal
             .usage
             .as_ref()
             .and_then(ModelUsage::total_input_tokens),
-        Some(1 + 3 + 4)
+        Some(10 + 20 + 5)
     );
     assert_eq!(
         terminal.context.as_ref().and_then(|context| context.tokens),
-        Some(1 + 3 + 4)
+        Some(10 + 20 + 5)
     );
     // Context window is the max across modelUsage entries (sorted by key).
     assert_eq!(

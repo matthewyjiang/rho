@@ -11,7 +11,7 @@ use {
 };
 
 use super::{
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime, CapacityClass},
+    agent_binding::{AgentBinder, AgentInvocation, AgentRole, CapacityClass},
     automation::{self, RunReporter},
     subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
 };
@@ -161,15 +161,15 @@ impl AgentExecutor {
             &config,
         )?;
 
-        let (provider, model_label) = bound.runtime().artifact_labels();
-        let needs_claude_permit = matches!(bound.runtime().capacity_class(), CapacityClass::Claude);
+        let labels = bound.runtime().artifact_labels();
+        let capacity_class = bound.runtime().capacity_class();
 
         let initial = RunStatus {
             state: RunState::Starting,
             agent_id: Some(bound.id().to_string()),
             agent_fingerprint: Some(bound.fingerprint().to_string()),
-            provider: Some(provider.clone()),
-            model: Some(model_label.clone()),
+            provider: Some(labels.provider.clone()),
+            model: Some(labels.model.clone()),
             ..RunStatus::default()
         };
         // Executor owns the Starting boundary; sinks continue_from it.
@@ -199,7 +199,7 @@ impl AgentExecutor {
             let Some(_runtime_permits) = acquire_runtime_permits(
                 total_permits,
                 claude_permits,
-                needs_claude_permit,
+                capacity_class,
                 &task_cancellation,
             )
             .await?
@@ -208,8 +208,8 @@ impl AgentExecutor {
                     state: RunState::Stopped,
                     agent_id: Some(bound.id().to_string()),
                     agent_fingerprint: Some(bound.fingerprint().to_string()),
-                    provider: Some(provider.clone()),
-                    model: Some(model_label.clone()),
+                    provider: Some(labels.provider.clone()),
+                    model: Some(labels.model.clone()),
                     last_activity: Some("cancelled before execution".into()),
                     ..RunStatus::default()
                 };
@@ -230,16 +230,13 @@ impl AgentExecutor {
                 return crate::claude_runtime::session::run_session(session).await;
             }
 
-            let BoundRuntime::Rho {
-                config: bound_config,
-                ..
-            } = bound.runtime().clone()
-            else {
-                anyhow::bail!("bound runtime was neither Claude nor Rho");
-            };
+            let bound_config = bound
+                .rho_config()
+                .expect("non-Claude bound runtime is Rho")
+                .clone();
             run_rho_agent(RhoAgentRun {
                 bound,
-                config: *bound_config,
+                config: bound_config,
                 config_path,
                 cwd,
                 prompt,
@@ -426,22 +423,23 @@ struct RuntimePermits {
 async fn acquire_runtime_permits(
     total_permits: Arc<tokio::sync::Semaphore>,
     claude_permits: Arc<tokio::sync::Semaphore>,
-    needs_claude_permit: bool,
+    capacity_class: CapacityClass,
     cancellation: &RunCancellation,
 ) -> anyhow::Result<Option<RuntimePermits>> {
-    let claude = if needs_claude_permit {
-        let Some(permit) = acquire_permit_or_cancel(
-            claude_permits,
-            cancellation,
-            "Claude agent concurrency pool closed before the run could start",
-        )
-        .await?
-        else {
-            return Ok(None);
-        };
-        Some(permit)
-    } else {
-        None
+    let claude = match capacity_class {
+        CapacityClass::Claude => {
+            let Some(permit) = acquire_permit_or_cancel(
+                claude_permits,
+                cancellation,
+                "Claude agent concurrency pool closed before the run could start",
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            Some(permit)
+        }
+        CapacityClass::Rho => None,
     };
 
     let Some(total) = acquire_permit_or_cancel(

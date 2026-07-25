@@ -194,7 +194,15 @@ pub(super) fn mark_slot_emitted(
 /// Used when the complete path presents (or acknowledges) a block without going
 /// through partial `content_block_start`. Returns `false` only when the
 /// per-message slot cap is hit and no existing slot matches the index.
-pub(super) fn mark_complete_index(state: &mut MessageStreamState, index: usize) -> bool {
+///
+/// Prefer an existing index-less slot at `block_slots[index]` only when it has
+/// the same presentation kind, so mixed-kind complete envelopes do not claim
+/// the wrong ordered slot.
+pub(super) fn mark_complete_index(
+    state: &mut MessageStreamState,
+    index: usize,
+    kind: ContentBlockKind,
+) -> bool {
     if let Some(ordinal) = state
         .block_slots
         .iter()
@@ -205,13 +213,13 @@ pub(super) fn mark_complete_index(state: &mut MessageStreamState, index: usize) 
     // Prefer aligning with an existing index-less slot at this content position
     // so progressive partials and complete envelopes share one timeline.
     if let Some(slot) = state.block_slots.get_mut(index) {
-        if slot.index.is_none() {
+        if slot.index.is_none() && slot.kind == kind {
             slot.index = Some(index);
             slot.emitted = true;
             return true;
         }
     }
-    let Some(ordinal) = push_block_slot(state, ContentBlockKind::Other, Some(index)) else {
+    let Some(ordinal) = push_block_slot(state, kind, Some(index)) else {
         return false;
     };
     mark_slot_emitted(state, ordinal, Some(index))
@@ -266,7 +274,7 @@ pub(super) fn mark_and_text(
     if text.is_empty() {
         return Some(Vec::new());
     }
-    if !mark_complete_index(state, index) {
+    if !mark_complete_index(state, index, ContentBlockKind::Text) {
         return None;
     }
     Some(text_effects(text))
@@ -281,7 +289,7 @@ pub(super) fn mark_and_reasoning(
     if text.is_empty() {
         return Some(Vec::new());
     }
-    if !mark_complete_index(state, index) {
+    if !mark_complete_index(state, index, ContentBlockKind::Reasoning) {
         return None;
     }
     Some(reasoning_effects(text))

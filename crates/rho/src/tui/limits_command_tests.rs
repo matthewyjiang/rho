@@ -430,10 +430,7 @@ fn present_limits_never_spawns_or_probes_claude() {
     );
     assert!(matches!(
         view.items.as_slice(),
-        [
-            LimitsViewItem::UsageLimits(limits),
-            LimitsViewItem::Error(error)
-        ] if limits.providers.is_empty() && error.contains("Codex")
+        [LimitsViewItem::Error(error)] if error.contains("Codex")
     ));
     assert_eq!(view.status, "OAuth usage limit check failed");
 }

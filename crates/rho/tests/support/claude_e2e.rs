@@ -168,6 +168,64 @@ pub fn path_with_fake(bin_dir: &Path) -> String {
     }
 }
 
+/// Paths for a login-only fake `claude` used by `/login claude-code` PTY tests.
+#[derive(Debug)]
+pub struct FakeClaudeLogin {
+    pub bin_dir: tempfile::TempDir,
+    pub claude: PathBuf,
+    pub marker: PathBuf,
+    pub path: String,
+}
+
+/// Install a minimal `claude` that answers auth status/login/version probes.
+///
+/// On successful `auth login --claudeai` it touches `marker` so tests can prove
+/// the external binary ran. Status reports signed-in only after that marker exists.
+pub fn install_fake_claude_login() -> FakeClaudeLogin {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin_dir = tempfile::tempdir().expect("fake claude login bin dir");
+    let claude = bin_dir.path().join("claude");
+    let marker = bin_dir.path().join("login-ran");
+    fs::write(
+        &claude,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  if [ -f "{marker}" ]; then
+    printf '%s\n' '{{"loggedIn":true,"email":"fake@example.com","subscriptionType":"pro"}}'
+  else
+    printf '%s\n' '{{"loggedIn":false}}'
+  fi
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "login" ] && [ "$3" = "--claudeai" ]; then
+  printf 'FAKE_CLAUDE_LOGIN_READY\n'
+  touch "{marker}"
+  exit 0
+fi
+if [ "$1" = "--version" ]; then
+  printf '%s\n' '0.0.0-fake'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 1
+"#,
+            marker = marker.display(),
+        ),
+    )
+    .expect("write fake claude login");
+    fs::set_permissions(&claude, fs::Permissions::from_mode(0o755))
+        .expect("chmod fake claude login");
+    let path = path_with_fake(bin_dir.path());
+    FakeClaudeLogin {
+        bin_dir,
+        claude,
+        marker,
+        path,
+    }
+}
+
 /// Wait until the fake Claude `-p` spawn has been recorded.
 pub fn wait_for_spawn(paths: &FakeClaudePaths, timeout: Duration) {
     wait_until(timeout, "fake claude spawn", || paths.spawn_marker.exists());
@@ -239,12 +297,7 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
             .any(|pair| pair[0] == "--system-prompt-file"),
         "missing --system-prompt-file: {args:?}"
     );
-    assert!(
-        !args
-            .iter()
-            .any(|arg| arg == "Task" && !is_disallowed_task(args, arg)),
-        "Task must only appear as --disallowedTools value: {args:?}"
-    );
+    assert_each_task_is_disallowed_tools_value(args);
     // Task must never be in --tools or --allowedTools.
     if let Some(tools) = value_after(args, "--tools") {
         assert!(
@@ -281,9 +334,20 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
     );
 }
 
-fn is_disallowed_task(args: &[String], _arg: &str) -> bool {
-    args.windows(2)
-        .any(|pair| pair[0] == "--disallowedTools" && pair[1].eq_ignore_ascii_case("Task"))
+/// Every `Task` argv token must be the immediate value of `--disallowedTools`.
+fn assert_each_task_is_disallowed_tools_value(args: &[String]) {
+    for (index, arg) in args.iter().enumerate() {
+        if arg != "Task" {
+            continue;
+        }
+        let is_disallowed_value = index
+            .checked_sub(1)
+            .is_some_and(|flag_idx| args[flag_idx] == "--disallowedTools");
+        assert!(
+            is_disallowed_value,
+            "Task at argv[{index}] must be immediately after --disallowedTools: {args:?}"
+        );
+    }
 }
 
 fn assert_allowed_tools(args: &[String], expected: &[&str]) {

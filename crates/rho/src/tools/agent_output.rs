@@ -56,14 +56,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
             }
         }
     }
-    if let Some(session_id) = &snapshot.status.claude_session_id {
-        lines.push(format!(
-            "claude session: {session_id} (resume with `claude --resume {session_id}`)"
-        ));
-    }
-    if let Some(cost) = snapshot.status.total_cost_usd {
-        lines.push(format!("claude cost: ${cost:.4}"));
-    }
+    push_claude_metadata(&mut lines, snapshot);
     if matches!(format, SnapshotFormat::Completion) {
         if let Some(error) = &snapshot.status.error {
             lines.push(format!("error: {error}"));
@@ -185,14 +178,7 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         format_token_count(snapshot.status.input_tokens),
         format_token_count(snapshot.status.output_tokens)
     ));
-    if let Some(session_id) = &snapshot.status.claude_session_id {
-        lines.push(format!(
-            "claude session: {session_id} (resume with `claude --resume {session_id}`)"
-        ));
-    }
-    if let Some(cost) = snapshot.status.total_cost_usd {
-        lines.push(format!("claude cost: ${cost:.4}"));
-    }
+    push_claude_metadata(&mut lines, snapshot);
     if let Some(error) = &snapshot.status.error {
         lines.push(format!(
             "error: {}",
@@ -209,6 +195,17 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         ));
     }
     lines
+}
+
+fn push_claude_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
+    if let Some(session_id) = &snapshot.status.claude_session_id {
+        lines.push(format!(
+            "claude session: {session_id} (resume with `claude --resume {session_id}`)"
+        ));
+    }
+    if let Some(cost) = snapshot.status.total_cost_usd {
+        lines.push(format!("claude cost: ${cost:.4}"));
+    }
 }
 
 fn previous_char_boundary(value: &str, max_bytes: usize) -> usize {

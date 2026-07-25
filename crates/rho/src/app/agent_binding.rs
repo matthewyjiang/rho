@@ -64,15 +64,25 @@ impl BoundRuntime {
     }
 
     /// Provider/model labels for the initial status snapshot.
-    pub(crate) fn artifact_labels(&self) -> (String, String) {
+    pub(crate) fn artifact_labels(&self) -> ArtifactLabels {
         match self {
-            Self::ClaudeCli { model, .. } => (
-                "claude-code".into(),
-                model.clone().unwrap_or_else(|| "claude-cli".into()),
-            ),
-            Self::Rho { config, .. } => (config.provider.clone(), config.model.clone()),
+            Self::ClaudeCli { model, .. } => ArtifactLabels {
+                provider: "claude-code".into(),
+                model: model.clone().unwrap_or_else(|| "claude-cli".into()),
+            },
+            Self::Rho { config, .. } => ArtifactLabels {
+                provider: config.provider.clone(),
+                model: config.model.clone(),
+            },
         }
     }
+}
+
+/// Named provider/model labels from a bound runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ArtifactLabels {
+    pub(crate) provider: String,
+    pub(crate) model: String,
 }
 
 #[derive(Clone, Debug)]

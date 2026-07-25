@@ -30,7 +30,7 @@ pub async fn collect_stream(
         lines.push(&chunk);
         while let Some(line) = lines
             .next_line()
-            .map_err(invalid_utf8)
+            .map_err(line_decode_error)
             .map_err(|error| stream_error(&collector, error))?
         {
             if events
@@ -43,7 +43,7 @@ pub async fn collect_stream(
     }
     if let Some(line) = lines
         .finish()
-        .map_err(invalid_utf8)
+        .map_err(line_decode_error)
         .map_err(|error| stream_error(&collector, error))?
     {
         events
@@ -121,8 +121,8 @@ fn stream_error(collector: &ResponseCollector, error: ModelError) -> ModelError 
     }
 }
 
-fn invalid_utf8(error: crate::provider_backend::line_decoder::LineDecodeError) -> ModelError {
-    ModelError::InvalidResponse(format!("invalid UTF-8 in Gemini stream: {error}"))
+fn line_decode_error(error: crate::provider_backend::line_decoder::LineDecodeError) -> ModelError {
+    ModelError::InvalidResponse(format!("could not decode Gemini stream: {error}"))
 }
 
 #[cfg(test)]

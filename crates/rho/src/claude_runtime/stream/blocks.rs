@@ -57,73 +57,25 @@ pub(super) fn emit_open_snapshot_block(
             effects.extend(tool_started_effects(block));
             effects
         }
-        ContentBlockKind::Text => {
-            let Some(text) = block.get("text").and_then(Value::as_str) else {
-                return Vec::new();
-            };
-            if text.is_empty() {
-                return Vec::new();
-            }
-            if state
-                .block_slots
-                .iter()
-                .any(|slot| slot.kind == ContentBlockKind::Text && slot.emitted)
-            {
-                return Vec::new();
-            }
-            let ordinal = state
-                .block_slots
-                .iter()
-                .position(|slot| slot.kind == ContentBlockKind::Text && !slot.emitted)
-                .or_else(|| push_block_slot(state, ContentBlockKind::Text, None));
-            let Some(ordinal) = ordinal else {
-                return fidelity_notice(
-                    "claude stream: dropped snapshot text block; tracked block cap reached",
-                );
-            };
-            let index = state.block_slots[ordinal].index.unwrap_or(ordinal);
-            if !mark_slot_emitted(state, ordinal, Some(index)) {
-                return fidelity_notice(
-                    "claude stream: dropped snapshot text block; tracked block cap reached",
-                );
-            }
-            text_effects(text)
-        }
+        ContentBlockKind::Text => emit_open_snapshot_text_like(
+            state,
+            ContentBlockKind::Text,
+            block.get("text").and_then(Value::as_str),
+            text_effects,
+            "text",
+        ),
         ContentBlockKind::Reasoning => {
-            let Some(text) = block
+            let text = block
                 .get("thinking")
                 .or_else(|| block.get("text"))
-                .and_then(Value::as_str)
-            else {
-                return Vec::new();
-            };
-            if text.is_empty() {
-                return Vec::new();
-            }
-            if state
-                .block_slots
-                .iter()
-                .any(|slot| slot.kind == ContentBlockKind::Reasoning && slot.emitted)
-            {
-                return Vec::new();
-            }
-            let ordinal = state
-                .block_slots
-                .iter()
-                .position(|slot| slot.kind == ContentBlockKind::Reasoning && !slot.emitted)
-                .or_else(|| push_block_slot(state, ContentBlockKind::Reasoning, None));
-            let Some(ordinal) = ordinal else {
-                return fidelity_notice(
-                    "claude stream: dropped snapshot reasoning block; tracked block cap reached",
-                );
-            };
-            let index = state.block_slots[ordinal].index.unwrap_or(ordinal);
-            if !mark_slot_emitted(state, ordinal, Some(index)) {
-                return fidelity_notice(
-                    "claude stream: dropped snapshot reasoning block; tracked block cap reached",
-                );
-            }
-            reasoning_effects(text)
+                .and_then(Value::as_str);
+            emit_open_snapshot_text_like(
+                state,
+                ContentBlockKind::Reasoning,
+                text,
+                reasoning_effects,
+                "reasoning",
+            )
         }
         ContentBlockKind::Other => {
             let other = block.get("type").and_then(Value::as_str).unwrap_or("");
@@ -138,6 +90,47 @@ pub(super) fn emit_open_snapshot_block(
     }
 }
 
+/// Shared Text/Reasoning snapshot path: skip when already emitted, else claim
+/// an unemitted same-kind slot (or allocate) and present the snapshot body.
+fn emit_open_snapshot_text_like(
+    state: &mut MessageStreamState,
+    kind: ContentBlockKind,
+    text: Option<&str>,
+    present: fn(&str) -> Vec<StreamEffect>,
+    label: &str,
+) -> Vec<StreamEffect> {
+    let Some(text) = text else {
+        return Vec::new();
+    };
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if state
+        .block_slots
+        .iter()
+        .any(|slot| slot.kind == kind && slot.emitted)
+    {
+        return Vec::new();
+    }
+    let ordinal = state
+        .block_slots
+        .iter()
+        .position(|slot| slot.kind == kind && !slot.emitted)
+        .or_else(|| push_block_slot(state, kind, None));
+    let Some(ordinal) = ordinal else {
+        return fidelity_notice(&format!(
+            "claude stream: dropped snapshot {label} block; tracked block cap reached"
+        ));
+    };
+    let index = state.block_slots[ordinal].index.unwrap_or(ordinal);
+    if !mark_slot_emitted(state, ordinal, Some(index)) {
+        return fidelity_notice(&format!(
+            "claude stream: dropped snapshot {label} block; tracked block cap reached"
+        ));
+    }
+    present(text)
+}
+
 pub(super) fn emit_complete_block(
     state: &mut MessageStreamState,
     block: &Value,
@@ -145,9 +138,9 @@ pub(super) fn emit_complete_block(
     active_tools: &mut HashSet<String>,
     max_active_tools: usize,
 ) -> Vec<StreamEffect> {
-    let kind = block.get("type").and_then(Value::as_str).unwrap_or("");
+    let kind = content_block_kind(block.get("type").and_then(Value::as_str).unwrap_or(""));
     match kind {
-        "text" => {
+        ContentBlockKind::Text => {
             let Some(text) = block.get("text").and_then(Value::as_str) else {
                 return Vec::new();
             };
@@ -157,7 +150,7 @@ pub(super) fn emit_complete_block(
                 )
             })
         }
-        "thinking" => {
+        ContentBlockKind::Reasoning => {
             let Some(text) = block
                 .get("thinking")
                 .or_else(|| block.get("text"))
@@ -171,7 +164,7 @@ pub(super) fn emit_complete_block(
                 )
             })
         }
-        "tool_use" => {
+        ContentBlockKind::Tool => {
             let tool_id = block
                 .get("id")
                 .and_then(Value::as_str)
@@ -179,10 +172,10 @@ pub(super) fn emit_complete_block(
                 .to_string();
             if !tool_id.is_empty() && active_tools.contains(&tool_id) {
                 // Started via partials; still mark this complete index seen.
-                let _ = mark_complete_index(state, index);
+                let _ = mark_complete_index(state, index, ContentBlockKind::Tool);
                 return Vec::new();
             }
-            if !mark_complete_index(state, index) {
+            if !mark_complete_index(state, index, ContentBlockKind::Tool) {
                 return fidelity_notice(
                     "claude stream: dropped complete tool block; tracked block cap reached",
                 );
@@ -194,12 +187,16 @@ pub(super) fn emit_complete_block(
             effects.extend(tool_started_effects(block));
             effects
         }
-        other if !other.is_empty() => {
-            vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
-                "claude stream: ignored assistant block `{other}`"
-            )))]
+        ContentBlockKind::Other => {
+            let other = block.get("type").and_then(Value::as_str).unwrap_or("");
+            if other.is_empty() {
+                Vec::new()
+            } else {
+                vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
+                    "claude stream: ignored assistant block `{other}`"
+                )))]
+            }
         }
-        _ => Vec::new(),
     }
 }
 

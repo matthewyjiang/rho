@@ -128,12 +128,12 @@ impl LineDecoder {
         // Segment by newlines so oversize tails fail without a per-byte loop
         // and without retaining multi-megabyte runaway input.
         let mut offset = 0;
+        let mut line_start = current_line_start(&self.buffer, self.start);
         while offset < chunk.len() {
             if self.pending_error.is_some() {
                 return;
             }
             let rest = &chunk[offset..];
-            let line_start = current_line_start(&self.buffer, self.start);
             let current_len = self.buffer.len() - line_start;
 
             if let Some(newline_at) = rest.iter().position(|byte| *byte == b'\n') {
@@ -149,6 +149,7 @@ impl LineDecoder {
                 }
                 self.buffer.extend_from_slice(&rest[..=newline_at]);
                 offset += newline_at + 1;
+                line_start = self.buffer.len();
             } else {
                 let total = current_len.saturating_add(rest.len());
                 if total > limit {
@@ -188,7 +189,7 @@ impl LineDecoder {
             return Ok(Some(line));
         }
 
-        if let Some(error) = self.pending_error.take() {
+        if let Some(error) = self.pending_error.clone() {
             return Err(error);
         }
         Ok(None)
@@ -197,9 +198,11 @@ impl LineDecoder {
     /// Return the final unterminated tail, if any.
     ///
     /// Callers must not discard `Err` here. Invalid UTF-8 and oversize tails are
-    /// stream errors for bounded decoders.
+    /// stream errors for bounded decoders. Once a `LineTooLong` failure is
+    /// pending, it stays terminal: later `push`/`next_line`/`finish` calls
+    /// cannot resume decoding.
     pub fn finish(&mut self) -> Result<Option<&str>, LineDecodeError> {
-        if let Some(error) = self.pending_error.take() {
+        if let Some(error) = self.pending_error.clone() {
             self.start = self.buffer.len();
             return Err(error);
         }

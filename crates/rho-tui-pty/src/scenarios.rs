@@ -343,7 +343,8 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::AssertText("Permission mode"),
     Step::Key(Key::Enter),
-    // Nested mode list shows one selected detail at a time.
+    // Nested mode list keeps every mode label visible; only the detail pane
+    // shows the selected mode's description.
     Step::WaitText {
         text: "No permission checks",
         timeout: SETTLE,

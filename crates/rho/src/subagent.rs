@@ -102,8 +102,10 @@ pub struct RunStatus {
 /// worker cannot overwrite `Error`/`Ok`/`Stopped` with a queued `Running`.
 ///
 /// The existing-status read, terminal check, and atomic replace are serialized
-/// under process-wide ownership so concurrent writers cannot interleave a stale
-/// nonterminal replace after a terminal write.
+/// under process-wide ownership so concurrent writers in the same process cannot
+/// interleave a stale nonterminal replace after a terminal write. This
+/// monotonicity is single-process only: concurrent `rho` processes can still
+/// demote a terminal status if they write the same path.
 pub fn write_status(path: &Path, status: &RunStatus) -> std::io::Result<()> {
     write_status_inner(path, status, /*force*/ false)
 }

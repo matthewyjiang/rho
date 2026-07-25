@@ -201,11 +201,30 @@ pub(crate) fn notable_rate_limit_status(status: Option<&str>) -> Option<String> 
     if status.is_empty() {
         return None;
     }
-    match status {
-        "allowed" => None,
-        "allowed_warning" => Some("warning".into()),
-        "rejected" => Some("limited".into()),
-        other => Some(other.replace('_', " ")),
+    match RateLimitStatusKind::parse(status) {
+        RateLimitStatusKind::Allowed => None,
+        RateLimitStatusKind::AllowedWarning => Some("warning".into()),
+        RateLimitStatusKind::Rejected => Some("limited".into()),
+        RateLimitStatusKind::Other(other) => Some(other.replace('_', " ")),
+    }
+}
+
+/// Wire status values Claude may report on a rate-limit window.
+enum RateLimitStatusKind<'a> {
+    Allowed,
+    AllowedWarning,
+    Rejected,
+    Other(&'a str),
+}
+
+impl<'a> RateLimitStatusKind<'a> {
+    fn parse(status: &'a str) -> Self {
+        match status {
+            "allowed" => Self::Allowed,
+            "allowed_warning" => Self::AllowedWarning,
+            "rejected" => Self::Rejected,
+            other => Self::Other(other),
+        }
     }
 }
 

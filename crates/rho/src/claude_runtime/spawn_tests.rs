@@ -287,7 +287,7 @@ fn multiline_replace_prompt_preserves_bytes_in_file() {
 
 #[cfg(unix)]
 #[test]
-fn non_utf8_system_prompt_path_is_rejected_before_write() {
+fn non_utf8_system_prompt_path_uses_os_string_argv() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
@@ -301,24 +301,32 @@ fn non_utf8_system_prompt_path_is_rejected_before_write() {
     ))
     .unwrap();
 
-    // Construct a non-UTF-8 output path under a valid parent without creating it.
-    // macOS rejects non-UTF-8 path components at the filesystem boundary
-    // (`Illegal byte sequence`), so the test must not depend on mkdir.
+    // Construct a non-UTF-8 output path under a valid parent. macOS may reject
+    // non-UTF-8 path components at the filesystem boundary (`Illegal byte
+    // sequence`); when write fails the error stays a Write, not a UTF-8 gate.
     let dir = tempfile::tempdir().unwrap();
     let output = dir
         .path()
         .join(OsStr::from_bytes(b"run-\xff-dir"))
         .join("result.json");
 
-    let err = finalize_spawn_args(&plan, &output).expect_err("non-utf8 path must fail");
-    assert!(
-        matches!(err, ClaudeSpawnMaterializeError::NonUtf8Path { .. }),
-        "unexpected error: {err}"
-    );
-    assert!(
-        !system_prompt_path(&output).exists(),
-        "must not write private prompt when path cannot be represented exactly"
-    );
+    match finalize_spawn_args(&plan, &output) {
+        Ok(args) => {
+            let prompt_path = system_prompt_path(&output);
+            assert!(
+                prompt_path.exists(),
+                "native path should write the private prompt file"
+            );
+            assert!(
+                args.iter()
+                    .any(|arg| arg.as_os_str() == prompt_path.as_os_str()),
+                "argv must carry the native OsString path token"
+            );
+        }
+        Err(ClaudeSpawnMaterializeError::Write { .. }) => {
+            // Filesystem rejected the non-UTF-8 component; no UTF-8 argv gate.
+        }
+    }
 }
 
 #[test]

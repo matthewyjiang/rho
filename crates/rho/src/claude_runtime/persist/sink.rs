@@ -4,6 +4,8 @@
 //! Rate-limit cache updates are collected here and flushed once at settle so
 //! the artifact path never knows about `/limits`.
 
+use std::path::PathBuf;
+
 use tokio::sync::watch;
 
 use crate::{
@@ -28,14 +30,18 @@ pub(crate) struct ClaudeRunIdentity {
 pub(crate) struct StatusSink {
     inner: RunArtifactSink,
     pending_limits: RateLimitState,
+    /// Override for tests. Production leaves this unset and uses
+    /// [`rate_limit::default_state_path`] at flush time.
+    rate_limit_state_path: Option<PathBuf>,
 }
 
 impl StatusSink {
     pub(crate) fn new(
-        path: std::path::PathBuf,
+        path: PathBuf,
         identity: &ClaudeRunIdentity,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
+        rate_limit_state_path: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
         let artifact = identity_to_artifact(identity);
         let mut inner = RunArtifactSink::open(path, &artifact, prompt, status_tx)?;
@@ -44,15 +50,17 @@ impl StatusSink {
         Ok(Self {
             inner,
             pending_limits: RateLimitState::default(),
+            rate_limit_state_path,
         })
     }
 
     /// Resume after the executor already wrote the Starting boundary.
     pub(crate) fn continue_from(
-        path: std::path::PathBuf,
+        path: PathBuf,
         mut status: RunStatus,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
+        rate_limit_state_path: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
         status.last_activity = Some("starting claude".into());
         let mut inner = RunArtifactSink::continue_from(path, status, prompt, status_tx)?;
@@ -60,6 +68,7 @@ impl StatusSink {
         Ok(Self {
             inner,
             pending_limits: RateLimitState::default(),
+            rate_limit_state_path,
         })
     }
 
@@ -110,18 +119,21 @@ impl StatusSink {
 
     pub(crate) async fn fail(&mut self, error: impl Into<String>) {
         self.inner.finish_error(error);
-        self.flush_rate_limits();
+        self.flush_rate_limits().await;
     }
 
-    pub(crate) async fn stop(&mut self, reason: &str) {
+    pub(crate) async fn stop(&mut self, reason: &str, pending: Option<&TerminalResult>) {
+        if let Some(terminal) = pending {
+            apply_terminal_metadata(&mut self.inner.status, terminal);
+        }
         self.inner.finish_stopped(reason);
-        self.flush_rate_limits();
+        self.flush_rate_limits().await;
     }
 
     pub(crate) async fn finalize_success_from_stream(&mut self, terminal: &TerminalResult) {
         apply_terminal_metadata(&mut self.inner.status, terminal);
         self.inner.finish_ok(terminal.result_text.clone());
-        self.flush_rate_limits();
+        self.flush_rate_limits().await;
     }
 
     pub(crate) async fn finalize_failure_from_stream(
@@ -147,16 +159,41 @@ impl StatusSink {
                 .unwrap_or(detail)
         };
         self.inner.finish_error(error);
-        self.flush_rate_limits();
+        self.flush_rate_limits().await;
     }
 
-    fn flush_rate_limits(&mut self) {
+    async fn flush_rate_limits(&mut self) {
         let pending = std::mem::take(&mut self.pending_limits);
         if pending.is_empty() {
             return;
         }
-        if let Ok(path) = rate_limit::default_state_path() {
-            let _ = rate_limit::store_state(&path, pending);
+        let path = match self.rate_limit_state_path.clone() {
+            Some(path) => path,
+            None => match rate_limit::default_state_path() {
+                Ok(path) => path,
+                Err(error) => {
+                    tracing::debug!(
+                        error = %error,
+                        "claude rate-limit cache path unavailable; dropping pending windows"
+                    );
+                    return;
+                }
+            },
+        };
+        // File lock + atomic write are blocking; keep them off the runtime worker.
+        let result =
+            tokio::task::spawn_blocking(move || rate_limit::store_state(&path, pending)).await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(error = %error, "failed to persist claude rate-limit cache");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "claude rate-limit cache flush task failed to join"
+                );
+            }
         }
     }
 }

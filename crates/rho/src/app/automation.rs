@@ -602,13 +602,7 @@ impl RunReporter {
         stream_output: bool,
         status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
     ) -> anyhow::Result<Self> {
-        let artifact = crate::run_artifacts::RunArtifactIdentity {
-            agent_id: identity.agent_id,
-            agent_fingerprint: identity.agent_fingerprint,
-            provider: identity.provider,
-            model: identity.model,
-        };
-        let sink = crate::run_artifacts::RunArtifactSink::open(path, &artifact, prompt, status_tx)?;
+        let sink = crate::run_artifacts::RunArtifactSink::open(path, &identity, prompt, status_tx)?;
         Ok(Self {
             sink,
             adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),

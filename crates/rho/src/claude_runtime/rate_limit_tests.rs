@@ -38,14 +38,7 @@ fn sample_info_window(status: &str, window: &str) -> RateLimitInfo {
 }
 
 fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
-    let observed = RateLimitObservation {
-        observed_at_unix: observation.observed_at_unix,
-        observed_seq: observation.observed_seq,
-        observed_at_nanos: observation.observed_at_nanos,
-        observed_nonce: observation.observed_nonce.clone(),
-        info: observation.info.clone(),
-    };
-    let contents = serde_json::to_vec_pretty(&observed).unwrap();
+    let contents = serde_json::to_vec_pretty(observation).unwrap();
     crate::config_writer::write_bytes_atomically(path, &contents).unwrap();
 }
 
