@@ -70,13 +70,20 @@ impl App {
             .reset_conversation
             .matches(key)
         {
-            let _ = agent.reset();
-            self.info.session.session_id = None;
-            self.reset_usage();
-            self.usage.current_context = None;
-            self.insert_entry(&Entry::Notice(
-                "conversation reset; next message starts a new session".into(),
-            ));
+            if let Err(error) = agent.reset() {
+                // The conversation is still live, so report the failure instead
+                // of clearing the UI as though a new session had started.
+                self.insert_entry(&Entry::Error(format!(
+                    "could not reset conversation: {error}"
+                )));
+            } else {
+                self.info.session.session_id = None;
+                self.reset_usage();
+                self.usage.current_context = None;
+                self.insert_entry(&Entry::Notice(
+                    "conversation reset; next message starts a new session".into(),
+                ));
+            }
         } else if self.info.runtime.keybindings.insert_newline.matches(key) {
             self.insert_input_char('\n');
         } else {

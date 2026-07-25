@@ -788,13 +788,26 @@ impl App {
         }
 
         let error = registry::missing_credentials_error(&target.provider);
+        // Credentials are gone either way; only claim the stub is active after
+        // replace_provider succeeds (it rolls back on post-replace failures).
         self.info.services.auth_unavailable = Some(error.to_string());
-        self.using_unavailable_provider = true;
-        let _ = agent.replace_provider(
+        match agent.replace_provider(
             std::sync::Arc::new(UnavailableProvider::new(error)),
             self.info.runtime.reasoning,
-        );
-        self.status = "no providers configured; run /login".into();
+        ) {
+            Ok(_) => {
+                self.using_unavailable_provider = true;
+                self.status = "no providers configured; run /login".into();
+            }
+            Err(swap_error) => {
+                // Runtime still holds the prior provider object.
+                self.using_unavailable_provider = false;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not detach the logged-out provider: {swap_error}"
+                )));
+                self.status = "logout complete; provider detach failed".into();
+            }
+        }
         true
     }
 }

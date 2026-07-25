@@ -5,8 +5,12 @@
 //! once for the queue to drain - no emergency dual-write path.
 
 use std::{
-    path::PathBuf,
-    sync::mpsc::{self, RecvTimeoutError, SyncSender},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, RecvTimeoutError, SyncSender},
+        Arc,
+    },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
@@ -53,6 +57,8 @@ pub(crate) struct RunArtifactSink {
     last_write: Instant,
     closed: bool,
     attachment_enabled: bool,
+    /// Shared with the background writer so a failed status update is warned once.
+    status_write_failed: Arc<AtomicBool>,
     tx: Option<SyncSender<WriterCommand>>,
     /// Signaled once when the background writer exits.
     done_rx: Option<mpsc::Receiver<()>>,
@@ -122,8 +128,9 @@ impl RunArtifactSink {
         };
         status.attachment_error = attachment_error;
         let attachment_enabled = status.attachment_error.is_none();
+        let status_write_failed = Arc::new(AtomicBool::new(false));
         if status.attachment_error.is_some() {
-            let _ = subagent::write_status(&path, &status);
+            write_status_best_effort(&path, &status, &status_write_failed);
         }
         if let Some(tx) = &status_tx {
             tx.send_replace(status.clone());
@@ -132,10 +139,11 @@ impl RunArtifactSink {
         let (tx, rx) = mpsc::sync_channel::<WriterCommand>(QUEUE_CAPACITY);
         let (done_tx, done_rx) = mpsc::channel();
         let worker_path = path.clone();
+        let worker_write_failed = Arc::clone(&status_write_failed);
         let join = std::thread::Builder::new()
             .name("rho-run-artifacts".into())
             .spawn(move || {
-                writer_loop(worker_path, attachment, rx);
+                writer_loop(worker_path, attachment, rx, worker_write_failed);
                 let _ = done_tx.send(());
             })
             .ok();
@@ -147,6 +155,7 @@ impl RunArtifactSink {
             last_write: Instant::now(),
             closed: false,
             attachment_enabled,
+            status_write_failed,
             tx: Some(tx),
             done_rx: Some(done_rx),
             join,
@@ -278,13 +287,13 @@ impl RunArtifactSink {
                 let _ = join.join();
             } else {
                 // Detach: best-effort direct status write so attach sees terminal.
-                let _ = subagent::write_status(&self.path, &self.status);
+                write_status_best_effort(&self.path, &self.status, &self.status_write_failed);
                 std::thread::spawn(move || {
                     let _ = join.join();
                 });
             }
         } else {
-            let _ = subagent::write_status(&self.path, &self.status);
+            write_status_best_effort(&self.path, &self.status, &self.status_write_failed);
         }
         if let Some(tx) = &self.status_tx {
             tx.send_replace(self.status.clone());
@@ -331,6 +340,7 @@ fn writer_loop(
     path: PathBuf,
     mut attachment: Option<AttachmentWriter>,
     rx: mpsc::Receiver<WriterCommand>,
+    status_write_failed: Arc<AtomicBool>,
 ) {
     // Coalesce replaceable status snapshots so a burst of Running updates does
     // not serialize every write behind the attachment journal.
@@ -344,11 +354,11 @@ fn writer_loop(
                     command
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    let _ = subagent::write_status(&path, &status);
+                    write_status_best_effort(&path, &status, &status_write_failed);
                     continue;
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    let _ = subagent::write_status(&path, &status);
+                    write_status_best_effort(&path, &status, &status_write_failed);
                     break;
                 }
             }
@@ -365,7 +375,7 @@ fn writer_loop(
             }
             WriterCommand::Attachment(event) => {
                 if let Some(status) = pending_status.take() {
-                    let _ = subagent::write_status(&path, &status);
+                    write_status_best_effort(&path, &status, &status_write_failed);
                 }
                 if let Some(writer) = attachment.as_mut() {
                     if writer.write_event(&event).is_err() {
@@ -378,21 +388,36 @@ fn writer_loop(
                 terminal_attachment,
             } => {
                 if let Some(previous) = pending_status.take() {
-                    let _ = subagent::write_status(&path, &previous);
+                    write_status_best_effort(&path, &previous, &status_write_failed);
                 }
                 if let (Some(event), Some(writer)) = (terminal_attachment, attachment.as_mut()) {
                     let _ = writer.write_event(&event);
                 }
-                let _ = subagent::write_status(&path, &status);
+                write_status_best_effort(&path, &status, &status_write_failed);
                 // Drain anything already queued, then exit.
                 while let Ok(extra) = rx.try_recv() {
                     if let WriterCommand::Status(status) = extra {
-                        let _ = subagent::write_status(&path, &status);
+                        write_status_best_effort(&path, &status, &status_write_failed);
                     }
                 }
                 break;
             }
         }
+    }
+}
+
+/// Attached hosts poll the status file, so an unreported write failure freezes
+/// the run state they observe. Warn once per sink and keep remaining writes
+/// best-effort without flooding the terminal.
+fn write_status_best_effort(path: &Path, status: &RunStatus, status_write_failed: &AtomicBool) {
+    if let Err(error) = subagent::write_status(path, status) {
+        if status_write_failed.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        eprintln!(
+            "warning: could not update run status {}: {error}",
+            path.display()
+        );
     }
 }
 
