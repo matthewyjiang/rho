@@ -67,7 +67,7 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
     if group_id == "anthropic" {
         items.push(PickerItem {
             section: None,
-            label: "claude code (delegation only)".into(),
+            label: "Claude Code (delegation only)".into(),
             detail: Some(
                 "External Claude binary subscription, not Anthropic API billing. Credentials are managed by Claude Code, not Rho."
                     .into(),

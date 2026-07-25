@@ -231,6 +231,7 @@ impl AgentExecutor {
                     inherit_claude_config,
                     permission_mode,
                     max_turns,
+                    effort,
                 } => {
                     crate::claude_runtime::session::run_bound_session(
                         crate::claude_runtime::session::ClaudeBoundLaunch {
@@ -245,6 +246,7 @@ impl AgentExecutor {
                             inherit_claude_config,
                             permission_mode,
                             max_turns,
+                            effort,
                             prompt,
                             output_file,
                             cwd,

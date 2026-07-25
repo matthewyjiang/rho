@@ -276,7 +276,7 @@ fn parses_claude_indented_tool_list_with_patterns() {
 }
 
 #[test]
-fn rejects_rho_style_alias_and_reasoning_on_claude_runtime() {
+fn rejects_rho_style_alias_and_unsupported_reasoning_on_claude_runtime() {
     let alias =
         parse("---\ndescription: demo\nruntime: claude-cli\nmodel: @deep\ntools: [Read]\n---\n")
             .unwrap_err();
@@ -285,11 +285,34 @@ fn rejects_rho_style_alias_and_reasoning_on_claude_runtime() {
         .to_string()
         .contains("does not resolve Rho model aliases"));
 
-    let reasoning =
-        parse("---\ndescription: demo\nruntime: claude-cli\nreasoning: high\ntools: [Read]\n---\n")
-            .unwrap_err();
-    assert_eq!(reasoning.field.as_deref(), Some("reasoning"));
-    assert!(reasoning
-        .to_string()
-        .contains("not supported with runtime: claude-cli"));
+    for level in ["off", "minimal"] {
+        let reasoning = parse(&format!(
+            "---\ndescription: demo\nruntime: claude-cli\nreasoning: {level}\ntools: [Read]\n---\n"
+        ))
+        .unwrap_err();
+        assert_eq!(reasoning.field.as_deref(), Some("reasoning"));
+        assert!(
+            reasoning
+                .to_string()
+                .contains("not a Claude Code effort level"),
+            "{level}: {reasoning}"
+        );
+    }
+}
+
+#[test]
+fn accepts_claude_effort_reasoning_levels() {
+    for level in ["low", "medium", "high", "xhigh", "max"] {
+        let definition = parse(&format!(
+            "---\ndescription: demo\nruntime: claude-cli\nreasoning: {level}\ntools: [Read]\n---\n"
+        ))
+        .unwrap_or_else(|error| panic!("expected {level} to parse: {error}"));
+        assert_eq!(
+            definition
+                .reasoning
+                .map(|value| value.to_string())
+                .as_deref(),
+            Some(level)
+        );
+    }
 }

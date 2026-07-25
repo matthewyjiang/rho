@@ -3,6 +3,7 @@ use pretty_assertions::assert_eq;
 use crate::agent::{
     AgentDefinition, AgentId, AgentRuntime, AgentTools, ModelPolicy, ModelSelection, PromptPolicy,
 };
+use rho_providers::reasoning::ReasoningLevel;
 
 use super::*;
 
@@ -38,6 +39,26 @@ fn request(
     max_turns: u64,
     prompt: PromptPolicy,
 ) -> ClaudeSpawnRequest {
+    request_with_effort(
+        tools,
+        inherit,
+        model,
+        permission_mode,
+        max_turns,
+        prompt,
+        None,
+    )
+}
+
+fn request_with_effort(
+    tools: Vec<&str>,
+    inherit: bool,
+    model: Option<&str>,
+    permission_mode: PermissionMode,
+    max_turns: u64,
+    prompt: PromptPolicy,
+    effort: Option<&'static str>,
+) -> ClaudeSpawnRequest {
     ClaudeSpawnRequest {
         definition: definition(tools.clone(), inherit, model, prompt),
         model: model.map(str::to_string),
@@ -46,6 +67,7 @@ fn request(
         permission_mode,
         cwd: PathBuf::from("/tmp/project"),
         max_turns,
+        effort,
     }
 }
 
@@ -133,6 +155,8 @@ fn builds_explicit_safe_spawn_args() {
         .windows(2)
         .any(|pair| pair == ["--max-turns", "8"]));
     assert!(plan.args.windows(2).any(|pair| pair == ["--model", "opus"]));
+    assert!(plan.effort.is_none());
+    assert!(!plan.args.iter().any(|arg| arg == "--effort"));
     // Prompt text stays out of the base argv; file flag is attached on finalize.
     assert!(!plan.args.iter().any(|arg| arg.contains("Plan carefully.")));
     assert!(!plan.args.iter().any(|arg| arg == "--system-prompt"));
@@ -528,6 +552,38 @@ fn non_default_max_turns_is_emitted_exactly() {
             "missing --max-turns {turns}"
         );
     }
+}
+
+#[test]
+fn reasoning_maps_to_claude_effort_flag() {
+    for (level, expected) in [
+        (ReasoningLevel::Low, "low"),
+        (ReasoningLevel::Medium, "medium"),
+        (ReasoningLevel::High, "high"),
+        (ReasoningLevel::Xhigh, "xhigh"),
+        (ReasoningLevel::Max, "max"),
+    ] {
+        assert_eq!(claude_effort_flag(level), Some(expected));
+        let plan = build_spawn_plan(&request_with_effort(
+            vec!["Read"],
+            false,
+            None,
+            PermissionMode::Auto,
+            8,
+            PromptPolicy::Replace("Plan carefully.".into()),
+            Some(expected),
+        ))
+        .unwrap();
+        assert_eq!(plan.effort, Some(expected));
+        assert!(
+            plan.args
+                .windows(2)
+                .any(|pair| pair == ["--effort", expected]),
+            "missing --effort {expected}"
+        );
+    }
+    assert_eq!(claude_effort_flag(ReasoningLevel::Off), None);
+    assert_eq!(claude_effort_flag(ReasoningLevel::Minimal), None);
 }
 
 #[test]

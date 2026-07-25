@@ -41,6 +41,8 @@ pub(crate) struct ClaudeSessionRequest {
     pub(crate) inherit_claude_config: bool,
     /// Exact `--max-turns` value from the bound step budget.
     pub(crate) max_turns: u64,
+    /// Claude `--effort` from definition `reasoning:`. `None` omits the flag.
+    pub(crate) effort: Option<&'static str>,
     pub(crate) prompt: String,
     pub(crate) output_file: std::path::PathBuf,
     pub(crate) cwd: std::path::PathBuf,
@@ -68,6 +70,8 @@ pub(crate) struct ClaudeBoundLaunch {
     /// Exact `--max-turns` value. Always set from the configured/definition step
     /// cap at bind/launch time; never recomputed inside the session adapter.
     pub(crate) max_turns: u64,
+    /// Claude `--effort` from definition `reasoning:`. `None` omits the flag.
+    pub(crate) effort: Option<&'static str>,
     pub(crate) prompt: String,
     pub(crate) output_file: std::path::PathBuf,
     pub(crate) cwd: std::path::PathBuf,
@@ -231,6 +235,7 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         permission_mode: request.permission_mode,
         cwd: request.cwd.clone(),
         max_turns: request.max_turns,
+        effort: request.effort,
     }) {
         Ok(plan) => plan,
         Err(error) => {
@@ -636,6 +641,7 @@ pub(crate) async fn run_bound_session(launch: ClaudeBoundLaunch) -> anyhow::Resu
         tools: launch.tools,
         inherit_claude_config: launch.inherit_claude_config,
         max_turns: launch.max_turns,
+        effort: launch.effort,
         prompt: launch.prompt,
         output_file: launch.output_file,
         cwd: launch.cwd,

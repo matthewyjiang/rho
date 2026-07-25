@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use rho_providers::reasoning::ReasoningLevel;
+
 use crate::{
     agent::{AgentDefinition, AgentRuntime, PromptPolicy},
     permission::PermissionMode,
@@ -28,6 +30,8 @@ pub(crate) struct ClaudeSpawnRequest {
     /// Soft turn cap emitted as `--max-turns`. Claude's flag is undocumented
     /// surface; callers should treat rejection of the flag as a hard error.
     pub(crate) max_turns: u64,
+    /// Claude `--effort` value from definition `reasoning:`. `None` omits the flag.
+    pub(crate) effort: Option<&'static str>,
 }
 
 /// How the agent system prompt is applied on the Claude CLI.
@@ -70,6 +74,7 @@ pub(crate) struct ClaudeSpawnPlan {
     pub(crate) cwd: PathBuf,
     pub(crate) system_prompt: SystemPromptPlan,
     pub(crate) model: Option<String>,
+    pub(crate) effort: Option<&'static str>,
     pub(crate) permission_mode: String,
     pub(crate) setting_sources: String,
     pub(crate) tool_base_names: Vec<String>,
@@ -116,6 +121,23 @@ pub(crate) fn map_permission_mode(mode: PermissionMode) -> Result<&'static str, 
     }
 }
 
+/// Map Rho `reasoning:` onto Claude `--effort`.
+///
+/// Claude accepts `low`, `medium`, `high`, `xhigh`, and `max`. Rho `off` and
+/// `minimal` have no Claude counterpart, so they return `None` and callers
+/// reject them at parse/bind time. Omit the field entirely to inherit Claude's
+/// default effort.
+pub(crate) fn claude_effort_flag(level: ReasoningLevel) -> Option<&'static str> {
+    match level {
+        ReasoningLevel::Off | ReasoningLevel::Minimal => None,
+        ReasoningLevel::Low => Some("low"),
+        ReasoningLevel::Medium => Some("medium"),
+        ReasoningLevel::High => Some("high"),
+        ReasoningLevel::Xhigh => Some("xhigh"),
+        ReasoningLevel::Max => Some("max"),
+    }
+}
+
 pub(crate) fn build_spawn_plan(
     request: &ClaudeSpawnRequest,
 ) -> Result<ClaudeSpawnPlan, ClaudeSpawnError> {
@@ -157,6 +179,10 @@ pub(crate) fn build_spawn_plan(
         args.push("--model".into());
         args.push(model.clone());
     }
+    if let Some(effort) = request.effort {
+        args.push("--effort".into());
+        args.push(effort.into());
+    }
     args.push("--max-turns".into());
     args.push(request.max_turns.to_string());
 
@@ -183,6 +209,7 @@ pub(crate) fn build_spawn_plan(
         cwd: request.cwd.clone(),
         system_prompt,
         model,
+        effort: request.effort,
         permission_mode,
         setting_sources,
         tool_base_names,

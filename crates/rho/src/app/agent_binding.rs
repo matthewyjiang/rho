@@ -42,6 +42,9 @@ pub(crate) enum BoundRuntime {
         permission_mode: crate::permission::PermissionMode,
         /// Exact Claude `--max-turns` value from the configured step budget.
         max_turns: u64,
+        /// Claude `--effort` from definition `reasoning:` when set.
+        /// `None` means omit the flag (Claude inherit).
+        effort: Option<&'static str>,
     },
 }
 
@@ -229,14 +232,6 @@ use it through the agent tool, not as an interactive or automation root",
         }
     }
 
-    if let Some(reasoning) = definition.reasoning {
-        anyhow::bail!(
-            "agent '{}': runtime claude-cli does not support reasoning: {reasoning}; \
-omit reasoning (inherit Claude's default) or use runtime: rho",
-            definition.id
-        );
-    }
-
     let tools = match &definition.tools {
         AgentTools::Claude(tools) => tools.clone(),
         AgentTools::Rho(_) => anyhow::bail!(
@@ -263,6 +258,20 @@ set model to a Claude model name or alias (for example opus), not '{}'",
             Some(selection.model.clone())
         }
     };
+    // Reuse definition `reasoning:` as Claude `--effort`. Parser already rejects
+    // off/minimal; keep the same gate here for constructed definitions.
+    let effort = match definition.reasoning {
+        Some(level) => Some(
+            crate::claude_runtime::spawn::claude_effort_flag(level).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "agent '{}': runtime claude-cli reasoning '{level}' is not a Claude \
+effort level; use one of: low, medium, high, xhigh, max (or omit for Claude default)",
+                    definition.id
+                )
+            })?,
+        ),
+        None => None,
+    };
     Ok(BoundRuntime::ClaudeCli {
         model,
         tools,
@@ -274,6 +283,7 @@ set model to a Claude model name or alias (for example opus), not '{}'",
             .get()
             .try_into()
             .expect("run step limit fits in u64"),
+        effort,
     })
 }
 

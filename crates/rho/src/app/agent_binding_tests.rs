@@ -292,6 +292,7 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
             inherit_claude_config,
             permission_mode,
             max_turns,
+            effort,
         } => {
             assert_eq!(model.as_deref(), Some("opus"));
             assert_eq!(
@@ -304,6 +305,7 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
                 *max_turns,
                 crate::app::sdk_config::run_step_limit().get() as u64
             );
+            assert!(effort.is_none());
         }
         BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
     }
@@ -375,9 +377,28 @@ fn claude_runtime_rejects_rho_style_model_alias() {
 }
 
 #[test]
-fn claude_runtime_rejects_non_inherit_reasoning() {
+fn claude_runtime_maps_reasoning_to_effort() {
     let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
     definition.reasoning = Some(rho_sdk::ReasoningLevel::High);
+    let bound = AgentBinder::bind(
+        Arc::new(definition),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli { effort, .. } => assert_eq!(*effort, Some("high")),
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
+}
+
+#[test]
+fn claude_runtime_rejects_unsupported_reasoning_effort() {
+    let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    definition.reasoning = Some(rho_sdk::ReasoningLevel::Minimal);
     let error = AgentBinder::bind(
         Arc::new(definition),
         AgentInvocation {
@@ -388,8 +409,11 @@ fn claude_runtime_rejects_non_inherit_reasoning() {
     )
     .unwrap_err();
     let message = error.to_string();
-    assert!(message.contains("does not support reasoning"), "{message}");
-    assert!(message.contains("high"), "{message}");
+    assert!(
+        message.contains("not a Claude") || message.contains("effort"),
+        "{message}"
+    );
+    assert!(message.contains("minimal"), "{message}");
 }
 
 #[test]

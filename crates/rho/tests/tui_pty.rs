@@ -209,7 +209,7 @@ web_search_provider = "disabled"
         "store chooser must wait until a normal provider is selected:\n{screen}"
     );
     assert!(
-        !screen.contains("claude code (delegation only)"),
+        !screen.contains("Claude Code (delegation only)"),
         "claude-code belongs under Anthropic methods, not the top-level group picker:\n{screen}"
     );
     assert!(

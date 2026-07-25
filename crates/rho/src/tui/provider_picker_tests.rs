@@ -129,7 +129,7 @@ fn anthropic_login_methods_include_claude_code_for_delegation() {
     assert_eq!(api_key.value, "anthropic");
 
     let claude = &picker.items[1];
-    assert_eq!(claude.label, "claude code (delegation only)");
+    assert_eq!(claude.label, "Claude Code (delegation only)");
     assert_eq!(claude.value, "claude-code");
     let detail = claude
         .detail

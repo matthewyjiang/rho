@@ -104,12 +104,20 @@ pub(crate) fn parse_definition(
             })
         })
         .transpose()?;
-    if runtime == AgentRuntime::ClaudeCli && reasoning.is_some() {
-        return Err(AgentCatalogError::at_field(
-            path.to_path_buf(),
-            "reasoning",
-            "is not supported with runtime: claude-cli; omit it to inherit Claude's default",
-        ));
+    if runtime == AgentRuntime::ClaudeCli {
+        if let Some(level) = reasoning {
+            // Claude `--effort` accepts low/medium/high/xhigh/max only.
+            if matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal) {
+                return Err(AgentCatalogError::at_field(
+                    path.to_path_buf(),
+                    "reasoning",
+                    format!(
+                        "value '{level}' is not a Claude Code effort level; \
+expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default)"
+                    ),
+                ));
+            }
+        }
     }
     let tools = parse_tools(path, runtime, raw.tools)?;
     Ok(AgentDefinition {

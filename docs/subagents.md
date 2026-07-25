@@ -34,7 +34,9 @@ Review the requested changes. Do not modify files.
 
 Definitions are discovered deterministically from built-ins, `~/.agents/agents`, `~/.rho/agents`, and trusted project `.agents/agents` directories, with later sources taking precedence. Project definitions are ignored unless `RHO_TRUST_PROJECT_AGENTS=1`, so an untrusted checkout cannot affect prompts, models, or tools. Duplicate IDs within one precedence level are errors. The file name supplies `id` when the field is omitted.
 
-Supported fields are:
+For the full value set, constraints, and defaults, see [Agent definition schema](#agent-definition-schema).
+
+### Quick field summary
 
 | Field | Required | Meaning |
 | --- | --- | --- |
@@ -45,25 +47,269 @@ Supported fields are:
 | `model-policy` | no | For `runtime: rho`: `inherit`, `prefer`, `require`, or `select`. For `runtime: claude-cli`: omit, `inherit`, or `select` |
 | `model` | policy-dependent | Model selected by non-inherit policies. On `runtime: rho`, use `@name` to reference a [model alias](/configuration#model-aliases). On `runtime: claude-cli`, the value is passed through as Claude's `--model` and must be a Claude model name or Claude alias such as `opus` (Rho `@alias` references are rejected) |
 | `provider` | no | Provider selected with the model. Valid only for `runtime: rho`; rejected on `runtime: claude-cli` |
-| `reasoning` | no | For `runtime: rho`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Rejected on `runtime: claude-cli` (Claude keeps its own default; Rho does not map this to `--effort`) |
+| `reasoning` | no | For `runtime: rho`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. For `runtime: claude-cli`: maps to Claude `--effort` as `low`, `medium`, `high`, `xhigh`, or `max`. Omit to inherit Claude's default. `off` and `minimal` are rejected on `claude-cli` |
 | `tools` | no | Tool allowlist. Vocabulary depends on `runtime` (see below) |
 | `inherit_claude_config` | no | `true` or `false` (default). Opt in only with `runtime: claude-cli` to load the user's full Claude settings (`user,project,local`). Default stays closed |
 
-### Runtime and tool vocabulary
+## Agent definition schema
 
-`runtime` chooses the harness that runs the agent loop. It is independent of which model answers:
+This is the parse contract for agent Markdown files. Unknown frontmatter keys fail. Invalid values fail before execution. Field order does not matter; `runtime` is resolved before `tools`.
 
-- `rho` (default): Rho's own loop and Rho tool capabilities
-- `claude-cli`: the `claude` binary (`claude -p`). Sign-in is owned by Claude Code (`/login claude-code`); Rho does not store that credential
+### File shape
 
-`tools:` is parsed against the runtime's vocabulary. Runtime is resolved before tools, so field order in the file does not matter. The two vocabularies do not translate:
+```text
+---
+<yaml-like frontmatter keys>
+---
+<markdown body>
+```
 
-| Runtime | `tools` values | Examples |
+| Part | Rule |
+| --- | --- |
+| Frontmatter | Starts and ends with a line that is exactly `---` |
+| Body | Markdown after the closing `---`. Trimmed. Used by `prompt` |
+| Encoding | Text file, one agent |
+
+### Frontmatter fields
+
+| Field | Type | Required | Default | Allowed values / constraints |
+| --- | --- | --- | --- | --- |
+| `id` | string | no | file stem (`name` in `name.md`) | 1-64 chars; lowercase ASCII letters, digits, single hyphens only; no leading/trailing/double hyphen |
+| `description` | string | yes | - | 1-1024 Unicode characters after trim; empty rejected |
+| `runtime` | enum | no | `rho` | `rho` \| `claude-cli` |
+| `prompt` | enum | no | `extend` | `extend` \| `replace`. `replace` requires a non-empty Markdown body |
+| `model-policy` | enum | no | see model rules | Depends on `runtime` (below) |
+| `model` | string | policy-dependent | unset | Non-empty; no whitespace. Rho may use `@alias`. Claude rejects `@alias` and passes the value to `--model` |
+| `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli` |
+| `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude |
+| `tools` | `all` or string list | no | runtime-specific | See tool vocabulary. Mixing Rho and Claude names is a parse error |
+| `inherit_claude_config` | bool | no | `false` | `true` \| `false`. `true` only with `runtime: claude-cli` |
+
+Scalars are plain or single/double quoted. Booleans are only `true` / `false`. Lists use `[a, b]` form (comma-separated). Nested YAML maps/objects are not accepted.
+
+### Model rules by runtime
+
+**`runtime: rho` (default)**
+
+| `model-policy` | `model` | `provider` | Result |
+| --- | --- | --- | --- |
+| omitted, no `model` | omitted | omitted | `inherit` |
+| omitted, with `model` | required | optional | treated as `select` |
+| `inherit` | must omit | must omit | keep parent provider/model |
+| `prefer` \| `require` \| `select` | required | optional | pin that selection; `@alias` allowed |
+
+**`runtime: claude-cli`**
+
+| `model-policy` | `model` | `provider` | Result |
+| --- | --- | --- | --- |
+| omitted / `inherit`, no `model` | omitted | must omit | Claude default model (no `--model`) |
+| omitted / `select`, with `model` | required | must omit | pass-through `--model` |
+| `prefer` \| `require` | - | - | rejected |
+| any | `@...` | - | rejected (no Rho alias resolution) |
+| any | any | set | rejected |
+
+### Tool vocabulary by runtime
+
+**`runtime: rho`**
+
+| Form | Meaning |
+| --- | --- |
+| omitted or `tools: all` | all host-supplied Rho capabilities (default) |
+| `tools: [name, ...]` | allowlist of Rho capabilities |
+
+Built-in Rho capability names:
+
+```text
+agent
+agents
+bash
+edit_file
+fetch_content
+get_search_content
+list_dir
+powershell
+process
+questionnaire
+read_file
+rho
+shell
+skill
+web_search
+write_file
+```
+
+Notes:
+
+- `shell` resolves at bind time to the platform shell (`bash` or `powershell`) when that capability is available
+- unknown names become extension capabilities and still fail bind unless the host supplies them
+- delegated agents never receive `agent` / `agents` even if listed
+
+**`runtime: claude-cli`**
+
+| Form | Meaning |
+| --- | --- |
+| omitted | empty allowlist (no Claude tools) |
+| `tools: all` | rejected |
+| `tools: [entry, ...]` | Claude Code tool entries |
+
+Each entry must match:
+
+```text
+ToolName
+ToolName(specifier)
+```
+
+| Rule | Detail |
+| --- | --- |
+| Base name | non-empty; letters, digits, `_`, `-` only |
+| Specifier | optional `(...)` with balanced parentheses; may contain spaces and quotes |
+| Commas | not allowed inside a specifier (Claude list grammar cannot round-trip them) |
+| Membership | open-ended (plugins/MCP may add tools); Rho checks shape, not a fixed catalog |
+| Examples | `Read`, `Edit`, `Glob`, `Grep`, `Bash(git *)`, `mcp__server__tool` |
+
+Base names feed Claude `--tools`. Full entries (except nested `Task`) feed `--allowedTools`. Nested Claude `Task` stays disallowed at spawn.
+
+### Body / prompt semantics
+
+| `prompt` | Body empty | Body non-empty |
 | --- | --- | --- |
-| `rho` | `all` (default) or Rho capabilities | `tools: [read_file, list_dir, bash]`; `shell` resolves to the platform shell |
-| `claude-cli` | Claude Code tool names and patterns. Omitting `tools` means an empty allowlist. `tools: all` is rejected. Base names restrict availability via `--tools`; patterns with specifiers also go to `--allowedTools`. Patterns must round-trip Claude's list grammar (no commas inside a specifier). | `tools: [Read, Edit, "Bash(git *)"]` |
+| `extend` (default) | keep base coding prompt only | append body to base coding prompt |
+| `replace` | parse error | body becomes the full system prompt |
 
-Claude tool names are open-ended (plugins and MCP servers add more). Rho validates shape (`Tool` or `Tool(specifier)`), not membership in a fixed list. Mixing vocabularies is a parse error that names the runtime and shows a valid example.
+### JSON Schema (frontmatter)
+
+Machine-readable shape for the frontmatter object after parse. Runtime-specific exclusions (`provider` on Claude, `tools: all` on Claude, `reasoning: off|minimal` on Claude, and model-policy combinations) are enforced in prose and by the Rho parser beyond plain JSON Schema.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rho.dev/schemas/agent-definition-frontmatter.json",
+  "title": "Rho agent definition frontmatter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "runtime": {
+      "type": "string",
+      "enum": ["rho", "claude-cli"],
+      "default": "rho"
+    },
+    "prompt": {
+      "type": "string",
+      "enum": ["extend", "replace"],
+      "default": "extend"
+    },
+    "model-policy": {
+      "type": "string",
+      "enum": ["inherit", "prefer", "require", "select"]
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S+$"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S+$"
+    },
+    "reasoning": {
+      "type": "string",
+      "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+    },
+    "tools": {
+      "oneOf": [
+        { "const": "all" },
+        {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      ]
+    },
+    "inherit_claude_config": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "runtime": { "const": "claude-cli" } },
+        "required": ["runtime"]
+      },
+      "then": {
+        "properties": {
+          "provider": false,
+          "model-policy": { "enum": ["inherit", "select"] },
+          "reasoning": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+          "tools": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "inherit_claude_config": { "type": "boolean" }
+        },
+        "not": {
+          "required": ["model-policy", "model"],
+          "properties": {
+            "model-policy": { "const": "inherit" },
+            "model": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "model-policy": { "const": "inherit" } },
+        "required": ["model-policy"]
+      },
+      "then": {
+        "not": {
+          "anyOf": [{ "required": ["model"] }, { "required": ["provider"] }]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "model-policy": { "enum": ["prefer", "require", "select"] }
+        },
+        "required": ["model-policy"]
+      },
+      "then": { "required": ["model"] }
+    }
+  ]
+}
+```
+
+### Examples
+
+Rho agent:
+
+```markdown
+---
+id: security-review
+description: Reviews changes for security defects
+runtime: rho
+model-policy: inherit
+reasoning: high
+tools: [read_file, list_dir, bash]
+---
+Review the requested changes. Do not modify files.
+```
+
+Claude Code delegated agent:
 
 ```markdown
 ---
@@ -71,6 +317,7 @@ id: claude-planner
 description: Plans with Claude Code on the user subscription
 runtime: claude-cli
 model: claude-opus-4-6
+reasoning: high
 tools: [Read, Edit, "Bash(git *)"]
 inherit_claude_config: false
 ---
@@ -84,7 +331,7 @@ Unknown fields, values, and tool references fail before execution. Definitions c
 Every invocation goes through the same binder. Binding is runtime-specific:
 
 - `runtime: rho`: resolve model aliases and reasoning against the host config, render prompt policy, and intersect requested Rho tools with host-supplied capabilities. Host policy remains the upper authority boundary.
-- `runtime: claude-cli`: copy `model` byte-for-byte (or omit it when inherited), keep the Claude tool list, and record `inherit_claude_config`. No Rho model-alias resolution and no mutation of the parent provider/model config. Rho-style `@alias` model values and any explicit `reasoning:` field are rejected. `runtime: claude-cli` is delegated-only: interactive and automation roots cannot bind it.
+- `runtime: claude-cli`: copy `model` byte-for-byte (or omit it when inherited), keep the Claude tool list, map optional `reasoning:` to Claude `--effort` (`low`/`medium`/`high`/`xhigh`/`max`), and record `inherit_claude_config`. No Rho model-alias resolution and no mutation of the parent provider/model config. Rho-style `@alias` model values and `reasoning: off` / `reasoning: minimal` are rejected. `runtime: claude-cli` is delegated-only: interactive and automation roots cannot bind it.
 
 Delegated Rho invocations do not receive `agent` or `agents`, so they cannot recursively delegate. Background delegated Rho agents under an interactive parent may use the questionnaire tool. The child pauses on that request, the parent TUI presents the structured form without blocking its active turn or goal loop, and the answer is routed back to the same child run. TUI approvals and questionnaires still use one shared interaction slot, so concurrent requests wait in order. Foreground delegated agents and headless automation omit questionnaire support. Each delegated run owns a fresh run status file, cancellation token, and attachment stream. Rho-runtime delegated runs also own a fresh SDK runtime, session, tool registry, and usage accounting. Claude-cli delegated runs spawn an external `claude` process instead of an in-process SDK loop. Immutable configuration and provider infrastructure may be shared for Rho runs.
 
@@ -139,7 +386,7 @@ Claude-cli agents are **delegated only**. The interactive root and `rho run` roo
    /login claude-code
    ```
 
-   Or open bare `/login`, pick **Anthropic**, then **claude code (delegation only)**. Rho hands the terminal to `claude auth login --claudeai` and never sees or stores the token. Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in).
+   Or open bare `/login`, pick **Anthropic**, then **Claude Code (delegation only)**. Rho hands the terminal to `claude auth login --claudeai` and never sees or stores the token. Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in).
 
 3. **Write a delegated agent definition** (there is no built-in Claude agent). Use the `rho-agent-creator` skill for a guided questionnaire, or write a file such as `~/.rho/agents/claude-planner.md`:
 
@@ -149,6 +396,7 @@ Claude-cli agents are **delegated only**. The interactive root and `rho run` roo
    description: Use Claude Code to plan with an Anthropic model
    runtime: claude-cli
    model: claude-opus-5
+   reasoning: high
    tools: [Read, Glob, Grep]
    inherit_claude_config: false
    ---
@@ -160,6 +408,7 @@ Claude-cli agents are **delegated only**. The interactive root and `rho run` roo
    - `tools:` uses Claude Code names (`Read`, `Edit`, `Bash(git *)`), not Rho capabilities
    - Omitting `tools` means no tools. There is no `tools: all`
    - `model:` is a Claude model name or Claude alias such as `opus`, not a Rho `@alias`
+   - optional `reasoning:` maps to Claude `--effort` (`low`/`medium`/`high`/`xhigh`/`max`); omit to inherit Claude's default; `off` and `minimal` are rejected
    - Keep permission mode at Plan or Auto before launch. Supervised refuses Claude-cli spawn because `claude -p` cannot prompt through Rho
 
 4. **Confirm setup** in the TUI:
@@ -221,6 +470,7 @@ Spawn flags are fixed and deliberate:
 | `--strict-mcp-config` | MCP servers only from what the spawn passes |
 | `--system-prompt-file` / `--append-system-prompt-file` | From the agent definition body. `prompt: replace` writes a private run-dir file and passes `--system-prompt-file`; nonempty `prompt: extend` uses `--append-system-prompt-file`. Empty extend omits both flags. Prompt body bytes never appear on argv |
 | `--model` | From the agent `model:` field when set, passed through unchanged. Omitted when the definition inherits Claude's model. Parent provider/model updates do not overwrite Claude agents |
+| `--effort` | From agent `reasoning:` when set (`low`, `medium`, `high`, `xhigh`, `max`). Omitted when unset so Claude keeps its default. `off` and `minimal` never reach spawn |
 | `--max-turns` | Exact configured step/turn cap from the bound launch data. If the installed binary rejects the flag, the run fails with a clear error |
 | cwd | Explicit project directory |
 | prompt | Written on stdin, not argv |

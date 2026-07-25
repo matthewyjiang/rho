@@ -7,6 +7,8 @@ description: Create a new Rho agent through a guided questionnaire. Use when the
 
 Guide the user through creating one valid agent definition. Do not jump directly to a file. Collect decisions step by step with the `questionnaire` tool, draft the definition, confirm it, write it safely, and verify it.
 
+The authoritative field and value contract is the agent definition schema in the Rho docs (`docs/subagents.md`, section "Agent definition schema"). Prefer that schema over inventing fields or values.
+
 Rho ships no built-in `runtime: claude-cli` agent. If the user wants Claude Code or a Claude subscription-backed specialist under Rho, create a user-defined agent with this skill.
 
 Agent definitions are Markdown files with YAML frontmatter and a prompt body. Valid discovery locations are:
@@ -50,7 +52,8 @@ Do **not** choose `claude-cli` merely because the user said "Opus" or "Claude". 
 - Requires the `claude` binary on `PATH` and a Claude Code login (`/login claude-code`). Offer to remind the user after write if they have not signed in yet.
 - Launch under Plan or Auto. Supervised mode refuses Claude-cli spawn because `claude -p` cannot prompt through Rho.
 - No nested Claude `Task` agents. Fan-out stays under Rho.
-- No Rho `provider`, no Rho `@alias` models, no `reasoning` field, no `tools: all`.
+- No Rho `provider`, no Rho `@alias` models, no `tools: all`
+- `reasoning:` is optional and maps to Claude `--effort` (`low`, `medium`, `high`, `xhigh`, `max`). Do not emit `off` or `minimal`.
 
 If the user still wants `claude-cli`, ask whether to set `inherit_claude_config: true`. Default is `false` (closed). Explain that the opt-in loads the user's full Claude settings (`user,project,local`); closed keeps project-only settings. Rho still does not store Claude credentials.
 
@@ -71,9 +74,10 @@ For Claude-cli starters, offer concrete presets when the user is unsure:
 
 ### Reasoning
 
-Ask for a reasoning level only on `runtime: rho`: inherit/default, off, minimal, low, medium, high, xhigh, max. Omitting `reasoning` means the selected model's normal default.
+Ask for a reasoning level:
 
-Never emit `reasoning` for `runtime: claude-cli`. Claude keeps its own defaults; Rho does not map reasoning to Claude `--effort`.
+- `runtime: rho`: inherit/default, off, minimal, low, medium, high, xhigh, max. Omitting `reasoning` means the selected model's normal default.
+- `runtime: claude-cli`: inherit/default, low, medium, high, xhigh, max. Omitting `reasoning` inherits Claude's default effort. Map the chosen value to Claude `--effort`. Never emit `off` or `minimal` for Claude.
 
 ## 4. Model policy
 
@@ -122,6 +126,7 @@ id: claude-planner
 description: Plans with Claude Code on the user subscription. Requires /login claude-code. Not for Rho-native tools or root sessions.
 runtime: claude-cli
 model: claude-opus-4-6
+reasoning: high
 tools: [Read, Glob, Grep]
 inherit_claude_config: false
 ---
@@ -133,7 +138,7 @@ You are a planning specialist running under Claude Code for a Rho parent.
 - Do not claim you can open nested Task agents; fan-out stays in Rho.
 ```
 
-`prompt` must be `extend` or `replace`. `runtime` must be `rho` or `claude-cli`. For Rho, `model-policy` must be `inherit`, `prefer`, `require`, or `select`, and `tools` must be `all` or a YAML list of Rho capability names. For Claude, never set `provider` or `reasoning`, and `tools` must be a YAML list of Claude tool names or patterns. Present the exact destination path and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.
+`prompt` must be `extend` or `replace`. `runtime` must be `rho` or `claude-cli`. For Rho, `model-policy` must be `inherit`, `prefer`, `require`, or `select`, and `tools` must be `all` or a YAML list of Rho capability names. For Claude, never set `provider`, `tools` must be a YAML list of Claude tool names or patterns, and `reasoning` when set must be one of `low`, `medium`, `high`, `xhigh`, `max`. Present the exact destination path and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.
 
 ## 7. Write safely and verify
 
