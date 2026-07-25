@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.10.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.9.0...rho-sdk-v1.10.0) (2026-07-25)
+
+
+### Features
+
+* **subagents:** route background questionnaires to parent ([#539](https://github.com/matthewyjiang/rho/issues/539)) ([e0cab31](https://github.com/matthewyjiang/rho/commit/e0cab3182e9fc833fbf304c7dad5714f73b89952))
+
+
+### Bug Fixes
+
+* **subagents:** run multi-agent batches in parallel ([#544](https://github.com/matthewyjiang/rho/issues/544)) ([7dd6706](https://github.com/matthewyjiang/rho/commit/7dd6706f6aade0a45d70336a42d259b4a3c12a4f))
+* **tools:** allow file paths outside workspace ([#537](https://github.com/matthewyjiang/rho/issues/537)) ([8a3cc24](https://github.com/matthewyjiang/rho/commit/8a3cc24468e89bb509fefbefced738b706b1e43d))
+
 ## [1.9.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.8.0...rho-sdk-v1.9.0) (2026-07-24)
 
 

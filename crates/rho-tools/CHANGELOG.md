@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.6](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.5.5...rho-agent-tools-v0.5.6) (2026-07-25)
+
+
+### Bug Fixes
+
+* **errors:** surface failures that were silently swallowed ([#546](https://github.com/matthewyjiang/rho/issues/546)) ([1d4eee3](https://github.com/matthewyjiang/rho/commit/1d4eee3ea2e45d459897198d48babbe3ded3bf19))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.9.0 to 1.10.0
+
 ## [0.5.5](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.5.4...rho-agent-tools-v0.5.5) (2026-07-24)
 
 
