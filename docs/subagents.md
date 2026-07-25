@@ -146,9 +146,9 @@ Claude-cli agents are **delegated only**. The interactive root and `rho run` roo
    ```markdown
    ---
    id: claude-planner
-   description: Plans with Claude Code on the user subscription
+   description: Use Claude Code to plan with an Anthropic model
    runtime: claude-cli
-   model: claude-opus-4-6
+   model: claude-opus-5
    tools: [Read, Glob, Grep]
    inherit_claude_config: false
    ---
