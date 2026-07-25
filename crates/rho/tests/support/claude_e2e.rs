@@ -170,6 +170,7 @@ pub fn path_with_fake(bin_dir: &Path) -> String {
 
 /// Paths for a login-only fake `claude` used by `/login claude-code` PTY tests.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct FakeClaudeLogin {
     pub bin_dir: tempfile::TempDir,
     pub claude: PathBuf,
