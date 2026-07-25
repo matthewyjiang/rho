@@ -116,12 +116,26 @@ fn background_guidance_is_gated_by_capability() {
         root.path(),
         BackgroundSubagents::Disabled,
     );
+    assert!(enabled.spec().description.contains("background=true"));
     assert!(enabled
         .spec()
         .description
-        .contains("delivered automatically"));
+        .contains("Independent agent calls in the same batch run together"));
+    assert!(enabled
+        .spec()
+        .description
+        .contains("issue them in one turn for parallel work"));
+    assert!(disabled
+        .spec()
+        .description
+        .contains("Independent agent calls in the same batch run together"));
+    assert!(!disabled.spec().description.contains("background=true"));
+    assert_eq!(
+        enabled.spec().input_schema["properties"]["background"]["description"],
+        "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Independent agent calls in the same batch run together either way."
+    );
     let disabled_spec = disabled.spec();
-    assert!(!disabled_spec.description.contains("background"));
+    assert!(!disabled_spec.description.contains("background=true"));
     assert!(disabled_spec.input_schema["properties"]
         .get("background")
         .is_none());
@@ -132,7 +146,6 @@ fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotificati
         snapshot: SubagentSnapshot {
             id: id.into(),
             agent_id: agent_id.into(),
-            background: true,
             elapsed: Duration::from_secs(5),
             status: crate::subagent::RunStatus {
                 state,
@@ -324,7 +337,23 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         .unwrap();
     assert_eq!(
         one_access(&launch),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
+    );
+
+    let background = agent
+        .prepare(
+            invocation(serde_json::json!({
+                "agent_id": "default",
+                "prompt": "task",
+                "background": true,
+            })),
+            preparation_context(root.path()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        one_access(&background),
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
     );
 
     let list = agents
@@ -360,6 +389,39 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         .unwrap();
     assert_eq!(
         one_access(&stop),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
     );
+}
+
+#[tokio::test]
+async fn concurrent_background_launches_register_together() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let first = call_agent(
+        &tool,
+        root.path(),
+        serde_json::json!({
+            "agent_id": "default",
+            "prompt": "first background task",
+            "background": true,
+        }),
+    );
+    let second = call_agent(
+        &tool,
+        root.path(),
+        serde_json::json!({
+            "agent_id": "default",
+            "prompt": "second background task",
+            "background": true,
+        }),
+    );
+    let (first, second) = tokio::join!(first, second);
+    let runs = manager.list();
+    assert_eq!(runs.len(), 2, "both background launches should register");
+    assert!(first.content().contains("started in background"));
+    assert!(second.content().contains("started in background"));
+    let ids = runs.iter().map(|run| run.id.as_str()).collect::<Vec<_>>();
+    assert!(ids.iter().any(|id| first.content().contains(id)));
+    assert!(ids.iter().any(|id| second.content().contains(id)));
 }

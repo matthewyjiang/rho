@@ -56,10 +56,10 @@ Delegated invocations do not receive `agent` or `agents`, so they cannot recursi
 
 ## Delegating work
 
-The `agent` tool accepts an `agent_id`, prompt, and optional `background` flag:
+Delegation has two modes:
 
-- Foreground delegation waits on the run handle and returns its final result.
-- Background delegation returns a six-character run ID immediately and sends a completion notification later.
+- Foreground waits for the run and returns its final result. Independent agent calls in the same step run together - issue them in one turn for parallel work.
+- Background returns a six-character run ID immediately and sends a completion notification later. Use background when you want to keep working or end the turn without waiting.
 
 Both modes use the same in-process `AgentExecutor`; Rho never starts a CLI child for internal delegation. The `agents` tool lists, inspects, or cancels handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by background agents surface in the parent session; approvals still cannot. In Supervised mode, delegated Write and Process operations therefore fail closed. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
 

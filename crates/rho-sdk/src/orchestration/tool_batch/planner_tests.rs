@@ -32,6 +32,16 @@ fn shared_accesses_and_empty_plans_can_overlap() {
 }
 
 #[test]
+fn shared_manager_state_launches_can_overlap() {
+    let manager = || ToolResourceAccess::shared(ToolResource::manager_state("subagents"));
+
+    assert_eq!(
+        plan(&[aware([manager()]), aware([manager()]), aware([manager()]),]),
+        vec![planned(0, vec![]), planned(1, vec![]), planned(2, vec![])]
+    );
+}
+
+#[test]
 fn conflicting_resources_depend_on_every_earlier_conflict_in_model_order() {
     let path = || ToolResource::workspace_path("/workspace/file");
     let policies = [

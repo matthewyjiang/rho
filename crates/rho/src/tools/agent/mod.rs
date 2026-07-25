@@ -31,7 +31,6 @@ use super::agent_output::{
     format_snapshot, SnapshotFormat,
 };
 
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBAGENT_MANAGER: &str = "subagents";
 const AGENT_TOOL: &str = "agent";
@@ -41,7 +40,6 @@ const AGENTS_TOOL: &str = "agents";
 pub struct SubagentSnapshot {
     pub id: String,
     pub agent_id: String,
-    pub background: bool,
     pub elapsed: Duration,
     pub status: RunStatus,
     pub done: bool,
@@ -62,7 +60,6 @@ impl AgentEntry {
         SubagentSnapshot {
             id: id.to_string(),
             agent_id: self.agent_id.clone(),
-            background: self.background,
             elapsed: self.started.elapsed(),
             done: status.state.is_terminal(),
             status,
@@ -454,27 +451,9 @@ impl AgentTool {
                 )
             })?,
             () = context.cancellation().cancelled() => {
-                // Foreground delegated runs must stop when the parent run is
-                // interrupted instead of leaving an orphan behind.
-                loop {
-                    let running: Vec<String> = self
-                        .manager
-                        .list()
-                        .into_iter()
-                        .filter(|snapshot| !snapshot.done && !snapshot.background)
-                        .map(|snapshot| snapshot.id)
-                        .collect();
-                    if !running.is_empty() {
-                        for id in running {
-                            let _ = self.manager.stop(&id).await;
-                        }
-                        break;
-                    }
-                    tokio::select! {
-                        _ = &mut wait => break,
-                        () = tokio::time::sleep(POLL_INTERVAL) => {}
-                    }
-                }
+                // This invocation owns run_id for the wait. Stop only that
+                // handle on parent cancellation.
+                let _ = self.manager.stop(&run_id).await;
                 return Err(ToolError::cancelled());
             }
         };
@@ -522,20 +501,22 @@ impl Tool for AgentTool {
         if self.background_subagents.is_enabled() {
             properties["background"] = json!({
                 "type": "boolean",
-                "description": "Run concurrently and return an id immediately"
+                "description": "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Independent agent calls in the same batch run together either way."
             });
         }
-        // Behavioral guidance must match registered capabilities: describe
-        // background delivery only when background runs can actually start.
+        // Parallel batch behavior is always true; background delivery text is
+        // capability-gated so disabled runs do not advertise a missing path.
+        let parallel_guidance =
+            " Independent agent calls in the same batch run together - issue them in one turn for parallel work.";
         let background_guidance = if self.background_subagents.is_enabled() {
-            " A background run's completion is delivered automatically at the next turn boundary (multiple completions arrive batched in one notification): after starting one, end your turn once no other work remains - never sleep or poll for the result."
+            " Foreground calls wait for completion. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
         } else {
-            ""
+            " Calls wait for completion."
         };
         rho_sdk::model::ToolSpec {
             name: AGENT_TOOL.into(),
             description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent.{background_guidance}\n\nAgents:\n{summaries}"
+                "Delegate a substantial, self-contained task to a fresh agent.{parallel_guidance}{background_guidance}\n\nAgents:\n{summaries}"
             ),
             input_schema: json!({
                 "type": "object",
@@ -562,11 +543,13 @@ impl Tool for AgentTool {
         let args = parse_agent_args(invocation.into_arguments());
         Box::pin(async move {
             let args = args?;
-            // Launch and wait mutate the shared subagent registry.
-            let access =
-                ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER));
+            // Registry ops are mutex-protected and short. Shared access lets
+            // several launches in one batch overlap; each call still waits
+            // only on its own handle when foreground.
             Ok(PreparedToolInvocation::resource_aware(
-                [access],
+                [ToolResourceAccess::shared(ToolResource::manager_state(
+                    SUBAGENT_MANAGER,
+                ))],
                 [],
                 agent_metadata(),
                 move |context| Box::pin(async move { self.execute(args, &context).await }),
@@ -681,15 +664,12 @@ impl Tool for AgentsTool {
         let args = parse_agents_args(invocation.into_arguments());
         Box::pin(async move {
             let args = args?;
-            let access = match args.action.as_str() {
-                // Stop mutates registry ownership; list/status only observe.
-                "stop" => {
-                    ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER))
-                }
-                _ => ToolResourceAccess::shared(ToolResource::manager_state(SUBAGENT_MANAGER)),
-            };
+            // list/status/stop all touch the mutex-backed registry briefly.
+            // Shared access keeps lifecycle ops from serializing launches.
             Ok(PreparedToolInvocation::resource_aware(
-                [access],
+                [ToolResourceAccess::shared(ToolResource::manager_state(
+                    SUBAGENT_MANAGER,
+                ))],
                 [],
                 agents_metadata(),
                 move |_context| Box::pin(async move { self.execute(args).await }),
