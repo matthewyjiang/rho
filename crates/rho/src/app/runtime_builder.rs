@@ -67,7 +67,6 @@ where
     let (compactor, policy) = build_compaction(
         Arc::clone(&provider),
         tools,
-        system_prompt.clone(),
         reasoning,
         compaction,
         context_window,
@@ -102,7 +101,6 @@ where
 pub(crate) fn build_compaction(
     provider: Arc<dyn ModelProvider>,
     tools: &[Arc<dyn rho_sdk::tool::Tool>],
-    system_prompt: SystemPrompt,
     reasoning: rho_sdk::ReasoningLevel,
     compaction: CompactionConfig,
     context_window: Option<u64>,
@@ -113,7 +111,6 @@ pub(crate) fn build_compaction(
         provider,
         usage_recording,
         tool_specs: tools.iter().map(|tool| tool.spec()).collect(),
-        system_prompt,
         reasoning,
         config: compaction,
         context_window,
@@ -140,13 +137,6 @@ pub(crate) struct ModelCompactor {
     provider: Arc<dyn ModelProvider>,
     usage_recording: ProviderRequestUsageRecording,
     tool_specs: Vec<rho_sdk::model::ToolSpec>,
-    /// Host-owned system prompt re-applied after every successful compaction.
-    ///
-    /// Tool schemas are not stored in history (they are re-advertised each
-    /// turn). The system prompt carries base instructions, AGENTS.md, and the
-    /// available-skills catalog, so it must survive native opaque compaction
-    /// even when the provider returns only a compaction marker.
-    system_prompt: SystemPrompt,
     reasoning: rho_sdk::ReasoningLevel,
     config: CompactionConfig,
     context_window: Option<u64>,
@@ -174,27 +164,24 @@ impl Compactor for ModelCompactor {
             }
             let cancellation = request.cancellation().clone();
             let mut next_attempt_index = 1usize;
-            let pre_compact = request.messages();
 
             match self
                 .try_native_compaction(
-                    pre_compact,
+                    request.messages(),
                     cancellation.clone(),
                     usage_context.clone(),
                     &mut next_attempt_index,
                 )
                 .await
             {
-                NativeCompactionResult::Success(output) => {
-                    return finalize_compaction_output(self, pre_compact, output);
-                }
+                NativeCompactionResult::Success(output) => return Ok(output),
                 NativeCompactionResult::Cancelled => return Err(Error::Cancelled),
                 // Explicit fallback to portable text-summary compaction.
                 NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
             }
 
             // Clone only after native compact is unavailable or failed and fallback needs ownership.
-            let messages = pre_compact.to_vec();
+            let messages = request.messages().to_vec();
             let target_tokens = self
                 .context_window
                 .map(|window| self.config.target_tokens(window))
@@ -240,11 +227,9 @@ impl Compactor for ModelCompactor {
                     message: "compaction model returned no summary text".into(),
                 });
             }
-            let replacement = replacement_history_from_summary(partition, summary);
-            finalize_compaction_output(
-                self,
-                pre_compact,
-                CompactionOutput::with_usage(replacement, usage)?,
+            CompactionOutput::with_usage(
+                replacement_history_from_summary(partition, summary),
+                usage,
             )
         })
     }
@@ -252,56 +237,6 @@ impl Compactor for ModelCompactor {
     fn cancellation_mode(&self) -> rho_sdk::CompactorCancellationMode {
         rho_sdk::CompactorCancellationMode::Cooperative
     }
-}
-
-/// Re-stamps host system prompt onto compaction replacement history.
-fn finalize_compaction_output(
-    compactor: &ModelCompactor,
-    pre_compact: &[rho_sdk::model::Message],
-    output: CompactionOutput,
-) -> Result<CompactionOutput, Error> {
-    let usage = output.usage().clone();
-    let messages = output.into_messages();
-    let preserved = preserve_host_system_messages(&compactor.system_prompt, pre_compact, messages);
-    CompactionOutput::with_usage(preserved, usage)
-}
-
-/// Ensures host-owned system instructions survive compaction.
-///
-/// Provider native compact may return only an opaque marker. Summary compact
-/// keeps leading systems from history. In both cases the runtime system prompt
-/// (base instructions + AGENTS.md + available skills) is authoritative and is
-/// forced back to the front of replacement history.
-pub(crate) fn preserve_host_system_messages(
-    system_prompt: &SystemPrompt,
-    pre_compact: &[rho_sdk::model::Message],
-    replacement: Vec<rho_sdk::model::Message>,
-) -> Vec<rho_sdk::model::Message> {
-    use rho_sdk::model::Message;
-
-    let host_systems: Vec<Message> = match system_prompt {
-        SystemPrompt::Custom(text) if !text.trim().is_empty() => {
-            vec![Message::System(text.clone())]
-        }
-        // No runtime system prompt configured: keep whatever systems were in
-        // the pre-compact history (provider-retained or summary leading).
-        _ => pre_compact
-            .iter()
-            .filter(|message| matches!(message, Message::System(_)))
-            .cloned()
-            .collect(),
-    };
-
-    // Drop any system messages the provider/summary put in the replacement so
-    // the host copy is the single authoritative prefix.
-    let mut rest = replacement
-        .into_iter()
-        .filter(|message| !matches!(message, Message::System(_)))
-        .collect::<Vec<_>>();
-
-    let mut preserved = host_systems;
-    preserved.append(&mut rest);
-    preserved
 }
 
 #[derive(Debug)]

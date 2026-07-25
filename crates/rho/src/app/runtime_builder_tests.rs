@@ -55,7 +55,6 @@ fn compactor(
     build_compaction(
         Arc::new(provider) as Arc<dyn ModelProvider>,
         &[],
-        rho_sdk::SystemPrompt::Custom("system".into()),
         rho_sdk::ReasoningLevel::Off,
         CompactionConfig {
             auto_compact: false,
@@ -107,102 +106,6 @@ async fn native_compaction_success_records_usage_and_returns_replacement() {
         .recorded_requests()
         .iter()
         .all(|request| request.tools.is_empty() && request.prompt_cache_key.is_none()));
-}
-
-#[tokio::test]
-async fn native_compaction_restores_host_system_when_provider_omits_it() {
-    let usage = RecordingUsage::default();
-    // Provider returns only a non-system replacement (xAI-style marker stand-in).
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("xai", "openai-responses", "grok-test"),
-        [],
-    )
-    .with_native_compactions([Ok(rho_sdk::CompactionOutput::with_usage(
-        vec![Message::assistant_text("opaque compaction marker")],
-        ModelUsage {
-            input_tokens: Some(100),
-            output_tokens: Some(5),
-            total_tokens: Some(105),
-            ..ModelUsage::default()
-        },
-    )
-    .unwrap())]);
-    let host_system = "base instructions\n<available_skills>\n  <skill><name>rho-diagnostics</name></skill>\n</available_skills>";
-    let compactor = build_compaction(
-        Arc::new(provider) as Arc<dyn ModelProvider>,
-        &[],
-        rho_sdk::SystemPrompt::Custom(host_system.into()),
-        rho_sdk::ReasoningLevel::Off,
-        CompactionConfig {
-            auto_compact: false,
-            threshold_percent: 85,
-            target_percent: 20,
-        },
-        Some(8_000),
-        ProviderRequestUsageRecording::new(usage),
-    )
-    .0;
-
-    let history = vec![
-        Message::System(host_system.into()),
-        Message::user_text("hello"),
-        Message::assistant_text("world"),
-    ];
-    let output = compactor
-        .compact(CompactionRequest::new(history, Default::default()))
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        &output.messages()[0],
-        Message::System(text) if text == host_system && text.contains("rho-diagnostics")
-    ));
-    assert_eq!(output.messages().len(), 2);
-}
-
-#[test]
-fn preserve_host_system_messages_prefers_runtime_prompt() {
-    use super::preserve_host_system_messages;
-
-    let pre = vec![
-        Message::System("stale system".into()),
-        Message::user_text("u"),
-    ];
-    let replacement = vec![
-        Message::System("provider system".into()),
-        Message::assistant_text("marker"),
-    ];
-    let preserved = preserve_host_system_messages(
-        &rho_sdk::SystemPrompt::Custom("host system with skills".into()),
-        &pre,
-        replacement,
-    );
-    assert_eq!(
-        preserved,
-        vec![
-            Message::System("host system with skills".into()),
-            Message::assistant_text("marker"),
-        ]
-    );
-}
-
-#[test]
-fn preserve_host_system_messages_falls_back_to_pre_compact_systems() {
-    use super::preserve_host_system_messages;
-
-    let pre = vec![
-        Message::System("history system".into()),
-        Message::user_text("u"),
-    ];
-    let replacement = vec![Message::assistant_text("marker")];
-    let preserved = preserve_host_system_messages(&rho_sdk::SystemPrompt::None, &pre, replacement);
-    assert_eq!(
-        preserved,
-        vec![
-            Message::System("history system".into()),
-            Message::assistant_text("marker"),
-        ]
-    );
 }
 
 #[tokio::test]
