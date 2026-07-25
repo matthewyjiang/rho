@@ -41,7 +41,7 @@ Emit `runtime: rho` only when making the choice explicit; omit it to keep the de
 Then ask whether the agent should receive all tools (Rho only) or a focused allowlist. Tool names depend on runtime:
 
 - `runtime: rho`: multi-select from `agent`, `agents`, `bash`, `edit_file`, `fetch_content`, `get_search_content`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `web_search`, `write_file`. `tools: all` is allowed.
-- `runtime: claude-cli`: collect Claude Code tool names such as `Read`, `Edit`, and patterns like `Bash(git *)`. Specifier interiors may contain nested parentheses, commas, and quotes. Do not use Rho capability names. Omitting `tools` means no Claude tools. `tools: all` is not valid.
+- `runtime: claude-cli`: collect Claude Code tool names such as `Read`, `Edit`, and patterns like `Bash(git *)`. Specifier interiors may contain nested parentheses and quotes, but not commas (Claude's list grammar cannot round-trip commas). Do not use Rho capability names. Omitting `tools` means no Claude tools. `tools: all` is not valid.
 
 Never mix the two vocabularies. Then ask for reasoning level with these choices: inherit/default, off, minimal, low, medium, high, xhigh, max. Omitting `reasoning` means the selected model's normal default. Reasoning applies to Rho binding; Claude Code uses its own model defaults unless `model` is set.
 

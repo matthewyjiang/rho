@@ -46,7 +46,7 @@ fn permission_mode_updates_are_shared_with_executor_clones() {
 
 #[test]
 fn default_concurrency_is_global_four_with_nested_claude_two() {
-    let limits = concurrency_limits_from_env(None);
+    let limits = concurrency_limits_from_env(None, None);
     assert_eq!(
         limits,
         ConcurrencyLimits {
@@ -57,8 +57,8 @@ fn default_concurrency_is_global_four_with_nested_claude_two() {
 }
 
 #[test]
-fn env_override_sets_total_and_never_opens_two_n() {
-    let limits = concurrency_limits_from_env(Some("6"));
+fn total_env_override_keeps_default_claude_cap_and_clamps() {
+    let limits = concurrency_limits_from_env(Some("6"), None);
     assert_eq!(
         limits,
         ConcurrencyLimits {
@@ -67,12 +67,98 @@ fn env_override_sets_total_and_never_opens_two_n() {
         }
     );
 
-    let tight = concurrency_limits_from_env(Some("1"));
+    let tight = concurrency_limits_from_env(Some("1"), None);
     assert_eq!(
         tight,
         ConcurrencyLimits {
             total: 1,
             claude: 1
+        }
+    );
+}
+
+#[test]
+fn claude_env_override_raises_nested_cap_within_total() {
+    let limits = concurrency_limits_from_env(Some("6"), Some("4"));
+    assert_eq!(
+        limits,
+        ConcurrencyLimits {
+            total: 6,
+            claude: 4
+        }
+    );
+}
+
+#[test]
+fn claude_env_override_clamps_to_total() {
+    let limits = concurrency_limits_from_env(Some("3"), Some("10"));
+    assert_eq!(
+        limits,
+        ConcurrencyLimits {
+            total: 3,
+            claude: 3
+        }
+    );
+}
+
+#[test]
+fn zero_invalid_and_huge_concurrency_values_fall_back() {
+    assert_eq!(
+        concurrency_limits_from_env(Some("0"), Some("0")),
+        ConcurrencyLimits {
+            total: 4,
+            claude: 2
+        }
+    );
+    assert_eq!(
+        concurrency_limits_from_env(Some("-1"), Some("nope")),
+        ConcurrencyLimits {
+            total: 4,
+            claude: 2
+        }
+    );
+    assert_eq!(
+        concurrency_limits_from_env(Some(""), Some(" ")),
+        ConcurrencyLimits {
+            total: 4,
+            claude: 2
+        }
+    );
+    // Larger than usize::MAX decimal representation is rejected by parse.
+    let huge = format!("{}0", usize::MAX);
+    assert_eq!(
+        concurrency_limits_from_env(Some(huge.as_str()), Some(huge.as_str())),
+        ConcurrencyLimits {
+            total: 4,
+            claude: 2
+        }
+    );
+}
+
+#[test]
+fn total_and_claude_env_values_interact() {
+    // Valid Claude override with invalid total keeps default total and clamps.
+    assert_eq!(
+        concurrency_limits_from_env(Some("bad"), Some("3")),
+        ConcurrencyLimits {
+            total: 4,
+            claude: 3
+        }
+    );
+    // Valid total with invalid Claude keeps default Claude, clamped to total.
+    assert_eq!(
+        concurrency_limits_from_env(Some("1"), Some("bad")),
+        ConcurrencyLimits {
+            total: 1,
+            claude: 1
+        }
+    );
+    // Both valid: Claude is min(requested, total).
+    assert_eq!(
+        concurrency_limits_from_env(Some("8"), Some("5")),
+        ConcurrencyLimits {
+            total: 8,
+            claude: 5
         }
     );
 }

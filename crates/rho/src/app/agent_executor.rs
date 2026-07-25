@@ -31,7 +31,8 @@ pub(crate) struct AgentExecutor {
     ///
     /// `RHO_AGENT_CONCURRENCY` overrides this total. Claude runs also take a
     /// permit from [`Self::claude_permits`], so one env override never opens a
-    /// 2N fan-out window.
+    /// 2N fan-out window. `RHO_CLAUDE_AGENT_CONCURRENCY` overrides the Claude
+    /// nested cap and is clamped to the total.
     total_permits: Arc<tokio::sync::Semaphore>,
     /// Claude-only nested pool. Sized to min(total, Claude default/override).
     claude_permits: Arc<tokio::sync::Semaphore>,
@@ -368,18 +369,36 @@ struct ConcurrencyLimits {
 }
 
 fn concurrency_limits() -> ConcurrencyLimits {
-    concurrency_limits_from_env(std::env::var("RHO_AGENT_CONCURRENCY").ok().as_deref())
+    concurrency_limits_from_env(
+        std::env::var("RHO_AGENT_CONCURRENCY").ok().as_deref(),
+        std::env::var("RHO_CLAUDE_AGENT_CONCURRENCY")
+            .ok()
+            .as_deref(),
+    )
 }
 
-fn concurrency_limits_from_env(raw: Option<&str>) -> ConcurrencyLimits {
-    let total = raw
-        .and_then(|value| value.parse().ok())
-        .filter(|limit: &usize| *limit > 0)
-        .unwrap_or(DEFAULT_TOTAL_CONCURRENCY);
-    // Nested Claude pool never exceeds the global total, so one override cannot
+/// Parse concurrency env values without reading process environment.
+///
+/// Both values must be positive `usize` integers when present. Zero, empty,
+/// non-numeric, and overflow values fall back to the matching default. The
+/// Claude nested cap is always clamped to the resolved total so Claude fan-out
+/// cannot exceed the global pool.
+fn concurrency_limits_from_env(
+    total_raw: Option<&str>,
+    claude_raw: Option<&str>,
+) -> ConcurrencyLimits {
+    let total = parse_positive_concurrency(total_raw).unwrap_or(DEFAULT_TOTAL_CONCURRENCY);
+    let claude_requested =
+        parse_positive_concurrency(claude_raw).unwrap_or(DEFAULT_CLAUDE_CONCURRENCY);
+    // Nested Claude pool never exceeds the global total, so overrides cannot
     // open total + Claude = 2N concurrent delegated runs.
-    let claude = DEFAULT_CLAUDE_CONCURRENCY.min(total);
+    let claude = claude_requested.min(total);
     ConcurrencyLimits { total, claude }
+}
+
+fn parse_positive_concurrency(raw: Option<&str>) -> Option<usize> {
+    raw.and_then(|value| value.parse().ok())
+        .filter(|limit: &usize| *limit > 0)
 }
 
 async fn acquire_permit_or_cancel(
