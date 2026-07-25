@@ -1,4 +1,7 @@
-use ratatui::text::{Line, Span};
+use ratatui::{
+    layout::{Position, Rect},
+    text::{Line, Span},
+};
 
 use super::{
     render::{display_width, truncate_one_line},
@@ -18,9 +21,28 @@ struct RunningSubagent {
     elapsed_seconds: u64,
 }
 
+/// How a subagent row is being pointed at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum SubagentRowState {
+    #[default]
+    Idle,
+    Hovered,
+    Pressed,
+}
+
+/// A clickable subagent row resolved from a pointer position.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SubagentAttachTarget {
+    pub(super) row: usize,
+    pub(super) run_id: String,
+    pub(super) agent_id: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct SubagentPanel {
     agents: Vec<RunningSubagent>,
+    hovered: Option<usize>,
+    pressed: Option<usize>,
 }
 
 impl SubagentPanel {
@@ -42,6 +64,9 @@ impl SubagentPanel {
             return false;
         }
         self.agents = agents;
+        // Drop pointer state that may now point at a finished or shifted row.
+        self.hovered = None;
+        self.pressed = None;
         true
     }
 
@@ -57,14 +82,69 @@ impl SubagentPanel {
         self.agents.len().min(MAX_VISIBLE_AGENTS)
     }
 
-    pub(super) fn lines(&self, width: usize, height: usize) -> Vec<Line<'static>> {
+    pub(super) fn clear_pointer_state(&mut self) {
+        self.hovered = None;
+        self.pressed = None;
+    }
+
+    /// Returns whether the hovered row changed.
+    pub(super) fn set_hovered(&mut self, row: Option<usize>) -> bool {
+        if self.hovered == row {
+            return false;
+        }
+        self.hovered = row;
+        true
+    }
+
+    /// Returns whether the pressed row changed.
+    pub(super) fn set_pressed(&mut self, row: Option<usize>) -> bool {
+        if self.pressed == row {
+            return false;
+        }
+        self.pressed = row;
+        true
+    }
+
+    pub(super) fn highlighted_row(&self) -> Option<(usize, SubagentRowState)> {
+        if let Some(row) = self.pressed {
+            return Some((row, SubagentRowState::Pressed));
+        }
+        self.hovered.map(|row| (row, SubagentRowState::Hovered))
+    }
+
+    pub(super) fn attach_target_at(
+        &self,
+        area: Rect,
+        column: u16,
+        row: u16,
+    ) -> Option<SubagentAttachTarget> {
+        if !area.contains(Position { x: column, y: row }) || area.height == 0 {
+            return None;
+        }
+        let index = row.saturating_sub(area.y) as usize;
+        let agents = self.visible_agents(area.height as usize);
+        let agent = agents.get(index)?;
+        Some(SubagentAttachTarget {
+            row: index,
+            run_id: agent.id.clone(),
+            agent_id: agent.agent_id.clone(),
+        })
+    }
+
+    pub(super) fn lines(
+        &self,
+        width: usize,
+        height: usize,
+        action_hint: &str,
+    ) -> Vec<Line<'static>> {
         if self.agents.is_empty() || width == 0 || height == 0 {
             return Vec::new();
         }
 
-        let visible_count = self.agents.len().min(MAX_VISIBLE_AGENTS).min(height);
+        let agents = self.visible_agents(height);
+        let visible_count = agents.len();
         let mut lines = Vec::with_capacity(visible_count);
-        for (index, agent) in self.agents.iter().take(visible_count).enumerate() {
+        for (index, agent) in agents.into_iter().enumerate() {
             let activity = match agent.state {
                 RunState::Starting => "starting",
                 RunState::Running => activity_label(agent.last_activity.as_deref()),
@@ -75,9 +155,36 @@ impl SubagentPanel {
             } else {
                 "  ├ "
             };
-            lines.push(agent_line(agent, activity, connector, width));
+            let row_state = self.row_state(index);
+            lines.push(agent_line(
+                agent,
+                activity,
+                connector,
+                width,
+                row_state,
+                action_hint,
+            ));
         }
         lines
+    }
+
+    fn row_state(&self, row: usize) -> SubagentRowState {
+        if self.pressed == Some(row) {
+            SubagentRowState::Pressed
+        } else if self.hovered == Some(row) {
+            SubagentRowState::Hovered
+        } else {
+            SubagentRowState::Idle
+        }
+    }
+
+    fn visible_agents(&self, height: usize) -> Vec<&RunningSubagent> {
+        let limit = self.agents.len().min(MAX_VISIBLE_AGENTS).min(height);
+        self.agents
+            .iter()
+            .filter(|agent| matches!(agent.state, RunState::Starting | RunState::Running))
+            .take(limit)
+            .collect()
     }
 }
 
@@ -86,6 +193,8 @@ fn agent_line(
     activity: &str,
     connector: &'static str,
     width: usize,
+    row_state: SubagentRowState,
+    action_hint: &str,
 ) -> Line<'static> {
     const SEPARATOR: &str = "  ·  ";
     const MIN_GAP: usize = 2;
@@ -97,36 +206,44 @@ fn agent_line(
     let identity_width = display_width(&agent.agent_id) + 2 + display_width(&agent.id);
     let separator_width = display_width(SEPARATOR);
     let elapsed = format_elapsed(agent.elapsed_seconds);
-    let fixed_width = identity_width + separator_width + MIN_GAP + display_width(&elapsed);
+    let trailing = match row_state {
+        SubagentRowState::Idle => elapsed,
+        SubagentRowState::Hovered | SubagentRowState::Pressed => action_hint.to_string(),
+    };
+    let fixed_width = identity_width + separator_width + MIN_GAP + display_width(&trailing);
+    let row_style = Theme::subagent_row(row_state);
 
     if fixed_width >= content_width {
         let detail = truncate_one_line(
             &format!(
-                "{}  {}{SEPARATOR}{activity}  {elapsed}",
+                "{}  {}{SEPARATOR}{activity}  {trailing}",
                 agent.agent_id, agent.id
             ),
             content_width,
         );
         return Line::from(vec![
-            Span::styled(connector, Theme::dim()),
-            Span::styled(detail, Theme::dim()),
+            Span::styled(connector, Theme::dim().patch(row_style)),
+            Span::styled(detail, Theme::dim().patch(row_style)),
         ]);
     }
 
     let activity_width = content_width.saturating_sub(fixed_width);
     let activity = truncate_one_line(activity, activity_width);
     let gap = " ".repeat(content_width.saturating_sub(
-        identity_width + separator_width + display_width(&activity) + display_width(&elapsed),
+        identity_width + separator_width + display_width(&activity) + display_width(&trailing),
     ));
     Line::from(vec![
-        Span::styled(connector, Theme::dim()),
-        Span::styled(agent.agent_id.clone(), Theme::text_strong()),
-        Span::raw("  "),
-        Span::styled(agent.id.clone(), Theme::dim()),
-        Span::styled(SEPARATOR, Theme::dim()),
-        Span::styled(activity, Theme::text()),
-        Span::raw(gap),
-        Span::styled(elapsed, Theme::dim()),
+        Span::styled(connector, Theme::dim().patch(row_style)),
+        Span::styled(
+            agent.agent_id.clone(),
+            Theme::text_strong().patch(row_style),
+        ),
+        Span::styled("  ", row_style),
+        Span::styled(agent.id.clone(), Theme::dim().patch(row_style)),
+        Span::styled(SEPARATOR, Theme::dim().patch(row_style)),
+        Span::styled(activity, Theme::text().patch(row_style)),
+        Span::styled(gap, row_style),
+        Span::styled(trailing, Theme::dim().patch(row_style)),
     ])
 }
 

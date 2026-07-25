@@ -231,6 +231,18 @@ impl Theme {
         Self::activity_rail().fg(Palette::current().dim)
     }
 
+    pub(super) fn subagent_row(state: super::subagent_panel::SubagentRowState) -> Style {
+        use super::subagent_panel::SubagentRowState;
+        match state {
+            SubagentRowState::Idle => Self::activity_rail(),
+            SubagentRowState::Hovered => Self::activity_rail().fg(Palette::current().accent),
+            SubagentRowState::Pressed => Style::default()
+                .fg(Color::Black)
+                .bg(Palette::current().accent)
+                .add_modifier(Modifier::BOLD),
+        }
+    }
+
     pub(super) fn success() -> Style {
         Style::default()
             .fg(Palette::current().success)

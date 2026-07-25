@@ -73,6 +73,11 @@ impl HerdrReporter {
         self.config.is_some()
     }
 
+    /// Pane this Rho instance runs in, when Herdr is configured.
+    pub fn pane_id(&self) -> Option<&str> {
+        self.config.as_ref().map(|config| config.pane_id.as_str())
+    }
+
     pub fn socket_is_reachable(&self) -> Option<bool> {
         let config = self.config.as_ref()?;
         Some(socket_is_reachable(&config.socket_path))

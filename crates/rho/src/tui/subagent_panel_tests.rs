@@ -1,4 +1,5 @@
 use super::*;
+use ratatui::layout::Rect;
 
 fn agent(
     id: &str,
@@ -39,10 +40,11 @@ fn renders_running_agents_with_identity_activity_and_elapsed_time() {
                 75,
             ),
         ],
+        ..Default::default()
     };
 
     assert_eq!(
-        text(&panel.lines(80, 3)),
+        text(&panel.lines(80, 3, "copy attach")),
         vec![
             "  ├ explorer  a1b2c3  ·  read_file                   42s",
             "  └ reviewer  d4e5f6  ·  responding               1m 15s",
@@ -64,9 +66,10 @@ fn summarizes_overflow_and_truncates_details_to_width() {
             agent("d4e5f6", "reviewer", RunState::Running, None, 2),
             agent("012abc", "worker", RunState::Running, None, 3),
         ],
+        ..Default::default()
     };
 
-    let lines = text(&panel.lines(32, 3));
+    let lines = text(&panel.lines(32, 3, "copy attach"));
 
     assert_eq!(panel.count(), 3);
     assert_eq!(lines.len(), 2);
@@ -90,6 +93,7 @@ fn active_tui_frame_places_panel_above_the_composer() {
             Some("tool: read_file"),
             42,
         )],
+        ..Default::default()
     };
 
     let layout = app.screen_layout(
@@ -120,6 +124,7 @@ fn text_selection_uses_rendered_history_window_with_active_subagents() {
             agent("a1b2c3", "explorer", RunState::Running, None, 3),
             agent("d4e5f6", "reviewer", RunState::Running, None, 4),
         ],
+        ..Default::default()
     };
     for index in 0..20 {
         app.record_inserted_entry(crate::tui::Entry::User(format!("message {index}")));
@@ -168,6 +173,7 @@ fn subagent_only_activity_reserves_bottom_follow_inset() {
     app.end_busy_ui();
     app.subagent_panel = SubagentPanel {
         agents: vec![agent("a1b2c3", "explorer", RunState::Running, None, 3)],
+        ..Default::default()
     };
     app.turn.start_loading();
 
@@ -195,6 +201,7 @@ fn activity_rail_shares_a_row_with_jump_to_bottom() {
             agent("a1b2c3", "explorer", RunState::Running, None, 3),
             agent("d4e5f6", "reviewer", RunState::Running, None, 4),
         ],
+        ..Default::default()
     };
     for index in 0..20 {
         app.push_transcript_entry(crate::tui::Entry::User(format!("message {index}")));
@@ -236,8 +243,166 @@ fn activity_rail_shares_a_row_with_jump_to_bottom() {
 fn renders_one_agent_detail_when_only_one_row_is_available() {
     let panel = SubagentPanel {
         agents: vec![agent("a1b2c3", "worker", RunState::Running, None, 3)],
+        ..Default::default()
     };
 
-    assert!(text(&panel.lines(20, 1))[0].starts_with("  └ worker"));
+    assert!(text(&panel.lines(20, 1, "copy attach"))[0].starts_with("  └ worker"));
     assert_eq!(panel.desired_height(), 1);
+}
+
+#[test]
+fn hover_replaces_elapsed_with_action_hint() {
+    let mut panel = SubagentPanel {
+        agents: vec![agent(
+            "a1b2c3",
+            "explorer",
+            RunState::Running,
+            Some("tool: read_file"),
+            42,
+        )],
+        ..Default::default()
+    };
+    panel.set_hovered(Some(0));
+
+    let line = text(&panel.lines(80, 1, "copy attach")).remove(0);
+    assert!(line.contains("copy attach"), "{line}");
+    assert!(!line.contains("42s"), "{line}");
+    assert_eq!(
+        panel.highlighted_row(),
+        Some((0, SubagentRowState::Hovered))
+    );
+}
+
+#[test]
+fn attach_target_at_resolves_row_over_full_width() {
+    let panel = SubagentPanel {
+        agents: vec![
+            agent("a1b2c3", "explorer", RunState::Running, None, 3),
+            agent("d4e5f6", "reviewer", RunState::Running, None, 4),
+        ],
+        ..Default::default()
+    };
+    let area = Rect::new(0, 10, 80, 2);
+
+    assert_eq!(
+        panel.attach_target_at(area, 79, 10),
+        Some(SubagentAttachTarget {
+            row: 0,
+            run_id: "a1b2c3".into(),
+            agent_id: "explorer".into(),
+        })
+    );
+    assert_eq!(
+        panel.attach_target_at(area, 0, 11),
+        Some(SubagentAttachTarget {
+            row: 1,
+            run_id: "d4e5f6".into(),
+            agent_id: "reviewer".into(),
+        })
+    );
+    assert_eq!(panel.attach_target_at(area, 0, 9), None);
+}
+
+#[test]
+fn pressed_state_takes_priority_over_hover() {
+    let mut panel = SubagentPanel {
+        agents: vec![agent("a1b2c3", "worker", RunState::Running, None, 3)],
+        ..Default::default()
+    };
+    panel.set_hovered(Some(0));
+    panel.set_pressed(Some(0));
+    assert_eq!(
+        panel.highlighted_row(),
+        Some((0, SubagentRowState::Pressed))
+    );
+    let line = text(&panel.lines(80, 1, "open pane")).remove(0);
+    assert!(line.contains("open pane"), "{line}");
+}
+
+#[test]
+fn clicking_subagent_row_copies_attach_command() {
+    use std::sync::{Arc, Mutex};
+
+    use crossterm::event::{MouseButton, MouseEventKind};
+    use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+
+    use crate::tui::clipboard::{ClipboardWriter, CopyOutcome};
+
+    #[derive(Clone)]
+    struct RecordingClipboard {
+        copied: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ClipboardWriter for RecordingClipboard {
+        fn copy(&mut self, text: &str) -> std::io::Result<CopyOutcome> {
+            self.copied.lock().unwrap().push(text.to_string());
+            Ok(CopyOutcome::Confirmed)
+        }
+    }
+
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let mut app = crate::tui::tests::test_app();
+    app.clipboard = Box::new(RecordingClipboard {
+        copied: Arc::clone(&copied),
+    });
+    app.begin_provider_turn_ui();
+    app.subagent_panel = SubagentPanel {
+        agents: vec![agent(
+            "a1b2c3",
+            "explorer",
+            RunState::Running,
+            Some("tool: read_file"),
+            42,
+        )],
+        ..Default::default()
+    };
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let now = std::time::Instant::now();
+    let layout = app.screen_layout(Rect::new(0, 0, 80, 16), now);
+    assert!(layout.subagents.height >= 1);
+    let row = layout.subagents.y;
+    let column = layout.subagents.x + 2;
+
+    app.handle_mouse_event(MouseEventKind::Moved, column, row, &mut terminal)
+        .unwrap();
+    assert_eq!(
+        app.subagent_panel.highlighted_row(),
+        Some((0, SubagentRowState::Hovered))
+    );
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let hovered_style = terminal.backend().buffer()[(column, row)].style();
+    let expected = Theme::subagent_row(SubagentRowState::Hovered);
+    assert_eq!(hovered_style.fg, expected.fg);
+    assert_eq!(hovered_style.bg, expected.bg);
+
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    assert_eq!(
+        app.subagent_panel.highlighted_row(),
+        Some((0, SubagentRowState::Pressed))
+    );
+    assert_eq!(copied.lock().unwrap().as_slice(), ["rho attach a1b2c3"]);
+    assert_eq!(
+        app.history.last_status_notice(),
+        Some("copied attach command: rho attach a1b2c3")
+    );
+
+    app.handle_mouse_event(
+        MouseEventKind::Up(MouseButton::Left),
+        column,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    assert_eq!(
+        app.subagent_panel.highlighted_row(),
+        Some((0, SubagentRowState::Hovered))
+    );
 }

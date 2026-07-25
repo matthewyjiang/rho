@@ -25,6 +25,7 @@ fn enabled_from_complete_herdr_environment() {
     let reporter = HerdrReporter::from_env_vars(|key| values.get(key).map(|value| (*value).into()));
 
     assert!(reporter.is_enabled());
+    assert_eq!(reporter.pane_id(), Some("w1:p1"));
 }
 
 #[cfg(windows)]

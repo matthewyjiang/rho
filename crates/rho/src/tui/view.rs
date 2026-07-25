@@ -138,13 +138,22 @@ impl App {
         }
         if layout.subagents.height > 0 {
             frame.render_widget(
-                Paragraph::new(
-                    self.subagent_panel
-                        .lines(width, layout.subagents.height as usize),
-                )
+                Paragraph::new(self.subagent_panel.lines(
+                    width,
+                    layout.subagents.height as usize,
+                    self.subagent_action_hint(),
+                ))
                 .style(Theme::activity_rail()),
                 layout.subagents,
             );
+            if let Some((row, state)) = self.subagent_panel.highlighted_row() {
+                let y = layout.subagents.y.saturating_add(row as u16);
+                if y < layout.subagents.bottom() {
+                    for x in layout.subagents.x..layout.subagents.right() {
+                        frame.buffer_mut()[(x, y)].set_style(Theme::subagent_row(state));
+                    }
+                }
+            }
         }
         if layout.top_divider.height > 0 {
             frame.render_widget(
@@ -300,10 +309,11 @@ impl App {
             );
         }
         if layout.subagents.height > 0 {
-            lines.extend(
-                self.subagent_panel
-                    .lines(width, layout.subagents.height as usize),
-            );
+            lines.extend(self.subagent_panel.lines(
+                width,
+                layout.subagents.height as usize,
+                self.subagent_action_hint(),
+            ));
         }
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width, /*shell_label*/ true));
