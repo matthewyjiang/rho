@@ -316,7 +316,7 @@ Claude Code delegated agent:
 id: claude-planner
 description: Plans with Claude Code on the user subscription
 runtime: claude-cli
-model: claude-opus-4-6
+model: claude-opus-5
 reasoning: high
 tools: [Read, Edit, "Bash(git *)"]
 inherit_claude_config: false
