@@ -52,6 +52,10 @@ struct AgentEntry {
     handle: AgentRunHandle,
     session_id: Option<String>,
     observed: bool,
+    /// Whether this run's terminal cost has already been folded into a parent
+    /// session total. Independent of [`Self::observed`] so cost still counts
+    /// when a run is delivered through `status`/`stop` instead of notification.
+    cost_accounted: bool,
 }
 
 impl AgentEntry {
@@ -148,9 +152,59 @@ impl SubagentManager {
                 handle,
                 session_id,
                 observed: false,
+                cost_accounted: false,
             },
         );
         Ok((id, directory.join(subagent::LOG_FILE_NAME)))
+    }
+
+    /// Fold terminal costs for `session_id` into a parent total once per run.
+    ///
+    /// Counts every finished run (background or foreground, success or failure)
+    /// the first time the parent claims it. Safe to call from any TUI poll path.
+    pub fn claim_terminal_costs_usd_micros(&self, session_id: &str) -> u64 {
+        let mut entries = self.inner.lock().expect("delegated registry lock");
+        let mut total = 0u64;
+        for entry in entries.values_mut() {
+            if entry.cost_accounted || entry.session_id.as_deref() != Some(session_id) {
+                continue;
+            }
+            let status = entry.handle.status();
+            if !status.state.is_terminal() {
+                continue;
+            }
+            entry.cost_accounted = true;
+            if let Some(cost) = status.total_cost_usd {
+                total = total.saturating_add(subagent::usd_to_micros(cost));
+            }
+        }
+        total
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_completed_for_test(
+        &self,
+        id: &str,
+        session_id: &str,
+        total_cost_usd: Option<f64>,
+    ) {
+        use crate::app::agent_executor::AgentRunHandle;
+        self.inner.lock().expect("delegated registry lock").insert(
+            id.to_string(),
+            AgentEntry {
+                agent_id: "fixture".into(),
+                background: true,
+                started: Instant::now(),
+                handle: AgentRunHandle::completed_for_test(crate::subagent::RunStatus {
+                    state: crate::subagent::RunState::Ok,
+                    total_cost_usd,
+                    ..crate::subagent::RunStatus::default()
+                }),
+                session_id: Some(session_id.into()),
+                observed: false,
+                cost_accounted: false,
+            },
+        );
     }
 
     pub fn status(&self, id: &str) -> Option<SubagentSnapshot> {

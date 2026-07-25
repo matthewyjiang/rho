@@ -5,7 +5,9 @@ use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, Mode
 
 use super::{
     command_block::CommandBlock,
-    usage_cost::{estimated_cost_usd_micros, format_usd, CostSource},
+    usage_cost::{
+        format_usd, resolved_usage_cost_usd_micros, session_total_cost_usd_micros, CostSource,
+    },
     workspace::git_branch,
     App, Entry,
 };
@@ -53,6 +55,8 @@ pub(super) struct RuntimeInfo {
     tree_error: Option<String>,
     /// Claude Code auth summary. Outside provider credentials on purpose.
     claude_code: String,
+    /// Cumulative cost from all completed subagents, including failed/canceled ones.
+    subagent_total_cost_usd_micros: u64,
 }
 
 impl App {
@@ -96,6 +100,7 @@ impl App {
             tree,
             tree_error,
             claude_code,
+            subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
         };
         self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
         self.status = "runtime info".into();
@@ -163,7 +168,11 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        block.push_note("No token usage recorded yet.");
+        if info.subagent_total_cost_usd_micros == 0 {
+            block.push_note("No token usage recorded yet.");
+        } else {
+            push_cost_fields(block, info, None);
+        }
         return;
     };
 
@@ -175,24 +184,57 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
         block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
     }
 
-    let cost = usage
-        .cost_usd_micros
-        .or_else(|| estimated_cost_usd_micros(usage, info.model_metadata.as_ref()));
-    if let Some(cost) = cost {
-        let qualifier = if info.cost_source == CostSource::Estimated {
-            " estimated"
-        } else {
-            ""
-        };
-        let equivalent = if info.billing == BillingInfo::Subscription {
-            " API equivalent"
-        } else {
-            ""
-        };
-        block.push_field(
-            "Cost",
-            &format!("{}{qualifier}{equivalent}", format_usd(cost)),
-        );
+    let main_cost_micros = resolved_usage_cost_usd_micros(usage, info.model_metadata.as_ref());
+    push_cost_fields(block, info, main_cost_micros);
+}
+
+fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micros: Option<u64>) {
+    let subagent = info.subagent_total_cost_usd_micros;
+    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, subagent) else {
+        return;
+    };
+    let equivalent = cost_equivalent_suffix(info.billing);
+    let main_qualifier = if info.cost_source == CostSource::Estimated {
+        " estimated"
+    } else {
+        ""
+    };
+
+    match (main_cost_micros, subagent) {
+        (Some(main), 0) => {
+            block.push_field(
+                "Cost",
+                &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
+            );
+        }
+        (None, subagent) => {
+            block.push_field(
+                "Subagent cost",
+                &format!("{}{equivalent}", format_usd(subagent)),
+            );
+        }
+        (Some(main), subagent) => {
+            block.push_field(
+                "Main cost",
+                &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
+            );
+            block.push_field(
+                "Subagent cost",
+                &format!("{}{equivalent}", format_usd(subagent)),
+            );
+            block.push_field(
+                "Total cost",
+                &format!("{}{equivalent}", format_usd(total_micros)),
+            );
+        }
+    }
+}
+
+fn cost_equivalent_suffix(billing: BillingInfo) -> &'static str {
+    if billing == BillingInfo::Subscription {
+        " API equivalent"
+    } else {
+        ""
     }
 }
 

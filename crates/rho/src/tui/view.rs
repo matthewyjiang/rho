@@ -745,6 +745,7 @@ impl App {
         self.statusline.update_usage(
             self.usage.cumulative_usage.as_ref(),
             self.usage.current_context.as_ref(),
+            self.usage.subagent_total_cost_usd_micros,
         );
         self.statusline
             .update_model_metadata(self.model_metadata.as_ref());
