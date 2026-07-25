@@ -23,7 +23,7 @@ use crate::subagent;
 use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
     executable::{self, ClaudeExecutable},
-    line_decoder::{LineDecodeError, LineDecoder},
+    line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
     persist::{self, StatusSink},
     spawn::{self, ClaudeSpawnRequest},
     stream::{StreamEffect, StreamMapper, TerminalResult},
@@ -337,7 +337,7 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
     tokio::pin!(stdin_write);
 
     let mut stdout = BufReader::new(stdout);
-    let mut decoder = LineDecoder::default();
+    let mut decoder = claude_ndjson_line_decoder();
     let mut mapper = StreamMapper::new();
     let mut pending_terminal: Option<TerminalResult> = None;
     let mut stream_error: Option<String> = None;

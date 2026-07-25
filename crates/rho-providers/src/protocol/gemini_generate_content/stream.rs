@@ -121,7 +121,7 @@ fn stream_error(collector: &ResponseCollector, error: ModelError) -> ModelError 
     }
 }
 
-fn invalid_utf8(error: std::str::Utf8Error) -> ModelError {
+fn invalid_utf8(error: crate::provider_backend::line_decoder::LineDecodeError) -> ModelError {
     ModelError::InvalidResponse(format!("invalid UTF-8 in Gemini stream: {error}"))
 }
 

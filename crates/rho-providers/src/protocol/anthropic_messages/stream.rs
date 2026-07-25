@@ -103,7 +103,7 @@ pub(crate) async fn collect_anthropic_sse_response(
     state.into_response()
 }
 
-fn invalid_stream_utf8(err: std::str::Utf8Error) -> ModelError {
+fn invalid_stream_utf8(err: crate::provider_backend::line_decoder::LineDecodeError) -> ModelError {
     ModelError::InvalidResponse(format!("streamed response contained invalid utf-8: {err}"))
 }
 
