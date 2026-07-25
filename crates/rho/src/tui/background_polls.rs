@@ -22,6 +22,21 @@ impl App {
         }
     }
 
+    /// Returns whether the runtime accepted the context window.
+    fn apply_context_window(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        context_window: Option<u64>,
+    ) -> bool {
+        if let Err(err) = agent.set_context_window(context_window) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not apply the model context window: {err}"
+            )));
+            return false;
+        }
+        true
+    }
+
     pub(super) fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         if let Some(handle) = self.pending_model_metadata.take() {
             handle.abort();
@@ -31,14 +46,16 @@ impl App {
             &self.info.runtime.provider,
             &self.info.runtime.model,
         ) {
-            agent.set_context_window(metadata.display_context_window());
-            let reasoning_metadata_complete = metadata.reasoning_metadata_complete;
-            self.model_metadata = Some(metadata);
-            if reasoning_metadata_complete && metadata_is_current {
-                return;
+            if self.apply_context_window(agent, metadata.display_context_window()) {
+                let reasoning_metadata_complete = metadata.reasoning_metadata_complete;
+                self.model_metadata = Some(metadata);
+                if reasoning_metadata_complete && metadata_is_current {
+                    return;
+                }
             }
+            // Failed apply: leave any prior cache alone and fall through to fetch.
         } else {
-            agent.set_context_window(None);
+            let _ = self.apply_context_window(agent, None);
             self.model_metadata = None;
         }
         let provider = self.info.runtime.provider.clone();
@@ -62,7 +79,10 @@ impl App {
         if let Some(handle) = self.pending_model_metadata.take() {
             let reasoning_at_fetch_start = self.pending_model_metadata_reasoning.take();
             if let Some(Ok(Some(metadata))) = handle.now_or_never() {
-                agent.set_context_window(metadata.display_context_window());
+                if !self.apply_context_window(agent, metadata.display_context_window()) {
+                    // Keep prior metadata until a later fetch can apply cleanly.
+                    return;
+                }
                 let capabilities = metadata.reasoning_capabilities();
                 let resolved = reasoning_metadata::resolve_fetched_reasoning(
                     &capabilities,

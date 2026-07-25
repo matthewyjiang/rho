@@ -63,6 +63,29 @@ fn load_falls_back_to_legacy_temp_cache() {
 }
 
 #[test]
+fn unreadable_stored_blob_reports_the_read_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let store = WebAccessStore::with_root(root.path().to_path_buf());
+    let response_id = new_response_id();
+    // A directory in the blob's place fails to read for a reason other than
+    // "missing", so the legacy fallback must not hide it.
+    fs::create_dir_all(
+        root.path()
+            .join("content")
+            .join(format!("{response_id}.json")),
+    )
+    .unwrap();
+
+    let error = store.load(&response_id).unwrap_err();
+
+    let message = error.to_string();
+    assert!(
+        message.contains("failed to read stored web content"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
 fn available_selectors_lists_exact_keys() {
     let stored = StoredContent {
         kind: "web_search".into(),

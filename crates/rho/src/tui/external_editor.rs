@@ -40,8 +40,9 @@ impl App {
         let suspended_run = terminal_session
             .run_suspended(terminal, "Opening editor…", || async move {
                 #[cfg(unix)]
-                let _signal_guard = unix_editor_signals::EditorSignalGuard::install(&mut command)
-                    .context("could not prepare editor signal handling")?;
+                let _signal_guard =
+                    unix_suspended_child_signals::SuspendedChildSignalGuard::install(&mut command)
+                        .context("could not prepare editor signal handling")?;
                 let status = command.status().await.context("could not start editor")?;
                 if !status.success() {
                     return Err(anyhow!("editor exited with {status}"));
@@ -202,8 +203,9 @@ fn split_editor_command(editor: &std::ffi::OsStr) -> anyhow::Result<Vec<OsString
     Ok(parts)
 }
 
+/// Signal handling shared by suspended interactive children (editor, claude login).
 #[cfg(unix)]
-mod unix_editor_signals {
+pub(super) mod unix_suspended_child_signals {
     use std::{io, mem::MaybeUninit, os::unix::process::CommandExt};
 
     use tokio::process::Command;
@@ -211,12 +213,12 @@ mod unix_editor_signals {
     const PARENT_IGNORED_SIGNALS: [libc::c_int; 2] = [libc::SIGINT, libc::SIGQUIT];
     const CHILD_DEFAULT_SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGQUIT, libc::SIGTSTP];
 
-    pub(super) struct EditorSignalGuard {
+    pub struct SuspendedChildSignalGuard {
         previous: Vec<(libc::c_int, libc::sigaction)>,
     }
 
-    impl EditorSignalGuard {
-        pub(super) fn install(command: &mut Command) -> io::Result<Self> {
+    impl SuspendedChildSignalGuard {
+        pub fn install(command: &mut Command) -> io::Result<Self> {
             let mut previous = Vec::with_capacity(PARENT_IGNORED_SIGNALS.len());
             for signal in PARENT_IGNORED_SIGNALS {
                 match replace_handler(signal, libc::SIG_IGN) {
@@ -239,7 +241,7 @@ mod unix_editor_signals {
         }
     }
 
-    impl Drop for EditorSignalGuard {
+    impl Drop for SuspendedChildSignalGuard {
         fn drop(&mut self) {
             restore_handlers(&self.previous);
         }

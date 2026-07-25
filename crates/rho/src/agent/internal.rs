@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::LazyLock};
 
 use rho_providers::reasoning::ReasoningLevel;
 
-use super::{AgentDefinition, AgentId, ModelPolicy, PromptPolicy, ToolPolicy};
+use super::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
 pub(crate) const SESSION_TITLE_AGENT_ID: &str = "session-title";
 pub(crate) const GOAL_JUDGE_AGENT_ID: &str = "goal-judge";
@@ -14,18 +14,22 @@ static INTERNAL_DEFINITIONS: LazyLock<Vec<AgentDefinition>> = LazyLock::new(|| {
             description: "Internal agent that names chat sessions. Reserved; cannot be overridden or delegated."
                 .to_string(),
             prompt: PromptPolicy::Replace(crate::tui::SESSION_TITLE_PROMPT.into()),
-            model: ModelPolicy::Inherit,
-            tools: ToolPolicy::Allow(BTreeSet::new()),
-            reasoning: Some(ReasoningLevel::Low),
+            runtime: AgentRuntimeSpec::Rho {
+                tools: ToolPolicy::Allow(BTreeSet::new()),
+                model: ModelPolicy::Inherit,
+                reasoning: Some(ReasoningLevel::Low),
+            },
         },
         AgentDefinition {
             id: AgentId::new(GOAL_JUDGE_AGENT_ID).expect("valid internal agent ID"),
             description: "Internal agent that evaluates goal completion. Reserved; cannot be overridden or delegated."
                 .to_string(),
             prompt: PromptPolicy::Replace(crate::tui::GOAL_JUDGE_PROMPT.into()),
-            model: ModelPolicy::Inherit,
-            tools: ToolPolicy::Allow(BTreeSet::new()),
-            reasoning: Some(ReasoningLevel::Low),
+            runtime: AgentRuntimeSpec::Rho {
+                tools: ToolPolicy::Allow(BTreeSet::new()),
+                model: ModelPolicy::Inherit,
+                reasoning: Some(ReasoningLevel::Low),
+            },
         },
     ]
 });

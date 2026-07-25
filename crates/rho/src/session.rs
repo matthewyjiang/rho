@@ -204,10 +204,22 @@ impl Session {
             .map(|snapshot| snapshot.provider().clone()))
     }
 
-    pub(crate) fn validate_agent_identity(
+    /// Resume check that accepts the current fingerprint or an exact legacy
+    /// v1 fingerprint for definitions whose behavior still maps to the old
+    /// encoding.
+    pub(crate) fn validate_agent_definition_identity(
+        &self,
+        definition: &crate::agent::AgentDefinition,
+    ) -> anyhow::Result<()> {
+        self.validate_agent_identity_with(definition.id.as_str(), |stored| {
+            definition.accepts_stored_fingerprint(stored)
+        })
+    }
+
+    fn validate_agent_identity_with(
         &self,
         selected_id: &str,
-        selected_fingerprint: &str,
+        accepts_fingerprint: impl FnOnce(&str) -> bool,
     ) -> anyhow::Result<()> {
         let Some((stored_id, stored_fingerprint)) = self.stored_agent_identity()? else {
             anyhow::bail!(
@@ -219,7 +231,7 @@ impl Session {
                 "cannot resume session created by agent '{stored_id}' as selected agent '{selected_id}'"
             );
         }
-        if stored_fingerprint != selected_fingerprint {
+        if !accepts_fingerprint(&stored_fingerprint) {
             anyhow::bail!(
                 "cannot resume agent '{selected_id}': its definition changed since the session was created"
             );

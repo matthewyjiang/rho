@@ -43,6 +43,34 @@ fn parses_github_root_tree_blob_and_commit_urls() {
     let commit = github::parse_url("https://github.com/owner/repo/commit/abc123").unwrap();
     assert_eq!(commit.kind, GitHubKind::Commit);
     assert_eq!(commit.ref_name.as_deref(), Some("abc123"));
+
+    let special_ref =
+        github::parse_url("https://github.com/owner/repo/tree/hello-$USER/src/tools").unwrap();
+    assert_eq!(special_ref.ref_name.as_deref(), Some("hello-$USER"));
+    assert_eq!(special_ref.path, "src/tools");
+
+    let plus_ref =
+        github::parse_url("https://github.com/owner/repo/blob/feature+api/README.md").unwrap();
+    assert_eq!(plus_ref.kind, GitHubKind::Blob);
+    assert_eq!(plus_ref.ref_name.as_deref(), Some("feature+api"));
+    assert_eq!(plus_ref.path, "README.md");
+}
+
+#[test]
+fn rejects_github_urls_whose_segments_could_inject_git_arguments() {
+    for url in [
+        "https://github.com/-owner/repo",
+        "https://github.com/owner/-repo",
+        "https://github.com/owner/re;po",
+        "https://github.com/owner/repo/tree/--upload-pack=touch%20pwned",
+        "https://github.com/owner/repo/commit/--output=pwned",
+        "https://github.com/owner/repo/tree/%2e%2e/etc",
+    ] {
+        assert!(
+            github::parse_url(url).is_none(),
+            "{url} should not parse as a GitHub target"
+        );
+    }
 }
 
 #[tokio::test]

@@ -6,6 +6,7 @@ use rho_providers::{
 use {crate::commands::CommandInvocation, crate::export, rho_tools::tool::ToolDisplayStyle};
 
 use super::{doctor, local_diff, App, Entry, ToolEntry, ToolEntryState};
+use crate::claude_runtime::auth::ClaudeProbeSnapshot;
 
 impl App {
     pub(super) fn execute_diff_command(&mut self) -> anyhow::Result<()> {
@@ -84,16 +85,20 @@ impl App {
                     .await;
             provider_health.push((descriptor.name.to_string(), health));
         }
-        self.open_doctor_picker(&provider_health)
+        let claude = self.claude_probe_snapshot().await;
+        self.open_doctor_picker(&provider_health, &claude)
     }
 
     pub(super) fn execute_doctor_command(&mut self) -> anyhow::Result<()> {
-        self.open_doctor_picker(&[])
+        // During a turn, skip live Claude probes so stream draining is never
+        // blocked on a child process.
+        self.open_doctor_picker(&[], &ClaudeProbeSnapshot::not_refreshed_during_turn())
     }
 
     fn open_doctor_picker(
         &mut self,
         provider_health: &[(String, ProviderModelHealth)],
+        claude: &ClaudeProbeSnapshot,
     ) -> anyhow::Result<()> {
         let config_path = self.info.services.config_repository.configured_path()?;
         let session_root = crate::paths::rho_dir()?.join("sessions");
@@ -108,6 +113,7 @@ impl App {
             herdr_enabled: self.info.services.herdr.is_enabled(),
             herdr_socket_reachable: self.info.services.herdr.socket_is_reachable(),
             provider_health,
+            claude,
         });
         self.input_ui
             .set_composer(super::ComposerMode::Picker(picker));

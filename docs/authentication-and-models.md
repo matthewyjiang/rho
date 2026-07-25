@@ -30,7 +30,7 @@ Each provider page documents whether authentication is required, how to select m
 
 ## Where credentials live
 
-Rho recommends the native OS credential store. When the credential backend is still unset, the first interactive `/login` probes available backends and opens a picker before any secret is saved. CLI `rho login` asks the same question on a TTY. If the OS probe fails, you can choose local file storage instead.
+Rho recommends the native OS credential store. When the credential backend is still unset, the first interactive login for a **normal Rho provider** probes available backends and opens a picker before any secret is saved. Bare `/login` opens the provider group picker first; the store chooser appears only after you pick a normal provider (or run `/login <provider>`). CLI `rho login` asks the same store question on a TTY. If the OS probe fails, you can choose local file storage instead.
 
 Local file storage keeps secrets in `~/.rho/credentials/secrets.json` (or under `RHO_HOME`). Rho applies owner-only directory and file permissions on Unix and a protected user-only ACL on Windows. It is not encrypted at rest. Rho never selects it without an explicit login picker answer, CLI command, config value, or environment setting.
 
@@ -56,7 +56,17 @@ For normal interactive setup, prefer `/login`. Environment variables are CI/deve
 
 Successful login normally stores credentials only. It does not switch the active provider/model, because provider switching is model-driven through `/model`. If Rho started without usable auth and is running on an unauthenticated placeholder, a successful login selects that provider's default model so the session becomes usable.
 
-`/logout` opens a provider picker containing only providers with stored credentials that can be deleted. If an environment override is still present, the provider remains available after deleting the stored credential.
+`/logout` opens a provider picker containing only providers with stored credentials that can be deleted. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.
+
+### Claude Code runtime sign-in
+
+Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic API-key provider](/providers/anthropic). Anthropic does not allow third-party clients to use Claude.ai subscription credentials on their own API stacks, so Rho cannot put a Pro/Max plan on the normal Anthropic provider path. `runtime: claude-cli` is the indirect workaround: delegate a child to the official `claude` binary, which owns sign-in and plan usage (see [subscription workaround and how to use it](/subagents#claude-code-as-a-delegated-runtime)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
+
+- `/login claude-code` (or **Anthropic** → **Claude Code (delegation only)** in the picker) hands the terminal to `claude auth login --claudeai`. Rho suspends its TUI for that process and resumes when it exits.
+- Claude Code runs the sign-in UI, stores the subscription credential, and remains the owner of that state. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
+- Rho reads signed-in state with bounded `claude auth status` probes for `/info` and `/doctor`. Ownership wording stays explicit (`managed by the claude binary`).
+- Sign out with `/logout claude-code` (after an explicit confirmation that this signs out of Claude Code everywhere) or with `claude auth logout` yourself. That is a global Claude Code logout, not a Rho token delete. Rho cannot remove a Claude token from the Rho credential store because it never stored one.
+- Bare `/login` lists Claude Code under the Anthropic group next to the Anthropic API key method. Choosing it skips the Rho credential-store chooser entirely.
 
 ## Selecting models
 

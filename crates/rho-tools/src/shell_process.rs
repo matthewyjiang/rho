@@ -6,6 +6,7 @@
 
 use crate::cancellation::RunCancellation;
 use crate::process_env::apply_process_environment;
+use crate::process_stream::{capture_failure_notice, StreamKind};
 use crate::tool::{truncate, ToolError, ToolResult};
 use rho_sdk::{ExecutableSelection, ProcessExecution, ProcessInvocation};
 use serde::Deserialize;
@@ -136,12 +137,6 @@ fn build_command(execution: &ProcessExecution, tool_name: &str) -> Result<Comman
     Ok(command)
 }
 
-#[derive(Clone, Copy)]
-enum StreamKind {
-    Stdout,
-    Stderr,
-}
-
 /// In-flight chunk queue bound. Keeps producer backpressure without allowing
 /// unbounded allocation between the OS pipes and the retained output budget.
 const CHUNK_CHANNEL_CAPACITY: usize = 32;
@@ -258,7 +253,18 @@ async fn read_stream<R>(
     let mut buffer = [0; 8192];
     loop {
         match reader.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
+            Err(error) => {
+                // Report the truncation instead of returning a silently short
+                // capture that reads like complete command output.
+                let _ = chunk_tx
+                    .send((
+                        StreamKind::Stderr,
+                        capture_failure_notice(kind, &error).into_bytes(),
+                    ))
+                    .await;
+                break;
+            }
             Ok(n) => {
                 // Stop once the consumer is gone so escaped writers cannot keep
                 // these tasks allocating and discarding output forever.

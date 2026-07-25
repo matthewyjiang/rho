@@ -91,6 +91,7 @@ impl ProcessManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        super::prepare_child_command(&mut cmd);
         rho_tools::apply_process_environment(&mut cmd, execution.environment())?;
         let timeout = execution.output_limits().timeout();
 
@@ -314,8 +315,6 @@ fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process
         } => {
             let mut cmd = tokio::process::Command::new(executable);
             cmd.args(arguments).arg(command);
-            #[cfg(unix)]
-            cmd.process_group(0);
             Ok(cmd)
         }
         ProcessInvocation::Executable {
@@ -325,8 +324,6 @@ fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process
         } => {
             let mut cmd = tokio::process::Command::new(executable);
             cmd.args(arguments);
-            #[cfg(unix)]
-            cmd.process_group(0);
             Ok(cmd)
         }
         _ => Err("unsupported process invocation".into()),

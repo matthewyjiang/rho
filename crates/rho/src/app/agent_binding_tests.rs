@@ -1,5 +1,7 @@
 use super::*;
-use crate::agent::{ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy};
+use crate::agent::{
+    AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability, ToolPolicy,
+};
 
 fn capability_set(names: &[&str]) -> AgentCapabilities {
     AgentCapabilities::new(
@@ -15,9 +17,11 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
         id: AgentId::new("test").unwrap(),
         description: "test".into(),
         prompt: PromptPolicy::Extend("instructions".into()),
-        model: ModelPolicy::Inherit,
-        tools,
-        reasoning: None,
+        runtime: AgentRuntimeSpec::Rho {
+            tools,
+            model: ModelPolicy::Inherit,
+            reasoning: None,
+        },
     })
 }
 
@@ -52,7 +56,10 @@ fn root_roles_bind_equivalently() {
         &config,
     )
     .unwrap();
-    assert_eq!(interactive.capabilities(), automation.capabilities());
+    assert_eq!(
+        interactive.rho_capabilities(),
+        automation.rho_capabilities()
+    );
     assert_eq!(interactive.fingerprint(), automation.fingerprint());
 }
 
@@ -68,8 +75,12 @@ fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     )
     .unwrap();
     assert_eq!(
-        bound.capabilities(),
-        &capability_set(&["read_file", "write_file", "questionnaire"])
+        bound.rho_capabilities(),
+        Some(&capability_set(&[
+            "read_file",
+            "write_file",
+            "questionnaire"
+        ]))
     );
 }
 
@@ -85,8 +96,8 @@ fn delegated_role_removes_recursive_capabilities() {
     )
     .unwrap();
     assert_eq!(
-        bound.capabilities(),
-        &capability_set(&["read_file", "write_file"])
+        bound.rho_capabilities(),
+        Some(&capability_set(&["read_file", "write_file"]))
     );
 }
 
@@ -103,7 +114,9 @@ fn extension_capability_name_survives_binding() {
     )
     .unwrap();
 
-    assert!(bound.capabilities().contains(&extension));
+    assert!(bound
+        .rho_capabilities()
+        .is_some_and(|capabilities| capabilities.contains(&extension)));
 }
 
 #[test]
@@ -127,7 +140,11 @@ fn unavailable_explicit_tool_fails_before_execution() {
 
 fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {
     Arc::new(AgentDefinition {
-        model,
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            model,
+            reasoning: None,
+        },
         ..definition(ToolPolicy::All).as_ref().clone()
     })
 }
@@ -161,9 +178,10 @@ fn agent_model_alias_resolves_to_concrete_provider_and_model() {
     )
     .unwrap();
 
-    assert_eq!(bound.config().provider, "anthropic");
-    assert_eq!(bound.config().model, "claude-opus-4-8");
-    assert_eq!(bound.config().current_model_alias(), Some("deep"));
+    let config = bound.rho_config().expect("rho config");
+    assert_eq!(config.provider, "anthropic");
+    assert_eq!(config.model, "claude-opus-4-8");
+    assert_eq!(config.current_model_alias(), Some("deep"));
 }
 
 #[test]
@@ -185,8 +203,9 @@ fn agent_bare_model_alias_keeps_inherited_provider() {
     )
     .unwrap();
 
-    assert_eq!(bound.config().provider, "openai");
-    assert_eq!(bound.config().model, "gpt-5.5-mini");
+    let config = bound.rho_config().expect("rho config");
+    assert_eq!(config.provider, "openai");
+    assert_eq!(config.model, "gpt-5.5-mini");
 }
 
 #[test]
@@ -237,4 +256,199 @@ fn undefined_agent_model_alias_names_agent_and_reference() {
         ),
         "{error:#}"
     );
+}
+
+fn claude_definition(model: ModelPolicy) -> Arc<AgentDefinition> {
+    let claude_model = match &model {
+        ModelPolicy::Inherit => None,
+        ModelPolicy::Select(selection)
+        | ModelPolicy::Prefer(selection)
+        | ModelPolicy::Require(selection) => Some(selection.model.clone()),
+    };
+    Arc::new(AgentDefinition {
+        id: AgentId::new("claude-test").unwrap(),
+        description: "claude".into(),
+        prompt: PromptPolicy::Replace("plan".into()),
+        runtime: AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+            tools: crate::agent::ClaudeToolPolicy::Allow(vec!["Read".into(), "Bash(git *)".into()]),
+            inherit_claude_config: true,
+            model: claude_model,
+            reasoning: None,
+        }),
+    })
+}
+
+#[test]
+fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() {
+    let host = Config {
+        provider: "openai".into(),
+        model: "gpt-5.5".into(),
+        model_aliases: aliases(&[("deep", "anthropic/claude-opus-4-8")]),
+        permission_mode: crate::permission::PermissionMode::Plan,
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind(
+        claude_definition(ModelPolicy::Select(ModelSelection {
+            provider: None,
+            model: "opus".into(),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+    )
+    .unwrap();
+
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli {
+            model,
+            tools,
+            inherit_claude_config,
+            permission_mode,
+            max_turns,
+            effort,
+        } => {
+            assert_eq!(model.as_deref(), Some("opus"));
+            assert_eq!(
+                tools.as_slice(),
+                ["Read".to_string(), "Bash(git *)".to_string()].as_slice()
+            );
+            assert!(*inherit_claude_config);
+            assert_eq!(*permission_mode, crate::permission::PermissionMode::Plan);
+            assert_eq!(
+                *max_turns,
+                crate::app::sdk_config::run_step_limit().get() as u64
+            );
+            assert!(effort.is_none());
+        }
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
+    assert!(bound.rho_config().is_none());
+    assert!(bound.rho_capabilities().is_none());
+    // Host config is not mutated through binding.
+    assert_eq!(host.provider, "openai");
+    assert_eq!(host.model, "gpt-5.5");
+}
+
+#[test]
+fn claude_inherit_model_binds_none() {
+    let bound = AgentBinder::bind(
+        claude_definition(ModelPolicy::Inherit),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli { model, .. } => assert!(model.is_none()),
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
+}
+
+#[test]
+fn claude_runtime_rejects_root_roles() {
+    for role in [AgentRole::InteractiveRoot, AgentRole::AutomationRoot] {
+        let error = AgentBinder::bind(
+            claude_definition(ModelPolicy::Inherit),
+            AgentInvocation {
+                role,
+                available_tools: capabilities(),
+            },
+            &Config::default(),
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("delegated-only"),
+            "role {role:?}: {message}"
+        );
+        assert!(message.contains("claude-cli"), "role {role:?}: {message}");
+    }
+}
+
+#[test]
+fn claude_runtime_rejects_alias_models_at_bind() {
+    // Parse rejects aliases; bind re-checks constructed configs.
+    let error = AgentBinder::bind(
+        claude_definition(ModelPolicy::Select(ModelSelection {
+            provider: None,
+            model: "@deep".into(),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("does not resolve Rho model aliases"),
+        "{error:#}"
+    );
+    assert!(error.to_string().contains("@deep"), "{error:#}");
+}
+
+#[test]
+fn claude_runtime_maps_reasoning_to_effort() {
+    let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
+        config.reasoning = Some(rho_sdk::ReasoningLevel::High);
+    }
+    let bound = AgentBinder::bind(
+        Arc::new(definition),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli { effort, .. } => assert_eq!(*effort, Some("high")),
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
+}
+
+#[test]
+fn claude_runtime_rejects_unmapped_reasoning_at_bind() {
+    let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
+        config.reasoning = Some(rho_sdk::ReasoningLevel::Minimal);
+    }
+    let error = AgentBinder::bind(
+        Arc::new(definition),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("not a Claude Code effort level"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn claude_runtime_omits_effort_when_reasoning_is_none() {
+    let definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    let bound = AgentBinder::bind(
+        Arc::new(definition),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli { effort, .. } => assert!(effort.is_none()),
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
 }

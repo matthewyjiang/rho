@@ -77,8 +77,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let (session, histories) =
             Session::open_by_id_with_histories(&self.info.runtime.cwd, session_id)?;
-        let (agent_id, agent_fingerprint) = agent.agent_identity();
-        session.validate_agent_identity(agent_id, agent_fingerprint)?;
+        session.validate_agent_definition_identity(agent.bound_definition())?;
 
         if self.offer_resume_context_handoff(
             &session,

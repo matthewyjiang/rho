@@ -71,6 +71,7 @@ pub(crate) struct InteractiveRuntime {
     permission_mode: PermissionMode,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
+    agent: BoundAgent,
     agent_id: String,
     agent_fingerprint: String,
     pending_persistence_error: Option<anyhow::Error>,
@@ -114,7 +115,10 @@ impl InteractiveRuntime {
                 build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
             }
         };
-        let mut capabilities = agent.capabilities().clone();
+        // Claude-cli agents bind no Rho host tools. Root interactive/automation
+        // still uses the Rho loop and parent config; Claude execution is via
+        // AgentExecutor for delegated runs.
+        let mut capabilities = agent.rho_capabilities().cloned().unwrap_or_default();
         if no_subagents {
             capabilities.remove(&ToolCapability::Agent);
             capabilities.remove(&ToolCapability::Agents);
@@ -238,6 +242,7 @@ impl InteractiveRuntime {
             permission_mode,
             approval_handler,
             approval_receiver,
+            agent,
             agent_id,
             agent_fingerprint,
             pending_persistence_error: None,
@@ -366,11 +371,23 @@ impl InteractiveRuntime {
         self.workspace.root()
     }
 
-    pub(crate) fn set_context_window(&mut self, context_window: Option<u64>) {
-        self.context_window = context_window;
-        if !self.runs.is_active() {
-            let _ = self.refresh_compaction();
+    /// Rebuilds compaction against the new window so a failure surfaces instead
+    /// of leaving the session compacting for the previous model's limits.
+    ///
+    /// Commits `context_window` only after compaction refresh succeeds when the
+    /// runtime is idle. Active runs defer the rebuild and store the value now.
+    pub(crate) fn set_context_window(&mut self, context_window: Option<u64>) -> Result<(), Error> {
+        if self.runs.is_active() {
+            self.context_window = context_window;
+            return Ok(());
         }
+        let previous = self.context_window;
+        self.context_window = context_window;
+        if let Err(error) = self.refresh_compaction() {
+            self.context_window = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(crate) fn take_context_usage(&mut self) -> Option<rho_sdk::model::ContextUsage> {
@@ -384,6 +401,10 @@ impl InteractiveRuntime {
 
     pub(crate) fn agent_identity(&self) -> (&str, &str) {
         (&self.agent_id, &self.agent_fingerprint)
+    }
+
+    pub(crate) fn bound_definition(&self) -> &crate::agent::AgentDefinition {
+        self.agent.definition()
     }
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
@@ -670,6 +691,10 @@ impl InteractiveRuntime {
             return Err(Error::SessionBusy);
         }
         self.runs.begin_provider_switch()?;
+        // Capture prior identity so post-replace failures can roll back and keep
+        // `Err` meaning "active provider unchanged" for callers.
+        let previous_provider = Arc::clone(self.provider.provider());
+        let previous_reasoning = self.provider.reasoning();
         let report = match self
             .provider
             .replace(self.sessions.session(), provider, reasoning)
@@ -681,6 +706,18 @@ impl InteractiveRuntime {
             }
         };
         if let Err(error) = self.refresh_compaction() {
+            if let Err(rollback_error) = self.provider.replace(
+                self.sessions.session(),
+                previous_provider,
+                previous_reasoning,
+            ) {
+                self.runs.finish_transition();
+                return Err(Error::InvalidConfiguration {
+                    message: format!(
+                        "{error}; also failed to restore the previous provider: {rollback_error}"
+                    ),
+                });
+            }
             self.runs.finish_transition();
             return Err(error);
         }

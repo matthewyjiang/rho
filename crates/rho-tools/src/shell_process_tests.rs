@@ -173,3 +173,50 @@ async fn read_stream_stops_when_consumer_disconnects() {
         .expect("reader task should finish cleanly");
     writer_task.abort();
 }
+
+/// Reader that yields one chunk and then fails, standing in for a pipe that
+/// breaks mid-command.
+struct FailingReader {
+    delivered: bool,
+}
+
+impl tokio::io::AsyncRead for FailingReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.delivered {
+            return std::task::Poll::Ready(Err(std::io::Error::other("pipe exploded")));
+        }
+        self.delivered = true;
+        buf.put_slice(b"partial");
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn stream_read_failure_is_reported_on_stderr() {
+    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel(4);
+    read_stream(
+        StreamKind::Stdout,
+        FailingReader { delivered: false },
+        chunk_tx,
+    )
+    .await;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    while let Some((kind, bytes)) = chunk_rx.recv().await {
+        match kind {
+            StreamKind::Stdout => stdout.extend(bytes),
+            StreamKind::Stderr => stderr.extend(bytes),
+        }
+    }
+
+    assert_eq!(String::from_utf8(stdout).unwrap(), "partial");
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "\n[rho: stdout capture ended early: pipe exploded]\n"
+    );
+}

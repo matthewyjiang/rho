@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-msnd-001"}
+{"type":"stream_event","session_id":"sess-msnd-001","event":{"type":"message_start","message":{"id":"msg_msnd_1","role":"assistant"}}}
+{"type":"stream_event","session_id":"sess-msnd-001","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-msnd-001","message":{"id":"msg_msnd_1","role":"assistant","content":[{"type":"thinking","thinking":"reason complete"},{"type":"text","text":"only on complete"},{"type":"tool_use","id":"toolu_msnd","name":"Read","input":{"path":"x"}}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"only on complete","session_id":"sess-msnd-001","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}

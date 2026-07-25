@@ -71,7 +71,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Agents,
         name: "agents",
         usage: "/agents",
-        description: "reload agents and show their details",
+        description: "reload agents and show runtime, tools, and other details",
         argument_choices: &[],
     },
     CommandSpec {
@@ -141,7 +141,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Limits,
         name: "limits",
         usage: "/limits",
-        description: "show connected OAuth usage limits",
+        description: "show connected OAuth usage limits and last-observed Claude Code limits",
         argument_choices: &[],
     },
     CommandSpec {

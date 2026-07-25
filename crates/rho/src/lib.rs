@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod claude_runtime;
 mod cli;
 mod clipboard;
 mod commands;
@@ -18,6 +19,7 @@ mod permission;
 mod prompt;
 mod prompt_templates;
 mod questionnaire;
+mod run_artifacts;
 mod session;
 mod skills;
 mod subagent;

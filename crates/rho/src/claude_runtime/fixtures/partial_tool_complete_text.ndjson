@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","session_id":"sess-ptct-001"}
+{"type":"stream_event","session_id":"sess-ptct-001","event":{"type":"message_start","message":{"id":"msg_ptct_1","role":"assistant","model":"claude-opus-demo"}}}
+{"type":"stream_event","session_id":"sess-ptct-001","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_partial_1","name":"Read","input":{}}}}
+{"type":"stream_event","session_id":"sess-ptct-001","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a.md\"}"}}}
+{"type":"stream_event","session_id":"sess-ptct-001","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","session_id":"sess-ptct-001","event":{"type":"message_stop"}}
+{"type":"assistant","session_id":"sess-ptct-001","message":{"id":"msg_ptct_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_partial_1","name":"Read","input":{"path":"a.md"}},{"type":"thinking","thinking":"think complete-only"},{"type":"text","text":"text complete-only"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_partial_1","content":"# a"}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"text complete-only","session_id":"sess-ptct-001","usage":{"input_tokens":2,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}

@@ -9,7 +9,7 @@ use rho_sdk::{
 
 use crate::credential_store::build_provider;
 
-use super::{AgentDefinition, ModelPolicy, PromptPolicy, ToolPolicy};
+use super::{AgentDefinition, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
 pub(crate) struct OneShotAgentRequest<'a> {
     pub definition: &'a AgentDefinition,
@@ -82,19 +82,31 @@ fn validate_definition(
             definition.id
         );
     }
-    if definition.model != ModelPolicy::Inherit {
+    if *definition.model_policy() != ModelPolicy::Inherit {
         bail!(
             "one-shot agent definition '{}' must inherit its model",
             definition.id
         );
     }
-    if !matches!(&definition.tools, ToolPolicy::Allow(tools) if tools.is_empty()) {
-        bail!(
-            "one-shot agent definition '{}' must allow no tools",
-            definition.id
-        );
+    match &definition.runtime {
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(tools),
+            ..
+        } if tools.is_empty() => {}
+        AgentRuntimeSpec::Rho { .. } => {
+            bail!(
+                "one-shot agent definition '{}' must allow no tools",
+                definition.id
+            );
+        }
+        AgentRuntimeSpec::ClaudeCli(_) => {
+            bail!(
+                "one-shot agent definition '{}' must use the rho runtime",
+                definition.id
+            );
+        }
     }
-    definition.reasoning.ok_or_else(|| {
+    definition.reasoning().ok_or_else(|| {
         anyhow::anyhow!(
             "one-shot agent definition '{}' must set a reasoning level",
             definition.id

@@ -28,6 +28,22 @@ fn blocks_loopback_link_local_private_and_reserved() {
 }
 
 #[test]
+fn blocks_ipv6_transition_addresses_that_embed_internal_ipv4() {
+    for literal in [
+        "64:ff9b::7f00:1",    // NAT64 well-known prefix to 127.0.0.1
+        "64:ff9b::a9fe:a9fe", // NAT64 well-known prefix to 169.254.169.254
+        "64:ff9b:1::1",       // local-use NAT64 prefix
+        "2002:7f00:1::1",     // 6to4 to 127.0.0.1
+        "2002:c0a8:1::1",     // 6to4 to 192.168.0.1
+        "::127.0.0.1",        // deprecated IPv4-compatible address
+        "::169.254.169.254",  // deprecated IPv4-compatible address
+    ] {
+        let ip: IpAddr = literal.parse().unwrap();
+        assert!(is_blocked(ip), "{literal} should be blocked");
+    }
+}
+
+#[test]
 fn allows_globally_routable_addresses() {
     for literal in [
         "8.8.8.8",

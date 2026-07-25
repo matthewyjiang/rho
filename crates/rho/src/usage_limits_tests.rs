@@ -118,8 +118,9 @@ fn parses_only_windows_reported_by_codex() {
         windows,
         vec![UsageLimitWindow {
             label: "Weekly".into(),
-            remaining_percent: 69.0,
-            resets_at_unix: 1_800_000_000,
+            remaining_percent: Some(69.0),
+            resets_at_unix: Some(1_800_000_000),
+            note: None,
         }]
     );
 }
@@ -154,12 +155,13 @@ fn parses_only_weekly_window_reported_by_xai_billing() {
         payload.windows(),
         vec![UsageLimitWindow {
             label: "Weekly".into(),
-            remaining_percent: 97.0,
-            resets_at_unix: chrono::DateTime::parse_from_rfc3339(
-                "2026-07-11T02:57:36.331252+00:00"
-            )
-            .unwrap()
-            .timestamp(),
+            remaining_percent: Some(97.0),
+            resets_at_unix: Some(
+                chrono::DateTime::parse_from_rfc3339("2026-07-11T02:57:36.331252+00:00")
+                    .unwrap()
+                    .timestamp()
+            ),
+            note: None,
         }]
     );
 }
@@ -268,8 +270,9 @@ async fn codex_source_sends_oauth_and_account_headers() {
             provider: "Codex".into(),
             windows: vec![UsageLimitWindow {
                 label: "5-hour".into(),
-                remaining_percent: 75.0,
-                resets_at_unix: 1_800_000_000,
+                remaining_percent: Some(75.0),
+                resets_at_unix: Some(1_800_000_000),
+                note: None,
             }],
         }
     );
@@ -302,17 +305,23 @@ fn parses_kimi_weekly_and_rolling_windows() {
         vec![
             UsageLimitWindow {
                 label: "5-hour".into(),
-                remaining_percent: 30.5,
-                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-02-07T12:32:50.757941Z")
-                    .unwrap()
-                    .timestamp(),
+                remaining_percent: Some(30.5),
+                resets_at_unix: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-02-07T12:32:50.757941Z")
+                        .unwrap()
+                        .timestamp()
+                ),
+                note: None,
             },
             UsageLimitWindow {
                 label: "Weekly".into(),
-                remaining_percent: 75.0,
-                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-02-11T17:32:50.757941Z")
-                    .unwrap()
-                    .timestamp(),
+                remaining_percent: Some(75.0),
+                resets_at_unix: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-02-11T17:32:50.757941Z")
+                        .unwrap()
+                        .timestamp()
+                ),
+                note: None,
             },
         ]
     );
@@ -385,10 +394,13 @@ async fn kimi_source_sends_oauth_header() {
             provider: "Kimi Code".into(),
             windows: vec![UsageLimitWindow {
                 label: "Weekly".into(),
-                remaining_percent: 75.0,
-                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-02-11T17:32:50.757941Z")
-                    .unwrap()
-                    .timestamp(),
+                remaining_percent: Some(75.0),
+                resets_at_unix: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-02-11T17:32:50.757941Z")
+                        .unwrap()
+                        .timestamp()
+                ),
+                note: None,
             }],
         }
     );
@@ -444,10 +456,13 @@ async fn xai_source_sends_oauth_cli_headers() {
             provider: "xAI".into(),
             windows: vec![UsageLimitWindow {
                 label: "Weekly".into(),
-                remaining_percent: 87.5,
-                resets_at_unix: chrono::DateTime::parse_from_rfc3339("2026-07-11T02:57:36Z")
-                    .unwrap()
-                    .timestamp(),
+                remaining_percent: Some(87.5),
+                resets_at_unix: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-07-11T02:57:36Z")
+                        .unwrap()
+                        .timestamp()
+                ),
+                note: None,
             }],
         }
     );

@@ -11,12 +11,12 @@ use std::{
 };
 
 use super::file_document::{read_document, write_document, SecretDocument};
-use super::file_lock::FileLock;
 use super::file_permissions::{
     ensure_private_directory, open_private_file, set_private_file_permissions, validate_account,
     validate_owner, PrivateFileOpen,
 };
 use super::{CredentialError, CredentialResult, CredentialStore};
+use crate::file_lock::FileLock;
 
 const CREDENTIALS_DIR_NAME: &str = "credentials";
 const SECRETS_FILE_NAME: &str = "secrets.json";
@@ -94,7 +94,9 @@ impl FileCredentialStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let lock_file = open_private_file(&self.lock_path, PrivateFileOpen::OpenOrCreate)?;
-        let _file_guard = FileLock::acquire(lock_file)?;
+        let _file_guard = FileLock::acquire(lock_file).map_err(|error| {
+            CredentialError::StoreUnavailable(format!("could not lock credential store: {error}"))
+        })?;
         self.cleanup_stale_temp_files()?;
         let mut document = read_document(&self.secrets_path)?;
         let (result, mutation) = op(&mut document)?;

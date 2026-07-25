@@ -26,10 +26,7 @@ impl App {
                 self.open_config_login_picker();
                 Ok(())
             }
-            config_picker::PROVIDER_LOGOUT_VALUE => {
-                self.open_config_logout_picker();
-                Ok(())
-            }
+            config_picker::PROVIDER_LOGOUT_VALUE => self.open_config_logout_picker().await,
             config_picker::PERMISSION_MODE_VALUE => {
                 let child =
                     config_picker::permission_mode_picker(self.info.runtime.permission_mode);

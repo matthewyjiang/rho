@@ -4,6 +4,7 @@ mod config;
 mod conversation_tree;
 mod goal;
 mod id;
+mod login;
 mod pickers;
 mod runtime_info;
 
@@ -13,6 +14,7 @@ use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
+use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
@@ -336,20 +338,41 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "Permission mode",
+        text: "Config / Agent behavior",
         timeout: SETTLE,
     },
+    Step::AssertText("Permission mode"),
     Step::Key(Key::Enter),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
+    // Nested mode list keeps every mode label visible; only the detail pane
+    // shows the selected mode's description.
     Step::WaitText {
-        text: "permissions: Supervised",
+        text: "No permission checks",
         timeout: SETTLE,
     },
+    Step::AssertText("Auto"),
+    Step::AssertText("Plan"),
+    Step::AssertText("Supervised"),
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::WaitText {
+        text: "Ask before writes and processes",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    // Selection returns to the agent-behavior category with the label badge.
+    Step::WaitText {
+        text: "Config / Agent behavior",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Permission mode"),
+    Step::AssertText("Supervised"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Models & reasoning",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "permissions: supervised",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
@@ -505,58 +528,6 @@ const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_markdown_headings_rendered),
-    Step::ExitCommand,
-];
-
-const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
-    Step::Phase("open_group_picker"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("/login"),
-    Step::WaitText {
-        text: "select provider to login",
-        timeout: SETTLE,
-    },
-    Step::AssertText("OpenAI"),
-    Step::AssertText("Anthropic"),
-    Step::AssertText("Moonshot AI"),
-    Step::AssertText("xAI"),
-    Step::Phase("open_openai_methods"),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "select OpenAI login method",
-        timeout: SETTLE,
-    },
-    Step::AssertText("API Key"),
-    Step::AssertText("OAuth"),
-    Step::AssertText("Esc to back"),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "select provider to login",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Esc to cancel"),
-    Step::Phase("close_group_picker"),
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Phase("single_method_provider"),
-    Step::SubmitText("/login"),
-    Step::WaitText {
-        text: "select provider to login",
-        timeout: SETTLE,
-    },
-    Step::TypeText("Anthropic"),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "enter Anthropic API key",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
 
