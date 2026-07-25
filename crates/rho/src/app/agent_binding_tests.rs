@@ -76,7 +76,11 @@ fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     .unwrap();
     assert_eq!(
         bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write_file", "questionnaire"]))
+        Some(&capability_set(&[
+            "read_file",
+            "write_file",
+            "questionnaire"
+        ]))
     );
 }
 
