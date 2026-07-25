@@ -113,6 +113,14 @@ impl XaiAuthManager {
         if self.source != XaiAuthSource::Store {
             return Ok(None);
         }
+        // No refresh token means the 401 is final; do not surface MissingXaiAuth
+        // as a distinct refresh failure (that would double-count attempts).
+        {
+            let tokens = self.tokens.lock().await;
+            if tokens.refresh_token.is_none() {
+                return Ok(None);
+            }
+        }
         self.refresh_if_current(failed_access_token).await.map(Some)
     }
 

@@ -1,22 +1,37 @@
+//! xAI Responses provider (API key and OAuth).
+//!
+//! Create and compact are separate wire contracts:
+//! - create peels system prompts into `instructions` and may attach tools/reasoning
+//! - compact sends the full conversation in `input` (including system) and only
+//!   accepts the documented `model` + `input` body fields
+
 #[cfg(test)]
 use std::sync::Arc;
 
-use crate::protocol::openai_responses::{
-    codex_input_items_for_target, collect_codex_sse_response, to_responses_lite_tool,
-};
-use reqwest::StatusCode;
-use serde_json::{json, Value};
+use crate::protocol::openai_responses::collect_codex_sse_response;
 
 use crate::{
     auth::xai_token::XaiAuthManager,
-    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
+    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
 };
 
 #[cfg(test)]
 use crate::{credentials::CredentialStore, provider_backend::stream_timeout::provider_client};
 
-#[path = "xai/reasoning.rs"]
+mod bodies;
+mod compact;
+mod http;
+#[path = "reasoning.rs"]
 mod reasoning;
+
+#[cfg(test)]
+#[path = "../xai_tests.rs"]
+mod tests;
+
+use bodies::build_xai_responses_body;
+
+#[cfg(test)]
+use bodies::build_xai_compact_body;
 
 pub struct XaiProvider {
     client: reqwest::Client,
@@ -72,42 +87,23 @@ impl XaiProvider {
                       + Send),
         >,
     ) -> Result<reqwest::Response, ModelError> {
+        let cancellation = request.cancellation.clone();
         let body = build_xai_responses_body(self.provider, &self.model, &self.reasoning, request)?;
-        let auth = self.auth.auth_material().await?;
-        let response = self
-            .send_request_with_token(&body, &auth.access_token)
-            .await?;
-        if response.status() != StatusCode::UNAUTHORIZED {
-            return Ok(response);
-        }
-        let Some(refreshed) = self.auth.force_refresh(&auth.access_token).await? else {
-            return Ok(response);
-        };
-        if let Some(on_request_event) = on_request_event {
-            on_request_event(
-                rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                    kind: rho_sdk::ProviderErrorKind::Authentication,
-                    usage: ModelUsage::default(),
-                },
-            )?;
-        }
-        self.send_request_with_token(&body, &refreshed.access_token)
-            .await
-    }
-
-    async fn send_request_with_token(
-        &self,
-        body: &Value,
-        access_token: &str,
-    ) -> Result<reqwest::Response, ModelError> {
-        Ok(self
-            .client
-            .post(format!("{}/responses", self.api_base.trim_end_matches('/')))
-            .bearer_auth(access_token)
-            .header("User-Agent", crate::rho_user_agent())
-            .json(body)
-            .send()
-            .await?)
+        let mut on_request_event = on_request_event;
+        let result = self
+            .post_with_auth_retry("responses", &body, Some(&cancellation), || {
+                if let Some(on_request_event) = on_request_event.as_mut() {
+                    on_request_event(
+                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                            kind: rho_sdk::ProviderErrorKind::Authentication,
+                            usage: crate::model::ModelUsage::default(),
+                        },
+                    )?;
+                }
+                Ok(())
+            })
+            .await;
+        result.response
     }
 
     async fn send_responses_turn(
@@ -125,9 +121,7 @@ impl XaiProvider {
             .await
             .map(|output| output.response)
     }
-}
 
-impl XaiProvider {
     pub(crate) fn model_identity(&self) -> ModelIdentity {
         ModelIdentity::new(self.provider, "openai-responses", &self.model)
     }
@@ -158,48 +152,4 @@ impl XaiProvider {
     }
 }
 
-crate::impl_sdk_model_provider!(XaiProvider);
-
-fn build_xai_responses_body(
-    provider: &'static str,
-    model: &str,
-    reasoning: &reasoning::XaiReasoningProfile,
-    request: ModelRequest<'_>,
-) -> Result<Value, ModelError> {
-    let reasoning_effort = reasoning.effort(request.reasoning_level);
-    let mut instructions = Vec::new();
-    let target = crate::model::ModelIdentity::new(provider, "openai-responses", model);
-    let input =
-        codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(&target))?;
-    let tools = request
-        .tools
-        .iter()
-        .cloned()
-        .map(to_responses_lite_tool)
-        .collect::<Vec<_>>();
-    let mut body = json!({
-        "model": model,
-        "input": input,
-        "store": false,
-        "stream": true,
-    });
-    let instructions = instructions.join("\n\n");
-    if !instructions.is_empty() {
-        body["instructions"] = json!(instructions);
-    }
-    if !tools.is_empty() {
-        body["tools"] = json!(tools);
-        body["tool_choice"] = json!("auto");
-    }
-    if let Some(prompt_cache_key) = request.prompt_cache_key {
-        body["prompt_cache_key"] = json!(prompt_cache_key);
-    }
-    if let Some(effort) = reasoning_effort {
-        body["reasoning"] = json!({ "effort": effort });
-    }
-    Ok(body)
-}
-
-#[cfg(test)]
-#[path = "xai_tests.rs"]
-mod tests;
+crate::impl_sdk_model_provider!(XaiProvider, native_compact);

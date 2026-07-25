@@ -83,3 +83,4 @@ Provide the matching environment override or log in once so Rho can read the sto
 
 - With OAuth, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for xAI OAuth when you are logged in.
+- Both `xai` and `xai-oauth` use xAI [server-side context compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction) (`POST /v1/responses/compact`) when automatic or manual compaction runs. The compact request body is only `model` plus full `input` (system messages included). The response is a single encrypted compaction item that replaces the prior window; host-owned system prompts are still retained client-side for portable handoff. The encrypted item only replays on a compatible xAI Responses turn for the same provider identity and model.

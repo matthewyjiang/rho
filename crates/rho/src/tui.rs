@@ -28,6 +28,7 @@ mod clipboard;
 mod command_actions;
 mod command_block;
 mod command_palette;
+mod compaction_display;
 mod composer;
 mod config_actions;
 mod config_editor;

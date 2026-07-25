@@ -543,7 +543,7 @@ impl InteractiveRuntime {
         Ok(finished.outcome?)
     }
 
-    pub(crate) async fn compact(&mut self) -> anyhow::Result<bool> {
+    pub(crate) async fn compact(&mut self) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
         if self.runs.is_active() {
             anyhow::bail!("session is busy");
         }
@@ -558,12 +558,15 @@ impl InteractiveRuntime {
                 )),
             };
         }
-        let reduced = outcome.current_messages() < outcome.previous_messages();
+        let reduced = outcome.current_messages() < outcome.previous_messages()
+            || outcome.removed_tokens() > 0;
         if reduced {
             self.runs.note_manual_compaction(self.context_window);
             self.invalidate_live_context();
+            Ok(Some(outcome))
+        } else {
+            Ok(None)
         }
-        Ok(reduced)
     }
 
     pub(crate) fn reset(&mut self) -> anyhow::Result<()> {

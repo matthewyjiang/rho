@@ -14,6 +14,7 @@ pub mod builder;
 pub mod factory;
 pub mod github_copilot;
 pub mod google;
+pub(crate) mod native_compaction;
 pub mod openai;
 pub mod openai_compatible;
 pub mod sdk_contract;

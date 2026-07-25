@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use {crate::subagent, rho_tools::tool::ToolDisplayStyle};
 
-use super::super::event_adapter::{
-    compaction_completed_notice, SdkEventAdapter, ViewEvent, ViewModelEvent,
-    COMPACTION_STARTED_NOTICE,
+use super::super::{
+    compaction_display::running_display_lines,
+    event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,20 +61,21 @@ impl AttachmentWriter {
     }
 
     pub(crate) fn on_event(&mut self, event: &rho_sdk::RunEvent) -> anyhow::Result<()> {
-        let attachment = match self.adapter.translate(event.clone()) {
-            ViewEvent::Update(update) => attachment_update(update),
-            ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
-            ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
-                "input requested but unavailable in a delegated agent: {}",
-                request.title()
-            ))),
-            ViewEvent::Completed => Some(AttachmentEvent::Completed),
-            ViewEvent::Cancelled => Some(AttachmentEvent::Cancelled),
-            ViewEvent::Failed(message) => Some(AttachmentEvent::Failed(message)),
-            ViewEvent::Ignored => None,
-        };
-        if let Some(attachment) = attachment {
-            self.write(&attachment)?;
+        for view_event in self.adapter.translate(event.clone()) {
+            let attachment = match view_event {
+                ViewEvent::Update(update) => attachment_update(update),
+                ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
+                ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
+                    "input requested but unavailable in a delegated agent: {}",
+                    request.title()
+                ))),
+                ViewEvent::Completed => Some(AttachmentEvent::Completed),
+                ViewEvent::Cancelled => Some(AttachmentEvent::Cancelled),
+                ViewEvent::Failed(message) => Some(AttachmentEvent::Failed(message)),
+            };
+            if let Some(attachment) = attachment {
+                self.write(&attachment)?;
+            }
         }
         Ok(())
     }
@@ -116,16 +117,14 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
         ViewModelEvent::ProviderRetry => None,
-        ViewModelEvent::CompactionStarted => {
-            Some(AttachmentEvent::Notice(COMPACTION_STARTED_NOTICE.into()))
-        }
-        ViewModelEvent::CompactionCompleted {
-            previous_messages,
-            current_messages,
-        } => Some(AttachmentEvent::Notice(compaction_completed_notice(
-            previous_messages,
-            current_messages,
-        ))),
+        ViewModelEvent::CompactionStarted => Some(AttachmentEvent::ToolStarted {
+            display_lines: running_display_lines(),
+        }),
+        ViewModelEvent::CompactionFinished { outcome } => Some(AttachmentEvent::ToolFinished {
+            ok: outcome.ok(),
+            display_style: ToolDisplayStyle::default_tool(),
+            display_lines: outcome.display_lines(),
+        }),
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
     }

@@ -334,28 +334,36 @@ impl App {
                             terminal,
                         )?;
                     }
-                    match adapter.translate(event) {
-                        ViewEvent::Update(event) => {
-                            changed |= self.handle_queued_agent_event(event, terminal)?;
-                            tool_call_active.store(self.turn.tool_calls().is_running(), Ordering::SeqCst);
+                    let view_events = adapter.translate(event);
+                    for view_event in view_events {
+                        match view_event {
+                            ViewEvent::Update(event) => {
+                                changed |= self.handle_queued_agent_event(event, terminal)?;
+                                tool_call_active.store(
+                                    self.turn.tool_calls().is_running(),
+                                    Ordering::SeqCst,
+                                );
+                            }
+                            ViewEvent::Questionnaire { call_id, request } => {
+                                queued_interactions.push(
+                                    QueuedRunningInteraction::ParentQuestionnaire {
+                                        call_id,
+                                        request,
+                                    },
+                                );
+                                changed = true;
+                            }
+                            ViewEvent::Notice(notice) => {
+                                self.insert_entry(&Entry::Notice(notice));
+                                changed = true;
+                            }
+                            ViewEvent::Completed => terminal_event = true,
+                            ViewEvent::Cancelled => terminal_event = true,
+                            ViewEvent::Failed(message) => {
+                                sdk_failure = Some(message);
+                                terminal_event = true;
+                            }
                         }
-                        ViewEvent::Questionnaire { call_id, request } => {
-                            queued_interactions.push(
-                                QueuedRunningInteraction::ParentQuestionnaire { call_id, request },
-                            );
-                            changed = true;
-                        }
-                        ViewEvent::Notice(notice) => {
-                            self.insert_entry(&Entry::Notice(notice));
-                            changed = true;
-                        }
-                        ViewEvent::Completed => terminal_event = true,
-                        ViewEvent::Cancelled => terminal_event = true,
-                        ViewEvent::Failed(message) => {
-                            sdk_failure = Some(message);
-                            terminal_event = true;
-                        }
-                        ViewEvent::Ignored => {}
                     }
                     if changed && frame_scheduler.request_background_frame(Instant::now()) {
                         self.draw_running_frame(terminal, &mut frame_scheduler)?;
