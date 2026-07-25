@@ -5,7 +5,9 @@ use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, Mode
 
 use super::{
     command_block::CommandBlock,
-    usage_cost::{estimated_cost_usd_micros, format_usd, CostSource},
+    usage_cost::{
+        format_usd, resolved_usage_cost_usd_micros, session_total_cost_usd_micros, CostSource,
+    },
     workspace::git_branch,
     App, Entry,
 };
@@ -166,10 +168,10 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        if info.subagent_total_cost_usd_micros > 0 {
-            push_subagent_only_cost(block, info);
-        } else {
+        if info.subagent_total_cost_usd_micros == 0 {
             block.push_note("No token usage recorded yet.");
+        } else {
+            push_cost_fields(block, info, None);
         }
         return;
     };
@@ -182,48 +184,50 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
         block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
     }
 
-    let main_cost_micros = usage
-        .cost_usd_micros
-        .or_else(|| estimated_cost_usd_micros(usage, info.model_metadata.as_ref()));
-    if let Some(main_cost_micros) = main_cost_micros {
-        let qualifier = if info.cost_source == CostSource::Estimated {
-            " estimated"
-        } else {
-            ""
-        };
-        let equivalent = cost_equivalent_suffix(info.billing);
-
-        if info.subagent_total_cost_usd_micros > 0 {
-            block.push_field(
-                "Main cost",
-                &format!("{}{qualifier}{equivalent}", format_usd(main_cost_micros)),
-            );
-            let total_cost_micros =
-                main_cost_micros.saturating_add(info.subagent_total_cost_usd_micros);
-            block.push_field(
-                "Total cost",
-                &format!("{}{equivalent}", format_usd(total_cost_micros)),
-            );
-        } else {
-            block.push_field(
-                "Cost",
-                &format!("{}{qualifier}{equivalent}", format_usd(main_cost_micros)),
-            );
-        }
-    } else if info.subagent_total_cost_usd_micros > 0 {
-        push_subagent_only_cost(block, info);
-    }
+    let main_cost_micros = resolved_usage_cost_usd_micros(usage, info.model_metadata.as_ref());
+    push_cost_fields(block, info, main_cost_micros);
 }
 
-fn push_subagent_only_cost(block: &mut CommandBlock, info: &RuntimeInfo) {
+fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micros: Option<u64>) {
+    let subagent = info.subagent_total_cost_usd_micros;
+    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, subagent) else {
+        return;
+    };
     let equivalent = cost_equivalent_suffix(info.billing);
-    block.push_field(
-        "Subagent cost",
-        &format!(
-            "{}{equivalent}",
-            format_usd(info.subagent_total_cost_usd_micros)
-        ),
-    );
+    let main_qualifier = if info.cost_source == CostSource::Estimated {
+        " estimated"
+    } else {
+        ""
+    };
+
+    match (main_cost_micros, subagent) {
+        (Some(main), 0) => {
+            block.push_field(
+                "Cost",
+                &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
+            );
+        }
+        (None, subagent) => {
+            block.push_field(
+                "Subagent cost",
+                &format!("{}{equivalent}", format_usd(subagent)),
+            );
+        }
+        (Some(main), subagent) => {
+            block.push_field(
+                "Main cost",
+                &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
+            );
+            block.push_field(
+                "Subagent cost",
+                &format!("{}{equivalent}", format_usd(subagent)),
+            );
+            block.push_field(
+                "Total cost",
+                &format!("{}{equivalent}", format_usd(total_micros)),
+            );
+        }
+    }
 }
 
 fn cost_equivalent_suffix(billing: BillingInfo) -> &'static str {

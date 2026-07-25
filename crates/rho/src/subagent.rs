@@ -93,6 +93,19 @@ pub struct RunStatus {
     pub total_cost_usd: Option<f64>,
 }
 
+/// Convert a provider-reported USD amount into microdollars for session totals.
+pub fn usd_to_micros(usd: f64) -> u64 {
+    if !usd.is_finite() || usd <= 0.0 {
+        return 0;
+    }
+    let micros = (usd * 1_000_000.0).round();
+    if micros >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        micros as u64
+    }
+}
+
 /// Writes the status file atomically (unique temp + replace) so readers never
 /// observe a torn write. Repeated updates replace an existing `result.json`.
 ///

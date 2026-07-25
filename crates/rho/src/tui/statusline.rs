@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use super::{
     render::{display_width, truncate_one_line},
     theme::Theme,
-    usage_cost::{estimated_cost_usd_micros, format_usd},
+    usage_cost::{format_usd, resolved_usage_cost_usd_micros, session_total_cost_usd_micros},
     workspace::git_branch,
     RuntimeModelView,
 };
@@ -137,11 +137,15 @@ impl StatusLine {
         &mut self,
         usage: Option<&ModelUsage>,
         context_usage: Option<&ContextUsage>,
+        subagent_total_cost_usd_micros: u64,
     ) {
-        if self.state.usage.as_ref() != usage || self.state.context_usage.as_ref() != context_usage
+        if self.state.usage.as_ref() != usage
+            || self.state.context_usage.as_ref() != context_usage
+            || self.state.subagent_total_cost_usd_micros != subagent_total_cost_usd_micros
         {
             self.state.usage = usage.cloned();
             self.state.context_usage = context_usage.cloned();
+            self.state.subagent_total_cost_usd_micros = subagent_total_cost_usd_micros;
             self.invalidate();
         }
     }
@@ -154,13 +158,6 @@ impl StatusLine {
         {
             self.state.model_metadata = model_metadata.cloned();
             self.state.reasoning_configurable = reasoning_configurable;
-            self.invalidate();
-        }
-    }
-
-    pub(super) fn update_subagent_cost(&mut self, subagent_total_cost_usd_micros: u64) {
-        if self.state.subagent_total_cost_usd_micros != subagent_total_cost_usd_micros {
-            self.state.subagent_total_cost_usd_micros = subagent_total_cost_usd_micros;
             self.invalidate();
         }
     }
@@ -307,15 +304,12 @@ fn format_token_count(tokens: u64) -> String {
 }
 
 fn status_cost(state: &StatusLineState) -> Option<String> {
-    let main_cost_micros = state.usage.as_ref().and_then(|usage| {
-        usage
-            .cost_usd_micros
-            .or_else(|| estimated_cost_usd_micros(usage, state.model_metadata.as_ref()))
-    });
-    match (main_cost_micros, state.subagent_total_cost_usd_micros) {
-        (None, 0) => None,
-        (main, subagent) => Some(format_usd(main.unwrap_or(0).saturating_add(subagent))),
-    }
+    let main_cost_micros = state
+        .usage
+        .as_ref()
+        .and_then(|usage| resolved_usage_cost_usd_micros(usage, state.model_metadata.as_ref()));
+    session_total_cost_usd_micros(main_cost_micros, state.subagent_total_cost_usd_micros)
+        .map(format_usd)
 }
 
 fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {

@@ -98,14 +98,27 @@ pub(super) fn format_usd(micros: u64) -> String {
 
 /// Convert a provider-reported USD amount into microdollars for TUI totals.
 pub(super) fn usd_to_micros(usd: f64) -> u64 {
-    if !usd.is_finite() || usd <= 0.0 {
-        return 0;
-    }
-    let micros = (usd * 1_000_000.0).round();
-    if micros >= u64::MAX as f64 {
-        u64::MAX
-    } else {
-        micros as u64
+    crate::subagent::usd_to_micros(usd)
+}
+
+/// Resolve provider-reported or estimated main-session cost.
+pub(super) fn resolved_usage_cost_usd_micros(
+    usage: &ModelUsage,
+    metadata: Option<&ModelMetadata>,
+) -> Option<u64> {
+    usage
+        .cost_usd_micros
+        .or_else(|| estimated_cost_usd_micros(usage, metadata))
+}
+
+/// Combine main-session and subagent costs into one statusline/info total.
+pub(super) fn session_total_cost_usd_micros(
+    main_cost_micros: Option<u64>,
+    subagent_total_cost_usd_micros: u64,
+) -> Option<u64> {
+    match (main_cost_micros, subagent_total_cost_usd_micros) {
+        (None, 0) => None,
+        (main, subagent) => Some(main.unwrap_or(0).saturating_add(subagent)),
     }
 }
 

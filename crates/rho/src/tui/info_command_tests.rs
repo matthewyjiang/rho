@@ -88,6 +88,7 @@ fn runtime_info_splits_main_and_subagent_costs() {
     let text = rendered_text(&info, 80);
 
     assert!(text.contains("Main cost     $1.250"), "{text}");
+    assert!(text.contains("Subagent cost $0.250"), "{text}");
     assert!(text.contains("Total cost    $1.500"), "{text}");
     assert!(!text.contains("Cost          $1.250"), "{text}");
 }
