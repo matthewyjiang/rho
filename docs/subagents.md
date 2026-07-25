@@ -141,7 +141,7 @@ Claude-cli agents are **delegated only**. The interactive root and `rho run` roo
 
    Or open bare `/login`, pick **Anthropic**, then **claude code (delegation only)**. Rho hands the terminal to `claude auth login --claudeai` and never sees or stores the token. Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in).
 
-3. **Write a delegated agent definition**, for example `~/.rho/agents/claude-planner.md`:
+3. **Write a delegated agent definition** (there is no built-in Claude agent). Use the `rho-agent-creator` skill for a guided questionnaire, or write a file such as `~/.rho/agents/claude-planner.md`:
 
    ```markdown
    ---

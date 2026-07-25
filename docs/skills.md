@@ -73,7 +73,7 @@ Rho includes two built-in skills:
 | Skill | Use |
 | --- | --- |
 | `rho-diagnostics` | Inspect harness diagnostics |
-| `rho-agent-creator` | Define an agent through a guided questionnaire |
+| `rho-agent-creator` | Define an agent through a guided questionnaire, including `runtime: claude-cli` Claude Code specialists |
 
 See [Tools and workspace](/tools-workspace) for details about the `skill` tool.
 See [Agents and delegation](/subagents) to learn how to define agents.
