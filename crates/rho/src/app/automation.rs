@@ -635,19 +635,29 @@ impl RunReporter {
     pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {
         use rho_sdk::RunEvent;
 
-        for attachment in crate::tui::translate_run_event(&mut self.adapter, event) {
-            match &attachment {
-                crate::run_artifacts::AttachmentEvent::AssistantTextDelta(text)
-                    if !text.is_empty() =>
-                {
-                    self.sink.append_last_text(text);
-                    self.sink.write_attachment(attachment);
-                    self.sink.publish_throttled();
+        let attachments = crate::tui::translate_run_event(&mut self.adapter, event);
+        if !attachments.is_empty() {
+            let mut saw_text_delta = false;
+            let mut needs_immediate_publish = false;
+            for attachment in attachments {
+                match &attachment {
+                    crate::run_artifacts::AttachmentEvent::AssistantTextDelta(text)
+                        if !text.is_empty() =>
+                    {
+                        self.sink.append_last_text(text);
+                        saw_text_delta = true;
+                        self.sink.write_attachment(attachment);
+                    }
+                    _ => {
+                        needs_immediate_publish = true;
+                        self.sink.write_attachment(attachment);
+                    }
                 }
-                _ => {
-                    self.sink.write_attachment(attachment);
-                    self.sink.publish();
-                }
+            }
+            if needs_immediate_publish {
+                self.sink.publish();
+            } else if saw_text_delta {
+                self.sink.publish_throttled();
             }
         }
         match event {

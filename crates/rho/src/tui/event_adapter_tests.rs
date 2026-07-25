@@ -6,10 +6,7 @@ use rho_sdk::{
     RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
 
-use super::{
-    host_response, questionnaire_request, CompactionUiOutcome, SdkEventAdapter, ViewEvent,
-    ViewModelEvent,
-};
+use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
 use crate::{
     questionnaire::{QuestionnaireQuestionKind, QuestionnaireResponse},
     tui::questionnaire::{
@@ -197,7 +194,9 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
             trigger: rho_sdk::CompactionTrigger::Automatic,
             message_count: 3,
         })),
-        ViewEvent::Update(ViewModelEvent::CompactionStarted)
+        ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, display_lines })
+            if call_id == crate::tui::compaction_display::compaction_call_id()
+                && display_lines == crate::tui::compaction_display::running_display_lines()
     ));
 
     let events = adapter.translate(RunEvent::Failed {
@@ -207,9 +206,13 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
     assert_eq!(events.len(), 2);
     assert!(matches!(
         &events[0],
-        ViewEvent::Update(ViewModelEvent::CompactionFinished {
-            outcome: CompactionUiOutcome::Failed { detail }
-        }) if detail == "provider unavailable"
+        ViewEvent::Update(ViewModelEvent::ToolFinished {
+            call_id,
+            ok: false,
+            display_lines,
+            ..
+        }) if call_id == &crate::tui::compaction_display::compaction_call_id()
+            && display_lines.iter().any(|line| line == "failed")
     ));
     assert!(matches!(
         &events[1],
@@ -230,9 +233,11 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
     assert_eq!(events.len(), 2);
     assert!(matches!(
         &events[0],
-        ViewEvent::Update(ViewModelEvent::CompactionFinished {
-            outcome: CompactionUiOutcome::Cancelled
-        })
+        ViewEvent::Update(ViewModelEvent::ToolFinished {
+            call_id,
+            ok: true,
+            ..
+        }) if call_id == &crate::tui::compaction_display::compaction_call_id()
     ));
     assert!(matches!(&events[1], ViewEvent::Cancelled));
 }

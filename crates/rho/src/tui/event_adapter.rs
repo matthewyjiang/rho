@@ -11,6 +11,7 @@ use {
 
 use super::{
     activity::ActivityPhase,
+    compaction_display::{compaction_call_id, running_display_lines},
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
@@ -27,10 +28,6 @@ pub(super) enum ViewModelEvent {
     },
     ProviderStreamReset,
     ProviderRetry,
-    CompactionStarted,
-    CompactionFinished {
-        outcome: CompactionUiOutcome,
-    },
     OutputDelta(String),
     ReasoningDelta(String),
     ContextUsage(ContextUsage),
@@ -56,9 +53,16 @@ pub(super) enum ViewModelEvent {
 impl ViewModelEvent {
     pub(super) fn activity_phase(&self) -> Option<ActivityPhase> {
         match self {
-            Self::RunStarted | Self::CompactionFinished { .. } => Some(ActivityPhase::Starting),
+            Self::RunStarted => Some(ActivityPhase::Starting),
+            // Compaction is tool-shaped; keep the dedicated activity phase via call id.
+            Self::ToolFinished { call_id, .. } if call_id == &compaction_call_id() => {
+                Some(ActivityPhase::Starting)
+            }
             Self::ToolFinished { .. } => None,
             Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
+            Self::ToolStarted { call_id, .. } if call_id == &compaction_call_id() => {
+                Some(ActivityPhase::Compacting)
+            }
             Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
             Self::ToolCallUpdated { .. } => Some(ActivityPhase::PreparingTool),
             Self::ProviderStreamReset | Self::ProviderRetry => {
@@ -66,7 +70,6 @@ impl ViewModelEvent {
             }
             Self::OutputDelta(_) => Some(ActivityPhase::Responding),
             Self::ReasoningDelta(_) => Some(ActivityPhase::Thinking),
-            Self::CompactionStarted => Some(ActivityPhase::Compacting),
             _ => None,
         }
     }
@@ -111,9 +114,7 @@ impl SdkEventAdapter {
             return None;
         }
         self.compaction_open = false;
-        Some(ViewEvent::Update(ViewModelEvent::CompactionFinished {
-            outcome,
-        }))
+        Some(ViewEvent::Update(compaction_finished(outcome)))
     }
 
     /// Translates one SDK run event into zero or more view events.
@@ -241,15 +242,13 @@ impl SdkEventAdapter {
             }
             RunEvent::CompactionStarted { .. } => {
                 self.compaction_open = true;
-                vec![ViewEvent::Update(ViewModelEvent::CompactionStarted)]
+                vec![ViewEvent::Update(compaction_started())]
             }
             RunEvent::CompactionCompleted { outcome, .. } => {
                 self.compaction_open = false;
-                vec![ViewEvent::Update(ViewModelEvent::CompactionFinished {
-                    outcome: CompactionUiOutcome::Completed(CompactionDisplayFacts::from_outcome(
-                        &outcome,
-                    )),
-                })]
+                vec![ViewEvent::Update(compaction_finished(
+                    CompactionUiOutcome::Completed(CompactionDisplayFacts::from_outcome(&outcome)),
+                ))]
             }
             RunEvent::Completed { .. } => {
                 let mut events = Vec::new();
@@ -281,6 +280,23 @@ impl SdkEventAdapter {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+fn compaction_started() -> ViewModelEvent {
+    ViewModelEvent::ToolStarted {
+        call_id: compaction_call_id(),
+        display_lines: running_display_lines(),
+    }
+}
+
+fn compaction_finished(outcome: CompactionUiOutcome) -> ViewModelEvent {
+    ViewModelEvent::ToolFinished {
+        call_id: compaction_call_id(),
+        ok: outcome.ok(),
+        display_style: ToolDisplayStyle::default_tool(),
+        display_lines: outcome.display_lines(),
+        image_asset: None,
     }
 }
 

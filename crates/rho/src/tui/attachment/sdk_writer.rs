@@ -6,12 +6,8 @@
 //! [`crate::run_artifacts::RunArtifactSink`]. [`SdkAttachmentWriter`] is a
 //! test-only convenience that owns a journal writer for unit coverage.
 
-use super::super::{
-    compaction_display::running_display_lines,
-    event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
-};
+use super::super::event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use crate::run_artifacts::AttachmentEvent;
-use rho_tools::tool::ToolDisplayStyle;
 
 /// Test-only helper that records Rho SDK run events into a journal writer.
 ///
@@ -95,14 +91,6 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         ViewModelEvent::SteeringApplied(_) => None,
         ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
         ViewModelEvent::ProviderRetry => None,
-        ViewModelEvent::CompactionStarted => Some(AttachmentEvent::ToolStarted {
-            display_lines: running_display_lines(),
-        }),
-        ViewModelEvent::CompactionFinished { outcome } => Some(AttachmentEvent::ToolFinished {
-            ok: outcome.ok(),
-            display_style: ToolDisplayStyle::default_tool(),
-            display_lines: outcome.display_lines(),
-        }),
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
     }

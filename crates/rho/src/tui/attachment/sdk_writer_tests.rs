@@ -1,9 +1,18 @@
 use std::path::PathBuf;
 
+use pretty_assertions::assert_eq;
+use rho_tools::tool::ToolDisplayStyle;
 use tempfile::TempDir;
 
 use super::*;
-use crate::{run_artifacts::AttachmentReader, subagent};
+use crate::{
+    run_artifacts::{AttachmentEvent, AttachmentReader},
+    subagent,
+    tui::compaction_display::{
+        compaction_call_id, completed_display_lines, running_display_lines, CompactionDisplayFacts,
+        CompactionUiOutcome,
+    },
+};
 
 #[test]
 fn attachment_stream_round_trips_view_events() {
@@ -25,14 +34,13 @@ fn attachment_stream_round_trips_view_events() {
     let mut reader = AttachmentReader::new(directory.path().join(subagent::ATTACHMENT_FILE_NAME));
     let events = reader.read_new().unwrap();
 
-    assert!(matches!(
-        &events[0],
-        AttachmentEvent::Prompt(prompt) if prompt == "inspect the code"
-    ));
-    assert!(matches!(
-        &events[1],
-        AttachmentEvent::AssistantTextDelta(text) if text == "found it"
-    ));
+    assert_eq!(
+        events,
+        vec![
+            AttachmentEvent::Prompt("inspect the code".into()),
+            AttachmentEvent::AssistantTextDelta("found it".into()),
+        ]
+    );
     assert!(reader.read_new().unwrap().is_empty());
 }
 
@@ -42,41 +50,82 @@ fn attachment_stream_ignores_steering_applied() {
 }
 
 #[test]
-fn attachment_stream_preserves_compaction_tool_blocks() {
-    assert!(matches!(
-        attachment_update(ViewModelEvent::CompactionStarted),
-        Some(AttachmentEvent::ToolStarted { display_lines })
-            if display_lines == ["compact".to_string(), "shrinking context…".to_string()]
-    ));
-    assert!(matches!(
-        attachment_update(ViewModelEvent::CompactionFinished {
-            outcome: super::super::super::compaction_display::CompactionUiOutcome::Completed(
-                super::super::super::compaction_display::CompactionDisplayFacts {
-                    previous_messages: 12,
-                    current_messages: 4,
-                    previous_tokens: 12_400,
-                    current_tokens: 3_100,
-                    cost_usd_micros: None,
-                },
-            ),
+fn compaction_run_events_project_to_tool_attachment_blocks() {
+    let mut adapter = SdkEventAdapter::new(PathBuf::from("/workspace"));
+
+    let started = translate_run_event(
+        &mut adapter,
+        &rho_sdk::RunEvent::CompactionStarted {
+            trigger: rho_sdk::CompactionTrigger::Automatic,
+            message_count: 3,
+        },
+    );
+    assert_eq!(
+        started,
+        vec![AttachmentEvent::ToolStarted {
+            display_lines: running_display_lines(),
+        }]
+    );
+
+    // Completion is already tool-shaped at the view-model boundary; attach only
+    // projects ToolFinished structurally.
+    let facts = CompactionDisplayFacts {
+        previous_messages: 12,
+        current_messages: 4,
+        previous_tokens: 12_400,
+        current_tokens: 3_100,
+        cost_usd_micros: None,
+    };
+    let display_lines = completed_display_lines(facts);
+    assert_eq!(
+        attachment_update(ViewModelEvent::ToolFinished {
+            call_id: compaction_call_id(),
+            ok: true,
+            display_style: ToolDisplayStyle::default_tool(),
+            display_lines: display_lines.clone(),
+            image_asset: None,
         }),
         Some(AttachmentEvent::ToolFinished {
             ok: true,
+            display_style: ToolDisplayStyle::default_tool(),
             display_lines,
-            ..
-        }) if display_lines.iter().any(|line| line.contains("12.4K → 3.1K tokens"))
-            && display_lines.iter().any(|line| line.contains("12 → 4 messages"))
-    ));
-    assert!(matches!(
-        attachment_update(ViewModelEvent::CompactionFinished {
-            outcome: super::super::super::compaction_display::CompactionUiOutcome::Failed {
-                detail: "boom".into(),
-            },
-        }),
-        Some(AttachmentEvent::ToolFinished {
+        })
+    );
+}
+
+#[test]
+fn open_compaction_failure_emits_tool_finish_then_failed() {
+    let mut adapter = SdkEventAdapter::new(PathBuf::from("/workspace"));
+    let _ = translate_run_event(
+        &mut adapter,
+        &rho_sdk::RunEvent::CompactionStarted {
+            trigger: rho_sdk::CompactionTrigger::Automatic,
+            message_count: 1,
+        },
+    );
+
+    let events = translate_run_event(
+        &mut adapter,
+        &rho_sdk::RunEvent::Failed {
+            message: "provider unavailable".into(),
+            retryability: rho_sdk::Retryability::Retryable,
+        },
+    );
+    assert_eq!(events.len(), 2);
+    let failed_lines = CompactionUiOutcome::Failed {
+        detail: "provider unavailable".into(),
+    }
+    .display_lines();
+    assert_eq!(
+        events[0],
+        AttachmentEvent::ToolFinished {
             ok: false,
-            display_lines,
-            ..
-        }) if display_lines.iter().any(|line| line == "failed")
-    ));
+            display_style: ToolDisplayStyle::default_tool(),
+            display_lines: failed_lines,
+        }
+    );
+    assert_eq!(
+        events[1],
+        AttachmentEvent::Failed("provider unavailable".into())
+    );
 }
