@@ -45,6 +45,23 @@ fn parses_github_root_tree_blob_and_commit_urls() {
     assert_eq!(commit.ref_name.as_deref(), Some("abc123"));
 }
 
+#[test]
+fn rejects_github_urls_whose_segments_could_inject_git_arguments() {
+    for url in [
+        "https://github.com/-owner/repo",
+        "https://github.com/owner/-repo",
+        "https://github.com/owner/re;po",
+        "https://github.com/owner/repo/tree/--upload-pack=touch%20pwned",
+        "https://github.com/owner/repo/commit/--output=pwned",
+        "https://github.com/owner/repo/tree/%2e%2e/etc",
+    ] {
+        assert!(
+            github::parse_url(url).is_none(),
+            "{url} should not parse as a GitHub target"
+        );
+    }
+}
+
 #[tokio::test]
 async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     let args = json!({"query": "rho web access", "provider": "tavily", "includeContent": true});

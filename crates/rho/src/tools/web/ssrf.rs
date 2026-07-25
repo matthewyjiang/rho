@@ -133,7 +133,42 @@ fn is_blocked_v4(ip: Ipv4Addr) -> bool {
         || a >= 224 // multicast and reserved
 }
 
+/// IPv4 address carried inside an IPv6 address by a transition mechanism.
+///
+/// A translated address reaches the embedded IPv4 destination, so the IPv4
+/// rules must apply to it as well.
+fn embedded_ipv4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return Some(v4);
+    }
+    let segments = ip.segments();
+    let from_segments = |high: u16, low: u16| {
+        Ipv4Addr::new(
+            (high >> 8) as u8,
+            (high & 0xff) as u8,
+            (low >> 8) as u8,
+            (low & 0xff) as u8,
+        )
+    };
+    if segments[0] == 0x2002 {
+        // 2002::/16 6to4
+        return Some(from_segments(segments[1], segments[2]));
+    }
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6] == [0, 0, 0, 0] {
+        // 64:ff9b::/96 well-known NAT64 prefix
+        return Some(from_segments(segments[6], segments[7]));
+    }
+    if segments[..6] == [0, 0, 0, 0, 0, 0] && !ip.is_unspecified() && !ip.is_loopback() {
+        // ::a.b.c.d deprecated IPv4-compatible address
+        return Some(from_segments(segments[6], segments[7]));
+    }
+    None
+}
+
 fn is_blocked_v6(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = embedded_ipv4(ip) {
+        return is_blocked_v4(v4);
+    }
     let segments = ip.segments();
     ip.is_unspecified()
         || ip.is_loopback()
@@ -142,6 +177,7 @@ fn is_blocked_v6(ip: Ipv6Addr) -> bool {
         || (segments[0] & 0xff00) == 0xff00 // ff00::/8 multicast
         || (segments[0] == 0x2001 && segments[1] == 0x0db8) // 2001:db8::/32 documentation
         || (segments[0] == 0x2001 && segments[1] == 0x0002 && segments[2] == 0) // 2001:2::/48 benchmarking
+        || (segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 1) // 64:ff9b:1::/48 local-use NAT64
         || (segments[0] == 0x0100
             && segments[1] == 0
             && segments[2] == 0
