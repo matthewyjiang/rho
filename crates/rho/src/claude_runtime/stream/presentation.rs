@@ -45,6 +45,92 @@ pub(super) fn record_block(state: &mut MessageStreamState, index: usize) -> bool
     true
 }
 
+/// Kind of presentation carried by an index-less partial block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum IndexlessBlockKind {
+    Text,
+    Reasoning,
+}
+
+/// Resolve the block index for a partial event, allocating a stable synthetic
+/// index when Claude omits `index`.
+///
+/// Indexed events use the real index and clear any open index-less slot of the
+/// same kind. Index-less deltas reuse the open synthetic index for the active
+/// block; the first emission of a new index-less block allocates, records via
+/// [`record_block`], and increments the per-kind complete-envelope suppress
+/// count so a later full assistant message does not re-emit the same content.
+pub(super) fn resolve_partial_block_index(
+    state: &mut MessageStreamState,
+    explicit_index: Option<usize>,
+    kind: IndexlessBlockKind,
+) -> Option<usize> {
+    if let Some(index) = explicit_index {
+        clear_open_indexless(state, kind);
+        return Some(index);
+    }
+
+    let existing = match kind {
+        IndexlessBlockKind::Text => state.open_indexless_text,
+        IndexlessBlockKind::Reasoning => state.open_indexless_reasoning,
+    };
+    if let Some(index) = existing {
+        return Some(index);
+    }
+
+    let offset = state.next_synthetic_index;
+    if offset >= MAX_BLOCKS_PER_MESSAGE {
+        return None;
+    }
+    let index = super::SYNTHETIC_BLOCK_INDEX_BASE.saturating_add(offset);
+    if !record_block(state, index) {
+        return None;
+    }
+    state.next_synthetic_index = offset.saturating_add(1);
+    match kind {
+        IndexlessBlockKind::Text => {
+            state.open_indexless_text = Some(index);
+            state.indexless_text_blocks = state.indexless_text_blocks.saturating_add(1);
+        }
+        IndexlessBlockKind::Reasoning => {
+            state.open_indexless_reasoning = Some(index);
+            state.indexless_reasoning_blocks = state.indexless_reasoning_blocks.saturating_add(1);
+        }
+    }
+    Some(index)
+}
+
+pub(super) fn clear_open_indexless(state: &mut MessageStreamState, kind: IndexlessBlockKind) {
+    match kind {
+        IndexlessBlockKind::Text => state.open_indexless_text = None,
+        IndexlessBlockKind::Reasoning => state.open_indexless_reasoning = None,
+    }
+}
+
+pub(super) fn clear_all_open_indexless(state: &mut MessageStreamState) {
+    state.open_indexless_text = None;
+    state.open_indexless_reasoning = None;
+}
+
+/// When a complete envelope block was not streamed under a real index, consume
+/// one matching index-less emission so partial text/reasoning is not duplicated.
+pub(super) fn consume_indexless_complete_block(
+    state: &mut MessageStreamState,
+    kind: IndexlessBlockKind,
+    complete_index: usize,
+) -> bool {
+    let slot = match kind {
+        IndexlessBlockKind::Text => &mut state.indexless_text_blocks,
+        IndexlessBlockKind::Reasoning => &mut state.indexless_reasoning_blocks,
+    };
+    if *slot == 0 {
+        return false;
+    }
+    *slot = slot.saturating_sub(1);
+    let _ = record_block(state, complete_index);
+    true
+}
+
 pub(super) fn mark_and_text(
     state: &mut MessageStreamState,
     index: usize,

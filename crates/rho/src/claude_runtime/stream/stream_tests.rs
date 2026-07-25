@@ -21,6 +21,9 @@ fn effects_from_fixture(name: &str) -> Vec<StreamEffect> {
             include_str!("../fixtures/message_start_no_deltas.ndjson")
         }
         "missing_message_id.ndjson" => include_str!("../fixtures/missing_message_id.ndjson"),
+        "indexless_partial_complete.ndjson" => {
+            include_str!("../fixtures/indexless_partial_complete.ndjson")
+        }
         "live_tool_roundtrip.ndjson" => include_str!("../fixtures/live_tool_roundtrip.ndjson"),
         other => panic!("unknown fixture {other}"),
     };
@@ -398,6 +401,87 @@ fn missing_message_ids_do_not_share_fallback_or_duplicate() {
         2
     );
     assert_eq!(joined_text(&effects), "first second");
+    assert_no_terminal_attachment(&effects);
+}
+
+#[test]
+fn indexless_partials_do_not_duplicate_on_complete_envelope() {
+    // Index-less text/thinking partials must still mark emission so the
+    // complete assistant envelope does not replay the same presentation. An
+    // indexed tool block in the same message keeps normal index bookkeeping.
+    let effects = effects_from_fixture("indexless_partial_complete.ndjson");
+
+    assert_eq!(
+        count_attachments(&effects, |event| matches!(
+            event,
+            AttachmentEvent::StepStarted
+        )),
+        1
+    );
+    assert_eq!(joined_reasoning(&effects), "plan first");
+    assert_eq!(joined_text(&effects), "Hello indexless.");
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ToolStarted { display_lines }
+                if display_lines.iter().any(|line| line.contains("toolu_indexless_1")))
+        }),
+        1
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })
+        }),
+        1
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::AssistantTextDelta(_))
+        }),
+        2,
+        "two index-less text deltas only; complete envelope must not re-emit"
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ReasoningDelta(_))
+        }),
+        2,
+        "two index-less reasoning deltas only; complete envelope must not re-emit"
+    );
+    assert_no_terminal_attachment(&effects);
+}
+
+#[test]
+fn indexless_partials_preserve_mixed_indexed_complete_only_blocks() {
+    // Index-less reasoning streamed; indexed text arrives only on complete.
+    let lines = [
+        r#"{"type":"stream_event","session_id":"s","event":{"type":"message_start","message":{"id":"msg_idxless_mix","role":"assistant"}}}"#,
+        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_start","content_block":{"type":"thinking","thinking":""}}}"#,
+        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"streamed"}}}"#,
+        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_stop"}}"#,
+        r#"{"type":"stream_event","session_id":"s","event":{"type":"message_stop"}}"#,
+        r#"{"type":"assistant","session_id":"s","message":{"id":"msg_idxless_mix","role":"assistant","content":[{"type":"thinking","thinking":"streamed"},{"type":"text","text":"complete-only text"}]}}"#,
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}"#,
+    ];
+    let mut mapper = StreamMapper::new();
+    let effects: Vec<_> = lines
+        .iter()
+        .flat_map(|line| mapper.push_line(line))
+        .collect();
+
+    assert_eq!(joined_reasoning(&effects), "streamed");
+    assert_eq!(joined_text(&effects), "complete-only text");
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ReasoningDelta(_))
+        }),
+        1
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::AssistantTextDelta(_))
+        }),
+        1
+    );
     assert_no_terminal_attachment(&effects);
 }
 

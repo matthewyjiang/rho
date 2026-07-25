@@ -7,9 +7,27 @@
 
 /// Maximum accepted bytes in one NDJSON line, including an incomplete tail.
 ///
-/// Claude stream-json lines are usually small. Tool inputs can be large, but
-/// multi-megabyte single lines are not treated as legitimate protocol traffic.
-pub(crate) const MAX_NDJSON_LINE_BYTES: usize = 1024 * 1024;
+/// # Why 4 MiB (not 1 MiB, not 32 MiB)
+///
+/// Claude stream-json lines are usually small. With
+/// `--include-partial-messages`, tool inputs arrive as short
+/// `input_json_delta` chunks. Live fixtures stay under 2 KiB per line.
+///
+/// The complete `assistant` envelope and `user`/`tool_result` frames still
+/// carry full tool input/result JSON on a single NDJSON line. Agents may
+/// declare `Write` / `Read` / `Bash`, so a legitimate supported message can
+/// hold hundreds of KiB to a few MiB of file or command output. A 1 MiB
+/// decoder cap would reject those complete frames before the mapper can
+/// apply its softer presentation bounds (tool payload display 16 KiB,
+/// terminal result 64 KiB, text/reasoning delta 32 KiB).
+///
+/// 4 MiB is therefore the anti-runaway line budget: large enough for
+/// ordinary multi-megabyte tool envelopes, far below a 16–32 MiB "accept
+/// anything" ceiling. Peak retained memory is one incomplete line of this
+/// size; oversize input sets a pending error, drops only that tail, and
+/// the session fails the run with a clear diagnostic rather than truncating
+/// mid-JSON and corrupting later lines.
+pub(crate) const MAX_NDJSON_LINE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Failure while decoding a local stream-json byte stream into lines.
 #[derive(Debug, Clone, PartialEq, Eq)]

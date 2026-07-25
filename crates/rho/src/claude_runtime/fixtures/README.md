@@ -17,6 +17,7 @@ capture from Claude Code.
 | `partial_tool_complete_text.ndjson` | Hand-authored: tool streamed via partials; thinking/text only on complete envelope. Not a live capture. |
 | `message_start_no_deltas.ndjson` | Hand-authored: `message_start`/`message_stop` with no content deltas; complete envelope supplies all blocks. Not a live capture. |
 | `missing_message_id.ndjson` | Hand-authored: two complete assistants without message ids must not share a fallback key. Not a live capture. |
+| `indexless_partial_complete.ndjson` | Hand-authored: index-less text/thinking partials plus an indexed tool block, then a complete assistant envelope. Guards against duplicate presentation when Claude omits content-block `index`. Not a live capture. |
 
 Do not invent "synthetic capture" labels. Keep fixtures deterministic. Do not
 commit credentials or private content. Live multi-turn tool coverage is `live_tool_roundtrip.ndjson` (second live

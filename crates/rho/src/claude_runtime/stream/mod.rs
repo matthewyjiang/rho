@@ -41,9 +41,10 @@ use format::{
 };
 pub(crate) use presentation::apply_status_patch;
 use presentation::{
-    block_index, fidelity_notice, map_error_message, map_rate_limit, map_system,
-    mark_and_reasoning, mark_and_text, reasoning_effects, record_block, stable_message_id,
-    text_effects, tool_finished_effects, tool_started_effects,
+    block_index, clear_all_open_indexless, clear_open_indexless, consume_indexless_complete_block,
+    fidelity_notice, map_error_message, map_rate_limit, map_system, mark_and_reasoning,
+    mark_and_text, reasoning_effects, record_block, resolve_partial_block_index, stable_message_id,
+    text_effects, tool_finished_effects, tool_started_effects, IndexlessBlockKind,
 };
 pub(crate) use types::{
     classify_terminal_result, describe_rate_limit, RateLimitInfo, StatusPatch, StreamEffect,
@@ -85,8 +86,29 @@ pub(crate) struct StreamMapper {
 struct MessageStreamState {
     step_started: bool,
     /// Content-block indices that produced text, reasoning, or tool-start output.
+    ///
+    /// Real Claude indices stay in `0..`. Index-less partials use synthetic
+    /// indices from [`SYNTHETIC_BLOCK_INDEX_BASE`] so mixed indexed streams keep
+    /// stable real keys while index-less emissions still consume the block cap.
     emitted_blocks: HashSet<usize>,
+    /// Monotonic offset for the next index-less synthetic block index.
+    next_synthetic_index: usize,
+    /// Open index-less text block, when partial deltas omitted `index`.
+    open_indexless_text: Option<usize>,
+    /// Open index-less reasoning block, when partial deltas omitted `index`.
+    open_indexless_reasoning: Option<usize>,
+    /// Distinct index-less text blocks that already presented. Complete
+    /// envelopes consume these before re-emitting same-kind blocks.
+    indexless_text_blocks: usize,
+    /// Distinct index-less reasoning blocks that already presented.
+    indexless_reasoning_blocks: usize,
 }
+
+/// Base for synthetic content-block indices assigned to index-less partials.
+///
+/// Kept far above normal Claude block indices so mixed indexed + index-less
+/// streams cannot collide in `emitted_blocks`.
+const SYNTHETIC_BLOCK_INDEX_BASE: usize = usize::MAX / 2;
 
 /// Result of allocating or resolving the open partial message.
 enum OpenMessage {
@@ -279,9 +301,30 @@ impl StreamMapper {
                 if state.emitted_blocks.contains(&index) {
                     continue;
                 }
+                // Index-less partials never occupied this real index. Suppress
+                // re-emission of same-kind complete blocks they already showed.
+                let kind = block.get("type").and_then(Value::as_str).unwrap_or("");
+                let suppressed = match kind {
+                    "text" => consume_indexless_complete_block(
+                        &mut state,
+                        IndexlessBlockKind::Text,
+                        index,
+                    ),
+                    "thinking" => consume_indexless_complete_block(
+                        &mut state,
+                        IndexlessBlockKind::Reasoning,
+                        index,
+                    ),
+                    _ => false,
+                };
+                if suppressed {
+                    continue;
+                }
                 effects.extend(self.emit_complete_block(block, index, &mut state));
             }
-        } else if !state.emitted_blocks.contains(&0) {
+        } else if !state.emitted_blocks.contains(&0)
+            && !consume_indexless_complete_block(&mut state, IndexlessBlockKind::Text, 0)
+        {
             // Rare shape: top-level text without a content array.
             if let Some(text) = body.get("text").and_then(Value::as_str) {
                 if let Some(block_effects) = mark_and_text(&mut state, 0, text) {
@@ -488,10 +531,25 @@ impl StreamMapper {
                 self.map_content_block_start(&event, message.content_block.as_ref())
             }
             "content_block_delta" => self.map_content_block_delta(&event, message.delta.as_ref()),
-            "content_block_stop" | "message_delta" => Vec::new(),
+            "content_block_stop" => {
+                // Close any open index-less slots for this message so a later
+                // same-kind index-less block allocates a fresh synthetic index.
+                if let Some(key) = self.open_message_id.clone() {
+                    if let Some(state) = self.messages.get_mut(&key) {
+                        clear_all_open_indexless(state);
+                    }
+                }
+                Vec::new()
+            }
+            "message_delta" => Vec::new(),
             "message_stop" => {
                 // Keep message state until the complete assistant envelope
-                // reconciles; only clear the open cursor.
+                // reconciles; only clear the open cursor and index-less slots.
+                if let Some(key) = self.open_message_id.clone() {
+                    if let Some(state) = self.messages.get_mut(&key) {
+                        clear_all_open_indexless(state);
+                    }
+                }
                 self.open_message_id = None;
                 Vec::new()
             }
@@ -595,21 +653,32 @@ impl StreamMapper {
                     return effects;
                 };
                 if text.is_empty() {
-                    return effects;
-                }
-                if let Some(index) = index {
-                    let Some(state) = self.messages.get_mut(&message_key) else {
-                        return effects;
-                    };
-                    match mark_and_text(state, index, text) {
-                        Some(block_effects) => effects.extend(block_effects),
-                        None => effects.extend(fidelity_notice(
-                            "claude stream: dropped partial text; tracked block cap reached",
-                        )),
+                    // Indexed empty start just opens the real index path.
+                    // Index-less empty starts wait for the first non-empty delta.
+                    if index.is_some() {
+                        if let Some(state) = self.messages.get_mut(&message_key) {
+                            clear_open_indexless(state, IndexlessBlockKind::Text);
+                        }
                     }
                     return effects;
                 }
-                effects.extend(text_effects(text));
+                let Some(state) = self.messages.get_mut(&message_key) else {
+                    return effects;
+                };
+                let Some(resolved) =
+                    resolve_partial_block_index(state, index, IndexlessBlockKind::Text)
+                else {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped partial text; tracked block cap reached",
+                    ));
+                    return effects;
+                };
+                match mark_and_text(state, resolved, text) {
+                    Some(block_effects) => effects.extend(block_effects),
+                    None => effects.extend(fidelity_notice(
+                        "claude stream: dropped partial text; tracked block cap reached",
+                    )),
+                }
                 effects
             }
             Some("thinking") => {
@@ -621,21 +690,30 @@ impl StreamMapper {
                     return effects;
                 };
                 if text.is_empty() {
-                    return effects;
-                }
-                if let Some(index) = index {
-                    let Some(state) = self.messages.get_mut(&message_key) else {
-                        return effects;
-                    };
-                    match mark_and_reasoning(state, index, text) {
-                        Some(block_effects) => effects.extend(block_effects),
-                        None => effects.extend(fidelity_notice(
-                            "claude stream: dropped partial reasoning; tracked block cap reached",
-                        )),
+                    if index.is_some() {
+                        if let Some(state) = self.messages.get_mut(&message_key) {
+                            clear_open_indexless(state, IndexlessBlockKind::Reasoning);
+                        }
                     }
                     return effects;
                 }
-                effects.extend(reasoning_effects(text));
+                let Some(state) = self.messages.get_mut(&message_key) else {
+                    return effects;
+                };
+                let Some(resolved) =
+                    resolve_partial_block_index(state, index, IndexlessBlockKind::Reasoning)
+                else {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped partial reasoning; tracked block cap reached",
+                    ));
+                    return effects;
+                };
+                match mark_and_reasoning(state, resolved, text) {
+                    Some(block_effects) => effects.extend(block_effects),
+                    None => effects.extend(fidelity_notice(
+                        "claude stream: dropped partial reasoning; tracked block cap reached",
+                    )),
+                }
                 effects
             }
             _ => effects,
@@ -671,17 +749,23 @@ impl StreamMapper {
                 if text.is_empty() {
                     return effects;
                 }
-                if let Some(index) = index {
-                    let Some(state) = self.messages.get_mut(&message_key) else {
-                        return effects;
-                    };
-                    // First delta marks the block as streamed; later deltas still emit.
-                    if !record_block(state, index) {
-                        effects.extend(fidelity_notice(
-                            "claude stream: dropped text delta; tracked block cap reached",
-                        ));
-                        return effects;
-                    }
+                let Some(state) = self.messages.get_mut(&message_key) else {
+                    return effects;
+                };
+                // First delta marks the block as streamed; later deltas still emit.
+                let Some(resolved) =
+                    resolve_partial_block_index(state, index, IndexlessBlockKind::Text)
+                else {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped text delta; tracked block cap reached",
+                    ));
+                    return effects;
+                };
+                if !record_block(state, resolved) {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped text delta; tracked block cap reached",
+                    ));
+                    return effects;
                 }
                 effects.extend(text_effects(text));
                 effects
@@ -697,16 +781,22 @@ impl StreamMapper {
                 if text.is_empty() {
                     return effects;
                 }
-                if let Some(index) = index {
-                    let Some(state) = self.messages.get_mut(&message_key) else {
-                        return effects;
-                    };
-                    if !record_block(state, index) {
-                        effects.extend(fidelity_notice(
-                            "claude stream: dropped reasoning delta; tracked block cap reached",
-                        ));
-                        return effects;
-                    }
+                let Some(state) = self.messages.get_mut(&message_key) else {
+                    return effects;
+                };
+                let Some(resolved) =
+                    resolve_partial_block_index(state, index, IndexlessBlockKind::Reasoning)
+                else {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped reasoning delta; tracked block cap reached",
+                    ));
+                    return effects;
+                };
+                if !record_block(state, resolved) {
+                    effects.extend(fidelity_notice(
+                        "claude stream: dropped reasoning delta; tracked block cap reached",
+                    ));
+                    return effects;
                 }
                 effects.extend(reasoning_effects(text));
                 effects
