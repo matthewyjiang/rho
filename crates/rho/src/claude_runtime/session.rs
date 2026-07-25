@@ -83,7 +83,25 @@ struct OwnedChild {
 impl OwnedChild {
     fn spawn(mut command: tokio::process::Command) -> Result<Self, std::io::Error> {
         prepare_child_command(&mut command);
-        let child = command.spawn()?;
+        // Linux can return ETXTBSY when a just-written executable is still open
+        // for write (or still being closed) under parallel test load. Retry with
+        // cooperative yields only - no timed sleeps.
+        let child = {
+            let mut attempts = 0;
+            loop {
+                match command.spawn() {
+                    Ok(child) => break child,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                            && attempts < 32 =>
+                    {
+                        attempts += 1;
+                        std::thread::yield_now();
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        };
         let tree = match ProcessTree::attach(&child) {
             Ok(tree) => tree,
             Err(error) => {
@@ -284,37 +302,6 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         }
     };
 
-    // Prompt on stdin so shell metacharacters cannot break the command line.
-    // Cancellation is selected while writing so a stuck child cannot hang us.
-    if let Some(mut stdin) = child.stdin() {
-        let prompt = request.prompt.clone();
-        let write = async {
-            stdin.write_all(prompt.as_bytes()).await?;
-            stdin.shutdown().await?;
-            Ok::<(), std::io::Error>(())
-        };
-        tokio::select! {
-            biased;
-            () = request.cancellation.cancelled() => {
-                child.terminate().await;
-                sink.stop("cancelled").await;
-                sink.shutdown().await;
-                return Ok(());
-            }
-            result = write => {
-                if let Err(error) = result {
-                    child.terminate().await;
-                    sink.fail(format!(
-                        "claude code: failed to write prompt to stdin: {error}"
-                    ))
-                    .await;
-                    sink.shutdown().await;
-                    return Ok(());
-                }
-            }
-        }
-    }
-
     if let Err(error) = sink.mark_running() {
         child.terminate().await;
         sink.fail(format!(
@@ -333,25 +320,60 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         return Ok(());
     };
 
+    // Prompt on stdin so shell metacharacters cannot break the command line.
+    // Write stdin concurrently with the stdout drain: a child that emits enough
+    // output before consuming stdin would otherwise fill the pipe and deadlock
+    // if we awaited the full prompt write first.
+    let stdin = child.stdin();
+    let prompt = request.prompt.clone();
+    let stdin_write = async move {
+        let Some(mut stdin) = stdin else {
+            return Ok(());
+        };
+        stdin.write_all(prompt.as_bytes()).await?;
+        stdin.shutdown().await?;
+        Ok::<(), std::io::Error>(())
+    };
+    tokio::pin!(stdin_write);
+
     let mut stdout = BufReader::new(stdout);
     let mut decoder = LineDecoder::default();
     let mut mapper = StreamMapper::new();
     let mut pending_terminal: Option<TerminalResult> = None;
     let mut stream_error: Option<String> = None;
+    let mut stdin_error: Option<String> = None;
+    let mut stdin_done = false;
+    let mut stdout_done = false;
     let mut chunk = vec![0_u8; 8 * 1024];
 
     loop {
+        if stdin_done && stdout_done {
+            break;
+        }
         tokio::select! {
             biased;
             () = request.cancellation.cancelled() => {
+                // Dropping the pinned stdin future closes ChildStdin; terminate
+                // then reaps the process tree so nothing is left orphaned.
                 child.terminate().await;
                 sink.stop("cancelled").await;
                 sink.shutdown().await;
                 return Ok(());
             }
-            read = stdout.read(&mut chunk) => {
+            result = &mut stdin_write, if !stdin_done => {
+                stdin_done = true;
+                if let Err(error) = result {
+                    stdin_error = Some(format!(
+                        "claude code: failed to write prompt to stdin: {error}"
+                    ));
+                    break;
+                }
+            }
+            read = stdout.read(&mut chunk), if !stdout_done => {
                 match read {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        stdout_done = true;
+                    }
                     Ok(n) => {
                         decoder.push(&chunk[..n]);
                         loop {
@@ -387,6 +409,19 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
                 }
             }
         }
+    }
+
+    // Stdin write failures take precedence over later stream noise: the child
+    // often exits uncleanly once its stdin pipe is dropped mid-protocol.
+    if let Some(error) = stdin_error {
+        child.terminate().await;
+        if !sink.status.state.is_terminal() {
+            sink.fail(error).await;
+        } else {
+            sink.flush_terminal_status().await;
+        }
+        sink.shutdown().await;
+        return Ok(());
     }
 
     if stream_error.is_none() {

@@ -180,8 +180,20 @@ mod unix_fake_matrix {
     use crate::tui::AttachmentEvent;
 
     fn write_fake_claude(path: &Path, body: &str) {
-        std::fs::write(path, body).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Fresh inode via tempfile rename; avoids overwriting a live text image.
+        let dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let tmp = dir.join(format!(
+            ".claude-install-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::write(&tmp, body).unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = std::fs::remove_file(path);
+        std::fs::rename(&tmp, path).unwrap();
     }
 
     fn fixture(name: &str) -> String {
@@ -241,12 +253,11 @@ exit {exit_code}
         permission_mode: PermissionMode,
         cancellation: RunCancellation,
     ) {
-        // Keep rate-limit persistence off the host home directory.
+        // Keep rate-limit persistence off the host home directory without
+        // mutating process env (unsafe under concurrent tests).
         let rho_home = tempfile::tempdir().unwrap();
-        let previous = std::env::var_os("RHO_HOME");
-        // SAFETY: test-only RHO_HOME scoped to this async call.
-        std::env::set_var("RHO_HOME", rho_home.path());
-        let result = run_session(ClaudeSessionRequest {
+        let rate_limit_path = rho_home.path().join("claude-rate-limit.json");
+        run_session(ClaudeSessionRequest {
             definition: definition(),
             identity: ClaudeRunIdentity {
                 agent_id: "claude-planner".into(),
@@ -265,14 +276,53 @@ exit {exit_code}
             status_tx: None,
             executable: Some(ClaudeExecutable::from_path(fake)),
             auth_status: Some(Ok(logged_in())),
-            persist_hooks: None,
+            persist_hooks: Some(persist::PersistHooks {
+                rate_limit_path: Some(rate_limit_path),
+                ..Default::default()
+            }),
         })
-        .await;
-        match previous {
-            Some(value) => std::env::set_var("RHO_HOME", value),
-            None => std::env::remove_var("RHO_HOME"),
-        }
-        result.unwrap();
+        .await
+        .unwrap();
+        // Keep the temp root alive through the session await above.
+        drop(rho_home);
+    }
+
+    async fn run_with_fake_prompt(
+        output: &Path,
+        cwd: &Path,
+        fake: &Path,
+        prompt: &str,
+        cancellation: RunCancellation,
+    ) {
+        let rho_home = tempfile::tempdir().unwrap();
+        let rate_limit_path = rho_home.path().join("claude-rate-limit.json");
+        run_session(ClaudeSessionRequest {
+            definition: definition(),
+            identity: ClaudeRunIdentity {
+                agent_id: "claude-planner".into(),
+                agent_fingerprint: "fp".into(),
+                model: Some("opus".into()),
+            },
+            model: Some("opus".into()),
+            tools: vec!["Read".into()],
+            inherit_claude_config: false,
+            max_turns: 8,
+            prompt: prompt.into(),
+            output_file: output.to_path_buf(),
+            cwd: cwd.to_path_buf(),
+            permission_mode: PermissionMode::Auto,
+            cancellation,
+            status_tx: None,
+            executable: Some(ClaudeExecutable::from_path(fake)),
+            auth_status: Some(Ok(logged_in())),
+            persist_hooks: Some(persist::PersistHooks {
+                rate_limit_path: Some(rate_limit_path),
+                ..Default::default()
+            }),
+        })
+        .await
+        .unwrap();
+        drop(rho_home);
     }
 
     fn process_is_running(pid: i32) -> bool {
@@ -897,6 +947,118 @@ done
             started.elapsed() < Duration::from_secs(3),
             "cancel took too long: {:?}",
             started.elapsed()
+        );
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Stopped);
+    }
+
+    /// Child floods stdout before reading stdin. Old ordering awaited the full
+    /// prompt write before draining stdout, so a filled pipe deadlocked.
+    #[tokio::test]
+    async fn concurrent_stdin_write_drains_high_volume_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        let payload = dir.path().join("flood.ndjson");
+        // ~1 MiB of NDJSON lines, enough to fill a typical pipe buffer.
+        let line = r#"{"type":"assistant","session_id":"s","message":{"id":"m","role":"assistant","content":[{"type":"text","text":"padpadpadpadpadpadpadpadpadpadpadpadpadpadpadpad"}]}}"#;
+        let mut body = String::with_capacity(1024 * 1024 + 256);
+        while body.len() < 1024 * 1024 {
+            body.push_str(line);
+            body.push('\n');
+        }
+        body.push_str(
+            r#"{"type":"result","subtype":"success","is_error":false,"result":"drained-while-writing","session_id":"s","num_turns":1,"usage":{"input_tokens":1,"output_tokens":1}}"#,
+        );
+        body.push('\n');
+        std::fs::write(&payload, body).unwrap();
+
+        // Emit a large stdout payload first; only then consume stdin. The parent
+        // must drain while still writing the prompt or the pipes wedge.
+        let script = format!(
+            r#"#!/bin/sh
+cat {payload}
+cat >/dev/null
+exit 0
+"#,
+            payload = shell_quote(&payload)
+        );
+        write_fake_claude(&fake, &script);
+
+        // Large prompt so stdin write itself needs multiple pipe buffers.
+        let prompt = "P".repeat(256 * 1024);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            run_with_fake_prompt(&output, dir.path(), &fake, &prompt, RunCancellation::new()).await;
+        })
+        .await
+        .expect("draining stdout while writing stdin must not deadlock");
+
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Ok);
+        assert_eq!(status.result.as_deref(), Some("drained-while-writing"));
+    }
+
+    /// Same high-volume child, but cancel mid-flight while stdin is still open
+    /// and stdout is still flooding. Must stop promptly and kill the tree.
+    #[tokio::test]
+    async fn concurrent_high_volume_cancel_kills_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        let pid_file = dir.path().join("descendant.pid");
+        let script = format!(
+            r#"#!/bin/sh
+# Flood stdout without reading stdin so the parent must drain concurrently.
+i=0
+while [ "$i" -lt 20000 ]; do
+  printf '%s\n' "{{\"type\":\"assistant\",\"session_id\":\"s\",\"message\":{{\"id\":\"m$i\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"chunk $i\"}}]}}}}"
+  i=$((i+1))
+done
+# Stay alive with a descendant so cancellation can prove process-tree kill.
+sleep 300 &
+echo $! > {pid_file}
+# Eventually drain stdin if never cancelled.
+cat >/dev/null
+wait
+"#,
+            pid_file = shell_quote(&pid_file)
+        );
+        write_fake_claude(&fake, &script);
+
+        let cancellation = RunCancellation::new();
+        let cancel = cancellation.clone();
+        let output_clone = output.clone();
+        let cwd = dir.path().to_path_buf();
+        let fake_clone = fake.clone();
+        let prompt = "Q".repeat(256 * 1024);
+        let run = tokio::spawn(async move {
+            run_with_fake_prompt(&output_clone, &cwd, &fake_clone, &prompt, cancellation).await;
+        });
+
+        let pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(pid) = std::fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|contents| contents.trim().parse::<i32>().ok())
+                {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("descendant pid while flooding stdout");
+
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(3), run)
+            .await
+            .expect("cancel during concurrent stdin/stdout must finish promptly")
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !process_is_running(pid),
+            "descendant {pid} survived concurrent high-volume cancellation"
         );
         let status = subagent::read_status(&output).expect("status");
         assert_eq!(status.state, RunState::Stopped);
