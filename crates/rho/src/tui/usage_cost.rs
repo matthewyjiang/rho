@@ -96,11 +96,6 @@ pub(super) fn format_usd(micros: u64) -> String {
     }
 }
 
-/// Convert a provider-reported USD amount into microdollars for TUI totals.
-pub(super) fn usd_to_micros(usd: f64) -> u64 {
-    crate::subagent::usd_to_micros(usd)
-}
-
 /// Resolve provider-reported or estimated main-session cost.
 pub(super) fn resolved_usage_cost_usd_micros(
     usage: &ModelUsage,
