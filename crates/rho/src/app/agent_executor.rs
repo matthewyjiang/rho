@@ -30,11 +30,14 @@ pub(crate) struct AgentExecutor {
     /// Global permit pool for every delegated agent (Rho and Claude).
     ///
     /// `RHO_AGENT_CONCURRENCY` overrides this total. Claude runs also take a
-    /// permit from [`Self::claude_permits`], so one env override never opens a
-    /// 2N fan-out window. `RHO_CLAUDE_AGENT_CONCURRENCY` overrides the Claude
-    /// nested cap and is clamped to the total.
+    /// permit from [`Self::claude_permits`] (Claude pool first, then global) so
+    /// one env override never opens a 2N fan-out window and queued Claude work
+    /// cannot starve Rho of spare global capacity.
+    /// `RHO_CLAUDE_AGENT_CONCURRENCY` overrides the Claude nested cap and is
+    /// clamped to the total.
     total_permits: Arc<tokio::sync::Semaphore>,
     /// Claude-only nested pool. Sized to min(total, Claude default/override).
+    /// Acquired before the global pool for Claude runs.
     claude_permits: Arc<tokio::sync::Semaphore>,
     host_input: SubagentHostInputBridge,
 }
@@ -195,11 +198,17 @@ impl AgentExecutor {
 
         let task_status_tx = status_tx.clone();
         let task: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-            // Every delegated run takes one global permit. Claude runs also
-            // take a nested Claude permit so total fan-out stays <= N and
-            // Claude fan-out stays <= min(N, Claude cap).
-            let Some(_total_permit) =
-                acquire_permit_or_cancel(total_permits, &task_cancellation).await?
+            // Acquire runtime-aware capacity before work starts. Claude runs
+            // take Claude capacity first so queued Claude work cannot occupy
+            // global permits while waiting on the nested pool; Rho takes only
+            // the global pool. Dropping the guard returns every held permit.
+            let Some(_runtime_permits) = acquire_runtime_permits(
+                total_permits,
+                claude_permits,
+                needs_claude_permit,
+                &task_cancellation,
+            )
+            .await?
             else {
                 let stopped = RunStatus {
                     state: RunState::Stopped,
@@ -213,28 +222,6 @@ impl AgentExecutor {
                 task_status_tx.send_replace(stopped.clone());
                 subagent::write_status(&output_file, &stopped)?;
                 return Ok(());
-            };
-
-            let _claude_permit = if needs_claude_permit {
-                let Some(permit) =
-                    acquire_permit_or_cancel(claude_permits, &task_cancellation).await?
-                else {
-                    let stopped = RunStatus {
-                        state: RunState::Stopped,
-                        agent_id: Some(bound.id().to_string()),
-                        agent_fingerprint: Some(bound.fingerprint().to_string()),
-                        provider: Some(provider.clone()),
-                        model: Some(model_label.clone()),
-                        last_activity: Some("cancelled before execution".into()),
-                        ..RunStatus::default()
-                    };
-                    task_status_tx.send_replace(stopped.clone());
-                    subagent::write_status(&output_file, &stopped)?;
-                    return Ok(());
-                };
-                Some(permit)
-            } else {
-                None
             };
 
             match bound.runtime().clone() {
@@ -401,17 +388,77 @@ fn parse_positive_concurrency(raw: Option<&str>) -> Option<usize> {
         .filter(|limit: &usize| *limit > 0)
 }
 
+/// Concurrency capacity held for the lifetime of one delegated run.
+///
+/// Dropping this value returns every acquired permit. Field drop order is not
+/// load-bearing; each permit returns to its own semaphore independently.
+struct RuntimePermits {
+    _total: tokio::sync::OwnedSemaphorePermit,
+    _claude: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+/// Acquire concurrency for a delegated run in runtime-aware order.
+///
+/// - Rho: one global permit only.
+/// - Claude: Claude nested permit first, then one global permit.
+///
+/// Claude-first ordering keeps queued Claude tasks off the global pool until
+/// Claude capacity exists, so spare global slots stay available for Rho.
+/// Cancellation at either wait stage returns `Ok(None)` and drops any permit
+/// already held so capacity cannot leak. A closed semaphore surfaces as an
+/// error rather than a silent cancel.
+async fn acquire_runtime_permits(
+    total_permits: Arc<tokio::sync::Semaphore>,
+    claude_permits: Arc<tokio::sync::Semaphore>,
+    needs_claude_permit: bool,
+    cancellation: &RunCancellation,
+) -> anyhow::Result<Option<RuntimePermits>> {
+    let claude = if needs_claude_permit {
+        let Some(permit) = acquire_permit_or_cancel(
+            claude_permits,
+            cancellation,
+            "Claude agent concurrency pool closed before the run could start",
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        Some(permit)
+    } else {
+        None
+    };
+
+    let Some(total) = acquire_permit_or_cancel(
+        total_permits,
+        cancellation,
+        "agent concurrency pool closed before the run could start",
+    )
+    .await?
+    else {
+        // Drop any Claude permit acquired above before returning cancelled.
+        return Ok(None);
+    };
+
+    Ok(Some(RuntimePermits {
+        _total: total,
+        _claude: claude,
+    }))
+}
+
 async fn acquire_permit_or_cancel(
     permits: Arc<tokio::sync::Semaphore>,
     cancellation: &RunCancellation,
+    closed_message: &str,
 ) -> anyhow::Result<Option<tokio::sync::OwnedSemaphorePermit>> {
     tokio::select! {
         biased;
         () = cancellation.cancelled() => Ok(None),
         permit = permits.acquire_owned() => {
-            let permit = permit.map_err(|_| {
-                anyhow::anyhow!("agent executor shut down before the run could start")
-            })?;
+            // Map a closed semaphore to a clear startup error. Dropping the
+            // failed acquire path holds nothing, so no permit can leak here.
+            let permit = permit.map_err(|_| anyhow::anyhow!("{closed_message}"))?;
+            // Re-check after acquire wins the select so a cancel that arrived
+            // in the same poll drops the permit via this None return.
             if cancellation.is_cancelled() {
                 Ok(None)
             } else {

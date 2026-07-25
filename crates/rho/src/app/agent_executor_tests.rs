@@ -163,6 +163,8 @@ fn total_and_claude_env_values_interact() {
     );
 }
 
+const CLOSED_MSG: &str = "test concurrency pool closed";
+
 #[tokio::test]
 async fn cancellation_interrupts_concurrency_queue() {
     let permits = Arc::new(tokio::sync::Semaphore::new(0));
@@ -170,7 +172,7 @@ async fn cancellation_interrupts_concurrency_queue() {
     let queued = tokio::spawn({
         let permits = Arc::clone(&permits);
         let cancellation = cancellation.clone();
-        async move { acquire_permit_or_cancel(permits, &cancellation).await }
+        async move { acquire_permit_or_cancel(permits, &cancellation, CLOSED_MSG).await }
     });
 
     cancellation.cancel();
@@ -189,11 +191,325 @@ async fn cancellation_wins_when_a_permit_is_already_available() {
     let cancellation = RunCancellation::new();
     cancellation.cancel();
 
-    let permit = acquire_permit_or_cancel(permits, &cancellation)
+    let permit = acquire_permit_or_cancel(permits, &cancellation, CLOSED_MSG)
         .await
         .unwrap();
 
     assert!(permit.is_none());
+}
+
+#[tokio::test]
+async fn closed_semaphore_returns_clear_error() {
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    permits.close();
+
+    let error = acquire_permit_or_cancel(permits, &RunCancellation::new(), CLOSED_MSG)
+        .await
+        .expect_err("closed pool should error");
+    assert!(
+        error.to_string().contains(CLOSED_MSG),
+        "unexpected error: {error:#}"
+    );
+}
+
+/// Deterministic scheduling probe: wait until `ready` is true, yielding so the
+/// runtime can progress other tasks without wall-clock sleeps.
+async fn wait_until(mut ready: impl FnMut() -> bool) {
+    for _ in 0..10_000 {
+        if ready() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("condition not met after cooperative yields");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
+    // total=2, claude=1: one active Claude holds both pools; a second Claude
+    // waits on Claude capacity without taking the spare global slot, so Rho
+    // can still start. After active Claude and Rho release, queued Claude
+    // progresses.
+    let total = Arc::new(tokio::sync::Semaphore::new(2));
+    let claude = Arc::new(tokio::sync::Semaphore::new(1));
+
+    let active_claude = acquire_runtime_permits(
+        Arc::clone(&total),
+        Arc::clone(&claude),
+        /* needs_claude_permit */ true,
+        &RunCancellation::new(),
+    )
+    .await
+    .unwrap()
+    .expect("active Claude should acquire");
+    assert_eq!(total.available_permits(), 1);
+    assert_eq!(claude.available_permits(), 0);
+
+    let queued_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let queued_claude = tokio::spawn({
+        let total = Arc::clone(&total);
+        let claude = Arc::clone(&claude);
+        let queued_started = Arc::clone(&queued_started);
+        async move {
+            queued_started.store(true, std::sync::atomic::Ordering::SeqCst);
+            acquire_runtime_permits(
+                total,
+                claude,
+                /* needs_claude_permit */ true,
+                &RunCancellation::new(),
+            )
+            .await
+        }
+    });
+
+    wait_until(|| queued_started.load(std::sync::atomic::Ordering::SeqCst)).await;
+    // Yield so the queued Claude task reaches its Claude-pool wait.
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !queued_claude.is_finished(),
+        "queued Claude must still wait on Claude capacity"
+    );
+    // Spare global capacity must remain free while Claude is nested-waiting.
+    assert_eq!(total.available_permits(), 1);
+    assert_eq!(claude.available_permits(), 0);
+
+    let rho = acquire_runtime_permits(
+        Arc::clone(&total),
+        Arc::clone(&claude),
+        /* needs_claude_permit */ false,
+        &RunCancellation::new(),
+    )
+    .await
+    .unwrap()
+    .expect("Rho should take the spare global permit");
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 0);
+    assert!(
+        !queued_claude.is_finished(),
+        "queued Claude must not finish while Claude capacity is held"
+    );
+
+    // Releasing the active Claude frees nested Claude capacity and one global
+    // slot. Queued Claude can finish even while Rho still holds its spare
+    // global permit - that is the non-starvation property.
+    drop(active_claude);
+    let queued = tokio::time::timeout(std::time::Duration::from_secs(1), queued_claude)
+        .await
+        .expect("queued Claude should acquire after active Claude releases")
+        .unwrap()
+        .unwrap()
+        .expect("queued Claude should not cancel");
+    // Rho still holds one global permit; queued Claude took the freed pair.
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 0);
+
+    drop(rho);
+    drop(queued);
+    assert_eq!(total.available_permits(), 2);
+    assert_eq!(claude.available_permits(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn claude_waits_on_global_after_taking_claude_capacity() {
+    // Global full (two Rho runs), Claude free: Claude takes nested capacity
+    // first, waits on global, then finishes when a Rho slot frees.
+    let total = Arc::new(tokio::sync::Semaphore::new(2));
+    let claude = Arc::new(tokio::sync::Semaphore::new(1));
+
+    let rho_a = acquire_runtime_permits(
+        Arc::clone(&total),
+        Arc::clone(&claude),
+        /* needs_claude_permit */ false,
+        &RunCancellation::new(),
+    )
+    .await
+    .unwrap()
+    .expect("rho a");
+    let rho_b = acquire_runtime_permits(
+        Arc::clone(&total),
+        Arc::clone(&claude),
+        /* needs_claude_permit */ false,
+        &RunCancellation::new(),
+    )
+    .await
+    .unwrap()
+    .expect("rho b");
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 1);
+
+    let queued = tokio::spawn({
+        let total = Arc::clone(&total);
+        let claude = Arc::clone(&claude);
+        async move {
+            acquire_runtime_permits(
+                total,
+                claude,
+                /* needs_claude_permit */ true,
+                &RunCancellation::new(),
+            )
+            .await
+        }
+    });
+
+    wait_until(|| claude.available_permits() == 0).await;
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert!(!queued.is_finished());
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 0);
+
+    drop(rho_a);
+    let permits = tokio::time::timeout(std::time::Duration::from_secs(1), queued)
+        .await
+        .expect("Claude should finish once a global slot frees")
+        .unwrap()
+        .unwrap()
+        .expect("Claude acquired");
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 0);
+    drop(rho_b);
+    drop(permits);
+    assert_eq!(total.available_permits(), 2);
+    assert_eq!(claude.available_permits(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancellation_during_claude_wait_releases_nothing() {
+    let total = Arc::new(tokio::sync::Semaphore::new(2));
+    let claude = Arc::new(tokio::sync::Semaphore::new(0));
+    let cancellation = RunCancellation::new();
+
+    let queued = tokio::spawn({
+        let total = Arc::clone(&total);
+        let claude = Arc::clone(&claude);
+        let cancellation = cancellation.clone();
+        async move {
+            acquire_runtime_permits(
+                total,
+                claude,
+                /* needs_claude_permit */ true,
+                &cancellation,
+            )
+            .await
+        }
+    });
+
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+    cancellation.cancel();
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), queued)
+        .await
+        .expect("cancel during Claude wait")
+        .unwrap()
+        .unwrap();
+    assert!(result.is_none());
+    assert_eq!(total.available_permits(), 2);
+    assert_eq!(claude.available_permits(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancellation_during_global_wait_releases_claude_permit() {
+    let total = Arc::new(tokio::sync::Semaphore::new(0));
+    let claude = Arc::new(tokio::sync::Semaphore::new(1));
+    let cancellation = RunCancellation::new();
+
+    let queued = tokio::spawn({
+        let total = Arc::clone(&total);
+        let claude = Arc::clone(&claude);
+        let cancellation = cancellation.clone();
+        async move {
+            acquire_runtime_permits(
+                total,
+                claude,
+                /* needs_claude_permit */ true,
+                &cancellation,
+            )
+            .await
+        }
+    });
+
+    // Let the task take the Claude permit and block on global.
+    wait_until(|| claude.available_permits() == 0).await;
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 0);
+
+    cancellation.cancel();
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), queued)
+        .await
+        .expect("cancel during global wait")
+        .unwrap()
+        .unwrap();
+    assert!(result.is_none());
+    // Claude permit acquired before the global wait must be returned.
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancellation_during_rho_global_wait_holds_nothing() {
+    let total = Arc::new(tokio::sync::Semaphore::new(0));
+    let claude = Arc::new(tokio::sync::Semaphore::new(1));
+    let cancellation = RunCancellation::new();
+
+    let queued = tokio::spawn({
+        let total = Arc::clone(&total);
+        let claude = Arc::clone(&claude);
+        let cancellation = cancellation.clone();
+        async move {
+            acquire_runtime_permits(
+                total,
+                claude,
+                /* needs_claude_permit */ false,
+                &cancellation,
+            )
+            .await
+        }
+    });
+
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+    cancellation.cancel();
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), queued)
+        .await
+        .expect("cancel during Rho global wait")
+        .unwrap()
+        .unwrap();
+    assert!(result.is_none());
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rho_skips_claude_pool_entirely() {
+    let total = Arc::new(tokio::sync::Semaphore::new(1));
+    // Claude pool empty: Rho must still acquire.
+    let claude = Arc::new(tokio::sync::Semaphore::new(0));
+
+    let rho = acquire_runtime_permits(
+        Arc::clone(&total),
+        Arc::clone(&claude),
+        /* needs_claude_permit */ false,
+        &RunCancellation::new(),
+    )
+    .await
+    .unwrap()
+    .expect("Rho ignores Claude pool");
+    assert_eq!(total.available_permits(), 0);
+    assert_eq!(claude.available_permits(), 0);
+    drop(rho);
+    assert_eq!(total.available_permits(), 1);
+    assert_eq!(claude.available_permits(), 0);
 }
 
 #[test]
