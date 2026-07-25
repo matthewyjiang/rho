@@ -139,3 +139,33 @@ fn attempt_aware_run_usage_preserves_failed_attempt_tokens() {
         })
     );
 }
+
+#[test]
+fn converts_usd_amounts_to_micros() {
+    assert_eq!(crate::subagent::usd_to_micros(0.0388), 38_800);
+    assert_eq!(crate::subagent::usd_to_micros(1.5), 1_500_000);
+    assert_eq!(crate::subagent::usd_to_micros(0.0), 0);
+    assert_eq!(crate::subagent::usd_to_micros(-1.0), 0);
+    assert_eq!(crate::subagent::usd_to_micros(f64::NAN), 0);
+}
+
+#[test]
+fn resolves_and_combines_session_costs() {
+    let usage = ModelUsage {
+        cost_usd_micros: Some(570_000),
+        ..ModelUsage::default()
+    };
+    assert_eq!(
+        super::resolved_usage_cost_usd_micros(&usage, Some(&priced_metadata())),
+        Some(570_000)
+    );
+    assert_eq!(
+        super::session_total_cost_usd_micros(Some(570_000), 430_000),
+        Some(1_000_000)
+    );
+    assert_eq!(
+        super::session_total_cost_usd_micros(None, 250_000),
+        Some(250_000)
+    );
+    assert_eq!(super::session_total_cost_usd_micros(None, 0), None);
+}

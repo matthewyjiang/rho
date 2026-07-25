@@ -79,6 +79,17 @@ impl AgentRunHandle {
         }
         self.status()
     }
+
+    #[cfg(test)]
+    pub(crate) fn completed_for_test(status: RunStatus) -> Self {
+        let (_status_tx, status_rx) = tokio::sync::watch::channel(status);
+        let (_completion_tx, completion_rx) = tokio::sync::watch::channel(true);
+        Self {
+            cancellation: RunCancellation::new(),
+            status: status_rx,
+            completion: completion_rx,
+        }
+    }
 }
 
 impl AgentExecutor {

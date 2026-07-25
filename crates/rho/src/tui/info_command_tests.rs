@@ -29,6 +29,7 @@ fn test_info() -> RuntimeInfo {
         tree: None,
         tree_error: None,
         claude_code: "claude code: not signed in - run /login claude-code".into(),
+        subagent_total_cost_usd_micros: 0,
     }
 }
 
@@ -77,6 +78,32 @@ fn runtime_info_groups_model_usage_and_workspace_details() {
     assert!(text.contains("Cost          $1.250"), "{text}");
     assert!(text.contains("Workspace\n"), "{text}");
     assert!(text.contains("Git branch    main"), "{text}");
+}
+
+#[test]
+fn runtime_info_splits_main_and_subagent_costs() {
+    let mut info = test_info();
+    info.subagent_total_cost_usd_micros = 250_000;
+
+    let text = rendered_text(&info, 80);
+
+    assert!(text.contains("Main cost     $1.250"), "{text}");
+    assert!(text.contains("Subagent cost $0.250"), "{text}");
+    assert!(text.contains("Total cost    $1.500"), "{text}");
+    assert!(!text.contains("Cost          $1.250"), "{text}");
+}
+
+#[test]
+fn runtime_info_shows_subagent_cost_without_parent_usage() {
+    let mut info = test_info();
+    info.usage = None;
+    info.latest_usage = None;
+    info.subagent_total_cost_usd_micros = 34_271;
+
+    let text = rendered_text(&info, 80);
+
+    assert!(text.contains("Subagent cost $0.034"), "{text}");
+    assert!(!text.contains("No token usage recorded yet."), "{text}");
 }
 
 #[test]

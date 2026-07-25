@@ -263,7 +263,20 @@ impl App {
     }
 
     pub(super) fn update_subagent_panel(&mut self, agent: &InteractiveRuntime) -> bool {
-        let changed = self.subagent_panel.update(agent.subagents());
+        let mut changed = self.subagent_panel.update(agent.subagents());
+        // Fold terminal subagent costs into the parent session total whenever the
+        // panel refreshes (idle poll, in-turn wait, goal wait). Claiming is
+        // idempotent per run and covers every delivery path.
+        if let Some(manager) = agent.subagents() {
+            let claimed = manager.claim_terminal_costs_usd_micros(agent.session_id().as_str());
+            if claimed > 0 {
+                self.usage.subagent_total_cost_usd_micros = self
+                    .usage
+                    .subagent_total_cost_usd_micros
+                    .saturating_add(claimed);
+                changed = true;
+            }
+        }
         if self.subagent_panel.is_active() {
             self.turn.start_loading_if_needed();
         }
@@ -287,6 +300,7 @@ impl App {
         self.usage.usage_cost_tracker.reset();
         self.usage.usage_before_current_run = None;
         self.usage.run_usage.clear();
+        self.usage.subagent_total_cost_usd_micros = 0;
         self.usage.latest_usage = None;
     }
 

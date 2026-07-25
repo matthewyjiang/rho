@@ -453,6 +453,14 @@ pub fn assert_success_result(status: &Value, run_dir: &Path) {
             .is_some(),
         "fingerprint missing: {status}"
     );
+    assert_eq!(
+        status
+            .get("total_cost_usd")
+            .and_then(Value::as_f64)
+            .map(|cost| (cost * 1_000_000.0).round() as u64),
+        Some(34_271),
+        "expected fixture total_cost_usd on terminal status: {status}"
+    );
     let events = run_dir.join("events.jsonl");
     assert!(
         events.is_file(),

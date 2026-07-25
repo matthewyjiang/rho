@@ -289,6 +289,23 @@ async fn unobserved_terminal_runs_drain_as_one_batch() {
 }
 
 #[test]
+fn claim_terminal_costs_is_idempotent_and_session_scoped() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    manager.insert_completed_for_test("aaa111", "session-1", Some(0.034271));
+    manager.insert_completed_for_test("bbb222", "session-1", Some(0.01));
+    manager.insert_completed_for_test("ccc333", "session-2", Some(0.5));
+    manager.insert_completed_for_test("ddd444", "session-1", None);
+
+    assert_eq!(manager.claim_terminal_costs_usd_micros("session-1"), 44_271);
+    assert_eq!(manager.claim_terminal_costs_usd_micros("session-1"), 0);
+    assert_eq!(
+        manager.claim_terminal_costs_usd_micros("session-2"),
+        500_000
+    );
+}
+
+#[test]
 fn lifecycle_tool_schema_is_stable() {
     let root = tempfile::tempdir().unwrap();
     let tool = AgentsTool::new(manager(root.path()));
