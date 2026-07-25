@@ -14,7 +14,7 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
 use super::{
     activity::ActivityPhase,
-    compaction_display::{completed_display_lines, compaction_call_id, running_display_lines},
+    compaction_display::{compaction_call_id, running_display_lines},
     event_adapter::ViewModelEvent,
     markdown::{update_code_block_state, CodeFenceState},
     render::padded_content_width,
@@ -50,7 +50,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
         | ViewModelEvent::ToolUpdated { .. } => false,
-        ViewModelEvent::CompactionStarted | ViewModelEvent::CompactionCompleted { .. } => true,
+        ViewModelEvent::CompactionStarted | ViewModelEvent::CompactionFinished { .. } => true,
     }
 }
 
@@ -280,14 +280,14 @@ impl App {
                     .tool_started(compaction_call_id(), running_display_lines());
                 None
             }
-            ViewModelEvent::CompactionCompleted { facts } => {
+            ViewModelEvent::CompactionFinished { outcome } => {
                 let expanded = self.turn.tool_finished(&compaction_call_id());
                 Some(Entry::Tool(ToolEntry {
                     state: ToolEntryState::Finished {
-                        ok: true,
+                        ok: outcome.ok(),
                         display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
                     },
-                    display_lines: completed_display_lines(facts),
+                    display_lines: outcome.display_lines(),
                     expanded,
                     image: None,
                 }))

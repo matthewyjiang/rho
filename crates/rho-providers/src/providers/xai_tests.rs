@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -164,7 +164,7 @@ fn responses_body_uses_each_request_reasoning_level() {
 }
 
 #[test]
-fn compact_body_is_unary_without_tools_or_include() {
+fn compact_body_is_model_and_full_input_only() {
     let messages = [
         Message::System("be helpful".into()),
         Message::user_text("hello"),
@@ -174,15 +174,9 @@ fn compact_body_is_unary_without_tools_or_include() {
         description: "read a file".into(),
         input_schema: json!({"type": "object"}),
     }];
-    let profile = reasoning::XaiReasoningProfile::exact([
-        ReasoningLevel::Low,
-        ReasoningLevel::Medium,
-        ReasoningLevel::High,
-    ]);
     let body = build_xai_compact_body(
         "xai",
         "grok-4.5",
-        &profile,
         ModelRequest {
             messages: &messages,
             tools: &tools,
@@ -194,15 +188,25 @@ fn compact_body_is_unary_without_tools_or_include() {
     .unwrap();
 
     assert_eq!(body["model"], "grok-4.5");
-    assert_eq!(body["instructions"], "be helpful");
-    assert_eq!(body["input"][0]["role"], "user");
-    assert_eq!(body["store"], false);
-    assert_eq!(body["prompt_cache_key"], "session-1");
-    assert_eq!(body["reasoning"], json!({"effort": "high"}));
+    assert_eq!(body["input"][0]["role"], "system");
+    assert_eq!(body["input"][0]["content"], "be helpful");
+    assert_eq!(body["input"][1]["role"], "user");
+    // Documented compact body is only model + input.
+    assert!(body.get("instructions").is_none());
+    assert!(body.get("store").is_none());
+    assert!(body.get("prompt_cache_key").is_none());
+    assert!(body.get("reasoning").is_none());
     assert!(body.get("stream").is_none());
     assert!(body.get("tools").is_none());
     assert!(body.get("tool_choice").is_none());
     assert!(body.get("include").is_none());
+    let keys: std::collections::BTreeSet<_> = body.as_object().unwrap().keys().cloned().collect();
+    assert_eq!(
+        keys,
+        ["input".to_string(), "model".to_string()]
+            .into_iter()
+            .collect()
+    );
 }
 
 #[test]
@@ -210,9 +214,11 @@ fn compact_body_works_for_oauth_identity() {
     let body = build_xai_compact_body(
         "xai-oauth",
         "grok-4.5",
-        &reasoning::XaiReasoningProfile::not_configurable(),
         ModelRequest {
-            messages: &[Message::user_text("hello")],
+            messages: &[
+                Message::System("oauth system".into()),
+                Message::user_text("hello"),
+            ],
             tools: &[],
             cancellation: Default::default(),
             reasoning_level: Default::default(),
@@ -222,9 +228,11 @@ fn compact_body_works_for_oauth_identity() {
     .unwrap();
 
     assert_eq!(body["model"], "grok-4.5");
-    assert_eq!(body["input"][0]["role"], "user");
+    assert_eq!(body["input"][0]["role"], "system");
+    assert_eq!(body["input"][1]["role"], "user");
     assert!(body.get("reasoning").is_none());
     assert!(body.get("include").is_none());
+    assert!(body.get("instructions").is_none());
 }
 
 #[tokio::test]
@@ -335,7 +343,21 @@ async fn native_compact_posts_to_responses_compact_and_returns_marker() {
         let body: Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert!(body.get("stream").is_none());
         assert!(body.get("tools").is_none());
+        assert!(body.get("instructions").is_none());
+        assert!(body.get("store").is_none());
+        assert!(body.get("reasoning").is_none());
         assert_eq!(body["model"], "grok-4.5");
+        assert_eq!(body["input"][0]["role"], "system");
+        assert_eq!(body["input"][0]["content"], "system");
+        assert_eq!(body["input"][1]["role"], "user");
+        let keys: std::collections::BTreeSet<_> =
+            body.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(
+            keys,
+            ["input".to_string(), "model".to_string()]
+                .into_iter()
+                .collect()
+        );
 
         let response_body = r#"{"id":"cmp_1","object":"response.compaction","output":[{"type":"compaction","id":"cmp_1","encrypted_content":"blob"}],"usage":{"input_tokens":12,"output_tokens":3,"total_tokens":15}}"#;
         let response = format!(
@@ -381,9 +403,9 @@ async fn native_compact_posts_to_responses_compact_and_returns_marker() {
         panic!("expected compaction marker");
     };
     assert_eq!(marker.provider_context[0].data["encrypted_content"], "blob");
-    assert!(marker
-        .portable_fallback()
-        .is_some_and(|text| text.contains("xAI server-side")));
+    assert!(marker.portable_fallback().is_some_and(|text| {
+        text.contains("xAI server-side") && !text.contains("Retained recent user messages")
+    }));
     server.await.unwrap();
 }
 
@@ -446,10 +468,62 @@ async fn native_compact_unauthorized_without_refresh_fails() {
     let (result, failed_attempts) = response.into_parts();
     assert!(result.is_err());
     assert_eq!(compact_hits.load(Ordering::SeqCst), 1);
-    assert_eq!(failed_attempts.len(), 1);
-    assert_eq!(
-        failed_attempts[0].kind,
-        rho_sdk::ProviderErrorKind::Authentication
-    );
+    // No-refresh 401 is the final response; it is not a prior failed attempt.
+    assert!(failed_attempts.is_empty());
     server.await.unwrap();
+}
+
+#[tokio::test]
+async fn native_compact_honors_cancellation_before_response() {
+    use std::time::Duration;
+
+    use rho_sdk::provider::ModelProvider;
+    use tokio::time::timeout;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        // Stall after accept so the client is blocked in HTTP send/read.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        let _ = stream.shutdown().await;
+    });
+
+    let store = Arc::new(MemoryCredentialStore::default());
+    save_xai_tokens(
+        store.as_ref(),
+        &XaiTokens {
+            access_token: "access-token".into(),
+            refresh_token: None,
+            expires_at_unix: None,
+            id_token: None,
+        },
+    )
+    .unwrap();
+    let provider = XaiProvider::new_with_api_base("grok-4.5".into(), store, api_base).unwrap();
+    let cancellation = rho_sdk::CancellationToken::new();
+    let cancel = cancellation.clone();
+    let messages = [Message::user_text("hello")];
+    let compact = provider
+        .native_compact(ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation,
+            reasoning_level: Default::default(),
+            prompt_cache_key: None,
+        })
+        .expect("xAI exposes native compact");
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel.cancel();
+    });
+    let response = timeout(Duration::from_secs(2), compact)
+        .await
+        .expect("compact future should finish after cancel");
+    let (result, failed_attempts) = response.into_parts();
+    assert!(failed_attempts.is_empty());
+    let error = result.expect_err("cancelled compact must fail");
+    assert_eq!(error.kind(), rho_sdk::ProviderErrorKind::Interrupted);
+    server.abort();
 }

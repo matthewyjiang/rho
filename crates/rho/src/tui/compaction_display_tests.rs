@@ -52,10 +52,7 @@ fn completed_lines_message_only_when_tokens_missing() {
     });
     assert_eq!(
         lines,
-        vec![
-            "compact".to_string(),
-            "12 → 4 messages  (−8)".to_string(),
-        ]
+        vec!["compact".to_string(), "12 → 4 messages  (−8)".to_string(),]
     );
 }
 
@@ -72,7 +69,7 @@ fn completed_lines_mark_no_token_change() {
 }
 
 #[test]
-fn failed_and_unchanged_lines() {
+fn failed_unchanged_and_cancelled_lines() {
     assert_eq!(
         failed_display_lines("provider unavailable"),
         vec![
@@ -88,4 +85,17 @@ fn failed_and_unchanged_lines() {
             "not enough conversation history to compact".to_string(),
         ]
     );
+    assert_eq!(
+        cancelled_display_lines(),
+        vec!["compact".to_string(), "cancelled".to_string()]
+    );
+    assert!(CompactionUiOutcome::Unchanged {
+        detail: "noop".into()
+    }
+    .ok());
+    assert!(!CompactionUiOutcome::Failed {
+        detail: "boom".into()
+    }
+    .ok());
+    assert!(CompactionUiOutcome::Cancelled.ok());
 }

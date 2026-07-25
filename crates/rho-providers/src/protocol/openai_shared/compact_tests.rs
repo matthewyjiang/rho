@@ -3,6 +3,7 @@ use serde_json::json;
 
 use super::*;
 use crate::model::ContentBlock;
+use crate::providers::native_compaction::native_compact_from_response_body;
 
 const NOTICE: &str = "server-side compaction handoff notice";
 
@@ -50,6 +51,7 @@ fn replacement_uses_server_output_users_and_compaction_marker() {
         &retained_system_messages,
         &output,
         NOTICE,
+        CompactUserRetention::KeepServerUsers,
     )
     .unwrap();
 
@@ -81,6 +83,33 @@ fn replacement_uses_server_output_users_and_compaction_marker() {
 }
 
 #[test]
+fn xai_policy_drops_server_user_messages() {
+    let identity = ModelIdentity::new("xai", "openai-responses", "grok-4.5");
+    let output = vec![
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "should drop"}]
+        }),
+        json!({
+            "type": "compaction",
+            "encrypted_content": "blob"
+        }),
+    ];
+    let replacement = replacement_from_compact_output(
+        identity,
+        &[Message::System("sys".into())],
+        &output,
+        NOTICE,
+        CompactUserRetention::CompactionItemOnly,
+    )
+    .unwrap();
+    assert_eq!(replacement.len(), 2);
+    assert!(matches!(&replacement[0], Message::System(_)));
+    assert!(matches!(&replacement[1], Message::EnrichedAssistant(_)));
+}
+
+#[test]
 fn parse_compact_response_reads_usage() {
     let identity = ModelIdentity::new("openai-codex", "openai-responses", "gpt-5.4");
     let body = json!({
@@ -103,7 +132,14 @@ fn parse_compact_response_reads_usage() {
             "total_tokens": 105
         }
     });
-    let (messages, usage) = parse_compact_response(identity, &[], &body, NOTICE).unwrap();
+    let (messages, usage) = parse_compact_response(
+        identity,
+        &[],
+        &body,
+        NOTICE,
+        CompactUserRetention::KeepServerUsers,
+    )
+    .unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(usage.input_tokens, Some(100));
     assert_eq!(usage.output_tokens, Some(5));
@@ -119,8 +155,14 @@ fn parse_compact_response_malformed_output_is_invalid() {
             "not": "an array"
         }
     });
-    let error = parse_compact_response(identity, &[Message::System("sys".into())], &body, NOTICE)
-        .expect_err("malformed compact output must fail");
+    let error = parse_compact_response(
+        identity,
+        &[Message::System("sys".into())],
+        &body,
+        NOTICE,
+        CompactUserRetention::KeepServerUsers,
+    )
+    .expect_err("malformed compact output must fail");
     assert!(matches!(error, ModelError::InvalidResponse(_)));
 }
 
@@ -152,6 +194,7 @@ fn native_compact_from_response_body_success_and_failure() {
             "usage": { "input_tokens": 3, "output_tokens": 1, "total_tokens": 4 }
         }),
         NOTICE,
+        CompactUserRetention::CompactionItemOnly,
         Vec::new(),
     );
     let (result, failed) = ok.into_parts();
@@ -165,6 +208,7 @@ fn native_compact_from_response_body_success_and_failure() {
         &[],
         &json!({ "output": { "not": "array" } }),
         NOTICE,
+        CompactUserRetention::CompactionItemOnly,
         vec![rho_sdk::provider::NativeCompactionFailedAttempt::new(
             rho_sdk::ProviderErrorKind::Authentication,
             ModelUsage::default(),
@@ -200,6 +244,7 @@ fn xai_single_compaction_item_replaces_history() {
         &[Message::System("tutor".into())],
         &body,
         NOTICE,
+        CompactUserRetention::CompactionItemOnly,
     )
     .unwrap();
 

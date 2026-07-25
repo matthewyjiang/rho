@@ -35,17 +35,39 @@ impl CompactionDisplayFacts {
     }
 
     pub(super) fn removed_tokens(self) -> u64 {
-        self.previous_tokens
-            .saturating_sub(self.current_tokens)
+        self.previous_tokens.saturating_sub(self.current_tokens)
     }
 
     pub(super) fn removed_messages(self) -> usize {
-        self.previous_messages
-            .saturating_sub(self.current_messages)
+        self.previous_messages.saturating_sub(self.current_messages)
     }
 
     pub(super) fn reduced(self) -> bool {
         self.removed_tokens() > 0 || self.removed_messages() > 0
+    }
+}
+
+/// Terminal presentation state for a compaction tool block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CompactionUiOutcome {
+    Completed(CompactionDisplayFacts),
+    Unchanged { detail: String },
+    Failed { detail: String },
+    Cancelled,
+}
+
+impl CompactionUiOutcome {
+    pub(super) fn ok(&self) -> bool {
+        !matches!(self, Self::Failed { .. })
+    }
+
+    pub(super) fn display_lines(&self) -> Vec<String> {
+        match self {
+            Self::Completed(facts) => completed_display_lines(*facts),
+            Self::Unchanged { detail } => unchanged_display_lines(detail.clone()),
+            Self::Failed { detail } => failed_display_lines(detail.clone()),
+            Self::Cancelled => cancelled_display_lines(),
+        }
     }
 }
 
@@ -86,6 +108,11 @@ pub(super) fn completed_display_lines(facts: CompactionDisplayFacts) -> Vec<Stri
 /// Failed compact tool-block lines.
 pub(super) fn failed_display_lines(detail: impl Into<String>) -> Vec<String> {
     vec!["compact".into(), "failed".into(), detail.into()]
+}
+
+/// Cancelled compact tool-block lines.
+pub(super) fn cancelled_display_lines() -> Vec<String> {
+    vec!["compact".into(), "cancelled".into()]
 }
 
 /// Unchanged / not-enough-history finished block.

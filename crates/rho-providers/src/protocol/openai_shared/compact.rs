@@ -1,9 +1,13 @@
 //! Shared Responses API server-side compaction response parsing.
 //!
-//! OpenAI and xAI both expose `POST /responses/compact` with the same output
-//! shape: retained conversation items plus one opaque compaction item. Providers
-//! own request building, auth, and portable handoff copy; this module turns the
-//! compact JSON into replacement history and shared native-compaction responses.
+//! OpenAI and xAI both expose `POST /responses/compact` and return a compaction
+//! item with `encrypted_content`. Retention policy differs:
+//! - OpenAI may keep recent user messages in `output`
+//! - xAI returns a single compaction item that replaces the whole window
+//!
+//! Providers own request building, auth, portable handoff copy, and whether
+//! server-returned user messages are kept. This module turns compact JSON into
+//! replacement history.
 
 use serde_json::Value;
 
@@ -25,12 +29,22 @@ pub(crate) fn retained_system_messages(messages: &[Message]) -> Vec<Message> {
         .collect()
 }
 
+/// Whether compact `output` user messages are kept in replacement history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompactUserRetention {
+    /// OpenAI keeps recent user messages returned by the compact endpoint.
+    KeepServerUsers,
+    /// xAI returns only the compaction item for the whole prior window.
+    CompactionItemOnly,
+}
+
 /// Parses a unary `/responses/compact` JSON body into replacement history + usage.
 pub(crate) fn parse_compact_response(
     identity: ModelIdentity,
     retained_system_messages: &[Message],
     body: &Value,
     portable_handoff_notice: &str,
+    user_retention: CompactUserRetention,
 ) -> Result<(Vec<Message>, ModelUsage), ModelError> {
     let output = body
         .get("output")
@@ -44,54 +58,9 @@ pub(crate) fn parse_compact_response(
         retained_system_messages,
         output,
         portable_handoff_notice,
+        user_retention,
     )?;
     Ok((messages, usage))
-}
-
-/// Builds a native compaction failure, preserving any prior failed attempts.
-pub(crate) fn native_compact_failure(
-    error: ModelError,
-    failed_attempts: Vec<rho_sdk::provider::NativeCompactionFailedAttempt>,
-) -> rho_sdk::provider::NativeCompactionResponse {
-    rho_sdk::provider::NativeCompactionResponse::failure(
-        crate::providers::sdk_contract::provider_error_from_model_error(error),
-    )
-    .with_failed_attempts(failed_attempts)
-}
-
-/// Wraps parsed replacement history as a native compaction success response.
-pub(crate) fn native_compact_success(
-    messages: Vec<Message>,
-    usage: ModelUsage,
-    failed_attempts: Vec<rho_sdk::provider::NativeCompactionFailedAttempt>,
-) -> rho_sdk::provider::NativeCompactionResponse {
-    match rho_sdk::CompactionOutput::with_usage(messages, usage) {
-        Ok(output) => rho_sdk::provider::NativeCompactionResponse::success(output)
-            .with_failed_attempts(failed_attempts),
-        Err(error) => native_compact_failure(
-            ModelError::InvalidResponse(error.to_string()),
-            failed_attempts,
-        ),
-    }
-}
-
-/// Parses a compact response body and finalizes the native compaction result.
-pub(crate) fn native_compact_from_response_body(
-    identity: ModelIdentity,
-    retained_system_messages: &[Message],
-    body: &Value,
-    portable_handoff_notice: &str,
-    failed_attempts: Vec<rho_sdk::provider::NativeCompactionFailedAttempt>,
-) -> rho_sdk::provider::NativeCompactionResponse {
-    match parse_compact_response(
-        identity,
-        retained_system_messages,
-        body,
-        portable_handoff_notice,
-    ) {
-        Ok((messages, usage)) => native_compact_success(messages, usage, failed_attempts),
-        Err(error) => native_compact_failure(error, failed_attempts),
-    }
 }
 
 pub(crate) fn replacement_from_compact_output<'a>(
@@ -99,6 +68,7 @@ pub(crate) fn replacement_from_compact_output<'a>(
     retained_system_messages: impl IntoIterator<Item = &'a Message>,
     output_items: &[Value],
     portable_handoff_notice: &str,
+    user_retention: CompactUserRetention,
 ) -> Result<Vec<Message>, ModelError> {
     let compaction_item = extract_compaction_item(output_items)?;
     let mut replacement = Vec::new();
@@ -115,20 +85,22 @@ pub(crate) fn replacement_from_compact_output<'a>(
         }
     }
 
-    for item in output_items {
-        let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
-        let is_user = item.get("role").and_then(Value::as_str) == Some("user");
-        match item_type {
-            "compaction" => {}
-            // Keep user turns from typed messages or older role-only payloads.
-            // Drop assistant/tool/reasoning items; the encrypted compaction item
-            // is the server's compressed substitute for those.
-            _ if is_user => {
-                if let Some(message) = user_message_from_output_item(item) {
-                    replacement.push(message);
+    if matches!(user_retention, CompactUserRetention::KeepServerUsers) {
+        for item in output_items {
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+            let is_user = item.get("role").and_then(Value::as_str) == Some("user");
+            match item_type {
+                "compaction" => {}
+                // Keep user turns from typed messages or older role-only payloads.
+                // Drop assistant/tool/reasoning items; the encrypted compaction item
+                // is the server's compressed substitute for those.
+                _ if is_user => {
+                    if let Some(message) = user_message_from_output_item(item) {
+                        replacement.push(message);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 

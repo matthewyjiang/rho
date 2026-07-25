@@ -14,7 +14,7 @@ use super::{
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
-pub(super) use super::compaction_display::CompactionDisplayFacts;
+pub(super) use super::compaction_display::{CompactionDisplayFacts, CompactionUiOutcome};
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
@@ -28,8 +28,8 @@ pub(super) enum ViewModelEvent {
     ProviderStreamReset,
     ProviderRetry,
     CompactionStarted,
-    CompactionCompleted {
-        facts: CompactionDisplayFacts,
+    CompactionFinished {
+        outcome: CompactionUiOutcome,
     },
     OutputDelta(String),
     ReasoningDelta(String),
@@ -56,7 +56,7 @@ pub(super) enum ViewModelEvent {
 impl ViewModelEvent {
     pub(super) fn activity_phase(&self) -> Option<ActivityPhase> {
         match self {
-            Self::RunStarted | Self::CompactionCompleted { .. } => Some(ActivityPhase::Starting),
+            Self::RunStarted | Self::CompactionFinished { .. } => Some(ActivityPhase::Starting),
             Self::ToolFinished { .. } => None,
             Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
             Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
@@ -83,13 +83,13 @@ pub(super) enum ViewEvent {
     Completed,
     Cancelled,
     Failed(String),
-    Ignored,
 }
 
 #[derive(Default)]
 pub(super) struct SdkEventAdapter {
     presenter: Option<InteractiveToolPresenter>,
     proposed_index: usize,
+    compaction_open: bool,
 }
 
 impl SdkEventAdapter {
@@ -97,6 +97,7 @@ impl SdkEventAdapter {
         Self {
             presenter: Some(InteractiveToolPresenter::new(cwd)),
             proposed_index: 0,
+            compaction_open: false,
         }
     }
 
@@ -105,22 +106,38 @@ impl SdkEventAdapter {
             .get_or_insert_with(|| InteractiveToolPresenter::new(std::path::PathBuf::new()))
     }
 
-    pub(super) fn translate(&mut self, event: RunEvent) -> ViewEvent {
+    fn close_compaction(&mut self, outcome: CompactionUiOutcome) -> Option<ViewEvent> {
+        if !self.compaction_open {
+            return None;
+        }
+        self.compaction_open = false;
+        Some(ViewEvent::Update(ViewModelEvent::CompactionFinished {
+            outcome,
+        }))
+    }
+
+    /// Translates one SDK run event into zero or more view events.
+    ///
+    /// Compaction failures and cancellations emit a finished tool block before
+    /// the run terminal event so auto-compact shares the manual lifecycle.
+    pub(super) fn translate(&mut self, event: RunEvent) -> Vec<ViewEvent> {
         match event {
-            RunEvent::Started { .. } => ViewEvent::Update(ViewModelEvent::RunStarted),
+            RunEvent::Started { .. } => {
+                vec![ViewEvent::Update(ViewModelEvent::RunStarted)]
+            }
             RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
                 self.proposed_index = 0;
-                ViewEvent::Update(ViewModelEvent::StepStarted(step))
+                vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
             }
             RunEvent::SteeringApplied { ids } => {
-                ViewEvent::Update(ViewModelEvent::SteeringApplied(ids))
+                vec![ViewEvent::Update(ViewModelEvent::SteeringApplied(ids))]
             }
             RunEvent::AssistantTextDelta { text } => {
-                ViewEvent::Update(ViewModelEvent::OutputDelta(text))
+                vec![ViewEvent::Update(ViewModelEvent::OutputDelta(text))]
             }
             RunEvent::ReasoningDelta { text } | RunEvent::ReasoningSummaryDelta { text } => {
-                ViewEvent::Update(ViewModelEvent::ReasoningDelta(text))
+                vec![ViewEvent::Update(ViewModelEvent::ReasoningDelta(text))]
             }
             RunEvent::ToolCallUpdated {
                 index,
@@ -131,12 +148,12 @@ impl SdkEventAdapter {
                 let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
                 self.presenter()
                     .preview(index, name, &arguments_delta)
-                    .map_or(ViewEvent::Ignored, |display_lines| {
-                        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                    .map_or_else(Vec::new, |display_lines| {
+                        vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
                             index,
                             call_id,
                             display_lines,
-                        })
+                        })]
                     })
             }
             RunEvent::ToolProposed { call } => {
@@ -144,11 +161,11 @@ impl SdkEventAdapter {
                 let display_lines = self.presenter().proposed(call);
                 let index = self.proposed_index;
                 self.proposed_index += 1;
-                ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
                     index,
                     call_id,
                     display_lines,
-                })
+                })]
             }
             RunEvent::ToolStarted {
                 call_id,
@@ -159,74 +176,110 @@ impl SdkEventAdapter {
                     .presenter()
                     .started(call_id.clone(), name, metadata)
                     .display_lines;
-                ViewEvent::Update(ViewModelEvent::ToolStarted {
+                vec![ViewEvent::Update(ViewModelEvent::ToolStarted {
                     call_id,
                     display_lines,
-                })
+                })]
             }
             RunEvent::ToolUpdated { call_id, progress } => {
                 let display_lines = self.presenter().updated(&call_id, &progress);
-                ViewEvent::Update(ViewModelEvent::ToolUpdated {
+                vec![ViewEvent::Update(ViewModelEvent::ToolUpdated {
                     call_id,
                     display_lines,
-                })
+                })]
             }
             RunEvent::ToolFinished { call_id, result } => {
                 let (ok, presented) = self.presenter().finished(&call_id, result);
-                ViewEvent::Update(ViewModelEvent::ToolFinished {
+                vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id,
                     ok,
                     display_style: presented.display_style,
                     display_lines: presented.display_lines,
                     image_asset: presented.image_asset,
-                })
+                })]
             }
-            RunEvent::UsageUpdated { usage } => ViewEvent::Update(ViewModelEvent::Usage(usage)),
+            RunEvent::UsageUpdated { usage } => {
+                vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]
+            }
             RunEvent::ProviderActivity { kind, detail } => {
                 if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
-                    ViewEvent::Update(ViewModelEvent::ToolFinished {
+                    vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                         call_id: rho_sdk::ToolCallId::new(),
                         ok: true,
                         display_style: ToolDisplayStyle::web(),
                         display_lines: vec![format!("web search: {detail}")],
                         image_asset: None,
-                    })
+                    })]
                 } else if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
                     // The following typed reset event drives current hosts.
-                    ViewEvent::Ignored
+                    Vec::new()
                 } else if kind == PROVIDER_ACTIVITY_REQUEST_RETRY {
-                    ViewEvent::Update(ViewModelEvent::ProviderRetry)
+                    vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
                 } else {
-                    ViewEvent::Notice(format!("{kind}: {detail}"))
+                    vec![ViewEvent::Notice(format!("{kind}: {detail}"))]
                 }
             }
             RunEvent::ProviderStreamReset { .. } => {
                 self.presenter().step_started();
-                ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+                vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset)]
             }
-            RunEvent::ProviderContextUpdated { .. } => ViewEvent::Ignored,
+            RunEvent::ProviderContextUpdated { .. } => Vec::new(),
             RunEvent::ProviderDiagnostic { detail } => {
-                ViewEvent::Notice(format!("provider diagnostic:\n{}", detail.as_str()))
+                vec![ViewEvent::Notice(format!(
+                    "provider diagnostic:\n{}",
+                    detail.as_str()
+                ))]
             }
-            RunEvent::HostInputRequested { request } => ViewEvent::Questionnaire {
-                call_id: rho_sdk::ToolCallId::new(),
-                request,
-            },
+            RunEvent::HostInputRequested { request } => {
+                vec![ViewEvent::Questionnaire {
+                    call_id: rho_sdk::ToolCallId::new(),
+                    request,
+                }]
+            }
             RunEvent::ToolHostInputRequested { call_id, request } => {
-                ViewEvent::Questionnaire { call_id, request }
+                vec![ViewEvent::Questionnaire { call_id, request }]
             }
             RunEvent::CompactionStarted { .. } => {
-                ViewEvent::Update(ViewModelEvent::CompactionStarted)
+                self.compaction_open = true;
+                vec![ViewEvent::Update(ViewModelEvent::CompactionStarted)]
             }
             RunEvent::CompactionCompleted { outcome, .. } => {
-                ViewEvent::Update(ViewModelEvent::CompactionCompleted {
-                    facts: CompactionDisplayFacts::from_outcome(&outcome),
-                })
+                self.compaction_open = false;
+                vec![ViewEvent::Update(ViewModelEvent::CompactionFinished {
+                    outcome: CompactionUiOutcome::Completed(CompactionDisplayFacts::from_outcome(
+                        &outcome,
+                    )),
+                })]
             }
-            RunEvent::Completed { .. } => ViewEvent::Completed,
-            RunEvent::Cancelled { .. } => ViewEvent::Cancelled,
-            RunEvent::Failed { message, .. } => ViewEvent::Failed(message),
-            _ => ViewEvent::Ignored,
+            RunEvent::Completed { .. } => {
+                let mut events = Vec::new();
+                if let Some(finished) = self.close_compaction(CompactionUiOutcome::Unchanged {
+                    detail: "compaction ended without a result".into(),
+                }) {
+                    events.push(finished);
+                }
+                events.push(ViewEvent::Completed);
+                events
+            }
+            RunEvent::Cancelled { .. } => {
+                let mut events = Vec::new();
+                if let Some(finished) = self.close_compaction(CompactionUiOutcome::Cancelled) {
+                    events.push(finished);
+                }
+                events.push(ViewEvent::Cancelled);
+                events
+            }
+            RunEvent::Failed { message, .. } => {
+                let mut events = Vec::new();
+                if let Some(finished) = self.close_compaction(CompactionUiOutcome::Failed {
+                    detail: message.clone(),
+                }) {
+                    events.push(finished);
+                }
+                events.push(ViewEvent::Failed(message));
+                events
+            }
+            _ => Vec::new(),
         }
     }
 }

@@ -48,14 +48,16 @@ fn attachment_stream_preserves_compaction_tool_blocks() {
             if display_lines == ["compact".to_string(), "shrinking context…".to_string()]
     ));
     assert!(matches!(
-        attachment_update(ViewModelEvent::CompactionCompleted {
-            facts: super::super::super::compaction_display::CompactionDisplayFacts {
-                previous_messages: 12,
-                current_messages: 4,
-                previous_tokens: 12_400,
-                current_tokens: 3_100,
-                cost_usd_micros: None,
-            },
+        attachment_update(ViewModelEvent::CompactionFinished {
+            outcome: super::super::super::compaction_display::CompactionUiOutcome::Completed(
+                super::super::super::compaction_display::CompactionDisplayFacts {
+                    previous_messages: 12,
+                    current_messages: 4,
+                    previous_tokens: 12_400,
+                    current_tokens: 3_100,
+                    cost_usd_micros: None,
+                },
+            ),
         }),
         Some(AttachmentEvent::ToolFinished {
             ok: true,
@@ -63,6 +65,18 @@ fn attachment_stream_preserves_compaction_tool_blocks() {
             ..
         }) if display_lines.iter().any(|line| line.contains("12.4K → 3.1K tokens"))
             && display_lines.iter().any(|line| line.contains("12 → 4 messages"))
+    ));
+    assert!(matches!(
+        attachment_update(ViewModelEvent::CompactionFinished {
+            outcome: super::super::super::compaction_display::CompactionUiOutcome::Failed {
+                detail: "boom".into(),
+            },
+        }),
+        Some(AttachmentEvent::ToolFinished {
+            ok: false,
+            display_lines,
+            ..
+        }) if display_lines.iter().any(|line| line == "failed")
     ));
 }
 

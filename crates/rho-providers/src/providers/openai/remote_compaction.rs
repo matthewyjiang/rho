@@ -8,8 +8,9 @@
 use serde_json::Value;
 
 use crate::model::{ModelError, ModelRequest, ModelUsage};
-use crate::protocol::openai_responses::{
-    native_compact_failure, native_compact_from_response_body, retained_system_messages,
+use crate::protocol::openai_responses::{retained_system_messages, CompactUserRetention};
+use crate::providers::native_compaction::{
+    native_compact_failure, native_compact_from_response_body,
 };
 
 use super::auth::Auth;
@@ -99,6 +100,7 @@ pub(super) async fn compact_with_http(
         &retained_system_messages,
         &body,
         PORTABLE_HANDOFF_NOTICE,
+        CompactUserRetention::KeepServerUsers,
         failed_attempts,
     )
 }

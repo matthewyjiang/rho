@@ -6,7 +6,10 @@ use rho_sdk::{
     RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
 
-use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
+use super::{
+    host_response, questionnaire_request, CompactionUiOutcome, SdkEventAdapter, ViewEvent,
+    ViewModelEvent,
+};
 use crate::{
     questionnaire::{QuestionnaireQuestionKind, QuestionnaireResponse},
     tui::questionnaire::{
@@ -15,19 +18,30 @@ use crate::{
     },
 };
 
+fn only_event(events: Vec<ViewEvent>) -> ViewEvent {
+    assert_eq!(
+        events.len(),
+        1,
+        "expected exactly one view event: {events:?}"
+    );
+    events.into_iter().next().expect("one event")
+}
+
 #[test]
 fn translates_streaming_and_usage_events_without_rendering_state() {
     let mut adapter = SdkEventAdapter::default();
 
     assert!(matches!(
-        adapter.translate(RunEvent::Started {
+        only_event(adapter.translate(RunEvent::Started {
             run_id: RunId::new(),
             revision: Revision::INITIAL,
-        }),
+        })),
         ViewEvent::Update(ViewModelEvent::RunStarted)
     ));
     assert!(matches!(
-        adapter.translate(RunEvent::AssistantTextDelta { text: "hello".into() }),
+        only_event(adapter.translate(RunEvent::AssistantTextDelta {
+            text: "hello".into()
+        })),
         ViewEvent::Update(ViewModelEvent::OutputDelta(text)) if text == "hello"
     ));
     let usage = ModelUsage {
@@ -35,7 +49,9 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
         ..ModelUsage::default()
     };
     assert!(matches!(
-        adapter.translate(RunEvent::UsageUpdated { usage: usage.clone() }),
+        only_event(adapter.translate(RunEvent::UsageUpdated {
+            usage: usage.clone()
+        })),
         ViewEvent::Update(ViewModelEvent::Usage(translated)) if translated == usage
     ));
 }
@@ -44,9 +60,9 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
 fn provider_diagnostics_are_shown_in_interactive_failures() {
     let mut adapter = SdkEventAdapter::default();
 
-    let event = adapter.translate(RunEvent::ProviderDiagnostic {
+    let event = only_event(adapter.translate(RunEvent::ProviderDiagnostic {
         detail: rho_sdk::ProviderDiagnostic::new("{\"error\":\"bad request\"}"),
-    });
+    }));
 
     let ViewEvent::Notice(message) = event else {
         panic!("expected diagnostic notice");
@@ -63,10 +79,10 @@ fn provider_retry_resets_the_current_provider_stream() {
         ProviderStreamResetReason::RetryableFailure(rho_sdk::ProviderErrorKind::Unavailable),
     ] {
         assert!(matches!(
-            adapter.translate(RunEvent::ProviderStreamReset {
+            only_event(adapter.translate(RunEvent::ProviderStreamReset {
                 reason,
                 detail: "retrying".into(),
-            }),
+            })),
             ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
         ));
     }
@@ -77,10 +93,10 @@ fn physical_provider_retry_maps_to_typed_view_model_event() {
     let mut adapter = SdkEventAdapter::default();
 
     assert!(matches!(
-        adapter.translate(RunEvent::ProviderActivity {
+        only_event(adapter.translate(RunEvent::ProviderActivity {
             kind: rho_sdk::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
             detail: "retrying".into(),
-        }),
+        })),
         ViewEvent::Update(ViewModelEvent::ProviderRetry)
     ));
 }
@@ -89,13 +105,12 @@ fn physical_provider_retry_maps_to_typed_view_model_event() {
 fn legacy_malformed_response_activity_does_not_reset_twice() {
     let mut adapter = SdkEventAdapter::default();
 
-    assert!(matches!(
-        adapter.translate(RunEvent::ProviderActivity {
+    assert!(adapter
+        .translate(RunEvent::ProviderActivity {
             kind: rho_sdk::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
             detail: "retrying".into(),
-        }),
-        ViewEvent::Ignored
-    ));
+        })
+        .is_empty());
 }
 
 #[test]
@@ -107,12 +122,12 @@ fn retains_structured_tool_metadata_until_completion() {
         name: "edit_file".into(),
         arguments: serde_json::json!({"path": "src/lib.rs"}),
     };
-    let _ = adapter.translate(RunEvent::ToolProposed { call });
-    let _ = adapter.translate(RunEvent::ToolStarted {
+    let _ = only_event(adapter.translate(RunEvent::ToolProposed { call }));
+    let _ = only_event(adapter.translate(RunEvent::ToolStarted {
         call_id: call_id.clone(),
         name: "edit_file".into(),
         metadata: ToolMetadata::new().operation(OperationKind::Write),
-    });
+    }));
     let output = ToolOutput::text("updated").metadata(
         ToolMetadata::new()
             .affected_path("src/lib.rs")
@@ -124,10 +139,10 @@ fn retains_structured_tool_metadata_until_completion() {
         ok,
         display_lines,
         ..
-    }) = adapter.translate(RunEvent::ToolFinished {
+    }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
         result: ToolCompletion::Success(output),
-    })
+    }))
     else {
         panic!("expected translated tool completion");
     };
@@ -141,11 +156,11 @@ fn retains_structured_tool_metadata_until_completion() {
 fn forwards_image_asset_on_tool_completion() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-image").unwrap();
-    let _ = adapter.translate(RunEvent::ToolStarted {
+    let _ = only_event(adapter.translate(RunEvent::ToolStarted {
         call_id: call_id.clone(),
         name: "read_file".into(),
         metadata: ToolMetadata::new(),
-    });
+    }));
     let asset = ToolAsset::new("image/png", vec![1, 2, 3, 4]);
     let output = ToolOutput::text("image/png image (4 bytes)").metadata(
         ToolMetadata::new()
@@ -158,10 +173,10 @@ fn forwards_image_asset_on_tool_completion() {
         image_asset,
         display_lines,
         ..
-    }) = adapter.translate(RunEvent::ToolFinished {
+    }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
         result: ToolCompletion::Success(output),
-    })
+    }))
     else {
         panic!("expected translated tool completion");
     };
@@ -172,6 +187,54 @@ fn forwards_image_asset_on_tool_completion() {
         display_lines,
         ["read_file ", "image preview unavailable: invalid image"]
     );
+}
+
+#[test]
+fn compaction_failure_closes_open_tool_block_before_run_failed() {
+    let mut adapter = SdkEventAdapter::default();
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::CompactionStarted {
+            trigger: rho_sdk::CompactionTrigger::Automatic,
+            message_count: 3,
+        })),
+        ViewEvent::Update(ViewModelEvent::CompactionStarted)
+    ));
+
+    let events = adapter.translate(RunEvent::Failed {
+        message: "provider unavailable".into(),
+        retryability: rho_sdk::Retryability::Retryable,
+    });
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        &events[0],
+        ViewEvent::Update(ViewModelEvent::CompactionFinished {
+            outcome: CompactionUiOutcome::Failed { detail }
+        }) if detail == "provider unavailable"
+    ));
+    assert!(matches!(
+        &events[1],
+        ViewEvent::Failed(message) if message == "provider unavailable"
+    ));
+}
+
+#[test]
+fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
+    let mut adapter = SdkEventAdapter::default();
+    let _ = only_event(adapter.translate(RunEvent::CompactionStarted {
+        trigger: rho_sdk::CompactionTrigger::Automatic,
+        message_count: 1,
+    }));
+    let events = adapter.translate(RunEvent::Cancelled {
+        revision: Revision::INITIAL,
+    });
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        &events[0],
+        ViewEvent::Update(ViewModelEvent::CompactionFinished {
+            outcome: CompactionUiOutcome::Cancelled
+        })
+    ));
+    assert!(matches!(&events[1], ViewEvent::Cancelled));
 }
 
 #[test]

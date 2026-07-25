@@ -543,9 +543,7 @@ impl InteractiveRuntime {
         Ok(finished.outcome?)
     }
 
-    pub(crate) async fn compact(
-        &mut self,
-    ) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
+    pub(crate) async fn compact(&mut self) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
         if self.runs.is_active() {
             anyhow::bail!("session is busy");
         }
