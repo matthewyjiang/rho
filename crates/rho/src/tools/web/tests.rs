@@ -43,6 +43,17 @@ fn parses_github_root_tree_blob_and_commit_urls() {
     let commit = github::parse_url("https://github.com/owner/repo/commit/abc123").unwrap();
     assert_eq!(commit.kind, GitHubKind::Commit);
     assert_eq!(commit.ref_name.as_deref(), Some("abc123"));
+
+    let special_ref =
+        github::parse_url("https://github.com/owner/repo/tree/hello-$USER/src/tools").unwrap();
+    assert_eq!(special_ref.ref_name.as_deref(), Some("hello-$USER"));
+    assert_eq!(special_ref.path, "src/tools");
+
+    let plus_ref =
+        github::parse_url("https://github.com/owner/repo/blob/feature+api/README.md").unwrap();
+    assert_eq!(plus_ref.kind, GitHubKind::Blob);
+    assert_eq!(plus_ref.ref_name.as_deref(), Some("feature+api"));
+    assert_eq!(plus_ref.path, "README.md");
 }
 
 #[test]

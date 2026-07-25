@@ -284,16 +284,29 @@ fn is_safe_repository_segment(value: &str) -> bool {
 }
 
 /// A ref reaches `git fetch` as a positional argument, so a leading dash would
-/// be parsed as an option.
+/// be parsed as an option. Remaining checks follow `git check-ref-format
+/// --allow-onelevel`, which permits valid branch characters such as `$` and `+`.
 fn is_safe_ref_name(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('-')
-        && !value
-            .split('/')
-            .any(|component| component.is_empty() || component == "." || component == "..")
-        && value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_' | '/')
-        })
+    if value.is_empty() || value == "@" || value.starts_with('-') {
+        return false;
+    }
+    if value.starts_with('/') || value.ends_with('/') || value.ends_with('.') {
+        return false;
+    }
+    if value.contains("..") || value.contains("//") || value.contains("@{") || value.contains('\\')
+    {
+        return false;
+    }
+    if value.bytes().any(|byte| {
+        byte < 0x20
+            || byte == 0x7f
+            || matches!(byte, b' ' | b'~' | b'^' | b':' | b'?' | b'*' | b'[')
+    }) {
+        return false;
+    }
+    value.split('/').all(|component| {
+        !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock")
+    })
 }
 
 fn split_github_ref_and_path(_kind: GitHubKind, segments: &[&str]) -> (Option<String>, String) {
