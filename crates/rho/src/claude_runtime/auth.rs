@@ -19,7 +19,11 @@ use super::executable::{self, ClaudeExecutable};
 pub(crate) const CLAUDE_PROGRAM: &str = "claude";
 
 /// Default wall-clock budget for status/version/logout probes.
-pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+///
+/// Cold Claude starts and keychain access can exceed a few seconds. Ten seconds
+/// stays bounded for UI probes while avoiding false timeouts on first launch.
+/// Tests inject a shorter timeout via [`run_bounded_command_with_timeout`].
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Hard cap for each of stdout and stderr on a probe.
 pub(crate) const PROBE_OUTPUT_CAP_BYTES: usize = 64 * 1024;
@@ -445,6 +449,21 @@ fn parse_auth_status_output(
     program: &str,
     output: &BoundedOutput,
 ) -> Result<ClaudeAuthStatus, ClaudeAuthError> {
+    // Claude Code returns exit 1 with valid JSON when signed out:
+    // `{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}`.
+    // Prefer structurally valid status JSON over exit status so signed-out is
+    // a normal `ClaudeAuthStatus`, not a probe failure.
+    let stdout =
+        String::from_utf8(output.stdout.clone()).map_err(|_| ClaudeAuthError::InvalidUtf8)?;
+    let trimmed = stdout.trim();
+    if !trimmed.is_empty() {
+        return match serde_json::from_str::<ClaudeAuthStatus>(trimmed) {
+            Ok(status) => Ok(status),
+            // Non-empty stdout that is not auth status JSON is always a parse
+            // error, even when the exit status is non-zero.
+            Err(error) => Err(ClaudeAuthError::InvalidJson(error)),
+        };
+    }
     if !output.status.success() {
         return Err(ClaudeAuthError::ExitStatus {
             program: program.into(),
@@ -452,15 +471,9 @@ fn parse_auth_status_output(
             stderr: output.stderr_lossy_trimmed(),
         });
     }
-    let stdout =
-        String::from_utf8(output.stdout.clone()).map_err(|_| ClaudeAuthError::InvalidUtf8)?;
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return Err(ClaudeAuthError::InvalidJson(
-            serde_json::from_str::<ClaudeAuthStatus>("").expect_err("empty json"),
-        ));
-    }
-    Ok(serde_json::from_str(trimmed)?)
+    Err(ClaudeAuthError::InvalidJson(
+        serde_json::from_str::<ClaudeAuthStatus>("").expect_err("empty json"),
+    ))
 }
 
 fn first_nonempty_line(text: &str) -> Option<&str> {

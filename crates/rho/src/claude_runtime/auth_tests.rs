@@ -226,6 +226,104 @@ exit 1
 
 #[cfg(unix)]
 #[tokio::test]
+async fn query_program_accepts_valid_signed_out_json_on_nonzero_exit() {
+    // Real `claude auth status` returns exit 1 with this shape when signed out.
+    let status = query_sh(
+        r#"
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  printf '%s\n' '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}'
+  exit 1
+fi
+exit 2
+"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        status,
+        ClaudeAuthStatus {
+            logged_in: false,
+            auth_method: Some("none".into()),
+            api_provider: Some("firstParty".into()),
+            email: None,
+            org_id: None,
+            org_name: None,
+            subscription_type: None,
+        }
+    );
+    assert_eq!(
+        status.describe(),
+        "claude code: not signed in - run /login claude-code"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn query_program_rejects_malformed_json_on_nonzero_exit() {
+    let error = query_sh(
+        r#"
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  printf '%s\n' 'not-json'
+  echo boom >&2
+  exit 1
+fi
+exit 2
+"#,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(error, ClaudeAuthError::InvalidJson(_)),
+        "malformed stdout must stay InvalidJson, not ExitStatus: {error:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn query_program_reports_exit_status_when_stdout_empty_on_nonzero_exit() {
+    let error = query_sh(
+        r#"
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo boom >&2
+  exit 1
+fi
+exit 2
+"#,
+    )
+    .await
+    .unwrap_err();
+    match error {
+        ClaudeAuthError::ExitStatus { stderr, .. } => assert_eq!(stderr, "boom"),
+        other => panic!("expected ExitStatus, got {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn query_program_rejects_oversized_stdout() {
+    let oversized = PROBE_OUTPUT_CAP_BYTES + 1;
+    let body = format!(
+        r#"
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  # Emit more than the probe cap without sleeping.
+  head -c {oversized} /dev/zero
+  exit 0
+fi
+exit 1
+"#
+    );
+    let error = query_sh(&body).await.unwrap_err();
+    match error {
+        ClaudeAuthError::OutputTooLarge { stream, cap, .. } => {
+            assert_eq!(stream, "stdout");
+            assert_eq!(cap, PROBE_OUTPUT_CAP_BYTES);
+        }
+        other => panic!("expected OutputTooLarge, got {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn query_program_reports_missing_binary() {
     let directory = tempfile::tempdir().unwrap();
     let missing = directory.path().join("missing-claude");
@@ -271,16 +369,36 @@ if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
 fi
 exit 1
 "#;
+    let injected = Duration::from_millis(200);
     let started = std::time::Instant::now();
     let error = run_bounded_command_with_timeout(
         sh_probe_command(body, &["auth", "status"]),
         STABLE_SH.into(),
-        Duration::from_millis(200),
+        injected,
     )
     .await
     .unwrap_err();
-    assert!(matches!(error, ClaudeAuthError::Timeout { .. }));
-    assert!(started.elapsed() < Duration::from_secs(5));
+    match error {
+        ClaudeAuthError::Timeout { timeout, .. } => assert_eq!(timeout, injected),
+        other => panic!("expected Timeout, got {other:?}"),
+    }
+    // Must not wait out the production PROBE_TIMEOUT (10s) or the child sleep.
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(PROBE_TIMEOUT >= Duration::from_secs(10));
+}
+
+#[test]
+fn probe_timeout_is_bounded_for_cold_start() {
+    // Production budget must stay long enough for cold Claude + keychain, and
+    // short enough that a hung probe does not stall the TUI indefinitely.
+    assert_eq!(PROBE_TIMEOUT, Duration::from_secs(10));
+}
+
+#[test]
+fn login_args_keep_supported_claudeai_flag() {
+    // Verified against installed `claude auth login --help`: `--claudeai` is
+    // the subscription login option (default). Do not drop a supported flag.
+    assert_eq!(login_args(), &["auth", "login", "--claudeai"]);
 }
 
 #[cfg(unix)]
