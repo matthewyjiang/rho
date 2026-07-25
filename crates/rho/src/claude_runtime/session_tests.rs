@@ -356,6 +356,65 @@ exit {exit_code}
     }
 
     #[tokio::test]
+    async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        install_streaming_fake(&fake, &fixture("live_tool_roundtrip.ndjson"), 0);
+        run_with_fake(
+            &output,
+            dir.path(),
+            &fake,
+            8,
+            PermissionMode::Auto,
+            RunCancellation::new(),
+        )
+        .await;
+        let status = subagent::read_status(&output).expect("status");
+        assert_eq!(status.state, RunState::Ok);
+        assert_eq!(status.result.as_deref(), Some("rho-tool-fixture-marker-42"));
+        assert_eq!(
+            status.claude_session_id.as_deref(),
+            Some("22222222-3333-4444-8555-666666666666")
+        );
+        assert_eq!(status.turns, 2);
+        assert_eq!(status.input_tokens, 4 + 14452 + 5604);
+        assert_eq!(status.output_tokens, 102);
+        assert_eq!(status.error, None);
+
+        let events = read_attachment_events(&output);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AttachmentEvent::ToolStarted { display_lines }
+                    if display_lines.iter().any(|line| line.contains("Read"))
+            )),
+            "tool started: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })),
+            "tool finished: {events:?}"
+        );
+        let assistant_text: String = events
+            .iter()
+            .filter_map(|event| match event {
+                AttachmentEvent::AssistantTextDelta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            assistant_text.contains("rho-tool-fixture-marker-42"),
+            "assistant text: {assistant_text:?} events: {events:?}"
+        );
+        assert_eq!(count_terminal_events(&events), 1);
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AttachmentEvent::Completed)));
+    }
+
+    #[tokio::test]
     async fn success_stream_with_nonzero_exit_is_error() {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("result.json");

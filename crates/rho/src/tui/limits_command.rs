@@ -80,68 +80,129 @@ impl App {
     }
 
     fn render_limits_result(&mut self, result: LimitsFetchResult) {
-        match result {
-            Ok((limits, errors)) if limits.providers.is_empty() && errors.is_empty() => {
-                if let Some(claude) = claude_limits_notice() {
-                    self.insert_entry(&Entry::Notice(claude));
-                    self.status = "claude code limits only".into();
-                } else {
-                    self.insert_entry(&Entry::Notice(
-                        "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth. Claude Code limits appear after a claude-cli run reports them."
-                            .into(),
-                    ));
-                    self.status = "no supported OAuth providers connected".into();
+        // `/limits` never probes Claude. It only shows the last observation a
+        // prior claude-cli run persisted, or that none is known yet.
+        let view = present_limits_result(
+            result,
+            crate::claude_runtime::rate_limit::load().as_ref(),
+            crate::claude_runtime::rate_limit::now_unix(),
+        );
+        for item in view.items {
+            match item {
+                LimitsViewItem::UsageLimits(limits) => {
+                    self.insert_entry(&Entry::UsageLimits(limits));
                 }
-            }
-            Ok((limits, errors))
-                if limits
-                    .providers
-                    .iter()
-                    .all(|provider| provider.windows.is_empty())
-                    && errors.is_empty() =>
-            {
-                let names = provider_names(&limits);
-                self.insert_entry(&Entry::Notice(format!(
-                    "{names} did not report any active usage limit windows"
-                )));
-                if let Some(claude) = claude_limits_notice() {
-                    self.insert_entry(&Entry::Notice(claude));
-                }
-                self.status = "no OAuth usage limits reported".into();
-            }
-            Ok((limits, errors)) => {
-                self.insert_entry(&Entry::UsageLimits(limits));
-                if let Some(claude) = claude_limits_notice() {
-                    self.insert_entry(&Entry::Notice(claude));
-                }
-                for error in &errors {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not check OAuth usage limits: {error}"
-                    )));
-                }
-                self.status = if errors.is_empty() {
-                    "OAuth usage limits updated".into()
-                } else {
-                    "OAuth usage limits partially updated".into()
-                };
-            }
-            Err(error) => {
-                if let Some(claude) = claude_limits_notice() {
-                    self.insert_entry(&Entry::Notice(claude));
-                }
-                self.insert_entry(&Entry::Error(format!(
-                    "could not check OAuth usage limits: {error}"
-                )));
-                self.status = "OAuth usage limit check failed".into();
+                LimitsViewItem::Notice(text) => self.insert_entry(&Entry::Notice(text)),
+                LimitsViewItem::Error(text) => self.insert_entry(&Entry::Error(text)),
             }
         }
+        self.status = view.status;
     }
 }
 
-fn claude_limits_notice() -> Option<String> {
-    let observed = crate::claude_runtime::rate_limit::load()?;
-    let now = crate::claude_runtime::rate_limit::now_unix();
-    Some(observed.describe(now))
+/// One history row produced by `/limits` presentation.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum LimitsViewItem {
+    UsageLimits(ProviderLimits),
+    Notice(String),
+    Error(String),
+}
+
+/// Pure `/limits` presentation: OAuth fetch result plus optional Claude cache.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LimitsView {
+    pub(super) items: Vec<LimitsViewItem>,
+    pub(super) status: String,
+}
+
+/// Build `/limits` history rows without I/O.
+///
+/// `claude` is injected so tests do not mutate `HOME` / `RHO_HOME`. Claude is
+/// never probed here; missing cache becomes an explicit "not known yet" notice
+/// even when OAuth providers returned data or errors. Observed values never
+/// include a remaining percentage.
+pub(super) fn present_limits_result(
+    result: LimitsFetchResult,
+    claude: Option<&crate::claude_runtime::rate_limit::ObservedRateLimit>,
+    now_unix: i64,
+) -> LimitsView {
+    let claude_notice = claude_limits_line(claude, now_unix);
+    match result {
+        Ok((limits, errors)) if limits.providers.is_empty() && errors.is_empty() => {
+            if claude.is_some() {
+                LimitsView {
+                    items: vec![LimitsViewItem::Notice(claude_notice)],
+                    status: "claude code limits only".into(),
+                }
+            } else {
+                LimitsView {
+                    items: vec![
+                        LimitsViewItem::Notice(
+                            "no supported OAuth providers are connected; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, or xAI with /login xai-oauth"
+                                .into(),
+                        ),
+                        LimitsViewItem::Notice(claude_notice),
+                    ],
+                    status: "no supported OAuth providers connected".into(),
+                }
+            }
+        }
+        Ok((limits, errors))
+            if limits
+                .providers
+                .iter()
+                .all(|provider| provider.windows.is_empty())
+                && errors.is_empty() =>
+        {
+            let names = provider_names(&limits);
+            LimitsView {
+                items: vec![
+                    LimitsViewItem::Notice(format!(
+                        "{names} did not report any active usage limit windows"
+                    )),
+                    LimitsViewItem::Notice(claude_notice),
+                ],
+                status: "no OAuth usage limits reported".into(),
+            }
+        }
+        Ok((limits, errors)) => {
+            let mut items = vec![LimitsViewItem::UsageLimits(limits)];
+            items.push(LimitsViewItem::Notice(claude_notice));
+            for error in &errors {
+                items.push(LimitsViewItem::Error(format!(
+                    "could not check OAuth usage limits: {error}"
+                )));
+            }
+            LimitsView {
+                items,
+                status: if errors.is_empty() {
+                    "OAuth usage limits updated".into()
+                } else {
+                    "OAuth usage limits partially updated".into()
+                },
+            }
+        }
+        Err(error) => LimitsView {
+            items: vec![
+                LimitsViewItem::Notice(claude_notice),
+                LimitsViewItem::Error(format!("could not check OAuth usage limits: {error}")),
+            ],
+            status: "OAuth usage limit check failed".into(),
+        },
+    }
+}
+
+fn claude_limits_line(
+    observed: Option<&crate::claude_runtime::rate_limit::ObservedRateLimit>,
+    now_unix: i64,
+) -> String {
+    match observed {
+        Some(observed) => observed.describe(now_unix),
+        None => {
+            "claude code: no limit observation is known yet; it appears after a claude-cli run reports rate limits"
+                .into()
+        }
+    }
 }
 
 pub(super) fn usage_limit_lines(limits: &ProviderLimits, width: usize) -> Vec<Line<'static>> {

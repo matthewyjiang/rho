@@ -16,12 +16,22 @@ fn running_limits_query_does_not_queue_model_context() {
 
     assert!(app.pending.steering_prompts().is_empty());
     assert!(app.pending.queued_prompts().is_empty());
-    assert!(matches!(
-        app.history.last(),
-        Some(Entry::Notice(notice))
-            if notice.contains("no supported OAuth providers are connected")
-                && notice.contains("/login openai-codex")
-    ));
+    // `render_limits_result` still reads the process Claude cache. Assert only
+    // non-queueing and that presentation produced history; cache-dependent copy
+    // is covered by `present_limits_*` tests with injected state.
+    assert!(
+        !app.history.entries().is_empty(),
+        "{:?}",
+        app.history.entries()
+    );
+    assert!(
+        app.history.entries().iter().any(|entry| matches!(
+            entry,
+            Entry::Notice(notice) if notice.contains("claude code:")
+        )),
+        "expected a Claude limits notice, got {:?}",
+        app.history.entries()
+    );
 }
 
 #[tokio::test]
@@ -187,4 +197,151 @@ fn formats_provider_names_for_empty_window_notice() {
         }),
         "Codex and xAI"
     );
+}
+
+fn sample_claude(observed_at_unix: i64) -> crate::claude_runtime::rate_limit::ObservedRateLimit {
+    crate::claude_runtime::rate_limit::ObservedRateLimit {
+        observed_at_unix,
+        info: crate::claude_runtime::stream::RateLimitInfo {
+            status: Some("allowed".into()),
+            rate_limit_type: Some("five_hour".into()),
+            resets_at: Some(1_800_000_000),
+            overage_status: None,
+            overage_resets_at: None,
+            is_using_overage: Some(false),
+        },
+    }
+}
+
+fn oauth_codex_limits() -> ProviderLimits {
+    ProviderLimits {
+        providers: vec![ProviderUsageLimits {
+            provider: "Codex".into(),
+            windows: vec![UsageLimitWindow {
+                label: "Weekly".into(),
+                remaining_percent: 40.0,
+                resets_at_unix: now_unix() + 3_600,
+            }],
+        }],
+    }
+}
+
+fn notice_texts(view: &LimitsView) -> Vec<&str> {
+    view.items
+        .iter()
+        .filter_map(|item| match item {
+            LimitsViewItem::Notice(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn present_limits_without_claude_cache_states_unknown_even_with_oauth_data() {
+    let view = present_limits_result(Ok((oauth_codex_limits(), Vec::new())), None, 2_000);
+    let notices = notice_texts(&view);
+    assert!(
+        notices
+            .iter()
+            .any(|text| text.contains("no limit observation is known yet")),
+        "{notices:?}"
+    );
+    assert!(view
+        .items
+        .iter()
+        .any(|item| matches!(item, LimitsViewItem::UsageLimits(_))));
+    assert!(!notices.iter().any(|text| text.contains('%')));
+    assert_eq!(view.status, "OAuth usage limits updated");
+}
+
+#[test]
+fn present_limits_without_claude_cache_states_unknown_with_oauth_errors() {
+    let view = present_limits_result(
+        Ok((
+            oauth_codex_limits(),
+            vec![UsageLimitsError::Unauthorized {
+                provider: "xAI",
+                login: "/login xai-oauth",
+            }],
+        )),
+        None,
+        2_000,
+    );
+    let notices = notice_texts(&view);
+    assert!(
+        notices
+            .iter()
+            .any(|text| text.contains("no limit observation is known yet")),
+        "{notices:?}"
+    );
+    assert!(view.items.iter().any(|item| matches!(
+        item,
+        LimitsViewItem::Error(text) if text.contains("xAI")
+    )));
+    assert_eq!(view.status, "OAuth usage limits partially updated");
+}
+
+#[test]
+fn present_limits_with_claude_cache_shows_age_without_percentage() {
+    let observed = sample_claude(1_000);
+    let view = present_limits_result(
+        Ok((oauth_codex_limits(), Vec::new())),
+        Some(&observed),
+        1_000 + 125,
+    );
+    let notices = notice_texts(&view);
+    let claude = notices
+        .iter()
+        .find(|text| text.contains("claude code:"))
+        .copied()
+        .expect("claude notice");
+    assert!(claude.contains("five hour"), "{claude}");
+    assert!(claude.contains("allowed"), "{claude}");
+    assert!(claude.contains("last observed 2m ago"), "{claude}");
+    assert!(!claude.contains('%'), "{claude}");
+    assert!(!claude.contains("known yet"), "{claude}");
+}
+
+#[test]
+fn present_limits_claude_only_when_no_oauth_providers() {
+    let observed = sample_claude(500);
+    let view = present_limits_result(
+        Ok((
+            ProviderLimits {
+                providers: Vec::new(),
+            },
+            Vec::new(),
+        )),
+        Some(&observed),
+        560,
+    );
+    assert_eq!(view.items.len(), 1);
+    assert!(matches!(
+        &view.items[0],
+        LimitsViewItem::Notice(text)
+            if text.contains("claude code:") && text.contains("last observed 1m ago")
+    ));
+    assert_eq!(view.status, "claude code limits only");
+}
+
+#[test]
+fn present_limits_never_spawns_or_probes_claude() {
+    // Pure helper: injecting None must not invent an observation.
+    let view = present_limits_result(
+        Err(UsageLimitsError::Unauthorized {
+            provider: "Codex",
+            login: "/login openai-codex",
+        }),
+        None,
+        0,
+    );
+    assert!(matches!(
+        view.items.as_slice(),
+        [
+            LimitsViewItem::Notice(notice),
+            LimitsViewItem::Error(error)
+        ] if notice.contains("no limit observation is known yet")
+            && error.contains("Codex")
+    ));
+    assert_eq!(view.status, "OAuth usage limit check failed");
 }

@@ -109,3 +109,112 @@ async fn cancellation_wins_when_a_permit_is_already_available() {
 
     assert!(permit.is_none());
 }
+
+#[test]
+fn update_model_does_not_alter_bound_claude_runtime() {
+    use crate::agent::{
+        AgentDefinition, AgentId, AgentRuntime, AgentTools, ModelPolicy, ModelSelection,
+        PromptPolicy,
+    };
+    use crate::app::agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime};
+
+    let executor = AgentExecutor::new(
+        Config {
+            provider: "openai-codex".into(),
+            model: "gpt-parent-before".into(),
+            permission_mode: crate::permission::PermissionMode::Plan,
+            ..Config::default()
+        },
+        PathBuf::new(),
+        PathBuf::new(),
+        SubagentHostInputBridge::new(),
+    );
+
+    let definition = Arc::new(AgentDefinition {
+        id: AgentId::new("claude-bound").unwrap(),
+        description: "claude".into(),
+        prompt: PromptPolicy::Replace("plan".into()),
+        model: ModelPolicy::Select(ModelSelection {
+            provider: None,
+            model: "opus".into(),
+        }),
+        runtime: AgentRuntime::ClaudeCli,
+        tools: AgentTools::Claude(vec!["Read".into()]),
+        reasoning: None,
+        inherit_claude_config: false,
+    });
+
+    // Bind before the parent model changes.
+    let host_before = executor
+        .config
+        .read()
+        .expect("delegated config lock")
+        .clone();
+    let bound_before = AgentBinder::bind(
+        Arc::clone(&definition),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: crate::agent::AgentCapabilities::default(),
+        },
+        &host_before,
+    )
+    .unwrap();
+
+    executor.update_model(
+        "moonshot-kimi",
+        "kimi-parent-after",
+        rho_sdk::ReasoningLevel::High,
+    );
+
+    let host_after = executor
+        .config
+        .read()
+        .expect("delegated config lock")
+        .clone();
+    assert_eq!(host_after.provider, "moonshot-kimi");
+    assert_eq!(host_after.model, "kimi-parent-after");
+
+    // Already-bound Claude runtime keeps definition model/tools; parent snapshot
+    // is irrelevant once BoundRuntime::ClaudeCli is produced.
+    match bound_before.runtime() {
+        BoundRuntime::ClaudeCli {
+            model,
+            tools,
+            inherit_claude_config,
+            permission_mode,
+            ..
+        } => {
+            assert_eq!(model.as_deref(), Some("opus"));
+            assert_eq!(tools.as_slice(), ["Read".to_string()].as_slice());
+            assert!(!*inherit_claude_config);
+            assert_eq!(*permission_mode, crate::permission::PermissionMode::Plan);
+        }
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
+    assert!(bound_before.rho_config().is_none());
+
+    // Re-bind after update_model: Claude model still comes from definition only.
+    let bound_after = AgentBinder::bind(
+        definition,
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: crate::agent::AgentCapabilities::default(),
+        },
+        &host_after,
+    )
+    .unwrap();
+    match bound_after.runtime() {
+        BoundRuntime::ClaudeCli {
+            model,
+            permission_mode,
+            ..
+        } => {
+            assert_eq!(model.as_deref(), Some("opus"));
+            // Permission mode is the only host field Claude bind snapshots.
+            assert_eq!(*permission_mode, crate::permission::PermissionMode::Plan);
+        }
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
+    assert_ne!(host_after.model, "opus");
+    assert_ne!(host_after.provider, "claude-code");
+}

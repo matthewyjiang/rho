@@ -81,18 +81,32 @@ pub(super) fn fidelity_notice(message: &str) -> Vec<StreamEffect> {
 
 pub(super) fn map_system(message: StreamEnvelope) -> Vec<StreamEffect> {
     let mut effects = Vec::new();
+    // `system`/`status` is a progress heartbeat under the system envelope.
+    // Keep session id if present, but do not emit a notice per pulse.
+    let is_status_heartbeat = message.subtype.as_deref() == Some("status");
+    let is_init = message.subtype.as_deref() == Some("init");
+
     if let Some(session_id) = message.session_id {
+        let last_activity = if is_status_heartbeat {
+            None
+        } else if is_init {
+            Some("claude init".into())
+        } else {
+            Some("claude system".into())
+        };
         effects.push(StreamEffect::Status(StatusPatch {
             claude_session_id: Some(session_id),
             state: Some(RunState::Running),
-            last_activity: Some("claude init".into()),
+            last_activity,
             ..StatusPatch::default()
         }));
     }
     if let Some(subtype) = message.subtype {
-        effects.push(StreamEffect::Attachment(AttachmentEvent::Notice(format!(
-            "claude system: {subtype}"
-        ))));
+        if !is_status_heartbeat {
+            effects.push(StreamEffect::Attachment(AttachmentEvent::Notice(format!(
+                "claude system: {subtype}"
+            ))));
+        }
     }
     effects
 }

@@ -130,6 +130,41 @@ pub(crate) fn map_line(line: &str) -> Vec<StreamEffect> {
     StreamMapper::new().push_line(line)
 }
 
+/// Top-level stream-json `type` policy.
+///
+/// Protocol/control frames are known and intentionally silent so heartbeats do
+/// not spam attach notices. Unknown kinds remain visible diagnostics.
+#[derive(Debug, PartialEq, Eq)]
+enum TopLevelKind {
+    Assistant,
+    User,
+    Result,
+    System,
+    RateLimitEvent,
+    StreamEvent,
+    Error,
+    /// Documented no-op frames: progress/status heartbeats and control channel.
+    ProtocolControlNoop,
+    Unknown(String),
+}
+
+fn classify_top_level_kind(kind: &str) -> TopLevelKind {
+    match kind {
+        "assistant" => TopLevelKind::Assistant,
+        "user" => TopLevelKind::User,
+        "result" => TopLevelKind::Result,
+        "system" => TopLevelKind::System,
+        "rate_limit_event" => TopLevelKind::RateLimitEvent,
+        "stream_event" => TopLevelKind::StreamEvent,
+        "error" => TopLevelKind::Error,
+        // Intentional silence: these are protocol/control or progress heartbeats.
+        "tool_progress" | "status" | "keep_alive" | "control_request" | "control_response" => {
+            TopLevelKind::ProtocolControlNoop
+        }
+        other => TopLevelKind::Unknown(other.to_string()),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct StreamEnvelope {
     #[serde(rename = "type")]
@@ -174,20 +209,23 @@ struct StreamEnvelope {
 
 impl StreamMapper {
     fn map_envelope(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
-        match message.kind.as_str() {
-            "assistant" => self.map_assistant(message),
-            "user" => self.map_user_tool_result(message),
-            "result" => self.map_result(message),
-            "system" => map_system(message),
-            "rate_limit_event" => map_rate_limit(message),
-            "stream_event" => self.map_stream_event(message),
-            "error" => map_error_message(message),
-            "tool_progress" | "status" | "keep_alive" | "control_request" | "control_response" => {
-                Vec::new()
+        // Exhaustive top-level policy: known frames are handled, documented
+        // protocol/control frames are intentional no-ops (no heartbeat spam),
+        // and unknown kinds become diagnostics so schema drift is visible.
+        match classify_top_level_kind(message.kind.as_str()) {
+            TopLevelKind::Assistant => self.map_assistant(message),
+            TopLevelKind::User => self.map_user_tool_result(message),
+            TopLevelKind::Result => self.map_result(message),
+            TopLevelKind::System => map_system(message),
+            TopLevelKind::RateLimitEvent => map_rate_limit(message),
+            TopLevelKind::StreamEvent => self.map_stream_event(message),
+            TopLevelKind::Error => map_error_message(message),
+            TopLevelKind::ProtocolControlNoop => Vec::new(),
+            TopLevelKind::Unknown(other) => {
+                vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
+                    "claude stream: ignored unknown message type `{other}`"
+                )))]
             }
-            other => vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
-                "claude stream: ignored unknown message type `{other}`"
-            )))],
         }
     }
 

@@ -21,6 +21,7 @@ fn effects_from_fixture(name: &str) -> Vec<StreamEffect> {
             include_str!("../fixtures/message_start_no_deltas.ndjson")
         }
         "missing_message_id.ndjson" => include_str!("../fixtures/missing_message_id.ndjson"),
+        "live_tool_roundtrip.ndjson" => include_str!("../fixtures/live_tool_roundtrip.ndjson"),
         other => panic!("unknown fixture {other}"),
     };
     let mut mapper = StreamMapper::new();
@@ -707,4 +708,137 @@ fn pending_result_status_uses_result_received_activity() {
         }) if activity == "result received"
     )));
     assert_no_terminal_attachment(&effects);
+}
+
+#[test]
+fn protocol_control_frames_are_silent_noops() {
+    // Documented progress/control frames must not emit diagnostics or status.
+    for line in [
+        r#"{"type":"tool_progress","tool_use_id":"toolu_1","elapsed_time_seconds":1}"#,
+        r#"{"type":"status","status":"requesting"}"#,
+        r#"{"type":"keep_alive"}"#,
+        r#"{"type":"control_request","request_id":"1"}"#,
+        r#"{"type":"control_response","request_id":"1"}"#,
+    ] {
+        let effects = map_line(line);
+        assert!(
+            effects.is_empty(),
+            "expected silent no-op for {line}, got {effects:?}"
+        );
+    }
+}
+
+#[test]
+fn unknown_top_level_kind_emits_diagnostic_notice() {
+    let effects = map_line(r#"{"type":"brand_new_frame","payload":true}"#);
+    assert!(matches!(
+        effects.as_slice(),
+        [StreamEffect::Attachment(AttachmentEvent::Notice(text))]
+            if text.contains("unknown message type") && text.contains("brand_new_frame")
+    ));
+}
+
+#[test]
+fn system_status_heartbeat_is_quiet_but_init_is_noticed() {
+    let status = map_line(
+        r#"{"type":"system","subtype":"status","status":"requesting","session_id":"sess-hb"}"#,
+    );
+    assert!(
+        !status
+            .iter()
+            .any(|effect| matches!(effect, StreamEffect::Attachment(AttachmentEvent::Notice(_)))),
+        "status heartbeat must not spam notices: {status:?}"
+    );
+    assert!(status.iter().any(|effect| matches!(
+        effect,
+        StreamEffect::Status(StatusPatch {
+            claude_session_id: Some(id),
+            ..
+        }) if id == "sess-hb"
+    )));
+
+    let init = map_line(r#"{"type":"system","subtype":"init","session_id":"sess-init"}"#);
+    assert!(init.iter().any(|effect| matches!(
+        effect,
+        StreamEffect::Attachment(AttachmentEvent::Notice(text)) if text.contains("claude system: init")
+    )));
+}
+
+#[test]
+fn maps_live_tool_roundtrip_capture() {
+    let effects = effects_from_fixture("live_tool_roundtrip.ndjson");
+
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ToolStarted { display_lines }
+                if display_lines.iter().any(|line| line.contains("Read"))
+                    && display_lines.iter().any(|line| line.contains("toolu_0liveToolRoundtrip")))
+        }),
+        1,
+        "tool start"
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })
+        }),
+        1,
+        "tool finish"
+    );
+    assert!(
+        joined_text(&effects).contains("rho-tool-fixture-marker-42"),
+        "assistant final text: {}",
+        joined_text(&effects)
+    );
+
+    let terminal = effects
+        .iter()
+        .find_map(|effect| match effect {
+            StreamEffect::Terminal(terminal) => Some(terminal),
+            _ => None,
+        })
+        .expect("terminal");
+    assert!(terminal.classification.is_success());
+    assert_eq!(terminal.num_turns, Some(2));
+    assert_eq!(
+        terminal.result_text.as_deref(),
+        Some("rho-tool-fixture-marker-42")
+    );
+    assert_eq!(
+        terminal.session_id.as_deref(),
+        Some("22222222-3333-4444-8555-666666666666")
+    );
+    let usage = terminal.usage.as_ref().expect("usage");
+    assert_eq!(usage.input_tokens, Some(4));
+    assert_eq!(usage.cache_read_tokens, Some(14452));
+    assert_eq!(usage.cache_write_tokens, Some(5604));
+    assert_eq!(usage.output_tokens, Some(102));
+    assert_eq!(usage.total_input_tokens(), Some(4 + 14452 + 5604));
+
+    let mut status = crate::subagent::RunStatus::default();
+    for effect in &effects {
+        if let StreamEffect::Status(patch) = effect {
+            apply_status_patch(&mut status, patch.clone());
+        }
+    }
+    assert_ne!(status.state, RunState::Ok);
+    assert_ne!(status.state, RunState::Error);
+    assert_eq!(status.turns, 2);
+    assert_eq!(status.input_tokens, 4 + 14452 + 5604);
+    assert_eq!(status.output_tokens, 102);
+    assert_eq!(
+        status.claude_session_id.as_deref(),
+        Some("22222222-3333-4444-8555-666666666666")
+    );
+    assert_eq!(status.result.as_deref(), Some("rho-tool-fixture-marker-42"));
+    assert_no_terminal_attachment(&effects);
+
+    // Heartbeat system/status frames from the live capture must stay quiet.
+    assert!(
+        !effects.iter().any(|effect| matches!(
+            effect,
+            StreamEffect::Attachment(AttachmentEvent::Notice(text))
+                if text.contains("claude system: status")
+        )),
+        "live capture must not spam status notices"
+    );
 }
