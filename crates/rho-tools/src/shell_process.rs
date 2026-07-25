@@ -260,7 +260,9 @@ fn finished_result(
 ) -> ToolResult {
     let exit_code = status
         .code()
-        .map_or_else(|| "signal".into(), |code| code.to_string());
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "signal".into());
     let elapsed_secs = elapsed.as_secs_f64();
     let content = truncate(
         format!(
@@ -293,3 +295,7 @@ fn timeout_error(
         max_output_bytes,
     ))
 }
+
+#[cfg(test)]
+#[path = "shell_process_tests.rs"]
+mod tests;

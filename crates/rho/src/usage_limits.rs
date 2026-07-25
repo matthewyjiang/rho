@@ -337,10 +337,9 @@ impl KimiUsageLimitsSource {
             unauthorized_status,
             self.request(&tokens).await,
             || async {
-                if source != KimiAuthSource::Store {
-                    return Ok(None);
-                }
-                let Some(refresh_token) = tokens.refresh_token.clone() else {
+                let (KimiAuthSource::Store, Some(refresh_token)) =
+                    (source, tokens.refresh_token.clone())
+                else {
                     return Ok(None);
                 };
                 tokens = refresh_kimi_tokens(self.endpoint.client(), &refresh_token)
@@ -453,10 +452,9 @@ impl XaiUsageLimitsSource {
             unauthorized_or_forbidden,
             self.request(&tokens).await,
             || async {
-                if source != XaiAuthSource::Store {
-                    return Ok(None);
-                }
-                let Some(refresh_token) = tokens.refresh_token.clone() else {
+                let (XaiAuthSource::Store, Some(refresh_token)) =
+                    (source, tokens.refresh_token.clone())
+                else {
                     return Ok(None);
                 };
                 tokens = refresh_xai_token(self.endpoint.client(), store, &refresh_token, &tokens)
