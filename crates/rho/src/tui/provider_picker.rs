@@ -6,6 +6,14 @@ use rho_providers::{
 
 pub(super) const ALL_REFRESHABLE_PROVIDERS: &str = "all";
 
+/// Next step after choosing a top-level `/login` provider group.
+pub(super) enum LoginGroupNext {
+    /// One method only: start that provider login directly.
+    Provider(String),
+    /// Multiple methods: open the method picker (for example Anthropic API vs Claude Code).
+    MethodPicker(Box<UiPicker>),
+}
+
 pub(super) fn login_group_picker() -> UiPicker {
     let mut items = catalog::login_groups()
         .into_iter()
@@ -18,14 +26,6 @@ pub(super) fn login_group_picker() -> UiPicker {
             value: group.id,
         })
         .collect::<Vec<_>>();
-    items.push(PickerItem {
-        section: None,
-        label: "claude code (subscription, external)".into(),
-        detail: Some("Sign in through the claude binary. Rho never stores this credential.".into()),
-        preview: None,
-        badge: None,
-        value: super::claude_login::CLAUDE_CODE_TARGET.into(),
-    });
     sort_items_by_ascii_label(&mut items);
     UiPicker::new(
         "select provider to login",
@@ -35,9 +35,22 @@ pub(super) fn login_group_picker() -> UiPicker {
     )
 }
 
+/// Resolve whether a login group continues directly or opens a method picker.
+///
+/// Runtime options that are not catalog providers (Claude Code) are injected here
+/// so group short-circuiting stays honest about the full method list.
+pub(super) fn login_group_next(group: catalog::LoginGroup) -> LoginGroupNext {
+    let picker = login_method_picker(group);
+    match picker.items.as_slice() {
+        [only] => LoginGroupNext::Provider(only.value.clone()),
+        _ => LoginGroupNext::MethodPicker(Box::new(picker)),
+    }
+}
+
 pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
     let title = format!("select {} login method", group.prompt);
-    let items = group
+    let group_id = group.id.clone();
+    let mut items = group
         .methods
         .into_iter()
         .map(|method| PickerItem {
@@ -48,7 +61,22 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
             badge: None,
             value: method.target.provider,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    // Claude Code is an Anthropic-family runtime for delegation, not a separate
+    // top-level provider group. Keep it beside the Anthropic API key method.
+    if group_id == "anthropic" {
+        items.push(PickerItem {
+            section: None,
+            label: "claude code (delegation only)".into(),
+            detail: Some(
+                "External Claude binary subscription, not Anthropic API billing. Credentials are managed by Claude Code, not Rho."
+                    .into(),
+            ),
+            preview: None,
+            badge: None,
+            value: super::claude_login::CLAUDE_CODE_TARGET.into(),
+        });
+    }
     UiPicker::new(
         title,
         "type regex filter, tab complete, up/down select, enter confirm, esc cancel",

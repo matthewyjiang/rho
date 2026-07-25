@@ -62,11 +62,11 @@ Successful login normally stores credentials only. It does not switch the active
 
 Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic API-key provider](/providers/anthropic). Use it when an agent definition sets `runtime: claude-cli` (see [Agents and delegation](/subagents#claude-cli-execution)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
 
-- `/login claude-code` (or the **claude code (subscription, external)** picker row) hands the terminal to `claude auth login --claudeai`. Rho suspends its TUI for that process and resumes when it exits.
+- `/login claude-code` (or **Anthropic** → **claude code (delegation only)** in the picker) hands the terminal to `claude auth login --claudeai`. Rho suspends its TUI for that process and resumes when it exits.
 - Claude Code runs the sign-in UI, stores the subscription credential, and remains the owner of that state. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
 - Rho reads signed-in state with bounded `claude auth status` probes for `/info` and `/doctor`. Ownership wording stays explicit (`managed by the claude binary`).
 - Sign out with `/logout claude-code` (after an explicit confirmation that this signs out of Claude Code everywhere) or with `claude auth logout` yourself. That is a global Claude Code logout, not a Rho token delete. Rho cannot remove a Claude token from the Rho credential store because it never stored one.
-- Bare `/login` still lists Claude Code in the group picker. Choosing it skips the Rho credential-store chooser entirely.
+- Bare `/login` lists Claude Code under the Anthropic group next to the Anthropic API key method. Choosing it skips the Rho credential-store chooser entirely.
 
 ## Selecting models
 
