@@ -17,9 +17,6 @@ pub(super) struct GitHubClonePlan {
     target: github::GitHubTarget,
     network_url: String,
     local_path: PathBuf,
-    working_directory: PathBuf,
-    max_output_bytes: usize,
-    process_environment: ProcessEnvironment,
     processes: Vec<ProcessExecution>,
     store: WebAccessStore,
 }
@@ -62,9 +59,6 @@ impl GitHubClonePlan {
             target,
             network_url,
             local_path,
-            working_directory: config.working_directory,
-            max_output_bytes: config.max_output_bytes,
-            process_environment: config.process_environment,
             processes,
             store: config.store,
         }
@@ -99,20 +93,12 @@ impl GitHubClonePlan {
                 .create_private_dir_all(parent)
                 .map_err(map_app_tool_error)?;
         }
-        // Authorize with the public clone URL, but inject a token-backed URL only
-        // when executing so private repos can clone without leaking credentials
-        // into capability requests.
-        let clone_url = github::authenticated_clone_url(&self.target);
-        let processes = process_plan(
-            &self.working_directory,
-            &clone_url,
-            &self.local_path,
-            self.target.ref_name.as_deref(),
-            self.max_output_bytes,
-            self.process_environment,
-        );
-        for process in &processes {
-            run_process(process).await?;
+        // The authorized command line stays token-free; private repositories are
+        // authenticated through git configuration passed in the environment so the
+        // token never reaches the process table or the clone's remote URL.
+        let credentials = github::clone_credential_environment();
+        for process in &self.processes {
+            run_process(process, &credentials).await?;
         }
         github::read_clone(&self.target, &self.local_path)
             .await
@@ -166,7 +152,10 @@ fn process_plan(
         .collect()
 }
 
-async fn run_process(execution: &ProcessExecution) -> Result<(), ToolError> {
+async fn run_process(
+    execution: &ProcessExecution,
+    credentials: &[(String, String)],
+) -> Result<(), ToolError> {
     let ProcessInvocation::Executable {
         executable,
         selection: ExecutableSelection::SearchPath,
@@ -188,6 +177,9 @@ async fn run_process(execution: &ProcessExecution) -> Result<(), ToolError> {
         .kill_on_drop(true);
     rho_tools::apply_process_environment(&mut command, execution.environment())
         .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
+    for (name, value) in credentials {
+        command.env(name, value);
+    }
     let timeout = execution.output_limits().timeout().unwrap_or(GIT_TIMEOUT);
     let status = tokio::time::timeout(timeout, command.status())
         .await

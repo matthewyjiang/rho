@@ -62,14 +62,28 @@ pub(in crate::tools::web) fn clone_url(github: &GitHubTarget) -> String {
     format!("https://github.com/{}/{}.git", github.owner, github.repo)
 }
 
-pub(in crate::tools::web) fn authenticated_clone_url(github: &GitHubTarget) -> String {
-    match github_token() {
-        Ok(token) => format!(
-            "https://x-access-token:{token}@github.com/{}/{}.git",
-            github.owner, github.repo
+/// Environment overrides that let `git` authenticate GitHub clones.
+///
+/// The token travels as a scoped `http.<url>.extraheader` config value instead
+/// of a URL userinfo component, so it never appears in the command line (world
+/// readable through the process table) or in the cloned repository's
+/// `remote.origin.url`.
+pub(in crate::tools::web) fn clone_credential_environment() -> Vec<(String, String)> {
+    let Ok(token) = github_token() else {
+        return Vec::new();
+    };
+    let header = format!(
+        "Authorization: Basic {}",
+        BASE64_STANDARD.encode(format!("x-access-token:{token}"))
+    );
+    vec![
+        ("GIT_CONFIG_COUNT".into(), "1".into()),
+        (
+            "GIT_CONFIG_KEY_0".into(),
+            "http.https://github.com/.extraheader".into(),
         ),
-        Err(_) => clone_url(github),
-    }
+        ("GIT_CONFIG_VALUE_0".into(), header),
+    ]
 }
 
 async fn github_api_file_content(client: &reqwest::Client, url: &str) -> Result<String, ToolError> {
@@ -213,6 +227,9 @@ pub(in crate::tools::web) fn parse_url(input: &str) -> Option<GitHubTarget> {
     }
     let owner = segments[0].to_string();
     let repo = segments[1].trim_end_matches(".git").to_string();
+    if !is_safe_repository_segment(&owner) || !is_safe_repository_segment(&repo) {
+        return None;
+    }
     match segments.get(2).copied() {
         None | Some("") => Some(GitHubTarget {
             owner,
@@ -228,6 +245,9 @@ pub(in crate::tools::web) fn parse_url(input: &str) -> Option<GitHubTarget> {
                 GitHubKind::Blob
             };
             let (ref_name, path) = split_github_ref_and_path(kind, &segments[3..]);
+            if !ref_name.as_deref().is_none_or(is_safe_ref_name) {
+                return None;
+            }
             Some(GitHubTarget {
                 owner,
                 repo,
@@ -236,15 +256,57 @@ pub(in crate::tools::web) fn parse_url(input: &str) -> Option<GitHubTarget> {
                 path,
             })
         }
-        Some("commit") => Some(GitHubTarget {
-            owner,
-            repo,
-            kind: GitHubKind::Commit,
-            ref_name: segments.get(3).map(|value| (*value).to_string()),
-            path: String::new(),
-        }),
+        Some("commit") => {
+            let ref_name = segments.get(3).map(|value| (*value).to_string());
+            if !ref_name.as_deref().is_none_or(is_safe_ref_name) {
+                return None;
+            }
+            Some(GitHubTarget {
+                owner,
+                repo,
+                kind: GitHubKind::Commit,
+                ref_name,
+                path: String::new(),
+            })
+        }
         _ => None,
     }
+}
+
+/// GitHub owner and repository names use a restricted character set. Rejecting
+/// anything else keeps interpolated API URLs and `git` arguments unambiguous.
+fn is_safe_repository_segment(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+        })
+}
+
+/// A ref reaches `git fetch` as a positional argument, so a leading dash would
+/// be parsed as an option. Remaining checks follow `git check-ref-format
+/// --allow-onelevel`, which permits valid branch characters such as `$` and `+`.
+fn is_safe_ref_name(value: &str) -> bool {
+    if value.is_empty() || value == "@" || value.starts_with('-') {
+        return false;
+    }
+    if value.starts_with('/') || value.ends_with('/') || value.ends_with('.') {
+        return false;
+    }
+    if value.contains("..") || value.contains("//") || value.contains("@{") || value.contains('\\')
+    {
+        return false;
+    }
+    if value.bytes().any(|byte| {
+        byte < 0x20
+            || byte == 0x7f
+            || matches!(byte, b' ' | b'~' | b'^' | b':' | b'?' | b'*' | b'[')
+    }) {
+        return false;
+    }
+    value.split('/').all(|component| {
+        !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock")
+    })
 }
 
 fn split_github_ref_and_path(_kind: GitHubKind, segments: &[&str]) -> (Option<String>, String) {
