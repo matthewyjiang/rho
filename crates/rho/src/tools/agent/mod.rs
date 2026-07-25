@@ -453,8 +453,8 @@ impl AgentTool {
                 )
             })?,
             () = context.cancellation().cancelled() => {
-                // Foreground runs are exclusive, so this tool owns run_id for
-                // the wait. Stop only that handle on parent cancellation.
+                // This invocation owns run_id for the wait. Stop only that
+                // handle on parent cancellation.
                 let _ = self.manager.stop(&run_id).await;
                 return Err(ToolError::cancelled());
             }
@@ -503,13 +503,13 @@ impl Tool for AgentTool {
         if self.background_subagents.is_enabled() {
             properties["background"] = json!({
                 "type": "boolean",
-                "description": "Required for parallel delegated work. Starts the run and returns an id immediately. Foreground calls (background=false or omitted) wait for completion and run one at a time."
+                "description": "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Several agent calls in one batch run together either way."
             });
         }
         // Behavioral guidance must match registered capabilities: describe
         // background delivery only when background runs can actually start.
         let background_guidance = if self.background_subagents.is_enabled() {
-            " Foreground calls wait for completion and run one at a time. For parallel work, set background=true on each call in the same batch; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
+            " Foreground calls wait for completion; several in the same batch run together. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
         } else {
             ""
         };
@@ -543,17 +543,13 @@ impl Tool for AgentTool {
         let args = parse_agent_args(invocation.into_arguments());
         Box::pin(async move {
             let args = args?;
-            // Foreground waits hold the manager resource for the whole run and
-            // stay exclusive so batch FG agents serialize. Background returns
-            // after registration; shared access lets several start together.
-            // Stop stays exclusive and still serializes against either mode.
-            let access = if args.background {
-                ToolResourceAccess::shared(ToolResource::manager_state(SUBAGENT_MANAGER))
-            } else {
-                ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER))
-            };
+            // Registry ops are mutex-protected and short. Shared access lets
+            // several launches in one batch overlap; each call still waits
+            // only on its own handle when foreground.
             Ok(PreparedToolInvocation::resource_aware(
-                [access],
+                [ToolResourceAccess::shared(ToolResource::manager_state(
+                    SUBAGENT_MANAGER,
+                ))],
                 [],
                 agent_metadata(),
                 move |context| Box::pin(async move { self.execute(args, &context).await }),
@@ -668,15 +664,12 @@ impl Tool for AgentsTool {
         let args = parse_agents_args(invocation.into_arguments());
         Box::pin(async move {
             let args = args?;
-            let access = match args.action.as_str() {
-                // Stop mutates registry ownership; list/status only observe.
-                "stop" => {
-                    ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER))
-                }
-                _ => ToolResourceAccess::shared(ToolResource::manager_state(SUBAGENT_MANAGER)),
-            };
+            // list/status/stop all touch the mutex-backed registry briefly.
+            // Shared access keeps lifecycle ops from serializing launches.
             Ok(PreparedToolInvocation::resource_aware(
-                [access],
+                [ToolResourceAccess::shared(ToolResource::manager_state(
+                    SUBAGENT_MANAGER,
+                ))],
                 [],
                 agents_metadata(),
                 move |_context| Box::pin(async move { self.execute(args).await }),

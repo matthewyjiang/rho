@@ -117,10 +117,13 @@ fn background_guidance_is_gated_by_capability() {
         BackgroundSubagents::Disabled,
     );
     assert!(enabled.spec().description.contains("background=true"));
-    assert!(enabled.spec().description.contains("run one at a time"));
+    assert!(enabled
+        .spec()
+        .description
+        .contains("several in the same batch run together"));
     assert_eq!(
         enabled.spec().input_schema["properties"]["background"]["description"],
-        "Required for parallel delegated work. Starts the run and returns an id immediately. Foreground calls (background=false or omitted) wait for completion and run one at a time."
+        "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Several agent calls in one batch run together either way."
     );
     let disabled_spec = disabled.spec();
     assert!(!disabled_spec.description.contains("background"));
@@ -326,7 +329,7 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         .unwrap();
     assert_eq!(
         one_access(&launch),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
     );
 
     let background = agent
@@ -378,12 +381,12 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         .unwrap();
     assert_eq!(
         one_access(&stop),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
     );
 }
 
 #[tokio::test]
-async fn parallel_background_launches_register_together() {
+async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();
     let manager = manager(root.path());
     let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);

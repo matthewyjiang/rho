@@ -54,7 +54,7 @@ If you produce a Mermaid diagram, always wrap valid Mermaid source in a closed `
             r#"
 Work directly by default. A subagent starts with fresh context and adds latency, token use, and coordination overhead. Delegate only a substantial, self-contained task when the saved work is likely to exceed that cost.
 
-Do not delegate simple questions, routine codebase inspection, or small/local changes. Foreground agent calls wait and run one at a time. For independent parallel work, set background=true on each agent call in the same batch, then keep working or end the turn - completions arrive automatically. Subagents share the workspace, so avoid overlapping edits.
+Do not delegate simple questions, routine codebase inspection, or small/local changes. Foreground agent calls wait for completion; several in the same batch run together. For work you can continue past, set background=true so the call returns an id immediately - completions arrive automatically. Subagents share the workspace, so avoid overlapping edits.
 "#,
         );
     }
@@ -345,7 +345,7 @@ mod tests {
         assert!(enabled.contains("Work directly by default"));
         assert!(enabled.contains("adds latency, token use, and coordination overhead"));
         assert!(enabled.contains("background=true"));
-        assert!(enabled.contains("run one at a time"));
+        assert!(enabled.contains("several in the same batch run together"));
         assert!(enabled.contains("avoid overlapping edits"));
         assert!(!disabled.contains("Work directly by default"));
     }
