@@ -11,12 +11,13 @@ fn registers_internal_agent_definitions() {
     assert_eq!(definitions[0].id.as_str(), SESSION_TITLE_AGENT_ID);
     assert_eq!(definitions[1].id.as_str(), GOAL_JUDGE_AGENT_ID);
     for definition in definitions {
-        assert_eq!(definition.model, ModelPolicy::Inherit);
-        assert_eq!(definition.reasoning, Some(ReasoningLevel::Low));
+        assert_eq!(*definition.model_policy(), ModelPolicy::Inherit);
+        assert_eq!(definition.reasoning(), Some(ReasoningLevel::Low));
         assert!(matches!(
             &definition.runtime,
             AgentRuntimeSpec::Rho {
                 tools: ToolPolicy::Allow(tools),
+                ..
             } if tools.is_empty()
         ));
     }

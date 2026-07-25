@@ -616,6 +616,28 @@ impl RunReporter {
         })
     }
 
+    /// Resume after the executor already wrote the Starting boundary.
+    pub(crate) fn continue_from(
+        path: PathBuf,
+        started_status: RunStatus,
+        cwd: PathBuf,
+        prompt: &str,
+        stream_output: bool,
+        status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
+    ) -> anyhow::Result<Self> {
+        let sink = crate::run_artifacts::RunArtifactSink::continue_from(
+            path,
+            started_status,
+            prompt,
+            status_tx,
+        )?;
+        Ok(Self {
+            sink,
+            adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
+            stream_output,
+        })
+    }
+
     pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {
         use rho_sdk::RunEvent;
 

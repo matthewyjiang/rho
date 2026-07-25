@@ -17,9 +17,11 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
         id: AgentId::new("test").unwrap(),
         description: "test".into(),
         prompt: PromptPolicy::Extend("instructions".into()),
-        model: ModelPolicy::Inherit,
-        runtime: AgentRuntimeSpec::Rho { tools },
-        reasoning: None,
+        runtime: AgentRuntimeSpec::Rho {
+            tools,
+            model: ModelPolicy::Inherit,
+            reasoning: None,
+        },
     })
 }
 
@@ -134,7 +136,11 @@ fn unavailable_explicit_tool_fails_before_execution() {
 
 fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {
     Arc::new(AgentDefinition {
-        model,
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            model,
+            reasoning: None,
+        },
         ..definition(ToolPolicy::All).as_ref().clone()
     })
 }
@@ -259,14 +265,12 @@ fn claude_definition(model: ModelPolicy) -> Arc<AgentDefinition> {
         id: AgentId::new("claude-test").unwrap(),
         description: "claude".into(),
         prompt: PromptPolicy::Replace("plan".into()),
-        model,
         runtime: AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
             tools: crate::agent::ClaudeToolPolicy::Allow(vec!["Read".into(), "Bash(git *)".into()]),
             inherit_claude_config: true,
             model: claude_model,
-            effort: None,
+            reasoning: None,
         }),
-        reasoning: None,
     })
 }
 
@@ -362,9 +366,9 @@ fn claude_runtime_rejects_root_roles() {
 }
 
 #[test]
-fn claude_runtime_trusts_validated_config_model() {
-    // Alias rejection is a parse-time gate. Constructed configs are trusted.
-    let bound = AgentBinder::bind(
+fn claude_runtime_rejects_alias_models_at_bind() {
+    // Parse rejects aliases; bind re-checks constructed configs.
+    let error = AgentBinder::bind(
         claude_definition(ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "@deep".into(),
@@ -375,19 +379,21 @@ fn claude_runtime_trusts_validated_config_model() {
         },
         &Config::default(),
     )
-    .unwrap();
-    match bound.runtime() {
-        BoundRuntime::ClaudeCli { model, .. } => assert_eq!(model.as_deref(), Some("@deep")),
-        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
-    }
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("does not resolve Rho model aliases"),
+        "{error:#}"
+    );
+    assert!(error.to_string().contains("@deep"), "{error:#}");
 }
 
 #[test]
 fn claude_runtime_maps_reasoning_to_effort() {
     let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
-    definition.reasoning = Some(rho_sdk::ReasoningLevel::High);
     if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
-        config.effort = Some("high");
+        config.reasoning = Some(rho_sdk::ReasoningLevel::High);
     }
     let bound = AgentBinder::bind(
         Arc::new(definition),
@@ -405,12 +411,29 @@ fn claude_runtime_maps_reasoning_to_effort() {
 }
 
 #[test]
-fn claude_runtime_omits_effort_when_config_has_none() {
+fn claude_runtime_rejects_unmapped_reasoning_at_bind() {
     let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
-    definition.reasoning = Some(rho_sdk::ReasoningLevel::Minimal);
     if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
-        config.effort = None;
+        config.reasoning = Some(rho_sdk::ReasoningLevel::Minimal);
     }
+    let error = AgentBinder::bind(
+        Arc::new(definition),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("not a Claude Code effort level"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn claude_runtime_omits_effort_when_reasoning_is_none() {
+    let definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
     let bound = AgentBinder::bind(
         Arc::new(definition),
         AgentInvocation {

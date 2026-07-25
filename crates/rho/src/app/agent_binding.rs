@@ -127,6 +127,7 @@ impl BoundAgent {
         cwd: std::path::PathBuf,
         cancellation: rho_tools::cancellation::RunCancellation,
         status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
+        started_status: Option<crate::subagent::RunStatus>,
     ) -> Option<crate::claude_runtime::session::ClaudeSessionRequest> {
         let BoundRuntime::ClaudeCli {
             model,
@@ -157,6 +158,7 @@ impl BoundAgent {
             cwd,
             cancellation,
             status_tx,
+            started_status,
             overrides: Default::default(),
         })
     }
@@ -172,8 +174,17 @@ impl AgentBinder {
     ) -> anyhow::Result<BoundAgent> {
         let fingerprint = definition.fingerprint();
         let runtime = match &definition.runtime {
-            AgentRuntimeSpec::Rho { tools } => BoundRuntime::Rho {
-                config: Box::new(bind_rho_config(&definition, host_config)?),
+            AgentRuntimeSpec::Rho {
+                tools,
+                model,
+                reasoning,
+            } => BoundRuntime::Rho {
+                config: Box::new(bind_rho_config(
+                    definition.id.as_str(),
+                    model,
+                    *reasoning,
+                    host_config,
+                )?),
                 capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
             },
             AgentRuntimeSpec::ClaudeCli(config) => {
@@ -243,9 +254,14 @@ fn bind_rho_capabilities(
     }
 }
 
-fn bind_rho_config(definition: &AgentDefinition, host_config: &Config) -> anyhow::Result<Config> {
+fn bind_rho_config(
+    agent_id: &str,
+    model: &ModelPolicy,
+    reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
+    host_config: &Config,
+) -> anyhow::Result<Config> {
     let mut config = host_config.clone();
-    match &definition.model {
+    match model {
         ModelPolicy::Inherit => {}
         ModelPolicy::Prefer(selection)
         | ModelPolicy::Require(selection)
@@ -255,12 +271,11 @@ fn bind_rho_config(definition: &AgentDefinition, host_config: &Config) -> anyhow
             let resolved = config
                 .model_aliases
                 .resolve(&selection.model)
-                .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
+                .map_err(|error| anyhow::anyhow!("agent '{agent_id}': {error}"))?;
             match (&selection.provider, &resolved.provider, &resolved.alias) {
                 (Some(pinned), Some(alias_provider), Some(_)) if pinned != alias_provider => {
                     anyhow::bail!(
-                        "agent '{}': model alias '{}' resolves to provider '{alias_provider}', which conflicts with the agent's provider '{pinned}'",
-                        definition.id,
+                        "agent '{agent_id}': model alias '{}' resolves to provider '{alias_provider}', which conflicts with the agent's provider '{pinned}'",
                         selection.model,
                     );
                 }
@@ -278,7 +293,7 @@ fn bind_rho_config(definition: &AgentDefinition, host_config: &Config) -> anyhow
             config.model = resolved.model;
         }
     }
-    if let Some(reasoning) = definition.reasoning {
+    if let Some(reasoning) = reasoning {
         config.reasoning = reasoning;
     }
     Ok(config)
@@ -300,8 +315,30 @@ fn bind_claude_runtime(
         }
     }
 
-    // Config is validated at parse time. Binder only snapshots host permission
-    // mode and the shared step budget.
+    // Defense in depth: parse already rejects these, but constructed configs
+    // (tests, future loaders) must not slip past bind.
+    if let Some(model) = &config.model {
+        if model.starts_with('@') {
+            anyhow::bail!(
+                "agent '{}': runtime claude-cli does not resolve Rho model aliases; \
+set a Claude model name or alias (for example opus), not '{model}'",
+                definition.id
+            );
+        }
+    }
+    let effort = match config.reasoning {
+        None => None,
+        Some(level) => match config.effort() {
+            Some(effort) => Some(effort),
+            None => anyhow::bail!(
+                "agent '{}': reasoning '{level}' is not a Claude Code effort level; \
+expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default)",
+                definition.id
+            ),
+        },
+    };
+
+    // Binder snapshots host permission mode and the shared step budget.
     Ok(BoundRuntime::ClaudeCli {
         model: config.model.clone(),
         tools: config.tools.clone().into_vec(),
@@ -311,7 +348,7 @@ fn bind_claude_runtime(
             .get()
             .try_into()
             .expect("run step limit fits in u64"),
-        effort: config.effort,
+        effort,
     })
 }
 

@@ -99,6 +99,7 @@ async fn run_with_fake(
         permission_mode,
         cancellation,
         status_tx: None,
+        started_status: None,
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
             auth_status: Some(Ok(logged_in())),
@@ -137,6 +138,7 @@ async fn run_with_fake_prompt(
         permission_mode: PermissionMode::Auto,
         cancellation,
         status_tx: None,
+        started_status: None,
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
             auth_status: Some(Ok(logged_in())),

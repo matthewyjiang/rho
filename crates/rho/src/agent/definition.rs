@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt, str::FromStr};
+use std::{borrow::Cow, collections::BTreeSet, fmt, str::FromStr};
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -264,8 +264,8 @@ impl ClaudeToolPolicy {
 
 /// Settings that only the Claude CLI runtime understands.
 ///
-/// Built at parse time with validated model/effort/tools so binders and spawn
-/// do not re-check the same invariants.
+/// Built at parse time with validated model/reasoning/tools. Bind derives
+/// Claude `--effort` from reasoning and re-checks hard gates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaudeAgentConfig {
     pub tools: ClaudeToolPolicy,
@@ -274,8 +274,17 @@ pub struct ClaudeAgentConfig {
     pub inherit_claude_config: bool,
     /// Pass-through `--model` value. `None` omits the flag.
     pub model: Option<String>,
-    /// Claude `--effort` token. `None` omits the flag.
-    pub effort: Option<&'static str>,
+    /// Original reasoning for fingerprint stability. Effort is derived at
+    /// bind/spawn via [`Self::effort`].
+    pub reasoning: Option<ReasoningLevel>,
+}
+
+impl ClaudeAgentConfig {
+    /// Claude `--effort` token derived from reasoning. `None` omits the flag.
+    pub fn effort(&self) -> Option<&'static str> {
+        self.reasoning
+            .and_then(crate::claude_runtime::spawn::claude_effort_flag)
+    }
 }
 
 /// The runtime together with the settings only that runtime understands.
@@ -284,7 +293,11 @@ pub struct ClaudeAgentConfig {
 /// harness with another harness's tool vocabulary or settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentRuntimeSpec {
-    Rho { tools: ToolPolicy },
+    Rho {
+        tools: ToolPolicy,
+        model: ModelPolicy,
+        reasoning: Option<ReasoningLevel>,
+    },
     ClaudeCli(ClaudeAgentConfig),
 }
 
@@ -292,6 +305,8 @@ impl Default for AgentRuntimeSpec {
     fn default() -> Self {
         Self::Rho {
             tools: ToolPolicy::All,
+            model: ModelPolicy::Inherit,
+            reasoning: None,
         }
     }
 }
@@ -310,12 +325,35 @@ pub struct AgentDefinition {
     pub id: AgentId,
     pub description: String,
     pub prompt: PromptPolicy,
-    pub model: ModelPolicy,
     pub runtime: AgentRuntimeSpec,
-    pub reasoning: Option<ReasoningLevel>,
 }
 
 impl AgentDefinition {
+    /// Model policy for display and fingerprinting.
+    ///
+    /// Taken from the Rho arm, or reconstructed from Claude's pass-through
+    /// model string (`None` → inherit, `Some` → select).
+    pub fn model_policy(&self) -> Cow<'_, ModelPolicy> {
+        match &self.runtime {
+            AgentRuntimeSpec::Rho { model, .. } => Cow::Borrowed(model),
+            AgentRuntimeSpec::ClaudeCli(config) => Cow::Owned(match &config.model {
+                None => ModelPolicy::Inherit,
+                Some(model) => ModelPolicy::Select(ModelSelection {
+                    provider: None,
+                    model: model.clone(),
+                }),
+            }),
+        }
+    }
+
+    /// Reasoning level for display and fingerprinting.
+    pub fn reasoning(&self) -> Option<ReasoningLevel> {
+        match &self.runtime {
+            AgentRuntimeSpec::Rho { reasoning, .. } => *reasoning,
+            AgentRuntimeSpec::ClaudeCli(config) => config.reasoning,
+        }
+    }
+
     /// Current semantic fingerprint (v2). New sessions store this value.
     pub fn fingerprint(&self) -> AgentFingerprint {
         self.hash_semantic(FingerprintEncoding::V2)
@@ -331,7 +369,7 @@ impl AgentDefinition {
     /// definition that cannot be expressed in the old encoding.
     pub fn legacy_v1_fingerprint(&self) -> Option<AgentFingerprint> {
         match &self.runtime {
-            AgentRuntimeSpec::Rho { tools } => {
+            AgentRuntimeSpec::Rho { tools, .. } => {
                 Some(self.hash_semantic(FingerprintEncoding::LegacyV1 { tools }))
             }
             AgentRuntimeSpec::ClaudeCli(_) => None,
@@ -368,7 +406,7 @@ impl AgentDefinition {
                 hash_field(&mut hash, text.as_bytes());
             }
         }
-        match &self.model {
+        match self.model_policy().as_ref() {
             ModelPolicy::Inherit => hash_field(&mut hash, b"model:inherit"),
             ModelPolicy::Prefer(selection) => hash_selection(&mut hash, b"model:prefer", selection),
             ModelPolicy::Require(selection) => {
@@ -383,9 +421,11 @@ impl AgentDefinition {
                 match &self.runtime {
                     AgentRuntimeSpec::Rho {
                         tools: ToolPolicy::All,
+                        ..
                     } => hash_field(&mut hash, b"tools:rho:all"),
                     AgentRuntimeSpec::Rho {
                         tools: ToolPolicy::Allow(tools),
+                        ..
                     } => {
                         hash_field(&mut hash, b"tools:rho:allow");
                         for tool in tools {
@@ -410,7 +450,7 @@ impl AgentDefinition {
                 }
             },
         }
-        if let Some(reasoning) = self.reasoning {
+        if let Some(reasoning) = self.reasoning() {
             hash_field(&mut hash, b"reasoning:some");
             hash_field(&mut hash, reasoning.to_string().as_bytes());
         } else {

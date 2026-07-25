@@ -54,6 +54,9 @@ pub(crate) struct ClaudeSessionRequest {
     pub(crate) permission_mode: PermissionMode,
     pub(crate) cancellation: RunCancellation,
     pub(crate) status_tx: Option<watch::Sender<RunStatus>>,
+    /// When set, the launcher already force-replaced `result.json` with this
+    /// Starting status. The sink continues from it instead of rewriting.
+    pub(crate) started_status: Option<RunStatus>,
     pub(crate) overrides: ClaudeSessionOverrides,
 }
 
@@ -139,12 +142,20 @@ pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Re
     if request.identity.model.is_none() {
         request.identity.model = request.model.clone();
     }
-    let mut sink = StatusSink::new(
-        request.output_file.clone(),
-        &request.identity,
-        &request.prompt,
-        request.status_tx.take(),
-    )?;
+    let mut sink = match request.started_status.take() {
+        Some(status) => StatusSink::continue_from(
+            request.output_file.clone(),
+            status,
+            &request.prompt,
+            request.status_tx.take(),
+        )?,
+        None => StatusSink::new(
+            request.output_file.clone(),
+            &request.identity,
+            &request.prompt,
+            request.status_tx.take(),
+        )?,
+    };
     let outcome = drive_session(&mut request, &mut sink).await;
     settle(sink, outcome).await;
     Ok(())

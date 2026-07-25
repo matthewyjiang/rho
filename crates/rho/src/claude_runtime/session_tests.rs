@@ -60,6 +60,7 @@ async fn cancelled_before_start_writes_stopped_status() {
         permission_mode: PermissionMode::Auto,
         cancellation,
         status_tx: None,
+        started_status: None,
         overrides: ClaudeSessionOverrides {
             auth_status: Some(Ok(logged_in())),
             ..ClaudeSessionOverrides::default()

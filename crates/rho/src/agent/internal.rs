@@ -14,22 +14,22 @@ static INTERNAL_DEFINITIONS: LazyLock<Vec<AgentDefinition>> = LazyLock::new(|| {
             description: "Internal agent that names chat sessions. Reserved; cannot be overridden or delegated."
                 .to_string(),
             prompt: PromptPolicy::Replace(crate::tui::SESSION_TITLE_PROMPT.into()),
-            model: ModelPolicy::Inherit,
             runtime: AgentRuntimeSpec::Rho {
                 tools: ToolPolicy::Allow(BTreeSet::new()),
+                model: ModelPolicy::Inherit,
+                reasoning: Some(ReasoningLevel::Low),
             },
-            reasoning: Some(ReasoningLevel::Low),
         },
         AgentDefinition {
             id: AgentId::new(GOAL_JUDGE_AGENT_ID).expect("valid internal agent ID"),
             description: "Internal agent that evaluates goal completion. Reserved; cannot be overridden or delegated."
                 .to_string(),
             prompt: PromptPolicy::Replace(crate::tui::GOAL_JUDGE_PROMPT.into()),
-            model: ModelPolicy::Inherit,
             runtime: AgentRuntimeSpec::Rho {
                 tools: ToolPolicy::Allow(BTreeSet::new()),
+                model: ModelPolicy::Inherit,
+                reasoning: Some(ReasoningLevel::Low),
             },
-            reasoning: Some(ReasoningLevel::Low),
         },
     ]
 });

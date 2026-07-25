@@ -7,4 +7,4 @@ mod app;
 pub(crate) mod sdk_writer;
 
 pub(crate) use app::run;
-pub(crate) use sdk_writer::{translate_run_event, SdkAttachmentWriter};
+pub(crate) use sdk_writer::translate_run_event;

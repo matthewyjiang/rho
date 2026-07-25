@@ -12,7 +12,7 @@ use {
 
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime, CapacityClass},
-    automation::{self, RunArtifactIdentity, RunReporter},
+    automation::{self, RunReporter},
     subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
 };
 
@@ -172,7 +172,7 @@ impl AgentExecutor {
             model: Some(model_label.clone()),
             ..RunStatus::default()
         };
-        // Claude StatusSink force-replaces this at open; Rho reporter does too.
+        // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.
         subagent::initialize_status(&request.output_file, &initial)?;
         let (status_tx, status) = tokio::sync::watch::channel(initial);
@@ -218,12 +218,14 @@ impl AgentExecutor {
                 return Ok(());
             };
 
+            let started_status = task_status_tx.borrow().clone();
             if let Some(session) = bound.clone().into_claude_session(
                 prompt.clone(),
                 output_file.clone(),
                 cwd.clone(),
                 task_cancellation.clone(),
                 Some(task_status_tx.clone()),
+                Some(started_status),
             ) {
                 return crate::claude_runtime::session::run_session(session).await;
             }
@@ -322,14 +324,10 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
     super::cli_config::normalize_reasoning(&mut config);
     let diagnostics = RuntimeDiagnostics::new(&config);
     diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
-    let mut reporter = RunReporter::new(
+    let started_status = status_tx.borrow().clone();
+    let mut reporter = RunReporter::continue_from(
         output_file,
-        RunArtifactIdentity {
-            agent_id: bound.id().to_string(),
-            agent_fingerprint: bound.fingerprint().to_string(),
-            provider: config.provider.clone(),
-            model: config.model.clone(),
-        },
+        started_status,
         cwd.clone(),
         &prompt,
         /* stream_output */ false,

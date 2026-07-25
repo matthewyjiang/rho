@@ -23,6 +23,7 @@
 //! emit; later snapshots and the final envelope emit only blocks not yet shown.
 
 mod blocks;
+mod events;
 mod format;
 mod presentation;
 mod protocol;
@@ -38,13 +39,14 @@ use rho_tools::tool::ToolDisplayStyle;
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
 use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
+use events::{decode_stream_event, ContentBlockStart, ContentDelta, StreamEventPayload};
 use format::{
     bound_result_text, context_usage_from_result, format_permission_denial, raw_usage_to_model,
     stringify_content,
 };
 pub(crate) use presentation::apply_status_patch;
 use presentation::{
-    block_index, clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,
+    clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,
     map_rate_limit, map_system, mark_and_text, mark_slot_emitted, push_block_slot,
     reasoning_effects, reconcile_complete_block, resolve_partial_slot, stable_message_id,
     text_effects, tool_finished_effects, tool_started_effects, ContentBlockKind,
@@ -109,11 +111,13 @@ impl MessageKey {
 }
 
 /// Presentation already emitted for one assistant message.
+///
+/// Ordered `block_slots` with per-slot `emitted` is the single source of truth
+/// for whether a content block has been presented. `open_indexless` tracks
+/// which index-less slot currently absorbs same-kind deltas.
 #[derive(Debug, Default)]
 struct MessageStreamState {
     step_started: bool,
-    /// Real content-block indices that produced text, reasoning, or tool output.
-    emitted_blocks: HashSet<usize>,
     /// Every `content_block_start` in stream order, including empty bodies.
     block_slots: Vec<presentation::ContentBlockSlot>,
     /// Open index-less slot ordinals, keyed by presentation kind.
@@ -407,17 +411,22 @@ impl StreamMapper {
     }
 
     fn map_stream_event(&mut self, message: StreamEventMessage) -> Vec<StreamEffect> {
-        let Some(event) = message.event else {
+        let Some(payload) = decode_stream_event(message) else {
             return Vec::new();
         };
-        let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
-        match kind {
-            "message_start" => self.map_message_start(&event),
-            "content_block_start" => {
-                self.map_content_block_start(&event, message.content_block.as_ref())
-            }
-            "content_block_delta" => self.map_content_block_delta(&event, message.delta.as_ref()),
-            "content_block_stop" => {
+        match payload {
+            StreamEventPayload::MessageStart { message_id } => self.map_message_start(message_id),
+            StreamEventPayload::ContentBlockStart {
+                message_id,
+                index,
+                block,
+            } => self.map_content_block_start(message_id, index, block),
+            StreamEventPayload::ContentBlockDelta {
+                message_id,
+                index,
+                delta,
+            } => self.map_content_block_delta(message_id, index, delta),
+            StreamEventPayload::ContentBlockStop { .. } => {
                 // Close any open index-less slots for this message so a later
                 // same-kind index-less block allocates a fresh synthetic index.
                 if let Some(key) = self.open_message.clone() {
@@ -427,8 +436,8 @@ impl StreamMapper {
                 }
                 Vec::new()
             }
-            "message_delta" => Vec::new(),
-            "message_stop" => {
+            StreamEventPayload::MessageDelta => Vec::new(),
+            StreamEventPayload::MessageStop => {
                 // Keep named message state until a later complete assistant
                 // envelope reconciles. Drop anonymous keys here: after stop they
                 // cannot pair with a later envelope and would only leak.
@@ -442,15 +451,17 @@ impl StreamMapper {
                 }
                 Vec::new()
             }
-            other if !other.is_empty() => vec![StreamEffect::Attachment(AttachmentEvent::Notice(
-                format!("claude stream: ignored stream event `{other}`"),
-            ))],
-            _ => Vec::new(),
+            StreamEventPayload::Unknown { kind } if !kind.is_empty() => {
+                vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
+                    "claude stream: ignored stream event `{kind}`"
+                )))]
+            }
+            StreamEventPayload::Unknown { .. } => Vec::new(),
         }
     }
 
-    fn map_message_start(&mut self, event: &Value) -> Vec<StreamEffect> {
-        let key = match embedded_message_id(event) {
+    fn map_message_start(&mut self, message_id: Option<String>) -> Vec<StreamEffect> {
+        let key = match message_id {
             Some(id) => MessageKey::Stable(id),
             // No stable id: allocate a unique anonymous key so later complete
             // envelopes without ids do not share one fallback.
@@ -477,10 +488,11 @@ impl StreamMapper {
 
     fn map_content_block_start(
         &mut self,
-        event: &Value,
-        top_level_block: Option<&Value>,
+        message_id: Option<String>,
+        index: Option<usize>,
+        block: ContentBlockStart,
     ) -> Vec<StreamEffect> {
-        let (message_key, mut effects) = match self.ensure_open_message(event) {
+        let (message_key, mut effects) = match self.ensure_open_message(message_id) {
             OpenMessage::Ready { key, notices } => (key, notices),
             OpenMessage::Unavailable { notices } => {
                 let mut effects = notices;
@@ -490,13 +502,7 @@ impl StreamMapper {
                 return effects;
             }
         };
-        let index = block_index(event);
-        let block = event
-            .get("content_block")
-            .or(top_level_block)
-            .cloned()
-            .unwrap_or(Value::Null);
-        let kind = content_block_kind(block.get("type").and_then(Value::as_str).unwrap_or(""));
+        let kind = block.kind();
 
         {
             let Some(state) = self.messages.get_mut(&message_key) else {
@@ -512,13 +518,9 @@ impl StreamMapper {
             }
         }
 
-        match kind {
-            ContentBlockKind::Tool => {
-                let tool_id = block
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
+        match block {
+            ContentBlockStart::ToolUse { ref id, .. } => {
+                let tool_id = id.clone().unwrap_or_default();
                 let already_started = !tool_id.is_empty() && self.active_tools.contains(&tool_id);
                 match self.claim_partial_slot(&message_key, index, kind, "partial tool start") {
                     // Already started: the slot claim above keeps ordering, but
@@ -530,7 +532,7 @@ impl StreamMapper {
                         {
                             effects.extend(notice);
                         }
-                        effects.extend(tool_started_effects(&block));
+                        effects.extend(tool_started_effects(&block.tool_block_value()));
                         effects
                     }
                     // A restarted tool never needed presentation, so a cap here
@@ -542,35 +544,29 @@ impl StreamMapper {
                     }
                 }
             }
-            ContentBlockKind::Text => {
-                let text = block.get("text").and_then(Value::as_str).unwrap_or("");
+            ContentBlockStart::Text { text } => {
                 effects.extend(self.emit_partial_text(
                     &message_key,
                     index,
                     kind,
                     "partial text",
-                    text,
+                    &text,
                     text_effects,
                 ));
                 effects
             }
-            ContentBlockKind::Reasoning => {
-                let text = block
-                    .get("thinking")
-                    .or_else(|| block.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+            ContentBlockStart::Thinking { text } => {
                 effects.extend(self.emit_partial_text(
                     &message_key,
                     index,
                     kind,
                     "partial reasoning",
-                    text,
+                    &text,
                     reasoning_effects,
                 ));
                 effects
             }
-            ContentBlockKind::Other => effects,
+            ContentBlockStart::Other { .. } => effects,
         }
     }
 
@@ -626,10 +622,11 @@ impl StreamMapper {
 
     fn map_content_block_delta(
         &mut self,
-        event: &Value,
-        top_level_delta: Option<&Value>,
+        message_id: Option<String>,
+        index: Option<usize>,
+        delta: ContentDelta,
     ) -> Vec<StreamEffect> {
-        let (message_key, mut effects) = match self.ensure_open_message(event) {
+        let (message_key, mut effects) = match self.ensure_open_message(message_id) {
             OpenMessage::Ready { key, notices } => (key, notices),
             OpenMessage::Unavailable { notices } => {
                 let mut effects = notices;
@@ -639,49 +636,38 @@ impl StreamMapper {
                 return effects;
             }
         };
-        let index = block_index(event);
-        let Some(delta) = event.get("delta").or(top_level_delta) else {
-            return effects;
-        };
-        let delta_type = delta.get("type").and_then(Value::as_str).unwrap_or("");
 
-        match delta_type {
-            "text_delta" => {
-                let text = delta.get("text").and_then(Value::as_str).unwrap_or("");
+        match delta {
+            ContentDelta::Text { text } => {
                 effects.extend(self.emit_partial_text(
                     &message_key,
                     index,
                     ContentBlockKind::Text,
                     "text delta",
-                    text,
+                    &text,
                     text_effects,
                 ));
                 effects
             }
-            "thinking_delta" | "reasoning_delta" => {
-                let text = delta
-                    .get("thinking")
-                    .or_else(|| delta.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+            ContentDelta::Thinking { text } => {
                 effects.extend(self.emit_partial_text(
                     &message_key,
                     index,
                     ContentBlockKind::Reasoning,
                     "reasoning delta",
-                    text,
+                    &text,
                     reasoning_effects,
                 ));
                 effects
             }
-            "input_json_delta" | "signature_delta" => effects,
-            other if !other.is_empty() => {
+            ContentDelta::InputJson { .. } | ContentDelta::Signature => effects,
+            ContentDelta::Other { type_name } if !type_name.is_empty() => {
                 effects.push(StreamEffect::Attachment(AttachmentEvent::Notice(format!(
-                    "claude stream: ignored delta `{other}`"
+                    "claude stream: ignored delta `{type_name}`"
                 ))));
                 effects
             }
-            _ => effects,
+            ContentDelta::Other { .. } => effects,
         }
     }
 
@@ -690,7 +676,7 @@ impl StreamMapper {
     /// Partial events without a prior `message_start` and without an embedded
     /// message id get a unique anonymous key. They never share a global
     /// fallback that would incorrectly reconcile distinct turns.
-    fn ensure_open_message(&mut self, event: &Value) -> OpenMessage {
+    fn ensure_open_message(&mut self, message_id: Option<String>) -> OpenMessage {
         if let Some(key) = self.open_message.clone() {
             if self.messages.contains_key(&key) {
                 return OpenMessage::Ready {
@@ -699,7 +685,7 @@ impl StreamMapper {
                 };
             }
         }
-        let key = match embedded_message_id(event) {
+        let key = match message_id {
             Some(id) => MessageKey::Stable(id),
             None => self.next_anonymous_key(),
         };
@@ -756,14 +742,14 @@ impl StreamMapper {
     }
 }
 
-fn embedded_message_id(event: &Value) -> Option<String> {
-    event
-        .get("message")
-        .and_then(|value| value.get("id"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
+#[cfg(test)]
+#[path = "stream_test_support.rs"]
+mod stream_test_support;
 
 #[cfg(test)]
-#[path = "stream_tests.rs"]
-mod tests;
+#[path = "stream_protocol_tests.rs"]
+mod stream_protocol_tests;
+
+#[cfg(test)]
+#[path = "stream_reconciliation_tests.rs"]
+mod stream_reconciliation_tests;

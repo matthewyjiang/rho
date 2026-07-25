@@ -28,24 +28,6 @@ pub(super) fn stable_message_id(message: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
-pub(super) fn block_index(event: &Value) -> Option<usize> {
-    event
-        .get("index")
-        .and_then(Value::as_u64)
-        .map(|index| index as usize)
-}
-
-pub(super) fn record_block(state: &mut MessageStreamState, index: usize) -> bool {
-    if state.emitted_blocks.contains(&index) {
-        return true;
-    }
-    if state.emitted_blocks.len() >= MAX_BLOCKS_PER_MESSAGE {
-        return false;
-    }
-    state.emitted_blocks.insert(index);
-    true
-}
-
 /// Presentation kind for an ordered content-block slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ContentBlockKind {
@@ -182,6 +164,12 @@ pub(super) fn resolve_partial_slot(
     push_block_slot(state, kind, None)
 }
 
+/// Mark a resolved slot as presented.
+///
+/// Returns `false` only when the ordinal is out of range. Caps are enforced at
+/// slot allocation (`push_block_slot` / `resolve_partial_slot`); once a slot
+/// exists, marking it is always allowed so partial and complete paths share one
+/// `emitted` flag.
 pub(super) fn mark_slot_emitted(
     state: &mut MessageStreamState,
     ordinal: usize,
@@ -190,11 +178,43 @@ pub(super) fn mark_slot_emitted(
     let Some(slot) = state.block_slots.get_mut(ordinal) else {
         return false;
     };
-    slot.emitted = true;
-    if let Some(index) = explicit_index.or(slot.index) {
-        return record_block(state, index);
+    // Keep any known real index on the slot so later complete envelopes can
+    // reconcile by stream index even when the claim path supplied it late.
+    if slot.index.is_none() {
+        if let Some(index) = explicit_index {
+            slot.index = Some(index);
+        }
     }
+    slot.emitted = true;
     true
+}
+
+/// Ensure a complete-envelope content index has a slot and mark it emitted.
+///
+/// Used when the complete path presents (or acknowledges) a block without going
+/// through partial `content_block_start`. Returns `false` only when the
+/// per-message slot cap is hit and no existing slot matches the index.
+pub(super) fn mark_complete_index(state: &mut MessageStreamState, index: usize) -> bool {
+    if let Some(ordinal) = state
+        .block_slots
+        .iter()
+        .position(|slot| slot.index == Some(index))
+    {
+        return mark_slot_emitted(state, ordinal, Some(index));
+    }
+    // Prefer aligning with an existing index-less slot at this content position
+    // so progressive partials and complete envelopes share one timeline.
+    if let Some(slot) = state.block_slots.get_mut(index) {
+        if slot.index.is_none() {
+            slot.index = Some(index);
+            slot.emitted = true;
+            return true;
+        }
+    }
+    let Some(ordinal) = push_block_slot(state, ContentBlockKind::Other, Some(index)) else {
+        return false;
+    };
+    mark_slot_emitted(state, ordinal, Some(index))
 }
 
 fn clear_open_indexless(state: &mut MessageStreamState, kind: ContentBlockKind) {
@@ -216,20 +236,13 @@ pub(super) fn reconcile_complete_block(
     kind: ContentBlockKind,
     complete_index: usize,
 ) -> bool {
-    if state.emitted_blocks.contains(&complete_index) {
-        return true;
-    }
     if let Some(slot) = state
         .block_slots
         .iter()
         .find(|slot| slot.index == Some(complete_index))
     {
-        if slot.emitted {
-            let _ = record_block(state, complete_index);
-            return true;
-        }
         // Slot opened but never presented; complete envelope owns emission.
-        return false;
+        return slot.emitted;
     }
     let Some(slot) = state.block_slots.get(complete_index) else {
         return false;
@@ -241,14 +254,10 @@ pub(super) fn reconcile_complete_block(
     if slot.kind != kind && slot.kind != ContentBlockKind::Other {
         return false;
     }
-    if slot.emitted {
-        let _ = record_block(state, complete_index);
-        true
-    } else {
-        false
-    }
+    slot.emitted
 }
 
+/// Mark a complete-envelope block presented and emit text effects.
 pub(super) fn mark_and_text(
     state: &mut MessageStreamState,
     index: usize,
@@ -257,12 +266,13 @@ pub(super) fn mark_and_text(
     if text.is_empty() {
         return Some(Vec::new());
     }
-    if !record_block(state, index) {
+    if !mark_complete_index(state, index) {
         return None;
     }
     Some(text_effects(text))
 }
 
+/// Mark a complete-envelope block presented and emit reasoning effects.
 pub(super) fn mark_and_reasoning(
     state: &mut MessageStreamState,
     index: usize,
@@ -271,7 +281,7 @@ pub(super) fn mark_and_reasoning(
     if text.is_empty() {
         return Some(Vec::new());
     }
-    if !record_block(state, index) {
+    if !mark_complete_index(state, index) {
         return None;
     }
     Some(reasoning_effects(text))

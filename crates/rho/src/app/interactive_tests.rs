@@ -21,11 +21,11 @@ fn sample_definition(id: &str) -> crate::agent::AgentDefinition {
         id: crate::agent::AgentId::new(id).unwrap(),
         description: "test".into(),
         prompt: crate::agent::PromptPolicy::Extend(String::new()),
-        model: crate::agent::ModelPolicy::Inherit,
         runtime: crate::agent::AgentRuntimeSpec::Rho {
             tools: crate::agent::ToolPolicy::All,
+            model: crate::agent::ModelPolicy::Inherit,
+            reasoning: None,
         },
-        reasoning: None,
     }
 }
 

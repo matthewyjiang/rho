@@ -17,7 +17,9 @@ fn defaults_runtime_to_rho() {
     assert_eq!(
         definition.runtime,
         AgentRuntimeSpec::Rho {
-            tools: ToolPolicy::All
+            tools: ToolPolicy::All,
+            model: ModelPolicy::Inherit,
+            reasoning: None,
         }
     );
 }
@@ -30,6 +32,8 @@ fn parses_explicit_rho_runtime() {
         definition.runtime,
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow([ToolCapability::ReadFile].into_iter().collect()),
+            model: ModelPolicy::Inherit,
+            reasoning: None,
         }
     );
 }
@@ -55,7 +59,7 @@ fn parses_claude_cli_runtime_and_tools_independent_of_key_order() {
             ]),
             inherit_claude_config: false,
             model: None,
-            effort: None,
+            reasoning: None,
         })
     );
     assert_eq!(tools_first.fingerprint(), runtime_first.fingerprint());
@@ -112,7 +116,7 @@ fn allows_nested_parentheses_inside_claude_tool_specifier() {
             ]),
             inherit_claude_config: false,
             model: None,
-            effort: None,
+            reasoning: None,
         })
     );
 }
@@ -195,7 +199,7 @@ fn omits_claude_tools_as_empty_allowlist() {
             tools: crate::agent::ClaudeToolPolicy::None,
             inherit_claude_config: false,
             model: None,
-            effort: None,
+            reasoning: None,
         })
     );
 }
@@ -215,7 +219,7 @@ fn allows_model_and_rejects_provider_on_claude_runtime() {
     )
     .unwrap();
     assert_eq!(
-        definition.model,
+        *definition.model_policy(),
         ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "claude-opus-4-6".into(),
@@ -224,6 +228,8 @@ fn allows_model_and_rejects_provider_on_claude_runtime() {
     match &definition.runtime {
         AgentRuntimeSpec::ClaudeCli(config) => {
             assert_eq!(config.model.as_deref(), Some("claude-opus-4-6"));
+            assert!(config.reasoning.is_none());
+            assert!(config.effort().is_none());
         }
         _ => panic!("expected claude runtime"),
     }
@@ -309,7 +315,7 @@ fn parses_claude_indented_tool_list_with_patterns() {
             tools: crate::agent::ClaudeToolPolicy::Allow(vec!["Read".into(), "Bash(git *)".into()]),
             inherit_claude_config: false,
             model: None,
-            effort: None,
+            reasoning: None,
         })
     );
     assert!(matches!(definition.prompt, PromptPolicy::Extend(_)));
@@ -349,10 +355,16 @@ fn accepts_claude_effort_reasoning_levels() {
         .unwrap_or_else(|error| panic!("expected {level} to parse: {error}"));
         assert_eq!(
             definition
-                .reasoning
+                .reasoning()
                 .map(|value| value.to_string())
                 .as_deref(),
             Some(level)
         );
+        match &definition.runtime {
+            AgentRuntimeSpec::ClaudeCli(config) => {
+                assert_eq!(config.effort(), Some(level));
+            }
+            _ => panic!("expected claude runtime"),
+        }
     }
 }

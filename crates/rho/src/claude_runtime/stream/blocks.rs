@@ -7,8 +7,8 @@ use serde_json::Value;
 use crate::run_artifacts::AttachmentEvent;
 
 use super::presentation::{
-    content_block_kind, fidelity_notice, mark_and_reasoning, mark_and_text, mark_slot_emitted,
-    push_block_slot, reasoning_effects, record_block, text_effects, tool_started_effects,
+    content_block_kind, fidelity_notice, mark_and_reasoning, mark_and_text, mark_complete_index,
+    mark_slot_emitted, push_block_slot, reasoning_effects, text_effects, tool_started_effects,
     ContentBlockKind,
 };
 use super::types::StreamEffect;
@@ -179,10 +179,10 @@ pub(super) fn emit_complete_block(
                 .to_string();
             if !tool_id.is_empty() && active_tools.contains(&tool_id) {
                 // Started via partials; still mark this complete index seen.
-                let _ = record_block(state, index);
+                let _ = mark_complete_index(state, index);
                 return Vec::new();
             }
-            if !record_block(state, index) {
+            if !mark_complete_index(state, index) {
                 return fidelity_notice(
                     "claude stream: dropped complete tool block; tracked block cap reached",
                 );

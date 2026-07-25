@@ -111,35 +111,18 @@ expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default
             }
         }
     }
-    let effort = if runtime == AgentRuntime::ClaudeCli {
-        reasoning.and_then(|level| crate::claude_runtime::spawn::claude_effort_flag(level))
-    } else {
-        None
-    };
-    let claude_model = if runtime == AgentRuntime::ClaudeCli {
-        match &model {
-            ModelPolicy::Inherit => None,
-            ModelPolicy::Select(selection)
-            | ModelPolicy::Prefer(selection)
-            | ModelPolicy::Require(selection) => Some(selection.model.clone()),
-        }
-    } else {
-        None
-    };
     Ok(AgentDefinition {
         id,
         description,
         prompt,
-        model,
         runtime: parse_runtime_spec(
             path,
             runtime,
             raw.tools,
             raw.inherit_claude_config.unwrap_or(false),
-            claude_model,
-            effort,
+            model,
+            reasoning,
         )?,
-        reasoning,
     })
 }
 
@@ -276,8 +259,8 @@ fn parse_runtime_spec(
     runtime: AgentRuntime,
     tools: Option<RawTools>,
     inherit_claude_config: bool,
-    claude_model: Option<String>,
-    effort: Option<&'static str>,
+    model: ModelPolicy,
+    reasoning: Option<ReasoningLevel>,
 ) -> Result<AgentRuntimeSpec, AgentCatalogError> {
     match runtime {
         AgentRuntime::Rho => {
@@ -292,7 +275,11 @@ fn parse_runtime_spec(
                 RawTools::All => ToolPolicy::All,
                 RawTools::Names(names) => ToolPolicy::Allow(validate_rho_tools(path, names)?),
             };
-            Ok(AgentRuntimeSpec::Rho { tools })
+            Ok(AgentRuntimeSpec::Rho {
+                tools,
+                model,
+                reasoning,
+            })
         }
         AgentRuntime::ClaudeCli => {
             let tools = match tools {
@@ -315,11 +302,17 @@ fn parse_runtime_spec(
                     }
                 }
             };
+            let model = match model {
+                ModelPolicy::Inherit => None,
+                ModelPolicy::Select(selection)
+                | ModelPolicy::Prefer(selection)
+                | ModelPolicy::Require(selection) => Some(selection.model),
+            };
             Ok(AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
                 tools,
                 inherit_claude_config,
-                model: claude_model,
-                effort,
+                model,
+                reasoning,
             }))
         }
     }

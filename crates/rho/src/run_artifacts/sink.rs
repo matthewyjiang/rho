@@ -57,6 +57,18 @@ pub(crate) struct RunArtifactSink {
     join: Option<JoinHandle<()>>,
 }
 
+fn starting_status(identity: &RunArtifactIdentity) -> RunStatus {
+    RunStatus {
+        state: RunState::Starting,
+        agent_id: Some(identity.agent_id.clone()),
+        agent_fingerprint: Some(identity.agent_fingerprint.clone()),
+        provider: Some(identity.provider.clone()),
+        model: Some(identity.model.clone()),
+        last_activity: Some("starting".into()),
+        ..RunStatus::default()
+    }
+}
+
 impl RunArtifactSink {
     /// Open a new run boundary: force-replace prior terminal status, write the
     /// prompt attachment when possible, and publish Starting.
@@ -66,17 +78,31 @@ impl RunArtifactSink {
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
     ) -> anyhow::Result<Self> {
-        let mut status = RunStatus {
-            state: RunState::Starting,
-            agent_id: Some(identity.agent_id.clone()),
-            agent_fingerprint: Some(identity.agent_fingerprint.clone()),
-            provider: Some(identity.provider.clone()),
-            model: Some(identity.model.clone()),
-            last_activity: Some("starting".into()),
-            ..RunStatus::default()
-        };
+        let status = starting_status(identity);
         subagent::initialize_status(&path, &status)?;
+        Self::from_started(path, status, prompt, status_tx)
+    }
 
+    /// Continue after the launcher already wrote the Starting boundary.
+    ///
+    /// Used when the executor stamps `result.json` before the task runs so the
+    /// handle and external attach see identity immediately. Skips a second
+    /// force-replace; still creates the journal and background writer.
+    pub(crate) fn continue_from(
+        path: PathBuf,
+        status: RunStatus,
+        prompt: &str,
+        status_tx: Option<watch::Sender<RunStatus>>,
+    ) -> anyhow::Result<Self> {
+        Self::from_started(path, status, prompt, status_tx)
+    }
+
+    fn from_started(
+        path: PathBuf,
+        mut status: RunStatus,
+        prompt: &str,
+        status_tx: Option<watch::Sender<RunStatus>>,
+    ) -> anyhow::Result<Self> {
         let (attachment, attachment_error) = match AttachmentWriter::create(&path) {
             Ok(mut writer) => {
                 match writer.write_event(&AttachmentEvent::Prompt(prompt.to_string())) {

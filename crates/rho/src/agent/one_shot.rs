@@ -82,7 +82,7 @@ fn validate_definition(
             definition.id
         );
     }
-    if definition.model != ModelPolicy::Inherit {
+    if *definition.model_policy() != ModelPolicy::Inherit {
         bail!(
             "one-shot agent definition '{}' must inherit its model",
             definition.id
@@ -92,6 +92,7 @@ fn validate_definition(
         &definition.runtime,
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(tools),
+            ..
         } if tools.is_empty()
     ) {
         bail!(
@@ -99,7 +100,7 @@ fn validate_definition(
             definition.id
         );
     }
-    definition.reasoning.ok_or_else(|| {
+    definition.reasoning().ok_or_else(|| {
         anyhow::anyhow!(
             "one-shot agent definition '{}' must set a reasoning level",
             definition.id

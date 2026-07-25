@@ -251,11 +251,11 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
                 id: crate::agent::AgentId::new("default").unwrap(),
                 description: "test".into(),
                 prompt: crate::agent::PromptPolicy::Extend(String::new()),
-                model: crate::agent::ModelPolicy::Inherit,
                 runtime: crate::agent::AgentRuntimeSpec::Rho {
                     tools: crate::agent::ToolPolicy::All,
+                    model: crate::agent::ModelPolicy::Inherit,
+                    reasoning: None,
                 },
-                reasoning: None,
             }),
             crate::app::agent_binding::AgentInvocation {
                 role: crate::app::agent_binding::AgentRole::InteractiveRoot,

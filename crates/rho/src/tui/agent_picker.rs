@@ -101,7 +101,7 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
             rho_providers::provider::model_reference(provider, model)
         )
     } else {
-        match &definition.model {
+        match definition.model_policy().as_ref() {
             ModelPolicy::Inherit => "inherit".to_string(),
             ModelPolicy::Prefer(selection) => format!("prefer {}", model_name(selection)),
             ModelPolicy::Require(selection) => format!("require {}", model_name(selection)),
@@ -109,18 +109,21 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         }
     };
     let reasoning = definition
-        .reasoning
+        .reasoning()
         .map(|level| level.to_string())
         .unwrap_or_else(|| "inherit".to_string());
     let (tools, inherit_claude_config) = match &definition.runtime {
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::All,
+            ..
         } => ("all".to_string(), "no"),
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(tools),
+            ..
         } if tools.is_empty() => ("none".to_string(), "no"),
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(tools),
+            ..
         } => (
             tools
                 .iter()

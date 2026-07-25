@@ -37,17 +37,25 @@ impl StatusSink {
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
     ) -> anyhow::Result<Self> {
-        let artifact = RunArtifactIdentity {
-            agent_id: identity.agent_id.clone(),
-            agent_fingerprint: identity.agent_fingerprint.clone(),
-            provider: "claude-code".into(),
-            model: identity
-                .model
-                .clone()
-                .unwrap_or_else(|| "claude-cli".into()),
-        };
+        let artifact = identity_to_artifact(identity);
         let mut inner = RunArtifactSink::open(path, &artifact, prompt, status_tx)?;
         inner.status.last_activity = Some("starting claude".into());
+        inner.publish();
+        Ok(Self {
+            inner,
+            pending_limits: RateLimitState::default(),
+        })
+    }
+
+    /// Resume after the executor already wrote the Starting boundary.
+    pub(crate) fn continue_from(
+        path: std::path::PathBuf,
+        mut status: RunStatus,
+        prompt: &str,
+        status_tx: Option<watch::Sender<RunStatus>>,
+    ) -> anyhow::Result<Self> {
+        status.last_activity = Some("starting claude".into());
+        let mut inner = RunArtifactSink::continue_from(path, status, prompt, status_tx)?;
         inner.publish();
         Ok(Self {
             inner,
@@ -172,5 +180,17 @@ fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
     }
     if let Some(error) = terminal.error.clone() {
         status.error = Some(error);
+    }
+}
+
+fn identity_to_artifact(identity: &ClaudeRunIdentity) -> RunArtifactIdentity {
+    RunArtifactIdentity {
+        agent_id: identity.agent_id.clone(),
+        agent_fingerprint: identity.agent_fingerprint.clone(),
+        provider: "claude-code".into(),
+        model: identity
+            .model
+            .clone()
+            .unwrap_or_else(|| "claude-cli".into()),
     }
 }
