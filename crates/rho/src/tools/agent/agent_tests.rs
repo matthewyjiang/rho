@@ -116,10 +116,12 @@ fn background_guidance_is_gated_by_capability() {
         root.path(),
         BackgroundSubagents::Disabled,
     );
-    assert!(enabled
-        .spec()
-        .description
-        .contains("delivered automatically"));
+    assert!(enabled.spec().description.contains("background=true"));
+    assert!(enabled.spec().description.contains("run one at a time"));
+    assert_eq!(
+        enabled.spec().input_schema["properties"]["background"]["description"],
+        "Required for parallel delegated work. Starts the run and returns an id immediately. Foreground calls (background=false or omitted) wait for completion and run one at a time."
+    );
     let disabled_spec = disabled.spec();
     assert!(!disabled_spec.description.contains("background"));
     assert!(disabled_spec.input_schema["properties"]
@@ -327,6 +329,22 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
     );
 
+    let background = agent
+        .prepare(
+            invocation(serde_json::json!({
+                "agent_id": "default",
+                "prompt": "task",
+                "background": true,
+            })),
+            preparation_context(root.path()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        one_access(&background),
+        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
+    );
+
     let list = agents
         .prepare(
             invocation(serde_json::json!({"action": "list"})),
@@ -362,4 +380,37 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         one_access(&stop),
         (ToolResourceKind::ManagerState, ToolAccessMode::Exclusive)
     );
+}
+
+#[tokio::test]
+async fn parallel_background_launches_register_together() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = manager(root.path());
+    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let first = call_agent(
+        &tool,
+        root.path(),
+        serde_json::json!({
+            "agent_id": "default",
+            "prompt": "first background task",
+            "background": true,
+        }),
+    );
+    let second = call_agent(
+        &tool,
+        root.path(),
+        serde_json::json!({
+            "agent_id": "default",
+            "prompt": "second background task",
+            "background": true,
+        }),
+    );
+    let (first, second) = tokio::join!(first, second);
+    let runs = manager.list();
+    assert_eq!(runs.len(), 2, "both background launches should register");
+    assert!(first.content().contains("started in background"));
+    assert!(second.content().contains("started in background"));
+    let ids = runs.iter().map(|run| run.id.as_str()).collect::<Vec<_>>();
+    assert!(ids.iter().any(|id| first.content().contains(id)));
+    assert!(ids.iter().any(|id| second.content().contains(id)));
 }

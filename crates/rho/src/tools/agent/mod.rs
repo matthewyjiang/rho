@@ -31,7 +31,6 @@ use super::agent_output::{
     format_snapshot, SnapshotFormat,
 };
 
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBAGENT_MANAGER: &str = "subagents";
 const AGENT_TOOL: &str = "agent";
@@ -454,27 +453,9 @@ impl AgentTool {
                 )
             })?,
             () = context.cancellation().cancelled() => {
-                // Foreground delegated runs must stop when the parent run is
-                // interrupted instead of leaving an orphan behind.
-                loop {
-                    let running: Vec<String> = self
-                        .manager
-                        .list()
-                        .into_iter()
-                        .filter(|snapshot| !snapshot.done && !snapshot.background)
-                        .map(|snapshot| snapshot.id)
-                        .collect();
-                    if !running.is_empty() {
-                        for id in running {
-                            let _ = self.manager.stop(&id).await;
-                        }
-                        break;
-                    }
-                    tokio::select! {
-                        _ = &mut wait => break,
-                        () = tokio::time::sleep(POLL_INTERVAL) => {}
-                    }
-                }
+                // Foreground runs are exclusive, so this tool owns run_id for
+                // the wait. Stop only that handle on parent cancellation.
+                let _ = self.manager.stop(&run_id).await;
                 return Err(ToolError::cancelled());
             }
         };
@@ -522,13 +503,13 @@ impl Tool for AgentTool {
         if self.background_subagents.is_enabled() {
             properties["background"] = json!({
                 "type": "boolean",
-                "description": "Run concurrently and return an id immediately"
+                "description": "Required for parallel delegated work. Starts the run and returns an id immediately. Foreground calls (background=false or omitted) wait for completion and run one at a time."
             });
         }
         // Behavioral guidance must match registered capabilities: describe
         // background delivery only when background runs can actually start.
         let background_guidance = if self.background_subagents.is_enabled() {
-            " A background run's completion is delivered automatically at the next turn boundary (multiple completions arrive batched in one notification): after starting one, end your turn once no other work remains - never sleep or poll for the result."
+            " Foreground calls wait for completion and run one at a time. For parallel work, set background=true on each call in the same batch; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
         } else {
             ""
         };
@@ -562,9 +543,15 @@ impl Tool for AgentTool {
         let args = parse_agent_args(invocation.into_arguments());
         Box::pin(async move {
             let args = args?;
-            // Launch and wait mutate the shared subagent registry.
-            let access =
-                ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER));
+            // Foreground waits hold the manager resource for the whole run and
+            // stay exclusive so batch FG agents serialize. Background returns
+            // after registration; shared access lets several start together.
+            // Stop stays exclusive and still serializes against either mode.
+            let access = if args.background {
+                ToolResourceAccess::shared(ToolResource::manager_state(SUBAGENT_MANAGER))
+            } else {
+                ToolResourceAccess::exclusive(ToolResource::manager_state(SUBAGENT_MANAGER))
+            };
             Ok(PreparedToolInvocation::resource_aware(
                 [access],
                 [],
