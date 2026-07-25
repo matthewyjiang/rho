@@ -4,7 +4,7 @@
 //! TUI and the Rho SDK event translator.
 
 mod app;
-mod sdk_writer;
+pub(crate) mod sdk_writer;
 
 pub(crate) use app::run;
-pub(crate) use sdk_writer::SdkAttachmentWriter;
+pub(crate) use sdk_writer::{translate_run_event, SdkAttachmentWriter};

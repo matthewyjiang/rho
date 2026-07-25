@@ -22,7 +22,7 @@ mod agent_picker;
 mod app_construct;
 mod app_state;
 mod approval;
-mod attachment;
+pub(crate) mod attachment;
 mod background_polls;
 mod clipboard;
 mod command_actions;
@@ -37,7 +37,7 @@ mod config_picker;
 mod context_handoff;
 mod copy_interaction;
 mod doctor;
-mod event_adapter;
+pub(crate) mod event_adapter;
 mod external_editor;
 mod feed_image;
 mod file_palette;
@@ -242,7 +242,7 @@ pub struct TuiResult {
     pub resume_session_id: Option<String>,
     exit_summary: Option<String>,
 }
-pub(crate) use attachment::{run as run_attachment, SdkAttachmentWriter};
+pub(crate) use attachment::{run as run_attachment, translate_run_event};
 
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();

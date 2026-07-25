@@ -11,7 +11,7 @@ use {
 };
 
 use super::{
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime},
+    agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime, CapacityClass},
     automation::{self, RunArtifactIdentity, RunReporter},
     subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
 };
@@ -161,16 +161,8 @@ impl AgentExecutor {
             &config,
         )?;
 
-        let (provider, model_label, needs_claude_permit) = match bound.runtime() {
-            BoundRuntime::ClaudeCli { model, .. } => (
-                "claude-code".into(),
-                model.clone().unwrap_or_else(|| "claude-cli".into()),
-                true,
-            ),
-            BoundRuntime::Rho { config, .. } => {
-                (config.provider.clone(), config.model.clone(), false)
-            }
-        };
+        let (provider, model_label) = bound.runtime().artifact_labels();
+        let needs_claude_permit = matches!(bound.runtime().capacity_class(), CapacityClass::Claude);
 
         let initial = RunStatus {
             state: RunState::Starting,
@@ -180,6 +172,8 @@ impl AgentExecutor {
             model: Some(model_label.clone()),
             ..RunStatus::default()
         };
+        // Claude StatusSink force-replaces this at open; Rho reporter does too.
+        // Write Starting here so the handle can observe status before the task runs.
         subagent::initialize_status(&request.output_file, &initial)?;
         let (status_tx, status) = tokio::sync::watch::channel(initial);
         let (completion_tx, completion) = tokio::sync::watch::channel(false);
@@ -224,60 +218,38 @@ impl AgentExecutor {
                 return Ok(());
             };
 
-            match bound.runtime().clone() {
-                BoundRuntime::ClaudeCli {
-                    model,
-                    tools,
-                    inherit_claude_config,
-                    permission_mode,
-                    max_turns,
-                    effort,
-                } => {
-                    crate::claude_runtime::session::run_session(
-                        crate::claude_runtime::session::ClaudeSessionRequest {
-                            system_prompt: bound.definition().prompt.clone(),
-                            identity: crate::claude_runtime::session::ClaudeRunIdentity {
-                                agent_id: bound.id().to_string(),
-                                agent_fingerprint: bound.fingerprint().to_string(),
-                                model: model.clone(),
-                            },
-                            model,
-                            tools,
-                            inherit_claude_config,
-                            permission_mode,
-                            max_turns,
-                            effort,
-                            prompt,
-                            output_file,
-                            cwd,
-                            cancellation: task_cancellation,
-                            status_tx: Some(task_status_tx),
-                            overrides: Default::default(),
-                        },
-                    )
-                    .await
-                }
-                BoundRuntime::Rho {
-                    config: bound_config,
-                    ..
-                } => {
-                    run_rho_agent(RhoAgentRun {
-                        bound,
-                        config: *bound_config,
-                        config_path,
-                        cwd,
-                        prompt,
-                        output_file,
-                        run_id,
-                        parent_session_id,
-                        questionnaire_available,
-                        host_input,
-                        cancellation: task_cancellation,
-                        status_tx: task_status_tx,
-                    })
-                    .await
-                }
+            if let Some(session) = bound.clone().into_claude_session(
+                prompt.clone(),
+                output_file.clone(),
+                cwd.clone(),
+                task_cancellation.clone(),
+                Some(task_status_tx.clone()),
+            ) {
+                return crate::claude_runtime::session::run_session(session).await;
             }
+
+            let BoundRuntime::Rho {
+                config: bound_config,
+                ..
+            } = bound.runtime().clone()
+            else {
+                anyhow::bail!("bound runtime was neither Claude nor Rho");
+            };
+            run_rho_agent(RhoAgentRun {
+                bound,
+                config: *bound_config,
+                config_path,
+                cwd,
+                prompt,
+                output_file,
+                run_id,
+                parent_session_id,
+                questionnaire_available,
+                host_input,
+                cancellation: task_cancellation,
+                status_tx: task_status_tx,
+            })
+            .await
         });
 
         let failure_status = status.clone();

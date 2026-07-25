@@ -47,10 +47,16 @@ fn parses_claude_cli_runtime_and_tools_independent_of_key_order() {
 
     assert_eq!(
         tools_first.runtime,
-        AgentRuntimeSpec::ClaudeCli {
-            tools: vec!["Read".into(), "Edit".into(), "Bash(git *)".into()],
+        AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+            tools: crate::agent::ClaudeToolPolicy::Allow(vec![
+                "Read".into(),
+                "Edit".into(),
+                "Bash(git *)".into()
+            ]),
             inherit_claude_config: false,
-        }
+            model: None,
+            effort: None,
+        })
     );
     assert_eq!(tools_first.fingerprint(), runtime_first.fingerprint());
 }
@@ -99,13 +105,15 @@ fn allows_nested_parentheses_inside_claude_tool_specifier() {
     .unwrap();
     assert_eq!(
         definition.runtime,
-        AgentRuntimeSpec::ClaudeCli {
-            tools: vec![
+        AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+            tools: crate::agent::ClaudeToolPolicy::Allow(vec![
                 "Bash(git log --format=%(refname))".into(),
                 "Bash(git *)".into(),
-            ],
+            ]),
             inherit_claude_config: false,
-        }
+            model: None,
+            effort: None,
+        })
     );
 }
 
@@ -183,10 +191,12 @@ fn omits_claude_tools_as_empty_allowlist() {
     let definition = parse("---\ndescription: demo\nruntime: claude-cli\n---\n").unwrap();
     assert_eq!(
         definition.runtime,
-        AgentRuntimeSpec::ClaudeCli {
-            tools: Vec::new(),
+        AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+            tools: crate::agent::ClaudeToolPolicy::None,
             inherit_claude_config: false,
-        }
+            model: None,
+            effort: None,
+        })
     );
 }
 
@@ -211,6 +221,12 @@ fn allows_model_and_rejects_provider_on_claude_runtime() {
             model: "claude-opus-4-6".into(),
         })
     );
+    match &definition.runtime {
+        AgentRuntimeSpec::ClaudeCli(config) => {
+            assert_eq!(config.model.as_deref(), Some("claude-opus-4-6"));
+        }
+        _ => panic!("expected claude runtime"),
+    }
 
     let error = parse(
         "---\ndescription: demo\nruntime: claude-cli\nprovider: anthropic\nmodel: claude-opus-4-6\ntools: [Read]\n---\n",
@@ -230,10 +246,10 @@ fn inherit_claude_config_is_opt_in_for_claude_runtime_only() {
     .unwrap();
     assert!(matches!(
         definition.runtime,
-        AgentRuntimeSpec::ClaudeCli {
+        AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
             inherit_claude_config: true,
             ..
-        }
+        })
     ));
 
     let rejected =
@@ -289,10 +305,12 @@ fn parses_claude_indented_tool_list_with_patterns() {
     .unwrap();
     assert_eq!(
         definition.runtime,
-        AgentRuntimeSpec::ClaudeCli {
-            tools: vec!["Read".into(), "Bash(git *)".into()],
+        AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+            tools: crate::agent::ClaudeToolPolicy::Allow(vec!["Read".into(), "Bash(git *)".into()]),
             inherit_claude_config: false,
-        }
+            model: None,
+            effort: None,
+        })
     );
     assert!(matches!(definition.prompt, PromptPolicy::Extend(_)));
 }

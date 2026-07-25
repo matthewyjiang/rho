@@ -21,6 +21,13 @@ pub(crate) struct AgentInvocation {
     pub(crate) available_tools: AgentCapabilities,
 }
 
+/// Capacity class for nested concurrency pools.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CapacityClass {
+    Rho,
+    Claude,
+}
+
 /// Runtime-specific values produced by binding.
 ///
 /// Callers must match exhaustively so Rho-shaped config and Claude spawn data
@@ -46,6 +53,26 @@ pub(crate) enum BoundRuntime {
         /// `None` means omit the flag (Claude inherit).
         effort: Option<&'static str>,
     },
+}
+
+impl BoundRuntime {
+    pub(crate) fn capacity_class(&self) -> CapacityClass {
+        match self {
+            Self::Rho { .. } => CapacityClass::Rho,
+            Self::ClaudeCli { .. } => CapacityClass::Claude,
+        }
+    }
+
+    /// Provider/model labels for the initial status snapshot.
+    pub(crate) fn artifact_labels(&self) -> (String, String) {
+        match self {
+            Self::ClaudeCli { model, .. } => (
+                "claude-code".into(),
+                model.clone().unwrap_or_else(|| "claude-cli".into()),
+            ),
+            Self::Rho { config, .. } => (config.provider.clone(), config.model.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +118,48 @@ impl BoundAgent {
     pub(crate) fn prompt(&self) -> &PromptPolicy {
         &self.definition.prompt
     }
+
+    /// Build the Claude session request for a bound Claude runtime.
+    pub(crate) fn into_claude_session(
+        self,
+        prompt: String,
+        output_file: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+        cancellation: rho_tools::cancellation::RunCancellation,
+        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
+    ) -> Option<crate::claude_runtime::session::ClaudeSessionRequest> {
+        let BoundRuntime::ClaudeCli {
+            model,
+            tools,
+            inherit_claude_config,
+            permission_mode,
+            max_turns,
+            effort,
+        } = self.runtime
+        else {
+            return None;
+        };
+        Some(crate::claude_runtime::session::ClaudeSessionRequest {
+            system_prompt: self.definition.prompt.clone(),
+            identity: crate::claude_runtime::session::ClaudeRunIdentity {
+                agent_id: self.definition.id.to_string(),
+                agent_fingerprint: self.fingerprint.to_string(),
+                model: model.clone(),
+            },
+            model,
+            tools,
+            inherit_claude_config,
+            permission_mode,
+            max_turns,
+            effort,
+            prompt,
+            output_file,
+            cwd,
+            cancellation,
+            status_tx,
+            overrides: Default::default(),
+        })
+    }
 }
 
 pub(crate) struct AgentBinder;
@@ -107,18 +176,9 @@ impl AgentBinder {
                 config: Box::new(bind_rho_config(&definition, host_config)?),
                 capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
             },
-            AgentRuntimeSpec::ClaudeCli {
-                tools,
-                inherit_claude_config,
-            } => bind_claude_runtime(
-                &definition,
-                ClaudeRuntimeSettings {
-                    tools,
-                    inherit_claude_config: *inherit_claude_config,
-                },
-                &invocation,
-                host_config,
-            )?,
+            AgentRuntimeSpec::ClaudeCli(config) => {
+                bind_claude_runtime(&definition, config, &invocation, host_config)?
+            }
         };
         Ok(BoundAgent {
             definition,
@@ -224,16 +284,9 @@ fn bind_rho_config(definition: &AgentDefinition, host_config: &Config) -> anyhow
     Ok(config)
 }
 
-/// Claude-only definition settings, already separated from Rho tool policy by
-/// [`AgentRuntimeSpec`].
-struct ClaudeRuntimeSettings<'a> {
-    tools: &'a [String],
-    inherit_claude_config: bool,
-}
-
 fn bind_claude_runtime(
     definition: &AgentDefinition,
-    settings: ClaudeRuntimeSettings<'_>,
+    config: &crate::agent::ClaudeAgentConfig,
     invocation: &AgentInvocation,
     host_config: &Config,
 ) -> anyhow::Result<BoundRuntime> {
@@ -241,58 +294,24 @@ fn bind_claude_runtime(
         AgentRole::Delegated => {}
         AgentRole::InteractiveRoot | AgentRole::AutomationRoot => {
             anyhow::bail!(
-                "agent '{}': runtime claude-cli is delegated-only; \
-use it through the agent tool, not as an interactive or automation root",
+                "agent '{}': runtime claude-cli is delegated-only; use it through the agent tool, not as an interactive or automation root",
                 definition.id
             );
         }
     }
 
-    // Claude model is pass-through only. No alias resolution and no parent
-    // provider/model mutation. Rho-style `@alias` references are rejected
-    // rather than resolved through the host alias table.
-    let model = match &definition.model {
-        ModelPolicy::Inherit => None,
-        ModelPolicy::Select(selection)
-        | ModelPolicy::Prefer(selection)
-        | ModelPolicy::Require(selection) => {
-            if selection.model.starts_with('@') {
-                anyhow::bail!(
-                    "agent '{}': runtime claude-cli does not resolve Rho model aliases; \
-set model to a Claude model name or alias (for example opus), not '{}'",
-                    definition.id,
-                    selection.model
-                );
-            }
-            Some(selection.model.clone())
-        }
-    };
-    // Reuse definition `reasoning:` as Claude `--effort`. Parser already rejects
-    // off/minimal; keep the same gate here for constructed definitions.
-    let effort = match definition.reasoning {
-        Some(level) => Some(
-            crate::claude_runtime::spawn::claude_effort_flag(level).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "agent '{}': runtime claude-cli reasoning '{level}' is not a Claude \
-effort level; use one of: low, medium, high, xhigh, max (or omit for Claude default)",
-                    definition.id
-                )
-            })?,
-        ),
-        None => None,
-    };
+    // Config is validated at parse time. Binder only snapshots host permission
+    // mode and the shared step budget.
     Ok(BoundRuntime::ClaudeCli {
-        model,
-        tools: settings.tools.to_vec(),
-        inherit_claude_config: settings.inherit_claude_config,
+        model: config.model.clone(),
+        tools: config.tools.clone().into_vec(),
+        inherit_claude_config: config.inherit_claude_config,
         permission_mode: host_config.permission_mode,
-        // Same application step budget Rho delegated agents use when no
-        // explicit max_steps override is present.
         max_turns: super::sdk_config::run_step_limit()
             .get()
             .try_into()
             .expect("run step limit fits in u64"),
-        effort,
+        effort: config.effort,
     })
 }
 

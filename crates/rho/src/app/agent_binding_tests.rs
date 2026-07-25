@@ -249,15 +249,23 @@ fn undefined_agent_model_alias_names_agent_and_reference() {
 }
 
 fn claude_definition(model: ModelPolicy) -> Arc<AgentDefinition> {
+    let claude_model = match &model {
+        ModelPolicy::Inherit => None,
+        ModelPolicy::Select(selection)
+        | ModelPolicy::Prefer(selection)
+        | ModelPolicy::Require(selection) => Some(selection.model.clone()),
+    };
     Arc::new(AgentDefinition {
         id: AgentId::new("claude-test").unwrap(),
         description: "claude".into(),
         prompt: PromptPolicy::Replace("plan".into()),
         model,
-        runtime: AgentRuntimeSpec::ClaudeCli {
-            tools: vec!["Read".into(), "Bash(git *)".into()],
+        runtime: AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+            tools: crate::agent::ClaudeToolPolicy::Allow(vec!["Read".into(), "Bash(git *)".into()]),
             inherit_claude_config: true,
-        },
+            model: claude_model,
+            effort: None,
+        }),
         reasoning: None,
     })
 }
@@ -354,8 +362,9 @@ fn claude_runtime_rejects_root_roles() {
 }
 
 #[test]
-fn claude_runtime_rejects_rho_style_model_alias() {
-    let error = AgentBinder::bind(
+fn claude_runtime_trusts_validated_config_model() {
+    // Alias rejection is a parse-time gate. Constructed configs are trusted.
+    let bound = AgentBinder::bind(
         claude_definition(ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "@deep".into(),
@@ -366,19 +375,20 @@ fn claude_runtime_rejects_rho_style_model_alias() {
         },
         &Config::default(),
     )
-    .unwrap_err();
-    let message = error.to_string();
-    assert!(
-        message.contains("does not resolve Rho model aliases"),
-        "{message}"
-    );
-    assert!(message.contains("@deep"), "{message}");
+    .unwrap();
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli { model, .. } => assert_eq!(model.as_deref(), Some("@deep")),
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
 }
 
 #[test]
 fn claude_runtime_maps_reasoning_to_effort() {
     let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
     definition.reasoning = Some(rho_sdk::ReasoningLevel::High);
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
+        config.effort = Some("high");
+    }
     let bound = AgentBinder::bind(
         Arc::new(definition),
         AgentInvocation {
@@ -395,10 +405,13 @@ fn claude_runtime_maps_reasoning_to_effort() {
 }
 
 #[test]
-fn claude_runtime_rejects_unsupported_reasoning_effort() {
+fn claude_runtime_omits_effort_when_config_has_none() {
     let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
     definition.reasoning = Some(rho_sdk::ReasoningLevel::Minimal);
-    let error = AgentBinder::bind(
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
+        config.effort = None;
+    }
+    let bound = AgentBinder::bind(
         Arc::new(definition),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -406,13 +419,11 @@ fn claude_runtime_rejects_unsupported_reasoning_effort() {
         },
         &Config::default(),
     )
-    .unwrap_err();
-    let message = error.to_string();
-    assert!(
-        message.contains("not a Claude") || message.contains("effort"),
-        "{message}"
-    );
-    assert!(message.contains("minimal"), "{message}");
+    .unwrap();
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli { effort, .. } => assert!(effort.is_none()),
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
 }
 
 #[test]

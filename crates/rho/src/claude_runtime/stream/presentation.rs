@@ -11,10 +11,11 @@ use super::format::{
     append_tail, bound_delta_text, bound_text, stringify_content, truncate_payload_lines,
     LAST_TEXT_BYTES, MAX_TOOL_DISPLAY_LINES,
 };
+use super::protocol::{ErrorMessage, RateLimitMessage, SystemMessage};
 use super::types::{
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult, MAX_RESULT_CHARS,
 };
-use super::{describe_rate_limit, MessageStreamState, StreamEnvelope, CLAUDE_TOOL_DISPLAY_STYLE};
+use super::{describe_rate_limit, MessageStreamState, CLAUDE_TOOL_DISPLAY_STYLE};
 
 /// Bound on content-block indices recorded per message.
 pub(super) const MAX_BLOCKS_PER_MESSAGE: usize = 256;
@@ -282,7 +283,7 @@ pub(super) fn fidelity_notice(message: &str) -> Vec<StreamEffect> {
     ))]
 }
 
-pub(super) fn map_system(message: StreamEnvelope) -> Vec<StreamEffect> {
+pub(super) fn map_system(message: SystemMessage) -> Vec<StreamEffect> {
     let mut effects = Vec::new();
     // `system`/`status` is a progress heartbeat under the system envelope.
     // Keep session id if present, but do not emit a notice per pulse.
@@ -314,7 +315,7 @@ pub(super) fn map_system(message: StreamEnvelope) -> Vec<StreamEffect> {
     effects
 }
 
-pub(super) fn map_rate_limit(message: StreamEnvelope) -> Vec<StreamEffect> {
+pub(super) fn map_rate_limit(message: RateLimitMessage) -> Vec<StreamEffect> {
     let Some(info) = message.rate_limit_info else {
         return vec![StreamEffect::Attachment(AttachmentEvent::Notice(
             "claude stream: rate_limit_event without rate_limit_info".into(),
@@ -327,7 +328,7 @@ pub(super) fn map_rate_limit(message: StreamEnvelope) -> Vec<StreamEffect> {
     ]
 }
 
-pub(super) fn map_error_message(message: StreamEnvelope) -> Vec<StreamEffect> {
+pub(super) fn map_error_message(message: ErrorMessage) -> Vec<StreamEffect> {
     // Protocol `type:error` is pending metadata only. Session waits for child
     // exit, combines this with any later `result`/exit, and emits exactly one
     // terminal Failed/Completed attachment. Never terminalize RunState here.
@@ -359,8 +360,6 @@ pub(super) fn map_error_message(message: StreamEnvelope) -> Vec<StreamEffect> {
             total_cost_usd: None,
             permission_denials: Vec::new(),
             stop_reason: None,
-            subtype: Some("error".into()),
-            is_error: Some(true),
         }),
     ]
 }

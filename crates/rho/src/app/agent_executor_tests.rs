@@ -539,10 +539,12 @@ fn update_model_does_not_alter_bound_claude_runtime() {
             provider: None,
             model: "opus".into(),
         }),
-        runtime: AgentRuntimeSpec::ClaudeCli {
-            tools: vec!["Read".into()],
+        runtime: AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+            tools: crate::agent::ClaudeToolPolicy::Allow(vec!["Read".into()]),
             inherit_claude_config: false,
-        },
+            model: Some("opus".into()),
+            effort: None,
+        }),
         reasoning: None,
     });
 

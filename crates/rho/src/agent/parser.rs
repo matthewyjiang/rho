@@ -5,8 +5,9 @@ use rho_providers::reasoning::ReasoningLevel;
 use super::{
     catalog::AgentCatalogError,
     definition::{
-        AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, ModelPolicy, ModelSelection,
-        PromptPolicy, ToolCapability, ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
+        AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, ClaudeAgentConfig,
+        ClaudeToolPolicy, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability,
+        ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
     },
 };
 
@@ -110,6 +111,21 @@ expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default
             }
         }
     }
+    let effort = if runtime == AgentRuntime::ClaudeCli {
+        reasoning.and_then(|level| crate::claude_runtime::spawn::claude_effort_flag(level))
+    } else {
+        None
+    };
+    let claude_model = if runtime == AgentRuntime::ClaudeCli {
+        match &model {
+            ModelPolicy::Inherit => None,
+            ModelPolicy::Select(selection)
+            | ModelPolicy::Prefer(selection)
+            | ModelPolicy::Require(selection) => Some(selection.model.clone()),
+        }
+    } else {
+        None
+    };
     Ok(AgentDefinition {
         id,
         description,
@@ -120,6 +136,8 @@ expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default
             runtime,
             raw.tools,
             raw.inherit_claude_config.unwrap_or(false),
+            claude_model,
+            effort,
         )?,
         reasoning,
     })
@@ -258,6 +276,8 @@ fn parse_runtime_spec(
     runtime: AgentRuntime,
     tools: Option<RawTools>,
     inherit_claude_config: bool,
+    claude_model: Option<String>,
+    effort: Option<&'static str>,
 ) -> Result<AgentRuntimeSpec, AgentCatalogError> {
     match runtime {
         AgentRuntime::Rho => {
@@ -276,7 +296,7 @@ fn parse_runtime_spec(
         }
         AgentRuntime::ClaudeCli => {
             let tools = match tools {
-                None => Vec::new(),
+                None => ClaudeToolPolicy::None,
                 Some(RawTools::All) => {
                     return Err(AgentCatalogError::at_field(
                         path.to_path_buf(),
@@ -286,12 +306,21 @@ fn parse_runtime_spec(
                         ),
                     ))
                 }
-                Some(RawTools::Names(names)) => validate_claude_tools(path, names)?,
+                Some(RawTools::Names(names)) => {
+                    let names = validate_claude_tools(path, names)?;
+                    if names.is_empty() {
+                        ClaudeToolPolicy::None
+                    } else {
+                        ClaudeToolPolicy::Allow(names)
+                    }
+                }
             };
-            Ok(AgentRuntimeSpec::ClaudeCli {
+            Ok(AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
                 tools,
                 inherit_claude_config,
-            })
+                model: claude_model,
+                effort,
+            }))
         }
     }
 }

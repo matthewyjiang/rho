@@ -35,8 +35,6 @@ fn success_terminal() -> TerminalResult {
         total_cost_usd: Some(0.12),
         permission_denials: Vec::new(),
         stop_reason: None,
-        subtype: Some("success".into()),
-        is_error: Some(false),
     }
 }
 

@@ -129,16 +129,17 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
                 .join(", "),
             "no",
         ),
-        AgentRuntimeSpec::ClaudeCli {
-            tools,
-            inherit_claude_config,
-        } => (
-            if tools.is_empty() {
+        AgentRuntimeSpec::ClaudeCli(config) => (
+            if config.tools.as_slice().is_empty() {
                 "none".to_string()
             } else {
-                tools.join(", ")
+                config.tools.as_slice().join(", ")
             },
-            if *inherit_claude_config { "yes" } else { "no" },
+            if config.inherit_claude_config {
+                "yes"
+            } else {
+                "no"
+            },
         ),
     };
     let runtime = definition.runtime.runtime().to_string();

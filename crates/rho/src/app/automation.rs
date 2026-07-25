@@ -17,12 +17,11 @@ use {
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
     crate::prompt,
-    crate::subagent::{self, RunState, RunStatus},
+    crate::subagent::{RunState, RunStatus},
     crate::tools::{
         agent::BackgroundSubagents,
         sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
     },
-    crate::tui::SdkAttachmentWriter,
     rho_providers::providers::build_automation_provider,
 };
 
@@ -584,27 +583,15 @@ async fn complete_run(
     }
 }
 
-pub(crate) struct RunArtifactIdentity {
-    pub(crate) agent_id: String,
-    pub(crate) agent_fingerprint: String,
-    pub(crate) provider: String,
-    pub(crate) model: String,
-}
+pub(crate) use crate::run_artifacts::RunArtifactIdentity;
 
 /// Maintains the `--output-file` status contract for subagent runs and
 /// streams progress to stdout so a watching pane shows live activity.
 pub(crate) struct RunReporter {
-    path: PathBuf,
-    status: RunStatus,
-    attachment: Option<SdkAttachmentWriter>,
+    sink: crate::run_artifacts::RunArtifactSink,
+    adapter: crate::tui::event_adapter::SdkEventAdapter,
     stream_output: bool,
-    status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
-    last_write: std::time::Instant,
 }
-
-/// Longest a status-file write is deferred while text streams.
-const REPORT_THROTTLE: std::time::Duration = std::time::Duration::from_secs(2);
-const LAST_TEXT_BYTES: usize = 400;
 
 impl RunReporter {
     pub(crate) fn new(
@@ -615,102 +602,89 @@ impl RunReporter {
         stream_output: bool,
         status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
     ) -> anyhow::Result<Self> {
-        let status = RunStatus {
-            state: RunState::Starting,
-            agent_id: Some(identity.agent_id),
-            agent_fingerprint: Some(identity.agent_fingerprint),
-            provider: Some(identity.provider),
-            model: Some(identity.model),
-            ..RunStatus::default()
+        let artifact = crate::run_artifacts::RunArtifactIdentity {
+            agent_id: identity.agent_id,
+            agent_fingerprint: identity.agent_fingerprint,
+            provider: identity.provider,
+            model: identity.model,
         };
-        // Run boundary: deliberately replace any prior terminal result.json.
-        subagent::initialize_status(&path, &status)?;
-        let attachment = match SdkAttachmentWriter::new(&path, cwd, prompt) {
-            Ok(attachment) => Some(attachment),
-            Err(error) => {
-                let mut status = status;
-                status.attachment_error = Some(format!("could not record attach output: {error}"));
-                subagent::write_status(&path, &status)?;
-                return Ok(Self {
-                    path,
-                    status,
-                    attachment: None,
-                    stream_output,
-                    status_tx,
-                    last_write: std::time::Instant::now(),
-                });
-            }
-        };
+        let sink = crate::run_artifacts::RunArtifactSink::open(path, &artifact, prompt, status_tx)?;
         Ok(Self {
-            path,
-            status,
-            attachment,
+            sink,
+            adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
             stream_output,
-            status_tx,
-            last_write: std::time::Instant::now(),
         })
     }
 
     pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {
         use rho_sdk::RunEvent;
 
-        if let Some(attachment) = self.attachment.as_mut() {
-            if let Err(error) = attachment.on_event(event) {
-                self.status.attachment_error =
-                    Some(format!("could not record attach output: {error}"));
-                self.attachment = None;
-                self.write();
+        for attachment in crate::tui::translate_run_event(&mut self.adapter, event) {
+            match &attachment {
+                crate::run_artifacts::AttachmentEvent::AssistantTextDelta(text)
+                    if !text.is_empty() =>
+                {
+                    self.sink.append_last_text(text);
+                    self.sink.write_attachment(attachment);
+                    self.sink.publish_throttled();
+                }
+                _ => {
+                    self.sink.write_attachment(attachment);
+                    self.sink.publish();
+                }
             }
         }
         match event {
             RunEvent::StepStarted { step } => {
-                self.status.state = RunState::Running;
-                self.status.turns = *step as u64;
-                self.write();
+                self.sink.status.state = RunState::Running;
+                self.sink.status.turns = *step as u64;
+                self.sink.publish();
             }
             RunEvent::ToolStarted { name, .. } => {
-                self.status.last_activity = Some(format!("tool: {name}"));
+                self.sink.status.last_activity = Some(format!("tool: {name}"));
                 self.stream(&format!("\n[tool] {name}\n"));
-                self.write();
+                self.sink.publish();
             }
             RunEvent::HostInputRequested { request }
             | RunEvent::ToolHostInputRequested { request, .. } => {
-                self.status.last_activity =
+                self.sink.status.last_activity =
                     Some(format!("waiting for questionnaire: {}", request.title()));
-                self.write();
+                self.sink.publish();
             }
             RunEvent::AssistantTextDelta { text } => {
-                self.status.last_activity = Some("assistant text".into());
-                append_tail(
-                    self.status.last_text.get_or_insert_with(String::new),
-                    text,
-                    LAST_TEXT_BYTES,
-                );
+                self.sink.status.last_activity = Some("assistant text".into());
                 self.stream(text);
-                self.write_throttled();
+                // Attachment path already published throttled when translated.
             }
             RunEvent::ProviderStreamReset { .. } => {
-                self.status.last_activity = Some("retrying provider response".into());
-                self.status.last_text = None;
+                self.sink.status.last_activity = Some("retrying provider response".into());
+                self.sink.status.last_text = None;
                 self.stream("\n[provider response discarded; retrying]\n");
-                self.write();
+                self.sink.publish();
             }
             RunEvent::UsageUpdated { usage } => {
-                self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
-                self.status.output_tokens = usage.output_tokens.unwrap_or(0);
+                self.sink.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
+                self.sink.status.output_tokens = usage.output_tokens.unwrap_or(0);
             }
             _ => {}
         }
     }
 
+    pub(crate) fn status(&self) -> &RunStatus {
+        &self.sink.status
+    }
+
+    pub(super) fn write(&mut self) {
+        self.sink.publish();
+    }
+
     pub(crate) fn finish(&mut self, result: &anyhow::Result<rho_sdk::RunOutcome>) {
         match result {
             Ok(outcome) => {
-                self.status.state = RunState::Ok;
-                self.status.result = Some(outcome.text().to_string());
                 let usage = outcome.usage();
-                self.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
-                self.status.output_tokens = usage.output_tokens.unwrap_or(0);
+                self.sink.status.input_tokens = usage.total_input_tokens().unwrap_or(0);
+                self.sink.status.output_tokens = usage.output_tokens.unwrap_or(0);
+                self.sink.finish_ok(Some(outcome.text().to_string()));
             }
             Err(error)
                 if error.is::<AutomationInterrupted>()
@@ -722,19 +696,12 @@ impl RunReporter {
                     })
                     || error.is::<SubagentCancelled>() =>
             {
-                self.status.state = RunState::Stopped;
-                self.status.result = self
-                    .status
-                    .last_text
-                    .as_ref()
-                    .map(|text| format!("(partial, stopped before finishing)\n{text}"));
+                self.sink.finish_stopped("stopped");
             }
             Err(error) => {
-                self.status.state = RunState::Error;
-                self.status.error = Some(format!("{error:#}"));
+                self.sink.finish_error(format!("{error:#}"));
             }
         }
-        self.write();
     }
 
     fn stream(&self, text: &str) {
@@ -744,32 +711,6 @@ impl RunReporter {
         let mut stdout = io::stdout().lock();
         let _ = stdout.write_all(text.as_bytes());
         let _ = stdout.flush();
-    }
-
-    fn write_throttled(&mut self) {
-        if self.last_write.elapsed() >= REPORT_THROTTLE {
-            self.write();
-        }
-    }
-
-    pub(super) fn write(&mut self) {
-        self.last_write = std::time::Instant::now();
-        if let Some(status_tx) = &self.status_tx {
-            status_tx.send_replace(self.status.clone());
-        }
-        let _ = subagent::write_status(&self.path, &self.status);
-    }
-}
-
-/// Appends to a rolling tail buffer capped at `max` bytes.
-fn append_tail(buffer: &mut String, text: &str, max: usize) {
-    buffer.push_str(text);
-    if buffer.len() > max {
-        let cut = buffer.len() - max;
-        let boundary = (cut..buffer.len())
-            .find(|index| buffer.is_char_boundary(*index))
-            .unwrap_or(buffer.len());
-        buffer.drain(..boundary);
     }
 }
 

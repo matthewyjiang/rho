@@ -233,22 +233,59 @@ pub struct AgentRuntimeError {
     value: String,
 }
 
+/// Validated Claude Code tool policy.
+///
+/// Distinct from a bare `Vec` so "no tools" cannot be confused with an unset
+/// default. Spawn always passes `--tools`; [`Self::None`] becomes the empty
+/// string argument.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClaudeToolPolicy {
+    /// Explicit empty tool set (`--tools ""`).
+    None,
+    /// Named Claude tools / patterns (`Read`, `Bash(git *)`, …).
+    Allow(Vec<String>),
+}
+
+impl ClaudeToolPolicy {
+    pub fn as_slice(&self) -> &[String] {
+        match self {
+            Self::None => &[],
+            Self::Allow(tools) => tools.as_slice(),
+        }
+    }
+
+    pub fn into_vec(self) -> Vec<String> {
+        match self {
+            Self::None => Vec::new(),
+            Self::Allow(tools) => tools,
+        }
+    }
+}
+
+/// Settings that only the Claude CLI runtime understands.
+///
+/// Built at parse time with validated model/effort/tools so binders and spawn
+/// do not re-check the same invariants.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClaudeAgentConfig {
+    pub tools: ClaudeToolPolicy,
+    /// When true, widen Claude setting sources to the user's full Claude
+    /// config. Default is closed.
+    pub inherit_claude_config: bool,
+    /// Pass-through `--model` value. `None` omits the flag.
+    pub model: Option<String>,
+    /// Claude `--effort` token. `None` omits the flag.
+    pub effort: Option<&'static str>,
+}
+
 /// The runtime together with the settings only that runtime understands.
 ///
 /// One value carries the whole runtime axis, so a definition cannot pair one
 /// harness with another harness's tool vocabulary or settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentRuntimeSpec {
-    Rho {
-        tools: ToolPolicy,
-    },
-    ClaudeCli {
-        /// Claude Code tool names. Empty means `--tools ""` (no tools), not Claude defaults.
-        tools: Vec<String>,
-        /// When true, widen Claude setting sources to the user's full Claude
-        /// config. Default is closed.
-        inherit_claude_config: bool,
-    },
+    Rho { tools: ToolPolicy },
+    ClaudeCli(ClaudeAgentConfig),
 }
 
 impl Default for AgentRuntimeSpec {
@@ -263,7 +300,7 @@ impl AgentRuntimeSpec {
     pub fn runtime(&self) -> AgentRuntime {
         match self {
             Self::Rho { .. } => AgentRuntime::Rho,
-            Self::ClaudeCli { .. } => AgentRuntime::ClaudeCli,
+            Self::ClaudeCli(_) => AgentRuntime::ClaudeCli,
         }
     }
 }
@@ -297,7 +334,7 @@ impl AgentDefinition {
             AgentRuntimeSpec::Rho { tools } => {
                 Some(self.hash_semantic(FingerprintEncoding::LegacyV1 { tools }))
             }
-            AgentRuntimeSpec::ClaudeCli { .. } => None,
+            AgentRuntimeSpec::ClaudeCli(_) => None,
         }
     }
 
@@ -355,9 +392,9 @@ impl AgentDefinition {
                             hash_field(&mut hash, tool.as_str().as_bytes());
                         }
                     }
-                    AgentRuntimeSpec::ClaudeCli { tools, .. } => {
+                    AgentRuntimeSpec::ClaudeCli(config) => {
                         hash_field(&mut hash, b"tools:claude");
-                        for tool in tools {
+                        for tool in config.tools.as_slice() {
                             hash_field(&mut hash, tool.as_bytes());
                         }
                     }
@@ -382,10 +419,10 @@ impl AgentDefinition {
         if matches!(encoding, FingerprintEncoding::V2) {
             if matches!(
                 self.runtime,
-                AgentRuntimeSpec::ClaudeCli {
+                AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
                     inherit_claude_config: true,
                     ..
-                }
+                })
             ) {
                 hash_field(&mut hash, b"inherit_claude_config:true");
             } else {

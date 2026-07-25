@@ -86,14 +86,14 @@ pub(super) enum ViewEvent {
 }
 
 #[derive(Default)]
-pub(super) struct SdkEventAdapter {
+pub(crate) struct SdkEventAdapter {
     presenter: Option<InteractiveToolPresenter>,
     proposed_index: usize,
     compaction_open: bool,
 }
 
 impl SdkEventAdapter {
-    pub(super) fn new(cwd: std::path::PathBuf) -> Self {
+    pub(crate) fn new(cwd: std::path::PathBuf) -> Self {
         Self {
             presenter: Some(InteractiveToolPresenter::new(cwd)),
             proposed_index: 0,

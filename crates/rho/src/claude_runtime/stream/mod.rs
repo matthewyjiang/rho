@@ -25,11 +25,11 @@
 mod blocks;
 mod format;
 mod presentation;
+mod protocol;
 mod types;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use serde::Deserialize;
 use serde_json::Value;
 
 use rho_sdk::model::ModelUsage;
@@ -40,7 +40,7 @@ use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
 use format::{
     bound_result_text, context_usage_from_result, format_permission_denial, raw_usage_to_model,
-    stringify_content, RawUsage,
+    stringify_content,
 };
 pub(crate) use presentation::apply_status_patch;
 use presentation::{
@@ -48,6 +48,10 @@ use presentation::{
     map_rate_limit, map_system, mark_and_text, mark_slot_emitted, push_block_slot,
     reasoning_effects, reconcile_complete_block, resolve_partial_slot, stable_message_id,
     text_effects, tool_finished_effects, tool_started_effects, ContentBlockKind,
+};
+use protocol::{
+    decode_line, AssistantMessage, ClaudeStreamMessage, ResultMessage, StreamEventMessage,
+    UserMessage,
 };
 pub(crate) use types::{
     classify_terminal_result, describe_rate_limit, notable_rate_limit_status, RateLimitInfo,
@@ -139,15 +143,15 @@ impl StreamMapper {
         if line.is_empty() {
             return Vec::new();
         }
-        let envelope = match serde_json::from_str::<StreamEnvelope>(line) {
-            Ok(envelope) => envelope,
+        let message = match decode_line(line) {
+            Ok(message) => message,
             Err(error) => {
                 return vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
                     "claude stream: skipped malformed JSON line: {error}"
                 )))];
             }
         };
-        self.map_envelope(envelope)
+        self.map_message(message)
     }
 }
 
@@ -158,106 +162,26 @@ pub(crate) fn map_line(line: &str) -> Vec<StreamEffect> {
     StreamMapper::new().push_line(line)
 }
 
-/// Top-level stream-json `type` policy.
-///
-/// Protocol/control frames are known and intentionally silent so heartbeats do
-/// not spam attach notices. Unknown kinds remain visible diagnostics.
-#[derive(Debug, PartialEq, Eq)]
-enum TopLevelKind {
-    Assistant,
-    User,
-    Result,
-    System,
-    RateLimitEvent,
-    StreamEvent,
-    Error,
-    /// Documented no-op frames: progress/status heartbeats and control channel.
-    ProtocolControlNoop,
-    Unknown(String),
-}
-
-fn classify_top_level_kind(kind: &str) -> TopLevelKind {
-    match kind {
-        "assistant" => TopLevelKind::Assistant,
-        "user" => TopLevelKind::User,
-        "result" => TopLevelKind::Result,
-        "system" => TopLevelKind::System,
-        "rate_limit_event" => TopLevelKind::RateLimitEvent,
-        "stream_event" => TopLevelKind::StreamEvent,
-        "error" => TopLevelKind::Error,
-        // Intentional silence: these are protocol/control or progress heartbeats.
-        "tool_progress" | "status" | "keep_alive" | "control_request" | "control_response" => {
-            TopLevelKind::ProtocolControlNoop
-        }
-        other => TopLevelKind::Unknown(other.to_string()),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct StreamEnvelope {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    subtype: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    is_error: Option<bool>,
-    #[serde(default)]
-    result: Option<String>,
-    #[serde(default)]
-    num_turns: Option<u64>,
-    #[serde(default)]
-    total_cost_usd: Option<f64>,
-    #[serde(default)]
-    stop_reason: Option<String>,
-    #[serde(default)]
-    usage: Option<RawUsage>,
-    #[serde(default, rename = "modelUsage")]
-    model_usage: Option<Value>,
-    #[serde(default)]
-    permission_denials: Option<Vec<Value>>,
-    #[serde(default)]
-    message: Option<Value>,
-    #[serde(default)]
-    event: Option<Value>,
-    #[serde(default)]
-    rate_limit_info: Option<RateLimitInfo>,
-    #[serde(default)]
-    content_block: Option<Value>,
-    #[serde(default)]
-    delta: Option<Value>,
-    #[serde(default)]
-    tool_use_id: Option<String>,
-    #[serde(default)]
-    content: Option<Value>,
-    #[serde(flatten)]
-    _rest: Value,
-}
-
 impl StreamMapper {
-    fn map_envelope(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
-        // Exhaustive top-level policy: known frames are handled, documented
-        // protocol/control frames are intentional no-ops (no heartbeat spam),
-        // and unknown kinds become diagnostics so schema drift is visible.
-        match classify_top_level_kind(message.kind.as_str()) {
-            TopLevelKind::Assistant => self.map_assistant(message),
-            TopLevelKind::User => self.map_user_tool_result(message),
-            TopLevelKind::Result => self.map_result(message),
-            TopLevelKind::System => map_system(message),
-            TopLevelKind::RateLimitEvent => map_rate_limit(message),
-            TopLevelKind::StreamEvent => self.map_stream_event(message),
-            TopLevelKind::Error => map_error_message(message),
-            TopLevelKind::ProtocolControlNoop => Vec::new(),
-            TopLevelKind::Unknown(other) => {
+    fn map_message(&mut self, message: ClaudeStreamMessage) -> Vec<StreamEffect> {
+        match message {
+            ClaudeStreamMessage::Assistant(message) => self.map_assistant(message),
+            ClaudeStreamMessage::User(message) => self.map_user_tool_result(message),
+            ClaudeStreamMessage::Result(message) => self.map_result(message),
+            ClaudeStreamMessage::System(message) => map_system(message),
+            ClaudeStreamMessage::RateLimit(message) => map_rate_limit(message),
+            ClaudeStreamMessage::StreamEvent(message) => self.map_stream_event(message),
+            ClaudeStreamMessage::Error(message) => map_error_message(message),
+            ClaudeStreamMessage::ProtocolControl => Vec::new(),
+            ClaudeStreamMessage::Unknown { kind } => {
                 vec![StreamEffect::Attachment(AttachmentEvent::Notice(format!(
-                    "claude stream: ignored unknown message type `{other}`"
+                    "claude stream: ignored unknown message type `{kind}`"
                 )))]
             }
         }
     }
 
-    fn map_assistant(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
+    fn map_assistant(&mut self, message: AssistantMessage) -> Vec<StreamEffect> {
         let message_id = stable_message_id(message.message.as_ref());
         let mut effects = Vec::new();
 
@@ -367,7 +291,7 @@ impl StreamMapper {
         self.messages.insert(key, state);
     }
 
-    fn map_user_tool_result(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
+    fn map_user_tool_result(&mut self, message: UserMessage) -> Vec<StreamEffect> {
         let Some(body) = message.message.as_ref() else {
             return self.map_toplevel_tool_result(message);
         };
@@ -398,7 +322,7 @@ impl StreamMapper {
         effects
     }
 
-    fn map_toplevel_tool_result(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
+    fn map_toplevel_tool_result(&mut self, message: UserMessage) -> Vec<StreamEffect> {
         let Some(tool_use_id) = message.tool_use_id.as_deref() else {
             return Vec::new();
         };
@@ -407,7 +331,7 @@ impl StreamMapper {
         tool_finished_effects(tool_use_id, /*ok*/ true, &content_text)
     }
 
-    fn map_result(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
+    fn map_result(&mut self, message: ResultMessage) -> Vec<StreamEffect> {
         let classification = classify_terminal_result(message.subtype.as_deref(), message.is_error);
         let usage = message.usage.as_ref().map(raw_usage_to_model);
         // RunStatus.input_tokens and ContextUsage both use uncached + cache-read
@@ -478,13 +402,11 @@ impl StreamMapper {
             total_cost_usd: message.total_cost_usd,
             permission_denials,
             stop_reason: message.stop_reason,
-            subtype: message.subtype,
-            is_error: message.is_error,
         }));
         effects
     }
 
-    fn map_stream_event(&mut self, message: StreamEnvelope) -> Vec<StreamEffect> {
+    fn map_stream_event(&mut self, message: StreamEventMessage) -> Vec<StreamEffect> {
         let Some(event) = message.event else {
             return Vec::new();
         };

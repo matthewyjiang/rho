@@ -90,8 +90,6 @@ pub(crate) struct TerminalResult {
     pub(crate) total_cost_usd: Option<f64>,
     pub(crate) permission_denials: Vec<String>,
     pub(crate) stop_reason: Option<String>,
-    pub(crate) subtype: Option<String>,
-    pub(crate) is_error: Option<bool>,
 }
 
 /// Latest subscription rate-limit observation from a Claude stream.

@@ -29,24 +29,33 @@ impl SdkAttachmentWriter {
     }
 
     pub(crate) fn on_event(&mut self, event: &rho_sdk::RunEvent) -> anyhow::Result<()> {
-        for view_event in self.adapter.translate(event.clone()) {
-            let attachment = match view_event {
-                ViewEvent::Update(update) => attachment_update(update),
-                ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
-                ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
-                    "input requested but unavailable in a delegated agent: {}",
-                    request.title()
-                ))),
-                ViewEvent::Completed => Some(AttachmentEvent::Completed),
-                ViewEvent::Cancelled => Some(AttachmentEvent::Cancelled),
-                ViewEvent::Failed(message) => Some(AttachmentEvent::Failed(message)),
-            };
-            if let Some(attachment) = attachment {
-                self.writer.write_event(&attachment)?;
-            }
+        for attachment in translate_run_event(&mut self.adapter, event) {
+            self.writer.write_event(&attachment)?;
         }
         Ok(())
     }
+}
+
+/// Translate one SDK event into zero or more attachment events.
+pub(crate) fn translate_run_event(
+    adapter: &mut SdkEventAdapter,
+    event: &rho_sdk::RunEvent,
+) -> Vec<AttachmentEvent> {
+    adapter
+        .translate(event.clone())
+        .into_iter()
+        .filter_map(|view_event| match view_event {
+            ViewEvent::Update(update) => attachment_update(update),
+            ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
+            ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
+                "input requested but unavailable in a delegated agent: {}",
+                request.title()
+            ))),
+            ViewEvent::Completed => Some(AttachmentEvent::Completed),
+            ViewEvent::Cancelled => Some(AttachmentEvent::Cancelled),
+            ViewEvent::Failed(message) => Some(AttachmentEvent::Failed(message)),
+        })
+        .collect()
 }
 
 fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
