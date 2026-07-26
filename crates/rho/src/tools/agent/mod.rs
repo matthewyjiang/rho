@@ -20,9 +20,9 @@ use {
     },
     crate::subagent::{self, RunState, RunStatus},
     rho_sdk::tool::{
-        OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
-        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
-        ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
+        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgress,
+        ToolResource, ToolResourceAccess, ToolSecurity,
     },
 };
 
@@ -591,10 +591,6 @@ impl Tool for AgentTool {
         ToolSecurity::built_in([])
     }
 
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
-    }
-
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -710,10 +706,6 @@ impl Tool for AgentsTool {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([])
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

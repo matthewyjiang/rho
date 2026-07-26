@@ -11,9 +11,9 @@ use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
-        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
-        ToolPrepareFuture, ToolResource, ToolResourceAccess, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
+        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
+        ToolResourceAccess, ToolSecurity,
     },
     CapabilityKind,
 };
@@ -126,10 +126,6 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                 },
             ))
         })
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 }
 

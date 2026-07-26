@@ -237,6 +237,33 @@ impl CancellingUsageProvider {
 
 crate::impl_sdk_model_provider!(CancellingUsageProvider);
 
+/// Transport whose completion never resolves, so only the adapter can end the
+/// turn.
+#[derive(Clone)]
+struct HangingProvider;
+
+impl HangingProvider {
+    fn model_identity(&self) -> ModelIdentity {
+        ModelIdentity::new("fake", "test", "hanging")
+    }
+
+    async fn complete_turn(&self, _request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        std::future::pending().await
+    }
+
+    async fn stream_turn(
+        &self,
+        _request: ModelRequest<'_>,
+        _on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        std::future::pending().await
+    }
+}
+
+crate::impl_sdk_model_provider!(HangingProvider);
+
 fn request<'a>(
     messages: &'a [Message],
     cancellation: CancellationToken,
@@ -281,6 +308,38 @@ async fn callback_events_accepted_before_cancellation_are_forwarded() {
             }
         )
     );
+}
+
+#[tokio::test]
+async fn cancels_a_non_streaming_turn_that_never_completes() {
+    let provider = HangingProvider;
+    let cancellation = CancellationToken::new();
+    let messages = [Message::user_text("hello")];
+    let turn = provider.send_turn(request(
+        &messages,
+        cancellation.clone(),
+        ReasoningLevel::Off,
+    ));
+
+    let (result, ()) = tokio::join!(turn, async move { cancellation.cancel() });
+
+    assert_eq!(result.unwrap_err().kind(), ProviderErrorKind::Interrupted);
+}
+
+#[tokio::test]
+async fn cancels_a_streaming_turn_that_never_completes() {
+    let provider = HangingProvider;
+    let cancellation = CancellationToken::new();
+    let messages = [Message::user_text("hello")];
+    let (sender, _receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let turn = provider.send_turn_stream(
+        request(&messages, cancellation.clone(), ReasoningLevel::Off),
+        sender,
+    );
+
+    let (result, ()) = tokio::join!(turn, async move { cancellation.cancel() });
+
+    assert_eq!(result.unwrap_err().kind(), ProviderErrorKind::Interrupted);
 }
 
 #[test]

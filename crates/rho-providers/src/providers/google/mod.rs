@@ -76,11 +76,7 @@ impl GoogleProvider {
         _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        tokio::select! {
-            result = self.send_stream(request, on_event) => result,
-            () = cancellation.cancelled() => Err(ModelError::Interrupted),
-        }
+        self.send_stream(request, on_event).await
     }
 
     async fn send_stream(

@@ -230,6 +230,27 @@ pub fn callback_request_event_sink(
     }
 }
 
+/// Drives a non-streaming transport turn, abandoning it if the request's
+/// cancellation token fires first.
+///
+/// The streaming counterpart is [`drive_callback_stream`], which checks the
+/// same token before each poll of the transport. Both exist so a transport
+/// never has to race the token itself.
+pub async fn drive_completion<Fut>(
+    cancellation: CancellationToken,
+    completion: Fut,
+) -> Result<ModelResponse, ProviderError>
+where
+    Fut: Future<Output = Result<ModelResponse, ModelError>>,
+{
+    tokio::select! {
+        result = completion => result.map_err(provider_error_from_model_error),
+        () = cancellation.cancelled() => {
+            Err(provider_error_from_model_error(ModelError::Interrupted))
+        }
+    }
+}
+
 /// Drains buffered callback events through the bounded SDK event channel and
 /// drives the provider future with host backpressure across awaits.
 pub async fn drive_callback_stream<Fut>(
@@ -298,6 +319,13 @@ where
 /// Streaming buffers same-poll callback bursts, then applies the SDK event
 /// channel's async backpressure before polling the provider again.
 ///
+/// This adapter owns turn-level cancellation for both paths, so transports must
+/// not race the token themselves. `send_turn` cancels the completion future
+/// here; `send_turn_stream` delegates to [`drive_callback_stream`], which
+/// already checks the token before it polls the transport. A transport only
+/// needs the token for finer-grained work inside a turn, such as aborting a
+/// single in-flight HTTP request.
+///
 /// Pass `native_compact` as a second argument when the transport also exposes
 /// an inherent `native_compact_turn` method returning
 /// `Result<NativeCompactionResponse, ModelError>` or
@@ -325,9 +353,12 @@ macro_rules! impl_sdk_model_provider {
                 request: ::rho_sdk::model::ModelRequest<'a>,
             ) -> ::rho_sdk::provider::ProviderFuture<'a> {
                 ::std::boxed::Box::pin(async move {
-                    self.complete_turn(request)
-                        .await
-                        .map_err($crate::providers::sdk_contract::provider_error_from_model_error)
+                    let cancellation = request.cancellation.clone();
+                    $crate::providers::sdk_contract::drive_completion(
+                        cancellation,
+                        self.complete_turn(request),
+                    )
+                    .await
                 })
             }
 

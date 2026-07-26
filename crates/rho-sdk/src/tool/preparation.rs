@@ -6,7 +6,8 @@ use crate::{
 };
 
 use super::{
-    Tool, ToolContext, ToolError, ToolFuture, ToolInvocation, ToolMetadata, ToolProgressSender,
+    Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata,
+    ToolProgressSender,
 };
 
 /// Future returned while a [`Tool`](super::Tool) prepares one invocation.
@@ -182,21 +183,48 @@ impl ToolResource {
     }
 }
 
-/// Runs the canonical prepared path from a tool's compatibility [`Tool::call`]
-/// implementation.
+/// Resolves a tool's plan, authorizes its capabilities, and executes it.
 ///
-/// Resource-aware tools can delegate `call` to this function instead of keeping
-/// a second parsing, authorization, and execution path. The tool must override
-/// [`Tool::prepare`], since its default implementation delegates back to
-/// [`Tool::call`].
+/// This backs the default [`Tool::call`], so a resource-aware tool gets the
+/// path for free by overriding [`Tool::prepare`]. A tool that overrides neither
+/// method fails here with a clear error rather than delegating in a loop.
 pub fn call_prepared<'a>(
     tool: &'a dyn Tool,
     invocation: ToolInvocation,
     execution: ToolContext,
 ) -> ToolFuture<'a> {
+    call_prepared_for(tool, invocation, execution)
+}
+
+/// [`call_prepared`] for a caller holding `Self` rather than a trait object.
+///
+/// The default [`Tool::call`] needs this because `Self` is `?Sized` there and
+/// so cannot coerce to `&dyn Tool`. Kept separate so the public signature stays
+/// object-taking, which callers depend on.
+pub(crate) fn call_prepared_for<'a, T>(
+    tool: &'a T,
+    invocation: ToolInvocation,
+    execution: ToolContext,
+) -> ToolFuture<'a>
+where
+    T: Tool + ?Sized,
+{
     Box::pin(async move {
         let preparation = ToolPreparationContext::from_execution(&execution);
         let prepared = tool.prepare(invocation, preparation).await?;
+        // Reaching here means `call` routed to `prepare`. A plan that routes
+        // back to `call` means the tool overrode neither, so stop rather than
+        // authorize and re-enter forever.
+        if prepared.is_from_default_prepare() {
+            return Err(ToolError::new(
+                ToolErrorKind::Execution,
+                format!(
+                    "tool '{}' implements neither Tool::call nor Tool::prepare; \
+                     it must implement one of them",
+                    tool.spec().name
+                ),
+            ));
+        }
         for capability in prepared.capabilities() {
             execution
                 .authorize(capability.clone())
@@ -293,6 +321,9 @@ pub struct PreparedToolInvocation<'a> {
     capabilities: Vec<CapabilityRequest>,
     metadata: ToolMetadata,
     executor: ToolExecutor<'a>,
+    /// True only for the plan built by the default [`Tool::prepare`], the one
+    /// a tool gets when it does not implement `prepare` itself.
+    from_default_prepare: bool,
 }
 
 impl<'a> PreparedToolInvocation<'a> {
@@ -305,7 +336,28 @@ impl<'a> PreparedToolInvocation<'a> {
             capabilities: Vec::new(),
             metadata,
             executor: ToolExecutor::Exclusive(Box::new(executor)),
+            from_default_prepare: false,
         }
+    }
+
+    /// Builds the plan returned by the default [`Tool::prepare`].
+    ///
+    /// Rust cannot ask which trait methods a type overrode, so the plan records
+    /// that it came from the default. That is what lets [`call_prepared`] tell
+    /// a real `prepare` from the default one that points back at `call`.
+    pub(crate) fn from_default_prepare<F>(metadata: ToolMetadata, executor: F) -> Self
+    where
+        F: FnOnce(ToolContext) -> ToolFuture<'a> + Send + 'a,
+    {
+        Self {
+            from_default_prepare: true,
+            ..Self::exclusive(metadata, executor)
+        }
+    }
+
+    /// Reports whether this plan came from the default [`Tool::prepare`].
+    pub(crate) fn is_from_default_prepare(&self) -> bool {
+        self.from_default_prepare
     }
 
     pub fn resource_aware<F>(
@@ -322,6 +374,7 @@ impl<'a> PreparedToolInvocation<'a> {
             capabilities: capabilities.into_iter().collect(),
             metadata,
             executor: ToolExecutor::ResourceAware(Box::new(executor)),
+            from_default_prepare: false,
         }
     }
 

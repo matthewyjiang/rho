@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 use rho_sdk::{
     tool::{
         OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
-        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
-        ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+        ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
     ProcessOutputLimits,
@@ -133,10 +133,6 @@ impl Tool for SdkProcess {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([CapabilityKind::Process])
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

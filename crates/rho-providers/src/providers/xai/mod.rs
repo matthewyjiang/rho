@@ -144,11 +144,8 @@ impl XaiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        tokio::select! {
-            result = self.send_responses_turn(request, Some(on_event), Some(on_request_event)) => result,
-            () = cancellation.cancelled() => Err(ModelError::Interrupted),
-        }
+        self.send_responses_turn(request, Some(on_event), Some(on_request_event))
+            .await
     }
 }
 

@@ -1,8 +1,7 @@
 use rho_sdk::{
     tool::{
-        OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
-        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
-        ToolPrepareFuture, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
+        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, NetworkTarget,
 };
@@ -61,10 +60,6 @@ impl Tool for SdkWebSearch {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([CapabilityKind::Network])
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

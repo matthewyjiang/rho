@@ -202,6 +202,35 @@ fn registry_rejects_duplicate_names_without_replacing_the_first_tool() {
     );
 }
 
+/// Tool that overrides neither `call` nor `prepare`, which is a programming
+/// error the SDK must report rather than loop on.
+struct UnimplementedTool;
+
+impl Tool for UnimplementedTool {
+    fn spec(&self) -> ToolSpec {
+        spec("unimplemented")
+    }
+}
+
+#[tokio::test]
+async fn a_tool_implementing_neither_call_nor_prepare_reports_the_mistake() {
+    let (context, _receiver) = context(CancellationToken::new());
+
+    let error = UnimplementedTool
+        .call(invocation(), context)
+        .await
+        .expect_err("a tool with no implementation cannot succeed");
+
+    assert_eq!(error.kind(), ToolErrorKind::Execution);
+    assert!(
+        error
+            .message()
+            .contains("implements neither Tool::call nor Tool::prepare"),
+        "unexpected message: {}",
+        error.message()
+    );
+}
+
 #[test]
 fn metadata_exposes_structured_paths_commands_urls_and_diffs() {
     let metadata = ToolMetadata::new()

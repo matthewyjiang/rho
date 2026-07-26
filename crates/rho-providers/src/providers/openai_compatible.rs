@@ -97,11 +97,7 @@ impl OpenAiCompatibleProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        tokio::select! {
-            result = self.stream_inner(request, on_event, on_request_event) => result,
-            () = cancellation.cancelled() => Err(ModelError::Interrupted),
-        }
+        self.stream_inner(request, on_event, on_request_event).await
     }
 
     async fn stream_inner(
