@@ -75,6 +75,7 @@ pub(super) enum InlineChoicePending {
     ContextHandoff(Box<super::context_handoff::PendingContextHandoff>),
     ClaudeCodeRelogin,
     ClaudeCodeLogout,
+    DeleteSession { session_id: String },
 }
 
 impl InlineChoiceModal {

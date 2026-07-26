@@ -7,7 +7,7 @@ pub(super) fn session_picker(
 ) -> UiPicker {
     UiPicker::new(
         "resume session",
-        "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
+        "type regex filter, tab complete, up/down select, enter resume, d delete, esc cancel",
         sessions
             .into_iter()
             .filter(|session| current_session_id != Some(session.id.as_str()))

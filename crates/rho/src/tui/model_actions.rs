@@ -324,6 +324,13 @@ impl App {
         )
     }
 
+    pub(super) fn resume_picker_is_open(&self) -> bool {
+        matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.action == PickerAction::ResumeSession
+        )
+    }
+
     pub(super) fn toggle_selected_model_favorite(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             return Ok(());

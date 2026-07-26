@@ -6,6 +6,7 @@ mod goal;
 mod id;
 mod login;
 mod pickers;
+mod resume_delete;
 mod runtime_info;
 mod subagent_rail;
 
@@ -17,6 +18,7 @@ use goal::{
 };
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
+use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
@@ -775,6 +777,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Restore an earlier turn and continue on a new branch",
             size: DEFAULT_SIZE,
             steps: CONVERSATION_TREE_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "resume_picker_delete",
+            description: "Delete a saved session from the resume picker with confirm/cancel",
+            size: DEFAULT_SIZE,
+            steps: RESUME_PICKER_DELETE_STEPS,
             smoke: false,
         },
         Scenario {

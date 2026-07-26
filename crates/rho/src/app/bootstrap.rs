@@ -18,6 +18,7 @@ use super::{
     config_repository::ConfigRepository,
     interactive, login,
     sdk_config::SdkBootstrapOptions,
+    sessions_cli,
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -60,6 +61,9 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
     if let Some(Command::CredentialStore { command }) = &cli.command {
         return run_credential_store_command(command, cli.config.clone());
+    }
+    if let Some(Command::Sessions { command }) = &cli.command {
+        return sessions_cli::run(command);
     }
     if let Some(Command::Attach { id }) = &cli.command {
         return crate::tui::run_attachment(id, HerdrReporter::from_env()).await;

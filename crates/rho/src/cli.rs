@@ -99,6 +99,35 @@ pub enum Command {
     },
     /// Update rho using the detected installation method.
     Update,
+    /// List or delete saved sessions.
+    Sessions {
+        #[command(subcommand)]
+        command: SessionsCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SessionsCommand {
+    /// List saved sessions for the current workspace (or all projects).
+    List {
+        /// Include sessions from every workspace, not only the current directory.
+        #[arg(long)]
+        all_projects: bool,
+    },
+    /// Delete one or more sessions by UUID or UUID prefix.
+    Rm {
+        /// Session UUID or unique prefix. May be repeated.
+        #[arg(value_name = "ID", required = true, num_args = 1..)]
+        ids: Vec<String>,
+        /// Delete even when a parent-linked run is still non-terminal.
+        ///
+        /// Use only for stale Starting/Running artifacts left after a crash.
+        #[arg(long)]
+        force: bool,
+        /// Skip the confirmation prompt for cross-project deletes.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

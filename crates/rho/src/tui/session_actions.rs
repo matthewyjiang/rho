@@ -1,8 +1,10 @@
 use ratatui::DefaultTerminal;
 
 use super::{
-    session_picker, App, CommandInvocation, ComposerMode, Entry, InteractiveRuntime, Session,
+    session_picker, App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceModal,
+    InlineChoiceOption, InlineChoicePending, InteractiveRuntime, Session,
 };
+use crate::session::DeleteOptions;
 
 impl App {
     pub(super) async fn execute_resume_command(
@@ -24,6 +26,7 @@ impl App {
     pub(super) fn open_resume_picker(&mut self) -> anyhow::Result<()> {
         match Session::list(&self.info.runtime.cwd) {
             Ok(sessions) if sessions.is_empty() => {
+                self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Notice(
                     "no saved sessions for this workspace".into(),
                 ));
@@ -35,6 +38,7 @@ impl App {
                     self.info.session.session_id.as_deref(),
                 );
                 if picker.items.is_empty() {
+                    self.input_ui.set_composer(ComposerMode::Input);
                     self.insert_entry(&Entry::Notice(
                         "no other saved sessions for this workspace".into(),
                     ));
@@ -45,11 +49,98 @@ impl App {
                 self.status = "select session".into();
             }
             Err(err) => {
+                self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Error(format!("could not list sessions: {err}")));
                 self.status = "resume failed".into();
             }
         }
         Ok(())
+    }
+
+    pub(super) fn prompt_delete_selected_session(&mut self) -> anyhow::Result<()> {
+        let Some(session_id) = self.selected_resume_session_id() else {
+            return Ok(());
+        };
+        let short = session_picker::short_session_id(&session_id);
+        let choice = InlineChoice::new(
+            format!("Delete session {short}?"),
+            "Removes the transcript, web sidecar, and parent-linked subagent runs. Usage history is kept.",
+            vec![
+                InlineChoiceOption::available(
+                    "delete",
+                    'd',
+                    "Delete",
+                    "Permanently remove this saved session",
+                ),
+                InlineChoiceOption::available(
+                    "cancel",
+                    'c',
+                    "Cancel",
+                    "Keep the session and return to the picker",
+                )
+                .with_alternate_shortcut('n'),
+            ],
+        )?;
+        self.input_ui
+            .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                choice,
+                pending: InlineChoicePending::DeleteSession { session_id },
+            }));
+        self.status = "confirm delete".into();
+        Ok(())
+    }
+
+    pub(super) fn submit_delete_session_choice(
+        &mut self,
+        value: &str,
+        session_id: &str,
+    ) -> anyhow::Result<()> {
+        if value != "delete" {
+            return self.open_resume_picker();
+        }
+
+        let short = session_picker::short_session_id(session_id);
+        match Session::delete_by_id(
+            &self.info.runtime.cwd,
+            session_id,
+            DeleteOptions {
+                force: false,
+                protect_session_id: self.info.session.session_id.clone(),
+            },
+        ) {
+            Ok(outcome) => {
+                let mut notice = format!("deleted session {short}");
+                if outcome.deleted_run_count > 0 {
+                    notice.push_str(&format!(
+                        " and {} related run{}",
+                        outcome.deleted_run_count,
+                        if outcome.deleted_run_count == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ));
+                }
+                self.insert_entry(&Entry::Notice(notice));
+                self.status = "session deleted".into();
+                self.open_resume_picker()?;
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!("could not delete session: {err}")));
+                self.status = "delete failed".into();
+                self.open_resume_picker()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn selected_resume_session_id(&self) -> Option<String> {
+        match self.input_ui.composer() {
+            ComposerMode::Picker(picker) if picker.action == super::PickerAction::ResumeSession => {
+                picker.selected_item().map(|item| item.value.clone())
+            }
+            _ => None,
+        }
     }
 
     pub(super) async fn submit_resume_selection(

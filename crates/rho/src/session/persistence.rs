@@ -812,6 +812,27 @@ impl SessionUnit {
             .split_once('_')
             .and_then(|(timestamp, _)| parse_timestamp(timestamp))
     }
+
+    /// Removes this session unit from disk (transcript, web sidecar, nested dirs).
+    pub(super) fn delete_from_disk(&self) -> anyhow::Result<()> {
+        match self {
+            Self::Folder { dir } => {
+                if dir.exists() {
+                    fs::remove_dir_all(dir)?;
+                }
+            }
+            Self::LegacyFile { path } => {
+                let web_dir = self.web_dir();
+                if path.exists() {
+                    fs::remove_file(path)?;
+                }
+                if web_dir.exists() {
+                    fs::remove_dir_all(&web_dir)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Resolves a workspace entry or transcript path to the session JSONL file.
