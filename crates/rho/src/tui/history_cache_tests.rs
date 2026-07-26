@@ -232,6 +232,56 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
 }
 
 #[test]
+fn resizing_moves_a_wide_diagram_between_art_and_explained_source() {
+    let source = concat!(
+        "flowchart LR\n",
+        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
+        "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
+        "  P3 --> P5[\"Phase 5: nest runs under session\"]"
+    );
+    let entries = vec![Entry::Assistant(format!("```mermaid\n{source}\n```"))];
+    let mut cache = HistoryLineCache::default();
+
+    let render_at = |cache: &mut HistoryLineCache, width: usize| {
+        let mut lines = Vec::new();
+        cache.extend_visible_lines(
+            &entries,
+            width,
+            10,
+            HistoryLineSlice {
+                start: 0,
+                count: usize::MAX,
+            },
+            &mut lines,
+            &no_images,
+        );
+        lines.iter().map(line_text).collect::<Vec<_>>()
+    };
+
+    let wide = render_at(&mut cache, 100);
+    assert!(wide.iter().any(|line| line.contains("Phase 5")), "{wide:?}");
+    assert!(!wide.iter().any(|line| line.contains("flowchart LR")));
+
+    let narrow = render_at(&mut cache, 40);
+    assert!(
+        narrow.iter().any(|line| line.contains("PANE TOO NARROW")),
+        "{narrow:?}"
+    );
+    assert!(narrow.iter().any(|line| line.contains("flowchart LR")));
+
+    assert_eq!(render_at(&mut cache, 100), wide);
+    for width in [100, 40] {
+        assert_eq!(
+            cache.code_blocks(&entries, width, 10, &no_images)[0]
+                .text
+                .as_ref(),
+            source
+        );
+    }
+}
+
+#[test]
 fn invalidating_an_assistant_entry_refreshes_code_block_contents() {
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("```\nfirst\n```".into())];

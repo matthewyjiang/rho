@@ -308,10 +308,14 @@ fn open_mermaid_fence_stays_raw_until_closed() {
 }
 
 #[test]
-fn malformed_and_too_wide_mermaid_fences_use_normal_code_blocks() {
-    for (source, width) in [
-        ("not-a-diagram", 60),
-        ("flowchart LR\nA[a label that is much too wide]", 8),
+fn closed_mermaid_fallbacks_keep_source_and_explain_themselves() {
+    for (source, width, reason) in [
+        ("not-a-diagram", 60, "NOT RENDERED"),
+        (
+            "flowchart LR\nA[a label that is much too wide]",
+            8,
+            "PANE TOO NARROW",
+        ),
     ] {
         let mut in_code_block = false;
         let markdown = format!("```mermaid\n{source}\n```");
@@ -319,12 +323,77 @@ fn malformed_and_too_wide_mermaid_fences_use_normal_code_blocks() {
         let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
 
         assert!(!in_code_block);
-        assert!(!text[0].contains("MERMAID"));
         assert!(text
             .iter()
             .any(|line| line.contains("flow") || line.contains("not-")));
         assert_eq!(rendered.code_blocks[0].text, source);
+        // Very narrow panels drop the title so COPY keeps its columns.
+        if display_width(reason) + 4 <= width {
+            assert!(text[0].contains(reason), "{}", text[0]);
+        }
     }
+}
+
+#[test]
+fn too_narrow_mermaid_panel_reports_width_and_keeps_copyable_source() {
+    let source = concat!(
+        "flowchart LR\n",
+        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]"
+    );
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        &format!("```mermaid\n{source}\n```"),
+        40,
+        &mut in_code_block,
+    );
+    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(
+        text[0].starts_with("╭─ MERMAID · PANE TOO NARROW"),
+        "{}",
+        text[0]
+    );
+    assert!(text.iter().any(|line| line.contains("flowchart LR")));
+    assert!(text.iter().all(|line| display_width(line) <= 40));
+    assert_eq!(
+        rendered.code_blocks,
+        vec![MarkdownCodeBlock {
+            top_line: 0,
+            copy_columns: 33..39,
+            text: source.into(),
+        }]
+    );
+    assert!(rendered.lines[0]
+        .spans
+        .iter()
+        .any(|span| span.content.as_ref() == " COPY "));
+}
+
+#[test]
+fn long_labelled_flowcharts_compact_to_fit_ordinary_transcript_widths() {
+    let source = concat!(
+        "flowchart LR\n",
+        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
+        "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
+        "  P3 --> P5[\"Phase 5: nest runs under session\"]"
+    );
+    let mut in_code_block = false;
+    let rendered = render_markdown(
+        &format!("```mermaid\n{source}\n```"),
+        100,
+        &mut in_code_block,
+    );
+    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert!(text[0].starts_with("╭─ MERMAID "), "{}", text[0]);
+    assert!(!text.iter().any(|line| line.contains("flowchart LR")));
+    assert!(text.iter().all(|line| display_width(line) <= 100));
+    for phase in ["Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5"] {
+        assert!(text.iter().any(|line| line.contains(phase)), "{phase}");
+    }
+    assert_eq!(rendered.code_blocks[0].text, source);
 }
 
 #[test]

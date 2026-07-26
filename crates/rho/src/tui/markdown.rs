@@ -151,6 +151,7 @@ fn render_markdown_from_fence_state(
     let mut active_fence = state.active;
     while line_index < raw_lines.len() {
         let raw_line = raw_lines[line_index];
+        let mut opening_title = None;
         if active_fence.is_none() {
             if let Some(opening) = mermaid_opening_fence(raw_line) {
                 if let Some(closing_offset) = raw_lines[line_index + 1..]
@@ -160,24 +161,27 @@ fn render_markdown_from_fence_state(
                     let closing_index = line_index + 1 + closing_offset;
                     let source = raw_lines[line_index + 1..closing_index].join("\n");
                     let inner_width = width.saturating_sub(4);
-                    if let mermaid::MermaidRender::Rendered(diagram_lines) =
-                        mermaid::render_mermaid(&source, inner_width)
-                    {
-                        let top_line = lines.len();
-                        lines.push(code_block_border(width, '╭', copy_button, Some("MERMAID")));
-                        lines.extend(mermaid::panel_lines(diagram_lines, width));
-                        lines.push(code_block_border(width, '╰', copy_button, None));
-                        if copy_button == CodeBlockCopyButton::Visible {
-                            if let Some(copy_columns) = code_block_copy_columns(width) {
-                                code_blocks.push(MarkdownCodeBlock {
-                                    top_line,
-                                    copy_columns,
-                                    text: source,
-                                });
+                    match mermaid::render_mermaid(&source, inner_width) {
+                        mermaid::MermaidRender::Rendered(diagram_lines) => {
+                            let top_line = lines.len();
+                            lines.push(code_block_border(width, '╭', copy_button, Some("MERMAID")));
+                            lines.extend(mermaid::panel_lines(diagram_lines, width));
+                            lines.push(code_block_border(width, '╰', copy_button, None));
+                            if copy_button == CodeBlockCopyButton::Visible {
+                                if let Some(copy_columns) = code_block_copy_columns(width) {
+                                    code_blocks.push(MarkdownCodeBlock {
+                                        top_line,
+                                        copy_columns,
+                                        text: source,
+                                    });
+                                }
                             }
+                            line_index = closing_index + 1;
+                            continue;
                         }
-                        line_index = closing_index + 1;
-                        continue;
+                        mermaid::MermaidRender::Fallback(reason) => {
+                            opening_title = Some(mermaid_fallback_title(reason));
+                        }
                     }
                 }
             }
@@ -200,7 +204,7 @@ fn render_markdown_from_fence_state(
             } else {
                 active_fence = opening_fence;
                 let top_line = lines.len();
-                lines.push(code_block_border(width, '╭', copy_button, None));
+                lines.push(code_block_border(width, '╭', copy_button, opening_title));
                 if copy_button == CodeBlockCopyButton::Visible {
                     if let Some(copy_columns) = code_block_copy_columns(width) {
                         active_code_block = Some((top_line, copy_columns, Vec::new()));
@@ -307,6 +311,23 @@ fn is_markdown_divider(line: &str) -> bool {
 
 fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
+}
+
+fn mermaid_fallback_title(reason: mermaid::MermaidFallback) -> &'static str {
+    match reason {
+        mermaid::MermaidFallback::TooWide => "MERMAID · PANE TOO NARROW",
+        mermaid::MermaidFallback::Blank
+        | mermaid::MermaidFallback::SourceBytes
+        | mermaid::MermaidFallback::SourceLines
+        | mermaid::MermaidFallback::UnsafeContent
+        | mermaid::MermaidFallback::Unsupported
+        | mermaid::MermaidFallback::Malformed
+        | mermaid::MermaidFallback::StructuralLimit
+        | mermaid::MermaidFallback::Panic
+        | mermaid::MermaidFallback::OutputLines
+        | mermaid::MermaidFallback::OutputCells
+        | mermaid::MermaidFallback::AnsiOutput => "MERMAID · NOT RENDERED",
+    }
 }
 
 fn code_block_border(
