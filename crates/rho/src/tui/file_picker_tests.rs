@@ -203,18 +203,29 @@ fn scroll_counts_track_hidden_rows_above_and_below() {
 
 #[test]
 fn scroll_footer_only_when_overflow_exists() {
-    assert_eq!(file_palette_scroll_footer(0, 0, 5), None);
     assert_eq!(
-        file_palette_scroll_footer(2, 0, 7),
+        file_palette_scroll_footer(0, 0, 5, /*incomplete*/ false),
+        None
+    );
+    assert_eq!(
+        file_palette_scroll_footer(2, 0, 7, /*incomplete*/ false),
         Some("↑ 2 more · 7 total".into())
     );
     assert_eq!(
-        file_palette_scroll_footer(0, 4, 9),
+        file_palette_scroll_footer(0, 4, 9, /*incomplete*/ false),
         Some("↓ 4 more · 9 total".into())
     );
     assert_eq!(
-        file_palette_scroll_footer(3, 8, 16),
+        file_palette_scroll_footer(3, 8, 16, /*incomplete*/ false),
         Some("↑ 3 more · ↓ 8 more · 16 total".into())
+    );
+    assert_eq!(
+        file_palette_scroll_footer(0, 0, 5, /*incomplete*/ true),
+        Some("5 total · partial".into())
+    );
+    assert_eq!(
+        file_palette_scroll_footer(1, 2, 10, /*incomplete*/ true),
+        Some("↑ 1 more · ↓ 2 more · 10 total · partial".into())
     );
 }
 

@@ -20,7 +20,7 @@ const DEFAULT_MAX_PER_FILE: usize = 10;
 /// Hard ceiling for per-file emitted match lines.
 const MAX_PER_FILE_CEILING: usize = 100;
 /// Skip files larger than this to avoid reading multi-gigabyte blobs.
-const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+pub(crate) const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 /// Bytes inspected at the start of a file for a NUL binary sniff.
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 /// Match-line display width before truncation.

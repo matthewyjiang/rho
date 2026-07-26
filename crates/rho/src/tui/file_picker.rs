@@ -37,17 +37,38 @@ struct FilePathCacheKey {
     include_hidden: bool,
 }
 
+/// Workspace paths discovered for `@` mentions, plus whether the walk finished.
+#[derive(Clone, Debug)]
+pub(super) struct DiscoveredFilePaths {
+    pub(super) paths: Arc<Vec<String>>,
+    /// True when discovery stopped early (deadline, entry cap, or result cap).
+    pub(super) incomplete: bool,
+}
+
+impl DiscoveredFilePaths {
+    fn complete(paths: Vec<String>) -> Self {
+        Self {
+            paths: Arc::new(paths),
+            incomplete: false,
+        }
+    }
+
+    pub(super) fn as_slice(&self) -> &[String] {
+        self.paths.as_slice()
+    }
+}
+
 #[derive(Debug)]
 struct FilePathCache {
     key: Option<FilePathCacheKey>,
-    paths: Arc<Vec<String>>,
+    discovered: DiscoveredFilePaths,
     cached_at: Instant,
 }
 
 static FILE_PATH_CACHE: LazyLock<Mutex<FilePathCache>> = LazyLock::new(|| {
     Mutex::new(FilePathCache {
         key: None,
-        paths: Arc::new(Vec::new()),
+        discovered: DiscoveredFilePaths::complete(Vec::new()),
         cached_at: Instant::now(),
     })
 });
@@ -76,7 +97,7 @@ pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMent
     })
 }
 
-pub(super) fn matching_file_paths(cwd: &Path, query: &str) -> Arc<Vec<String>> {
+pub(super) fn matching_file_paths(cwd: &Path, query: &str) -> DiscoveredFilePaths {
     matching_file_paths_with_home(cwd, query, home_dir().as_deref())
 }
 
@@ -85,38 +106,48 @@ pub(super) fn matching_file_paths_with_home_for_test(
     cwd: &Path,
     query: &str,
     home: Option<&Path>,
-) -> Arc<Vec<String>> {
+) -> DiscoveredFilePaths {
     matching_file_paths_with_home(cwd, query, home)
 }
 
-fn matching_file_paths_with_home(cwd: &Path, query: &str, home: Option<&Path>) -> Arc<Vec<String>> {
+fn matching_file_paths_with_home(
+    cwd: &Path,
+    query: &str,
+    home: Option<&Path>,
+) -> DiscoveredFilePaths {
     let query = query.trim();
     if let Some((scope, residual)) = directory_scope(cwd, query, home) {
         let include_hidden = residual_includes_hidden(&residual);
-        let relative_paths = file_paths_for_root(&scope.root, include_hidden);
+        let discovered = file_paths_for_root(&scope.root, include_hidden);
         let matches = if residual.is_empty() {
-            relative_paths.as_slice().to_vec()
+            discovered.as_slice().to_vec()
         } else {
-            fuzzy_matching_paths(relative_paths.as_slice(), &residual)
+            fuzzy_matching_paths(discovered.as_slice(), &residual)
         };
-        return Arc::new(
-            matches
-                .into_iter()
-                .map(|path| format!("{}{path}", scope.display_prefix))
-                .collect(),
-        );
+        return DiscoveredFilePaths {
+            paths: Arc::new(
+                matches
+                    .into_iter()
+                    .map(|path| format!("{}{path}", scope.display_prefix))
+                    .collect(),
+            ),
+            incomplete: discovered.incomplete,
+        };
     }
 
     let include_hidden = residual_includes_hidden(query);
-    let paths = file_paths_for_root(cwd, include_hidden);
+    let discovered = file_paths_for_root(cwd, include_hidden);
     if query.is_empty() {
-        return paths;
+        return discovered;
     }
-    Arc::new(fuzzy_matching_paths(paths.as_slice(), query))
+    DiscoveredFilePaths {
+        paths: Arc::new(fuzzy_matching_paths(discovered.as_slice(), query)),
+        incomplete: discovered.incomplete,
+    }
 }
 
 #[cfg(test)]
-pub(super) fn workspace_file_paths(cwd: &Path) -> Arc<Vec<String>> {
+pub(super) fn workspace_file_paths(cwd: &Path) -> DiscoveredFilePaths {
     file_paths_for_root(cwd, /*include_hidden*/ false)
 }
 
@@ -124,7 +155,7 @@ fn residual_includes_hidden(residual: &str) -> bool {
     residual.split('/').any(|part| part.starts_with('.'))
 }
 
-fn file_paths_for_root(root: &Path, include_hidden: bool) -> Arc<Vec<String>> {
+fn file_paths_for_root(root: &Path, include_hidden: bool) -> DiscoveredFilePaths {
     let root = normalize_existing_dir(root).unwrap_or_else(|| root.to_path_buf());
     let key = FilePathCacheKey {
         root: root.clone(),
@@ -132,31 +163,30 @@ fn file_paths_for_root(root: &Path, include_hidden: bool) -> Arc<Vec<String>> {
     };
     if let Ok(cache) = FILE_PATH_CACHE.lock() {
         if cache.key.as_ref() == Some(&key) && cache.cached_at.elapsed() < FILE_PATH_CACHE_TTL {
-            return Arc::clone(&cache.paths);
+            return cache.discovered.clone();
         }
     }
 
-    let mut paths = discover_file_paths(&root, include_hidden);
-    paths.sort_by(|left, right| {
+    let mut discovered = discover_file_paths(&root, include_hidden);
+    Arc::make_mut(&mut discovered.paths).sort_by(|left, right| {
         left.to_ascii_lowercase()
             .cmp(&right.to_ascii_lowercase())
             .then_with(|| left.cmp(right))
     });
-    let paths = Arc::new(paths);
 
     if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
         cache.key = Some(key);
-        cache.paths = Arc::clone(&paths);
+        cache.discovered = discovered.clone();
         cache.cached_at = Instant::now();
     }
-    paths
+    discovered
 }
 
 #[cfg(test)]
 pub(super) fn clear_workspace_file_path_cache() {
     if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
         cache.key = None;
-        cache.paths = Arc::new(Vec::new());
+        cache.discovered = DiscoveredFilePaths::complete(Vec::new());
         cache.cached_at = Instant::now();
     }
 }
@@ -313,8 +343,9 @@ pub(super) fn file_palette_scroll_footer(
     above: usize,
     below: usize,
     total: usize,
+    incomplete: bool,
 ) -> Option<String> {
-    if above == 0 && below == 0 {
+    if above == 0 && below == 0 && !incomplete {
         return None;
     }
 
@@ -326,13 +357,16 @@ pub(super) fn file_palette_scroll_footer(
         parts.push(format!("↓ {below} more"));
     }
     parts.push(format!("{total} total"));
+    if incomplete {
+        parts.push("partial".into());
+    }
     Some(parts.join(" · "))
 }
 
 /// Lists workspace files for `@` mentions using the shared workspace walker,
 /// so ignore rules, symlink policy, and path shapes match the `grep` and
 /// `glob` tools. Callers sort the result for display.
-fn discover_file_paths(root: &Path, include_hidden: bool) -> Vec<String> {
+fn discover_file_paths(root: &Path, include_hidden: bool) -> DiscoveredFilePaths {
     let options = WalkOptions {
         hidden: if include_hidden {
             HiddenFiles::Include
@@ -346,7 +380,7 @@ fn discover_file_paths(root: &Path, include_hidden: bool) -> Vec<String> {
     };
 
     let mut paths = Vec::new();
-    visit_files(root, &options, |file| {
+    let stop = visit_files(root, &options, |file| {
         paths.push(file.relative);
         if paths.len() >= MAX_FILE_PATHS {
             ControlFlow::Break(WalkStop::ResultLimit)
@@ -354,7 +388,10 @@ fn discover_file_paths(root: &Path, include_hidden: bool) -> Vec<String> {
             ControlFlow::Continue(())
         }
     });
-    paths
+    DiscoveredFilePaths {
+        paths: Arc::new(paths),
+        incomplete: !matches!(stop, WalkStop::Completed),
+    }
 }
 
 #[cfg(test)]

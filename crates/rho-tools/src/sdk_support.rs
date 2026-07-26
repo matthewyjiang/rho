@@ -115,7 +115,7 @@ pub(crate) fn map_app_error(error: AppToolError) -> ToolError {
         ),
         AppToolError::Io(error) => ToolError::new(ToolErrorKind::Execution, error.to_string()),
         AppToolError::Utf8(error) => ToolError::new(ToolErrorKind::Execution, error.to_string()),
-        AppToolError::Message(message) if message == "tool interrupted" => ToolError::cancelled(),
+        AppToolError::Cancelled => ToolError::cancelled(),
         AppToolError::Message(message) => ToolError::new(ToolErrorKind::Execution, message),
     }
 }

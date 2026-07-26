@@ -490,6 +490,7 @@ fn map_app_tool_error(error: rho_tools::tool::ToolError) -> ToolError {
     let message = error.to_string();
     let kind = match error {
         rho_tools::tool::ToolError::InvalidArguments(_) => ToolErrorKind::InvalidArguments,
+        rho_tools::tool::ToolError::Cancelled => return ToolError::cancelled(),
         rho_tools::tool::ToolError::Io(_)
         | rho_tools::tool::ToolError::Utf8(_)
         | rho_tools::tool::ToolError::Message(_) => ToolErrorKind::Execution,

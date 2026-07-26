@@ -154,6 +154,7 @@ pub(super) struct InputDraft {
 pub(super) struct FileMatchCache {
     pub(in crate::tui) query: String,
     pub(in crate::tui) matches: std::sync::Arc<Vec<String>>,
+    pub(in crate::tui) incomplete: bool,
     pub(in crate::tui) refreshed_at: Instant,
 }
 

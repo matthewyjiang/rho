@@ -1,10 +1,8 @@
-use std::path::PathBuf;
-
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::{grep_workspace, GrepRequest};
+use super::{grep_workspace, GrepRequest, MAX_FILE_BYTES};
 use crate::tool::{compact_display_path, resolve_path, ToolError};
 
 /// Runs grep the way the SDK adapter does: parse, resolve the root against the
@@ -218,11 +216,19 @@ b.txt:1
 fn skips_binary_and_oversized_files() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("bin.dat"), b"a\0b\nx\n").unwrap();
+    // Sparse/truncated file: large enough to exceed the byte cap without writing
+    // multi-megabyte contents into the fixture.
+    let oversized = dir.path().join("huge.txt");
+    {
+        let file = std::fs::File::create(&oversized).unwrap();
+        file.set_len(MAX_FILE_BYTES + 1).unwrap();
+    }
     write(&dir, "ok.txt", "needle\n");
 
     let content = call_grep(&dir, json!({"pattern": "needle|x"})).unwrap();
     assert!(content.contains("ok.txt\n"), "{content}");
     assert!(!content.contains("bin.dat"), "{content}");
+    assert!(!content.contains("huge.txt"), "{content}");
 }
 
 #[test]
@@ -262,13 +268,18 @@ fn truncates_long_match_lines_at_char_boundary() {
 
 #[test]
 fn request_path_defaults_to_dot() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "hit.txt", "x\n");
     let request = GrepRequest::from_arguments(json!({"pattern": "x"})).unwrap();
     assert_eq!(request.path, ".");
-    let root = PathBuf::from(".");
-    let out = grep_workspace(&root, ".", &request, &|| false).unwrap();
-    assert!(
-        out.starts_with("no matches") || out.contains("matches"),
-        "{out}"
+    let out = grep_workspace(dir.path(), ".", &request, &|| false).unwrap();
+    assert_eq!(
+        out,
+        "\
+hit.txt
+  1: x
+
+1 matches in 1 files"
     );
 }
 

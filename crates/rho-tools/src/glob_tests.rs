@@ -126,3 +126,42 @@ fn cancellation_is_reported_rather_than_read_as_no_matches() {
     let out = glob_workspace(dir.path(), ".", &request, &|| true).unwrap();
     assert_eq!(out, "no files matching '*.rs' under . (cancelled)");
 }
+
+#[test]
+fn empty_results_report_each_incomplete_stop_reason() {
+    use crate::{
+        search::{stop_reasons, with_reasons, NarrowHint},
+        workspace_walk::WalkStop,
+    };
+
+    let narrow = NarrowHint("the pattern or path");
+    let counts = "no files matching '*.rs' under .".to_string();
+    let cases = [
+        (
+            WalkStop::Cancelled,
+            "no files matching '*.rs' under . (cancelled)",
+        ),
+        (
+            WalkStop::EntryLimit,
+            "no files matching '*.rs' under . (scan limit reached; narrow the pattern or path)",
+        ),
+        (
+            WalkStop::Deadline,
+            "no files matching '*.rs' under . (time limit reached)",
+        ),
+        (
+            WalkStop::ResultLimit,
+            "no files matching '*.rs' under . (result limit reached; narrow the pattern or path)",
+        ),
+    ];
+    for (stop, expected) in cases {
+        let reasons = stop_reasons(stop, /*per_file_truncated*/ 0);
+        assert_eq!(with_reasons(counts.clone(), &reasons, narrow), expected);
+    }
+    // A finished walk keeps the plain empty message.
+    let reasons = stop_reasons(WalkStop::Completed, /*per_file_truncated*/ 0);
+    assert_eq!(
+        with_reasons(counts, &reasons, narrow),
+        "no files matching '*.rs' under ."
+    );
+}

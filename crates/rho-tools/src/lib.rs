@@ -5,8 +5,8 @@
 //! - Application tools ([`tool::Tool`]) implement the user-facing built-ins
 //!   (`bash`, `read_file`, `write_file`, `edit_file`, `list_dir`) with output
 //!   truncation, diffs, and display formatting.
-//! - Workspace searches ([`search::WorkspaceSearch`]) implement `grep` and
-//!   `glob` over the shared [`workspace_walk`] walker.
+//! - Workspace searches implement `grep` and `glob` over the shared
+//!   [`workspace_walk`] walker.
 //! - SDK adapters ([`sdk_adapter`], [`sdk_shell`], [`sdk_search`]) wrap those
 //!   implementations in the public [`rho_sdk::tool::Tool`] contract so hosts
 //!   can register them on an SDK runtime with explicit workspace policies.

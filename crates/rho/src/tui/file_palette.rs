@@ -78,16 +78,30 @@ impl App {
     }
 
     pub(super) fn file_matches(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.file_match_list().paths)
+    }
+
+    pub(super) fn file_discovery_incomplete(&self) -> bool {
+        self.file_match_list().incomplete
+    }
+
+    fn file_match_list(&self) -> file_picker::DiscoveredFilePaths {
         let Some(mention) =
             file_picker::active_file_mention(self.input_ui.text(), self.input_ui.cursor())
         else {
-            return Arc::new(Vec::new());
+            return file_picker::DiscoveredFilePaths {
+                paths: Arc::new(Vec::new()),
+                incomplete: false,
+            };
         };
         if let Some(cache) = self.input_ui.file_match_cache() {
             if cache.query == mention.query
                 && cache.refreshed_at.elapsed() < file_picker::FILE_PATH_CACHE_TTL
             {
-                return std::sync::Arc::clone(&cache.matches);
+                return file_picker::DiscoveredFilePaths {
+                    paths: Arc::clone(&cache.matches),
+                    incomplete: cache.incomplete,
+                };
             }
         }
         file_picker::matching_file_paths(&self.info.runtime.cwd, &mention.query)
@@ -111,9 +125,11 @@ impl App {
         {
             return;
         }
+        let discovered = file_picker::matching_file_paths(&self.info.runtime.cwd, &mention.query);
         self.input_ui.set_file_match_cache(Some(FileMatchCache {
             query: mention.query.clone(),
-            matches: file_picker::matching_file_paths(&self.info.runtime.cwd, &mention.query),
+            matches: Arc::clone(&discovered.paths),
+            incomplete: discovered.incomplete,
             refreshed_at: std::time::Instant::now(),
         }));
     }
