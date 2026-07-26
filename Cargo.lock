@@ -2989,7 +2989,6 @@ dependencies = [
  "crossterm",
  "futures-util",
  "humantime",
- "ignore",
  "image",
  "katex-rs",
  "keyring",

@@ -2,20 +2,16 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::Glob;
-use crate::tool::{Tool, ToolContext, ToolError};
+use super::{glob_workspace, GlobRequest};
+use crate::tool::{compact_display_path, resolve_path, ToolError};
 
-fn ctx(dir: &TempDir) -> ToolContext {
-    ToolContext {
-        cwd: dir.path().to_path_buf(),
-        max_output_bytes: 64_000,
-    }
-}
-
-async fn call_glob(dir: &TempDir, args: serde_json::Value) -> Result<String, ToolError> {
-    let result = Glob.call(args, ctx(dir), "id-1".into()).await?;
-    assert!(result.ok);
-    Ok(result.content)
+/// Runs glob the way the SDK adapter does: parse, resolve the root against the
+/// workspace, then walk.
+fn call_glob(dir: &TempDir, args: serde_json::Value) -> Result<String, ToolError> {
+    let request = GlobRequest::from_arguments(args)?;
+    let root = resolve_path(dir.path(), &request.path);
+    let display = compact_display_path(dir.path(), &request.path);
+    glob_workspace(&root, &display, &request, &|| false)
 }
 
 fn write(dir: &TempDir, relative: &str, content: &str) {
@@ -26,8 +22,8 @@ fn write(dir: &TempDir, relative: &str, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
-#[tokio::test]
-async fn nested_pattern_returns_sorted_relative_paths() {
+#[test]
+fn nested_pattern_returns_paths_in_directory_order() {
     let dir = TempDir::new().unwrap();
     write(&dir, "src/b.rs", "");
     write(&dir, "src/a.rs", "");
@@ -35,9 +31,7 @@ async fn nested_pattern_returns_sorted_relative_paths() {
     write(&dir, "src/a.txt", "");
     std::fs::create_dir_all(dir.path().join("src/empty")).unwrap();
 
-    let content = call_glob(&dir, json!({"pattern": "**/*.rs"}))
-        .await
-        .unwrap();
+    let content = call_glob(&dir, json!({"pattern": "**/*.rs"})).unwrap();
     assert_eq!(
         content,
         "\
@@ -49,15 +43,13 @@ src/nested/c.rs
     );
 }
 
-#[tokio::test]
-async fn path_scopes_search_and_paths_are_relative_to_scope() {
+#[test]
+fn path_scopes_search_and_paths_are_relative_to_scope() {
     let dir = TempDir::new().unwrap();
     write(&dir, "crates/rho/src/lib.rs", "");
     write(&dir, "crates/other/src/lib.rs", "");
 
-    let content = call_glob(&dir, json!({"pattern": "**/*.rs", "path": "crates/rho"}))
-        .await
-        .unwrap();
+    let content = call_glob(&dir, json!({"pattern": "**/*.rs", "path": "crates/rho"})).unwrap();
     assert_eq!(
         content,
         "\
@@ -67,26 +59,26 @@ src/lib.rs
     );
 }
 
-#[tokio::test]
-async fn directories_are_absent_from_results() {
+#[test]
+fn directories_are_absent_from_results() {
     let dir = TempDir::new().unwrap();
     std::fs::create_dir_all(dir.path().join("src")).unwrap();
     write(&dir, "src/main.rs", "");
 
-    let content = call_glob(&dir, json!({"pattern": "src/**"})).await.unwrap();
+    let content = call_glob(&dir, json!({"pattern": "src/**"})).unwrap();
     assert!(content.contains("src/main.rs\n"), "{content}");
     assert!(!content.lines().any(|line| line == "src"), "{content}");
 }
 
-#[tokio::test]
-async fn gitignored_and_hidden_excluded_by_default() {
+#[test]
+fn gitignored_and_hidden_excluded_by_default() {
     let dir = TempDir::new().unwrap();
     write(&dir, ".gitignore", "ignored.rs\n");
     write(&dir, "ignored.rs", "");
     write(&dir, ".hidden.rs", "");
     write(&dir, "kept.rs", "");
 
-    let content = call_glob(&dir, json!({"pattern": "*.rs"})).await.unwrap();
+    let content = call_glob(&dir, json!({"pattern": "*.rs"})).unwrap();
     assert_eq!(
         content,
         "\
@@ -95,39 +87,42 @@ kept.rs
 1 files"
     );
 
-    let hidden = call_glob(&dir, json!({"pattern": "*.rs", "include_hidden": true}))
-        .await
-        .unwrap();
+    let hidden = call_glob(&dir, json!({"pattern": "*.rs", "include_hidden": true})).unwrap();
     assert!(hidden.contains(".hidden.rs\n"), "{hidden}");
     assert!(!hidden.contains("ignored.rs"), "{hidden}");
 }
 
-#[tokio::test]
-async fn max_results_notes_truncation() {
+#[test]
+fn max_results_takes_the_first_paths_in_walk_order() {
     let dir = TempDir::new().unwrap();
     write(&dir, "a.rs", "");
     write(&dir, "b.rs", "");
     write(&dir, "c.rs", "");
 
-    let content = call_glob(&dir, json!({"pattern": "*.rs", "max_results": 1}))
-        .await
-        .unwrap();
-    assert!(
-        content.contains("1 files (result limit reached"),
-        "{content}"
-    );
+    let content = call_glob(&dir, json!({"pattern": "*.rs", "max_results": 2})).unwrap();
     assert_eq!(
-        content.lines().filter(|line| line.ends_with(".rs")).count(),
-        1
+        content,
+        "\
+a.rs
+b.rs
+
+2 files (result limit reached; narrow the pattern or path)"
     );
 }
 
-#[tokio::test]
-async fn no_matches_message() {
+#[test]
+fn no_matches_message() {
     let dir = TempDir::new().unwrap();
     write(&dir, "a.txt", "");
-    let content = call_glob(&dir, json!({"pattern": "*.rs", "path": "."}))
-        .await
-        .unwrap();
+    let content = call_glob(&dir, json!({"pattern": "*.rs", "path": "."})).unwrap();
     assert_eq!(content, "no files matching '*.rs' under .");
+}
+
+#[test]
+fn cancellation_is_reported_rather_than_read_as_no_matches() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "a.rs", "");
+    let request = GlobRequest::from_arguments(json!({"pattern": "*.rs"})).unwrap();
+    let out = glob_workspace(dir.path(), ".", &request, &|| true).unwrap();
+    assert_eq!(out, "no files matching '*.rs' under . (cancelled)");
 }

@@ -164,3 +164,46 @@ fn visitor_break_result_limit_stops_walk() {
     assert_eq!(stop, WalkStop::ResultLimit);
     assert_eq!(seen, 1);
 }
+
+#[test]
+fn entries_arrive_sorted_within_each_directory() {
+    let dir = TempDir::new().unwrap();
+    for relative in ["src/b.rs", "src/a.rs", "src/nested/c.rs", "top.rs"] {
+        let path = dir.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x").unwrap();
+    }
+
+    let mut files = Vec::new();
+    let stop = visit_files(
+        dir.path(),
+        &options(HiddenFiles::Skip, 1_000, far_deadline()),
+        |file: WalkedFile| {
+            files.push(file.relative);
+            ControlFlow::Continue(())
+        },
+    );
+
+    assert_eq!(stop, WalkStop::Completed);
+    assert_eq!(
+        files,
+        vec!["src/a.rs", "src/b.rs", "src/nested/c.rs", "top.rs"]
+    );
+}
+
+#[test]
+fn a_root_named_git_is_still_walked() {
+    let dir = TempDir::new().unwrap();
+    let git = dir.path().join(".git");
+    std::fs::create_dir_all(&git).unwrap();
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    let (stop, files) = collect(&git, &options(HiddenFiles::Skip, 1_000, far_deadline()));
+
+    assert_eq!(stop, WalkStop::Completed);
+    assert_eq!(files, vec!["HEAD".to_string()]);
+}
+
+fn far_deadline() -> Instant {
+    Instant::now() + Duration::from_secs(30)
+}

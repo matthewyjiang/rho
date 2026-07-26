@@ -19,7 +19,8 @@ glob
 
 - Patterns: `grep` takes a Rust/`regex` pattern. `glob` takes a path glob; a pattern with no `/` (for example `*.rs`) matches nested paths as `**/*.rs`.
 - Defaults: both honor `.gitignore`, skip hidden files, and never follow symlinks. Pass `include_hidden` when you need dotfiles.
-- Caps: results are bounded (default 200). `grep` also caps matches per file and trims long lines. Broad hits return a short summary that says how to narrow the search.
+- Order: results come back in walk order, sorted by name within each directory, so repeat runs agree and a capped result is the first N paths shown rather than an arbitrary sample.
+- Caps: results are bounded (default 200). `grep` also caps matches per file and trims long lines. Every capped, timed-out, or cancelled search says so in its summary, including when it found nothing.
 - Output: `grep` groups matches by file. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
 - Permissions: both request read access only, so they work in every permission mode, including `plan`.
 

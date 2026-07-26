@@ -1,10 +1,13 @@
 use std::{
-    path::{Component, Path, PathBuf},
+    ops::ControlFlow,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
 
-use ignore::WalkBuilder;
+use rho_tools::workspace_walk::{
+    visit_files, HiddenFiles, WalkLimits, WalkOptions, WalkStop, MAX_ENTRIES_SCANNED,
+};
 
 use super::picker::fuzzy_match_score;
 use crate::paths::home_dir;
@@ -235,6 +238,8 @@ fn directory_display_prefix(directory_query: &str) -> String {
 
 #[cfg(test)]
 fn path_to_unix_string(path: &Path) -> String {
+    use std::path::Component;
+
     let mut parts = Vec::new();
     for component in path.components() {
         match component {
@@ -324,60 +329,32 @@ pub(super) fn file_palette_scroll_footer(
     Some(parts.join(" · "))
 }
 
+/// Lists workspace files for `@` mentions using the shared workspace walker,
+/// so ignore rules, symlink policy, and path shapes match the `grep` and
+/// `glob` tools. Callers sort the result for display.
 fn discover_file_paths(root: &Path, include_hidden: bool) -> Vec<String> {
-    walk_file_paths(root, include_hidden)
-}
+    let options = WalkOptions {
+        hidden: if include_hidden {
+            HiddenFiles::Include
+        } else {
+            HiddenFiles::Skip
+        },
+        limits: WalkLimits {
+            max_entries: MAX_ENTRIES_SCANNED,
+            deadline: Instant::now() + FILE_DISCOVERY_TIMEOUT,
+        },
+    };
 
-fn walk_file_paths(root: &Path, include_hidden: bool) -> Vec<String> {
-    let deadline = Instant::now() + FILE_DISCOVERY_TIMEOUT;
-    let mut builder = WalkBuilder::new(root);
-    // Always allow walking into an explicitly scoped hidden root (depth 0).
-    // Hidden children are controlled by filter_entry below.
-    builder
-        .hidden(/*yes*/ false)
-        .follow_links(/*yes*/ false)
-        .filter_entry(move |entry| {
-            let name = entry.file_name();
-            if name == ".git" {
-                return false;
-            }
-            if include_hidden || entry.depth() == 0 {
-                return true;
-            }
-            !name.to_string_lossy().starts_with('.')
-        });
-
-    builder
-        .build()
-        .take_while(|_| Instant::now() < deadline)
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
-        .filter_map(|entry| {
-            let path = display_relative_path(root, entry.path())?;
-            if !include_hidden && path_has_hidden_component(&path) {
-                return None;
-            }
-            Some(path)
-        })
-        .take(MAX_FILE_PATHS)
-        .collect()
-}
-
-fn path_has_hidden_component(path: &str) -> bool {
-    path.split('/').any(|part| part.starts_with('.'))
-}
-
-fn display_relative_path(root: &Path, path: &Path) -> Option<String> {
-    let relative = path.strip_prefix(root).ok()?;
-    let mut parts = Vec::new();
-    for component in relative.components() {
-        match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+    let mut paths = Vec::new();
+    visit_files(root, &options, |file| {
+        paths.push(file.relative);
+        if paths.len() >= MAX_FILE_PATHS {
+            ControlFlow::Break(WalkStop::ResultLimit)
+        } else {
+            ControlFlow::Continue(())
         }
-    }
-    (!parts.is_empty()).then(|| parts.join("/"))
+    });
+    paths
 }
 
 #[cfg(test)]

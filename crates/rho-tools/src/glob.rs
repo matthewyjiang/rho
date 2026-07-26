@@ -1,28 +1,22 @@
-use std::{
-    ops::ControlFlow,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{ops::ControlFlow, path::Path};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
     path_glob::PathGlob,
-    tool::*,
+    search::{
+        clamp_limit, stop_reasons, with_reasons, NarrowHint, WorkspaceSearch, DEFAULT_MAX_RESULTS,
+        MAX_RESULTS_CEILING, SEARCH_DEADLINE,
+    },
+    tool::{ToolError, ToolSpec},
     workspace_walk::{visit_files, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile},
 };
 
-/// Default number of paths returned by one glob call.
-const DEFAULT_MAX_RESULTS: usize = 200;
-/// Hard ceiling so callers cannot request unbounded listings.
-const MAX_RESULTS_CEILING: usize = 1_000;
-/// Walk bound: stop after inspecting this many directory entries.
-const MAX_ENTRIES_SCANNED: usize = 200_000;
-/// Wall-clock bound for one glob call.
-const SEARCH_DEADLINE: Duration = Duration::from_secs(10);
+/// How glob tells the model to shrink a search.
+const NARROW: NarrowHint = NarrowHint("the pattern or path");
 
-pub struct Glob;
+pub(crate) struct GlobSearch;
 
 #[derive(Deserialize)]
 struct Args {
@@ -32,9 +26,8 @@ struct Args {
     max_results: Option<usize>,
 }
 
-/// A validated path search, built before any capability is requested.
-pub(super) struct GlobRequest {
-    pub(super) path: String,
+pub(crate) struct GlobRequest {
+    pub(crate) path: String,
     pattern_display: String,
     glob: PathGlob,
     hidden: HiddenFiles,
@@ -42,38 +35,31 @@ pub(super) struct GlobRequest {
 }
 
 impl GlobRequest {
-    pub(super) fn from_arguments(args: Value) -> Result<Self, ToolError> {
+    pub(crate) fn from_arguments(args: Value) -> Result<Self, ToolError> {
         let args: Args = serde_json::from_value(args)?;
-        Self::from_parsed(args)
-    }
-
-    fn from_parsed(args: Args) -> Result<Self, ToolError> {
-        let pattern_display = args.pattern.clone();
-        let glob = PathGlob::compile(&args.pattern)?;
-        let hidden = if args.include_hidden.unwrap_or(false) {
-            HiddenFiles::Include
-        } else {
-            HiddenFiles::Skip
-        };
         Ok(Self {
+            pattern_display: args.pattern.clone(),
+            glob: PathGlob::compile(&args.pattern)?,
             path: args.path.unwrap_or_else(|| ".".into()),
-            pattern_display,
-            glob,
-            hidden,
-            max_results: args
-                .max_results
-                .unwrap_or(DEFAULT_MAX_RESULTS)
-                .clamp(1, MAX_RESULTS_CEILING),
+            hidden: if args.include_hidden.unwrap_or(false) {
+                HiddenFiles::Include
+            } else {
+                HiddenFiles::Skip
+            },
+            max_results: clamp_limit(args.max_results, DEFAULT_MAX_RESULTS, MAX_RESULTS_CEILING),
         })
     }
 }
 
-#[async_trait::async_trait]
-impl Tool for Glob {
-    fn spec(&self) -> ToolSpec {
+impl WorkspaceSearch for GlobSearch {
+    type Request = GlobRequest;
+
+    const NAME: &'static str = "glob";
+
+    fn spec() -> ToolSpec {
         ToolSpec {
-            name: "glob".into(),
-            description: "Finds files matching a glob pattern under a directory. Skips ignored and hidden files. Returns sorted relative paths.".into(),
+            name: Self::NAME.into(),
+            description: "Finds files matching a glob pattern under a directory. Skips ignored and hidden files. Returns relative paths in directory order.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -87,29 +73,25 @@ impl Tool for Glob {
         }
     }
 
-    async fn call(
-        &self,
-        args: Value,
-        ctx: ToolContext,
-        id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let request = GlobRequest::from_arguments(args)?;
-        let path = resolve_path(&ctx.cwd, &request.path);
-        let display_root = compact_display_path(&ctx.cwd, &request.path);
-        let content = tokio::task::spawn_blocking(move || {
-            glob_workspace(&path, &display_root, &request, &|| false)
-        })
-        .await
-        .map_err(|error| ToolError::Message(format!("glob task failed: {error}")))??;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: truncate(content, ctx.max_output_bytes),
-        })
+    fn parse(arguments: Value) -> Result<GlobRequest, ToolError> {
+        GlobRequest::from_arguments(arguments)
+    }
+
+    fn root(request: &GlobRequest) -> &str {
+        &request.path
+    }
+
+    fn run(
+        root: &Path,
+        display_root: &str,
+        request: &GlobRequest,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String, ToolError> {
+        glob_workspace(root, display_root, request, cancelled)
     }
 }
 
-pub(super) fn glob_workspace(
+pub(crate) fn glob_workspace(
     root: &Path,
     display_root: &str,
     request: &GlobRequest,
@@ -117,14 +99,10 @@ pub(super) fn glob_workspace(
 ) -> Result<String, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
-        limits: WalkLimits {
-            max_entries: MAX_ENTRIES_SCANNED,
-            deadline: Instant::now() + SEARCH_DEADLINE,
-        },
+        limits: WalkLimits::within(SEARCH_DEADLINE),
     };
 
     let mut matches = Vec::new();
-    let mut result_limit_hit = false;
     let walk_stop = visit_files(root, &options, |file: WalkedFile| {
         if cancelled() {
             return ControlFlow::Break(WalkStop::Cancelled);
@@ -134,46 +112,29 @@ pub(super) fn glob_workspace(
         }
         matches.push(file.relative);
         if matches.len() >= request.max_results {
-            result_limit_hit = true;
             ControlFlow::Break(WalkStop::ResultLimit)
         } else {
             ControlFlow::Continue(())
         }
     });
 
-    matches.sort();
-
+    let reasons = stop_reasons(walk_stop, /*per_file_truncated*/ 0);
     if matches.is_empty() {
-        return Ok(format!(
+        // Still report why, so a walk cut short by a limit or a cancellation is
+        // never mistaken for a directory with no matching files.
+        let counts = format!(
             "no files matching '{}' under {display_root}",
             request.pattern_display
-        ));
+        );
+        return Ok(with_reasons(counts, &reasons, NARROW));
     }
 
-    let mut body = matches.join("\n");
-    body.push_str("\n\n");
-    body.push_str(&summary(matches.len(), walk_stop, result_limit_hit));
-    Ok(body)
-}
-
-fn summary(count: usize, walk_stop: WalkStop, result_limit_hit: bool) -> String {
-    let mut reasons = Vec::new();
-    if result_limit_hit || matches!(walk_stop, WalkStop::ResultLimit) {
-        reasons.push("result limit reached; narrow the pattern or path".to_string());
-    }
-    match walk_stop {
-        WalkStop::EntryLimit => {
-            reasons.push("scan limit reached; narrow the path or pattern".to_string())
-        }
-        WalkStop::Deadline => reasons.push("time limit reached".to_string()),
-        WalkStop::Cancelled => reasons.push("cancelled".to_string()),
-        WalkStop::Completed | WalkStop::ResultLimit => {}
-    }
-    if reasons.is_empty() {
-        format!("{count} files")
-    } else {
-        format!("{count} files ({})", reasons.join("; "))
-    }
+    let counts = format!("{} files", matches.len());
+    Ok(format!(
+        "{}\n\n{}",
+        matches.join("\n"),
+        with_reasons(counts, &reasons, NARROW)
+    ))
 }
 
 #[cfg(test)]

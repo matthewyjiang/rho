@@ -125,13 +125,7 @@ pub(super) fn finished_lines(
         ToolKind::PowerShell => command_result_lines("PS", &view.arguments, content),
         ToolKind::Process => process_result_lines(content),
         ToolKind::ListDir => vec![format!("list_dir {}", metadata_path(view, cwd))],
-        ToolKind::Grep | ToolKind::Glob => {
-            let mut lines = preview_lines(view.kind, &view.name, Some(&view.arguments), cwd);
-            if !content.trim().is_empty() {
-                lines.push(content.to_string());
-            }
-            lines
-        }
+        ToolKind::Grep | ToolKind::Glob => header_with_output(start_lines(view, cwd), content),
         ToolKind::ReadFile => vec![format!("read_file {}", metadata_read_path(view, cwd))],
         ToolKind::WriteFile | ToolKind::EditFile => file_diff_lines(view, content, ok, cwd),
         ToolKind::Skill => preview_lines(view.kind, &view.name, Some(&view.arguments), cwd),
@@ -160,14 +154,20 @@ pub(super) fn progress_lines(
             return command_result_lines(prompt, &view.arguments, progress.text());
         }
     }
-    let mut lines = view.map_or_else(|| vec!["tool".into()], |(view, cwd)| start_lines(view, cwd));
-    if !progress.text().trim().is_empty() {
-        lines.push(progress.text().to_string());
-    }
+    let header = view.map_or_else(|| vec!["tool".into()], |(view, cwd)| start_lines(view, cwd));
+    let mut lines = header_with_output(header, progress.text());
     if let (Some(completed), Some(total)) = (progress.completed_units(), progress.total_units()) {
         lines.push(format!("progress: {completed}/{total}"));
     }
     lines
+}
+
+/// Appends a tool's output beneath its header lines, dropping blank output.
+fn header_with_output(mut header: Vec<String>, output: &str) -> Vec<String> {
+    if !output.trim().is_empty() {
+        header.push(output.to_string());
+    }
+    header
 }
 
 pub(super) fn file_diff_lines(

@@ -1,5 +1,9 @@
 //! Gitignore-aware bounded walks over a resolved workspace root.
 //!
+//! This is the canonical workspace walker. The `grep` and `glob` tools and the
+//! TUI file picker all go through [`visit_files`] so ignore rules, symlink
+//! policy, and ordering stay identical everywhere.
+//!
 //! **Symlink security:** walks never follow symbolic links
 //! (`WalkBuilder::follow_links(false)`). Only regular files are yielded. A
 //! symlink inside an authorized root must not open a path outside that root,
@@ -9,34 +13,50 @@
 use std::{
     ops::ControlFlow,
     path::{Component, Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use ignore::WalkBuilder;
 
+/// Walk bound: stop after inspecting this many directory entries.
+pub const MAX_ENTRIES_SCANNED: usize = 200_000;
+
 /// Whether a walk descends into dot-files and dot-directories.
+///
+/// The root itself is always entered, so a walk explicitly scoped to a hidden
+/// directory still yields its contents.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HiddenFiles {
+pub enum HiddenFiles {
     Include,
     Skip,
 }
 
 /// Bounds that stop a walk before it can dominate a tool call.
 #[derive(Clone, Debug)]
-pub(crate) struct WalkLimits {
+pub struct WalkLimits {
     pub max_entries: usize,
     pub deadline: Instant,
 }
 
+impl WalkLimits {
+    /// Standard bounds: [`MAX_ENTRIES_SCANNED`] entries within `budget`.
+    pub fn within(budget: Duration) -> Self {
+        Self {
+            max_entries: MAX_ENTRIES_SCANNED,
+            deadline: Instant::now() + budget,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-pub(crate) struct WalkOptions {
+pub struct WalkOptions {
     pub hidden: HiddenFiles,
     pub limits: WalkLimits,
 }
 
 /// A regular file discovered by the walk.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WalkedFile {
+pub struct WalkedFile {
     pub absolute: PathBuf,
     /// Root-relative, `/`-separated, for display and glob matching.
     pub relative: String,
@@ -45,7 +65,7 @@ pub(crate) struct WalkedFile {
 /// Why a walk ended. Reported to the model so a capped result is never
 /// mistaken for a complete one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WalkStop {
+pub enum WalkStop {
     Completed,
     EntryLimit,
     Deadline,
@@ -55,7 +75,12 @@ pub(crate) enum WalkStop {
 
 /// Walks `root` honoring `.gitignore`/`.ignore`, never following symlinks,
 /// yielding regular files only. The visitor may end the walk early.
-pub(crate) fn visit_files(
+///
+/// Entries are sorted by name within each directory, so the walk order is
+/// stable across runs and platforms. Callers that cap results therefore emit a
+/// reproducible prefix rather than an arbitrary sample, and need no further
+/// sorting.
+pub fn visit_files(
     root: &Path,
     options: &WalkOptions,
     mut visit: impl FnMut(WalkedFile) -> ControlFlow<WalkStop>,
@@ -64,7 +89,10 @@ pub(crate) fn visit_files(
         .follow_links(false)
         .require_git(false)
         .hidden(matches!(options.hidden, HiddenFiles::Skip))
-        .filter_entry(|entry| entry.file_name() != ".git")
+        // Depth 0 is the requested root, which the caller has already chosen;
+        // only its descendants are filtered.
+        .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != ".git")
+        .sort_by_file_name(std::ffi::OsStr::cmp)
         .build();
 
     let mut entries_seen = 0usize;

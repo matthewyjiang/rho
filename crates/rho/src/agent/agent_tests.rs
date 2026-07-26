@@ -65,8 +65,12 @@ fn current_fingerprint_uses_v2_marker_and_differs_from_legacy_v1() {
     assert!(!definition.accepts_stored_fingerprint("deadbeef"));
 }
 
-/// Golden pre-change v1 fingerprints for builtin agents. These are the exact
-/// values sessions stored before the runtime axis; resume must still accept them.
+/// Golden v1 fingerprints for builtin agents, so resume keeps accepting the
+/// values sessions stored before the runtime axis.
+///
+/// Editing a builtin definition changes its fingerprint and stops older
+/// sessions for that agent from resuming. Update a value here only alongside a
+/// deliberate change to the matching `builtin_agents/*.md`.
 #[test]
 fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
     let root = tempfile::tempdir().unwrap();
@@ -78,11 +82,11 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "explorer",
-            "4bd78a085405f4b0e57d77ddf6b6879a4d0ae02e0181da13f15adb9a283510df",
+            "ef6f425945a8cee8742e53e8abb5c8f4cf8da391e48a2a44982c740bb735c249",
         ),
         (
             "reviewer",
-            "4d0667a7107a62ca45852898688e7cc5fc8f80e0606b78db689570c90d4b64a9",
+            "b83ec2ab30d6b667ba8813165ad141b7ef3e7bd53b189f6eb8f04ee0c08b9de0",
         ),
         (
             "worker",

@@ -17,8 +17,22 @@ use rho_sdk::{
 };
 use std::sync::Mutex;
 
-use super::{glob_tool, grep_tool};
-use crate::sdk_adapter::deny_context;
+use crate::sdk_adapter::{coding_tool, deny_context, CodingToolKind, CodingToolOptions};
+
+fn grep_tool(max_output_bytes: usize) -> Arc<dyn rho_sdk::tool::Tool> {
+    search_tool(CodingToolKind::Grep, max_output_bytes)
+}
+
+fn glob_tool(max_output_bytes: usize) -> Arc<dyn rho_sdk::tool::Tool> {
+    search_tool(CodingToolKind::Glob, max_output_bytes)
+}
+
+fn search_tool(kind: CodingToolKind, max_output_bytes: usize) -> Arc<dyn rho_sdk::tool::Tool> {
+    coding_tool(
+        kind,
+        CodingToolOptions::new().max_output_bytes(max_output_bytes),
+    )
+}
 
 fn call_id() -> ToolCallId {
     ToolCallId::from_str("call-1").unwrap()

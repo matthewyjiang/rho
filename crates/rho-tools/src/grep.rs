@@ -1,31 +1,24 @@
-use std::{
-    ops::ControlFlow,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{ops::ControlFlow, path::Path};
 
 use regex::RegexBuilder;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
+    grep_format::format_results,
     path_glob::PathGlob,
-    tool::*,
+    search::{
+        clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
+        MAX_RESULTS_CEILING, SEARCH_DEADLINE,
+    },
+    tool::{ToolError, ToolSpec},
     workspace_walk::{visit_files, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile},
 };
 
-/// Default total match / file listing budget for a single search.
-const DEFAULT_MAX_RESULTS: usize = 200;
-/// Hard ceiling so callers cannot request unbounded output.
-const MAX_RESULTS_CEILING: usize = 1_000;
 /// Default emitted match lines per file in `content` mode.
 const DEFAULT_MAX_PER_FILE: usize = 10;
 /// Hard ceiling for per-file emitted match lines.
 const MAX_PER_FILE_CEILING: usize = 100;
-/// Walk bound: stop after inspecting this many directory entries.
-const MAX_ENTRIES_SCANNED: usize = 200_000;
-/// Wall-clock bound for one grep call.
-const SEARCH_DEADLINE: Duration = Duration::from_secs(15);
 /// Skip files larger than this to avoid reading multi-gigabyte blobs.
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 /// Bytes inspected at the start of a file for a NUL binary sniff.
@@ -37,7 +30,7 @@ const REGEX_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 /// Cap DFA heap during regex compile.
 const REGEX_DFA_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
-pub struct Grep;
+pub(crate) struct GrepSearch;
 
 #[derive(Deserialize)]
 struct Args {
@@ -52,50 +45,69 @@ struct Args {
     output_mode: Option<String>,
 }
 
-/// A validated search, built before any capability is requested so an
-/// invalid pattern cannot cost an authorization round trip.
-pub(super) struct GrepRequest {
-    pub(super) path: String,
-    pattern_display: String,
+pub(crate) struct GrepRequest {
+    pub(crate) path: String,
+    pub(crate) pattern_display: String,
     regex: regex::Regex,
     glob: Option<PathGlob>,
     hidden: HiddenFiles,
     max_results: usize,
     max_per_file: usize,
-    output_mode: GrepOutputMode,
+    pub(crate) output_mode: GrepOutputMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum GrepOutputMode {
+pub(crate) enum GrepOutputMode {
     Content,
     FilesWithMatches,
     Count,
 }
 
-impl GrepRequest {
-    pub(super) fn from_arguments(args: Value) -> Result<Self, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
-        Self::from_parsed(args)
+impl GrepOutputMode {
+    /// How many match lines a per-file scan keeps for display. Zero means the
+    /// mode renders no line text, so a scan only needs counts.
+    fn retained_lines(self, max_per_file: usize) -> usize {
+        match self {
+            Self::Content => max_per_file,
+            Self::FilesWithMatches | Self::Count => 0,
+        }
     }
 
-    fn from_parsed(args: Args) -> Result<Self, ToolError> {
+    /// Whether a scan can quit at the first match in a file.
+    fn stops_at_first_match(self) -> bool {
+        match self {
+            Self::FilesWithMatches => true,
+            Self::Content | Self::Count => false,
+        }
+    }
+
+    /// What one file's hit spends from the `max_results` budget: match lines
+    /// in `content`, otherwise the file itself.
+    fn budget_cost(self, hit: &FileHit) -> usize {
+        match self {
+            Self::Content => hit.lines.len(),
+            Self::FilesWithMatches | Self::Count => 1,
+        }
+    }
+}
+
+impl GrepRequest {
+    pub(crate) fn from_arguments(args: Value) -> Result<Self, ToolError> {
+        let args: Args = serde_json::from_value(args)?;
         let pattern_display = args.pattern.clone();
-        let literal = args.literal.unwrap_or(false);
-        let case_sensitive = args.case_sensitive.unwrap_or(true);
-        let source = if literal {
+        let source = if args.literal.unwrap_or(false) {
             regex::escape(&args.pattern)
         } else {
             args.pattern
         };
         let regex = RegexBuilder::new(&source)
-            .case_insensitive(!case_sensitive)
+            .case_insensitive(!args.case_sensitive.unwrap_or(true))
             .size_limit(REGEX_SIZE_LIMIT)
             .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
             .build()
             .map_err(|error| {
                 ToolError::Message(format!("invalid pattern '{pattern_display}': {error}"))
             })?;
-        let glob = args.glob.as_deref().map(PathGlob::compile).transpose()?;
         let output_mode = match args.output_mode.as_deref().unwrap_or("content") {
             "content" => GrepOutputMode::Content,
             "files_with_matches" => GrepOutputMode::FilesWithMatches,
@@ -106,19 +118,18 @@ impl GrepRequest {
                 )));
             }
         };
-        let hidden = if args.include_hidden.unwrap_or(false) {
-            HiddenFiles::Include
-        } else {
-            HiddenFiles::Skip
-        };
         Ok(Self {
             path: args.path.unwrap_or_else(|| ".".into()),
             pattern_display,
             regex,
-            glob,
-            hidden,
-            max_results: clamp(args.max_results, DEFAULT_MAX_RESULTS, MAX_RESULTS_CEILING),
-            max_per_file: clamp(
+            glob: args.glob.as_deref().map(PathGlob::compile).transpose()?,
+            hidden: if args.include_hidden.unwrap_or(false) {
+                HiddenFiles::Include
+            } else {
+                HiddenFiles::Skip
+            },
+            max_results: clamp_limit(args.max_results, DEFAULT_MAX_RESULTS, MAX_RESULTS_CEILING),
+            max_per_file: clamp_limit(
                 args.max_per_file,
                 DEFAULT_MAX_PER_FILE,
                 MAX_PER_FILE_CEILING,
@@ -128,15 +139,14 @@ impl GrepRequest {
     }
 }
 
-fn clamp(value: Option<usize>, default: usize, ceiling: usize) -> usize {
-    value.unwrap_or(default).clamp(1, ceiling)
-}
+impl WorkspaceSearch for GrepSearch {
+    type Request = GrepRequest;
 
-#[async_trait::async_trait]
-impl Tool for Grep {
-    fn spec(&self) -> ToolSpec {
+    const NAME: &'static str = "grep";
+
+    fn spec() -> ToolSpec {
         ToolSpec {
-            name: "grep".into(),
+            name: Self::NAME.into(),
             description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers.".into(),
             input_schema: json!({
                 "type": "object",
@@ -159,29 +169,52 @@ impl Tool for Grep {
         }
     }
 
-    async fn call(
-        &self,
-        args: Value,
-        ctx: ToolContext,
-        id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let request = GrepRequest::from_arguments(args)?;
-        let path = resolve_path(&ctx.cwd, &request.path);
-        let display_root = compact_display_path(&ctx.cwd, &request.path);
-        let content = tokio::task::spawn_blocking(move || {
-            grep_workspace(&path, &display_root, &request, &|| false)
-        })
-        .await
-        .map_err(|error| ToolError::Message(format!("grep task failed: {error}")))??;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: truncate(content, ctx.max_output_bytes),
-        })
+    fn parse(arguments: Value) -> Result<GrepRequest, ToolError> {
+        GrepRequest::from_arguments(arguments)
+    }
+
+    fn root(request: &GrepRequest) -> &str {
+        &request.path
+    }
+
+    fn run(
+        root: &Path,
+        display_root: &str,
+        request: &GrepRequest,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String, ToolError> {
+        grep_workspace(root, display_root, request, cancelled)
     }
 }
 
-pub(super) fn grep_workspace(
+/// One file that matched, in the shape every output mode renders from.
+pub(crate) struct FileHit {
+    pub(crate) relative: String,
+    /// Matching lines in the file, including any not retained below.
+    pub(crate) total: usize,
+    /// Retained match lines as `(line number, display text)`. Empty unless the
+    /// output mode renders line text.
+    pub(crate) lines: Vec<(usize, String)>,
+}
+
+impl FileHit {
+    /// Match lines found but not shown, for the `... +N more` note.
+    pub(crate) fn suppressed(&self) -> usize {
+        self.total.saturating_sub(self.lines.len())
+    }
+}
+
+pub(crate) struct GrepStats {
+    /// Results counted against `max_results`: match lines in `content` mode,
+    /// files otherwise.
+    pub(crate) shown: usize,
+    /// Matching lines across every file the walk visited. Exceeds `shown` when
+    /// a limit cut the output short.
+    pub(crate) total_matches: usize,
+    pub(crate) reasons: Vec<StopReason>,
+}
+
+pub(crate) fn grep_workspace(
     root: &Path,
     display_root: &str,
     request: &GrepRequest,
@@ -189,17 +222,14 @@ pub(super) fn grep_workspace(
 ) -> Result<String, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
-        limits: WalkLimits {
-            max_entries: MAX_ENTRIES_SCANNED,
-            deadline: Instant::now() + SEARCH_DEADLINE,
-        },
+        limits: WalkLimits::within(SEARCH_DEADLINE),
     };
+    let retained_per_file = request.output_mode.retained_lines(request.max_per_file);
 
-    let mut files = Vec::new();
-    let mut shown_matches = 0usize;
+    let mut hits: Vec<FileHit> = Vec::new();
+    let mut shown = 0usize;
     let mut total_matches = 0usize;
-    let mut files_truncated = 0usize;
-    let mut result_limit_hit = false;
+    let mut per_file_truncated = 0usize;
 
     let walk_stop = visit_files(root, &options, |file: WalkedFile| {
         if cancelled() {
@@ -210,162 +240,70 @@ pub(super) fn grep_workspace(
                 return ControlFlow::Continue(());
             }
         }
+        let Some(mut hit) = scan_file(request, file, retained_per_file) else {
+            return ControlFlow::Continue(());
+        };
 
-        match request.output_mode {
-            GrepOutputMode::Content => {
-                let Some(file_result) = search_file_content(request, &file) else {
-                    return ControlFlow::Continue(());
-                };
-                if file_result.total == 0 {
-                    return ControlFlow::Continue(());
-                }
-                total_matches = total_matches.saturating_add(file_result.total);
-                if file_result.suppressed > 0 {
-                    files_truncated = files_truncated.saturating_add(1);
-                }
-                let remaining = request.max_results.saturating_sub(shown_matches);
-                if remaining == 0 {
-                    result_limit_hit = true;
-                    return ControlFlow::Break(WalkStop::ResultLimit);
-                }
-                let mut emitted = file_result.lines;
-                if emitted.len() > remaining {
-                    let extra = emitted.len() - remaining;
-                    emitted.truncate(remaining);
-                    files.push(ContentFile {
-                        relative: file.relative,
-                        lines: emitted,
-                        suppressed: file_result.suppressed.saturating_add(extra),
-                    });
-                    shown_matches = request.max_results;
-                    result_limit_hit = true;
-                    return ControlFlow::Break(WalkStop::ResultLimit);
-                }
-                shown_matches = shown_matches.saturating_add(emitted.len());
-                files.push(ContentFile {
-                    relative: file.relative,
-                    lines: emitted,
-                    suppressed: file_result.suppressed,
-                });
-                if shown_matches >= request.max_results {
-                    result_limit_hit = true;
-                    return ControlFlow::Break(WalkStop::ResultLimit);
-                }
-                ControlFlow::Continue(())
-            }
-            GrepOutputMode::FilesWithMatches => {
-                if !file_has_match(request, &file) {
-                    return ControlFlow::Continue(());
-                }
-                files.push(ContentFile {
-                    relative: file.relative,
-                    lines: Vec::new(),
-                    suppressed: 0,
-                });
-                shown_matches = shown_matches.saturating_add(1);
-                total_matches = shown_matches;
-                if shown_matches >= request.max_results {
-                    result_limit_hit = true;
-                    ControlFlow::Break(WalkStop::ResultLimit)
-                } else {
-                    ControlFlow::Continue(())
-                }
-            }
-            GrepOutputMode::Count => {
-                let count = count_file_matches(request, &file);
-                if count == 0 {
-                    return ControlFlow::Continue(());
-                }
-                total_matches = total_matches.saturating_add(count);
-                files.push(ContentFile {
-                    relative: file.relative,
-                    lines: vec![(count, String::new())],
-                    suppressed: 0,
-                });
-                shown_matches = shown_matches.saturating_add(1);
-                if shown_matches >= request.max_results {
-                    result_limit_hit = true;
-                    ControlFlow::Break(WalkStop::ResultLimit)
-                } else {
-                    ControlFlow::Continue(())
-                }
-            }
+        total_matches = total_matches.saturating_add(hit.total);
+        // Only meaningful where the mode keeps line text at all.
+        if retained_per_file > 0 && hit.suppressed() > 0 {
+            per_file_truncated = per_file_truncated.saturating_add(1);
+        }
+
+        // `shown < max_results` holds here: the walk breaks as soon as it is
+        // reached, so `remaining` is always at least one. A file may carry
+        // more match lines than the budget has left; the extra lines fall into
+        // `suppressed()`. Modes that keep no line text are unaffected.
+        let remaining = request.max_results - shown;
+        hit.lines.truncate(remaining);
+        shown = shown.saturating_add(request.output_mode.budget_cost(&hit));
+        hits.push(hit);
+
+        if shown >= request.max_results {
+            ControlFlow::Break(WalkStop::ResultLimit)
+        } else {
+            ControlFlow::Continue(())
         }
     });
-
-    files.sort_by(|a, b| a.relative.cmp(&b.relative));
 
     Ok(format_results(
         request,
         display_root,
-        &files,
-        GrepFormatStats {
-            shown_matches,
+        &hits,
+        GrepStats {
+            shown,
             total_matches,
-            files_truncated,
-            walk_stop,
-            result_limit_hit,
+            reasons: stop_reasons(walk_stop, per_file_truncated),
         },
     ))
 }
 
-struct ContentFile {
-    relative: String,
-    /// For content: (line_no, text). For count: (count, unused).
-    lines: Vec<(usize, String)>,
-    suppressed: usize,
-}
-
-struct FileContentResult {
-    lines: Vec<(usize, String)>,
-    suppressed: usize,
-    total: usize,
-}
-
-fn search_file_content(request: &GrepRequest, file: &WalkedFile) -> Option<FileContentResult> {
+/// Scans one file, keeping at most `retain` match lines for display.
+///
+/// Returns `None` for unreadable, oversized, binary, or non-matching files, so
+/// every output mode shares one read and one pass over the lines.
+fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<FileHit> {
     let text = read_searchable_text(&file.absolute)?;
-    let mut lines = Vec::new();
-    let mut suppressed = 0usize;
-    let mut total = 0usize;
+    let stop_early = request.output_mode.stops_at_first_match();
+    let mut hit = FileHit {
+        relative: file.relative,
+        total: 0,
+        lines: Vec::new(),
+    };
     for (index, line) in text.lines().enumerate() {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if !request.regex.is_match(line) {
             continue;
         }
-        total = total.saturating_add(1);
-        if lines.len() < request.max_per_file {
-            lines.push((index + 1, normalize_match_text(line)));
-        } else {
-            suppressed = suppressed.saturating_add(1);
+        hit.total = hit.total.saturating_add(1);
+        if hit.lines.len() < retain {
+            hit.lines.push((index + 1, normalize_match_text(line)));
+        }
+        if stop_early {
+            break;
         }
     }
-    Some(FileContentResult {
-        lines,
-        suppressed,
-        total,
-    })
-}
-
-fn file_has_match(request: &GrepRequest, file: &WalkedFile) -> bool {
-    let Some(text) = read_searchable_text(&file.absolute) else {
-        return false;
-    };
-    text.lines().any(|line| {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        request.regex.is_match(line)
-    })
-}
-
-fn count_file_matches(request: &GrepRequest, file: &WalkedFile) -> usize {
-    let Some(text) = read_searchable_text(&file.absolute) else {
-        return 0;
-    };
-    text.lines()
-        .filter(|line| {
-            let line = line.strip_suffix('\r').unwrap_or(line);
-            request.regex.is_match(line)
-        })
-        .count()
+    (hit.total > 0).then_some(hit)
 }
 
 fn read_searchable_text(path: &Path) -> Option<String> {
@@ -407,177 +345,6 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     let mut out: String = text.chars().take(max_chars).collect();
     out.push('…');
     out
-}
-
-struct GrepFormatStats {
-    shown_matches: usize,
-    total_matches: usize,
-    files_truncated: usize,
-    walk_stop: WalkStop,
-    result_limit_hit: bool,
-}
-
-fn format_results(
-    request: &GrepRequest,
-    display_root: &str,
-    files: &[ContentFile],
-    stats: GrepFormatStats,
-) -> String {
-    if files.is_empty() {
-        return format!(
-            "no matches for '{}' under {display_root}",
-            request.pattern_display
-        );
-    }
-
-    match request.output_mode {
-        GrepOutputMode::Content => {
-            let mut body = String::new();
-            for file in files {
-                body.push_str(&file.relative);
-                body.push('\n');
-                for (line_no, text) in &file.lines {
-                    body.push_str(&format!("  {line_no}: {text}\n"));
-                }
-                if file.suppressed > 0 {
-                    body.push_str(&format!("  ... +{} more in this file\n", file.suppressed));
-                }
-            }
-            body.push('\n');
-            body.push_str(&content_summary(
-                stats.shown_matches,
-                stats.total_matches,
-                files.len(),
-                stats.files_truncated,
-                stats.walk_stop,
-                stats.result_limit_hit,
-            ));
-            body
-        }
-        GrepOutputMode::FilesWithMatches => {
-            let mut body = String::new();
-            for file in files {
-                body.push_str(&file.relative);
-                body.push('\n');
-            }
-            body.push('\n');
-            body.push_str(&files_summary(
-                files.len(),
-                stats.walk_stop,
-                stats.result_limit_hit,
-            ));
-            body
-        }
-        GrepOutputMode::Count => {
-            let mut body = String::new();
-            let mut listed_total = 0usize;
-            for file in files {
-                let count = file.lines.first().map(|(n, _)| *n).unwrap_or(0);
-                listed_total = listed_total.saturating_add(count);
-                body.push_str(&format!("{}:{count}\n", file.relative));
-            }
-            body.push('\n');
-            let summary_total =
-                if stats.result_limit_hit || !matches!(stats.walk_stop, WalkStop::Completed) {
-                    // When capped mid-walk, total_matches only covers visited files.
-                    stats.total_matches
-                } else {
-                    listed_total
-                };
-            body.push_str(&count_summary(
-                summary_total,
-                files.len(),
-                stats.walk_stop,
-                stats.result_limit_hit,
-            ));
-            body
-        }
-    }
-}
-
-fn content_summary(
-    shown: usize,
-    total: usize,
-    file_count: usize,
-    files_truncated: usize,
-    walk_stop: WalkStop,
-    result_limit_hit: bool,
-) -> String {
-    let reasons = stop_reasons(walk_stop, result_limit_hit, files_truncated);
-    if reasons.is_empty() && shown == total {
-        return format!("{shown} matches in {file_count} files");
-    }
-    if files_truncated > 0 && shown != total {
-        let mut line = format!("{shown} matches shown ({total} total) in {file_count} files");
-        if !reasons.is_empty() {
-            line.push_str(&format!(" ({})", reasons.join("; ")));
-        }
-        if !reasons.iter().any(|r| r.contains("narrow")) {
-            line.push_str("; narrow the pattern, path, or glob");
-        }
-        return line;
-    }
-    let mut line = format!("{shown} matches shown in {file_count} files");
-    if shown != total || !reasons.is_empty() {
-        let mut detail = Vec::new();
-        if shown != total {
-            detail.push(format!("{total} total"));
-        }
-        detail.extend(reasons);
-        line.push_str(&format!(" ({})", detail.join("; ")));
-    }
-    line
-}
-
-fn files_summary(file_count: usize, walk_stop: WalkStop, result_limit_hit: bool) -> String {
-    let reasons = stop_reasons(walk_stop, result_limit_hit, 0);
-    if reasons.is_empty() {
-        format!("{file_count} files")
-    } else {
-        format!("{file_count} files ({})", reasons.join("; "))
-    }
-}
-
-fn count_summary(
-    total: usize,
-    file_count: usize,
-    walk_stop: WalkStop,
-    result_limit_hit: bool,
-) -> String {
-    let reasons = stop_reasons(walk_stop, result_limit_hit, 0);
-    if reasons.is_empty() {
-        format!("{total} matches in {file_count} files")
-    } else {
-        format!(
-            "{total} matches in {file_count} files ({})",
-            reasons.join("; ")
-        )
-    }
-}
-
-fn stop_reasons(
-    walk_stop: WalkStop,
-    result_limit_hit: bool,
-    files_truncated: usize,
-) -> Vec<String> {
-    let mut reasons = Vec::new();
-    if result_limit_hit || matches!(walk_stop, WalkStop::ResultLimit) {
-        reasons.push("result limit reached; narrow the pattern, path, or glob".to_string());
-    }
-    if files_truncated > 0 {
-        reasons.push(format!(
-            "{files_truncated} files truncated by max_per_file; raise max_per_file or narrow the pattern"
-        ));
-    }
-    match walk_stop {
-        WalkStop::EntryLimit => {
-            reasons.push("scan limit reached; narrow the path or glob".to_string())
-        }
-        WalkStop::Deadline => reasons.push("time limit reached".to_string()),
-        WalkStop::Cancelled => reasons.push("cancelled".to_string()),
-        WalkStop::Completed | WalkStop::ResultLimit => {}
-    }
-    reasons
 }
 
 #[cfg(test)]
