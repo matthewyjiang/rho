@@ -101,6 +101,7 @@ mod smoke_injection;
 mod statusline;
 mod stream;
 mod stream_preview;
+mod subagent_attach;
 mod subagent_panel;
 mod terminal_events;
 mod terminal_session;
@@ -164,6 +165,7 @@ use scrollbar::HistoryScrollbar;
 use scrollbar::HistoryScrollbarDrag;
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
+use subagent_attach::PendingSubagentAttach;
 use subagent_panel::SubagentPanel;
 use terminal_session::TerminalSession;
 use text_selection::{highlight_selection, render_copy_notice};
@@ -330,6 +332,7 @@ struct App {
     internal_agent_model_target: Option<String>,
     pending_session_title: Option<PendingSessionTitle>,
     clipboard: Box<dyn ClipboardWriter + Send>,
+    pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
     /// Test-only Claude probe override so `/info` and `/doctor` never spawn
     /// host `claude` or read personal auth from unit tests.

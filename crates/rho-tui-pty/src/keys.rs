@@ -29,6 +29,11 @@ pub enum MouseButton {
     Left = 0,
     Middle = 1,
     Right = 2,
+    /// Motion while the left button is held (`32 | 0` in SGR).
+    LeftDrag = 32,
+    /// Motion with no button held (`32 | 3` in SGR). Crossterm decodes this as
+    /// `MouseEventKind::Moved`.
+    Motion = 35,
     WheelUp = 64,
     WheelDown = 65,
 }
@@ -122,6 +127,14 @@ mod tests {
         assert_eq!(
             encode_sgr_mouse(MouseButton::WheelUp, 1, 1, false),
             b"\x1b[<64;1;1m"
+        );
+        assert_eq!(
+            encode_sgr_mouse(MouseButton::LeftDrag, 7, 8, true),
+            b"\x1b[<32;7;8M"
+        );
+        assert_eq!(
+            encode_sgr_mouse(MouseButton::Motion, 5, 6, true),
+            b"\x1b[<35;5;6M"
         );
     }
 }

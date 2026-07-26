@@ -8,7 +8,7 @@ use super::{
     render::tool_entry_lines,
     text_selection::{CopyNotice, TextSelection},
     tool_output_ui::{expandable_tool_entry, is_tool_entry, tool_display_line_count},
-    App,
+    App, ComposerMode,
 };
 
 impl App {
@@ -32,6 +32,7 @@ impl App {
         match kind {
             MouseEventKind::ScrollUp => {
                 self.history.set_hovered_code_block_copy(None);
+                self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(
@@ -43,6 +44,7 @@ impl App {
             }
             MouseEventKind::ScrollDown => {
                 self.history.set_hovered_code_block_copy(None);
+                self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(
@@ -66,7 +68,19 @@ impl App {
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 self.history
                     .set_hovered_code_block_copy(code_target.as_ref().map(|target| target.line));
-                if let Some(scrollbar) = scrollbar {
+                let subagent_target = matches!(self.input_ui.composer(), ComposerMode::Input)
+                    .then(|| {
+                        self.subagent_panel
+                            .attach_target_at(layout.subagents, column, row)
+                    })
+                    .flatten();
+                if let Some(target) = subagent_target {
+                    self.history.clear_text_selection();
+                    self.history.set_scrollbar_drag(None);
+                    self.subagent_panel.set_pressed(Some(&target.run_id));
+                    self.subagent_panel.set_hovered(Some(&target.run_id));
+                } else if let Some(scrollbar) = scrollbar {
+                    self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                     self.history.scroll_chrome_mut().begin_scrollbar_drag(
                         scrollbar,
@@ -77,24 +91,29 @@ impl App {
                 } else if layout.jump_to_bottom.is_some_and(|rect| {
                     rect.contains(ratatui::layout::Position { x: column, y: row })
                 }) {
+                    self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
                     self.scroll_history_to_bottom();
                 } else if let Some(target) = code_target {
+                    self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                     self.copy_text(&target.text, now);
                 } else if let Some(position) =
                     selection_position(history, history_start, column, row)
                 {
+                    self.subagent_panel.clear_pointer_state();
                     self.history.set_scrollbar_drag(None);
                     *self.history.text_selection_mut() = Some(TextSelection::new(position));
                 } else {
+                    self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
+                self.subagent_panel.clear_pointer_state();
                 if self.history.scrollbar_drag().is_some() {
                     self.history.clear_text_selection();
                     self.history.set_hovered_code_block_copy(None);
@@ -118,10 +137,25 @@ impl App {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                let pressed_subagent = self.subagent_panel.pressed_run_id().map(str::to_owned);
                 let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
                 self.history.set_scrollbar_drag(None);
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
+                let released_subagent = matches!(self.input_ui.composer(), ComposerMode::Input)
+                    .then(|| {
+                        self.subagent_panel
+                            .attach_target_at(layout.subagents, column, row)
+                    })
+                    .flatten();
+                self.subagent_panel.set_pressed(None);
+                self.subagent_panel.set_hovered(
+                    released_subagent
+                        .as_ref()
+                        .map(|target| target.run_id.as_str()),
+                );
+                let activate_subagent = released_subagent
+                    .filter(|target| pressed_subagent.as_deref() == Some(target.run_id.as_str()));
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let targets = self.code_block_copy_targets(width);
@@ -129,7 +163,10 @@ impl App {
                     code_block_copy_target_at(&targets, history, history_start, column, row)
                         .map(|target| target.line),
                 );
-                if was_scrollbar_drag {
+                if let Some(target) = activate_subagent {
+                    self.history.clear_text_selection();
+                    self.activate_subagent_row(&target, now);
+                } else if was_scrollbar_drag {
                     self.history.clear_text_selection();
                 } else if let Some(mut selection) = self.history.text_selection_mut().take() {
                     let release_position =
@@ -171,6 +208,14 @@ impl App {
                     None
                 };
                 self.history.set_hovered_code_block_copy(hovered);
+                let subagent_hover = matches!(self.input_ui.composer(), ComposerMode::Input)
+                    .then(|| {
+                        self.subagent_panel
+                            .attach_target_at(layout.subagents, column, row)
+                            .map(|target| target.run_id)
+                    })
+                    .flatten();
+                self.subagent_panel.set_hovered(subagent_hover.as_deref());
             }
             MouseEventKind::Down(MouseButton::Right)
             | MouseEventKind::Down(MouseButton::Middle)

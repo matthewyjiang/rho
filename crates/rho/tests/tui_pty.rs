@@ -474,6 +474,11 @@ fn background_agent_completion_is_delivered_after_turn_end() {
 }
 
 #[test]
+fn subagent_rail_mouse_activation_uses_release_and_survives_refresh() {
+    assert_pass("subagent_rail_mouse");
+}
+
+#[test]
 fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
 }

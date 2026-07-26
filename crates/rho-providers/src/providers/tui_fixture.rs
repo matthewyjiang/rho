@@ -23,6 +23,7 @@ const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
 const CONCURRENT_SLOW_CALL_ID: &str = "tui-fixture-concurrent-slow";
 const CONCURRENT_FAST_CALL_ID: &str = "tui-fixture-concurrent-fast";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
+const SUBAGENT_RAIL_AGENT_CALL_ID: &str = "tui-fixture-subagent-rail-agent";
 const BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID: &str = "tui-fixture-background-questionnaire-agent";
 const CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-claude-agent";
 const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
@@ -282,6 +283,17 @@ async fn fixture_stream(
                 PROGRESS_CALL_ID,
                 "tui_fixture_progress",
                 serde_json::json!({}),
+            )
+        }
+        "fixture subagent rail" if tool_result(&request, SUBAGENT_RAIL_AGENT_CALL_ID).is_none() => {
+            completed_tool_call(
+                SUBAGENT_RAIL_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker",
+                    "prompt": "fixture delay",
+                    "background": true,
+                }),
             )
         }
         "fixture background agent" if tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none() => {
@@ -565,6 +577,10 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
             "progress tool lifecycle complete with one result: {}",
             result.content
         ));
+    }
+    if let Some(result) = tool_result(request, SUBAGENT_RAIL_AGENT_CALL_ID) {
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return completed(format!("subagent rail fixture dispatched: {receipt}"));
     }
     if let Some(result) = tool_result(request, BACKGROUND_AGENT_CALL_ID) {
         // Echo the spawn receipt so PTY scenarios can assert from screen text
