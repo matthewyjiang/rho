@@ -221,7 +221,9 @@ impl App {
             }
             queued_interactions
                 .extend_subagent_questionnaires(self.queued_subagent_questionnaires.drain(..));
-            if self.update_subagent_panel(agent) {
+            let panel_changed = self.update_subagent_panel(agent);
+            let attach_changed = self.poll_pending_subagent_attaches(Instant::now());
+            if panel_changed || attach_changed {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
             if self.poll_limits_command().await? {

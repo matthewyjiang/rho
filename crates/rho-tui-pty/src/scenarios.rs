@@ -7,6 +7,7 @@ mod id;
 mod login;
 mod pickers;
 mod runtime_info;
+mod subagent_rail;
 
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
@@ -18,6 +19,7 @@ use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
+use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
 
 use anyhow::Result;
 
@@ -838,6 +840,13 @@ pub fn all_scenarios() -> &'static [Scenario] {
                 "Spawn a background agent, end the turn, and receive its completion automatically",
             size: DEFAULT_SIZE,
             steps: BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "subagent_rail_mouse",
+            description: "Keep hover through refreshes and activate rows on a completed click",
+            size: DEFAULT_SIZE,
+            steps: SUBAGENT_RAIL_MOUSE_STEPS,
             smoke: false,
         },
         Scenario {

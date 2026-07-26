@@ -11,7 +11,6 @@ use super::{
     clipboard::SystemClipboard,
     feed_image::picker_from_environment,
     statusline::StatusLine,
-    subagent_attach::HerdrCliPaneOpener,
     subagent_panel::SubagentPanel,
     App, StreamUi, TuiBootstrap, UsageUi,
 };
@@ -87,7 +86,7 @@ impl App {
             internal_agent_model_target: None,
             pending_session_title: None,
             clipboard: Box::new(SystemClipboard::default()),
-            pane_opener: Box::new(HerdrCliPaneOpener),
+            pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
             #[cfg(test)]
             test_claude_probe_snapshot: None,

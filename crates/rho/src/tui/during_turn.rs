@@ -692,6 +692,7 @@ impl App {
             match first_event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.history.clear_text_selection();
+                    self.subagent_panel.clear_pointer_state();
                     if key.code == KeyCode::Esc
                         && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
                     {
@@ -772,6 +773,9 @@ impl App {
                 Event::FocusGained => {
                     mouse_capture::reassert();
                     self.statusline.refresh_git_branch();
+                }
+                Event::FocusLost => {
+                    self.subagent_panel.clear_pointer_state();
                 }
                 _ => {}
             }

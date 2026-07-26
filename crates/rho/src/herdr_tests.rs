@@ -25,7 +25,6 @@ fn enabled_from_complete_herdr_environment() {
     let reporter = HerdrReporter::from_env_vars(|key| values.get(key).map(|value| (*value).into()));
 
     assert!(reporter.is_enabled());
-    assert_eq!(reporter.pane_id(), Some("w1:p1"));
 }
 
 #[cfg(windows)]
@@ -121,6 +120,106 @@ async fn release_sends_release_request() {
     assert_eq!(request["params"]["pane_id"], "w1:p1");
     assert_eq!(request["params"]["agent"], "rho");
     assert!(request["params"].get("seq").is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn open_sibling_pane_splits_and_submits_input_atomically() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    let mut server = super::test_support::TestHerdrServer::bind_with_responses(
+        &socket_path,
+        vec![
+            br#"{"id":"1","result":{"pane":{"pane_id":"w1:p2"}}}
+"#,
+            br#"{"id":"2","result":{}}
+"#,
+        ],
+    )
+    .await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
+
+    reporter
+        .open_sibling_pane("'/tmp/rho' 'attach' 'a1b2c3'")
+        .await
+        .unwrap();
+
+    let split = server.next_request().await;
+    assert_eq!(split["method"], "pane.split");
+    assert_eq!(split["params"]["target_pane_id"], "w1:p1");
+    assert_eq!(split["params"]["direction"], "right");
+    assert_eq!(split["params"]["focus"], false);
+
+    let input = server.next_request().await;
+    assert_eq!(input["method"], "pane.send_input");
+    assert_eq!(input["params"]["pane_id"], "w1:p2");
+    assert_eq!(input["params"]["text"], "'/tmp/rho' 'attach' 'a1b2c3'");
+    assert_eq!(input["params"]["keys"], serde_json::json!(["enter"]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn open_sibling_pane_closes_split_when_input_fails() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    let mut server = super::test_support::TestHerdrServer::bind_with_responses(
+        &socket_path,
+        vec![
+            br#"{"id":"1","result":{"pane":{"pane_id":"w1:p2"}}}
+"#,
+            br#"{"id":"2","error":{"code":"pane_missing","message":"pane disappeared"}}
+"#,
+            br#"{"id":"3","result":{}}
+"#,
+        ],
+    )
+    .await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
+
+    let error = reporter
+        .open_sibling_pane("rho attach a1b2c3")
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "pane disappeared");
+    assert_eq!(server.next_request().await["method"], "pane.split");
+    assert_eq!(server.next_request().await["method"], "pane.send_input");
+    let close = server.next_request().await;
+    assert_eq!(close["method"], "pane.close");
+    assert_eq!(close["params"]["pane_id"], "w1:p2");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn open_sibling_pane_keeps_input_and_cleanup_errors() {
+    let socket_dir = tempfile::tempdir().unwrap();
+    let socket_path = socket_dir.path().join("herdr.sock");
+    let mut server = super::test_support::TestHerdrServer::bind_with_responses(
+        &socket_path,
+        vec![
+            br#"{"id":"1","result":{"pane":{"pane_id":"w1:p2"}}}
+"#,
+            br#"{"id":"2","error":{"message":"input failed"}}
+"#,
+            br#"{"id":"3","error":{"message":"close failed"}}
+"#,
+        ],
+    )
+    .await;
+    let reporter = super::test_support::reporter_for_socket(&socket_path);
+
+    let error = reporter
+        .open_sibling_pane("rho attach a1b2c3")
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "input failed; pane cleanup failed: close failed"
+    );
+    assert_eq!(server.next_request().await["method"], "pane.split");
+    assert_eq!(server.next_request().await["method"], "pane.send_input");
+    assert_eq!(server.next_request().await["method"], "pane.close");
 }
 
 #[test]

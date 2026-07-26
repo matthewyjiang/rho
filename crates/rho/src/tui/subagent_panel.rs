@@ -33,7 +33,6 @@ pub(super) enum SubagentRowState {
 /// A clickable subagent row resolved from a pointer position.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SubagentAttachTarget {
-    pub(super) row: usize,
     pub(super) run_id: String,
     pub(super) agent_id: String,
 }
@@ -41,8 +40,8 @@ pub(super) struct SubagentAttachTarget {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct SubagentPanel {
     agents: Vec<RunningSubagent>,
-    hovered: Option<usize>,
-    pressed: Option<usize>,
+    hovered_run_id: Option<String>,
+    pressed_run_id: Option<String>,
 }
 
 impl SubagentPanel {
@@ -60,13 +59,21 @@ impl SubagentPanel {
                 elapsed_seconds: snapshot.elapsed.as_secs(),
             })
             .collect();
+        self.replace_agents(agents)
+    }
+
+    fn replace_agents(&mut self, agents: Vec<RunningSubagent>) -> bool {
         if self.agents == agents {
             return false;
         }
         self.agents = agents;
-        // Drop pointer state that may now point at a finished or shifted row.
-        self.hovered = None;
-        self.pressed = None;
+        let run_is_active = |run_id: &str| self.agents.iter().any(|agent| agent.id == run_id);
+        if !self.hovered_run_id.as_deref().is_some_and(run_is_active) {
+            self.hovered_run_id = None;
+        }
+        if !self.pressed_run_id.as_deref().is_some_and(run_is_active) {
+            self.pressed_run_id = None;
+        }
         true
     }
 
@@ -83,33 +90,42 @@ impl SubagentPanel {
     }
 
     pub(super) fn clear_pointer_state(&mut self) {
-        self.hovered = None;
-        self.pressed = None;
+        self.hovered_run_id = None;
+        self.pressed_run_id = None;
     }
 
-    /// Returns whether the hovered row changed.
-    pub(super) fn set_hovered(&mut self, row: Option<usize>) -> bool {
-        if self.hovered == row {
+    /// Returns whether the hovered run changed.
+    pub(super) fn set_hovered(&mut self, run_id: Option<&str>) -> bool {
+        if self.hovered_run_id.as_deref() == run_id {
             return false;
         }
-        self.hovered = row;
+        self.hovered_run_id = run_id.map(str::to_owned);
         true
     }
 
-    /// Returns whether the pressed row changed.
-    pub(super) fn set_pressed(&mut self, row: Option<usize>) -> bool {
-        if self.pressed == row {
+    /// Returns whether the pressed run changed.
+    pub(super) fn set_pressed(&mut self, run_id: Option<&str>) -> bool {
+        if self.pressed_run_id.as_deref() == run_id {
             return false;
         }
-        self.pressed = row;
+        self.pressed_run_id = run_id.map(str::to_owned);
         true
+    }
+
+    pub(super) fn pressed_run_id(&self) -> Option<&str> {
+        self.pressed_run_id.as_deref()
     }
 
     pub(super) fn highlighted_row(&self) -> Option<(usize, SubagentRowState)> {
-        if let Some(row) = self.pressed {
+        let agents = self.visible_agents(MAX_VISIBLE_AGENTS);
+        let row_for = |run_id: &str| agents.iter().position(|agent| agent.id == run_id);
+        if let Some(row) = self.pressed_run_id.as_deref().and_then(row_for) {
             return Some((row, SubagentRowState::Pressed));
         }
-        self.hovered.map(|row| (row, SubagentRowState::Hovered))
+        self.hovered_run_id
+            .as_deref()
+            .and_then(row_for)
+            .map(|row| (row, SubagentRowState::Hovered))
     }
 
     pub(super) fn attach_target_at(
@@ -125,7 +141,6 @@ impl SubagentPanel {
         let agents = self.visible_agents(area.height as usize);
         let agent = agents.get(index)?;
         Some(SubagentAttachTarget {
-            row: index,
             run_id: agent.id.clone(),
             agent_id: agent.agent_id.clone(),
         })
@@ -155,7 +170,7 @@ impl SubagentPanel {
             } else {
                 "  ├ "
             };
-            let row_state = self.row_state(index);
+            let row_state = self.row_state(agent);
             lines.push(agent_line(
                 agent,
                 activity,
@@ -168,10 +183,10 @@ impl SubagentPanel {
         lines
     }
 
-    fn row_state(&self, row: usize) -> SubagentRowState {
-        if self.pressed == Some(row) {
+    fn row_state(&self, agent: &RunningSubagent) -> SubagentRowState {
+        if self.pressed_run_id.as_deref() == Some(agent.id.as_str()) {
             SubagentRowState::Pressed
-        } else if self.hovered == Some(row) {
+        } else if self.hovered_run_id.as_deref() == Some(agent.id.as_str()) {
             SubagentRowState::Hovered
         } else {
             SubagentRowState::Idle

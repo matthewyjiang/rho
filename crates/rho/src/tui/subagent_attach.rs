@@ -1,10 +1,8 @@
 //! Click-to-attach actions for subagent rows in the activity rail.
 
-use std::{
-    io,
-    process::{Command, Stdio},
-    time::Instant,
-};
+use std::{io, path::Path, time::Instant};
+
+use futures_util::FutureExt;
 
 use super::{
     clipboard::CopyOutcome, subagent_panel::SubagentAttachTarget, text_selection::CopyNotice, App,
@@ -12,30 +10,18 @@ use super::{
 use crate::herdr::HerdrReporter;
 
 /// Where a subagent attach request should land.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AttachDestination {
     /// Split a new Herdr pane beside this one and run the attach command there.
-    HerdrPane { pane_id: String },
+    HerdrPane,
     /// No Herdr host: hand the command to the user through the clipboard.
     Clipboard,
 }
 
-/// Opens a terminal pane running a command.
-///
-/// Implementors must not block longer than a local IPC round trip; the TUI calls
-/// this on the input thread.
-pub(super) trait SubagentPaneOpener {
-    fn open(&mut self, pane_id: &str, command: &str) -> io::Result<()>;
-}
-
-/// Opens panes by shelling out to the `herdr` CLI.
-#[derive(Debug, Default)]
-pub(super) struct HerdrCliPaneOpener;
-
-impl SubagentPaneOpener for HerdrCliPaneOpener {
-    fn open(&mut self, pane_id: &str, command: &str) -> io::Result<()> {
-        open_herdr_pane(pane_id, command)
-    }
+pub(super) struct PendingSubagentAttach {
+    target: SubagentAttachTarget,
+    clipboard_command: String,
+    handle: tokio::task::JoinHandle<io::Result<()>>,
 }
 
 /// Command a user runs to watch delegated run `run_id`.
@@ -48,35 +34,38 @@ pub(super) fn attach_command(run_id: &str) -> String {
 /// Command to run inside a Herdr pane.
 ///
 /// Prefers this process's executable so a cargo-built or downloaded binary still
-/// starts when `rho` is not on `PATH`.
+/// starts when `rho` is not on `PATH`. Every argument is quoted because Herdr
+/// submits this string to the pane's shell.
 pub(super) fn pane_attach_command(run_id: &str) -> String {
-    match std::env::current_exe() {
-        Ok(path) => {
-            let path = path.display().to_string();
-            if needs_shell_quoting(&path) {
-                format!("{} attach {run_id}", shell_single_quote(&path))
-            } else {
-                format!("{path} attach {run_id}")
-            }
-        }
-        Err(_) => attach_command(run_id),
-    }
+    let executable = std::env::current_exe().ok();
+    pane_attach_command_for_executable(executable.as_deref(), run_id)
+}
+
+fn pane_attach_command_for_executable(executable: Option<&Path>, run_id: &str) -> String {
+    let executable = executable
+        .map(|path| path.to_string_lossy())
+        .unwrap_or_else(|| "rho".into());
+    format!(
+        "{} {} {}",
+        shell_single_quote(&executable),
+        shell_single_quote("attach"),
+        shell_single_quote(run_id)
+    )
 }
 
 /// Choose clipboard vs Herdr based on whether this Rho instance is hosted.
 pub(super) fn destination(herdr: &HerdrReporter) -> AttachDestination {
-    match herdr.pane_id() {
-        Some(pane_id) => AttachDestination::HerdrPane {
-            pane_id: pane_id.to_string(),
-        },
-        None => AttachDestination::Clipboard,
+    if herdr.is_enabled() {
+        AttachDestination::HerdrPane
+    } else {
+        AttachDestination::Clipboard
     }
 }
 
 /// Short hover hint shown on the right edge of a subagent row.
-pub(super) fn action_hint(destination: &AttachDestination) -> &'static str {
+pub(super) fn action_hint(destination: AttachDestination) -> &'static str {
     match destination {
-        AttachDestination::HerdrPane { .. } => "open pane",
+        AttachDestination::HerdrPane => "open pane",
         AttachDestination::Clipboard => "copy attach",
     }
 }
@@ -87,31 +76,70 @@ impl App {
     }
 
     pub(super) fn subagent_action_hint(&self) -> &'static str {
-        action_hint(&self.subagent_attach_destination())
+        action_hint(self.subagent_attach_destination())
     }
 
     pub(super) fn activate_subagent_row(&mut self, target: &SubagentAttachTarget, now: Instant) {
-        let command = attach_command(&target.run_id);
+        let clipboard_command = attach_command(&target.run_id);
         match self.subagent_attach_destination() {
-            AttachDestination::HerdrPane { pane_id } => {
+            AttachDestination::HerdrPane => {
+                let herdr = self.info.services.herdr.clone();
                 let pane_command = pane_attach_command(&target.run_id);
-                match self.pane_opener.open(&pane_id, &pane_command) {
-                    Ok(()) => self.notify_status(format!(
-                        "opened a herdr pane attached to {} {}",
-                        target.agent_id, target.run_id
-                    )),
-                    // A dead socket or a stale pane id must not lose the id.
-                    Err(error) => {
-                        self.notify_status(format!("herdr pane failed: {error}"));
-                        self.copy_attach_command(&command, now);
-                    }
-                }
+                let handle =
+                    tokio::spawn(async move { herdr.open_sibling_pane(&pane_command).await });
+                self.pending_subagent_attaches.push(PendingSubagentAttach {
+                    target: target.clone(),
+                    clipboard_command,
+                    handle,
+                });
+                self.notify_status(format!(
+                    "opening a herdr pane for {} {}",
+                    target.agent_id, target.run_id
+                ));
             }
-            AttachDestination::Clipboard => self.copy_attach_command(&command, now),
+            AttachDestination::Clipboard => {
+                let message = self.copy_attach_command(&clipboard_command, now);
+                self.notify_status(message);
+            }
         }
     }
 
-    fn copy_attach_command(&mut self, command: &str, now: Instant) {
+    pub(super) fn poll_pending_subagent_attaches(&mut self, now: Instant) -> bool {
+        let mut changed = false;
+        while let Some(index) = self
+            .pending_subagent_attaches
+            .iter()
+            .position(|pending| pending.handle.is_finished())
+        {
+            let pending = self.pending_subagent_attaches.remove(index);
+            let result = pending
+                .handle
+                .now_or_never()
+                .expect("finished subagent attach task has a result");
+            match result {
+                Ok(Ok(())) => self.notify_status(format!(
+                    "opened a herdr pane attached to {} {}",
+                    pending.target.agent_id, pending.target.run_id
+                )),
+                Ok(Err(error)) => {
+                    let copy_message = self.copy_attach_command(&pending.clipboard_command, now);
+                    self.notify_status(format!("herdr pane failed ({error}); {copy_message}"));
+                }
+                Err(error) => {
+                    let copy_message = self.copy_attach_command(&pending.clipboard_command, now);
+                    self.notify_status(format!("herdr pane task failed ({error}); {copy_message}"));
+                }
+            }
+            changed = true;
+        }
+        changed
+    }
+
+    pub(super) fn has_pending_subagent_attach(&self) -> bool {
+        !self.pending_subagent_attaches.is_empty()
+    }
+
+    fn copy_attach_command(&mut self, command: &str, now: Instant) -> String {
         let outcome = self.clipboard.copy(command);
         let message = match &outcome {
             Ok(CopyOutcome::Confirmed) => format!("copied attach command: {command}"),
@@ -126,65 +154,8 @@ impl App {
                 command.chars().count(),
                 now,
             )));
-        self.notify_status(message);
+        message
     }
-}
-
-fn open_herdr_pane(pane_id: &str, command: &str) -> io::Result<()> {
-    let split = Command::new("herdr")
-        .args([
-            "pane",
-            "split",
-            pane_id,
-            "--direction",
-            "right",
-            "--no-focus",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()?;
-    if !split.status.success() {
-        return Err(io::Error::other(format!(
-            "herdr pane split exited with {}",
-            split.status
-        )));
-    }
-    let new_pane_id = pane_id_from_split_response(&split.stdout).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "herdr pane split returned no pane id",
-        )
-    })?;
-
-    let run = Command::new("herdr")
-        .args(["pane", "run", &new_pane_id, command])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output()?;
-    if !run.status.success() {
-        return Err(io::Error::other(format!(
-            "herdr pane run exited with {}",
-            run.status
-        )));
-    }
-    Ok(())
-}
-
-/// Extract the new pane id from a `herdr pane split` JSON response.
-pub(super) fn pane_id_from_split_response(stdout: &[u8]) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_slice(stdout).ok()?;
-    value
-        .pointer("/result/pane/pane_id")
-        .and_then(|id| id.as_str())
-        .map(str::to_string)
-}
-
-fn needs_shell_quoting(value: &str) -> bool {
-    value
-        .chars()
-        .any(|ch| ch.is_whitespace() || "\"'$&|;<>()\\".contains(ch))
 }
 
 fn shell_single_quote(value: &str) -> String {

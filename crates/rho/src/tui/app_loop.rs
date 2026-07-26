@@ -67,6 +67,7 @@ impl App {
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_subagent_panel(agent);
+            needs_redraw |= self.poll_pending_subagent_attaches(Instant::now());
             needs_redraw |= self
                 .poll_subagent_questionnaires(agent.session_id())
                 .await?;
@@ -84,6 +85,7 @@ impl App {
                 || self.pending_session_title.is_some()
                 || self.pending_oauth_login.is_some()
                 || self.pending_usage_limits.is_some()
+                || self.has_pending_subagent_attach()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
             {
@@ -136,6 +138,7 @@ impl App {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 self.history.clear_text_selection();
+                self.subagent_panel.clear_pointer_state();
                 self.handle_key(key, terminal, agent).await?;
             }
             Event::Paste(text) => {
@@ -162,7 +165,10 @@ impl App {
                 mouse_capture::reassert();
                 self.statusline.refresh_git_branch();
             }
-            Event::FocusLost | Event::Key(_) => {}
+            Event::FocusLost => {
+                self.subagent_panel.clear_pointer_state();
+            }
+            Event::Key(_) => {}
         }
         Ok(())
     }

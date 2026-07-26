@@ -27,6 +27,7 @@ pub enum ScenarioId {
     GoalWaitsForSubagentsDuringRetry,
     BackgroundAgentAutoDelivery,
     BackgroundAgentQuestionnaire,
+    SubagentRailMouse,
 }
 
 impl ScenarioId {
@@ -58,6 +59,7 @@ impl ScenarioId {
             Self::GoalWaitsForSubagentsDuringRetry => "goal_waits_for_subagents_during_retry",
             Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
             Self::BackgroundAgentQuestionnaire => "background_agent_questionnaire",
+            Self::SubagentRailMouse => "subagent_rail_mouse",
         }
     }
 
@@ -89,6 +91,7 @@ impl ScenarioId {
             "goal_waits_for_subagents_during_retry" => Some(Self::GoalWaitsForSubagentsDuringRetry),
             "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
             "background_agent_questionnaire" => Some(Self::BackgroundAgentQuestionnaire),
+            "subagent_rail_mouse" => Some(Self::SubagentRailMouse),
             _ => None,
         }
     }

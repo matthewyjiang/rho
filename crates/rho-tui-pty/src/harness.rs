@@ -219,6 +219,11 @@ impl PtyHarness {
         self.mouse(MouseButton::Motion, col, row, true)
     }
 
+    /// Drag with the left button held.
+    pub fn mouse_drag(&mut self, col: u16, row: u16) -> Result<()> {
+        self.mouse(MouseButton::LeftDrag, col, row, true)
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         self.log(format!("resize {rows}x{cols}"));
         self.pty.resize(rows, cols)?;
