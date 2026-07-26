@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Result};
 
@@ -22,15 +22,17 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
         text: "diagram delivered",
         timeout: STREAM,
     },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_diagram_replaced_source),
+    Step::Custom(wait_until_diagram_art),
     Step::Phase("narrow_pane"),
     Step::Resize { rows: 40, cols: 44 },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
+    // Wait for the reflowed fallback, not merely a quiet frame. Resize can leave
+    // the previous wide art clipped until history rebuilds at the new width.
+    Step::WaitText {
+        text: "PANE TOO NARROW",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "flowchart LR",
         timeout: SETTLE,
     },
     Step::Custom(assert_narrow_pane_explains_fallback),
@@ -39,29 +41,32 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
         rows: 28,
         cols: 100,
     },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_diagram_replaced_source),
+    Step::Custom(wait_until_diagram_art),
     Step::ExitCommand,
 ];
 
-fn assert_diagram_replaced_source(harness: &mut PtyHarness) -> Result<()> {
-    let screen = harness.screen().contents();
-    ensure!(
-        !screen.contains("flowchart LR"),
-        "closed mermaid fence kept its source:\n{}",
-        harness.screen().debug_dump()
-    );
-    for phase in ["Phase 1", "Phase 5"] {
-        ensure!(
-            screen.contains(phase),
-            "rendered diagram is missing {phase}:\n{}",
-            harness.screen().debug_dump()
-        );
+fn wait_until_diagram_art(harness: &mut PtyHarness) -> Result<()> {
+    let deadline = Instant::now() + SETTLE.duration;
+    loop {
+        harness.poll(Duration::from_millis(25));
+        if diagram_art_visible(harness) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "timed out waiting for rendered mermaid art:\n{}",
+                harness.screen().debug_dump()
+            );
+        }
     }
-    Ok(())
+}
+
+fn diagram_art_visible(harness: &PtyHarness) -> bool {
+    let screen = harness.screen().contents();
+    !screen.contains("flowchart LR")
+        && !screen.contains("PANE TOO NARROW")
+        && screen.contains("Phase 1")
+        && screen.contains("Phase 5")
 }
 
 fn assert_narrow_pane_explains_fallback(harness: &mut PtyHarness) -> Result<()> {
@@ -74,6 +79,11 @@ fn assert_narrow_pane_explains_fallback(harness: &mut PtyHarness) -> Result<()> 
     ensure!(
         screen.contains("flowchart LR"),
         "narrow pane fallback dropped the mermaid source:\n{}",
+        harness.screen().debug_dump()
+    );
+    ensure!(
+        !screen.contains("┌") && !screen.contains("╭─ MERMAID ─"),
+        "narrow pane still showed diagram art instead of source:\n{}",
         harness.screen().debug_dump()
     );
     Ok(())
