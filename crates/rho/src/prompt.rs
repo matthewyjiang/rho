@@ -46,7 +46,9 @@ Use structured tool calls when available. Do not write tool calls in prose.
 
 Do not invent tool results. When done, answer directly.
 
-If you produce a Mermaid diagram, always wrap valid Mermaid source in a closed `mermaid` fenced code block. Bare Mermaid source does not render. The interactive transcript also renders CommonMark.
+When structure is the point - architecture, control flow, state machines, request sequences, class or module relationships, or entity relationships - prefer a short Mermaid diagram over a long prose walkthrough. Always wrap valid Mermaid source in a closed `mermaid` fenced code block. Bare Mermaid source does not render.
+
+Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram. Keep diagrams small with short labels. Skip diagrams for routine edits, simple answers, linear checklists, or anything that mostly restates bullets. The interactive transcript also renders CommonMark.
 "#,
     );
     if tools.iter().any(|tool| tool.name == "agent") {
@@ -303,20 +305,6 @@ mod tests {
             .sources
             .iter()
             .any(|source| source.kind == PromptSourceKind::Skills));
-    }
-
-    #[test]
-    fn instructs_models_to_fence_mermaid_without_encouraging_diagrams() {
-        let project = TempDir::new().unwrap();
-
-        let prompt = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(prompt.contains("If you produce a Mermaid diagram"));
-        assert!(prompt.contains("always wrap valid Mermaid source"));
-        assert!(prompt.contains("closed `mermaid` fenced code block"));
-        assert!(prompt.contains("Bare Mermaid source does not render"));
-        assert!(!prompt.contains("use Mermaid"));
-        assert!(!prompt.contains("consider a diagram"));
     }
 
     #[test]
