@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.17.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.16.0...rho-coding-agent-v1.17.0) (2026-07-26)
+
+
+### Features
+
+* **sessions:** delete sessions and cascade parent-linked runs ([#563](https://github.com/matthewyjiang/rho/issues/563)) ([ded020d](https://github.com/matthewyjiang/rho/commit/ded020d6763c2d078ed245b4ead2bd5c1790c394))
+* **sessions:** nest subagent artifacts with parent sessions ([#567](https://github.com/matthewyjiang/rho/issues/567)) ([3edf433](https://github.com/matthewyjiang/rho/commit/3edf433d691e1d5f6d3525334fade75025349d32))
+
+
+### Bug Fixes
+
+* **prompt:** guide agents to use supported mermaid diagrams ([#555](https://github.com/matthewyjiang/rho/issues/555)) ([a92c928](https://github.com/matthewyjiang/rho/commit/a92c928b684fc54fdb89152ba395b972e33fb45e))
+* **tui:** render narrow mermaid flowcharts and explain fallbacks ([#565](https://github.com/matthewyjiang/rho/issues/565)) ([0bf7ad7](https://github.com/matthewyjiang/rho/commit/0bf7ad719fa32d00bc6d1bc7857307032fd9f1f6))
+* **tui:** reuse tool stream previews and allow codex parallel tools ([#566](https://github.com/matthewyjiang/rho/issues/566)) ([fa0074a](https://github.com/matthewyjiang/rho/commit/fa0074ae125972ac533ae09b30915f7e479674bd))
+* **tui:** share mermaid fan-out source stems ([#562](https://github.com/matthewyjiang/rho/issues/562)) ([e244b45](https://github.com/matthewyjiang/rho/commit/e244b45ddae6a0f227cb4003b6e809342dbb696c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.10.0 to 1.10.1
+    * rho-providers bumped from 0.10.0 to 0.10.1
+
 ## [1.16.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.15.0...rho-coding-agent-v1.16.0) (2026-07-26)
 
 
