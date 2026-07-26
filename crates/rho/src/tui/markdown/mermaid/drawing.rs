@@ -158,13 +158,10 @@ pub(super) fn route_forward(
     to: &Placed,
     edge: &Edge,
     bus: usize,
+    source_anchor: usize,
 ) {
     let tx = to.cx;
-    let bx = if from.cx.abs_diff(tx) <= 1 {
-        tx
-    } else {
-        from.cx
-    };
+    let bx = source_anchor;
     let by = from.y + from.h - 1;
     let head_row = to.y - 1;
 
@@ -276,9 +273,10 @@ pub(super) fn route_forward_lr(
     to: &Placed,
     edge: &Edge,
     bus: usize,
+    source_anchor: usize,
 ) {
     let rx = from.x + from.w - 1;
-    let ry = from.cy;
+    let ry = source_anchor;
     let ly = to.cy;
     let head_col = to.x - 1;
 

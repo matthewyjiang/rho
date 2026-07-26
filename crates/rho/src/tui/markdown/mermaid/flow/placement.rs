@@ -10,23 +10,38 @@ use crate::tui::markdown::mermaid::{
     painter::{GAP_X, GAP_Y, MAX_LABEL},
 };
 
-fn bus_spans_td(
+#[derive(Clone, Copy)]
+enum CrossAxisAlignment {
+    Exact,
+    Near,
+}
+
+impl CrossAxisAlignment {
+    fn has_jog(self, from: usize, to: usize) -> bool {
+        match self {
+            Self::Exact => from != to,
+            Self::Near => !near_aligned(from, to),
+        }
+    }
+}
+
+fn near_aligned(from: usize, to: usize) -> bool {
+    from.abs_diff(to) <= 1
+}
+
+fn bus_spans(
     graph: &Graph,
     ranks: &[usize],
     centers: &[usize],
     r: usize,
-    exact: bool,
+    alignment: CrossAxisAlignment,
 ) -> Vec<(usize, usize, usize, usize, usize)> {
     graph
         .edges
         .iter()
         .enumerate()
         .filter(|(_, e)| {
-            let jogs = if exact {
-                centers[e.from] != centers[e.to]
-            } else {
-                centers[e.from].abs_diff(centers[e.to]) > 1
-            };
+            let jogs = alignment.has_jog(centers[e.from], centers[e.to]);
             e.from != e.to && ranks[e.from] == r && ranks[e.to] == r + 1 && jogs
         })
         .map(|(i, e)| {
@@ -35,6 +50,23 @@ fn bus_spans_td(
             (a, b, e.from, e.to, i)
         })
         .collect()
+}
+
+fn td_source_anchors(graph: &Graph, ranks: &[usize], centers: &[usize]) -> Vec<usize> {
+    let mut source_anchors = centers.to_vec();
+    // Rank spacing guarantees at most one distinct near-aligned child, so all
+    // forward siblings resolve to one stable exit for their source.
+    for edge in &graph.edges {
+        let source_x = centers[edge.from];
+        let target_x = centers[edge.to];
+        if edge.from != edge.to
+            && ranks[edge.to] == ranks[edge.from] + 1
+            && near_aligned(source_x, target_x)
+        {
+            source_anchors[edge.from] = target_x;
+        }
+    }
+    source_anchors
 }
 
 fn lane_spans(
@@ -69,11 +101,12 @@ pub(super) fn place_td(
     placed: &mut [Placed],
 ) -> RoutePlan {
     let centers = assign_positions(by_rank, &sizes.lay_w, GAP_X, &graph.edges, ranks);
+    let source_anchors = td_source_anchors(graph, ranks, &centers);
 
     let mut edge_bus = vec![0usize; graph.edges.len()];
     let mut bus_tracks = vec![0usize; max_rank + 1];
     for (r, tracks) in bus_tracks.iter_mut().enumerate().take(max_rank) {
-        let spans = bus_spans_td(graph, ranks, &centers, r, false);
+        let spans = bus_spans(graph, ranks, &centers, r, CrossAxisAlignment::Near);
         if spans.is_empty() {
             continue;
         }
@@ -124,7 +157,6 @@ pub(super) fn place_td(
             }
         }
     }
-
     let mut content_w = diagram_w;
     for e in &graph.edges {
         if e.from == e.to {
@@ -156,6 +188,7 @@ pub(super) fn place_td(
         canvas: (canvas_w, canvas_h),
         band_end,
         edge_bus,
+        source_anchors,
         lane_base,
         edge_lane,
     }
@@ -188,7 +221,7 @@ pub(super) fn place_lr(
     let mut edge_bus = vec![0usize; graph.edges.len()];
     let mut bus_tracks = vec![0usize; max_rank + 1];
     for (r, tracks) in bus_tracks.iter_mut().enumerate().take(max_rank) {
-        let spans = bus_spans_td(graph, ranks, &centers, r, true);
+        let spans = bus_spans(graph, ranks, &centers, r, CrossAxisAlignment::Exact);
         if spans.is_empty() {
             continue;
         }
@@ -234,6 +267,7 @@ pub(super) fn place_lr(
             diagram_h = diagram_h.max(y + h + sizes.extra_h[idx]);
         }
     }
+    let source_anchors = placed.iter().map(|node| node.cy).collect();
 
     let mut edge_lane = vec![0usize; graph.edges.len()];
     let lanes = lane_spans(graph, ranks, placed, false);
@@ -251,6 +285,7 @@ pub(super) fn place_lr(
         canvas: (canvas_w, canvas_h),
         band_end,
         edge_bus,
+        source_anchors,
         lane_base,
         edge_lane,
     }
@@ -260,6 +295,7 @@ pub(super) struct RoutePlan {
     pub(super) canvas: (usize, usize),
     pub(super) band_end: Vec<usize>,
     pub(super) edge_bus: Vec<usize>,
+    pub(super) source_anchors: Vec<usize>,
     pub(super) lane_base: usize,
     pub(super) edge_lane: Vec<usize>,
 }
