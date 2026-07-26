@@ -106,7 +106,7 @@ async fn wait_for_attach_result(app: &mut App) {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn activate_opens_herdr_pane_in_background() {
+async fn activate_opens_one_herdr_pane_while_attach_is_pending() {
     let socket_dir = tempfile::tempdir().unwrap();
     let socket_path = socket_dir.path().join("herdr.sock");
     let mut server = crate::herdr::test_support::TestHerdrServer::bind_with_responses(
@@ -123,8 +123,10 @@ async fn activate_opens_herdr_pane_in_background() {
     app.info.services.herdr = crate::herdr::test_support::reporter_for_socket(&socket_path);
 
     app.activate_subagent_row(&target(), Instant::now());
+    app.activate_subagent_row(&target(), Instant::now());
 
     assert!(app.has_pending_subagent_attach());
+    assert_eq!(app.pending_subagent_attaches.len(), 1);
     assert_eq!(
         app.history.last_status_notice(),
         Some("opening a herdr pane for explorer a1b2c3")

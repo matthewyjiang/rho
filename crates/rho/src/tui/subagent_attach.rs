@@ -83,6 +83,13 @@ impl App {
         let clipboard_command = attach_command(&target.run_id);
         match self.subagent_attach_destination() {
             AttachDestination::HerdrPane => {
+                if self
+                    .pending_subagent_attaches
+                    .iter()
+                    .any(|pending| pending.target.run_id == target.run_id)
+                {
+                    return;
+                }
                 let herdr = self.info.services.herdr.clone();
                 let pane_command = pane_attach_command(&target.run_id);
                 let handle =
