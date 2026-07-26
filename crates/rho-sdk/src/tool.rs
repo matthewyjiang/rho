@@ -594,7 +594,7 @@ pub trait Tool: Send + Sync {
     ) -> ToolPrepareFuture<'a> {
         let metadata = self.start_metadata(invocation.arguments());
         Box::pin(async move {
-            Ok(PreparedToolInvocation::delegating_to_call(
+            Ok(PreparedToolInvocation::from_default_prepare(
                 metadata,
                 move |execution| self.call(invocation, execution),
             ))

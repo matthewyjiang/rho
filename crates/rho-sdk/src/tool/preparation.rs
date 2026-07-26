@@ -202,7 +202,7 @@ where
         // Reaching here means `call` routed to `prepare`. A plan that routes
         // back to `call` means the tool overrode neither, so stop rather than
         // authorize and re-enter forever.
-        if prepared.delegates_to_call() {
+        if prepared.is_from_default_prepare() {
             return Err(ToolError::new(
                 ToolErrorKind::Execution,
                 format!(
@@ -308,9 +308,9 @@ pub struct PreparedToolInvocation<'a> {
     capabilities: Vec<CapabilityRequest>,
     metadata: ToolMetadata,
     executor: ToolExecutor<'a>,
-    /// True only for the plan the default [`Tool::prepare`] builds, which runs
-    /// the tool through [`Tool::call`]. See [`Self::delegates_to_call`].
-    delegates_to_call: bool,
+    /// True only for the plan built by the default [`Tool::prepare`], the one
+    /// a tool gets when it does not implement `prepare` itself.
+    from_default_prepare: bool,
 }
 
 impl<'a> PreparedToolInvocation<'a> {
@@ -323,28 +323,28 @@ impl<'a> PreparedToolInvocation<'a> {
             capabilities: Vec::new(),
             metadata,
             executor: ToolExecutor::Exclusive(Box::new(executor)),
-            delegates_to_call: false,
+            from_default_prepare: false,
         }
     }
 
     /// Builds the plan returned by the default [`Tool::prepare`].
     ///
-    /// The marker lets [`call_prepared`] tell that a tool overrode neither
-    /// `prepare` nor `call`, instead of the two delegating to each other
-    /// forever.
-    pub(crate) fn delegating_to_call<F>(metadata: ToolMetadata, executor: F) -> Self
+    /// Rust cannot ask which trait methods a type overrode, so the plan records
+    /// that it came from the default. That is what lets [`call_prepared`] tell
+    /// a real `prepare` from the default one that points back at `call`.
+    pub(crate) fn from_default_prepare<F>(metadata: ToolMetadata, executor: F) -> Self
     where
         F: FnOnce(ToolContext) -> ToolFuture<'a> + Send + 'a,
     {
         Self {
-            delegates_to_call: true,
+            from_default_prepare: true,
             ..Self::exclusive(metadata, executor)
         }
     }
 
     /// Reports whether this plan came from the default [`Tool::prepare`].
-    pub(crate) fn delegates_to_call(&self) -> bool {
-        self.delegates_to_call
+    pub(crate) fn is_from_default_prepare(&self) -> bool {
+        self.from_default_prepare
     }
 
     pub fn resource_aware<F>(
@@ -361,7 +361,7 @@ impl<'a> PreparedToolInvocation<'a> {
             capabilities: capabilities.into_iter().collect(),
             metadata,
             executor: ToolExecutor::ResourceAware(Box::new(executor)),
-            delegates_to_call: false,
+            from_default_prepare: false,
         }
     }
 
