@@ -155,8 +155,6 @@ pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolD
 pub use error::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{
     ProviderStreamResetReason, RunEvent, RunOutcome, StopReason, ToolCompletion, ToolFailure,
-    PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY, PROVIDER_ACTIVITY_REQUEST_RETRY,
-    PROVIDER_ACTIVITY_WEB_SEARCH,
 };
 pub use host_input::{
     DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,

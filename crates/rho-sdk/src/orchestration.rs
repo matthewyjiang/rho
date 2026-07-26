@@ -449,16 +449,6 @@ async fn request_valid_response(
         let detail = format!(
             "retrying malformed provider response after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}"
         );
-        // Preserve the 1.0 activity event while typed reset consumers migrate.
-        let _ = emit(
-            control.events,
-            control.cancellation,
-            RunEvent::ProviderActivity {
-                kind: crate::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
-                detail: detail.clone(),
-            },
-        )
-        .await;
         let _ = emit(
             control.events,
             control.cancellation,
@@ -701,16 +691,9 @@ async fn handle_provider_request_event(
 ) -> Result<(), ProviderError> {
     let crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage } = event;
     capture.record_request_attempt_failure(kind, usage);
-    emit(
-        events,
-        cancellation,
-        RunEvent::ProviderActivity {
-            kind: crate::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
-            detail: "retrying after a failed physical provider request".into(),
-        },
-    )
-    .await
-    .map_err(|error| ProviderError::interrupted(error.to_string()))
+    emit(events, cancellation, RunEvent::ProviderRequestRetry)
+        .await
+        .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
 async fn handle_provider_event(

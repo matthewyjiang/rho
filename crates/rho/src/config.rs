@@ -307,10 +307,7 @@ impl Config {
     fn parse_file(path: PathBuf) -> anyhow::Result<Self> {
         let mut cfg = Config::default();
         let text = fs::read_to_string(&path)?;
-        let file: PartialConfig = toml::from_str(&text)?;
-        let legacy_title_provider = file.title_provider.clone();
-        let legacy_title_model = file.title_model.clone();
-        let legacy_title_auth = file.title_auth.clone();
+        let file = toml::from_str::<PartialConfig>(&text)?.normalize_legacy()?;
         if let Some(v) = file.prompt_templates {
             crate::prompt_templates::validate(&v)?;
             cfg.prompt_templates = v;
@@ -318,88 +315,59 @@ impl Config {
         if let Some(v) = file.provider {
             cfg.provider = v;
         }
-        if let Some(ModelSetting::Name(v)) = file.model.as_ref() {
-            cfg.model = v.clone();
-        }
-        if let Some(v) = file.max_output_bytes {
-            cfg.max_output_bytes = v;
-        }
-        if let Some(v) = file.max_tool_output_lines {
-            cfg.max_tool_output_lines = v.max(1);
-        }
         if let Some(v) = file.auth {
             cfg.auth = v;
         }
         if let Some(v) = file.reasoning {
             cfg.reasoning = v;
-        } else if let Some(v) = file.reasoning_effort {
-            cfg.reasoning = v.parse()?;
-        }
-        if let Some(v) = file.show_reasoning_output {
-            cfg.show_reasoning_output = v;
-        }
-        if let Some(v) = file.auto_compact {
-            cfg.auto_compact = v;
-        }
-        if let Some(v) = file.compact_threshold_percent {
-            cfg.set_compact_threshold_percent(v);
-        }
-        if let Some(v) = file.compact_target_percent {
-            cfg.set_compact_target_percent(v);
         }
         if let Some(v) = file.favorite_models {
             cfg.favorite_models = favorite_model_values(&normalized_favorite_models(&v));
         }
-        if let Some(v) = file.web_search_provider {
-            cfg.web_search_provider = SearchProvider::from_config_value(&v);
-        }
-        if let Some(v) = file.check_for_updates {
-            cfg.check_for_updates = v;
-        }
-        if let Some(v) = file.enable_subagents {
-            cfg.enable_subagents = v;
-        }
-        if let Some(v) = file.permission_mode {
-            cfg.permission_mode = v;
-        }
-        cfg.legacy_web_search_credentials = LegacyWebSearchCredentials {
-            openai: file.web_search_openai_api_key.and_then(non_empty_secret),
-            exa: file.web_search_exa_api_key.and_then(non_empty_secret),
-            brave: file.web_search_brave_api_key.and_then(non_empty_secret),
-        };
-        if let Some(v) = file.rtk {
-            cfg.rtk = v;
-        }
-        if let Some(v) = file.inline_shell.filter(|value| !value.trim().is_empty()) {
-            cfg.inline_shell = v;
-        }
-        if let Some(ModelSetting::Group(group)) = file.model {
-            cfg.provider = group.provider.unwrap_or(cfg.provider);
-            cfg.model = group.model.unwrap_or(cfg.model);
-            cfg.auth = group.auth.unwrap_or(cfg.auth);
-            cfg.reasoning = group.reasoning.unwrap_or(cfg.reasoning);
-            cfg.favorite_models = group
-                .favorite_models
-                .map(|models| favorite_model_values(&normalized_favorite_models(&models)))
-                .unwrap_or(cfg.favorite_models);
-            cfg.model_aliases = group.aliases.unwrap_or(cfg.model_aliases);
+        match file.model {
+            Some(ModelSetting::Name(model)) => cfg.model = model,
+            Some(ModelSetting::Group(group)) => {
+                if let Some(provider) = group.provider {
+                    cfg.provider = provider;
+                }
+                if let Some(model) = group.model {
+                    cfg.model = model;
+                }
+                if let Some(auth) = group.auth {
+                    cfg.auth = auth;
+                }
+                if let Some(reasoning) = group.reasoning {
+                    cfg.reasoning = reasoning;
+                }
+                if let Some(models) = group.favorite_models {
+                    cfg.favorite_models =
+                        favorite_model_values(&normalized_favorite_models(&models));
+                }
+                if let Some(aliases) = group.aliases {
+                    cfg.model_aliases = aliases;
+                }
+            }
+            None => {}
         }
         cfg.validate_model_aliases()?;
         cfg.resolve_model_alias()?;
         if let Some(group) = file.display {
-            cfg.show_reasoning_output = group
-                .show_reasoning_output
-                .unwrap_or(cfg.show_reasoning_output);
-            cfg.max_tool_output_lines = group
-                .max_tool_output_lines
-                .unwrap_or(cfg.max_tool_output_lines)
-                .max(1);
+            if let Some(value) = group.show_reasoning_output {
+                cfg.show_reasoning_output = value;
+            }
+            if let Some(value) = group.max_tool_output_lines {
+                cfg.max_tool_output_lines = value.max(1);
+            }
         }
         if let Some(group) = file.output {
-            cfg.max_output_bytes = group.max_output_bytes.unwrap_or(cfg.max_output_bytes);
+            if let Some(value) = group.max_output_bytes {
+                cfg.max_output_bytes = value;
+            }
         }
         if let Some(group) = file.compaction {
-            cfg.auto_compact = group.auto_compact.unwrap_or(cfg.auto_compact);
+            if let Some(value) = group.auto_compact {
+                cfg.auto_compact = value;
+            }
             if let Some(value) = group.compact_threshold_percent {
                 cfg.set_compact_threshold_percent(value);
             }
@@ -407,51 +375,6 @@ impl Config {
                 cfg.set_compact_target_percent(value);
             }
         }
-        let legacy_title = file
-            .title
-            .and_then(|group| {
-                if group.provider.is_none() && group.model.is_none() && group.auth.is_none() {
-                    return None;
-                }
-                let provider = group
-                    .provider
-                    .or_else(|| legacy_title_provider.clone())
-                    .unwrap_or_else(|| cfg.provider.clone());
-                let auth = group
-                    .auth
-                    .or_else(|| legacy_title_auth.clone())
-                    .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
-                Some(InternalAgentModelConfig {
-                    provider,
-                    model: group
-                        .model
-                        .or_else(|| legacy_title_model.clone())
-                        .unwrap_or_else(|| cfg.model.clone()),
-                    auth,
-                    model_alias: None,
-                })
-            })
-            .or_else(|| {
-                (legacy_title_provider.is_some()
-                    || legacy_title_model.is_some()
-                    || legacy_title_auth.is_some())
-                .then(|| {
-                    let provider = legacy_title_provider
-                        .clone()
-                        .unwrap_or_else(|| cfg.provider.clone());
-                    let auth = legacy_title_auth.clone().unwrap_or_else(|| {
-                        inferred_provider_auth(&provider, &cfg.provider, &cfg.auth)
-                    });
-                    InternalAgentModelConfig {
-                        provider,
-                        model: legacy_title_model
-                            .clone()
-                            .unwrap_or_else(|| cfg.model.clone()),
-                        auth,
-                        model_alias: None,
-                    }
-                })
-            });
         cfg.internal_agents = file
             .internal_agents
             .unwrap_or_default()
@@ -472,10 +395,19 @@ impl Config {
                 )
             })
             .collect();
-        if let Some(selection) = legacy_title {
+        if let Some(group) = file.title {
+            let provider = group.provider.unwrap_or_else(|| cfg.provider.clone());
+            let auth = group
+                .auth
+                .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
             cfg.internal_agents
                 .entry("session-title".into())
-                .or_insert(selection);
+                .or_insert(InternalAgentModelConfig {
+                    provider,
+                    model: group.model.unwrap_or_else(|| cfg.model.clone()),
+                    auth,
+                    model_alias: None,
+                });
         }
         cfg.resolve_internal_agent_model_aliases()?;
         cfg.normalize_provider_profiles()?;
@@ -483,34 +415,37 @@ impl Config {
             if let Some(provider) = group.provider {
                 cfg.web_search_provider = SearchProvider::from_config_value(&provider);
             }
-            if let Some(secret) = group.openai_api_key.and_then(non_empty_secret) {
-                cfg.legacy_web_search_credentials.openai = Some(secret);
-            }
-            if let Some(secret) = group.exa_api_key.and_then(non_empty_secret) {
-                cfg.legacy_web_search_credentials.exa = Some(secret);
-            }
-            if let Some(secret) = group.brave_api_key.and_then(non_empty_secret) {
-                cfg.legacy_web_search_credentials.brave = Some(secret);
-            }
+            cfg.legacy_web_search_credentials = LegacyWebSearchCredentials {
+                openai: group.openai_api_key.and_then(non_empty_secret),
+                exa: group.exa_api_key.and_then(non_empty_secret),
+                brave: group.brave_api_key.and_then(non_empty_secret),
+            };
         }
         if let Some(providers) = file.providers {
             cfg.providers.apply(providers)?;
         }
         if let Some(group) = file.behavior {
-            cfg.check_for_updates = group.check_for_updates.unwrap_or(cfg.check_for_updates);
-            cfg.enable_subagents = group.enable_subagents.unwrap_or(cfg.enable_subagents);
-            cfg.permission_mode = group.permission_mode.unwrap_or(cfg.permission_mode);
+            if let Some(value) = group.check_for_updates {
+                cfg.check_for_updates = value;
+            }
+            if let Some(value) = group.enable_subagents {
+                cfg.enable_subagents = value;
+            }
+            if let Some(value) = group.permission_mode {
+                cfg.permission_mode = value;
+            }
             if let Some(value) = group.credential_store.as_deref() {
                 cfg.credential_store = Some(
                     CredentialStoreBackend::parse(value)
                         .map_err(|error| anyhow::anyhow!(error.to_string()))?,
                 );
             }
-            cfg.rtk = group.rtk.unwrap_or(cfg.rtk);
-            cfg.inline_shell = group
-                .inline_shell
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or(cfg.inline_shell);
+            if let Some(value) = group.rtk {
+                cfg.rtk = value;
+            }
+            if let Some(value) = group.inline_shell.filter(|value| !value.trim().is_empty()) {
+                cfg.inline_shell = value;
+            }
         }
         if let Some(keybindings) = file.keybindings {
             cfg.keybindings = keybindings;
@@ -766,6 +701,170 @@ struct PartialConfig {
     keybindings: Option<Keybindings>,
     prompt_templates: Option<crate::prompt_templates::PromptTemplates>,
     providers: Option<PartialProviderConfigs>,
+}
+
+impl PartialConfig {
+    /// Fold every legacy top-level key into its modern group.
+    ///
+    /// Group values win when both a flat key and a group field are present,
+    /// matching the previous parse order where groups were applied second.
+    fn normalize_legacy(mut self) -> anyhow::Result<Self> {
+        if self.reasoning.is_none() {
+            if let Some(effort) = self.reasoning_effort.take() {
+                self.reasoning = Some(effort.parse()?);
+            }
+        } else {
+            self.reasoning_effort = None;
+        }
+
+        let show_reasoning_output = self.show_reasoning_output.take();
+        let max_tool_output_lines = self.max_tool_output_lines.take();
+        if show_reasoning_output.is_some()
+            || max_tool_output_lines.is_some()
+            || self.display.is_some()
+        {
+            let group = self.display.take().unwrap_or(PartialDisplayConfig {
+                show_reasoning_output: None,
+                max_tool_output_lines: None,
+            });
+            self.display = Some(PartialDisplayConfig {
+                show_reasoning_output: group.show_reasoning_output.or(show_reasoning_output),
+                max_tool_output_lines: group.max_tool_output_lines.or(max_tool_output_lines),
+            });
+        }
+
+        let max_output_bytes = self.max_output_bytes.take();
+        if max_output_bytes.is_some() || self.output.is_some() {
+            let group = self.output.take().unwrap_or(PartialOutputConfig {
+                max_output_bytes: None,
+            });
+            self.output = Some(PartialOutputConfig {
+                max_output_bytes: group.max_output_bytes.or(max_output_bytes),
+            });
+        }
+
+        let auto_compact = self.auto_compact.take();
+        let compact_threshold_percent = self.compact_threshold_percent.take();
+        let compact_target_percent = self.compact_target_percent.take();
+        if auto_compact.is_some()
+            || compact_threshold_percent.is_some()
+            || compact_target_percent.is_some()
+            || self.compaction.is_some()
+        {
+            let group = self.compaction.take().unwrap_or(PartialCompactionConfig {
+                auto_compact: None,
+                compact_threshold_percent: None,
+                compact_target_percent: None,
+            });
+            self.compaction = Some(PartialCompactionConfig {
+                auto_compact: group.auto_compact.or(auto_compact),
+                compact_threshold_percent: group
+                    .compact_threshold_percent
+                    .or(compact_threshold_percent),
+                compact_target_percent: group.compact_target_percent.or(compact_target_percent),
+            });
+        }
+
+        let check_for_updates = self.check_for_updates.take();
+        let enable_subagents = self.enable_subagents.take();
+        let permission_mode = self.permission_mode.take();
+        let rtk = self.rtk.take();
+        let inline_shell = self.inline_shell.take();
+        if check_for_updates.is_some()
+            || enable_subagents.is_some()
+            || permission_mode.is_some()
+            || rtk.is_some()
+            || inline_shell.is_some()
+            || self.behavior.is_some()
+        {
+            let group = self.behavior.take().unwrap_or(PartialBehaviorConfig {
+                check_for_updates: None,
+                enable_subagents: None,
+                permission_mode: None,
+                credential_store: None,
+                rtk: None,
+                inline_shell: None,
+            });
+            self.behavior = Some(PartialBehaviorConfig {
+                check_for_updates: group.check_for_updates.or(check_for_updates),
+                enable_subagents: group.enable_subagents.or(enable_subagents),
+                permission_mode: group.permission_mode.or(permission_mode),
+                credential_store: group.credential_store,
+                rtk: group.rtk.or(rtk),
+                inline_shell: group.inline_shell.or(inline_shell),
+            });
+        }
+
+        let web_search_provider = self.web_search_provider.take();
+        let openai_api_key = self.web_search_openai_api_key.take();
+        let exa_api_key = self.web_search_exa_api_key.take();
+        let brave_api_key = self.web_search_brave_api_key.take();
+        if web_search_provider.is_some()
+            || openai_api_key.is_some()
+            || exa_api_key.is_some()
+            || brave_api_key.is_some()
+            || self.web_search.is_some()
+        {
+            let group = self.web_search.take().unwrap_or(PartialWebSearchConfig {
+                provider: None,
+                openai_api_key: None,
+                exa_api_key: None,
+                brave_api_key: None,
+            });
+            self.web_search = Some(PartialWebSearchConfig {
+                provider: group.provider.or(web_search_provider),
+                openai_api_key: group.openai_api_key.or(openai_api_key),
+                exa_api_key: group.exa_api_key.or(exa_api_key),
+                brave_api_key: group.brave_api_key.or(brave_api_key),
+            });
+        }
+
+        let title_provider = self.title_provider.take();
+        let title_model = self.title_model.take();
+        let title_auth = self.title_auth.take();
+        match self.title.take() {
+            Some(group)
+                if group.provider.is_none() && group.model.is_none() && group.auth.is_none() =>
+            {
+                // Empty `[title]` is a no-op. Legacy top-level title_* keys still apply.
+                if title_provider.is_some() || title_model.is_some() || title_auth.is_some() {
+                    self.title = Some(PartialTitleConfig {
+                        provider: title_provider,
+                        model: title_model,
+                        auth: title_auth,
+                    });
+                }
+            }
+            Some(group) => {
+                self.title = Some(PartialTitleConfig {
+                    provider: group.provider.or(title_provider),
+                    model: group.model.or(title_model),
+                    auth: group.auth.or(title_auth),
+                });
+            }
+            None if title_provider.is_some() || title_model.is_some() || title_auth.is_some() => {
+                self.title = Some(PartialTitleConfig {
+                    provider: title_provider,
+                    model: title_model,
+                    auth: title_auth,
+                });
+            }
+            None => {}
+        }
+
+        self.model = match self.model.take() {
+            Some(ModelSetting::Group(mut group)) => {
+                group.provider = group.provider.or(self.provider.take());
+                group.auth = group.auth.or(self.auth.take());
+                group.reasoning = group.reasoning.or(self.reasoning.take());
+                group.favorite_models = group.favorite_models.or(self.favorite_models.take());
+                Some(ModelSetting::Group(group))
+            }
+            other => other,
+        };
+
+        Ok(self)
+    }
 }
 
 #[derive(Deserialize)]

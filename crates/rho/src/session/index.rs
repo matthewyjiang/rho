@@ -351,22 +351,7 @@ fn validate_legacy_index_columns(connection: &Connection) -> anyhow::Result<()> 
         "file_size",
         "file_mtime",
     ];
-    let mut statement = connection.prepare("pragma table_info(sessions)")?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<rusqlite::Result<HashSet<_>>>()?;
-    let missing = REQUIRED_COLUMNS
-        .iter()
-        .filter(|column| !columns.contains(**column))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "malformed session index schema: missing column(s): {}",
-            missing.join(", ")
-        );
-    }
-    Ok(())
+    validate_columns(connection, REQUIRED_COLUMNS)
 }
 
 fn validate_index_columns(connection: &Connection) -> anyhow::Result<()> {
@@ -388,11 +373,12 @@ fn validate_index_columns(connection: &Connection) -> anyhow::Result<()> {
         "active_leaf_id",
         "effective_format_version",
     ];
-    let mut statement = connection.prepare("pragma table_info(sessions)")?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<rusqlite::Result<HashSet<_>>>()?;
-    let missing = REQUIRED_COLUMNS
+    validate_columns(connection, REQUIRED_COLUMNS)
+}
+
+fn validate_columns(connection: &Connection, required: &[&str]) -> anyhow::Result<()> {
+    let columns = session_table_columns(connection)?;
+    let missing = required
         .iter()
         .filter(|column| !columns.contains(**column))
         .copied()
@@ -411,19 +397,21 @@ fn ensure_column(connection: &Connection, column_definition: &str) -> anyhow::Re
         .split_whitespace()
         .next()
         .ok_or_else(|| anyhow::anyhow!("column definition must include a name"))?;
-    let mut statement = connection.prepare("pragma table_info(sessions)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    let exists = columns
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .iter()
-        .any(|column| column == column_name);
-    if !exists {
+    if !session_table_columns(connection)?.contains(column_name) {
         connection.execute(
             &format!("alter table sessions add column {column_definition}"),
             [],
         )?;
     }
     Ok(())
+}
+
+fn session_table_columns(connection: &Connection) -> anyhow::Result<HashSet<String>> {
+    let mut statement = connection.prepare("pragma table_info(sessions)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(columns)
 }
 
 fn set_private_file_permissions(path: &Path) -> anyhow::Result<()> {

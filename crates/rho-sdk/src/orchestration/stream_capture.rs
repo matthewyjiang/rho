@@ -144,10 +144,7 @@ pub(super) fn capture_provider_event(
             capture.reasoning_summary.push_str(&text);
             RunEvent::ReasoningSummaryDelta { text }
         }
-        ModelEvent::WebSearch(detail) => RunEvent::ProviderActivity {
-            kind: crate::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
-            detail,
-        },
+        ModelEvent::WebSearch(detail) => RunEvent::WebSearch { detail },
         ModelEvent::ToolCallDelta {
             index,
             id,

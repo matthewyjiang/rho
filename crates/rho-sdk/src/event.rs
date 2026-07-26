@@ -4,16 +4,6 @@ use crate::{
     Revision, RunId, SteeringId, ToolCallId,
 };
 
-/// Legacy provider activity kind emitted when a malformed response is retried.
-///
-/// New hosts should use [`RunEvent::ProviderStreamReset`]. This activity is
-/// retained so existing hosts still discard malformed response attempts.
-pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
-/// Provider activity kind emitted when a physical provider request is retried.
-pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
-/// Provider activity kind emitted for provider-native web searches.
-pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
-
 /// Why the current provider attempt was abandoned before a fresh request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -163,10 +153,12 @@ pub enum RunEvent {
     UsageUpdated {
         usage: ModelUsage,
     },
-    ProviderActivity {
-        kind: String,
+    /// Provider-native web search activity observed during a model turn.
+    WebSearch {
         detail: String,
     },
+    /// A physical provider request failed and will be retried.
+    ProviderRequestRetry,
     ProviderContextUpdated {
         kind: String,
     },
