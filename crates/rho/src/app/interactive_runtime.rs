@@ -118,69 +118,18 @@ impl InteractiveRuntime {
         let agent_id = agent.id().to_string();
         let agent_fingerprint = agent.fingerprint().to_string();
         let sdk_options = super::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
-        let provider: Arc<dyn ModelProvider> = match unavailable_error {
-            Some(error) => Arc::new(UnavailableProvider::new(error)),
-            None => {
-                let credentials =
-                    rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-                        Arc::new(AppCredentialStore),
-                    );
-                build_sdk_provider_with_source(sdk_options.provider.clone(), &credentials)?
-            }
-        };
-        // Claude-cli agents bind no Rho host tools. Root interactive/automation
-        // still uses the Rho loop and parent config; Claude execution is via
-        // AgentExecutor for delegated runs.
-        let mut capabilities = agent.rho_capabilities().cloned().unwrap_or_default();
-        if no_subagents {
-            capabilities.remove(&ToolCapability::Agent);
-            capabilities.remove(&ToolCapability::Agents);
-        }
-        if !questionnaire_enabled {
-            capabilities.remove(&ToolCapability::Questionnaire);
-        }
-        let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
-        let delegation_enabled =
-            launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
-        let tools = if no_tools {
-            AppToolSet::disabled()
-        } else {
-            let mut tool_options = ToolSetOptions::new(capabilities);
-            if delegation_enabled {
-                tool_options = tool_options.delegation(DelegationConfig::new(
-                    cwd.clone(),
-                    config_path,
-                    BackgroundSubagents::Enabled,
-                ));
-            }
-            AppToolSet::new(config, diagnostics.clone(), tool_options)
-        };
-        let specs = tools.specs();
-        let system_prompt = if no_system_prompt {
-            diagnostics.update_prompt_sources(Vec::new());
-            SystemPrompt::None
-        } else {
-            let mut text = match agent.prompt() {
-                PromptPolicy::Replace(text) => text.clone(),
-                PromptPolicy::Extend(extra) => {
-                    let mut built = prompt::system_prompt(&specs, &cwd);
-                    diagnostics.update_prompt_sources(built.sources);
-                    if !launch_delegation_enabled {
-                        prompt::append_subagents_disabled_instruction(&mut built.text);
-                    }
-                    if !extra.is_empty() {
-                        built.text.push_str("\n\n# Agent instructions\n\n");
-                        built.text.push_str(extra);
-                    }
-                    built.text
-                }
-            };
-            if text.is_empty() {
-                text = "You are a coding agent.".into();
-            }
-            SystemPrompt::Custom(text)
-        };
-        diagnostics.update_tools(&specs);
+        let provider = resolve_provider(unavailable_error, &sdk_options)?;
+        let (tools, system_prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
+            config,
+            config_path,
+            cwd: &cwd,
+            no_system_prompt,
+            no_tools,
+            no_subagents,
+            questionnaire_enabled,
+            diagnostics: &diagnostics,
+            agent: &agent,
+        })?;
         let workspace = sdk_options.workspace.build_workspace()?;
         let context_window = configured_context_window(config);
         let compaction = sdk_options.runtime.compaction.clone();
@@ -202,38 +151,9 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: usage_recording.clone(),
         })?;
-        let cache_key = session_id.as_deref().map(prompt_cache_key);
-        let resumed_snapshot = storage
-            .as_ref()
-            .map(|storage| {
-                storage.snapshot_for_resume(
-                    provider.identity(),
-                    cache_key
-                        .clone()
-                        .unwrap_or_else(|| prompt_cache_key(storage.id())),
-                )
-            })
-            .transpose()?;
-        let options = if let Some(snapshot) = resumed_snapshot {
-            // The TUI has not started yet, so stderr is still safe here.
-            if let Some(notice) = resume_omissions_notice(&snapshot, &provider.identity()) {
-                eprintln!("warning: {notice}");
-            }
-            SessionOptions::from_snapshot(snapshot)
-        } else {
-            // Always seed a prompt-cache key, including brand-new sessions that
-            // do not yet have durable storage. ensure_session later reuses this
-            // session id when creating the on-disk transcript.
-            let id = match session_id.as_deref() {
-                Some(id) => SessionId::from_string(id)?,
-                None => SessionId::new(),
-            };
-            SessionOptions::new()
-                .history(history)
-                .id(id.clone())
-                .prompt_cache_key(prompt_cache_key(id.as_str()))
-        };
-        let session = runtime.session(options).await?;
+        let session_options =
+            resolve_session_options(&provider, history, session_id.as_deref(), storage.as_ref())?;
+        let session = runtime.session(session_options).await?;
         bind_subagent_parent(&tools, session.id(), storage.as_ref());
         Ok(Self {
             runtime,
@@ -884,6 +804,138 @@ impl InteractiveRuntime {
         previous_runtime.shutdown();
         Ok(())
     }
+}
+
+fn resolve_provider(
+    unavailable_error: Option<rho_providers::model::ModelError>,
+    sdk_options: &super::sdk_config::SdkBootstrapOptions,
+) -> anyhow::Result<Arc<dyn ModelProvider>> {
+    match unavailable_error {
+        Some(error) => Ok(Arc::new(UnavailableProvider::new(error))),
+        None => {
+            let credentials =
+                rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+                    Arc::new(AppCredentialStore),
+                );
+            Ok(build_sdk_provider_with_source(
+                sdk_options.provider.clone(),
+                &credentials,
+            )?)
+        }
+    }
+}
+
+struct ToolsAndPromptOptions<'a> {
+    config: &'a Config,
+    config_path: PathBuf,
+    cwd: &'a PathBuf,
+    no_system_prompt: bool,
+    no_tools: bool,
+    no_subagents: bool,
+    questionnaire_enabled: bool,
+    diagnostics: &'a RuntimeDiagnostics,
+    agent: &'a BoundAgent,
+}
+
+/// Capability resolution plus system prompt assembly for interactive startup.
+fn assemble_tools_and_prompt(
+    options: ToolsAndPromptOptions<'_>,
+) -> anyhow::Result<(AppToolSet, SystemPrompt)> {
+    // Claude-cli agents bind no Rho host tools. Root interactive/automation
+    // still uses the Rho loop and parent config; Claude execution is via
+    // AgentExecutor for delegated runs.
+    let mut capabilities = options
+        .agent
+        .rho_capabilities()
+        .cloned()
+        .unwrap_or_default();
+    if options.no_subagents {
+        capabilities.remove(&ToolCapability::Agent);
+        capabilities.remove(&ToolCapability::Agents);
+    }
+    if !options.questionnaire_enabled {
+        capabilities.remove(&ToolCapability::Questionnaire);
+    }
+    let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
+    let delegation_enabled =
+        launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
+    let tools = if options.no_tools {
+        AppToolSet::disabled()
+    } else {
+        let mut tool_options = ToolSetOptions::new(capabilities);
+        if delegation_enabled {
+            tool_options = tool_options.delegation(DelegationConfig::new(
+                options.cwd.clone(),
+                options.config_path,
+                BackgroundSubagents::Enabled,
+            ));
+        }
+        AppToolSet::new(options.config, options.diagnostics.clone(), tool_options)
+    };
+    let specs = tools.specs();
+    let system_prompt = if options.no_system_prompt {
+        options.diagnostics.update_prompt_sources(Vec::new());
+        SystemPrompt::None
+    } else {
+        let mut text = match options.agent.prompt() {
+            PromptPolicy::Replace(text) => text.clone(),
+            PromptPolicy::Extend(extra) => {
+                let mut built = prompt::system_prompt(&specs, options.cwd);
+                options.diagnostics.update_prompt_sources(built.sources);
+                if !launch_delegation_enabled {
+                    prompt::append_subagents_disabled_instruction(&mut built.text);
+                }
+                if !extra.is_empty() {
+                    built.text.push_str("\n\n# Agent instructions\n\n");
+                    built.text.push_str(extra);
+                }
+                built.text
+            }
+        };
+        if text.is_empty() {
+            text = "You are a coding agent.".into();
+        }
+        SystemPrompt::Custom(text)
+    };
+    options.diagnostics.update_tools(&specs);
+    Ok((tools, system_prompt))
+}
+
+fn resolve_session_options(
+    provider: &Arc<dyn ModelProvider>,
+    history: Vec<Message>,
+    session_id: Option<&str>,
+    storage: Option<&StoredSession>,
+) -> anyhow::Result<SessionOptions> {
+    let cache_key = session_id.map(prompt_cache_key);
+    let resumed_snapshot = storage
+        .map(|storage| {
+            storage.snapshot_for_resume(
+                provider.identity(),
+                cache_key
+                    .clone()
+                    .unwrap_or_else(|| prompt_cache_key(storage.id())),
+            )
+        })
+        .transpose()?;
+    if let Some(snapshot) = resumed_snapshot {
+        // The TUI has not started yet, so stderr is still safe here.
+        if let Some(notice) = resume_omissions_notice(&snapshot, &provider.identity()) {
+            eprintln!("warning: {notice}");
+        }
+        return Ok(SessionOptions::from_snapshot(snapshot));
+    }
+    // Always seed a prompt-cache key, including brand-new sessions that
+    // do not yet have durable storage. ensure_session later reuses this
+    // session id when creating the on-disk transcript.
+    let id = match session_id {
+        Some(id) => SessionId::from_string(id)?,
+        None => SessionId::new(),
+    };
+    Ok(SessionOptions::new()
+        .history(history)
+        .id(id.clone())
+        .prompt_cache_key(prompt_cache_key(id.as_str())))
 }
 
 fn approval_channel_for(
