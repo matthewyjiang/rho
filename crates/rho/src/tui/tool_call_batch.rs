@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use rho_sdk::ToolCallId;
 
@@ -13,8 +13,8 @@ enum LiveToolKey {
 #[derive(Default)]
 pub(super) struct ToolCallBatch {
     pub(super) previews: BTreeMap<usize, ToolEntry>,
+    /// Once a call id is known, it owns one slot for the rest of the preview life.
     preview_call_ids: BTreeMap<ToolCallId, usize>,
-    promoted_previews: BTreeSet<usize>,
     pub(super) running: BTreeMap<ToolCallId, ToolEntry>,
     model_order: BTreeMap<usize, LiveToolKey>,
     unindexed_running_order: Vec<ToolCallId>,
@@ -24,7 +24,6 @@ impl ToolCallBatch {
     pub(super) fn clear(&mut self) {
         self.previews.clear();
         self.preview_call_ids.clear();
-        self.promoted_previews.clear();
         self.running.clear();
         self.model_order.clear();
         self.unindexed_running_order.clear();
@@ -66,12 +65,8 @@ impl ToolCallBatch {
     }
 
     pub(super) fn started(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
-        // Prefer the existing preview slot for this call id so the live card
-        // flips from "starting" to "running" in place. Only then drop stream
-        // previews that never bound a call id (true orphans, not reusable).
-        if let Some(index) = self.preview_call_ids.get(&call_id).copied() {
+        if let Some(index) = self.preview_call_ids.remove(&call_id) {
             self.previews.remove(&index);
-            self.promoted_previews.insert(index);
             self.model_order
                 .insert(index, LiveToolKey::Running(call_id.clone()));
             self.unindexed_running_order
@@ -81,7 +76,6 @@ impl ToolCallBatch {
         }
         self.running
             .insert(call_id, running_entry(display_lines, false));
-        self.drop_untracked_previews();
     }
 
     pub(super) fn updated(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
@@ -96,56 +90,50 @@ impl ToolCallBatch {
             .insert(call_id, running_entry(display_lines, expanded));
     }
 
+    /// Stream preview addressed by provider output index.
+    ///
+    /// When `call_id` is known it owns the slot: later stream or proposal traffic
+    /// for that id updates the same card even if indexes differ.
     pub(super) fn preview(
         &mut self,
         index: usize,
         call_id: Option<ToolCallId>,
         display_lines: Vec<String>,
     ) {
-        // Reuse the stream preview slot when this call id is already on screen.
-        // Provider stream indexes (Responses output_index) can skip non-tool
-        // items while proposal uses dense 0..n; matching by call id keeps one
-        // card instead of creating a second "starting" row.
-        let index = call_id
+        if call_id
+            .as_ref()
+            .is_some_and(|id| self.running.contains_key(id))
+        {
+            return;
+        }
+        let slot = call_id
             .as_ref()
             .and_then(|id| self.preview_call_ids.get(id).copied())
             .unwrap_or(index);
-        if self.promoted_previews.contains(&index) {
+        if matches!(self.model_order.get(&slot), Some(LiveToolKey::Running(_))) {
             return;
         }
         if let Some(call_id) = call_id {
-            self.preview_call_ids
-                .retain(|_, existing_index| *existing_index != index);
-            self.preview_call_ids.insert(call_id, index);
+            self.bind_call_id(call_id, slot);
         }
-        if display_lines.is_empty() {
-            self.previews.remove(&index);
-            self.model_order.remove(&index);
-            return;
-        }
-        let expanded = self
-            .previews
-            .get(&index)
-            .is_some_and(|entry| entry.expanded);
-        self.previews
-            .insert(index, running_entry(display_lines, expanded));
-        self.model_order.insert(index, LiveToolKey::Preview(index));
+        self.write_preview(slot, display_lines);
     }
 
-    fn drop_untracked_previews(&mut self) {
-        let tracked = self
+    /// Proposal preview addressed only by call id.
+    ///
+    /// Reuses the stream slot when the id already appeared; otherwise appends a
+    /// new slot. Does not invent a dense index in the provider namespace.
+    pub(super) fn preview_call(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
+        if self.running.contains_key(&call_id) {
+            return;
+        }
+        let slot = self
             .preview_call_ids
-            .values()
+            .get(&call_id)
             .copied()
-            .collect::<BTreeSet<_>>();
-        self.previews
-            .retain(|index, _| tracked.contains(index) || self.promoted_previews.contains(index));
-        self.model_order.retain(|_, key| match key {
-            LiveToolKey::Preview(preview_index) => {
-                tracked.contains(preview_index) || self.promoted_previews.contains(preview_index)
-            }
-            LiveToolKey::Running(_) => true,
-        });
+            .unwrap_or_else(|| self.next_slot());
+        self.bind_call_id(call_id, slot);
+        self.write_preview(slot, display_lines);
     }
 
     pub(super) fn finished(&mut self, call_id: &ToolCallId) -> bool {
@@ -159,10 +147,43 @@ impl ToolCallBatch {
             .retain(|running_id| running_id != call_id);
         if let Some(index) = self.preview_call_ids.remove(call_id) {
             self.previews.remove(&index);
-            self.promoted_previews.remove(&index);
             self.model_order.remove(&index);
         }
         expanded
+    }
+
+    fn bind_call_id(&mut self, call_id: ToolCallId, slot: usize) {
+        if let Some(previous) = self.preview_call_ids.insert(call_id.clone(), slot) {
+            if previous != slot {
+                self.previews.remove(&previous);
+                self.model_order.remove(&previous);
+            }
+        }
+        self.preview_call_ids
+            .retain(|id, existing| *id == call_id || *existing != slot);
+    }
+
+    fn write_preview(&mut self, slot: usize, display_lines: Vec<String>) {
+        if display_lines.is_empty() {
+            self.previews.remove(&slot);
+            self.model_order.remove(&slot);
+            self.preview_call_ids
+                .retain(|_, existing| *existing != slot);
+            return;
+        }
+        let expanded = self.previews.get(&slot).is_some_and(|entry| entry.expanded);
+        self.previews
+            .insert(slot, running_entry(display_lines, expanded));
+        self.model_order.insert(slot, LiveToolKey::Preview(slot));
+    }
+
+    fn next_slot(&self) -> usize {
+        let max_order = self.model_order.keys().next_back().copied();
+        let max_preview = self.previews.keys().next_back().copied();
+        max_order
+            .max(max_preview)
+            .map(|index| index + 1)
+            .unwrap_or(0)
     }
 }
 

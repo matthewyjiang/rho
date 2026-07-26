@@ -27,7 +27,7 @@ fn promotion_preserves_model_order_instead_of_call_id_order() {
 }
 
 #[test]
-fn proposal_reuses_stream_preview_slot_when_provider_index_differs() {
+fn proposal_reuses_stream_preview_slot_when_call_id_matches() {
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-agent");
     // Responses output_index can land past non-tool items (reasoning, etc.).
@@ -36,10 +36,9 @@ fn proposal_reuses_stream_preview_slot_when_provider_index_differs() {
         Some(call.clone()),
         vec!["● reviewer  starting".into(), "  …Return: verdict".into()],
     );
-    // Coordinator proposals use dense 0..n indexes.
-    batch.preview(
-        0,
-        Some(call.clone()),
+    // Proposal is call-id keyed and must not mint a second card.
+    batch.preview_call(
+        call.clone(),
         vec![
             "● reviewer  starting".into(),
             "  Perform a thermo-nuclear review".into(),
@@ -60,12 +59,26 @@ fn proposal_reuses_stream_preview_slot_when_provider_index_differs() {
 }
 
 #[test]
-fn starting_execution_drops_stream_previews_without_call_ids() {
+fn proposal_without_stream_appends_in_arrival_order() {
+    let mut batch = ToolCallBatch::default();
+    let first = call_id("call-a");
+    let second = call_id("call-b");
+    batch.preview_call(first.clone(), vec!["first starting".into()]);
+    batch.preview_call(second.clone(), vec!["second starting".into()]);
+    batch.started(first, vec!["first running".into()]);
+    batch.started(second, vec!["second running".into()]);
+
+    assert_eq!(live_labels(&batch), ["first running", "second running"]);
+}
+
+#[test]
+fn late_stream_preview_is_ignored_after_start() {
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-agent");
-    batch.preview(0, None, vec!["orphaned stream card".into()]);
-    batch.preview(1, Some(call.clone()), vec!["bound preview".into()]);
-    batch.started(call, vec!["running".into()]);
+    batch.preview(3, Some(call.clone()), vec!["starting".into()]);
+    batch.started(call.clone(), vec!["running".into()]);
+    batch.preview(3, Some(call), vec!["stale starting".into()]);
+    batch.preview(3, None, vec!["index only stale".into()]);
 
     assert_eq!(live_labels(&batch), ["running"]);
     assert!(batch.previews.is_empty());

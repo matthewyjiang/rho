@@ -41,6 +41,14 @@ pub(super) enum ViewModelEvent {
         call_id: Option<rho_sdk::ToolCallId>,
         display_lines: Vec<String>,
     },
+    /// Final proposal for a tool call, keyed only by call id.
+    ///
+    /// Distinct from stream `ToolCallUpdated` so proposal never invents a dense
+    /// index in the provider output_index namespace.
+    ToolCallProposed {
+        call_id: rho_sdk::ToolCallId,
+        display_lines: Vec<String>,
+    },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
         ok: bool,
@@ -64,7 +72,9 @@ impl ViewModelEvent {
                 Some(ActivityPhase::Compacting)
             }
             Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
-            Self::ToolCallUpdated { .. } => Some(ActivityPhase::PreparingTool),
+            Self::ToolCallUpdated { .. } | Self::ToolCallProposed { .. } => {
+                Some(ActivityPhase::PreparingTool)
+            }
             Self::ProviderStreamReset | Self::ProviderRetry => {
                 Some(ActivityPhase::RetryingProvider)
             }
@@ -91,7 +101,6 @@ pub(super) enum ViewEvent {
 #[derive(Default)]
 pub(crate) struct SdkEventAdapter {
     presenter: Option<InteractiveToolPresenter>,
-    proposed_index: usize,
     compaction_open: bool,
 }
 
@@ -99,7 +108,6 @@ impl SdkEventAdapter {
     pub(crate) fn new(cwd: std::path::PathBuf) -> Self {
         Self {
             presenter: Some(InteractiveToolPresenter::new(cwd)),
-            proposed_index: 0,
             compaction_open: false,
         }
     }
@@ -128,7 +136,6 @@ impl SdkEventAdapter {
             }
             RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
-                self.proposed_index = 0;
                 vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
             }
             RunEvent::SteeringApplied { ids } => {
@@ -158,12 +165,11 @@ impl SdkEventAdapter {
                     })
             }
             RunEvent::ToolProposed { call } => {
-                let call_id = rho_sdk::ToolCallId::from_string(call.id.clone()).ok();
+                let Ok(call_id) = rho_sdk::ToolCallId::from_string(call.id.clone()) else {
+                    return Vec::new();
+                };
                 let display_lines = self.presenter().proposed(call);
-                let index = self.proposed_index;
-                self.proposed_index += 1;
-                vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-                    index,
+                vec![ViewEvent::Update(ViewModelEvent::ToolCallProposed {
                     call_id,
                     display_lines,
                 })]

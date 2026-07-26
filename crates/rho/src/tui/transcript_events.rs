@@ -38,6 +38,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
     match event {
         ViewModelEvent::StepStarted(_)
         | ViewModelEvent::ToolCallUpdated { .. }
+        | ViewModelEvent::ToolCallProposed { .. }
         | ViewModelEvent::ToolStarted { .. }
         | ViewModelEvent::ToolFinished { .. } => true,
         ViewModelEvent::RunStarted
@@ -259,6 +260,13 @@ impl App {
                 display_lines,
             } => {
                 self.turn.tool_call_preview(index, call_id, display_lines);
+                None
+            }
+            ViewModelEvent::ToolCallProposed {
+                call_id,
+                display_lines,
+            } => {
+                self.turn.tool_call_proposed(call_id, display_lines);
                 None
             }
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
