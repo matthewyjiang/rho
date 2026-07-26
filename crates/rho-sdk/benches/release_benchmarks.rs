@@ -301,6 +301,38 @@ fn measure(samples: usize, mut operation: impl FnMut()) -> SampleStats {
     SampleStats::new(durations)
 }
 
+fn measure_interleaved(
+    samples: usize,
+    mut baseline: impl FnMut(),
+    mut candidate: impl FnMut(),
+) -> (SampleStats, SampleStats) {
+    let mut baseline_durations = Vec::with_capacity(samples);
+    let mut candidate_durations = Vec::with_capacity(samples);
+    for index in 0..samples {
+        let mut measure_baseline = || {
+            let started = Instant::now();
+            baseline();
+            baseline_durations.push(started.elapsed().as_nanos() as u64);
+        };
+        let mut measure_candidate = || {
+            let started = Instant::now();
+            candidate();
+            candidate_durations.push(started.elapsed().as_nanos() as u64);
+        };
+        if index % 2 == 0 {
+            measure_baseline();
+            measure_candidate();
+        } else {
+            measure_candidate();
+            measure_baseline();
+        }
+    }
+    (
+        SampleStats::new(baseline_durations),
+        SampleStats::new(candidate_durations),
+    )
+}
+
 struct RetainedBaselineRuntime {
     provider: Arc<dyn ModelProvider>,
     event_capacity: NonZeroUsize,
@@ -491,18 +523,6 @@ fn main() {
     let mut baseline_compaction_sessions = (0..samples)
         .map(|_| Mutex::new(representative_history.clone()))
         .collect::<VecDeque<_>>();
-    let compaction_baseline = measure(samples, || {
-        let history = baseline_compaction_sessions.pop_front().unwrap();
-        let messages = history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let replacement = compact_messages(&messages).into_messages();
-        *history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = replacement;
-        black_box(history);
-    });
     let compaction_runtime = Rho::builder()
         .provider(ImmediateProvider)
         .compactor(BenchCompactor)
@@ -518,10 +538,25 @@ fn main() {
                 .unwrap()
         })
         .collect::<VecDeque<_>>();
-    let compaction_candidate = measure(samples, || {
-        let session = compaction_sessions.pop_front().unwrap();
-        black_box(tokio.block_on(session.compact()).unwrap());
-    });
+    let (compaction_baseline, compaction_candidate) = measure_interleaved(
+        samples,
+        || {
+            let history = baseline_compaction_sessions.pop_front().unwrap();
+            let messages = history
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            let replacement = compact_messages(&messages).into_messages();
+            *history
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = replacement;
+            black_box(history);
+        },
+        || {
+            let session = compaction_sessions.pop_front().unwrap();
+            black_box(tokio.block_on(session.compact()).unwrap());
+        },
+    );
 
     run_parallel_read_batch(&tokio, 1);
     run_parallel_read_batch(&tokio, 4);
@@ -658,6 +693,7 @@ fn main() {
             },
             "compaction": {
                 "messages": HISTORY_COUNT,
+                "sampling_order": "interleaved with alternating baseline-first and candidate-first pairs",
                 "baseline": compaction_baseline.json(),
                 "candidate": compaction_candidate.json(),
                 "candidate_over_baseline": compaction_relative,

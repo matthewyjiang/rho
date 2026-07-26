@@ -13,6 +13,7 @@ enum PickerKeyEffect {
     Submit,
     Escape,
     ToggleFavorite,
+    DeleteRow,
 }
 
 fn overlay_page_target(picker: &UiPicker, terminal: &DefaultTerminal) -> Option<OverlayPageTarget> {
@@ -64,6 +65,7 @@ fn apply_picker_key(
     key: KeyEvent,
     page_target: Option<OverlayPageTarget>,
     model_picker_open: bool,
+    resume_picker_open: bool,
     space_confirms: bool,
 ) -> PickerKeyEffect {
     match (key.modifiers, key.code) {
@@ -110,6 +112,9 @@ fn apply_picker_key(
         (KeyModifiers::CONTROL, KeyCode::Char('p')) if model_picker_open => {
             PickerKeyEffect::ToggleFavorite
         }
+        (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete) if resume_picker_open => {
+            PickerKeyEffect::DeleteRow
+        }
         (KeyModifiers::NONE, KeyCode::Char(' ')) if space_confirms => PickerKeyEffect::Submit,
         (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
             picker.push_filter_char(ch);
@@ -133,13 +138,21 @@ impl App {
         }
 
         let model_picker_open = self.model_picker_is_open();
+        let resume_picker_open = self.resume_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
         let effect = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(picker, key, page_target, model_picker_open, space_confirms)
+            apply_picker_key(
+                picker,
+                key,
+                page_target,
+                model_picker_open,
+                resume_picker_open,
+                space_confirms,
+            )
         };
 
         match effect {
@@ -167,6 +180,12 @@ impl App {
                 self.toggle_selected_model_favorite()?;
                 Ok(true)
             }
+            PickerKeyEffect::DeleteRow => {
+                self.input_ui.clear_paste_burst();
+                self.ctrl_c_streak = 0;
+                self.prompt_delete_selected_session()?;
+                Ok(true)
+            }
         }
     }
 
@@ -180,13 +199,21 @@ impl App {
         }
 
         let model_picker_open = self.model_picker_is_open();
+        let resume_picker_open = self.resume_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
         let effect = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(picker, key, page_target, model_picker_open, space_confirms)
+            apply_picker_key(
+                picker,
+                key,
+                page_target,
+                model_picker_open,
+                resume_picker_open,
+                space_confirms,
+            )
         };
 
         match effect {
@@ -202,6 +229,10 @@ impl App {
             }
             PickerKeyEffect::ToggleFavorite => {
                 self.toggle_selected_model_favorite()?;
+                Ok(true)
+            }
+            PickerKeyEffect::DeleteRow => {
+                // Session switch/delete is idle-only; ignore while a turn runs.
                 Ok(true)
             }
         }

@@ -28,6 +28,11 @@ records the raw samples for limits one and four plus the ratio of their median
 run times. This scenario reports speedup rather than setting a machine-wide
 minimum because timer resolution and available CPU vary across release runners.
 
+Relative compaction samples interleave the retained baseline and SDK candidate,
+alternating which runs first in each pair. This keeps both distributions exposed
+to the same short-term runner conditions without changing either fixture or the
+15% acceptance budget.
+
 ## Regression policy
 
 A result within both the absolute and relative budget is acceptable. A result

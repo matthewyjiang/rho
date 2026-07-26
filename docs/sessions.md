@@ -52,7 +52,31 @@ rho --resume
 rho -R
 ```
 
-The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker.
+The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker. In the picker, press `d` or `Delete` to remove the selected session after a confirmation prompt; `escape` cancels.
+
+## Listing and deleting sessions
+
+Use the `sessions` CLI to inspect and remove saved history:
+
+```bash
+rho sessions list
+rho sessions list --all-projects
+rho sessions rm <session-uuid-or-prefix>
+rho sessions rm <id> --force   # only for stale non-terminal related runs
+rho sessions rm <id> --yes     # skip cross-project confirmation
+```
+
+`list` shows sessions for the current workspace. `--all-projects` includes every workspace and prints each session's working directory.
+
+`rm` deletes the session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, the session index row, and any parent-linked subagent run directories under `~/.rho/subagents/` whose `result.json` records that session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
+
+Delete refuses:
+
+- the current interactive session (switch or start a new session first)
+- a session with a still-running or starting related run, unless you pass `--force` (intended only for stale artifacts left after a crash)
+- an ambiguous UUID prefix (the error lists matching ids and workspaces)
+
+Cross-project deletes ask for confirmation and show the session workspace. Pass `--yes` in non-interactive scripts.
 
 After you send at least one message, Rho restores your shell view on exit and prints a short saved-session summary plus a resume command that you can paste later.
 

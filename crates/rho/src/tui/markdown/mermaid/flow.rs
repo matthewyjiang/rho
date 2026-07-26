@@ -269,9 +269,23 @@ pub(super) fn layout_canvas(
         let bus = plan.band_end[from.rank] + plan.edge_bus[i];
         let lane = plan.lane_base + plan.edge_lane[i];
         match (vertical, adjacent) {
-            (true, true) => route_forward(&mut canvas, from, to, edge, bus),
+            (true, true) => route_forward(
+                &mut canvas,
+                from,
+                to,
+                edge,
+                bus,
+                /*source_anchor*/ plan.source_anchors[edge.from],
+            ),
             (true, false) => route_back(&mut canvas, from, to, edge, lane),
-            (false, true) => route_forward_lr(&mut canvas, from, to, edge, bus),
+            (false, true) => route_forward_lr(
+                &mut canvas,
+                from,
+                to,
+                edge,
+                bus,
+                /*source_anchor*/ plan.source_anchors[edge.from],
+            ),
             (false, false) => route_back_lr(&mut canvas, from, to, edge, lane),
         }
     }

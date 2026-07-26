@@ -14,6 +14,7 @@ use rho_providers::model::{Message, ModelIdentity};
 #[cfg(test)]
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
+mod delete;
 mod index;
 mod persistence;
 mod snapshot_delta;
@@ -38,6 +39,8 @@ use persistence::{
     parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, workspace_key,
     AppendCursor, SessionStore,
 };
+
+pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
 
 #[derive(Clone, Debug)]
 pub struct Session {
@@ -243,8 +246,33 @@ impl Session {
         Self::list_in_root(&session_root()?, cwd)
     }
 
+    /// Lists sessions across every workspace under the session root.
+    pub fn list_all() -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_all_in_root(&session_root()?)
+    }
+
     pub fn set_title(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<()> {
         Self::set_title_in_root(&session_root()?, cwd, id_prefix, title)
+    }
+
+    /// Deletes a session by UUID or prefix and cascades parent-linked run dirs.
+    ///
+    /// Removes the transcript unit (folder or legacy flat file), web sidecar,
+    /// index row, and any `~/.rho/subagents/<id>/` directories whose
+    /// `result.json` records this session as `parent_session_id`. Does not
+    /// touch usage ledger rows; cost history remains.
+    pub fn delete_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+        options: DeleteOptions,
+    ) -> anyhow::Result<DeleteOutcome> {
+        Self::delete_by_id_in_roots(
+            &session_root()?,
+            &crate::paths::rho_dir()?.join("subagents"),
+            cwd,
+            id_prefix,
+            options,
+        )
     }
 
     fn set_title_in_root(
@@ -258,6 +286,28 @@ impl Session {
 
     fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
         SessionStore::new(session_root, cwd).list()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn list_in_root_for_test(
+        session_root: &Path,
+        cwd: &Path,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_in_root(session_root, cwd)
+    }
+
+    pub(crate) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {
+        delete::list_all_in_root(session_root)
+    }
+
+    pub(crate) fn delete_by_id_in_roots(
+        session_root: &Path,
+        subagents_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+        options: DeleteOptions,
+    ) -> anyhow::Result<DeleteOutcome> {
+        delete::delete_in_roots(session_root, subagents_root, cwd, id_prefix, &options)
     }
 
     pub(crate) fn create_with_id(

@@ -91,6 +91,12 @@ pub struct RunStatus {
     /// Terminal `total_cost_usd` from Claude's result message when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_cost_usd: Option<f64>,
+    /// Parent interactive session that spawned this run, when known.
+    ///
+    /// Used for cascade cleanup when that session is deleted. Absent on older
+    /// result files and on top-level automation runs with no parent session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
 }
 
 /// Convert a provider-reported USD amount into microdollars for session totals.

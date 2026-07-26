@@ -536,7 +536,7 @@ fn upsert_record(
     Ok(())
 }
 
-fn remove_stale_records(
+pub(super) fn remove_stale_records(
     connection: &Connection,
     workspace_key: &str,
     seen: &HashSet<String>,
@@ -561,6 +561,23 @@ fn remove_stale_records(
             params![workspace_key, id],
         )?;
     }
+    Ok(())
+}
+
+/// Drops the index row for a session after its on-disk unit is gone.
+pub(super) fn remove_session(
+    session_root: &Path,
+    workspace_key: &str,
+    id: &str,
+) -> anyhow::Result<()> {
+    let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    connection.execute(
+        "delete from sessions where workspace_key = ?1 and id = ?2",
+        params![workspace_key, id],
+    )?;
     Ok(())
 }
 
