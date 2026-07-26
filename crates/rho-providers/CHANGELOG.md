@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.9.0...rho-providers-v0.10.0) (2026-07-26)
+
+
+### Features
+
+* **tui:** open or copy subagent attach from the activity rail ([#552](https://github.com/matthewyjiang/rho/issues/552)) ([95e4ca6](https://github.com/matthewyjiang/rho/commit/95e4ca698ab92f858587356ba16e29476bcfd972))
+
 ## [0.9.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.8.1...rho-providers-v0.9.0) (2026-07-25)
 
 

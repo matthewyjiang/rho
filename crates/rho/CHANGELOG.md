@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.16.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.15.0...rho-coding-agent-v1.16.0) (2026-07-26)
+
+
+### Features
+
+* **tools:** add in-process grep and glob workspace tools ([#554](https://github.com/matthewyjiang/rho/issues/554)) ([e422a99](https://github.com/matthewyjiang/rho/commit/e422a990332afff330b096d8960d4e0fa07a5838))
+* **tui:** open or copy subagent attach from the activity rail ([#552](https://github.com/matthewyjiang/rho/issues/552)) ([95e4ca6](https://github.com/matthewyjiang/rho/commit/95e4ca698ab92f858587356ba16e29476bcfd972))
+
+
+### Bug Fixes
+
+* **tui:** report missing clipboard image helpers clearly ([#549](https://github.com/matthewyjiang/rho/issues/549)) ([774e965](https://github.com/matthewyjiang/rho/commit/774e965e851ca622197ffb0e5469d69db270967a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.9.0 to 0.10.0
+
 ## [1.15.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.14.0...rho-coding-agent-v1.15.0) (2026-07-25)
 
 
