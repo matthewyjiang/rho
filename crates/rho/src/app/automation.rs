@@ -159,6 +159,7 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             Command::Attach { .. }
             | Command::Login { .. }
             | Command::CredentialStore { .. }
+            | Command::Sessions { .. }
             | Command::Update,
         )
         | None => Ok(None),

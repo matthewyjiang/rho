@@ -511,7 +511,7 @@ rho attach abc123
 
 The read-only attachment TUI follows durable artifacts under `~/.rho/subagents/<id>/`:
 
-- `result.json` - live status, agent ID, semantic fingerprint, usage, final result, and optional `claude_session_id`
+- `result.json` - live status, agent ID, semantic fingerprint, usage, final result, optional `parent_session_id` (for cascade delete with the parent session), and optional `claude_session_id`
 - `events.jsonl` - display events used by attachment
 - `log.txt` - Claude stderr for `runtime: claude-cli` runs
 

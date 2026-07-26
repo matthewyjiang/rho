@@ -829,3 +829,181 @@ fn session_web_dir_method_matches_layout() {
     let expected = session.path().parent().unwrap().join("web");
     assert_eq!(session.web_dir(), Some(expected));
 }
+
+#[test]
+fn deletes_folder_session_and_cascades_parent_linked_runs() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let subagents = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    session
+        .append_message(&Message::user_text("delete me"))
+        .unwrap();
+    let id = session.id().to_string();
+    let session_dir = session.path().parent().unwrap().to_path_buf();
+    let web_dir = session_dir.join("web");
+    fs::create_dir_all(&web_dir).unwrap();
+    fs::write(web_dir.join("blob.bin"), b"sidecar").unwrap();
+
+    let linked = super::delete::write_linked_run_for_tests(
+        subagents.path(),
+        "aa11bb",
+        &id,
+        crate::subagent::RunState::Ok,
+    );
+    let other = super::delete::write_linked_run_for_tests(
+        subagents.path(),
+        "cc22dd",
+        "some-other-session",
+        crate::subagent::RunState::Ok,
+    );
+
+    let outcome = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        &id,
+        DeleteOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(outcome.id, id);
+    assert_eq!(outcome.deleted_run_count, 1);
+    assert!(!session_dir.exists());
+    assert!(!linked.exists());
+    assert!(other.exists());
+    assert!(Session::list_in_root_for_test(&root, &cwd)
+        .unwrap()
+        .is_empty());
+
+    let err = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        &id,
+        DeleteOptions::default(),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("no session found"), "{err}");
+}
+
+#[test]
+fn deletes_legacy_flat_session_and_web_companion() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    write_session_file(&root, &cwd, "legacy-delete-id", 99, &["legacy delete"]);
+    let dir = session_dir_in_root(&root, &cwd);
+    let transcript = dir.join("99_legacy-delete-id.jsonl");
+    let web = dir.join("99_legacy-delete-id.web");
+    fs::create_dir_all(&web).unwrap();
+    fs::write(web.join("page.html"), b"<html></html>").unwrap();
+    // Ensure the index knows about the legacy file before delete.
+    let _ = Session::list_in_root_for_test(&root, &cwd).unwrap();
+
+    Session::delete_by_id_in_roots(
+        &root,
+        tempfile::tempdir().unwrap().path(),
+        &cwd,
+        "legacy-delete-id",
+        DeleteOptions::default(),
+    )
+    .unwrap();
+
+    assert!(!transcript.exists());
+    assert!(!web.exists());
+}
+
+#[test]
+fn refuses_current_session_and_live_runs_without_force() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let subagents = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let id = session.id().to_string();
+
+    let protected = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        &id,
+        DeleteOptions {
+            force: false,
+            protect_session_id: Some(id.clone()),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        protected.to_string().contains("current session"),
+        "{protected}"
+    );
+
+    super::delete::write_linked_run_for_tests(
+        subagents.path(),
+        "ee33ff",
+        &id,
+        crate::subagent::RunState::Running,
+    );
+    let live = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        &id,
+        DeleteOptions::default(),
+    )
+    .unwrap_err();
+    assert!(live.to_string().contains("still running"), "{live}");
+
+    let forced = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        &id,
+        DeleteOptions {
+            force: true,
+            protect_session_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(forced.forced_run_ids, vec!["ee33ff".to_string()]);
+    assert_eq!(forced.deleted_run_count, 1);
+}
+
+#[test]
+fn list_all_includes_other_workspaces() {
+    let root = temp_session_root();
+    let cwd_a = temp_cwd();
+    let cwd_b = temp_cwd();
+    let session_a = Session::create_in_root(&root, &cwd_a).unwrap();
+    session_a
+        .append_message(&Message::user_text("project a"))
+        .unwrap();
+    let session_b = Session::create_in_root(&root, &cwd_b).unwrap();
+    session_b
+        .append_message(&Message::user_text("project b"))
+        .unwrap();
+
+    let all = Session::list_all_in_root(&root).unwrap();
+    let ids = all
+        .iter()
+        .map(|summary| summary.id.as_str())
+        .collect::<Vec<_>>();
+    assert!(ids.contains(&session_a.id()));
+    assert!(ids.contains(&session_b.id()));
+    assert!(all.iter().any(|summary| summary.cwd == *cwd_a));
+    assert!(all.iter().any(|summary| summary.cwd == *cwd_b));
+}
+
+#[test]
+fn index_self_heals_when_folder_is_gone_but_row_remains() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    session
+        .append_message(&Message::user_text("orphaned index row"))
+        .unwrap();
+    let path = session.path().to_path_buf();
+    remove_session_storage(&path);
+
+    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    assert!(listed.is_empty());
+}

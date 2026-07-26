@@ -37,6 +37,39 @@ fn attach_requires_an_id() {
 }
 
 #[test]
+fn parses_sessions_list_and_rm() {
+    let list = Cli::try_parse_from(["rho", "sessions", "list"]).unwrap();
+    assert!(matches!(
+        list.command,
+        Some(Command::Sessions {
+            command: SessionsCommand::List {
+                all_projects: false
+            }
+        })
+    ));
+
+    let all = Cli::try_parse_from(["rho", "sessions", "list", "--all-projects"]).unwrap();
+    assert!(matches!(
+        all.command,
+        Some(Command::Sessions {
+            command: SessionsCommand::List { all_projects: true }
+        })
+    ));
+
+    let rm = Cli::try_parse_from(["rho", "sessions", "rm", "abc", "def", "--force", "-y"]).unwrap();
+    assert!(matches!(
+        rm.command,
+        Some(Command::Sessions {
+            command: SessionsCommand::Rm {
+                ids,
+                force: true,
+                yes: true
+            }
+        }) if ids == ["abc", "def"]
+    ));
+}
+
+#[test]
 fn agent_selection_is_global() {
     let root = Cli::try_parse_from(["rho", "--agent", "reviewer"]).unwrap();
     assert_eq!(root.agent.as_deref(), Some("reviewer"));

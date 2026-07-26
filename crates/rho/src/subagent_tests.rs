@@ -322,3 +322,39 @@ fn write_status_omits_unknown_token_counters() {
     assert_eq!(loaded.input_tokens, None);
     assert_eq!(loaded.output_tokens, None);
 }
+
+#[test]
+fn old_status_files_without_parent_session_id_still_parse() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    std::fs::write(
+        &path,
+        r#"{
+  "state": "ok",
+  "agent_id": "worker",
+  "turns": 1
+}"#,
+    )
+    .unwrap();
+
+    let status = read_status(&path).unwrap();
+    assert_eq!(status.state, RunState::Ok);
+    assert_eq!(status.parent_session_id, None);
+}
+
+#[test]
+fn parent_session_id_round_trips_in_status_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    let status = RunStatus {
+        state: RunState::Starting,
+        parent_session_id: Some("parent-session-id".into()),
+        agent_id: Some("worker".into()),
+        ..RunStatus::default()
+    };
+    initialize_status(&path, &status).unwrap();
+    assert_eq!(
+        read_status(&path).unwrap().parent_session_id.as_deref(),
+        Some("parent-session-id")
+    );
+}

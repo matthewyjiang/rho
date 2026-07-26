@@ -35,6 +35,9 @@ impl App {
                     InlineChoicePending::ClaudeCodeLogout => {
                         self.submit_claude_code_logout_choice(modal.choice).await?;
                     }
+                    InlineChoicePending::DeleteSession { session_id } => {
+                        self.submit_delete_session_choice(&value, &session_id)?;
+                    }
                 }
             }
             InlineChoiceKeyOutcome::Cancelled => {
@@ -50,6 +53,9 @@ impl App {
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(None, *pending, terminal, agent)
                             .await?;
+                    }
+                    InlineChoicePending::DeleteSession { .. } => {
+                        self.open_resume_picker()?;
                     }
                 }
             }

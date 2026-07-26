@@ -181,6 +181,7 @@ impl AgentExecutor {
             agent_fingerprint: Some(bound.fingerprint().to_string()),
             provider: Some(labels.provider.clone()),
             model: Some(labels.model.clone()),
+            parent_session_id: request.parent_session_id.as_ref().map(ToString::to_string),
             ..RunStatus::default()
         };
         // Executor owns the Starting boundary; sinks continue_from it.
@@ -215,15 +216,9 @@ impl AgentExecutor {
             )
             .await?
             else {
-                let stopped = RunStatus {
-                    state: RunState::Stopped,
-                    agent_id: Some(bound.id().to_string()),
-                    agent_fingerprint: Some(bound.fingerprint().to_string()),
-                    provider: Some(labels.provider.clone()),
-                    model: Some(labels.model.clone()),
-                    last_activity: Some("cancelled before execution".into()),
-                    ..RunStatus::default()
-                };
+                let mut stopped = task_status_tx.borrow().clone();
+                stopped.state = RunState::Stopped;
+                stopped.last_activity = Some("cancelled before execution".into());
                 task_status_tx.send_replace(stopped.clone());
                 subagent::write_status(&output_file, &stopped)?;
                 return Ok(());

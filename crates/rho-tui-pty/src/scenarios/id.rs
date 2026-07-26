@@ -28,6 +28,7 @@ pub enum ScenarioId {
     BackgroundAgentAutoDelivery,
     BackgroundAgentQuestionnaire,
     SubagentRailMouse,
+    ResumePickerDelete,
 }
 
 impl ScenarioId {
@@ -60,6 +61,7 @@ impl ScenarioId {
             Self::BackgroundAgentAutoDelivery => "background_agent_auto_delivery",
             Self::BackgroundAgentQuestionnaire => "background_agent_questionnaire",
             Self::SubagentRailMouse => "subagent_rail_mouse",
+            Self::ResumePickerDelete => "resume_picker_delete",
         }
     }
 
@@ -92,6 +94,7 @@ impl ScenarioId {
             "background_agent_auto_delivery" => Some(Self::BackgroundAgentAutoDelivery),
             "background_agent_questionnaire" => Some(Self::BackgroundAgentQuestionnaire),
             "subagent_rail_mouse" => Some(Self::SubagentRailMouse),
+            "resume_picker_delete" => Some(Self::ResumePickerDelete),
             _ => None,
         }
     }
