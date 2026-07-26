@@ -82,6 +82,8 @@ web_search_provider = "disabled"
         "read_file",
         "write_file",
         "edit_file",
+        "grep",
+        "glob",
         "process",
         shell_tool_name(),
         "skill",

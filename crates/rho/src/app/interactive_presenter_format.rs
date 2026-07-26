@@ -86,6 +86,8 @@ pub(super) fn preview_lines(
             lines
         }
         ToolKind::ListDir => vec![format!("list_dir {}", display_path(arguments, cwd))],
+        ToolKind::Grep => vec![grep_header(arguments, cwd)],
+        ToolKind::Glob => vec![glob_header(arguments)],
         ToolKind::ReadFile => vec![format!("read_file {}", read_path(arguments, cwd))],
         ToolKind::WriteFile => vec![format!("write_file {}", display_path(arguments, cwd))],
         ToolKind::EditFile => vec![format!(
@@ -123,6 +125,13 @@ pub(super) fn finished_lines(
         ToolKind::PowerShell => command_result_lines("PS", &view.arguments, content),
         ToolKind::Process => process_result_lines(content),
         ToolKind::ListDir => vec![format!("list_dir {}", metadata_path(view, cwd))],
+        ToolKind::Grep | ToolKind::Glob => {
+            let mut lines = preview_lines(view.kind, &view.name, Some(&view.arguments), cwd);
+            if !content.trim().is_empty() {
+                lines.push(content.to_string());
+            }
+            lines
+        }
         ToolKind::ReadFile => vec![format!("read_file {}", metadata_read_path(view, cwd))],
         ToolKind::WriteFile | ToolKind::EditFile => file_diff_lines(view, content, ok, cwd),
         ToolKind::Skill => preview_lines(view.kind, &view.name, Some(&view.arguments), cwd),
@@ -286,6 +295,21 @@ pub(super) fn display_path(arguments: &serde_json::Value, cwd: &std::path::Path)
     string_arg(arguments, "path")
         .map(|path| compact_display_path(cwd, &path))
         .unwrap_or_default()
+}
+
+fn grep_header(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {
+    let pattern = string_arg(arguments, "pattern").unwrap_or_default();
+    let path = display_path(arguments, cwd);
+    if path.is_empty() {
+        format!("grep {pattern}")
+    } else {
+        format!("grep {pattern} {path}")
+    }
+}
+
+fn glob_header(arguments: &serde_json::Value) -> String {
+    let pattern = string_arg(arguments, "pattern").unwrap_or_default();
+    format!("glob {pattern}")
 }
 
 pub(super) fn read_path(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {

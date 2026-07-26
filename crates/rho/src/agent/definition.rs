@@ -47,6 +47,8 @@ define_tool_capabilities! {
     EditFile => "edit_file",
     FetchContent => "fetch_content",
     GetSearchContent => "get_search_content",
+    Glob => "glob",
+    Grep => "grep",
     ListDir => "list_dir",
     Powershell => "powershell",
     Process => "process",

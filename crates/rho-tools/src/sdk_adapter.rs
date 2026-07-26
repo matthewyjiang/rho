@@ -20,18 +20,21 @@ use serde_json::Value;
 use rho_sdk::{
     tool::{
         AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolContext,
-        ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
-        ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
-        ToolSecurity,
+        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
+        ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
-    CapabilityKind, CapabilityRequest, CapabilitySource, ResolvedWorkspacePath, Workspace,
-    WorkspacePathError, WorkspacePathState,
+    CapabilityKind, ResolvedWorkspacePath, Workspace, WorkspacePathState,
 };
 
 #[cfg(test)]
 use rho_sdk::tool::{DuplicateToolName, ToolRegistry};
 
 use crate::{
+    sdk_search::{GlobTool, GrepTool},
+    sdk_support::{
+        check_preparation_cancelled, map_app_error, map_path_error, parse_args, path_request,
+        preparation_workspace, PathCapability,
+    },
     tool::{compact_display_path, truncate, Tool as AppTool, ToolError as AppToolError},
     DEFAULT_MAX_OUTPUT_BYTES,
 };
@@ -74,7 +77,7 @@ impl CodingToolOptions {
     }
 }
 
-/// Registers the four workspace coding tools on an SDK registry.
+/// Registers the workspace coding tools on an SDK registry.
 ///
 /// The tools do not grant capabilities by themselves. Hosts must attach a
 /// workspace and a non-default policy on the runtime before reads or writes
@@ -97,6 +100,8 @@ pub enum CodingToolKind {
     ReadFile,
     WriteFile,
     EditFile,
+    Grep,
+    Glob,
 }
 
 /// Returns one selected SDK coding tool.
@@ -114,6 +119,8 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
         CodingToolKind::EditFile => Arc::new(EditFileTool {
             max_output_bytes: options.max_output_bytes,
         }),
+        CodingToolKind::Grep => Arc::new(GrepTool::new(options.max_output_bytes)),
+        CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes)),
     }
 }
 
@@ -124,6 +131,8 @@ pub fn coding_tools(options: CodingToolOptions) -> Vec<Arc<dyn Tool>> {
         CodingToolKind::ReadFile,
         CodingToolKind::WriteFile,
         CodingToolKind::EditFile,
+        CodingToolKind::Grep,
+        CodingToolKind::Glob,
     ]
     .into_iter()
     .map(|kind| coding_tool(kind, options.clone()))
@@ -513,39 +522,6 @@ fn execute_prepared_edits(
     })
 }
 
-fn check_preparation_cancelled(context: &ToolPreparationContext) -> Result<(), ToolError> {
-    if context.cancellation().is_cancelled() {
-        Err(ToolError::cancelled())
-    } else {
-        Ok(())
-    }
-}
-
-fn preparation_workspace(context: &ToolPreparationContext) -> Result<&Workspace, ToolError> {
-    context.workspace().ok_or_else(|| {
-        ToolError::new(
-            ToolErrorKind::Execution,
-            "workspace is required for built-in tools",
-        )
-    })
-}
-
-fn path_request(
-    path: &ResolvedWorkspacePath,
-    capability: PathCapability,
-    tool_name: &str,
-) -> CapabilityRequest {
-    let source = CapabilitySource::built_in_tool(tool_name);
-    match capability {
-        PathCapability::Read => {
-            CapabilityRequest::read_path(path.path(), path.scope().clone(), source)
-        }
-        PathCapability::Write => {
-            CapabilityRequest::write_path(path.path(), path.scope().clone(), source)
-        }
-    }
-}
-
 fn write_accesses(path: &ResolvedWorkspacePath) -> Vec<ToolResourceAccess> {
     let mut accesses = vec![ToolResourceAccess::exclusive(ToolResource::workspace_path(
         path.path(),
@@ -583,48 +559,9 @@ fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetad
     metadata
 }
 
-#[derive(Clone, Copy)]
-enum PathCapability {
-    Read,
-    Write,
-}
-
-fn parse_args<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, ToolError> {
-    serde_json::from_value(args).map_err(|error| {
-        ToolError::new(
-            ToolErrorKind::InvalidArguments,
-            format!("invalid arguments: {error}"),
-        )
-    })
-}
-
-fn map_path_error(error: WorkspacePathError) -> ToolError {
-    let kind = match error.kind() {
-        rho_sdk::WorkspacePathErrorKind::ParentTraversal
-        | rho_sdk::WorkspacePathErrorKind::OutsideGrantedRoots
-        | rho_sdk::WorkspacePathErrorKind::InvalidPlatformPath
-        | rho_sdk::WorkspacePathErrorKind::ChangedAfterAuthorization => ToolErrorKind::PolicyDenied,
-        _ => ToolErrorKind::Execution,
-    };
-    ToolError::new(kind, error.to_string())
-}
-
-fn map_app_error(error: AppToolError) -> ToolError {
-    match error {
-        AppToolError::InvalidArguments(error) => ToolError::new(
-            ToolErrorKind::InvalidArguments,
-            format!("invalid arguments: {error}"),
-        ),
-        AppToolError::Io(error) => ToolError::new(ToolErrorKind::Execution, error.to_string()),
-        AppToolError::Utf8(error) => ToolError::new(ToolErrorKind::Execution, error.to_string()),
-        AppToolError::Message(message) if message == "tool interrupted" => ToolError::cancelled(),
-        AppToolError::Message(message) => ToolError::new(ToolErrorKind::Execution, message),
-    }
-}
-
 /// Test helper: build a deny-by-default tool context rooted at `workspace`.
 #[cfg(test)]
-pub(super) fn deny_context(
+pub(crate) fn deny_context(
     workspace: Option<rho_sdk::Workspace>,
 ) -> (ToolContext, rho_sdk::tool::ToolProgressReceiver) {
     let (progress, receiver) =
