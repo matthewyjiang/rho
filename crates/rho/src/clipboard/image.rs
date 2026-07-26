@@ -17,6 +17,9 @@ use super::{
 pub enum ClipboardImageError {
     #[error("no supported image found on clipboard")]
     NoImage,
+    /// Platform clipboard helper is missing from PATH.
+    #[error("{0}")]
+    HelperMissing(String),
     #[error("image file exceeds the {0} byte paste limit")]
     TooLarge(u64),
     #[error("io error: {0}")]
@@ -124,9 +127,28 @@ fn image_content_from_bytes(bytes: Vec<u8>) -> Result<ImageContent, ClipboardIma
 pub(super) fn read_clipboard_image_for_session(
     session: SessionKind,
 ) -> Result<ImageContent, ClipboardImageError> {
+    read_clipboard_image_for_session_with(session, command_available)
+}
+
+pub(super) fn read_clipboard_image_for_session_with(
+    session: SessionKind,
+    host_command_available: impl Fn(&str) -> bool,
+) -> Result<ImageContent, ClipboardImageError> {
+    // Remote sessions have no path to the user's local image clipboard.
+    if matches!(session, SessionKind::Remote) {
+        return Err(ClipboardImageError::NoImage);
+    }
+
+    // Distinguish a missing helper from an empty clipboard so the status line
+    // points at the install step instead of the clipboard contents.
+    if available_image_helpers_with(session, &host_command_available).is_empty() {
+        return Err(ClipboardImageError::HelperMissing(
+            missing_image_helper_message(session),
+        ));
+    }
+
     let image = match session {
-        // Remote sessions have no path to the user's local image clipboard.
-        SessionKind::Remote => None,
+        SessionKind::Remote => unreachable!("remote sessions return before clipboard reads"),
         SessionKind::Wsl => read_linux_clipboard_image().or_else(read_wsl_clipboard_image),
         SessionKind::Local if cfg!(target_os = "linux") => read_linux_clipboard_image(),
         SessionKind::Local if cfg!(target_os = "macos") => read_macos_clipboard_image(),
@@ -145,6 +167,31 @@ pub(super) fn read_clipboard_image_for_session(
         data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes),
         mime_type,
     })
+}
+
+/// Actionable guidance when no supported clipboard image helper is on PATH.
+pub(super) fn missing_image_helper_message(session: SessionKind) -> String {
+    match session {
+        SessionKind::Remote => {
+            "Remote session detected. Image paste needs a local host clipboard helper and is unavailable over SSH/Mosh.".into()
+        }
+        SessionKind::Wsl => {
+            "clipboard image paste in WSL requires wl-paste, xclip, or powershell.exe, which were not found; install wl-clipboard or xclip, or ensure powershell.exe is on PATH".into()
+        }
+        SessionKind::Local => local_missing_image_helper_message(),
+    }
+}
+
+fn local_missing_image_helper_message() -> String {
+    if cfg!(target_os = "linux") {
+        "clipboard image paste on Linux requires wl-paste or xclip, which were not found; install wl-clipboard or xclip".into()
+    } else if cfg!(target_os = "macos") {
+        "clipboard image paste on macOS requires pngpaste, which was not found; install it with brew install pngpaste".into()
+    } else if cfg!(target_os = "windows") {
+        "clipboard image paste on Windows requires powershell.exe, which was not found; install PowerShell and ensure it is on PATH".into()
+    } else {
+        "clipboard image paste is not supported on this platform".into()
+    }
 }
 
 pub(super) fn available_image_helpers(session: SessionKind) -> Vec<&'static str> {
