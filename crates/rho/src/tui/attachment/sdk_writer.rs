@@ -68,7 +68,8 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         ViewModelEvent::OutputDelta(text) => Some(AttachmentEvent::AssistantTextDelta(text)),
         ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
         ViewModelEvent::ToolStarted { display_lines, .. }
-        | ViewModelEvent::ToolCallUpdated { display_lines, .. } => {
+        | ViewModelEvent::ToolCallUpdated { display_lines, .. }
+        | ViewModelEvent::ToolCallProposed { display_lines, .. } => {
             Some(AttachmentEvent::ToolStarted { display_lines })
         }
         ViewModelEvent::ToolUpdated { display_lines, .. } => {

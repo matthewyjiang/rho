@@ -156,6 +156,14 @@ impl TurnUi {
         self.tool_calls.preview(index, call_id, display_lines);
     }
 
+    pub(in crate::tui) fn tool_call_proposed(
+        &mut self,
+        call_id: ToolCallId,
+        display_lines: Vec<String>,
+    ) {
+        self.tool_calls.preview_call(call_id, display_lines);
+    }
+
     pub(in crate::tui) fn tool_finished(&mut self, call_id: &ToolCallId) -> bool {
         self.tool_calls.finished(call_id)
     }
