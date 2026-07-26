@@ -19,9 +19,9 @@ use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolContext,
-        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
-        ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
+        AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolFuture,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+        ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
     CapabilityKind, ResolvedWorkspacePath, Workspace, WorkspacePathState,
 };
@@ -228,10 +228,6 @@ impl Tool for ListDirTool {
             ))
         })
     }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
-    }
 }
 
 impl Tool for ReadFileTool {
@@ -297,10 +293,6 @@ impl Tool for ReadFileTool {
             ))
         })
     }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
-    }
 }
 
 impl Tool for WriteFileTool {
@@ -355,10 +347,6 @@ impl Tool for WriteFileTool {
                 },
             ))
         })
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 }
 
@@ -427,10 +415,6 @@ impl Tool for EditFileTool {
                 },
             ))
         })
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 }
 
@@ -563,7 +547,12 @@ fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetad
 #[cfg(test)]
 pub(crate) fn deny_context(
     workspace: Option<rho_sdk::Workspace>,
-) -> (ToolContext, rho_sdk::tool::ToolProgressReceiver) {
+) -> (
+    rho_sdk::tool::ToolContext,
+    rho_sdk::tool::ToolProgressReceiver,
+) {
+    use rho_sdk::tool::ToolContext;
+
     let (progress, receiver) =
         rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::new(4).unwrap());
     (

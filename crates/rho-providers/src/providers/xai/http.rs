@@ -4,7 +4,7 @@ use reqwest::StatusCode;
 use serde_json::Value;
 
 use super::XaiProvider;
-use crate::model::ModelError;
+use crate::{model::ModelError, provider_backend::cancel::cancel_aware};
 
 /// Physical request attempts that failed before the final HTTP result.
 ///
@@ -61,13 +61,7 @@ impl XaiProvider {
             .bearer_auth(access_token)
             .header("User-Agent", crate::rho_user_agent())
             .json(body);
-        match cancellation {
-            Some(cancellation) => tokio::select! {
-                response = request.send() => Ok(response?),
-                () = cancellation.cancelled() => Err(ModelError::Interrupted),
-            },
-            None => Ok(request.send().await?),
-        }
+        cancel_aware(cancellation, async { Ok(request.send().await?) }).await
     }
 
     /// Posts JSON and refreshes once on `401` when credentials allow it.
@@ -121,18 +115,5 @@ impl XaiProvider {
             Ok(response) => XaiHttpResult::ok(response).with_failed_attempts(failed_attempts),
             Err(error) => XaiHttpResult::err(error).with_failed_attempts(failed_attempts),
         }
-    }
-}
-
-async fn cancel_aware<T>(
-    cancellation: Option<&rho_sdk::CancellationToken>,
-    future: impl std::future::Future<Output = Result<T, ModelError>>,
-) -> Result<T, ModelError> {
-    match cancellation {
-        Some(cancellation) => tokio::select! {
-            result = future => result,
-            () = cancellation.cancelled() => Err(ModelError::Interrupted),
-        },
-        None => future.await,
     }
 }

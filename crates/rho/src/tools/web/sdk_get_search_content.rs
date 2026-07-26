@@ -1,7 +1,7 @@
 use rho_sdk::tool::{
-    OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
-    ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
-    ToolResource, ToolResourceAccess, ToolSecurity,
+    OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
+    ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
+    ToolResourceAccess, ToolSecurity,
 };
 use rho_tools::tool::Tool as LegacyTool;
 
@@ -39,10 +39,6 @@ impl Tool for SdkGetSearchContent {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([])
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

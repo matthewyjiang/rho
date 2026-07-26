@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::{
     credentials::{load_codex_tokens, CodexTokens, CredentialStore},
     model::ModelError,
+    provider_backend::cancel::cancel_aware,
 };
 
 use super::{
@@ -224,13 +225,7 @@ impl<'a> ResponsesHttpTransport<'a> {
             previous,
             self.codex_refresh_url,
         );
-        match cancellation {
-            Some(cancellation) => tokio::select! {
-                result = refresh => result,
-                () = cancellation.cancelled() => Err(ModelError::Interrupted),
-            },
-            None => refresh.await,
-        }
+        cancel_aware(cancellation, refresh).await
     }
 
     fn build_request(
@@ -278,13 +273,7 @@ impl<'a> ResponsesHttpTransport<'a> {
         request: reqwest::RequestBuilder,
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> Result<reqwest::Response, ModelError> {
-        match cancellation {
-            Some(cancellation) => tokio::select! {
-                response = request.send() => Ok(response?),
-                () = cancellation.cancelled() => Err(ModelError::Interrupted),
-            },
-            None => Ok(request.send().await?),
-        }
+        cancel_aware(cancellation, async { Ok(request.send().await?) }).await
     }
 
     fn codex_turn_tokens(&self, initial: &CodexTokens, source: CodexAuthSource) -> CodexTokens {

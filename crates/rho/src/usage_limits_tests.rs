@@ -195,7 +195,7 @@ fn blank_xai_env_token_falls_back_to_stored_oauth_tokens() {
     .unwrap();
 
     assert_eq!(
-        XaiUsageLimitsSource::configured_tokens_from(&store, Some("  ".into())).unwrap(),
+        XaiUsage::configured_tokens_from(&store, Some("  ".into())).unwrap(),
         Some((
             XaiTokens {
                 access_token: "stored-access".into(),
@@ -341,7 +341,7 @@ fn blank_kimi_env_token_falls_back_to_stored_oauth_tokens() {
     save_kimi_tokens(&store, &tokens).unwrap();
 
     assert_eq!(
-        KimiUsageLimitsSource::configured_tokens_from(&store, Some("  ".into())).unwrap(),
+        KimiUsage::configured_tokens_from(&store, Some("  ".into())).unwrap(),
         Some((tokens, KimiAuthSource::Store))
     );
 }

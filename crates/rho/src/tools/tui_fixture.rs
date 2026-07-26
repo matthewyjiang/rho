@@ -1,9 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use rho_sdk::tool::{
-    OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolFuture,
-    ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
-    ToolProgress, ToolSecurity,
+    OperationKind, PreparedToolInvocation, Tool, ToolError, ToolInvocation, ToolMetadata,
+    ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolSecurity,
 };
 
 pub(crate) const NAME: &str = "tui_fixture_progress";
@@ -33,10 +32,6 @@ impl Tool for TuiFixtureProgressTool {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([])
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(

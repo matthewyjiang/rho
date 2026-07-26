@@ -1,3 +1,4 @@
+pub(crate) mod cancel;
 pub(crate) mod http_error;
 /// Shared streaming line decoder used by provider HTTP streams and local process
 /// NDJSON (Claude CLI). Hidden from rustdoc; not a stable public product API.

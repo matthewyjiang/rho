@@ -567,7 +567,19 @@ pub trait Tool: Send + Sync {
         ToolMetadata::default()
     }
 
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a>;
+    /// Executes an authorized invocation.
+    ///
+    /// Implement this for a tool that runs exclusively and needs no resource
+    /// plan. A tool that declares one implements [`Self::prepare`] instead and
+    /// leaves this at its default, which resolves the plan and then executes
+    /// it. Every tool must implement one of the two: leaving both at their
+    /// defaults leaves them delegating to each other.
+    ///
+    /// The runtime enters through [`Self::prepare`], so this is called directly
+    /// only by the default `prepare` and by hosts driving a tool by hand.
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        call_prepared(self, invocation, context)
+    }
 
     /// Validates and resolves an invocation before authorization and execution.
     ///

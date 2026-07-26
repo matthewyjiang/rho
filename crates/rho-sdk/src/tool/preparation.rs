@@ -182,18 +182,20 @@ impl ToolResource {
     }
 }
 
-/// Runs the canonical prepared path from a tool's compatibility [`Tool::call`]
-/// implementation.
+/// Resolves a tool's plan, authorizes its capabilities, and executes it.
 ///
-/// Resource-aware tools can delegate `call` to this function instead of keeping
-/// a second parsing, authorization, and execution path. The tool must override
-/// [`Tool::prepare`], since its default implementation delegates back to
-/// [`Tool::call`].
-pub fn call_prepared<'a>(
-    tool: &'a dyn Tool,
+/// This backs the default [`Tool::call`], so a resource-aware tool gets the
+/// path for free by overriding [`Tool::prepare`]. Calling it on a tool that
+/// leaves `prepare` at its default recurses, because that default delegates
+/// back to [`Tool::call`].
+pub fn call_prepared<'a, T>(
+    tool: &'a T,
     invocation: ToolInvocation,
     execution: ToolContext,
-) -> ToolFuture<'a> {
+) -> ToolFuture<'a>
+where
+    T: Tool + ?Sized,
+{
     Box::pin(async move {
         let preparation = ToolPreparationContext::from_execution(&execution);
         let prepared = tool.prepare(invocation, preparation).await?;

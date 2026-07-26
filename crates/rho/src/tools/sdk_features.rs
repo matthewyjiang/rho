@@ -44,9 +44,6 @@ impl SdkTool for SdkSkillTool {
         ToolSecurity::built_in([CapabilityKind::Skill])
     }
 
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
-    }
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,

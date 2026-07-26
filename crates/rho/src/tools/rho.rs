@@ -6,9 +6,9 @@ use serde::Deserialize;
 use {
     crate::diagnostics::RuntimeDiagnostics,
     rho_sdk::tool::{
-        OperationKind, PreparedToolInvocation, Tool as SdkTool, ToolContext as SdkToolContext,
-        ToolError as SdkToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata,
-        ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool as SdkTool, ToolError as SdkToolError,
+        ToolErrorKind, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
+        ToolPrepareFuture, ToolSecurity,
     },
     rho_tools::tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
@@ -58,10 +58,6 @@ impl SdkTool for SdkRho {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([])
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: SdkToolContext) -> ToolFuture<'a> {
-        rho_sdk::tool::call_prepared(self, invocation, context)
     }
 
     fn prepare<'a>(
