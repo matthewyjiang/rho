@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.5.6...rho-agent-tools-v0.6.0) (2026-07-26)
+
+
+### Features
+
+* **tools:** add in-process grep and glob workspace tools ([#554](https://github.com/matthewyjiang/rho/issues/554)) ([e422a99](https://github.com/matthewyjiang/rho/commit/e422a990332afff330b096d8960d4e0fa07a5838))
+
 ## [0.5.6](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.5.5...rho-agent-tools-v0.5.6) (2026-07-25)
 
 
