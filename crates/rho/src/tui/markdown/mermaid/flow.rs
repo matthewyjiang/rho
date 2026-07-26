@@ -136,7 +136,7 @@ pub(super) fn layout_canvas(
     let mut box_w: Vec<usize> = (0..n)
         .map(|i| match &extras[i] {
             NodeExtra::Frame(sub) => {
-                let title_w = fit_label(&graph.nodes[i].label, WRAP_WIDTH).width();
+                let title_w = fit_label(&graph.nodes[i].label, wrap_width).width();
                 (sub.w + 2).max(title_w + 4)
             }
             NodeExtra::Compartments(sections) => {
