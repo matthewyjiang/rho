@@ -76,7 +76,7 @@ pub(crate) async fn run<S: ProcessSupervisor>(
                 supervisor.kill();
                 let _ = child.start_kill();
                 let _ = child.wait().await;
-                return Err(ToolError::Message("tool interrupted".into()));
+                return Err(ToolError::Cancelled);
             }
             status = child.wait() => break status?,
             chunk = streams.recv(), if streams.output_open => {

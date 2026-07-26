@@ -257,9 +257,7 @@ fn map_legacy_error(error: rho_tools::tool::ToolError) -> ToolError {
         rho_tools::tool::ToolError::InvalidArguments(error) => {
             ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
         }
-        rho_tools::tool::ToolError::Message(message) if message == "tool interrupted" => {
-            ToolError::cancelled()
-        }
+        rho_tools::tool::ToolError::Cancelled => ToolError::cancelled(),
         error => ToolError::new(ToolErrorKind::Execution, error.to_string()),
     }
 }

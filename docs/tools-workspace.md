@@ -11,7 +11,18 @@ list_dir
 read_file
 write_file
 edit_file
+grep
+glob
 ```
+
+`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or `rtk`.
+
+- Patterns: `grep` takes a Rust/`regex` pattern. `glob` takes a path glob; a pattern with no `/` (for example `*.rs`) matches nested paths as `**/*.rs`.
+- Defaults: both honor `.gitignore`, skip hidden files, and never follow symlinks. Pass `include_hidden` when you need dotfiles.
+- Order: results come back in walk order, sorted by name within each directory, so repeat runs agree and a capped result is the first N paths shown rather than an arbitrary sample.
+- Caps: results are bounded (default 200). `grep` also caps matches per file and trims long lines. Every capped, timed-out, or cancelled search says so in its summary, including when it found nothing.
+- Output: `grep` groups matches by file. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
+- Permissions: both request read access only, so they work in every permission mode, including `plan`.
 
 It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, web access tools with zero-config invocation, and one native shell tool for the current platform:
 

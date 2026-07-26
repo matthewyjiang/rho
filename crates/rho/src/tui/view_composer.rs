@@ -192,7 +192,12 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        if let Some(footer) = file_picker::file_palette_scroll_footer(above, below, matches.len()) {
+        if let Some(footer) = file_picker::file_palette_scroll_footer(
+            above,
+            below,
+            matches.len(),
+            self.file_discovery_incomplete(),
+        ) {
             lines.push(styled_line(
                 truncate_one_line(&footer, width.max(1)),
                 width.max(1),

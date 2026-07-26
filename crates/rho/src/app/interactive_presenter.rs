@@ -38,6 +38,8 @@ enum ToolKind {
     PowerShell,
     Process,
     ListDir,
+    Grep,
+    Glob,
     ReadFile,
     WriteFile,
     EditFile,
@@ -58,6 +60,8 @@ impl ToolKind {
             "powershell" => Self::PowerShell,
             "process" => Self::Process,
             "list_dir" => Self::ListDir,
+            "grep" => Self::Grep,
+            "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
             "write_file" => Self::WriteFile,
             "edit_file" => Self::EditFile,
@@ -73,9 +77,12 @@ impl ToolKind {
     fn display_style(self, metadata: &ToolMetadata) -> ToolDisplayStyle {
         match self {
             Self::Agent | Self::Agents => ToolDisplayStyle::default_tool(),
-            Self::Bash | Self::PowerShell | Self::ListDir | Self::ReadFile => {
-                ToolDisplayStyle::file_or_command()
-            }
+            Self::Bash
+            | Self::PowerShell
+            | Self::ListDir
+            | Self::Grep
+            | Self::Glob
+            | Self::ReadFile => ToolDisplayStyle::file_or_command(),
             Self::WriteFile | Self::EditFile => ToolDisplayStyle::file_diff(),
             Self::Skill => ToolDisplayStyle::skill(),
             Self::WebSearch | Self::FetchContent | Self::GetSearchContent => {
@@ -103,6 +110,8 @@ impl ToolKind {
             | Self::PowerShell
             | Self::Process
             | Self::ListDir
+            | Self::Grep
+            | Self::Glob
             | Self::ReadFile
             | Self::WriteFile
             | Self::EditFile

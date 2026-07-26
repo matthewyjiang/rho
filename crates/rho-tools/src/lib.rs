@@ -5,30 +5,39 @@
 //! - Application tools ([`tool::Tool`]) implement the user-facing built-ins
 //!   (`bash`, `read_file`, `write_file`, `edit_file`, `list_dir`) with output
 //!   truncation, diffs, and display formatting.
-//! - SDK adapters ([`sdk_adapter`], [`sdk_shell`]) wrap those implementations
-//!   in the public [`rho_sdk::tool::Tool`] contract so hosts can register them
-//!   on an SDK runtime with explicit workspace policies.
+//! - Workspace searches implement `grep` and `glob` over the shared
+//!   [`workspace_walk`] walker.
+//! - SDK adapters ([`sdk_adapter`], [`sdk_shell`], [`sdk_search`]) wrap those
+//!   implementations in the public [`rho_sdk::tool::Tool`] contract so hosts
+//!   can register them on an SDK runtime with explicit workspace policies.
 
 pub mod cancellation;
 pub mod image_format;
+mod path_glob;
 mod paths;
 mod process_env;
 mod process_stream;
+mod search;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod shell_process;
 pub mod tool;
+pub mod workspace_walk;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod bash;
 pub mod diff;
 pub mod edit_file;
 pub mod edit_file_args;
+mod glob;
+mod grep;
+mod grep_format;
 pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;
 pub mod read_file;
 pub mod rtk;
 pub mod sdk_adapter;
+mod sdk_search;
 pub mod sdk_security;
 pub mod sdk_shell;
 pub mod sdk_support;

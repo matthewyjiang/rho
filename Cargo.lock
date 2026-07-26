@@ -2958,9 +2958,12 @@ name = "rho-agent-tools"
 version = "0.5.6"
 dependencies = [
  "async-trait",
+ "globset",
+ "ignore",
  "image",
  "libc",
  "pretty_assertions",
+ "regex",
  "rho-sdk",
  "same-file",
  "serde",
@@ -2986,7 +2989,6 @@ dependencies = [
  "crossterm",
  "futures-util",
  "humantime",
- "ignore",
  "image",
  "katex-rs",
  "keyring",

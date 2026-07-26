@@ -17,6 +17,12 @@ fn tool_names(capability: ToolCapability) -> Vec<String> {
     .collect()
 }
 
+#[test]
+fn registers_grep_and_glob_for_their_capabilities() {
+    assert_eq!(tool_names(ToolCapability::Grep), ["grep"]);
+    assert_eq!(tool_names(ToolCapability::Glob), ["glob"]);
+}
+
 #[cfg(unix)]
 #[test]
 fn unix_registers_shell_only_for_bash_capability() {

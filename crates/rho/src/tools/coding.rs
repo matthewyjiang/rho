@@ -15,6 +15,8 @@ pub(super) fn sdk_bundle(
         (ToolCapability::ReadFile, CodingToolKind::ReadFile),
         (ToolCapability::WriteFile, CodingToolKind::WriteFile),
         (ToolCapability::EditFile, CodingToolKind::EditFile),
+        (ToolCapability::Grep, CodingToolKind::Grep),
+        (ToolCapability::Glob, CodingToolKind::Glob),
     ] {
         if capabilities.contains(&capability) {
             tools.push(rho_tools::coding_tool(kind, options.clone()));

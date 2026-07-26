@@ -86,6 +86,8 @@ pub(super) fn preview_lines(
             lines
         }
         ToolKind::ListDir => vec![format!("list_dir {}", display_path(arguments, cwd))],
+        ToolKind::Grep => vec![grep_header(arguments, cwd)],
+        ToolKind::Glob => vec![glob_header(arguments)],
         ToolKind::ReadFile => vec![format!("read_file {}", read_path(arguments, cwd))],
         ToolKind::WriteFile => vec![format!("write_file {}", display_path(arguments, cwd))],
         ToolKind::EditFile => vec![format!(
@@ -123,6 +125,7 @@ pub(super) fn finished_lines(
         ToolKind::PowerShell => command_result_lines("PS", &view.arguments, content),
         ToolKind::Process => process_result_lines(content),
         ToolKind::ListDir => vec![format!("list_dir {}", metadata_path(view, cwd))],
+        ToolKind::Grep | ToolKind::Glob => header_with_output(start_lines(view, cwd), content),
         ToolKind::ReadFile => vec![format!("read_file {}", metadata_read_path(view, cwd))],
         ToolKind::WriteFile | ToolKind::EditFile => file_diff_lines(view, content, ok, cwd),
         ToolKind::Skill => preview_lines(view.kind, &view.name, Some(&view.arguments), cwd),
@@ -151,14 +154,20 @@ pub(super) fn progress_lines(
             return command_result_lines(prompt, &view.arguments, progress.text());
         }
     }
-    let mut lines = view.map_or_else(|| vec!["tool".into()], |(view, cwd)| start_lines(view, cwd));
-    if !progress.text().trim().is_empty() {
-        lines.push(progress.text().to_string());
-    }
+    let header = view.map_or_else(|| vec!["tool".into()], |(view, cwd)| start_lines(view, cwd));
+    let mut lines = header_with_output(header, progress.text());
     if let (Some(completed), Some(total)) = (progress.completed_units(), progress.total_units()) {
         lines.push(format!("progress: {completed}/{total}"));
     }
     lines
+}
+
+/// Appends a tool's output beneath its header lines, dropping blank output.
+fn header_with_output(mut header: Vec<String>, output: &str) -> Vec<String> {
+    if !output.trim().is_empty() {
+        header.push(output.to_string());
+    }
+    header
 }
 
 pub(super) fn file_diff_lines(
@@ -286,6 +295,21 @@ pub(super) fn display_path(arguments: &serde_json::Value, cwd: &std::path::Path)
     string_arg(arguments, "path")
         .map(|path| compact_display_path(cwd, &path))
         .unwrap_or_default()
+}
+
+fn grep_header(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {
+    let pattern = string_arg(arguments, "pattern").unwrap_or_default();
+    let path = display_path(arguments, cwd);
+    if path.is_empty() {
+        format!("grep {pattern}")
+    } else {
+        format!("grep {pattern} {path}")
+    }
+}
+
+fn glob_header(arguments: &serde_json::Value) -> String {
+    let pattern = string_arg(arguments, "pattern").unwrap_or_default();
+    format!("glob {pattern}")
 }
 
 pub(super) fn read_path(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {

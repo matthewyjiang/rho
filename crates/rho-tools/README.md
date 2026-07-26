@@ -4,10 +4,10 @@
 agent and adapters for registering them with `rho-sdk`. The crate is imported as
 `rho_agent_tools`.
 
-The built-in tools cover `read_file`, `write_file`, `edit_file`, and `list_dir`,
-with shared diff generation and output limiting. `coding_tools` constructs their
-SDK adapters, while `shell_tool` constructs the platform shell adapter (`bash`
-on Linux and macOS, PowerShell on Windows).
+The built-in tools cover `read_file`, `write_file`, `edit_file`, `list_dir`,
+`grep`, and `glob`, with shared diff generation and output limiting.
+`coding_tools` constructs their SDK adapters, while `shell_tool` constructs the
+platform shell adapter (`bash` on Linux and macOS, PowerShell on Windows).
 
 The crate also exposes the application `Tool` contract and `RunCancellation` for
 hosts that integrate with Rho's lower-level tool implementations. It is used by

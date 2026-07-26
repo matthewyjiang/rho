@@ -316,7 +316,7 @@ fn map_app_error(error: AppToolError) -> ToolError {
         AppToolError::InvalidArguments(_) => {
             ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
         }
-        AppToolError::Message(message) if message == "tool interrupted" => ToolError::cancelled(),
+        AppToolError::Cancelled => ToolError::cancelled(),
         AppToolError::Io(_) | AppToolError::Utf8(_) | AppToolError::Message(_) => {
             ToolError::new(ToolErrorKind::Execution, error.to_string())
         }

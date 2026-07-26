@@ -126,6 +126,8 @@ bash
 edit_file
 fetch_content
 get_search_content
+glob
+grep
 list_dir
 powershell
 process

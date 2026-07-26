@@ -58,7 +58,17 @@ fn coding_tools_register_without_granting_capabilities() {
         .into_iter()
         .map(|spec| spec.name)
         .collect::<Vec<_>>();
-    assert_eq!(names, ["edit_file", "list_dir", "read_file", "write_file"]);
+    assert_eq!(
+        names,
+        [
+            "edit_file",
+            "glob",
+            "grep",
+            "list_dir",
+            "read_file",
+            "write_file"
+        ]
+    );
     assert_eq!(
         CodingToolOptions::new()
             .max_output_bytes(8_000)

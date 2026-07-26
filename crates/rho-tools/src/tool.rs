@@ -58,6 +58,8 @@ pub enum ToolError {
     Io(#[from] std::io::Error),
     #[error("utf-8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
+    #[error("tool interrupted")]
+    Cancelled,
     #[error("{0}")]
     Message(String),
 }
@@ -102,7 +104,7 @@ pub trait Tool: Send + Sync {
     ) -> Result<ToolResult, ToolError> {
         tokio::select! {
             result = self.call_with_updates(args, ctx, id, on_update) => result,
-            () = cancellation.cancelled() => Err(ToolError::Message("tool interrupted".into())),
+            () = cancellation.cancelled() => Err(ToolError::Cancelled),
         }
     }
 }
