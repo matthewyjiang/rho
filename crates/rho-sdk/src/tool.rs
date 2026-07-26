@@ -19,6 +19,7 @@ use crate::{
 
 mod preparation;
 
+use preparation::call_prepared_for;
 pub use preparation::{
     call_prepared, AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode,
     ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture, ToolResource,
@@ -578,7 +579,7 @@ pub trait Tool: Send + Sync {
     /// The runtime enters through [`Self::prepare`], so this is called directly
     /// only by the default `prepare` and by hosts driving a tool by hand.
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        call_prepared(self, invocation, context)
+        call_prepared_for(self, invocation, context)
     }
 
     /// Validates and resolves an invocation before authorization and execution.

@@ -188,7 +188,20 @@ impl ToolResource {
 /// This backs the default [`Tool::call`], so a resource-aware tool gets the
 /// path for free by overriding [`Tool::prepare`]. A tool that overrides neither
 /// method fails here with a clear error rather than delegating in a loop.
-pub fn call_prepared<'a, T>(
+pub fn call_prepared<'a>(
+    tool: &'a dyn Tool,
+    invocation: ToolInvocation,
+    execution: ToolContext,
+) -> ToolFuture<'a> {
+    call_prepared_for(tool, invocation, execution)
+}
+
+/// [`call_prepared`] for a caller holding `Self` rather than a trait object.
+///
+/// The default [`Tool::call`] needs this because `Self` is `?Sized` there and
+/// so cannot coerce to `&dyn Tool`. Kept separate so the public signature stays
+/// object-taking, which callers depend on.
+pub(crate) fn call_prepared_for<'a, T>(
     tool: &'a T,
     invocation: ToolInvocation,
     execution: ToolContext,
