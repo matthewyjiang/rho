@@ -358,6 +358,36 @@ fn mermaid_copy_button_copies_source_instead_of_rendered_art() {
 }
 
 #[test]
+fn too_narrow_mermaid_fallback_copies_source_instead_of_panel_text() {
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let mut app = test_app();
+    app.clipboard = Box::new(RecordingClipboard {
+        copied: copied.clone(),
+    });
+    let source = crate::tui::markdown::PHASE_CHAIN_FLOWCHART;
+    app.record_inserted_entry(Entry::Assistant(format!("```mermaid\n{source}\n```")));
+    let mut terminal = Terminal::new(TestBackend::new(44, 24)).unwrap();
+    let now = Instant::now();
+    let history_len = app.history_len(44, now);
+    let layout = app.screen_layout(Rect::new(0, 0, 44, 24), now);
+    let history_start = app.visible_history_start(history_len, layout.history.height as usize);
+    let target = app.code_block_copy_targets(44).into_iter().next().unwrap();
+    let column = target.columns.start as u16;
+    let row = layout.history.y + target.line.saturating_sub(history_start) as u16;
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+
+    assert_eq!(*copied.lock().unwrap(), vec![source.to_string()]);
+}
+
+#[test]
 fn code_block_copy_button_hovers_and_copies_raw_contents() {
     let copied = Arc::new(Mutex::new(Vec::new()));
     let mut app = test_app();

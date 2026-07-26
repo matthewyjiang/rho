@@ -16,10 +16,11 @@ enum Item {
     Group(usize),
 }
 
-pub(crate) fn render_grouped(
+pub(super) fn render_grouped(
     graph: &Graph,
     styles: &MermaidStyles,
     max_width: Option<usize>,
+    wrap_width: usize,
 ) -> Result<MermaidArt, Oversize> {
     let mut proxy: HashMap<usize, usize> = HashMap::new();
     for (gi, g) in graph.groups.iter().enumerate() {
@@ -89,11 +90,19 @@ pub(crate) fn render_grouped(
         keep[gi] = has_nodes || has_children || referenced[gi];
     }
 
-    let mut canvas = build_scope(graph, None, &scope_edges, &direct_nodes, &keep, max_width)?;
+    let mut canvas = build_scope(
+        graph,
+        None,
+        &scope_edges,
+        &direct_nodes,
+        &keep,
+        max_width,
+        wrap_width,
+    )?;
     match graph.dir {
         Dir::Up => canvas.flip_vertical(),
         Dir::Left => canvas.flip_horizontal(),
-        _ => {}
+        Dir::Down | Dir::Right => {}
     }
     let (styled_lines, plain_lines) = canvas.to_lines(styles);
     Ok(MermaidArt {
@@ -109,6 +118,7 @@ fn build_scope(
     direct_nodes: &HashMap<Option<usize>, Vec<usize>>,
     keep: &[bool],
     max_width: Option<usize>,
+    wrap_width: usize,
 ) -> Result<Canvas, Oversize> {
     let mut items: Vec<Item> = Vec::new();
     if let Some(nodes) = direct_nodes.get(&scope) {
@@ -137,7 +147,15 @@ fn build_scope(
                 extras.push(NodeExtra::Plain);
             }
             Item::Group(gi) => {
-                let sub = build_scope(graph, Some(*gi), scope_edges, direct_nodes, keep, None)?;
+                let sub = build_scope(
+                    graph,
+                    Some(*gi),
+                    scope_edges,
+                    direct_nodes,
+                    keep,
+                    None,
+                    wrap_width,
+                )?;
                 nodes.push(Node {
                     label: graph.groups[*gi].label.clone(),
                     shape: Shape::Rect,
@@ -173,7 +191,7 @@ fn build_scope(
         node_group: Vec::new(),
         dir: graph.dir,
     };
-    layout_canvas(&synth, &extras, max_width)
+    layout_canvas(&synth, &extras, max_width, wrap_width)
 }
 
 pub(super) fn draw_frame(canvas: &mut Canvas, p: &Placed, title: &str, sub: &Canvas) {

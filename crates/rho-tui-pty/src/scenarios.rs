@@ -3,8 +3,8 @@
 mod config;
 mod conversation_tree;
 mod goal;
-mod id;
 mod login;
+mod mermaid;
 mod pickers;
 mod resume_delete;
 mod runtime_info;
@@ -17,6 +17,7 @@ use goal::{
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
+use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
@@ -31,8 +32,6 @@ use crate::{
     pty::PtySize,
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
 };
-
-pub use id::ScenarioId;
 
 const DEFAULT_SIZE: PtySize = PtySize {
     rows: 28,
@@ -762,6 +761,14 @@ pub fn all_scenarios() -> &'static [Scenario] {
             description: "Render streamed Markdown heading levels without syntax markers",
             size: DEFAULT_SIZE,
             steps: MARKDOWN_HEADINGS_STEPS,
+            smoke: false,
+        },
+        Scenario {
+            id: "mermaid_flowchart_resize",
+            description:
+                "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
+            size: DEFAULT_SIZE,
+            steps: MERMAID_FLOWCHART_RESIZE_STEPS,
             smoke: false,
         },
         Scenario {

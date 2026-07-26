@@ -188,6 +188,22 @@ async fn fixture_stream(
             }
             completed(response)
         }
+        "fixture mermaid flowchart" => {
+            let mut response = String::new();
+            for delta in [
+                "```mermaid\nflowchart LR\n",
+                "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+                "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
+                "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
+                "  P3 --> P5[\"Phase 5: nest runs under session\"]\n",
+                "```\ndiagram delivered",
+            ] {
+                events.send(ModelEvent::OutputDelta(delta.into())).await?;
+                response.push_str(delta);
+                fixture_sleep(&request.cancellation, Duration::from_millis(60)).await?;
+            }
+            completed(response)
+        }
         "fixture approval long" if tool_result(&request, LONG_APPROVAL_CALL_ID).is_none() => {
             let command = concat!(
                 "printf 'reviewing harmless fixture'; ",

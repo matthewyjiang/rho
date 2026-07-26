@@ -27,6 +27,6 @@ pub use harness::{PtyHarness, WaitTimeout};
 pub use keys::{encode_key, encode_paste, encode_sgr_mouse, Key, MouseButton};
 pub use pty::{PtyController, PtySize};
 pub use scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step};
-pub use scenarios::{all_scenarios, run_named, smoke_scenario_ids, ScenarioId};
+pub use scenarios::{all_scenarios, run_named, smoke_scenario_ids};
 pub use screen::ScreenModel;
 pub use timing::{TimingSample, TimingSummary};

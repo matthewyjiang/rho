@@ -8,7 +8,7 @@ use crate::tui::markdown::mermaid::{
     canvas::{Canvas, Cls},
     drawing::{draw_box, draw_seq_text, fit_label},
     model::{ClassInfo, Dir, Graph, Shape},
-    painter::{MermaidArt, MermaidStyles, Oversize, PAD},
+    painter::{MermaidArt, MermaidStyles, Oversize, PAD, WRAP_WIDTH},
 };
 
 pub(crate) fn render_class(
@@ -30,11 +30,11 @@ pub(crate) fn render_class(
             NodeExtra::Compartments(vec![title, info.attrs.clone(), info.methods.clone()])
         })
         .collect();
-    let mut canvas = layout_canvas(graph, &extras, max_width)?;
+    let mut canvas = layout_canvas(graph, &extras, max_width, WRAP_WIDTH)?;
     match graph.dir {
         Dir::Up => canvas.flip_vertical(),
         Dir::Left => canvas.flip_horizontal(),
-        _ => {}
+        Dir::Down | Dir::Right => {}
     }
     let (styled_lines, plain_lines) = canvas.to_lines(styles);
     Ok(MermaidArt {

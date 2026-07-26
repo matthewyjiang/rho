@@ -304,6 +304,87 @@ fn honors_all_flowchart_directions() {
     }
 }
 
+const PHASE_CHAIN: &str = super::PHASE_CHAIN_FLOWCHART;
+
+#[test]
+fn long_labels_compact_without_losing_words_or_changing_direction() {
+    for (direction, /*left_to_right*/ ordered) in [("LR", true), ("RL", false)] {
+        let source = PHASE_CHAIN.replace("flowchart LR", &format!("flowchart {direction}"));
+        let lines = rendered(&source, 94);
+        let art = lines.join("\n");
+
+        assert!(lines.iter().all(|line| display_width(line) <= 94), "{art}");
+        assert!(!art.contains('…'), "{art}");
+        for word in [
+            "retention",
+            "sweep",
+            "parent",
+            "link",
+            "disk",
+            "session",
+            "delete",
+            "API",
+            "CLI",
+            "TUI",
+            "resume",
+            "picker",
+            "nest",
+            "runs",
+            "under",
+        ] {
+            assert!(art.contains(word), "{direction} missing {word}:\n{art}");
+        }
+
+        let first = label_position(&lines, "Phase 1").1;
+        let last = label_position(&lines, "Phase 4").1;
+        assert_eq!(first < last, ordered, "{direction}:\n{art}");
+    }
+}
+
+#[test]
+fn compaction_stops_at_a_readable_width_instead_of_truncating_labels() {
+    assert_eq!(
+        render_mermaid(PHASE_CHAIN, 40),
+        MermaidRender::Fallback(MermaidFallback::TooWide)
+    );
+
+    // Two of these words per line fit the default wrap, but only one fits a
+    // compacted wrap, so compacting would exceed the painter's line budget.
+    let words = vec!["abcdefghijk"; super::painter::MAX_LINES + 2].join(" ");
+    let tall = format!("flowchart LR\nA[\"{words}\"] --> B[Done]");
+    assert_eq!(
+        render_mermaid(&tall, 30),
+        MermaidRender::Fallback(MermaidFallback::TooWide)
+    );
+}
+
+#[test]
+fn grouped_flowcharts_share_label_compaction() {
+    let source = concat!(
+        "flowchart LR\n",
+        "  subgraph sweep [Retention]\n",
+        "    P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+        "  end\n",
+        "  subgraph delete [Delete]\n",
+        "    P3[\"Phase 3: session delete API + CLI\"] --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
+        "  end\n",
+        "  P2 --> P3\n",
+        "  P3 --> P5[\"Phase 5: nest runs under session\"]"
+    );
+    let lines = rendered(source, 100);
+    let art = lines.join("\n");
+
+    assert!(lines.iter().all(|line| display_width(line) <= 100), "{art}");
+    assert!(!art.contains('…'), "{art}");
+    for phase in ["Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5"] {
+        assert!(art.contains(phase), "missing {phase}:\n{art}");
+    }
+    assert_eq!(
+        render_mermaid(source, 40),
+        MermaidRender::Fallback(MermaidFallback::TooWide)
+    );
+}
+
 #[test]
 fn renders_unicode_labels_without_mismeasuring_or_reordering_cells() {
     for direction in ["LR", "RL", "TD", "BT"] {

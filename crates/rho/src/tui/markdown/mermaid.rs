@@ -38,10 +38,52 @@ pub(super) enum MermaidFallback {
     AnsiOutput,
 }
 
+impl MermaidFallback {
+    pub(super) fn panel_title(self) -> &'static str {
+        match self {
+            Self::TooWide => "MERMAID · PANE TOO NARROW",
+            Self::Blank
+            | Self::SourceBytes
+            | Self::SourceLines
+            | Self::UnsafeContent
+            | Self::Unsupported
+            | Self::Malformed
+            | Self::StructuralLimit
+            | Self::Panic
+            | Self::OutputLines
+            | Self::OutputCells
+            | Self::AnsiOutput => "MERMAID · NOT RENDERED",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum MermaidRender {
     Rendered(Vec<Line<'static>>),
     Fallback(MermaidFallback),
+}
+
+/// Complete closed Mermaid fence ready for the Markdown renderer.
+#[derive(Debug)]
+pub(super) enum ClosedMermaidFence {
+    Art {
+        lines: Vec<Line<'static>>,
+        source: String,
+    },
+    SourceFallback {
+        title: &'static str,
+        source: String,
+    },
+}
+
+pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedMermaidFence {
+    match render_mermaid(&source, inner_width) {
+        MermaidRender::Rendered(lines) => ClosedMermaidFence::Art { lines, source },
+        MermaidRender::Fallback(reason) => ClosedMermaidFence::SourceFallback {
+            title: reason.panel_title(),
+            source,
+        },
+    }
 }
 
 pub(super) fn panel_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
@@ -167,13 +209,8 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
             &styles,
             Some(inner_width),
         ),
-        policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState
-            if model.graph.groups.is_empty() =>
-        {
-            flow::layout_flowchart(&model.graph, &styles, Some(inner_width))
-        }
         policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState => {
-            flow::render_grouped(&model.graph, &styles, Some(inner_width))
+            flow::layout_flow(&model.graph, &styles, Some(inner_width))
         }
         policy::DiagramPolicy::RawFallback => unreachable!("handled before model conversion"),
     };
@@ -233,6 +270,15 @@ fn is_supported_header(source: &str) -> bool {
             | "erdiagram"
     )
 }
+
+#[cfg(test)]
+pub(crate) const PHASE_CHAIN_FLOWCHART: &str = concat!(
+    "flowchart LR\n",
+    "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+    "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
+    "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
+    "  P3 --> P5[\"Phase 5: nest runs under session\"]"
+);
 
 #[cfg(test)]
 #[path = "mermaid_tests.rs"]

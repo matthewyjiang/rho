@@ -383,6 +383,11 @@ fn renders_markdown_headings() {
 }
 
 #[test]
+fn mermaid_flowchart_survives_narrow_and_restored_panes() {
+    assert_pass("mermaid_flowchart_resize");
+}
+
+#[test]
 fn bare_skill_command_starts_a_model_turn() {
     let home = IsolatedHome::new().unwrap();
     let skill_dir = home.workspace.join(".agents/skills/test-skill");
