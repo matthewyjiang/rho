@@ -6,7 +6,8 @@ use crate::{
 };
 
 use super::{
-    Tool, ToolContext, ToolError, ToolFuture, ToolInvocation, ToolMetadata, ToolProgressSender,
+    Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata,
+    ToolProgressSender,
 };
 
 /// Future returned while a [`Tool`](super::Tool) prepares one invocation.
@@ -185,9 +186,8 @@ impl ToolResource {
 /// Resolves a tool's plan, authorizes its capabilities, and executes it.
 ///
 /// This backs the default [`Tool::call`], so a resource-aware tool gets the
-/// path for free by overriding [`Tool::prepare`]. Calling it on a tool that
-/// leaves `prepare` at its default recurses, because that default delegates
-/// back to [`Tool::call`].
+/// path for free by overriding [`Tool::prepare`]. A tool that overrides neither
+/// method fails here with a clear error rather than delegating in a loop.
 pub fn call_prepared<'a, T>(
     tool: &'a T,
     invocation: ToolInvocation,
@@ -199,6 +199,19 @@ where
     Box::pin(async move {
         let preparation = ToolPreparationContext::from_execution(&execution);
         let prepared = tool.prepare(invocation, preparation).await?;
+        // Reaching here means `call` routed to `prepare`. A plan that routes
+        // back to `call` means the tool overrode neither, so stop rather than
+        // authorize and re-enter forever.
+        if prepared.delegates_to_call() {
+            return Err(ToolError::new(
+                ToolErrorKind::Execution,
+                format!(
+                    "tool '{}' implements neither Tool::call nor Tool::prepare; \
+                     it must implement one of them",
+                    tool.spec().name
+                ),
+            ));
+        }
         for capability in prepared.capabilities() {
             execution
                 .authorize(capability.clone())
@@ -295,6 +308,9 @@ pub struct PreparedToolInvocation<'a> {
     capabilities: Vec<CapabilityRequest>,
     metadata: ToolMetadata,
     executor: ToolExecutor<'a>,
+    /// True only for the plan the default [`Tool::prepare`] builds, which runs
+    /// the tool through [`Tool::call`]. See [`Self::delegates_to_call`].
+    delegates_to_call: bool,
 }
 
 impl<'a> PreparedToolInvocation<'a> {
@@ -307,7 +323,28 @@ impl<'a> PreparedToolInvocation<'a> {
             capabilities: Vec::new(),
             metadata,
             executor: ToolExecutor::Exclusive(Box::new(executor)),
+            delegates_to_call: false,
         }
+    }
+
+    /// Builds the plan returned by the default [`Tool::prepare`].
+    ///
+    /// The marker lets [`call_prepared`] tell that a tool overrode neither
+    /// `prepare` nor `call`, instead of the two delegating to each other
+    /// forever.
+    pub(crate) fn delegating_to_call<F>(metadata: ToolMetadata, executor: F) -> Self
+    where
+        F: FnOnce(ToolContext) -> ToolFuture<'a> + Send + 'a,
+    {
+        Self {
+            delegates_to_call: true,
+            ..Self::exclusive(metadata, executor)
+        }
+    }
+
+    /// Reports whether this plan came from the default [`Tool::prepare`].
+    pub(crate) fn delegates_to_call(&self) -> bool {
+        self.delegates_to_call
     }
 
     pub fn resource_aware<F>(
@@ -324,6 +361,7 @@ impl<'a> PreparedToolInvocation<'a> {
             capabilities: capabilities.into_iter().collect(),
             metadata,
             executor: ToolExecutor::ResourceAware(Box::new(executor)),
+            delegates_to_call: false,
         }
     }
 

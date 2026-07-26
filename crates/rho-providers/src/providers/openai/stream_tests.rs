@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use super::{
     auth::{Auth, CodexAuthSource},
@@ -7,10 +7,13 @@ use super::{
 };
 use crate::{
     credentials::{CodexTokens, MemoryCredentialStore},
-    model::{ContentBlock, Message, ModelError, ModelEvent, ModelRequest, ModelResponse},
+    model::{ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse},
 };
 use futures_util::{SinkExt, StreamExt};
-use rho_sdk::CancellationToken;
+use rho_sdk::{
+    provider::{provider_event_channel, ModelProvider as SdkModelProvider},
+    CancellationToken, ProviderErrorKind,
+};
 use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -142,10 +145,11 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
             cancellation.cancel();
         }
     };
+    // Cancellation is owned by the SDK adapter, so drive the turn the way a
+    // host does rather than calling the transport directly.
     let first_messages = [Message::user_text("first")];
-    let mut on_first_event = |_| Ok(());
-    let mut on_first_request_event = |_| Ok(());
-    let first_turn = provider.stream_turn(
+    let (sender, _receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let first_turn = provider.send_turn_stream(
         ModelRequest {
             messages: &first_messages,
             tools: &[],
@@ -153,11 +157,10 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
-        &mut on_first_event,
-        &mut on_first_request_event,
+        sender,
     );
     let (result, ()) = tokio::join!(first_turn, cancel_after_request);
-    assert!(matches!(result, Err(ModelError::Interrupted)));
+    assert_eq!(result.unwrap_err().kind(), ProviderErrorKind::Interrupted);
 
     let response = provider
         .stream_turn(

@@ -36,6 +36,30 @@ pub(super) struct CodexWsTransport {
 struct CodexWsState {
     continuation: CodexContinuationState,
     connection: Option<CodexSocket>,
+    /// Set while a turn is in flight, cleared when that turn records a result.
+    ///
+    /// A cancelled turn is dropped part way through an await, and dropping
+    /// cannot run the async cleanup that clearing this state needs. Such a turn
+    /// therefore leaves the flag set, and [`CodexWsState::open_turn`] treats
+    /// that as a signal to discard the socket and continuation it left behind.
+    turn_open: bool,
+}
+
+impl CodexWsState {
+    /// Starts a turn, discarding anything an abandoned turn left cached.
+    fn open_turn(&mut self) {
+        if self.turn_open {
+            self.discard();
+        }
+        self.turn_open = true;
+    }
+
+    /// Drops the cached socket and continuation snapshot.
+    fn discard(&mut self) {
+        self.connection = None;
+        self.continuation.reset();
+        self.turn_open = false;
+    }
 }
 
 type CodexSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -101,6 +125,7 @@ impl CodexWsTransport {
             state: Mutex::new(CodexWsState {
                 continuation: CodexContinuationState::default(),
                 connection: None,
+                turn_open: false,
             }),
         }
     }
@@ -114,6 +139,7 @@ impl CodexWsTransport {
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
+        state.open_turn();
         let body = if mode.supports_incremental_websocket() {
             state.continuation.continuation_body(&candidate, body)
         } else {
@@ -139,11 +165,11 @@ impl CodexWsTransport {
                 state
                     .continuation
                     .record_success(&candidate, continuation_response);
+                state.turn_open = false;
                 Ok(CodexWsTurn::Completed(response.response))
             }
             Err(failure) => {
-                state.connection = None;
-                state.continuation.reset();
+                state.discard();
                 failure.into_turn()
             }
         }
@@ -157,6 +183,7 @@ impl CodexWsTransport {
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
+        state.open_turn();
         let body = if mode.supports_incremental_websocket() {
             state.continuation.continuation_body(&candidate, body)
         } else {
@@ -182,11 +209,11 @@ impl CodexWsTransport {
                 state
                     .continuation
                     .record_success(&candidate, continuation_response);
+                state.turn_open = false;
                 Ok(CodexWsTurn::Completed(response.response))
             }
             Err(failure) => {
-                state.connection = None;
-                state.continuation.reset();
+                state.discard();
                 failure.into_turn()
             }
         }
@@ -207,13 +234,12 @@ impl CodexWsTransport {
         state
             .continuation
             .record_success(&candidate, continuation_response);
+        state.turn_open = false;
         Ok(())
     }
 
     pub(super) async fn reset(&self) {
-        let mut state = self.state.lock().await;
-        state.connection = None;
-        state.continuation.reset();
+        self.state.lock().await.discard();
     }
 }
 

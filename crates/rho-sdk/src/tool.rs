@@ -572,8 +572,8 @@ pub trait Tool: Send + Sync {
     /// Implement this for a tool that runs exclusively and needs no resource
     /// plan. A tool that declares one implements [`Self::prepare`] instead and
     /// leaves this at its default, which resolves the plan and then executes
-    /// it. Every tool must implement one of the two: leaving both at their
-    /// defaults leaves them delegating to each other.
+    /// it. Every tool must implement one of the two. Leaving both at their
+    /// defaults fails the invocation with an explanatory error.
     ///
     /// The runtime enters through [`Self::prepare`], so this is called directly
     /// only by the default `prepare` and by hosts driving a tool by hand.
@@ -594,7 +594,7 @@ pub trait Tool: Send + Sync {
     ) -> ToolPrepareFuture<'a> {
         let metadata = self.start_metadata(invocation.arguments());
         Box::pin(async move {
-            Ok(PreparedToolInvocation::exclusive(
+            Ok(PreparedToolInvocation::delegating_to_call(
                 metadata,
                 move |execution| self.call(invocation, execution),
             ))

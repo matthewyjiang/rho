@@ -120,24 +120,14 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let cancellation = request.cancellation.clone();
-        tokio::select! {
-            result = async {
-                match &self.auth {
-                    Auth::ApiKey(_) => {
-                        self.send_openai_api_responses_stream(request, on_event).await
-                    }
-                    Auth::Codex { .. } => {
-                        self.send_codex_responses_stream(request, on_event, on_request_event)
-                            .await
-                    }
-                }
-            } => result,
-            () = cancellation.cancelled() => {
-                if matches!(&self.auth, Auth::Codex { .. }) {
-                    self.codex_ws.reset().await;
-                }
-                Err(ModelError::Interrupted)
+        match &self.auth {
+            Auth::ApiKey(_) => {
+                self.send_openai_api_responses_stream(request, on_event)
+                    .await
+            }
+            Auth::Codex { .. } => {
+                self.send_codex_responses_stream(request, on_event, on_request_event)
+                    .await
             }
         }
     }

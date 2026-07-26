@@ -46,53 +46,89 @@ async fn ws_server_connections(
             let mut socket = accept_async(stream).await.unwrap();
             for _ in 0..expected_messages {
                 response_index += 1;
-                let message = socket.next().await.unwrap().unwrap();
-                let text = message.into_text().unwrap();
-                let frame: Value = serde_json::from_str(&text).unwrap();
+                let frame = read_request_frame(&mut socket).await;
                 server_frames.lock().unwrap().push(frame);
-                let response_id = format!("resp_{response_index}");
-                socket
-                    .send(Message::Text(
-                        json!({"type":"response.output_text.delta","delta":format!("ok{response_index}")})
-                            .to_string()
-                            .into(),
-                    ))
-                    .await
-                    .unwrap();
-                socket
-                    .send(Message::Text(
-                        json!({
-                            "type":"response.output_item.done",
-                            "item":{
-                                "id": format!("msg_{response_index}"),
-                                "type":"message",
-                                "role":"assistant",
-                                "content":[{"type":"output_text","text":format!("ok{response_index}")}]
-                            }
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await
-                    .unwrap();
-                socket
-                    .send(Message::Text(
-                        json!({
-                            "type":"response.completed",
-                            "response":{
-                                "id": response_id,
-                                "output_text": format!("ok{response_index}"),
-                                "output":[],
-                                "usage":{"input_tokens": 10, "output_tokens": 2}
-                            }
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await
-                    .unwrap();
+                send_completion(&mut socket, response_index).await;
             }
         }
+    });
+    (format!("ws://{addr}/responses"), frames)
+}
+
+/// Reads one `response.create` frame from a connected test client.
+async fn read_request_frame(socket: &mut WebSocketStream<TcpStream>) -> Value {
+    let message = socket.next().await.unwrap().unwrap();
+    serde_json::from_str(&message.into_text().unwrap()).unwrap()
+}
+
+/// Sends the delta, item, and completion frames for one successful turn.
+async fn send_completion(socket: &mut WebSocketStream<TcpStream>, response_index: usize) {
+    socket
+        .send(Message::Text(
+            json!({"type":"response.output_text.delta","delta":format!("ok{response_index}")})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            json!({
+                "type":"response.output_item.done",
+                "item":{
+                    "id": format!("msg_{response_index}"),
+                    "type":"message",
+                    "role":"assistant",
+                    "content":[{"type":"output_text","text":format!("ok{response_index}")}]
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Text(
+            json!({
+                "type":"response.completed",
+                "response":{
+                    "id": format!("resp_{response_index}"),
+                    "output_text": format!("ok{response_index}"),
+                    "output":[],
+                    "usage":{"input_tokens": 10, "output_tokens": 2}
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+}
+
+/// Answers one turn, stalls on the next, then answers again on a reconnect.
+///
+/// Models a turn abandoned mid-flight: the socket is left with an unanswered
+/// request, so the next turn must not reuse it.
+async fn ws_server_stalls_then_accepts_reconnect() -> (String, Arc<StdMutex<Vec<Value>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let frames = Arc::new(StdMutex::new(Vec::new()));
+    let server_frames = Arc::clone(&frames);
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let frame = read_request_frame(&mut socket).await;
+        server_frames.lock().unwrap().push(frame);
+        send_completion(&mut socket, 1).await;
+        let frame = read_request_frame(&mut socket).await;
+        server_frames.lock().unwrap().push(frame);
+
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut reconnected = accept_async(stream).await.unwrap();
+        let frame = read_request_frame(&mut reconnected).await;
+        server_frames.lock().unwrap().push(frame);
+        send_completion(&mut reconnected, 2).await;
+        std::future::pending::<()>().await;
     });
     (format!("ws://{addr}/responses"), frames)
 }
@@ -376,6 +412,68 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
     assert_eq!(frames[1]["previous_response_id"], "resp_1");
     assert_eq!(
         frames[1]["input"],
+        json!([{"role":"user","content":"three"}])
+    );
+}
+
+#[tokio::test]
+async fn abandoned_turn_does_not_leave_continuation_state_for_the_next_turn() {
+    let (url, frames) = ws_server_stalls_then_accepts_reconnect().await;
+    let transport = CodexWsTransport::new_with_url(url);
+    let mut on_event = None;
+
+    transport
+        .send_responses_turn(
+            body(vec![json!({"role":"user","content":"one"})]),
+            &tokens(),
+            ResponsesRequestMode::Standard,
+            &mut on_event,
+        )
+        .await
+        .unwrap();
+
+    // Drop the second turn part way through, the way cancellation does.
+    let abandoned_tokens = tokens();
+    let abandoned = transport.send_responses_turn(
+        body(vec![
+            json!({"role":"user","content":"one"}),
+            json!({"role":"assistant","content":"ok1"}),
+            json!({"role":"user","content":"two"}),
+        ]),
+        &abandoned_tokens,
+        ResponsesRequestMode::Standard,
+        &mut on_event,
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(200), abandoned)
+            .await
+            .is_err(),
+        "the stalled turn should still be waiting when it is dropped"
+    );
+
+    let turn = immediate(transport.send_responses_turn(
+        body(vec![json!({"role":"user","content":"three"})]),
+        &tokens(),
+        ResponsesRequestMode::Standard,
+        &mut on_event,
+    ))
+    .await
+    .unwrap();
+
+    let CodexWsTurn::Completed(ModelResponse::Assistant(blocks)) = turn else {
+        panic!("expected websocket completion");
+    };
+    assert!(matches!(
+        blocks.as_slice(),
+        [ContentBlock::Text(text)] if text == "ok2"
+    ));
+    let frames = frames.lock().unwrap();
+    assert_eq!(frames.len(), 3);
+    // The turn after the abandoned one reconnects and sends full input, because
+    // the continuation the abandoned turn might have left is not trustworthy.
+    assert_eq!(frames[2].get("previous_response_id"), None);
+    assert_eq!(
+        frames[2]["input"],
         json!([{"role":"user","content":"three"}])
     );
 }
