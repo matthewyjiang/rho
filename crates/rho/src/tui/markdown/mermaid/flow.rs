@@ -213,6 +213,25 @@ pub(super) fn layout_canvas(
             ),
         }
     }
+    // Pick near-target alignment once per source so fan-out siblings cannot
+    // leave the same box through adjacent stems.
+    let mut forward_source_anchor = placed.iter().map(|node| node.cx).collect::<Vec<_>>();
+    for (source, anchor) in forward_source_anchor.iter_mut().enumerate() {
+        let source_x = placed[source].cx;
+        if let Some(target_x) = graph
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.from == source && edge.to != source && ranks[edge.to] == ranks[source] + 1
+            })
+            .map(|edge| placed[edge.to].cx)
+            .min_by_key(|target_x| source_x.abs_diff(*target_x))
+            .filter(|target_x| source_x.abs_diff(*target_x) <= 1)
+        {
+            *anchor = target_x;
+        }
+    }
+
     for (i, edge) in graph.edges.iter().enumerate() {
         canvas.cur_style = match edge.line {
             LineKind::Solid => STY_SOLID,
@@ -228,7 +247,14 @@ pub(super) fn layout_canvas(
         let bus = plan.band_end[from.rank] + plan.edge_bus[i];
         let lane = plan.lane_base + plan.edge_lane[i];
         match (vertical, adjacent) {
-            (true, true) => route_forward(&mut canvas, from, to, edge, bus),
+            (true, true) => route_forward(
+                &mut canvas,
+                from,
+                to,
+                edge,
+                bus,
+                /*source_anchor*/ forward_source_anchor[edge.from],
+            ),
             (true, false) => route_back(&mut canvas, from, to, edge, lane),
             (false, true) => route_forward_lr(&mut canvas, from, to, edge, bus),
             (false, false) => route_back_lr(&mut canvas, from, to, edge, lane),

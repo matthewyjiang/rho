@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 
 fn rendered(source: &str, width: usize) -> Vec<String> {
     match render_mermaid(source, width) {
@@ -239,6 +240,28 @@ fn branching_tea_diagram_has_compact_clean_routing() {
         "    ┌────────────┐\n    │ Boil water │\n    └──────┬─────┘\n           │\n           ▼\n ┌──────────────────┐\n │ Place tea in cup │\n └─────────┬────────┘\n           │\n           ▼\n ┌───────────────────┐\n │ Pour in hot water │\n └─────────┬─────────┘\n           │\n           ▼\n◇────────────────────◇\n│ Add milk or sugar? ├────┐\n◇──────────┬─────────◇    │\n           │ Yes          │\n           ▼              │\n    ┌────────────┐        │\n    │ Add extras │        │\n    └──────┬─────┘        │\n           │              │\n           ▼              │\n     ┌───────────┐     No │\n     │ Drink tea │◄───────┘\n     └───────────┘"
     );
     assert!(lines.len() <= 32, "used {} lines:\n{art}", lines.len());
+}
+
+#[test]
+fn asymmetric_fan_out_uses_one_shared_source_stem() {
+    let lines = rendered(
+        "flowchart TD\nSess[ts_sessionId/]\nTr[session.jsonl]\nWeb[web/]\nRuns[subagents/runId/]\nSess --> Tr\nSess --> Web\nSess --> Runs",
+        100,
+    );
+
+    assert_eq!(
+        lines.join("\n"),
+        concat!(
+            "                 ┌───────────────┐\n",
+            "                 │ ts_sessionId/ │\n",
+            "                 └──────┬────────┘\n",
+            "         ┌──────────────┼────────────────┐\n",
+            "         ▼              ▼                ▼\n",
+            " ┌───────────────┐  ┌──────┐   ┌──────────────────┐\n",
+            " │ session.jsonl │  │ web/ │   │ subagents/runId/ │\n",
+            " └───────────────┘  └──────┘   └──────────────────┘",
+        )
+    );
 }
 
 #[test]
