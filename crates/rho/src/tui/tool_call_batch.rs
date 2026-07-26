@@ -66,6 +66,9 @@ impl ToolCallBatch {
     }
 
     pub(super) fn started(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
+        // Prefer the existing preview slot for this call id so the live card
+        // flips from "starting" to "running" in place. Only then drop stream
+        // previews that never bound a call id (true orphans, not reusable).
         if let Some(index) = self.preview_call_ids.get(&call_id).copied() {
             self.previews.remove(&index);
             self.promoted_previews.insert(index);
@@ -78,6 +81,7 @@ impl ToolCallBatch {
         }
         self.running
             .insert(call_id, running_entry(display_lines, false));
+        self.drop_untracked_previews();
     }
 
     pub(super) fn updated(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
@@ -98,6 +102,14 @@ impl ToolCallBatch {
         call_id: Option<ToolCallId>,
         display_lines: Vec<String>,
     ) {
+        // Reuse the stream preview slot when this call id is already on screen.
+        // Provider stream indexes (Responses output_index) can skip non-tool
+        // items while proposal uses dense 0..n; matching by call id keeps one
+        // card instead of creating a second "starting" row.
+        let index = call_id
+            .as_ref()
+            .and_then(|id| self.preview_call_ids.get(id).copied())
+            .unwrap_or(index);
         if self.promoted_previews.contains(&index) {
             return;
         }
@@ -118,6 +130,22 @@ impl ToolCallBatch {
         self.previews
             .insert(index, running_entry(display_lines, expanded));
         self.model_order.insert(index, LiveToolKey::Preview(index));
+    }
+
+    fn drop_untracked_previews(&mut self) {
+        let tracked = self
+            .preview_call_ids
+            .values()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        self.previews
+            .retain(|index, _| tracked.contains(index) || self.promoted_previews.contains(index));
+        self.model_order.retain(|_, key| match key {
+            LiveToolKey::Preview(preview_index) => {
+                tracked.contains(preview_index) || self.promoted_previews.contains(preview_index)
+            }
+            LiveToolKey::Running(_) => true,
+        });
     }
 
     pub(super) fn finished(&mut self, call_id: &ToolCallId) -> bool {

@@ -215,7 +215,11 @@ pub(super) fn build_responses_create_body(
             }
             body["input"] = json!(lite_input);
             body["tool_choice"] = json!("auto");
-            body["parallel_tool_calls"] = json!(false);
+            // Rho executes independent tool calls concurrently. Request parallel
+            // tool calls so multi-agent batches can arrive in one model turn.
+            // Codex CLI disables this for Responses Lite; Rho keeps it on so the
+            // scheduler contract from multi-agent batches stays reachable.
+            body["parallel_tool_calls"] = json!(true);
         }
     }
 
@@ -378,7 +382,7 @@ mod tests {
 
         assert!(body.get("instructions").is_none());
         assert!(body.get("tools").is_none());
-        assert_eq!(body["parallel_tool_calls"], false);
+        assert_eq!(body["parallel_tool_calls"], true);
         assert_eq!(
             body["input"][0],
             json!({
