@@ -23,7 +23,6 @@ const FLOW_WRAP_STEP: usize = 4;
 use class::draw_class_box;
 pub(super) use class::render_class;
 use groups::draw_frame;
-pub(super) use groups::render_grouped;
 use ordering::order_ranks;
 use placement::{place_lr, place_td};
 
@@ -46,37 +45,61 @@ pub(super) struct NodeSizes {
     self_label_w: Vec<usize>,
 }
 
-pub(super) fn layout_flowchart(
+/// Lays out flow/state diagrams, retrying at tighter label wraps when the
+/// canvas is wider than the pane. Plain and grouped graphs share this policy.
+pub(super) fn layout_flow(
     graph: &Graph,
     styles: &MermaidStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
-    let extras: Vec<NodeExtra> = (0..graph.nodes.len()).map(|_| NodeExtra::Plain).collect();
     for wrap_width in (MIN_FLOW_WRAP_WIDTH..=WRAP_WIDTH)
         .rev()
         .step_by(FLOW_WRAP_STEP)
     {
-        let Some(wrapped) = wrapped_plain_labels(graph, wrap_width) else {
+        if !flow_labels_fit(graph, wrap_width) {
             continue;
-        };
-        let mut canvas =
-            match layout_canvas_with_wrapped_labels(graph, &extras, max_width, &wrapped) {
-                Ok(canvas) => canvas,
-                Err(Oversize::Width) => continue,
-                Err(error) => return Err(error),
-            };
-        match graph.dir {
-            Dir::Up => canvas.flip_vertical(),
-            Dir::Left => canvas.flip_horizontal(),
-            _ => {}
         }
-        let (styled_lines, plain_lines) = canvas.to_lines(styles);
-        return Ok(MermaidArt {
-            styled_lines,
-            plain_lines,
-        });
+        let result = if graph.groups.is_empty() {
+            layout_plain_flow(graph, styles, max_width, wrap_width)
+        } else {
+            groups::render_grouped(graph, styles, max_width, wrap_width)
+        };
+        match result {
+            Ok(art) => return Ok(art),
+            Err(Oversize::Width) => continue,
+            Err(error) => return Err(error),
+        }
     }
     Err(Oversize::Width)
+}
+
+fn layout_plain_flow(
+    graph: &Graph,
+    styles: &MermaidStyles,
+    max_width: Option<usize>,
+    wrap_width: usize,
+) -> Result<MermaidArt, Oversize> {
+    let extras: Vec<NodeExtra> = (0..graph.nodes.len()).map(|_| NodeExtra::Plain).collect();
+    let mut canvas = layout_canvas(graph, &extras, max_width, wrap_width)?;
+    match graph.dir {
+        Dir::Up => canvas.flip_vertical(),
+        Dir::Left => canvas.flip_horizontal(),
+        Dir::Down | Dir::Right => {}
+    }
+    let (styled_lines, plain_lines) = canvas.to_lines(styles);
+    Ok(MermaidArt {
+        styled_lines,
+        plain_lines,
+    })
+}
+
+/// Compaction must never drop label text, so a wrap width that cannot hold
+/// every node label within the painter's line budget is skipped entirely.
+fn flow_labels_fit(graph: &Graph, wrap_width: usize) -> bool {
+    graph
+        .nodes
+        .iter()
+        .all(|node| wrap_label(&node.label, wrap_width, usize::MAX).len() <= MAX_LINES)
 }
 
 pub(super) enum NodeExtra {
@@ -89,34 +112,7 @@ pub(super) fn layout_canvas(
     graph: &Graph,
     extras: &[NodeExtra],
     max_width: Option<usize>,
-) -> Result<Canvas, Oversize> {
-    let wrapped: Vec<Vec<String>> = graph
-        .nodes
-        .iter()
-        .map(|node| wrap_label(&node.label, WRAP_WIDTH, MAX_LINES))
-        .collect();
-    layout_canvas_with_wrapped_labels(graph, extras, max_width, &wrapped)
-}
-
-/// Wraps plain node labels for a compaction attempt, or `None` when that width
-/// would need more lines than the painter allows. Compaction must never drop
-/// label text, so a width that cannot hold every label is skipped entirely.
-fn wrapped_plain_labels(graph: &Graph, wrap_width: usize) -> Option<Vec<Vec<String>>> {
-    graph
-        .nodes
-        .iter()
-        .map(|node| {
-            let lines = wrap_label(&node.label, wrap_width, usize::MAX);
-            (lines.len() <= MAX_LINES).then_some(lines)
-        })
-        .collect()
-}
-
-fn layout_canvas_with_wrapped_labels(
-    graph: &Graph,
-    extras: &[NodeExtra],
-    max_width: Option<usize>,
-    wrapped: &[Vec<String>],
+    wrap_width: usize,
 ) -> Result<Canvas, Oversize> {
     let n = graph.nodes.len();
     if n == 0 {
@@ -132,6 +128,11 @@ fn layout_canvas_with_wrapped_labels(
     }
     order_ranks(&mut by_rank, &graph.edges, &ranks);
 
+    let wrapped: Vec<Vec<String>> = graph
+        .nodes
+        .iter()
+        .map(|node| wrap_label(&node.label, wrap_width, MAX_LINES))
+        .collect();
     let mut box_w: Vec<usize> = (0..n)
         .map(|i| match &extras[i] {
             NodeExtra::Frame(sub) => {

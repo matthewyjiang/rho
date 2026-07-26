@@ -364,11 +364,7 @@ fn too_narrow_mermaid_fallback_copies_source_instead_of_panel_text() {
     app.clipboard = Box::new(RecordingClipboard {
         copied: copied.clone(),
     });
-    let source = concat!(
-        "flowchart LR\n",
-        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
-        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]"
-    );
+    let source = crate::tui::markdown::PHASE_CHAIN_FLOWCHART;
     app.record_inserted_entry(Entry::Assistant(format!("```mermaid\n{source}\n```")));
     let mut terminal = Terminal::new(TestBackend::new(44, 24)).unwrap();
     let now = Instant::now();

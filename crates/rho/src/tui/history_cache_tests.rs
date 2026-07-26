@@ -233,13 +233,7 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
 
 #[test]
 fn resizing_moves_a_wide_diagram_between_art_and_explained_source() {
-    let source = concat!(
-        "flowchart LR\n",
-        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
-        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
-        "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
-        "  P3 --> P5[\"Phase 5: nest runs under session\"]"
-    );
+    let source = crate::tui::markdown::PHASE_CHAIN_FLOWCHART;
     let entries = vec![Entry::Assistant(format!("```mermaid\n{source}\n```"))];
     let mut cache = HistoryLineCache::default();
 

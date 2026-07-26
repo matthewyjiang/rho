@@ -9,6 +9,9 @@ mod mermaid;
 mod stream;
 mod table;
 
+#[cfg(test)]
+pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
+
 pub(in crate::tui) use code_fence::{
     is_closing_fence, parse_opening_fence, update_code_block_state, CodeFenceState,
 };
@@ -151,7 +154,6 @@ fn render_markdown_from_fence_state(
     let mut active_fence = state.active;
     while line_index < raw_lines.len() {
         let raw_line = raw_lines[line_index];
-        let mut opening_title = None;
         if active_fence.is_none() {
             if let Some(opening) = mermaid_opening_fence(raw_line) {
                 if let Some(closing_offset) = raw_lines[line_index + 1..]
@@ -159,30 +161,43 @@ fn render_markdown_from_fence_state(
                     .position(|line| is_closing_fence(line, opening.fence))
                 {
                     let closing_index = line_index + 1 + closing_offset;
-                    let source = raw_lines[line_index + 1..closing_index].join("\n");
+                    let source_lines = &raw_lines[line_index + 1..closing_index];
+                    let source = source_lines.join("\n");
                     let inner_width = width.saturating_sub(4);
-                    match mermaid::render_mermaid(&source, inner_width) {
-                        mermaid::MermaidRender::Rendered(diagram_lines) => {
-                            let top_line = lines.len();
+                    let top_line = lines.len();
+                    match mermaid::render_closed_fence(source, inner_width) {
+                        mermaid::ClosedMermaidFence::Art {
+                            lines: diagram_lines,
+                            source,
+                        } => {
                             lines.push(code_block_border(width, '╭', copy_button, Some("MERMAID")));
                             lines.extend(mermaid::panel_lines(diagram_lines, width));
                             lines.push(code_block_border(width, '╰', copy_button, None));
-                            if copy_button == CodeBlockCopyButton::Visible {
-                                if let Some(copy_columns) = code_block_copy_columns(width) {
-                                    code_blocks.push(MarkdownCodeBlock {
-                                        top_line,
-                                        copy_columns,
-                                        text: source,
-                                    });
-                                }
-                            }
-                            line_index = closing_index + 1;
-                            continue;
+                            push_copyable_code_block(
+                                &mut code_blocks,
+                                copy_button,
+                                top_line,
+                                width,
+                                source,
+                            );
                         }
-                        mermaid::MermaidRender::Fallback(reason) => {
-                            opening_title = Some(mermaid_fallback_title(reason));
+                        mermaid::ClosedMermaidFence::SourceFallback { title, source } => {
+                            lines.push(code_block_border(width, '╭', copy_button, Some(title)));
+                            for content_line in source_lines {
+                                lines.extend(code_block_content_lines(content_line, width));
+                            }
+                            lines.push(code_block_border(width, '╰', copy_button, None));
+                            push_copyable_code_block(
+                                &mut code_blocks,
+                                copy_button,
+                                top_line,
+                                width,
+                                source,
+                            );
                         }
                     }
+                    line_index = closing_index + 1;
+                    continue;
                 }
             }
         }
@@ -204,7 +219,7 @@ fn render_markdown_from_fence_state(
             } else {
                 active_fence = opening_fence;
                 let top_line = lines.len();
-                lines.push(code_block_border(width, '╭', copy_button, opening_title));
+                lines.push(code_block_border(width, '╭', copy_button, None));
                 if copy_button == CodeBlockCopyButton::Visible {
                     if let Some(copy_columns) = code_block_copy_columns(width) {
                         active_code_block = Some((top_line, copy_columns, Vec::new()));
@@ -313,20 +328,22 @@ fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
 }
 
-fn mermaid_fallback_title(reason: mermaid::MermaidFallback) -> &'static str {
-    match reason {
-        mermaid::MermaidFallback::TooWide => "MERMAID · PANE TOO NARROW",
-        mermaid::MermaidFallback::Blank
-        | mermaid::MermaidFallback::SourceBytes
-        | mermaid::MermaidFallback::SourceLines
-        | mermaid::MermaidFallback::UnsafeContent
-        | mermaid::MermaidFallback::Unsupported
-        | mermaid::MermaidFallback::Malformed
-        | mermaid::MermaidFallback::StructuralLimit
-        | mermaid::MermaidFallback::Panic
-        | mermaid::MermaidFallback::OutputLines
-        | mermaid::MermaidFallback::OutputCells
-        | mermaid::MermaidFallback::AnsiOutput => "MERMAID · NOT RENDERED",
+fn push_copyable_code_block(
+    code_blocks: &mut Vec<MarkdownCodeBlock>,
+    copy_button: CodeBlockCopyButton,
+    top_line: usize,
+    width: usize,
+    text: String,
+) {
+    if copy_button != CodeBlockCopyButton::Visible {
+        return;
+    }
+    if let Some(copy_columns) = code_block_copy_columns(width) {
+        code_blocks.push(MarkdownCodeBlock {
+            top_line,
+            copy_columns,
+            text,
+        });
     }
 }
 

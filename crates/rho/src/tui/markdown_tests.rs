@@ -336,11 +336,7 @@ fn closed_mermaid_fallbacks_keep_source_and_explain_themselves() {
 
 #[test]
 fn too_narrow_mermaid_panel_reports_width_and_keeps_copyable_source() {
-    let source = concat!(
-        "flowchart LR\n",
-        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
-        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]"
-    );
+    let source = super::PHASE_CHAIN_FLOWCHART;
     let mut in_code_block = false;
     let rendered = render_markdown(
         &format!("```mermaid\n{source}\n```"),
@@ -372,13 +368,7 @@ fn too_narrow_mermaid_panel_reports_width_and_keeps_copyable_source() {
 
 #[test]
 fn long_labelled_flowcharts_compact_to_fit_ordinary_transcript_widths() {
-    let source = concat!(
-        "flowchart LR\n",
-        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
-        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
-        "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
-        "  P3 --> P5[\"Phase 5: nest runs under session\"]"
-    );
+    let source = super::PHASE_CHAIN_FLOWCHART;
     let mut in_code_block = false;
     let rendered = render_markdown(
         &format!("```mermaid\n{source}\n```"),

@@ -3,7 +3,6 @@
 mod config;
 mod conversation_tree;
 mod goal;
-mod id;
 mod login;
 mod mermaid;
 mod pickers;
@@ -31,8 +30,6 @@ use crate::{
     pty::PtySize,
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
 };
-
-pub use id::ScenarioId;
 
 const DEFAULT_SIZE: PtySize = PtySize {
     rows: 28,
