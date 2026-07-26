@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.10.0...rho-sdk-v1.10.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **sdk:** stabilize compaction release benchmark ([#561](https://github.com/matthewyjiang/rho/issues/561)) ([8364edc](https://github.com/matthewyjiang/rho/commit/8364edc7f8d1acb3967a061b0da02fd4a102a787))
+
 ## [1.10.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.9.0...rho-sdk-v1.10.0) (2026-07-25)
 
 

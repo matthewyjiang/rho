@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.10.0...rho-providers-v0.10.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **tui:** render narrow mermaid flowcharts and explain fallbacks ([#565](https://github.com/matthewyjiang/rho/issues/565)) ([0bf7ad7](https://github.com/matthewyjiang/rho/commit/0bf7ad719fa32d00bc6d1bc7857307032fd9f1f6))
+* **tui:** reuse tool stream previews and allow codex parallel tools ([#566](https://github.com/matthewyjiang/rho/issues/566)) ([fa0074a](https://github.com/matthewyjiang/rho/commit/fa0074ae125972ac533ae09b30915f7e479674bd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.10.0 to 1.10.1
+
 ## [0.10.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.9.0...rho-providers-v0.10.0) (2026-07-26)
 
 
