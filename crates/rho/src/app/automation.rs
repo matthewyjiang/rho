@@ -523,10 +523,6 @@ async fn run_session_with_output(
     if let Some(adapter) = jsonl.as_deref_mut() {
         adapter.set_run_context(session.id(), &workspace_root);
     }
-    if let Some(manager) = tool_set.subagents() {
-        manager.set_session(session.id().to_string());
-    }
-
     startup
         .herdr
         .report_state(HerdrState::Working, None, None)

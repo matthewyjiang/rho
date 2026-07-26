@@ -258,9 +258,9 @@ impl Session {
     /// Deletes a session by UUID or prefix and cascades parent-linked run dirs.
     ///
     /// Removes the transcript unit (folder or legacy flat file), web sidecar,
-    /// index row, and any `~/.rho/subagents/<id>/` directories whose
-    /// `result.json` records this session as `parent_session_id`. Does not
-    /// touch usage ledger rows; cost history remains.
+    /// index row, nested delegated runs, and older global runs whose
+    /// `result.json` records this session as `parent_session_id`. Does not touch
+    /// usage ledger rows; cost history remains.
     pub fn delete_by_id(
         cwd: &Path,
         id_prefix: &str,
@@ -397,6 +397,11 @@ impl Session {
     /// Web-access sidecar directory for this session, when the on-disk layout supports one.
     pub(crate) fn web_dir(&self) -> Option<PathBuf> {
         session_web_dir(&self.path)
+    }
+
+    /// Delegated run artifact directory owned by this folder-layout session.
+    pub(crate) fn subagents_dir(&self) -> Option<PathBuf> {
+        persistence::SessionUnit::from_path(&self.path)?.subagents_dir()
     }
 
     pub fn id(&self) -> &str {

@@ -509,11 +509,21 @@ Observe any delegated run without owning its execution:
 rho attach abc123
 ```
 
-The read-only attachment TUI follows durable artifacts under `~/.rho/subagents/<id>/`:
+Runs started by a saved interactive session store durable artifacts with that session:
 
-- `result.json` - live status, agent ID, semantic fingerprint, usage, final result, optional `parent_session_id` (for cascade delete with the parent session), and optional `claude_session_id`
+```text
+~/.rho/sessions/<workspace-key>/<created-at>_<session-id>/subagents/<id>/
+```
+
+Parentless runs, including delegated work started by `rho run`, remain under `~/.rho/subagents/<id>/`. Runs from resumed legacy flat sessions also remain there because those sessions have no folder to own them. Existing global runs are not moved.
+
+Each run directory can contain:
+
+- `result.json` - live status, agent ID, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id`
 - `events.jsonl` - display events used by attachment
 - `log.txt` - Claude stderr for `runtime: claude-cli` runs
+
+Run IDs stay globally unique. `rho attach` first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This lets another process attach from any working directory while keeping unindexed older runs available.
 
 Detaching does not cancel execution. Herdr panes also run `rho attach <id>` and never own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
 

@@ -20,6 +20,7 @@ New sessions use one folder per session:
 ~/.rho/sessions/<workspace-key>/<created-at>_<session-id>/
   session.jsonl    # append-only transcript
   web/             # web-access sidecar blobs for this session
+  subagents/       # delegated run artifacts owned by this session
 ```
 
 Rho still opens legacy flat transcripts directly:
@@ -68,7 +69,7 @@ rho sessions rm <id> --yes     # skip cross-project confirmation
 
 `list` shows sessions for the current workspace. `--all-projects` includes every workspace and prints each session's working directory.
 
-`rm` deletes the session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, the session index row, and any parent-linked subagent run directories under `~/.rho/subagents/` whose `result.json` records that session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
+`rm` deletes the session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and the session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
 
 Delete refuses:
 

@@ -831,6 +831,15 @@ fn session_web_dir_method_matches_layout() {
 }
 
 #[test]
+fn session_subagents_dir_matches_folder_layout() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let expected = session.path().parent().unwrap().join("subagents");
+    assert_eq!(session.subagents_dir(), Some(expected));
+}
+
+#[test]
 fn deletes_folder_session_and_cascades_parent_linked_runs() {
     let root = temp_session_root();
     let cwd = temp_cwd();
@@ -885,6 +894,71 @@ fn deletes_folder_session_and_cascades_parent_linked_runs() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("no session found"), "{err}");
+}
+
+#[test]
+fn deletes_nested_runs_with_folder_session() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let subagents = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let nested = super::delete::write_linked_run_for_tests(
+        &session.subagents_dir().unwrap(),
+        "ab12cd",
+        session.id(),
+        crate::subagent::RunState::Ok,
+    );
+
+    let outcome = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        session.id(),
+        DeleteOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(outcome.deleted_run_count, 1);
+    assert!(!nested.exists());
+}
+
+#[test]
+fn refuses_live_nested_run_without_force() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let subagents = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let nested = super::delete::write_linked_run_for_tests(
+        &session.subagents_dir().unwrap(),
+        "ab12cd",
+        session.id(),
+        crate::subagent::RunState::Running,
+    );
+
+    let error = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        session.id(),
+        DeleteOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("still running"), "{error}");
+
+    let outcome = Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &cwd,
+        session.id(),
+        DeleteOptions {
+            force: true,
+            protect_session_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(outcome.forced_run_ids, vec!["ab12cd".to_string()]);
+    assert_eq!(outcome.deleted_run_count, 1);
+    assert!(!nested.exists());
 }
 
 #[test]

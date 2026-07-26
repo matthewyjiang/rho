@@ -5,7 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::subagent::{self, RunState, RunStatus, RESULT_FILE_NAME};
+#[cfg(test)]
+use crate::subagent::RunStatus;
+use crate::subagent::{self, RunState, RESULT_FILE_NAME};
 
 use super::{
     index,
@@ -31,17 +33,24 @@ pub struct DeleteOutcome {
     pub id: String,
     pub cwd: PathBuf,
     pub path: PathBuf,
-    /// Number of parent-linked run directories removed under `~/.rho/subagents/`.
+    /// Number of nested and global parent-linked run directories removed.
     pub deleted_run_count: usize,
     /// Run ids force-deleted while still non-terminal.
     pub forced_run_ids: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunCleanup {
+    Structural,
+    Explicit,
 }
 
 #[derive(Clone, Debug)]
 struct LinkedRun {
     dir: PathBuf,
     id: String,
-    status: RunStatus,
+    state: Option<RunState>,
+    cleanup: RunCleanup,
 }
 
 pub(super) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {
@@ -112,56 +121,101 @@ fn delete_resolved(
         )
     })?;
 
-    let linked = find_parent_linked_runs(subagents_root, &resolved.id)?;
-    let mut forced_run_ids = Vec::new();
-    for run in &linked {
-        if run.status.state.is_terminal() {
-            continue;
+    let parent_session_id = resolved.id.clone();
+    subagent::with_parent_run_cleanup_lock_in_root(subagents_root, &parent_session_id, move || {
+        let mut linked = find_nested_runs(&unit)?;
+        linked.extend(find_parent_linked_runs(subagents_root, &resolved.id)?);
+        linked.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then_with(|| left.dir.cmp(&right.dir))
+        });
+
+        let mut forced_run_ids = Vec::new();
+        for run in &linked {
+            if run.state.is_some_and(RunState::is_terminal) {
+                continue;
+            }
+            if !options.force {
+                let crash_hint =
+                    if matches!(run.state, Some(RunState::Running | RunState::Starting)) {
+                        " (use --force only for stale runs left after a crash)"
+                    } else {
+                        ""
+                    };
+                let state = run.state.map(RunState::as_str).unwrap_or("unknown");
+                anyhow::bail!(
+                        "refusing to delete session '{}': related run {} is still {state}{crash_hint}; wait for it to finish or pass --force",
+                        short_id(&resolved.id),
+                        run.id,
+                    );
+            }
+            forced_run_ids.push(run.id.clone());
         }
-        if !options.force {
-            anyhow::bail!(
-                "refusing to delete session '{}': related run {} is still {}{}; wait for it to finish or pass --force",
-                short_id(&resolved.id),
-                run.id,
-                run.status.state.as_str(),
-                if matches!(run.status.state, RunState::Running | RunState::Starting) {
-                    " (use --force only for stale runs left after a crash)"
-                } else {
-                    ""
+
+        // Delete session bytes first so the run index never points to a
+        // session folder that still owns artifacts after this transaction.
+        unit.delete_from_disk()?;
+        index::remove_session(session_root, &workspace_key(&resolved.cwd), &resolved.id)?;
+
+        let deleted_run_count = linked.len();
+        for run in linked
+            .into_iter()
+            .filter(|run| run.cleanup == RunCleanup::Explicit)
+        {
+            match fs::remove_dir_all(&run.dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "deleted session '{}' but failed to remove related run {}: {error}",
+                        resolved.id,
+                        run.id
+                    ));
                 }
-            );
-        }
-        forced_run_ids.push(run.id.clone());
-    }
-
-    // Delete session bytes first so a crash mid-cascade leaves an index that
-    // self-heals (missing path) and reclaims run dirs on a later delete attempt
-    // only when the session still exists. Cascade runs after the session unit.
-    unit.delete_from_disk()?;
-    index::remove_session(session_root, &workspace_key(&resolved.cwd), &resolved.id)?;
-
-    let mut deleted_run_count = 0;
-    for run in linked {
-        match fs::remove_dir_all(&run.dir) {
-            Ok(()) => deleted_run_count += 1,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(anyhow::anyhow!(
-                    "deleted session '{}' but failed to remove related run {}: {error}",
-                    resolved.id,
-                    run.id
-                ));
             }
         }
+
+        Ok(DeleteOutcome {
+            id: resolved.id,
+            cwd: resolved.cwd,
+            path: resolved.path,
+            deleted_run_count,
+            forced_run_ids,
+        })
+    })
+}
+
+fn find_nested_runs(unit: &SessionUnit) -> anyhow::Result<Vec<LinkedRun>> {
+    let Some(subagents_dir) = unit.subagents_dir() else {
+        return Ok(Vec::new());
+    };
+    if !subagents_dir.is_dir() {
+        return Ok(Vec::new());
     }
 
-    Ok(DeleteOutcome {
-        id: resolved.id,
-        cwd: resolved.cwd,
-        path: resolved.path,
-        deleted_run_count,
-        forced_run_ids,
-    })
+    let mut runs = Vec::new();
+    for entry in fs::read_dir(subagents_dir)? {
+        let dir = entry?.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let Some(id) = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|id| subagent::normalize_id(id).ok())
+        else {
+            continue;
+        };
+        let state = subagent::read_status(&dir.join(RESULT_FILE_NAME)).map(|status| status.state);
+        runs.push(LinkedRun {
+            dir,
+            id,
+            state,
+            cleanup: RunCleanup::Structural,
+        });
+    }
+    Ok(runs)
 }
 
 fn find_parent_linked_runs(
@@ -191,9 +245,13 @@ fn find_parent_linked_runs(
         if status.parent_session_id.as_deref() != Some(parent_session_id) {
             continue;
         }
-        runs.push(LinkedRun { dir, id, status });
+        runs.push(LinkedRun {
+            dir,
+            id,
+            state: Some(status.state),
+            cleanup: RunCleanup::Explicit,
+        });
     }
-    runs.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(runs)
 }
 

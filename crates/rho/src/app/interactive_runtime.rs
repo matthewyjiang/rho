@@ -80,6 +80,19 @@ pub(crate) struct InteractiveRuntime {
     live_context_warm: bool,
 }
 
+fn bind_subagent_parent(
+    tools: &AppToolSet,
+    session_id: &SessionId,
+    storage: Option<&StoredSession>,
+) {
+    if let Some(manager) = tools.subagents() {
+        manager.bind_parent_session(
+            session_id.to_string(),
+            storage.and_then(StoredSession::subagents_dir),
+        );
+    }
+}
+
 enum TurnPrelude {
     None,
     ToolCall(ToolCall),
@@ -221,9 +234,7 @@ impl InteractiveRuntime {
                 .prompt_cache_key(prompt_cache_key(id.as_str()))
         };
         let session = runtime.session(options).await?;
-        if let Some(manager) = tools.subagents() {
-            manager.set_session(session.id().to_string());
-        }
+        bind_subagent_parent(&tools, session.id(), storage.as_ref());
         Ok(Self {
             runtime,
             runs: InteractiveRunController::default(),
@@ -408,6 +419,7 @@ impl InteractiveRuntime {
     }
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
+        bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.attach_storage(storage);
     }
 
@@ -595,9 +607,7 @@ impl InteractiveRuntime {
             anyhow::bail!("cannot reset while a run is active");
         }
         let session_id = self.sessions.reset()?;
-        if let Some(manager) = self.tools.subagents() {
-            manager.set_session(session_id.to_string());
-        }
+        bind_subagent_parent(&self.tools, &session_id, None);
         self.invalidate_live_context();
         Ok(())
     }
@@ -620,9 +630,7 @@ impl InteractiveRuntime {
             id,
         })
         .await?;
-        if let Some(manager) = self.tools.subagents() {
-            manager.set_session(self.sessions.session().id().to_string());
-        }
+        bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
         self.invalidate_live_context();
         Ok(())

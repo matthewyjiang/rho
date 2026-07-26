@@ -27,6 +27,8 @@ pub(super) const SESSION_VERSION: u32 = 4;
 pub(super) const SESSION_TRANSCRIPT_FILE_NAME: &str = "session.jsonl";
 /// Sidecar directory name for web-access blobs inside a session folder.
 pub(super) const SESSION_WEB_DIR_NAME: &str = "web";
+/// Delegated run artifact directory inside a folder-layout session.
+pub(super) const SESSION_SUBAGENTS_DIR_NAME: &str = "subagents";
 
 #[derive(Clone, Debug)]
 pub(super) struct ResolvedSession {
@@ -791,6 +793,13 @@ impl SessionUnit {
                     .unwrap_or_else(|| Path::new("."))
                     .join(format!("{stem}.web"))
             }
+        }
+    }
+
+    pub(super) fn subagents_dir(&self) -> Option<PathBuf> {
+        match self {
+            Self::Folder { dir } => Some(dir.join(SESSION_SUBAGENTS_DIR_NAME)),
+            Self::LegacyFile { .. } => None,
         }
     }
 

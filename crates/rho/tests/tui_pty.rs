@@ -9,7 +9,7 @@
 mod claude_e2e;
 
 use std::{
-    fs::OpenOptions,
+    fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixListener,
     path::PathBuf,
@@ -743,6 +743,15 @@ fn fake_claude_runtime_end_to_end_success() {
         .to_string();
     let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
     claude_e2e::assert_success_result(&status, &run_dir);
+    assert!(
+        run_dir.starts_with(home.home.join(".rho/sessions")),
+        "interactive run was not nested under its session: {}",
+        run_dir.display()
+    );
+    assert!(
+        !home.home.join(".rho/subagents").join(&run_id).exists(),
+        "interactive run also appeared in the global pool"
+    );
 
     // Offline proof: only the fake binary ran; spawn marker is under the temp root.
     assert!(
@@ -760,7 +769,7 @@ fn fake_claude_runtime_end_to_end_success() {
 
     // Replay the real on-disk artifacts through `rho attach`.
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let plan = RhoLaunchPlan::matrix(
+    let mut plan = RhoLaunchPlan::matrix(
         binary,
         &home,
         PtySize {
@@ -770,6 +779,8 @@ fn fake_claude_runtime_end_to_end_success() {
     )
     .with_arg("attach")
     .with_arg(&run_id);
+    plan.cwd = home.path().join("attach-workspace");
+    fs::create_dir_all(&plan.cwd).unwrap();
     let mut attach = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_attach").unwrap();
     attach
         .wait_for_text(
