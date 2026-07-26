@@ -76,17 +76,11 @@ pub struct SubagentNotification {
     pub snapshot: SubagentSnapshot,
 }
 
-#[derive(Clone, Debug)]
-struct ParentSessionBinding {
-    session_id: String,
-    subagents_dir: Option<PathBuf>,
-}
-
 #[derive(Clone)]
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
     executor: AgentExecutor,
-    parent_session: Arc<Mutex<Option<ParentSessionBinding>>>,
+    parent_placement: Arc<Mutex<subagent::RunPlacement>>,
 }
 
 impl SubagentManager {
@@ -94,7 +88,7 @@ impl SubagentManager {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             executor,
-            parent_session: Arc::new(Mutex::new(None)),
+            parent_placement: Arc::new(Mutex::new(subagent::RunPlacement::parentless())),
         }
     }
 
@@ -106,11 +100,11 @@ impl SubagentManager {
         self.executor.host_input().unbind_parent();
     }
 
-    pub fn bind_parent_session(&self, session_id: String, subagents_dir: Option<PathBuf>) {
-        *self.parent_session.lock().expect("delegated session lock") = Some(ParentSessionBinding {
-            session_id,
-            subagents_dir,
-        });
+    pub fn bind_parent_session(&self, placement: subagent::RunPlacement) {
+        *self
+            .parent_placement
+            .lock()
+            .expect("delegated session lock") = placement;
     }
 
     pub fn update_model(&self, provider: &str, model: &str, reasoning: rho_sdk::ReasoningLevel) {
@@ -135,42 +129,26 @@ impl SubagentManager {
         background: bool,
         _cwd: &Path,
     ) -> anyhow::Result<(String, PathBuf)> {
-        let parent = self
-            .parent_session
+        let placement = self
+            .parent_placement
             .lock()
             .expect("delegated session lock")
             .clone();
-        let placement = match &parent {
-            Some(ParentSessionBinding {
-                session_id,
-                subagents_dir: Some(subagents_dir),
-            }) => subagent::RunPlacement::Session {
-                parent_session_id: session_id.clone(),
-                subagents_dir: subagents_dir.clone(),
-            },
-            Some(ParentSessionBinding {
-                session_id,
-                subagents_dir: None,
-            }) => subagent::RunPlacement::Global {
-                parent_session_id: Some(session_id.clone()),
-            },
-            None => subagent::RunPlacement::Global {
-                parent_session_id: None,
-            },
-        };
+        let parent_session_id = placement
+            .parent_session_id()
+            .map(str::to_owned)
+            .and_then(|id| rho_sdk::SessionId::from_string(id).ok());
+        let session_id = placement.parent_session_id().map(str::to_owned);
         let (id, directory) =
             tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement))
                 .await??;
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
-        let session_id = parent.map(|binding| binding.session_id);
         let launch = AgentLaunchRequest {
             definition: Arc::new(definition.clone()),
             prompt: prompt.to_string(),
             run_id: id.clone(),
             background,
-            parent_session_id: session_id
-                .as_deref()
-                .and_then(|id| rho_sdk::SessionId::from_string(id.to_owned()).ok()),
+            parent_session_id,
             output_file,
         };
         let handle = match self.executor.spawn(launch) {

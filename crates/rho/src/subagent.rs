@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 mod storage;
 pub(crate) use storage::{
-    release_run_directory, reserve_run_directory, resolve_run_directory,
-    with_parent_run_cleanup_lock_in_root, RunPlacement,
+    is_trusted_directory, lock_parent_for_cleanup, release_run_directory, reserve_run_directory,
+    resolve_run_directory, RunPlacement,
 };
 
 pub const RESULT_FILE_NAME: &str = "result.json";

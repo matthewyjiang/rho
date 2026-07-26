@@ -7,8 +7,15 @@ use std::{
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::*;
+use super::{
+    index::{
+        initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
+    },
+    lock_parent_for_cleanup_in_root, release_run_directory_in_root, reserve_run_directory_in_root,
+    resolve_run_directory_in_root, RunPlacement,
+};
 use crate::session::Session;
+use std::path::{Path, PathBuf};
 
 fn create_session_subagents(root: &Path) -> PathBuf {
     let cwd = TempDir::new().unwrap();
@@ -61,9 +68,9 @@ fn reserves_session_run_beneath_parent() {
 }
 
 #[test]
-fn skips_ids_used_by_unindexed_runs() {
+fn skips_ids_used_by_unindexed_target_path() {
     let temp = TempDir::new().unwrap();
-    let existing = create_session_subagents(temp.path()).join("111111");
+    let existing = temp.path().join("subagents/111111");
     fs::create_dir_all(&existing).unwrap();
     let mut ids = ["111111", "222222"].into_iter();
 
@@ -159,7 +166,7 @@ fn reservation_fails_after_parent_session_is_deleted() {
 }
 
 #[test]
-fn session_cleanup_lock_prevents_orphaned_reservation() {
+fn parent_cleanup_lock_blocks_reservations_for_that_parent() {
     let temp = TempDir::new().unwrap();
     let rho_root = temp.path().to_path_buf();
     let subagents_root = rho_root.join("subagents");
@@ -170,12 +177,11 @@ fn session_cleanup_lock_prevents_orphaned_reservation() {
     let (release_tx, release_rx) = mpsc::channel();
     let cleanup_root = subagents_root.clone();
     let cleanup = thread::spawn(move || {
-        with_parent_run_cleanup_lock_in_root(&cleanup_root, "session-id", || {
-            entered_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-            fs::remove_dir_all(session_dir)?;
-            Ok(())
-        })
+        let guard = lock_parent_for_cleanup_in_root(&cleanup_root, "session-id")?;
+        entered_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        fs::remove_dir_all(session_dir)?;
+        guard.clear_index_and_unlock()
     });
     entered_rx.recv().unwrap();
 
@@ -195,11 +201,83 @@ fn session_cleanup_lock_prevents_orphaned_reservation() {
         )
     });
     reserve_started_rx.recv().unwrap();
+    let reserve_error = reserve.join().unwrap().unwrap_err();
+    assert!(
+        reserve_error.to_string().contains("is being deleted"),
+        "{reserve_error}"
+    );
     release_tx.send(()).unwrap();
 
     cleanup.join().unwrap().unwrap();
-    assert!(reserve.join().unwrap().is_err());
     assert!(!deleted_session_dir.exists());
+}
+
+#[test]
+fn parent_cleanup_lock_does_not_block_unrelated_parents() {
+    let temp = TempDir::new().unwrap();
+    let rho_root = temp.path();
+    let subagents_root = rho_root.join("subagents");
+    let other_subagents = create_session_subagents(rho_root);
+    let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "deleting-session").unwrap();
+
+    let (_, directory) = reserve_run_directory_in_root(
+        rho_root,
+        &RunPlacement::Session {
+            parent_session_id: "other-session".into(),
+            subagents_dir: other_subagents.clone(),
+        },
+        || "abcdef".into(),
+    )
+    .unwrap();
+
+    assert_eq!(directory, other_subagents.join("abcdef"));
+}
+
+#[test]
+fn stale_parent_lock_is_ignored_by_reserve() {
+    let temp = TempDir::new().unwrap();
+    let subagents_root = temp.path().join("subagents");
+    let subagents_dir = create_session_subagents(temp.path());
+    let stale_at = unix_timestamp_secs() - PARENT_LOCK_TTL_SECS - 1;
+    insert_parent_lock_for_test(&subagents_root, "session-id", stale_at).unwrap();
+
+    let (_, directory) = reserve_run_directory_in_root(
+        temp.path(),
+        &RunPlacement::Session {
+            parent_session_id: "session-id".into(),
+            subagents_dir: subagents_dir.clone(),
+        },
+        || "abcdef".into(),
+    )
+    .unwrap();
+
+    assert_eq!(directory, subagents_dir.join("abcdef"));
+}
+
+#[test]
+fn stale_parent_lock_can_be_stolen_for_cleanup() {
+    let temp = TempDir::new().unwrap();
+    let subagents_root = temp.path().join("subagents");
+    let stale_at = unix_timestamp_secs() - PARENT_LOCK_TTL_SECS - 1;
+    insert_parent_lock_for_test(&subagents_root, "session-id", stale_at).unwrap();
+
+    let guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
+    guard.clear_index_and_unlock().unwrap();
+
+    // A fresh lock should succeed after the stolen cleanup finished.
+    let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
+}
+
+#[test]
+fn fresh_parent_lock_rejects_second_cleanup() {
+    let temp = TempDir::new().unwrap();
+    let subagents_root = temp.path().join("subagents");
+    let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
+    let error = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap_err();
+    assert!(
+        error.to_string().contains("already being deleted"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -254,4 +332,26 @@ fn stale_index_row_falls_through_to_legacy_global() {
         resolve_run_directory_in_root(temp.path(), "abcdef").unwrap(),
         legacy
     );
+}
+
+#[test]
+fn failed_cleanup_releases_parent_lock() {
+    let temp = TempDir::new().unwrap();
+    let subagents_root = temp.path().join("subagents");
+    let subagents_dir = create_session_subagents(temp.path());
+
+    {
+        let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
+    }
+
+    let (_, directory) = reserve_run_directory_in_root(
+        temp.path(),
+        &RunPlacement::Session {
+            parent_session_id: "session-id".into(),
+            subagents_dir: subagents_dir.clone(),
+        },
+        || "abcdef".into(),
+    )
+    .unwrap();
+    assert_eq!(directory, subagents_dir.join("abcdef"));
 }

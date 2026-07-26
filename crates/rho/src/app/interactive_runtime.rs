@@ -86,10 +86,10 @@ fn bind_subagent_parent(
     storage: Option<&StoredSession>,
 ) {
     if let Some(manager) = tools.subagents() {
-        manager.bind_parent_session(
+        manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
             session_id.to_string(),
             storage.and_then(StoredSession::subagents_dir),
-        );
+        ));
     }
 }
 
