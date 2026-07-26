@@ -65,6 +65,7 @@ For PRs:
 - Put new test modules in sibling `*_tests.rs` files with explicit `#[path = "..."] mod tests;` declarations instead of growing implementation files.
 - Prefer `pretty_assertions::assert_eq` when available and whole-object comparisons over field-by-field assertions.
 - Do not test static constants or add negative tests solely for removed behavior.
+- Do not lock instructional prose, system-prompt wording, help text, or other copy behind string-contains tests. Review that text in the PR. Test assembly seams and user-visible behavior instead, such as conditional inclusion, rendering, tool gating, and end-to-end effects.
 - Avoid mutating process environment; pass environment-derived values or dependencies explicitly when possible.
 
 ## Rho TUI testing

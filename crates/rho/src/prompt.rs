@@ -308,21 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn guides_models_to_use_supported_mermaid_when_structure_matters() {
-        let project = TempDir::new().unwrap();
-
-        let prompt = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(prompt.contains("structure is the point"));
-        assert!(prompt.contains("closed `mermaid` fenced code block"));
-        assert!(prompt.contains("Bare Mermaid source does not render"));
-        assert!(
-            prompt.contains("flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram")
-        );
-        assert!(prompt.contains("Skip diagrams for routine edits"));
-    }
-
-    #[test]
     fn keeps_web_access_guidance_concise_and_lazy() {
         let project = TempDir::new().unwrap();
 
