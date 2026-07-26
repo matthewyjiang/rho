@@ -388,19 +388,33 @@ fn value_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .map(|pair| pair[1].as_str())
 }
 
-/// List run directories under `~/.rho/subagents` that contain a result file.
+/// List global and folder-session run directories that contain a result file.
 pub fn list_run_dirs(home: &Path) -> Vec<PathBuf> {
-    let root = home.join(".rho/subagents");
-    let Ok(entries) = fs::read_dir(&root) else {
-        return Vec::new();
-    };
-    let mut dirs = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path.join("result.json").is_file())
-        .collect::<Vec<_>>();
+    let mut dirs = run_dirs_directly_under(&home.join(".rho/subagents"));
+    let sessions_root = home.join(".rho/sessions");
+    if let Ok(workspaces) = fs::read_dir(sessions_root) {
+        for workspace in workspaces.filter_map(Result::ok) {
+            let Ok(sessions) = fs::read_dir(workspace.path()) else {
+                continue;
+            };
+            for session in sessions.filter_map(Result::ok) {
+                dirs.extend(run_dirs_directly_under(&session.path().join("subagents")));
+            }
+        }
+    }
     dirs.sort();
     dirs
+}
+
+fn run_dirs_directly_under(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join("result.json").is_file())
+        .collect()
 }
 
 /// Wait until exactly one subagent run directory exists with a terminal result.

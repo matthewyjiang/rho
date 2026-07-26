@@ -2,11 +2,17 @@
 
 use std::{
     fs::{File, OpenOptions},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Mutex, OnceLock},
 };
 
 use serde::{Deserialize, Serialize};
+
+mod storage;
+pub(crate) use storage::{
+    is_trusted_directory, lock_parent_for_cleanup, release_run_directory, reserve_run_directory,
+    resolve_run_directory, RunPlacement,
+};
 
 pub const RESULT_FILE_NAME: &str = "result.json";
 pub const LOG_FILE_NAME: &str = "log.txt";
@@ -158,11 +164,6 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
 pub fn read_status(path: &Path) -> Option<RunStatus> {
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
-}
-
-pub fn directory(id: &str) -> anyhow::Result<PathBuf> {
-    let id = normalize_id(id)?;
-    Ok(crate::paths::rho_dir()?.join("subagents").join(id))
 }
 
 /// Validate a 6-char hex run id and return its canonical lowercase form.

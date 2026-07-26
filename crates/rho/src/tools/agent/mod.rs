@@ -80,7 +80,7 @@ pub struct SubagentNotification {
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
     executor: AgentExecutor,
-    session_id: Arc<Mutex<Option<String>>>,
+    parent_placement: Arc<Mutex<subagent::RunPlacement>>,
 }
 
 impl SubagentManager {
@@ -88,7 +88,7 @@ impl SubagentManager {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             executor,
-            session_id: Arc::new(Mutex::new(None)),
+            parent_placement: Arc::new(Mutex::new(subagent::RunPlacement::parentless())),
         }
     }
 
@@ -100,8 +100,11 @@ impl SubagentManager {
         self.executor.host_input().unbind_parent();
     }
 
-    pub fn set_session(&self, session_id: String) {
-        *self.session_id.lock().expect("delegated session lock") = Some(session_id);
+    pub fn bind_parent_session(&self, placement: subagent::RunPlacement) {
+        *self
+            .parent_placement
+            .lock()
+            .expect("delegated session lock") = placement;
     }
 
     pub fn update_model(&self, provider: &str, model: &str, reasoning: rho_sdk::ReasoningLevel) {
@@ -126,23 +129,45 @@ impl SubagentManager {
         background: bool,
         _cwd: &Path,
     ) -> anyhow::Result<(String, PathBuf)> {
-        let (id, directory) = create_run_directory()?;
-        let output_file = directory.join(subagent::RESULT_FILE_NAME);
-        let session_id = self
-            .session_id
+        let placement = self
+            .parent_placement
             .lock()
             .expect("delegated session lock")
             .clone();
-        let handle = self.executor.spawn(AgentLaunchRequest {
+        let parent_session_id = placement
+            .parent_session_id()
+            .map(str::to_owned)
+            .and_then(|id| rho_sdk::SessionId::from_string(id).ok());
+        let session_id = placement.parent_session_id().map(str::to_owned);
+        let (id, directory) =
+            tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement))
+                .await??;
+        let output_file = directory.join(subagent::RESULT_FILE_NAME);
+        let launch = AgentLaunchRequest {
             definition: Arc::new(definition.clone()),
             prompt: prompt.to_string(),
             run_id: id.clone(),
             background,
-            parent_session_id: session_id
-                .as_deref()
-                .and_then(|id| rho_sdk::SessionId::from_string(id.to_owned()).ok()),
+            parent_session_id,
             output_file,
-        })?;
+        };
+        let handle = match self.executor.spawn(launch) {
+            Ok(handle) => handle,
+            Err(error) => {
+                let cleanup_id = id.clone();
+                let cleanup_directory = directory.clone();
+                let cleanup = tokio::task::spawn_blocking(move || {
+                    subagent::release_run_directory(&cleanup_id, &cleanup_directory)
+                })
+                .await?;
+                if let Err(cleanup_error) = cleanup {
+                    return Err(anyhow::anyhow!(
+                        "{error}; failed to clean up delegated run reservation: {cleanup_error}"
+                    ));
+                }
+                return Err(error);
+            }
+        };
         self.inner.lock().expect("delegated registry lock").insert(
             id.clone(),
             AgentEntry {
@@ -342,29 +367,6 @@ impl SubagentManager {
         });
         let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, futures_util::future::join_all(waits)).await;
     }
-}
-
-fn new_agent_id() -> String {
-    let id = uuid::Uuid::new_v4().simple().to_string();
-    id[..6].to_string()
-}
-
-fn create_run_directory() -> anyhow::Result<(String, PathBuf)> {
-    const MAX_ATTEMPTS: usize = 100;
-    for _ in 0..MAX_ATTEMPTS {
-        let id = new_agent_id();
-        let directory = subagent::directory(&id)?;
-        if let Some(parent) = directory.parent() {
-            std::fs::create_dir_all(parent)?;
-            subagent::secure_directory(parent)?;
-        }
-        match subagent::create_private_directory(&directory) {
-            Ok(()) => return Ok((id, directory)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    anyhow::bail!("could not allocate a unique delegated run ID")
 }
 
 /// Formats a drained batch of terminal runs as one bounded notification. The

@@ -244,7 +244,10 @@ async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String 
 async fn running_queries_are_scoped_to_the_parent_session() {
     let root = tempfile::tempdir().unwrap();
     let manager = manager(root.path());
-    manager.set_session("session-1".into());
+    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+        "session-1",
+        None,
+    ));
     let id = spawn_background_run(&manager, root.path()).await;
 
     assert!(!manager.has_running_for_session("session-2"));
@@ -256,7 +259,10 @@ async fn running_queries_are_scoped_to_the_parent_session() {
 async fn observed_terminal_run_is_not_redelivered() {
     let root = tempfile::tempdir().unwrap();
     let manager = manager(root.path());
-    manager.set_session("session-1".into());
+    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+        "session-1",
+        None,
+    ));
     let id = spawn_background_run(&manager, root.path()).await;
     let snapshot = manager.wait_done(&id).await.unwrap();
     assert!(snapshot.done);
@@ -271,7 +277,10 @@ async fn observed_terminal_run_is_not_redelivered() {
 async fn unobserved_terminal_runs_drain_as_one_batch() {
     let root = tempfile::tempdir().unwrap();
     let manager = manager(root.path());
-    manager.set_session("session-1".into());
+    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+        "session-1",
+        None,
+    ));
     let first = spawn_background_run(&manager, root.path()).await;
     let second = spawn_background_run(&manager, root.path()).await;
     manager.wait_done(&first).await.unwrap();

@@ -43,11 +43,9 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
         anyhow::bail!("rho attach requires an interactive terminal");
     }
     let id = subagent::normalize_id(id)?;
-    let directory = subagent::directory(&id)?;
-    if !directory.is_dir() {
-        anyhow::bail!("unknown delegated run '{id}'");
-    }
-    subagent::secure_directory(&directory)?;
+    let lookup_id = id.clone();
+    let directory =
+        tokio::task::spawn_blocking(move || subagent::resolve_run_directory(&lookup_id)).await??;
 
     let mut terminal = ratatui::init();
     let _restore_terminal = RestoreTerminal {
