@@ -223,7 +223,7 @@ fn statusline_lines(
         .unwrap_or_default();
     let (bottom_left, bottom_right) = bottom_status(state, width);
     vec![
-        render_row(top_left, top_right, width),
+        render_cwd_row(top_left, top_right, width),
         render_row(bottom_left, bottom_right, width),
     ]
 }
@@ -326,9 +326,22 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
 }
 
 fn render_row(left: String, right: String, width: usize) -> Line<'static> {
+    render_row_with_left_fit(left, right, width, truncate_one_line)
+}
+
+fn render_cwd_row(left: String, right: String, width: usize) -> Line<'static> {
+    render_row_with_left_fit(left, right, width, fit_status_cwd_left)
+}
+
+fn render_row_with_left_fit(
+    left: String,
+    right: String,
+    width: usize,
+    fit_left: fn(&str, usize) -> String,
+) -> Line<'static> {
     let style = Theme::dim();
     if right.is_empty() {
-        return Line::from(Span::styled(truncate_one_line(&left, width), style));
+        return Line::from(Span::styled(fit_left(&left, width), style));
     }
 
     let left_width = display_width(&left);
@@ -341,7 +354,7 @@ fn render_row(left: String, right: String, width: usize) -> Line<'static> {
     let right_budget = right_width.min(width.saturating_div(2).max(1));
     let right = truncate_one_line(&right, right_budget);
     let right_width = display_width(&right);
-    let left = truncate_one_line(&left, width.saturating_sub(right_width + 1).max(1));
+    let left = fit_left(&left, width.saturating_sub(right_width + 1).max(1));
     let left_width = display_width(&left);
     let gap = " ".repeat(width.saturating_sub(left_width + right_width));
     Line::from(Span::styled(format!("{left}{gap}{right}"), style))
@@ -362,6 +375,145 @@ fn compact_cwd(path: &Path) -> String {
     } else {
         path.display().to_string()
     }
+}
+
+/// Fit a status-line cwd (optional ` (branch)` suffix) into `width`.
+///
+/// Prefers keeping the trailing path segments that identify the workspace, using a
+/// middle ellipsis for dropped leading segments: `~/work/…/api-gateway`.
+fn fit_status_cwd_left(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if display_width(text) <= width {
+        return text.to_string();
+    }
+
+    let (path, branch_suffix) = split_status_cwd_branch(text);
+    if branch_suffix.is_empty() {
+        return shorten_path_display(path, width);
+    }
+
+    let branch_width = display_width(branch_suffix);
+    if branch_width >= width {
+        // Branch alone fills the row; fall back to ordinary head truncation.
+        return truncate_one_line(text, width);
+    }
+
+    let shortened = shorten_path_display(path, width - branch_width);
+    format!("{shortened}{branch_suffix}")
+}
+
+fn split_status_cwd_branch(text: &str) -> (&str, &str) {
+    if let Some(open) = text.rfind(" (") {
+        if open > 0 && text.ends_with(')') {
+            return (&text[..open], &text[open..]);
+        }
+    }
+    (text, "")
+}
+
+fn shorten_path_display(path: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if display_width(path) <= width {
+        return path.to_string();
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+
+    let sep = path_display_separator(path);
+    let (prefix, rest) = split_path_display_prefix(path, sep);
+    let segments: Vec<&str> = rest
+        .split(sep)
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.len() <= 1 {
+        // No interior segments to drop; keep the identifying end of the name.
+        return truncate_keep_end(path, width);
+    }
+
+    // Prefer the longest trailing-segment form that still fits.
+    let mut best: Option<String> = None;
+    for keep in 1..segments.len() {
+        let tail = segments[segments.len() - keep..].join(&sep.to_string());
+        let candidate = if prefix.is_empty() {
+            format!("…{sep}{tail}")
+        } else {
+            // `~/…/tail` or `/…/tail`
+            format!("{prefix}…{sep}{tail}")
+        };
+
+        if display_width(&candidate) <= width {
+            best = Some(candidate);
+        } else if best.is_some() {
+            // Further candidates only grow.
+            break;
+        }
+    }
+
+    if let Some(candidate) = best {
+        return candidate;
+    }
+
+    // Even the shortest rooted form failed. Try dropping the root prefix:
+    // `…/last` instead of `~/…/last`.
+    let last = segments[segments.len() - 1];
+    let minimal = format!("…{sep}{last}");
+    if display_width(&minimal) <= width {
+        return minimal;
+    }
+
+    // Last segment itself is too long: keep its end so the name stays identifiable.
+    truncate_keep_end(&minimal, width)
+}
+
+fn path_display_separator(path: &str) -> char {
+    if path.contains('/') {
+        '/'
+    } else if path.contains('\\') {
+        '\\'
+    } else {
+        '/'
+    }
+}
+
+fn split_path_display_prefix(path: &str, sep: char) -> (&str, &str) {
+    if let Some(rest) = path.strip_prefix("~/") {
+        return ("~/", rest);
+    }
+    if let Some(rest) = path.strip_prefix(sep) {
+        return (&path[..sep.len_utf8()], rest);
+    }
+    ("", path)
+}
+
+/// Truncate from the front, keeping the end of `text` with a leading ellipsis.
+fn truncate_keep_end(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if display_width(text) <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+
+    let target = width - 1;
+    let mut start = text.len();
+    let mut used = 0usize;
+    for (index, ch) in text.char_indices().rev() {
+        let ch_width = super::render::char_display_width(ch);
+        if used + ch_width > target {
+            break;
+        }
+        used += ch_width;
+        start = index;
+    }
+    format!("…{}", &text[start..])
 }
 
 #[cfg(test)]

@@ -217,3 +217,59 @@ fn git_branch_is_cached_until_explicit_refresh() {
     assert!(line_text(&initial[0]).contains("(main)"));
     assert!(line_text(&refreshed[0]).contains("(feature)"));
 }
+
+#[test]
+fn shorten_path_keeps_trailing_segments() {
+    assert_eq!(
+        shorten_path_display("~/work/company/services/api-gateway", 24),
+        "~/…/services/api-gateway"
+    );
+    assert_eq!(
+        shorten_path_display("~/work/company/services/api-gateway", 18),
+        "~/…/api-gateway"
+    );
+    assert_eq!(
+        shorten_path_display("/tmp/claude-1000/home-emgym-herdr-work", 23),
+        "…/home-emgym-herdr-work"
+    );
+    assert_eq!(
+        shorten_path_display("/tmp/claude-1000/projects/api-gateway", 20),
+        "/…/api-gateway"
+    );
+}
+
+#[test]
+fn shorten_path_keeps_end_when_last_segment_is_long() {
+    let shortened = shorten_path_display("~/work/company/very-long-service-name", 14);
+    assert!(shortened.starts_with('…'), "{shortened}");
+    assert!(
+        shortened.ends_with("service-name") || shortened.ends_with("name"),
+        "{shortened}"
+    );
+    assert!(display_width(&shortened) <= 14, "{shortened}");
+    assert!(!shortened.starts_with("~/work"), "{shortened}");
+}
+
+#[test]
+fn fit_status_cwd_keeps_branch_and_tail() {
+    let fitted = fit_status_cwd_left("~/work/company/services/api-gateway (main)", 28);
+    assert!(fitted.contains("api-gateway"), "{fitted}");
+    assert!(fitted.ends_with(" (main)"), "{fitted}");
+    assert!(display_width(&fitted) <= 28, "{fitted}");
+    assert!(!fitted.contains("work/company/services"), "{fitted}");
+}
+
+#[test]
+fn narrow_statusline_keeps_cwd_basename() {
+    let mut state = test_state(ModelUsage::default());
+    state.cwd = PathBuf::from("/tmp/claude-1000/home-emgym-herdr-worktree-api-gateway");
+    state.branch = None;
+
+    let top = line_text(&statusline_lines(&state, 40, None)[0]);
+    let cwd = top.trim_end();
+
+    assert!(cwd.contains("api-gateway"), "{cwd}");
+    assert!(cwd.contains('…'), "{cwd}");
+    assert!(!cwd.ends_with('…'), "{cwd}");
+    assert!(display_width(cwd) <= 40, "{cwd}");
+}
