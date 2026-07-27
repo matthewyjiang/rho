@@ -18,16 +18,39 @@ fn meta_facts(count: usize) -> Vec<ToolFact> {
         .collect()
 }
 
+fn diff_body() -> ToolBody {
+    ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::Removed, Some(41), "old"),
+        DiffRow::new(DiffRowKind::Added, Some(41), "new"),
+    ])
+}
+
 #[test]
-fn display_plan_short_diff_collapsed_hides_body() {
-    let card = base_card().with_body(ToolBody::DiffLines(vec!["-old".into(), "+new".into()]));
+fn display_plan_short_diff_collapsed_shows_body() {
+    let card = base_card().with_body(diff_body());
     let plan = card.display_plan(10, /*expanded*/ false);
     assert_eq!(
         plan,
         ToolCardDisplayPlan {
             visible_facts: 0,
-            visible_body_lines: 0,
-            hidden_rows: 2,
+            visible_body_lines: 2,
+            hidden_rows: 0,
+            expandable: false,
+            show_collapse_prompt: false,
+        }
+    );
+}
+
+#[test]
+fn display_plan_diff_past_budget_collapses_like_any_body() {
+    let card = base_card().with_body(diff_body());
+    let plan = card.display_plan(1, /*expanded*/ false);
+    assert_eq!(
+        plan,
+        ToolCardDisplayPlan {
+            visible_facts: 0,
+            visible_body_lines: 1,
+            hidden_rows: 1,
             expandable: true,
             show_collapse_prompt: false,
         }
@@ -35,9 +58,9 @@ fn display_plan_short_diff_collapsed_hides_body() {
 }
 
 #[test]
-fn display_plan_short_diff_expanded_shows_collapse_prompt() {
-    let card = base_card().with_body(ToolBody::DiffLines(vec!["-old".into(), "+new".into()]));
-    let plan = card.display_plan(10, /*expanded*/ true);
+fn display_plan_expanded_diff_shows_collapse_prompt_past_budget() {
+    let card = base_card().with_body(diff_body());
+    let plan = card.display_plan(1, /*expanded*/ true);
     assert_eq!(
         plan,
         ToolCardDisplayPlan {
@@ -122,7 +145,7 @@ fn display_plan_expanded_long_body_shows_collapse_prompt() {
 }
 
 #[test]
-fn compact_diff_lines_two_files_without_blank_separator() {
+fn compact_diff_rows_two_files_without_blank_separator() {
     // No blank line between file sections - second header must not become +/- content.
     let diff = "\
 --- a/src/lib.rs
@@ -132,29 +155,74 @@ fn compact_diff_lines_two_files_without_blank_separator() {
 +new
 --- a/src/main.rs
 +++ b/src/main.rs
-@@ -1 +1 @@
+@@ -12 +12 @@
 -before
 +after
 ";
     assert_eq!(
-        compact_diff_lines(diff, /*include_file_headers*/ true),
+        compact_diff_rows(diff, /*include_file_headers*/ true),
         vec![
-            "src/lib.rs".to_string(),
-            "-old".to_string(),
-            "+new".to_string(),
-            String::new(),
-            "src/main.rs".to_string(),
-            "-before".to_string(),
-            "+after".to_string(),
+            DiffRow::new(DiffRowKind::File, None, "src/lib.rs"),
+            DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
+            DiffRow::new(DiffRowKind::Added, Some(1), "new"),
+            DiffRow::new(DiffRowKind::File, None, "src/main.rs"),
+            DiffRow::new(DiffRowKind::Removed, Some(12), "before"),
+            DiffRow::new(DiffRowKind::Added, Some(12), "after"),
         ]
     );
     assert_eq!(
-        compact_diff_lines(diff, /*include_file_headers*/ false),
+        compact_diff_rows(diff, /*include_file_headers*/ false),
         vec![
-            "-old".to_string(),
+            DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
+            DiffRow::new(DiffRowKind::Added, Some(1), "new"),
+            DiffRow::new(DiffRowKind::Removed, Some(12), "before"),
+            DiffRow::new(DiffRowKind::Added, Some(12), "after"),
+        ]
+    );
+}
+
+#[test]
+fn compact_diff_rows_number_context_and_mark_hunk_gaps() {
+    let diff = "\
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -40,3 +40,3 @@
+ keep
+-old
++new
+@@ -80,2 +80,3 @@
+ tail
++added
+";
+    assert_eq!(
+        compact_diff_rows(diff, /*include_file_headers*/ false),
+        vec![
+            DiffRow::new(DiffRowKind::Context, Some(40), "keep"),
+            DiffRow::new(DiffRowKind::Removed, Some(41), "old"),
+            DiffRow::new(DiffRowKind::Added, Some(41), "new"),
+            DiffRow::new(DiffRowKind::Skip, None, "⋯"),
+            DiffRow::new(DiffRowKind::Context, Some(80), "tail"),
+            DiffRow::new(DiffRowKind::Added, Some(81), "added"),
+        ]
+    );
+}
+
+#[test]
+fn diff_rows_render_as_signed_plain_text() {
+    let rows = vec![
+        DiffRow::new(DiffRowKind::File, None, "src/lib.rs"),
+        DiffRow::new(DiffRowKind::Context, Some(1), "keep"),
+        DiffRow::new(DiffRowKind::Added, Some(2), "new"),
+        DiffRow::new(DiffRowKind::Removed, Some(2), "old"),
+    ];
+
+    assert_eq!(
+        ToolBody::Diff(rows).plain_lines(),
+        vec![
+            "src/lib.rs".to_string(),
+            " keep".to_string(),
             "+new".to_string(),
-            "-before".to_string(),
-            "+after".to_string(),
+            "-old".to_string(),
         ]
     );
 }
@@ -251,7 +319,7 @@ fn tool_body_variants_round_trip() {
     for body in [
         ToolBody::None,
         ToolBody::Lines(vec!["line".into()]),
-        ToolBody::DiffLines(vec!["+line".into()]),
+        ToolBody::Diff(vec![DiffRow::new(DiffRowKind::Added, Some(1), "line")]),
     ] {
         let encoded = serde_json::to_string(&body).unwrap();
         assert_eq!(serde_json::from_str::<ToolBody>(&encoded).unwrap(), body);

@@ -221,16 +221,12 @@ pub(super) fn display_text(output: &ShellOutput, included_in_context: bool) -> S
     for fact in &card.facts {
         parts.push(fact.plain_text());
     }
-    match &card.body {
-        ToolBody::Lines(lines) | ToolBody::DiffLines(lines) => {
-            if !lines.is_empty() {
-                if !card.facts.is_empty() {
-                    parts.push(String::new());
-                }
-                parts.extend(lines.iter().cloned());
-            }
+    let body = card.body.plain_lines();
+    if !body.is_empty() {
+        if !card.facts.is_empty() {
+            parts.push(String::new());
         }
-        ToolBody::None => {}
+        parts.extend(body);
     }
     parts.join("\n")
 }

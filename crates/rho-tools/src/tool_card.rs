@@ -127,6 +127,62 @@ pub enum ToolFact {
     },
 }
 
+/// What a diff row represents, which decides its sign and color.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffRowKind {
+    /// Unchanged line kept for context.
+    Context,
+    Added,
+    Removed,
+    /// File path heading in a multi-file diff.
+    File,
+    /// Gap between hunks.
+    Skip,
+}
+
+impl DiffRowKind {
+    /// Sign column text, so a color-stripped card still reads correctly.
+    pub fn sign(self) -> &'static str {
+        match self {
+            Self::Added => "+",
+            Self::Removed => "-",
+            Self::Context | Self::File | Self::Skip => " ",
+        }
+    }
+}
+
+/// One row of a compact diff body, with the line numbers for its gutter.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffRow {
+    pub kind: DiffRowKind,
+    /// Line number: the new file's for context and additions, the old file's
+    /// for removals. Absent for headings and for patch text without hunks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    pub text: String,
+}
+
+impl DiffRow {
+    pub fn new(kind: DiffRowKind, line: Option<u32>, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            line,
+            text: text.into(),
+        }
+    }
+
+    /// Gutter number, sign and text as one string, for text-only surfaces.
+    pub fn plain_text(&self) -> String {
+        match self.kind {
+            DiffRowKind::File | DiffRowKind::Skip => self.text.clone(),
+            DiffRowKind::Context | DiffRowKind::Added | DiffRowKind::Removed => {
+                format!("{}{}", self.kind.sign(), self.text)
+            }
+        }
+    }
+}
+
 /// Optional expandable body content.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", content = "lines", rename_all = "snake_case")]
@@ -134,31 +190,40 @@ pub enum ToolBody {
     #[default]
     None,
     Lines(Vec<String>),
-    /// Compact diff body; lines keep leading `+`/`-` for semantic coloring.
-    DiffLines(Vec<String>),
+    /// Compact diff body with per-row line numbers and change kinds.
+    Diff(Vec<DiffRow>),
 }
 
 impl ToolBody {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::None => true,
-            Self::Lines(lines) | Self::DiffLines(lines) => {
+            Self::Lines(lines) => {
                 lines.is_empty() || lines.iter().all(|line| line.trim().is_empty())
             }
+            Self::Diff(rows) => rows.is_empty(),
         }
     }
 
     pub fn line_count(&self) -> usize {
         match self {
             Self::None => 0,
-            Self::Lines(lines) | Self::DiffLines(lines) => {
-                lines.iter().map(|line| line.lines().count().max(1)).sum()
-            }
+            Self::Lines(lines) => lines.iter().map(|line| line.lines().count().max(1)).sum(),
+            Self::Diff(rows) => rows.len(),
         }
     }
 
     pub fn is_diff(&self) -> bool {
-        matches!(self, Self::DiffLines(_))
+        matches!(self, Self::Diff(_))
+    }
+
+    /// Body content as plain lines, for text-only surfaces and tests.
+    pub fn plain_lines(&self) -> Vec<String> {
+        match self {
+            Self::None => Vec::new(),
+            Self::Lines(lines) => lines.clone(),
+            Self::Diff(rows) => rows.iter().map(DiffRow::plain_text).collect(),
+        }
     }
 }
 
@@ -173,7 +238,7 @@ pub struct ToolCardDisplayPlan {
     pub hidden_rows: usize,
     /// Whether Ctrl-O can toggle expand/collapse.
     pub expandable: bool,
-    /// Show "ctrl+o to collapse" when expanded past budget / revealing hidden diff.
+    /// Show "ctrl+o to collapse" when expanded past the budget.
     pub show_collapse_prompt: bool,
 }
 
@@ -233,30 +298,23 @@ impl ToolCard {
     /// - Always keep header out of this plan (caller always draws header).
     /// - Facts and body form ONE child sequence under `max_lines` budget
     ///   (`max_lines.max(1)`).
-    /// - When collapsed: apply budget across facts first, then body.
-    /// - Diff bodies ([`ToolBody::DiffLines`]) are HIDDEN when collapsed
-    ///   (0 visible body lines) but still count toward `hidden_rows` and make
-    ///   the card expandable if non-empty.
+    /// - When collapsed: apply budget across facts first, then body. Diff
+    ///   bodies take the budget like any other body, so an edit shows its
+    ///   opening rows without a keystroke.
     /// - When expanded: show all facts and all body lines.
-    /// - `expandable` is true if there is anything to reveal/hide via toggle:
-    ///   non-empty collapsed diff, OR any hidden rows when collapsed, OR when
-    ///   expanded after having been over budget / having a diff body that
-    ///   collapses away.
+    /// - `expandable` is true whenever the toggle has something to reveal or
+    ///   hide: hidden rows when collapsed, or an over-budget card when expanded.
     /// - When collapsed and `hidden_rows > 0`, caller shows
     ///   `... {hidden_rows} more lines, ctrl+o to expand`.
     /// - When expanded and `show_collapse_prompt`, show `ctrl+o to collapse`.
-    ///
-    /// Collapse prompt when expanded: true if a non-empty diff body exists OR
-    /// total children (facts + body lines) > `max_lines`.
     pub fn display_plan(&self, max_lines: usize, expanded: bool) -> ToolCardDisplayPlan {
         let budget = max_lines.max(1);
         let fact_count = self.facts.len();
         let body_lines = self.body.line_count();
         let total_children = fact_count + body_lines;
-        let non_empty_diff = self.body.is_diff() && body_lines > 0;
 
         if expanded {
-            let show_collapse_prompt = non_empty_diff || total_children > budget;
+            let show_collapse_prompt = total_children > budget;
             return ToolCardDisplayPlan {
                 visible_facts: fact_count,
                 visible_body_lines: body_lines,
@@ -266,15 +324,10 @@ impl ToolCard {
             };
         }
 
-        // Collapsed: budget covers facts first, then non-diff body lines.
-        // Diff bodies stay fully hidden until expanded.
+        // Collapsed: budget covers facts first, then body lines.
         let visible_facts = fact_count.min(budget);
         let remaining = budget.saturating_sub(visible_facts);
-        let visible_body_lines = if self.body.is_diff() {
-            0
-        } else {
-            body_lines.min(remaining)
-        };
+        let visible_body_lines = body_lines.min(remaining);
         let hidden_rows = fact_count.saturating_sub(visible_facts)
             + body_lines.saturating_sub(visible_body_lines);
         ToolCardDisplayPlan {
@@ -361,7 +414,12 @@ struct ParsedDiffFile {
     path: String,
     added: u64,
     removed: u64,
-    compact_lines: Vec<String>,
+    rows: Vec<DiffRow>,
+    /// Next line numbers in the old and new files, advanced across a hunk.
+    next_old: u32,
+    next_new: u32,
+    /// Whether a hunk has been seen, so later hunks can draw a gap row.
+    seen_hunk: bool,
 }
 
 /// Extract per-file `+N -M` stats from a unified diff.
@@ -376,23 +434,20 @@ pub fn diff_file_stats(diff: &str) -> Vec<DiffFileStat> {
         .collect()
 }
 
-/// Collapse a unified diff to compact add/remove/context lines for expand body.
-pub fn compact_diff_lines(diff: &str, include_file_headers: bool) -> Vec<String> {
+/// Collapse a unified diff to numbered add/remove/context rows for the card body.
+pub fn compact_diff_rows(diff: &str, include_file_headers: bool) -> Vec<DiffRow> {
     let files = parse_unified_diff(diff);
-    let mut lines = Vec::new();
+    let mut rows = Vec::new();
     for file in files {
         if include_file_headers {
-            if !lines.is_empty() {
-                lines.push(String::new());
-            }
-            lines.push(file.path);
+            rows.push(DiffRow::new(DiffRowKind::File, None, file.path));
         }
-        lines.extend(file.compact_lines);
+        rows.extend(file.rows);
     }
-    lines
+    rows
 }
 
-/// Parse a unified diff once into per-file sections used by stats and compact body.
+/// Parse a unified diff once into per-file sections used by stats and the body.
 fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
     let mut files = Vec::new();
     let mut current: Option<ParsedDiffFile> = None;
@@ -411,13 +466,26 @@ fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
                 path,
                 added: 0,
                 removed: 0,
-                compact_lines: Vec::new(),
+                rows: Vec::new(),
+                next_old: 1,
+                next_new: 1,
+                seen_hunk: false,
             });
             continue;
         }
 
-        if line.starts_with("@@") {
+        if let Some((old_start, new_start)) = hunk_starts(line) {
             in_hunk = true;
+            if let Some(file) = current.as_mut() {
+                // A second hunk means skipped lines; mark the gap so the row
+                // numbers do not look like a contiguous run.
+                if file.seen_hunk {
+                    file.rows.push(DiffRow::new(DiffRowKind::Skip, None, "⋯"));
+                }
+                file.seen_hunk = true;
+                file.next_old = old_start;
+                file.next_new = new_start;
+            }
             continue;
         }
 
@@ -431,19 +499,34 @@ fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
         let Some(marker) = line.as_bytes().first().copied() else {
             continue;
         };
+        let content = line.get(1..).unwrap_or_default().to_string();
         match marker {
             b'+' => {
                 file.added += 1;
-                file.compact_lines.push(line.to_string());
+                file.rows.push(DiffRow::new(
+                    DiffRowKind::Added,
+                    Some(file.next_new),
+                    content,
+                ));
+                file.next_new += 1;
             }
             b'-' => {
                 file.removed += 1;
-                file.compact_lines.push(line.to_string());
+                file.rows.push(DiffRow::new(
+                    DiffRowKind::Removed,
+                    Some(file.next_old),
+                    content,
+                ));
+                file.next_old += 1;
             }
             b' ' => {
-                if let Some(content) = line.get(1..) {
-                    file.compact_lines.push(content.to_string());
-                }
+                file.rows.push(DiffRow::new(
+                    DiffRowKind::Context,
+                    Some(file.next_new),
+                    content,
+                ));
+                file.next_old += 1;
+                file.next_new += 1;
             }
             _ => {}
         }
@@ -453,6 +536,22 @@ fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
         files.push(file);
     }
     files
+}
+
+/// Old and new starting line numbers from an `@@ -a,b +c,d @@` header.
+fn hunk_starts(line: &str) -> Option<(u32, u32)> {
+    let body = line.strip_prefix("@@ ")?;
+    let (ranges, _) = body.split_once(" @@")?;
+    let (old, new) = ranges.split_once(' ')?;
+    let start = |range: &str, sign: char| -> Option<u32> {
+        range
+            .strip_prefix(sign)?
+            .split(',')
+            .next()?
+            .parse::<u32>()
+            .ok()
+    };
+    Some((start(old, '-')?, start(new, '+')?))
 }
 
 fn plus_file_path(line: &str) -> Option<String> {

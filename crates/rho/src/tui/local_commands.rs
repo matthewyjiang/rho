@@ -23,7 +23,7 @@ impl App {
             }
         };
         let body = if diff.has_changes {
-            ToolBody::DiffLines(diff.lines)
+            ToolBody::Diff(diff.rows())
         } else {
             ToolBody::Lines(diff.lines)
         };

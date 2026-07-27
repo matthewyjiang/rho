@@ -4,10 +4,33 @@ use std::{
     process::{Command, Output},
 };
 
+use rho_tools::tool_card::{DiffRow, DiffRowKind};
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct WorktreeDiff {
     pub(super) lines: Vec<String>,
     pub(super) has_changes: bool,
+}
+
+impl WorktreeDiff {
+    /// Patch text as diff rows so `/diff` colors changes like a tool card.
+    ///
+    /// Git output here mixes status, section titles and several patches, so
+    /// rows carry no line numbers and the body renders without a gutter.
+    pub(super) fn rows(&self) -> Vec<DiffRow> {
+        self.lines
+            .iter()
+            .map(|line| match line.as_bytes().first() {
+                Some(b'+') if !line.starts_with("+++") => {
+                    DiffRow::new(DiffRowKind::Added, None, &line[1..])
+                }
+                Some(b'-') if !line.starts_with("---") => {
+                    DiffRow::new(DiffRowKind::Removed, None, &line[1..])
+                }
+                Some(_) | None => DiffRow::new(DiffRowKind::Context, None, line.clone()),
+            })
+            .collect()
+    }
 }
 
 pub(super) fn collect(cwd: &Path) -> anyhow::Result<WorktreeDiff> {

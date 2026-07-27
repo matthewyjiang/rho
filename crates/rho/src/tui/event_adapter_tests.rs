@@ -35,25 +35,15 @@ fn card_lines(card: &rho_tools::tool_card::ToolCard) -> Vec<String> {
         };
         lines.push(format!("  {branch} {}", fact.plain_text()));
     }
-    match &card.body {
-        rho_tools::tool_card::ToolBody::None => {}
-        rho_tools::tool_card::ToolBody::Lines(body)
-        | rho_tools::tool_card::ToolBody::DiffLines(body) => {
-            for (index, line) in body.iter().enumerate() {
-                if index == 0 && card.facts.is_empty() {
-                    if body.len() == 1 && !line.contains('\n') {
-                        lines.push(format!("  └ {line}"));
-                    } else {
-                        lines.push(String::new());
-                        lines.push(line.clone());
-                    }
-                } else if index == 0 {
-                    lines.push(String::new());
-                    lines.push(line.clone());
-                } else {
-                    lines.push(line.clone());
-                }
-            }
+    let body = card.body.plain_lines();
+    for (index, line) in body.iter().enumerate() {
+        if index == 0 && card.facts.is_empty() && body.len() == 1 && !line.contains('\n') {
+            lines.push(format!("  └ {line}"));
+        } else if index == 0 {
+            lines.push(String::new());
+            lines.push(line.clone());
+        } else {
+            lines.push(line.clone());
         }
     }
     lines

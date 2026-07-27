@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_tools::tool_card::{
+    DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+};
 
 use super::*;
 use crate::tui::tool_output_ui::tool_output_toggleable;
@@ -24,81 +26,94 @@ fn short_diff_card() -> ToolCard {
         removed: 2,
         path: Some("theme.rs".into()),
     }])
-    .with_body(ToolBody::DiffLines(vec!["-old".into(), "+new".into()]))
+    .with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::Removed, Some(41), "old"),
+        DiffRow::new(DiffRowKind::Added, Some(41), "new"),
+    ]))
 }
 
 #[test]
-fn renders_edit_card_with_diff_stat_child() {
+fn renders_edit_card_with_stat_child_and_diff_rows() {
     let card = short_diff_card();
     let mut lines = Vec::new();
     push_tool_card(&mut lines, &card, 80, 4, /*expanded*/ false);
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(rendered[0], "✓ edit_file(theme.rs)");
-    assert!(rendered[1].contains("├") || rendered[1].contains("└"));
-    assert!(rendered[1].contains("+54"));
-    assert!(rendered[1].contains("-2"));
-    assert!(
-        !rendered
-            .iter()
-            .any(|line| line.contains("-old") || line.contains("+new")),
-        "collapsed edit hides diff body: {rendered:?}"
-    );
-    assert!(
-        rendered
-            .iter()
-            .any(|line| line.contains("2 more lines") && line.contains("ctrl+o to expand")),
-        "short collapsed diff should keep expand chrome: {rendered:?}"
+
+    assert_eq!(
+        rendered,
+        vec![
+            "✓ edit_file(theme.rs)".to_string(),
+            "  ├ +54 -2 lines | theme.rs".to_string(),
+            "    41 - old".to_string(),
+            "    41 + new".to_string(),
+        ]
     );
 }
 
 #[test]
-fn short_diff_collapsed_hides_body_and_shows_expand_prompt() {
+fn short_diff_shows_its_body_while_collapsed() {
     let card = short_diff_card();
     let plan = card.display_plan(4, /*expanded*/ false);
-    assert_eq!(plan.visible_facts, 1);
-    assert_eq!(plan.visible_body_lines, 0);
-    assert_eq!(plan.hidden_rows, 2);
-    assert!(plan.expandable);
-    assert!(!plan.show_collapse_prompt);
 
+    assert_eq!(plan.visible_facts, 1);
+    assert_eq!(plan.visible_body_lines, 2);
+    assert_eq!(plan.hidden_rows, 0);
+    assert!(!plan.expandable);
+    assert!(!plan.show_collapse_prompt);
+}
+
+#[test]
+fn diff_gutter_pads_line_numbers_to_a_common_width() {
+    let card = short_diff_card().with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::Context, Some(9), "keep"),
+        DiffRow::new(DiffRowKind::Added, Some(1204), "new"),
+    ]));
     let mut lines = Vec::new();
     push_tool_card(&mut lines, &card, 80, 4, /*expanded*/ false);
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert!(
-        !rendered
-            .iter()
-            .any(|line| line.contains("-old") || line.contains("+new")),
-        "body must stay hidden: {rendered:?}"
-    );
-    assert!(
-        rendered
-            .iter()
-            .any(|line| line.contains("... 2 more lines, ctrl+o to expand")),
-        "expand prompt should report hidden body rows: {rendered:?}"
+
+    assert_eq!(
+        rendered[2..],
+        ["       9   keep".to_string(), "    1204 + new".to_string()]
     );
 }
 
 #[test]
-fn short_diff_is_toggleable_via_display_plan() {
-    let card = short_diff_card();
+fn unnumbered_diff_rows_render_without_a_gutter() {
+    let card = short_diff_card().with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::File, None, "src/lib.rs"),
+        DiffRow::new(DiffRowKind::Added, None, "new"),
+    ]));
+    let mut lines = Vec::new();
+    push_tool_card(&mut lines, &card, 80, 4, /*expanded*/ false);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert_eq!(
+        rendered[2..],
+        ["    src/lib.rs".to_string(), "    + new".to_string()]
+    );
+}
+
+#[test]
+fn over_budget_diff_is_toggleable_via_display_plan() {
     let tool = ToolEntry {
-        card,
+        card: short_diff_card(),
         expanded: false,
         image: None,
     };
     assert!(
-        tool_output_toggleable(&tool, 4),
-        "short collapsed diffs must remain toggleable"
+        tool_output_toggleable(&tool, 2),
+        "a diff past the budget must be expandable"
     );
 
     let mut expanded = tool.clone();
     expanded.expanded = true;
     assert!(
-        tool_output_toggleable(&expanded, 4),
-        "expanded short diffs must stay toggleable so users can collapse"
+        tool_output_toggleable(&expanded, 2),
+        "expanded diffs must stay toggleable so users can collapse"
     );
 
-    let expanded_plan = expanded.card.display_plan(4, /*expanded*/ true);
+    let expanded_plan = expanded.card.display_plan(2, /*expanded*/ true);
     assert_eq!(expanded_plan.visible_body_lines, 2);
     assert!(expanded_plan.show_collapse_prompt);
 }
@@ -107,11 +122,12 @@ fn short_diff_is_toggleable_via_display_plan() {
 fn long_collapsed_diff_shows_expand_prompt() {
     let body = (0..12)
         .map(|index| {
-            if index % 2 == 0 {
-                format!("-old {index}")
+            let kind = if index % 2 == 0 {
+                DiffRowKind::Removed
             } else {
-                format!("+new {index}")
-            }
+                DiffRowKind::Added
+            };
+            DiffRow::new(kind, Some(index + 1), format!("line {index}"))
         })
         .collect::<Vec<_>>();
     let card = ToolCard::new(
@@ -124,10 +140,10 @@ fn long_collapsed_diff_shows_expand_prompt() {
         removed: 6,
         path: Some("big.rs".into()),
     }])
-    .with_body(ToolBody::DiffLines(body));
+    .with_body(ToolBody::Diff(body));
     let plan = card.display_plan(4, /*expanded*/ false);
-    assert_eq!(plan.visible_body_lines, 0);
-    assert_eq!(plan.hidden_rows, 12);
+    assert_eq!(plan.visible_body_lines, 3);
+    assert_eq!(plan.hidden_rows, 9);
     assert!(plan.expandable);
 
     let mut lines = Vec::new();
@@ -136,7 +152,7 @@ fn long_collapsed_diff_shows_expand_prompt() {
     assert!(
         rendered
             .iter()
-            .any(|line| line.contains("... 12 more lines, ctrl+o to expand")),
+            .any(|line| line.contains("... 9 more lines, ctrl+o to expand")),
         "long collapsed diff should expose hidden body count: {rendered:?}"
     );
 }

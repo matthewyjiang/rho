@@ -4,7 +4,9 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
+use rho_tools::tool_card::{
+    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus,
+};
 use unicode_width::UnicodeWidthStr;
 
 use super::{
@@ -63,7 +65,6 @@ pub(super) fn push_tool_card(
     let show_expand_prompt = !expanded && plan.hidden_rows > 0;
     let show_collapse_prompt = expanded && plan.show_collapse_prompt;
     let has_prompt = show_expand_prompt || show_collapse_prompt;
-    let body_lines = body_logical_lines(&card.body);
 
     for (index, fact) in card.facts.iter().take(plan.visible_facts).enumerate() {
         let is_last =
@@ -71,15 +72,21 @@ pub(super) fn push_tool_card(
         push_fact_line(lines, fact, is_last, width);
     }
 
-    if plan.visible_body_lines > 0 {
-        let color_diff = card.body.is_diff();
-        for line in body_lines.iter().take(plan.visible_body_lines) {
-            let style = if color_diff {
-                tool_diff::line_style(line, Theme::text())
-            } else {
-                Theme::text()
-            };
-            push_body_line(lines, line, width, style);
+    match &card.body {
+        ToolBody::None => {}
+        ToolBody::Lines(body) => {
+            for line in tool_diff::logical_lines(body)
+                .iter()
+                .take(plan.visible_body_lines)
+            {
+                push_body_line(lines, line, width, Theme::text());
+            }
+        }
+        ToolBody::Diff(rows) => {
+            let gutter = tool_diff::gutter_width(rows);
+            for row in rows.iter().take(plan.visible_body_lines) {
+                push_diff_row(lines, row, gutter, width);
+            }
         }
     }
 
@@ -300,6 +307,49 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
     }
 }
 
+/// Draw one diff row as `<indent><line no> <sign> <text>`.
+///
+/// The number gutter and sign column are fixed, so wrapped text hangs under the
+/// text column and added/removed rows stay distinguishable without color.
+fn push_diff_row(lines: &mut Vec<Line<'static>>, row: &DiffRow, gutter: usize, width: usize) {
+    if row.kind == DiffRowKind::File {
+        push_body_line(lines, &row.text, width, Theme::tool_path());
+        return;
+    }
+
+    // Unnumbered bodies (patch text without hunk headers) drop the gutter and
+    // its separator so the sign column sits right under the tree indent.
+    let number = match (gutter, row.line) {
+        (0, _) => String::new(),
+        (_, Some(line)) => format!("{line:>gutter$} "),
+        (_, None) => " ".repeat(gutter + 1),
+    };
+    let sign = format!("{} ", row.kind.sign());
+    let prefix_width = display_width(CHILD_CONTENT_INDENT) + display_width(&number) + sign.len();
+    let content_width = width.saturating_sub(prefix_width).max(1);
+    let text_style = Theme::tool_diff_text(row.kind);
+
+    let mut chunks = wrap_line_hard(&row.text, content_width);
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+    for (index, chunk) in chunks.into_iter().enumerate() {
+        let mut spans = if index == 0 {
+            vec![
+                Span::styled(
+                    format!("{CHILD_CONTENT_INDENT}{number}"),
+                    Theme::tool_diff_gutter(),
+                ),
+                Span::styled(sign.clone(), text_style),
+            ]
+        } else {
+            vec![Span::styled(" ".repeat(prefix_width), Theme::tool_tree())]
+        };
+        spans.push(Span::styled(chunk, text_style));
+        lines.push(pad_spans_line(spans, width));
+    }
+}
+
 fn push_body_line(lines: &mut Vec<Line<'static>>, line: &str, width: usize, style: Style) {
     // Indent body under the tree content column.
     let prefix = CHILD_CONTENT_INDENT;
@@ -324,13 +374,6 @@ fn push_body_line(lines: &mut Vec<Line<'static>>, line: &str, width: usize, styl
             ],
             width,
         ));
-    }
-}
-
-fn body_logical_lines(body: &ToolBody) -> Vec<String> {
-    match body {
-        ToolBody::None => Vec::new(),
-        ToolBody::Lines(lines) | ToolBody::DiffLines(lines) => tool_diff::logical_lines(lines),
     }
 }
 

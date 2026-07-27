@@ -3,7 +3,7 @@
 use rho_tools::{
     parse_shell_content,
     tool_card::{
-        compact_diff_lines, diff_file_stats, ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus,
+        compact_diff_rows, diff_file_stats, ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus,
     },
 };
 
@@ -129,9 +129,9 @@ pub(super) fn file_diff_card(
                 });
             }
         }
-        let compact = compact_diff_lines(diff, paths.len() > 1);
-        if !compact.is_empty() {
-            card.body = ToolBody::DiffLines(compact);
+        let rows = compact_diff_rows(diff, paths.len() > 1);
+        if !rows.is_empty() {
+            card.body = ToolBody::Diff(rows);
         }
     } else if !content.trim().is_empty() {
         push_error_output(&mut card, content);
@@ -451,9 +451,9 @@ pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -
         card.push_fact(ToolFact::Meta { text: url.clone() });
     }
     if let Some(diff) = view.metadata.unified_diff() {
-        let compact = compact_diff_lines(diff, true);
-        if !compact.is_empty() {
-            card.body = ToolBody::DiffLines(compact);
+        let rows = compact_diff_rows(diff, true);
+        if !rows.is_empty() {
+            card.body = ToolBody::Diff(rows);
         }
     }
     if card.facts.is_empty()

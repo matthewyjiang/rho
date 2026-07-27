@@ -81,7 +81,7 @@ fn partial_tool_only_plus_complete_only_text_and_reasoning() {
     assert_eq!(
         count_attachments(&effects, |event| {
             matches!(event, AttachmentEvent::ToolStarted { card, .. }
-                if card.header_text().contains("toolu_partial_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_partial_1")) || matches!(&card.body, rho_tools::tool_card::ToolBody::Lines(lines) | rho_tools::tool_card::ToolBody::DiffLines(lines) if lines.iter().any(|line| line.contains("toolu_partial_1"))))
+                if card.header_text().contains("toolu_partial_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_partial_1")) || card.body.plain_lines().iter().any(|line| line.contains("toolu_partial_1")))
         }),
         1
     );
@@ -158,7 +158,7 @@ fn indexless_partials_do_not_duplicate_on_complete_envelope() {
     assert_eq!(
         count_attachments(&effects, |event| {
             matches!(event, AttachmentEvent::ToolStarted { card, .. }
-                if card.header_text().contains("toolu_indexless_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_indexless_1")) || matches!(&card.body, rho_tools::tool_card::ToolBody::Lines(lines) | rho_tools::tool_card::ToolBody::DiffLines(lines) if lines.iter().any(|line| line.contains("toolu_indexless_1"))))
+                if card.header_text().contains("toolu_indexless_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_indexless_1")) || card.body.plain_lines().iter().any(|line| line.contains("toolu_indexless_1")))
         }),
         1
     );

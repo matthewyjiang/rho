@@ -53,12 +53,10 @@ fn card_contains(card: &ToolCard, needle: &str) -> bool {
     {
         return true;
     }
-    match &card.body {
-        ToolBody::None => false,
-        ToolBody::Lines(lines) | ToolBody::DiffLines(lines) => {
-            lines.iter().any(|line| line.contains(needle))
-        }
-    }
+    card.body
+        .plain_lines()
+        .iter()
+        .any(|line| line.contains(needle))
 }
 
 fn fact_texts(card: &ToolCard) -> Vec<String> {

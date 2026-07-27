@@ -344,14 +344,6 @@ impl Theme {
             .add_modifier(Modifier::UNDERLINED)
     }
 
-    pub(super) fn diff_addition(base: Style) -> Style {
-        base.fg(Palette::current().success)
-    }
-
-    pub(super) fn diff_removal(base: Style) -> Style {
-        base.fg(Palette::current().error)
-    }
-
     pub(super) fn command_block() -> Style {
         Self::dim_block(Palette::current().neutral_tool_background)
     }
@@ -404,6 +396,22 @@ impl Theme {
 
     pub(super) fn tool_stat_del() -> Style {
         Style::default().fg(Palette::current().error)
+    }
+
+    /// Text color for one diff row. Context stays plain so changes stand out.
+    pub(super) fn tool_diff_text(kind: rho_tools::tool_card::DiffRowKind) -> Style {
+        use rho_tools::tool_card::DiffRowKind;
+        let palette = Palette::current();
+        match kind {
+            DiffRowKind::Added => Style::default().fg(palette.success),
+            DiffRowKind::Removed => Style::default().fg(palette.error),
+            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip => Self::text(),
+        }
+    }
+
+    /// Line-number gutter. The sign carries the change, so numbers stay chrome.
+    pub(super) fn tool_diff_gutter() -> Style {
+        Self::dim()
     }
 
     pub(super) fn tool_exit(ok: bool) -> Style {
