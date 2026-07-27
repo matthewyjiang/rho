@@ -21,7 +21,7 @@ use super::markdown_image::standalone_markdown_image;
 
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
-pub(super) use stream::{markdown_preview_prefix_len, markdown_stream_prefix};
+pub(super) use stream::markdown_stream_bounds;
 
 #[cfg(test)]
 #[path = "markdown/table_tests.rs"]
@@ -617,57 +617,63 @@ fn next_raw_url(line: &str) -> Option<MarkdownSpan> {
 
 /// Byte length of the leading inline-markdown prefix that is safe to draw.
 ///
-/// Open emphasis, links, code spans, and raw URLs hold only from their opener
-/// onward. Text before that opener stays visible so the live line does not blank
-/// while markers complete.
+/// Open emphasis, links, code spans, and raw URLs hold only from their earliest
+/// opener onward. Text before that opener stays visible so the live line does
+/// not blank while markers complete.
 fn inline_markdown_stable_prefix_len(line: &str) -> usize {
     first_unresolved_inline_markdown_start(line).unwrap_or(line.len())
 }
 
-fn first_unresolved_inline_markdown_start(line: &str) -> Option<usize> {
-    let code_ranges = match complete_delimiter_ranges(line, "`", &[]) {
-        Ok(ranges) => ranges,
-        Err(open_at) => return Some(open_at),
-    };
-    let link_ranges = match complete_link_ranges(line, &code_ranges) {
-        Ok(ranges) => ranges,
-        Err(open_at) => return Some(open_at),
-    };
-    let mut ignored_ranges = [code_ranges, link_ranges].concat();
-
-    if let Some(open_at) = first_unclosed_raw_url_start(line, &ignored_ranges) {
-        return Some(open_at);
-    }
-
-    // Bold must win over italic. Feed completed `**` spans into the ignored set
-    // before scanning `*`/`_`, or a closed bold run with trailing text is treated
-    // as an open italic delimiter and the live preview vanishes.
-    let bold_ranges = match complete_delimiter_ranges(line, "**", &ignored_ranges) {
-        Ok(ranges) => ranges,
-        Err(open_at) => return Some(open_at),
-    };
-    ignored_ranges.extend(bold_ranges);
-
-    if let Err(open_at) = complete_delimiter_ranges(line, "*", &ignored_ranges) {
-        return Some(open_at);
-    }
-    if let Err(open_at) = complete_delimiter_ranges(line, "_", &ignored_ranges) {
-        return Some(open_at);
-    }
-    None
+/// Completed spans of one delimiter kind, plus the first still-open opener.
+///
+/// Ranges and `open_at` coexist so callers can ignore finished spans while still
+/// taking the minimum unresolved cut across marker kinds.
+#[derive(Debug, Default)]
+struct InlineDelimScan {
+    ranges: Vec<std::ops::Range<usize>>,
+    open_at: Option<usize>,
 }
 
-fn complete_link_ranges(
-    line: &str,
-    ignored_ranges: &[std::ops::Range<usize>],
-) -> Result<Vec<std::ops::Range<usize>>, usize> {
+fn first_unresolved_inline_markdown_start(line: &str) -> Option<usize> {
+    let mut earliest: Option<usize> = None;
+    let mut consider = |open_at: Option<usize>| {
+        if let Some(pos) = open_at {
+            earliest = Some(earliest.map_or(pos, |existing| existing.min(pos)));
+        }
+    };
+
+    let code = complete_delimiter_ranges(line, "`", &[]);
+    consider(code.open_at);
+
+    let links = complete_link_ranges(line, &code.ranges);
+    consider(links.open_at);
+
+    let mut ignored_ranges = [code.ranges, links.ranges].concat();
+    consider(first_unclosed_raw_url_start(line, &ignored_ranges));
+
+    // Bold must win over italic for completed spans. Feed closed `**` ranges into
+    // the ignored set before scanning `*`/`_`, or a closed bold run with trailing
+    // text is treated as an open italic delimiter and the live preview vanishes.
+    let bold = complete_delimiter_ranges(line, "**", &ignored_ranges);
+    consider(bold.open_at);
+    ignored_ranges.extend(bold.ranges);
+
+    consider(complete_delimiter_ranges(line, "*", &ignored_ranges).open_at);
+    consider(complete_delimiter_ranges(line, "_", &ignored_ranges).open_at);
+    earliest
+}
+
+fn complete_link_ranges(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -> InlineDelimScan {
     let mut ranges = Vec::new();
     let mut search_from = 0;
     while let Some(start) = find_char_outside_ranges(line, '[', search_from, ignored_ranges) {
         let Some(close_label) =
             find_char_outside_ranges(line, ']', start + '['.len_utf8(), ignored_ranges)
         else {
-            return Err(start);
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
         };
         let target_start = close_label + "](".len();
         if !line[close_label + ']'.len_utf8()..].starts_with('(') {
@@ -675,28 +681,40 @@ fn complete_link_ranges(
             continue;
         }
         if target_start >= line.len() {
-            return Err(start);
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
         }
         let Some(target_end) = line[target_start..]
             .find(')')
             .map(|index| index + target_start)
         else {
-            return Err(start);
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
         };
         if close_label == start + '['.len_utf8() || target_end == target_start {
-            return Err(start);
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
         }
         ranges.push(start..target_end + ')'.len_utf8());
         search_from = target_end + ')'.len_utf8();
     }
-    Ok(ranges)
+    InlineDelimScan {
+        ranges,
+        open_at: None,
+    }
 }
 
 fn complete_delimiter_ranges(
     line: &str,
     marker: &str,
     ignored_ranges: &[std::ops::Range<usize>],
-) -> Result<Vec<std::ops::Range<usize>>, usize> {
+) -> InlineDelimScan {
     let mut ranges = Vec::new();
     let mut search_from = 0;
     while let Some(start) = find_marker_outside_ranges(line, marker, search_from, ignored_ranges) {
@@ -731,12 +749,18 @@ fn complete_delimiter_ranges(
             break;
         }
         let Some(end) = matched_end else {
-            return Err(start);
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
         };
         ranges.push(start..end + marker.len());
         search_from = end + marker.len();
     }
-    Ok(ranges)
+    InlineDelimScan {
+        ranges,
+        open_at: None,
+    }
 }
 
 fn is_valid_stream_opener(line: &str, marker: &str, marker_start: usize) -> bool {

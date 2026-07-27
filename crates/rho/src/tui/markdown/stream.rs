@@ -1,31 +1,140 @@
 use super::*;
 
-/// How much of `text` can be shown as a live partial-line preview.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tui) struct MarkdownStreamPrefix {
+    pub(in crate::tui) byte_index: usize,
+    pub(in crate::tui) ends_with_wrap: bool,
+}
+
+/// Drainable and previewable ends of a pending markdown buffer.
 ///
-/// Includes the stable prefix before an open inline marker so completing bold or
-/// italic does not blank the already-drawn prose and yank the viewport up.
-pub(in crate::tui) fn markdown_preview_prefix_len(
+/// `drain` is safe to commit permanently. `preview_end` may extend through the
+/// stable open-line prefix so already-drawn prose stays visible while a later
+/// inline marker is still incomplete. Preview never commits; only drain does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tui) struct MarkdownStreamBounds {
+    pub(in crate::tui) drain: MarkdownStreamPrefix,
+    pub(in crate::tui) preview_end: Option<usize>,
+}
+
+pub(in crate::tui) fn markdown_stream_bounds(
     text: &str,
     width: usize,
     in_code_block: bool,
-) -> Option<usize> {
+) -> MarkdownStreamBounds {
     let current_line_start = text.rfind('\n').map_or(0, |index| index + '\n'.len_utf8());
     let current_line_in_code_block =
         line_starts_in_code_block(text, current_line_start, in_code_block);
     let current_line = &text[current_line_start..];
+    let mut drain = MarkdownStreamPrefix {
+        byte_index: current_line_start,
+        ends_with_wrap: false,
+    };
+
     if current_line.is_empty() || starts_with_code_fence_fragment(current_line) {
-        return None;
+        return MarkdownStreamBounds {
+            drain,
+            preview_end: None,
+        };
     }
 
-    let stable_line_len = if current_line_in_code_block {
-        current_line.len()
-    } else {
-        inline_markdown_stable_prefix_len(current_line)
-    };
+    if current_line_in_code_block {
+        let complete =
+            complete_hard_wrap_prefix(current_line, code_block_stream_content_width(width));
+        if complete.byte_index > 0 {
+            drain.byte_index = current_line_start + complete.byte_index;
+            drain.ends_with_wrap = complete.ends_with_wrap;
+        }
+        return MarkdownStreamBounds {
+            drain,
+            preview_end: previewable_prefix_end(
+                text,
+                current_line_start,
+                current_line.len(),
+                width,
+                in_code_block,
+            ),
+        };
+    }
+
+    // Only wrap/preview inside the stable prefix. Open markers stay pending so
+    // already-drawn prose is not pulled back when the span finally closes shorter.
+    let stable_line_len = inline_markdown_stable_prefix_len(current_line);
+    let preview_end = previewable_prefix_end(
+        text,
+        current_line_start,
+        stable_line_len,
+        width,
+        in_code_block,
+    );
+
+    if !matches!(
+        heading_stream_state(current_line),
+        HeadingStreamState::NotHeading
+    ) {
+        // Headings drain only once the line completes.
+        return MarkdownStreamBounds { drain, preview_end };
+    }
+
+    if stable_line_len == 0 {
+        return MarkdownStreamBounds {
+            drain,
+            preview_end: None,
+        };
+    }
+
+    let stable_line = &current_line[..stable_line_len];
+    let rendered_line = markdown_inline_text(stable_line);
+    let complete = complete_word_wrap_prefix(&rendered_line, width);
+    if complete.byte_index == 0 {
+        return MarkdownStreamBounds { drain, preview_end };
+    }
+
+    let rendered_prefix = &rendered_line[..complete.byte_index];
+    for candidate in stable_line
+        .char_indices()
+        .map(|(index, _)| index)
+        .chain(std::iter::once(stable_line.len()))
+        .skip(1)
+    {
+        // Candidates already sit inside the stable prefix. The only remaining
+        // local hazard is a short prefix that looks like an open fence marker.
+        if starts_with_code_fence_fragment(&stable_line[..candidate]) {
+            continue;
+        }
+        let absolute_candidate = current_line_start + candidate;
+        let candidate_source = &stable_line[..candidate];
+        let candidate_rendered = markdown_inline_text(candidate_source);
+        if candidate_rendered == rendered_prefix {
+            drain.byte_index = absolute_candidate;
+            drain.ends_with_wrap = complete.ends_with_wrap;
+        } else if candidate_source.len() != candidate_rendered.len()
+            && !candidate_source
+                .chars()
+                .last()
+                .is_some_and(char::is_whitespace)
+            && candidate_rendered.starts_with(rendered_prefix)
+        {
+            drain.byte_index = absolute_candidate;
+            drain.ends_with_wrap = false;
+        }
+    }
+
+    MarkdownStreamBounds { drain, preview_end }
+}
+
+/// Byte end of the live preview, including complete prior lines plus the stable
+/// prefix of the open line when that prefix renders non-empty.
+fn previewable_prefix_end(
+    text: &str,
+    current_line_start: usize,
+    stable_line_len: usize,
+    width: usize,
+    in_code_block: bool,
+) -> Option<usize> {
     if stable_line_len == 0 {
         return None;
     }
-
     let prefix_len = current_line_start + stable_line_len;
     let mut probe_code_block = in_code_block;
     let rendered_width = markdown_lines(&text[..prefix_len], width, &mut probe_code_block)
@@ -38,92 +147,6 @@ pub(in crate::tui) fn markdown_preview_prefix_len(
         })
         .unwrap_or_default();
     (rendered_width > 0).then_some(prefix_len)
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::tui) struct MarkdownStreamPrefix {
-    pub(in crate::tui) byte_index: usize,
-    pub(in crate::tui) ends_with_wrap: bool,
-}
-
-pub(in crate::tui) fn markdown_stream_prefix(
-    text: &str,
-    width: usize,
-    in_code_block: bool,
-) -> MarkdownStreamPrefix {
-    let current_line_start = text.rfind('\n').map_or(0, |index| index + '\n'.len_utf8());
-    let current_line_in_code_block =
-        line_starts_in_code_block(text, current_line_start, in_code_block);
-    let mut prefix = MarkdownStreamPrefix {
-        byte_index: current_line_start,
-        ends_with_wrap: false,
-    };
-
-    let current_line = &text[current_line_start..];
-    if current_line.is_empty() || starts_with_code_fence_fragment(current_line) {
-        return prefix;
-    }
-
-    if current_line_in_code_block {
-        let complete =
-            complete_hard_wrap_prefix(current_line, code_block_stream_content_width(width));
-        if complete.byte_index > 0 {
-            prefix.byte_index = current_line_start + complete.byte_index;
-            prefix.ends_with_wrap = complete.ends_with_wrap;
-        }
-        return prefix;
-    }
-
-    if !matches!(
-        heading_stream_state(current_line),
-        HeadingStreamState::NotHeading
-    ) {
-        return prefix;
-    }
-
-    // Only wrap inside the stable prefix. Open markers stay pending so already
-    // drawn prose is not pulled back when the span finally closes shorter.
-    let stable_line_len = inline_markdown_stable_prefix_len(current_line);
-    if stable_line_len == 0 {
-        return prefix;
-    }
-    let stable_line = &current_line[..stable_line_len];
-
-    let rendered_line = markdown_inline_text(stable_line);
-    let complete = complete_word_wrap_prefix(&rendered_line, width);
-    if complete.byte_index == 0 {
-        return prefix;
-    }
-
-    let rendered_prefix = &rendered_line[..complete.byte_index];
-    for candidate in stable_line
-        .char_indices()
-        .map(|(index, _)| index)
-        .chain(std::iter::once(stable_line.len()))
-        .skip(1)
-    {
-        let absolute_candidate = current_line_start + candidate;
-        if markdown_safe_prefix_len(text, absolute_candidate, in_code_block) != absolute_candidate {
-            continue;
-        }
-        let candidate_source = &stable_line[..candidate];
-        let candidate_rendered = markdown_inline_text(candidate_source);
-        if candidate_rendered == rendered_prefix {
-            prefix.byte_index = absolute_candidate;
-            prefix.ends_with_wrap = complete.ends_with_wrap;
-        } else if candidate_source.len() != candidate_rendered.len()
-            && !candidate_source
-                .chars()
-                .last()
-                .is_some_and(char::is_whitespace)
-            && candidate_rendered.starts_with(rendered_prefix)
-        {
-            prefix.byte_index = absolute_candidate;
-            prefix.ends_with_wrap = false;
-        }
-    }
-
-    prefix
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -170,42 +193,6 @@ fn complete_hard_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
             byte_index: last_complete,
             ends_with_wrap: true,
         }
-    }
-}
-
-fn markdown_safe_prefix_len(text: &str, candidate_byte_index: usize, in_code_block: bool) -> usize {
-    let candidate_byte_index = candidate_byte_index.min(text.len());
-    let current_line_start = text[..candidate_byte_index]
-        .rfind('\n')
-        .map_or(0, |index| index + '\n'.len_utf8());
-    // Fence state depends on complete lines before the candidate, so scan the
-    // full text rather than only the candidate prefix.
-    let current_line_in_code_block =
-        line_starts_in_code_block(text, current_line_start, in_code_block);
-
-    let current_line = &text[current_line_start..candidate_byte_index];
-    if current_line.is_empty() {
-        return candidate_byte_index;
-    }
-    if starts_with_code_fence_fragment(current_line) {
-        return current_line_start;
-    }
-    if current_line_in_code_block {
-        return candidate_byte_index;
-    }
-
-    // The candidate is taken from the source line. Compare against the stable
-    // prefix of the full current line so open markers after the candidate do
-    // not invalidate already-closed prose before them.
-    let full_current_line_end = text[current_line_start..]
-        .find('\n')
-        .map_or(text.len(), |index| current_line_start + index);
-    let full_current_line = &text[current_line_start..full_current_line_end];
-    let stable_end = current_line_start + inline_markdown_stable_prefix_len(full_current_line);
-    if candidate_byte_index <= stable_end {
-        candidate_byte_index
-    } else {
-        stable_end
     }
 }
 

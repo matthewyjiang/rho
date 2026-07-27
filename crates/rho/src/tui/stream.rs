@@ -1,4 +1,4 @@
-use super::markdown::{markdown_preview_prefix_len, markdown_stream_prefix};
+use super::markdown::markdown_stream_bounds;
 #[cfg(test)]
 use super::render::{complete_visual_prefix, display_width};
 
@@ -108,22 +108,18 @@ impl AppendOnlyStream {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
         let pending = &self.pending[scan_start..];
-        let prefix = markdown_stream_prefix(pending, inner_width, in_code_block);
-        let mut renderable_byte_index = prefix.byte_index;
-        let mut ends_with_wrap = prefix.ends_with_wrap;
-        if allow_partial_line {
-            // Previews may include the stable open-line prefix even when earlier
-            // complete lines or wraps are also ready. Drain still uses the
-            // stream prefix only, so mid-line prose is not committed early.
-            if let Some(byte_index) =
-                markdown_preview_prefix_len(pending, inner_width, in_code_block)
-            {
-                if byte_index > renderable_byte_index {
-                    renderable_byte_index = byte_index;
-                    ends_with_wrap = false;
-                }
+        let bounds = markdown_stream_bounds(pending, inner_width, in_code_block);
+        // Previews may include the stable open-line prefix even when earlier
+        // complete lines or wraps are also ready. Drain still uses the drain
+        // bound only, so mid-line prose is not committed early.
+        let (renderable_byte_index, ends_with_wrap) = if allow_partial_line {
+            match bounds.preview_end {
+                Some(preview_end) if preview_end > bounds.drain.byte_index => (preview_end, false),
+                _ => (bounds.drain.byte_index, bounds.drain.ends_with_wrap),
             }
-        }
+        } else {
+            (bounds.drain.byte_index, bounds.drain.ends_with_wrap)
+        };
         let split_at = scan_start + renderable_byte_index;
         if split_at == 0 {
             return None;

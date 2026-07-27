@@ -459,7 +459,7 @@ fn markdown_preview_keeps_stable_prefix_after_complete_line() {
 }
 
 #[test]
-fn markdown_preview_open_emphasis_does_not_shrink_wrapped_height() {
+fn markdown_preview_closed_emphasis_after_wrap_keeps_height() {
     // Soft-wrapped stable prose must stay put while a later emphasis span
     // completes. Marker removal shortens the source, and rejoining without a
     // kept break would pull the second visual line back up.
@@ -499,6 +499,31 @@ fn markdown_preview_open_emphasis_does_not_shrink_wrapped_height() {
         height_after_tail >= wrapped_height,
         "wrapped stable prefix must remain after emphasis completes ({wrapped_height} -> {height_after_tail})"
     );
+}
+
+#[test]
+fn markdown_preview_holds_at_earliest_of_multiple_open_markers() {
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("before **bold");
+    let preview = stream
+        .drain_preview_markdown(40, false)
+        .expect("open bold keeps the prose prefix");
+    assert_eq!(preview.render_text(), "before ");
+
+    // A later open code span must not unlock the still-open bold body.
+    stream.push_delta(" `code");
+    let preview = stream
+        .drain_preview_markdown(40, false)
+        .expect("earliest open marker still owns the cut");
+    assert_eq!(preview.render_text(), "before ");
+    assert!(stream.drain_renderable_markdown(40, false).is_none());
+
+    stream.push_delta("`**");
+    let preview = stream
+        .drain_preview_markdown(40, false)
+        .expect("closing both markers unlocks the line");
+    assert_eq!(preview.render_text(), "before **bold `code`**");
 }
 
 #[test]
