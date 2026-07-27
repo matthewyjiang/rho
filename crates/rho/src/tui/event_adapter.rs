@@ -209,6 +209,8 @@ impl SdkEventAdapter {
                 name,
                 arguments_delta,
             } => {
+                // StreamCapture re-emits known identity on later deltas, so the
+                // first rendered preview can bind the call-id slot.
                 let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
                 self.presenter()
                     .preview(index, name, &arguments_delta)

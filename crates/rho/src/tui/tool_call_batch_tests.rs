@@ -118,3 +118,20 @@ fn finished_removes_running_and_returns_expanded() {
     assert!(!batch.is_running());
     assert!(batch.live_entries().next().is_none());
 }
+
+#[test]
+fn unbound_index_preview_is_a_separate_slot_from_call_id_proposal() {
+    // Batch binding is call-id keyed. An index-only preview cannot be claimed by
+    // a later proposal for a different address space.
+    let mut batch = ToolCallBatch::default();
+    let call = call_id("call-dup");
+    batch.preview(0, None, card("streamed without id"));
+    batch.preview_call(call.clone(), card("proposed"));
+
+    assert_eq!(batch.live_entries().count(), 2);
+    assert_eq!(live_labels(&batch), ["● streamed without id", "● proposed"]);
+
+    batch.started(call, card("running"));
+    assert_eq!(batch.live_entries().count(), 2);
+    assert_eq!(live_labels(&batch), ["● streamed without id", "● running"]);
+}

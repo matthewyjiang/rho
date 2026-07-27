@@ -622,11 +622,21 @@ fn has_unresolved_inline_markdown(line: &str) -> bool {
     let Some(link_ranges) = complete_link_ranges(line, &code_ranges) else {
         return true;
     };
-    let ignored_ranges = [code_ranges, link_ranges].concat();
+    let mut ignored_ranges = [code_ranges, link_ranges].concat();
 
-    has_unclosed_raw_url(line, &ignored_ranges)
-        || complete_delimiter_ranges(line, "**", &ignored_ranges).is_none()
-        || complete_delimiter_ranges(line, "*", &ignored_ranges).is_none()
+    if has_unclosed_raw_url(line, &ignored_ranges) {
+        return true;
+    }
+
+    // Bold must win over italic. Feed completed `**` spans into the ignored set
+    // before scanning `*`/`_`, or a closed bold run with trailing text is treated
+    // as an open italic delimiter and the live preview vanishes.
+    let Some(bold_ranges) = complete_delimiter_ranges(line, "**", &ignored_ranges) else {
+        return true;
+    };
+    ignored_ranges.extend(bold_ranges);
+
+    complete_delimiter_ranges(line, "*", &ignored_ranges).is_none()
         || complete_delimiter_ranges(line, "_", &ignored_ranges).is_none()
 }
 
@@ -666,10 +676,12 @@ fn complete_delimiter_ranges(
     let mut search_from = 0;
     while let Some(start) = find_marker_outside_ranges(line, marker, search_from, ignored_ranges) {
         if marker == "*" && line[start..].starts_with("**") {
-            search_from = start + marker.len();
+            // Skip the whole bold marker. Advancing by one left the second `*`
+            // eligible and false-triggered unresolved italic after closed bold.
+            search_from = start + "**".len();
             continue;
         }
-        if !is_valid_stream_delimiter(line, marker, start) {
+        if !is_valid_stream_opener(line, marker, start) {
             search_from = start + marker.len();
             continue;
         }
@@ -681,10 +693,10 @@ fn complete_delimiter_ranges(
             find_marker_outside_ranges(line, marker, end_search_from, ignored_ranges)
         {
             if marker == "*" && line[end..].starts_with("**") {
-                end_search_from = end + marker.len();
+                end_search_from = end + "**".len();
                 continue;
             }
-            if !is_valid_stream_delimiter(line, marker, end) {
+            if !is_valid_stream_closer(line, marker, end) {
                 end_search_from = end + marker.len();
                 continue;
             }
@@ -700,12 +712,25 @@ fn complete_delimiter_ranges(
     Some(ranges)
 }
 
-fn is_valid_stream_delimiter(line: &str, marker: &str, marker_start: usize) -> bool {
+fn is_valid_stream_opener(line: &str, marker: &str, marker_start: usize) -> bool {
     let before = line[..marker_start].chars().next_back();
     let after = line[marker_start + marker.len()..].chars().next();
-    if after.is_some_and(char::is_whitespace)
-        || before.is_some_and(char::is_whitespace) && after.is_none()
-    {
+    // Opening emphasis cannot run into whitespace. A marker at EOL is still a
+    // potential opener so the missing closer keeps the line unresolved.
+    if after.is_some_and(char::is_whitespace) {
+        return false;
+    }
+    marker != "_"
+        || !matches!((before, after), (Some(before), Some(after)) if is_word_char(before) && is_word_char(after))
+}
+
+fn is_valid_stream_closer(line: &str, marker: &str, marker_start: usize) -> bool {
+    let before = line[..marker_start].chars().next_back();
+    let after = line[marker_start + marker.len()..].chars().next();
+    // Closing emphasis cannot follow whitespace, but may be followed by spaces
+    // or more prose (`**bold** tail`). The old shared rule rejected that case
+    // and hid the live markdown preview after every closed span.
+    if before.is_none_or(char::is_whitespace) {
         return false;
     }
     marker != "_"
@@ -777,7 +802,7 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan
     while let Some(relative_start) = line[search_from..].find(marker) {
         let start = search_from + relative_start;
         if marker == "*" && line[start..].starts_with("**") {
-            search_from = start + marker.len();
+            search_from = start + "**".len();
             continue;
         }
         if marker == "_" && !is_valid_underscore_delimiter(line, start) {
@@ -789,6 +814,10 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan
         let mut end_search_from = content_start;
         while let Some(relative_end) = line[end_search_from..].find(marker) {
             let end = end_search_from + relative_end;
+            if marker == "*" && line[end..].starts_with("**") {
+                end_search_from = end + "**".len();
+                continue;
+            }
             if marker == "_" && !is_valid_underscore_delimiter(line, end) {
                 end_search_from = end + marker.len();
                 continue;

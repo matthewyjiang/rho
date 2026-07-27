@@ -1085,6 +1085,41 @@ fn started_tool_display_ignores_late_argument_previews() {
 }
 
 #[test]
+fn stream_preview_and_proposal_share_one_live_slot_when_call_id_binds() {
+    let mut app = test_app();
+    let call_id = rho_sdk::ToolCallId::from_string("call-once").unwrap();
+
+    // First rendered preview carries the call id (stream_capture re-emit).
+    // Proposal and start must reuse that slot instead of flashing a second card.
+    app.record_agent_event(ViewModelEvent::ToolCallUpdated {
+        index: 0,
+        call_id: Some(call_id.clone()),
+        card: running_card("read_file a.rs"),
+    });
+    assert_eq!(app.turn.tool_calls().live_entries().count(), 1);
+
+    app.record_agent_event(ViewModelEvent::ToolCallProposed {
+        call_id: call_id.clone(),
+        card: running_card("read_file a.rs"),
+    });
+    assert_eq!(app.turn.tool_calls().live_entries().count(), 1);
+
+    app.record_agent_event(ViewModelEvent::ToolStarted {
+        call_id,
+        card: running_card("read_file a.rs"),
+    });
+    assert_eq!(app.turn.tool_calls().live_entries().count(), 1);
+    assert_eq!(
+        app.turn
+            .tool_calls()
+            .live_entries()
+            .next()
+            .map(|tool| tool.card.header_text()),
+        Some("● read_file a.rs".to_string())
+    );
+}
+
+#[test]
 fn web_search_api_key_editor_preserves_parent_picker() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut app = test_app();
