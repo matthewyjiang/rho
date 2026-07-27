@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use super::super::{StreamKind, StreamUi, STREAM_UI_TICK};
 use super::{StreamPacer, MAX_RESERVE_CHARS, TARGET_LEAD};
 
 /// Frame interval the TUI ticks the pacer at.
@@ -154,4 +155,75 @@ fn releases_nothing_when_no_text_is_held() {
     let now = Instant::now();
 
     assert_eq!(pacer.release_allowance(now + TICK, 0), 0);
+}
+
+#[test]
+fn partial_preview_tick_does_not_reschedule_after_hold_drains() {
+    let mut streams = StreamUi::default();
+    let start = Instant::now();
+    streams.current_stream_kind = Some(StreamKind::Assistant);
+
+    streams.push_delta(StreamKind::Assistant, "a", start);
+    // Enough elapsed that the next arrival empties the hold into pending.
+    let after_lead = start + Duration::from_millis(200);
+    streams.push_delta(StreamKind::Assistant, "b", after_lead);
+    assert!(streams.hold.is_empty());
+    assert!(
+        streams
+            .stream(StreamKind::Assistant)
+            .pending_text()
+            .chars()
+            .count()
+            >= 2
+    );
+    assert!(
+        streams.stream_tick_deadline.is_some(),
+        "partial pending text should schedule one preview tick"
+    );
+
+    // No held text to release; this tick exists only for preview refresh.
+    assert!(!streams.on_tick(after_lead + STREAM_UI_TICK));
+    assert!(
+        streams.stream_tick_deadline.is_none(),
+        "static partial preview must not keep the 24ms cadence alive"
+    );
+
+    // Later ticks with no new arrivals must stay idle.
+    assert!(!streams.on_tick(after_lead + STREAM_UI_TICK * 2));
+    assert!(streams.stream_tick_deadline.is_none());
+}
+
+#[test]
+fn held_text_keeps_rescheduling_until_the_reserve_drains() {
+    let mut streams = StreamUi::default();
+    let start = Instant::now();
+    streams.current_stream_kind = Some(StreamKind::Assistant);
+
+    // Small first char starts the clock without releasing; a later burst builds
+    // a reserve that needs multiple ticks to empty.
+    streams.push_delta(StreamKind::Assistant, "x", start);
+    streams.push_delta(StreamKind::Assistant, &"y".repeat(40), start + TICK);
+    assert!(!streams.hold.is_empty());
+
+    let mut now = streams
+        .stream_tick_deadline
+        .expect("held text should schedule pacing ticks");
+    let mut saw_reschedule = false;
+    for _ in 0..30 {
+        let _released = streams.on_tick(now);
+        if streams.hold.is_empty() {
+            assert!(
+                streams.stream_tick_deadline.is_none(),
+                "once the hold is empty, ticks must stop"
+            );
+            break;
+        }
+        let deadline = streams
+            .stream_tick_deadline
+            .expect("paced hold should reschedule while draining");
+        saw_reschedule = true;
+        now = deadline;
+    }
+    assert!(saw_reschedule, "paced hold should reschedule while draining");
+    assert!(streams.hold.is_empty());
 }

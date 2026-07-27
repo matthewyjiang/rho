@@ -147,7 +147,11 @@ impl StreamUi {
             return false;
         };
         let released = self.release_into(kind, now);
-        self.schedule_tick(kind, now);
+        // Keep the cadence only while held text remains. A one-shot tick from
+        // schedule_tick for a static partial preview must not reschedule itself.
+        if !self.hold.is_empty() {
+            self.schedule_tick(kind, now);
+        }
         released
     }
 
