@@ -140,6 +140,7 @@ impl AppendOnlyStream {
         Some(self.pending_preview(split_at, skip_leading_newline))
     }
 
+    #[cfg(test)]
     fn preview_byte_index(
         &self,
         pending: &str,
