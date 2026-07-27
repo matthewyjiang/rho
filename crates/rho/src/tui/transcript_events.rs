@@ -15,14 +15,13 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 use super::{
     activity::ActivityPhase,
     event_adapter::ViewModelEvent,
-    markdown::{update_code_block_state, CodeFenceState},
+    markdown::update_code_block_state,
     render::padded_content_width,
     stream::StreamFragment,
     usage_cost::{
         add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
     },
     App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
-    STREAM_PREVIEW_DELAY, STREAM_PREVIEW_MIN_CHARS,
 };
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
@@ -75,9 +74,7 @@ impl App {
             }
             ViewModelEvent::OutputDelta(text) => {
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
-                self.streams.assistant_stream.push_delta(&text);
-                let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
-                self.update_stream_preview_deadline(StreamKind::Assistant);
+                let drained = self.receive_stream_delta(terminal, StreamKind::Assistant, &text)?;
                 Ok(switched || drained)
             }
             ViewModelEvent::ReasoningDelta(text) => {
@@ -89,9 +86,7 @@ impl App {
                     return Ok(true);
                 }
                 let switched = self.switch_stream_kind(StreamKind::Reasoning);
-                self.streams.reasoning_stream.push_delta(&text);
-                let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
-                self.update_stream_preview_deadline(StreamKind::Reasoning);
+                let drained = self.receive_stream_delta(terminal, StreamKind::Reasoning, &text)?;
                 Ok(switched || drained)
             }
             other => {
@@ -127,7 +122,7 @@ impl App {
             false
         };
         self.streams.current_stream_kind = Some(kind);
-        self.update_stream_preview_deadline(kind);
+        self.streams.schedule_tick(kind, Instant::now());
         inserted || thought
     }
 
@@ -140,6 +135,30 @@ impl App {
         Ok(reasoning_drained || assistant_drained)
     }
 
+    /// Appends one provider delta through the hold/pacer and commits renderable lines.
+    fn receive_stream_delta<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        kind: StreamKind,
+        text: &str,
+    ) -> Result<bool, B::Error> {
+        self.streams.push_delta(kind, text, Instant::now());
+        self.drain_stream(terminal, kind)
+    }
+
+    /// Plays out everything the pacer is holding.
+    ///
+    /// Stands in for the frame ticks a live terminal supplies, so tests can
+    /// assert on streamed text without depending on wall-clock timing.
+    #[cfg(test)]
+    pub(super) fn play_out_streams<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error> {
+        self.streams.play_out();
+        self.drain_streams(terminal)
+    }
+
     pub(super) fn drain_stream<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
@@ -147,16 +166,11 @@ impl App {
     ) -> Result<bool, B::Error> {
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
-        let fragment = match kind {
-            StreamKind::Assistant => self.streams.assistant_stream.drain_renderable_markdown(
-                inner_width,
-                self.streams.assistant_stream_code_fence.is_open(),
-            ),
-            StreamKind::Reasoning => self.streams.reasoning_stream.drain_renderable_markdown(
-                inner_width,
-                self.streams.reasoning_stream_code_fence.is_open(),
-            ),
-        };
+        let in_code_block = self.streams.code_fence(kind).is_open();
+        let fragment = self
+            .streams
+            .stream_mut(kind)
+            .drain_renderable_markdown(inner_width, in_code_block);
         if let Some(fragment) = fragment {
             self.streams.live_stream_preview = None;
             self.insert_stream_fragment(fragment, kind);
@@ -172,41 +186,54 @@ impl App {
             .is_some_and(|kind| self.finish_stream(kind))
     }
 
-    pub(super) fn drain_stream_preview(
+    /// Releases held text and refreshes the partial-line preview on the shared
+    /// stream UI cadence.
+    pub(super) fn drain_stream_tick(
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<bool> {
+        let now = Instant::now();
         if self
             .streams
-            .stream_preview_deadline
-            .is_none_or(|deadline| Instant::now() < deadline)
+            .stream_tick_deadline
+            .is_none_or(|deadline| now < deadline)
         {
             return Ok(false);
         }
+        let released = self.streams.on_tick(now);
         let Some(kind) = self.streams.current_stream_kind else {
-            self.streams.stream_preview_deadline = None;
             return Ok(false);
         };
+        let drained = if released {
+            self.drain_stream(terminal, kind)?
+        } else {
+            false
+        };
+        let preview_changed = self.refresh_stream_preview(terminal, kind)?;
+        Ok(drained || preview_changed)
+    }
+
+    fn refresh_stream_preview(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        kind: StreamKind,
+    ) -> std::io::Result<bool> {
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
-        let preview = match kind {
-            StreamKind::Assistant => self.streams.assistant_stream.drain_preview_markdown(
-                inner_width,
-                self.streams.assistant_stream_code_fence.is_open(),
-            ),
-            StreamKind::Reasoning => self.streams.reasoning_stream.drain_preview_markdown(
-                inner_width,
-                self.streams.reasoning_stream_code_fence.is_open(),
-            ),
-        };
-        self.streams.stream_preview_deadline = None;
-        self.update_stream_preview_deadline(kind);
+        let in_code_block = self.streams.code_fence(kind).is_open();
+        let preview = self
+            .streams
+            .stream(kind)
+            .drain_preview_markdown(inner_width, in_code_block);
         if let Some(preview) = preview {
             self.streams.live_stream_preview = Some(LiveStreamPreview {
                 kind,
                 text: preview.render_text().to_string(),
                 include_leading_blank: preview.include_leading_blank(),
             });
+            Ok(true)
+        } else if self.streams.live_stream_preview.is_some() {
+            self.streams.live_stream_preview = None;
             Ok(true)
         } else {
             Ok(false)
@@ -387,7 +414,7 @@ impl App {
         let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
         let assistant_finished = self.finish_stream(StreamKind::Assistant);
         self.streams.current_stream_kind = None;
-        self.streams.stream_preview_deadline = None;
+        self.streams.clear_tick_deadline();
         self.streams.live_stream_preview = None;
         let thought = self.close_reasoning_phase();
         reasoning_finished || assistant_finished || thought
@@ -413,29 +440,17 @@ impl App {
     }
 
     pub(super) fn finish_stream(&mut self, kind: StreamKind) -> bool {
-        let fragment = match kind {
-            StreamKind::Assistant => self.streams.assistant_stream.finish(),
-            StreamKind::Reasoning => self.streams.reasoning_stream.finish(),
-        };
-        self.update_stream_preview_deadline(kind);
+        if self.streams.current_stream_kind == Some(kind) {
+            self.streams.flush_hold(kind);
+        }
+        let fragment = self.streams.stream_mut(kind).finish();
+        self.streams.clear_tick_deadline();
         if let Some(fragment) = fragment {
             self.streams.live_stream_preview = None;
             self.insert_stream_fragment(fragment, kind);
             true
         } else {
             false
-        }
-    }
-
-    pub(super) fn update_stream_preview_deadline(&mut self, kind: StreamKind) {
-        let pending_chars = match kind {
-            StreamKind::Assistant => self.streams.assistant_stream.pending_text().chars().count(),
-            StreamKind::Reasoning => self.streams.reasoning_stream.pending_text().chars().count(),
-        };
-        if pending_chars < STREAM_PREVIEW_MIN_CHARS {
-            self.streams.stream_preview_deadline = None;
-        } else if self.streams.stream_preview_deadline.is_none() {
-            self.streams.stream_preview_deadline = Some(Instant::now() + STREAM_PREVIEW_DELAY);
         }
     }
 
@@ -457,11 +472,7 @@ impl App {
     pub(super) fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
-            let code_fence = match kind {
-                StreamKind::Assistant => &mut self.streams.assistant_stream_code_fence,
-                StreamKind::Reasoning => &mut self.streams.reasoning_stream_code_fence,
-            };
-            update_code_block_state(render_text, code_fence);
+            update_code_block_state(render_text, self.streams.code_fence_mut(kind));
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
@@ -563,11 +574,12 @@ impl App {
             self.streams.current_stream_kind,
             Some(StreamKind::Reasoning)
         ) {
+            self.streams.discard_hold();
             self.streams.reasoning_stream.reset();
-            self.streams.reasoning_stream_code_fence = CodeFenceState::default();
+            self.streams.reasoning_stream_code_fence = Default::default();
             self.streams.current_stream_kind = None;
         }
-        self.streams.stream_preview_deadline = None;
+        self.streams.clear_tick_deadline();
         self.streams.live_stream_preview = None;
     }
 

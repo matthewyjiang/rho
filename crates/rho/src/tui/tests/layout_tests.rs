@@ -10,6 +10,21 @@ fn running_card(verb: &str) -> ToolCard {
 }
 
 #[test]
+fn a_single_character_hold_schedules_a_stream_tick_without_painting() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.begin_provider_turn_ui();
+
+    app.handle_agent_event(ViewModelEvent::OutputDelta("x".into()), &mut terminal)
+        .unwrap();
+
+    assert_eq!(app.streams.held_chars(), 1);
+    assert!(app.streams.assistant_stream.pending_text().is_empty());
+    assert!(app.streams.stream_tick_deadline.is_some());
+    assert!(app.streams.live_stream_preview.is_none());
+}
+
+#[test]
 fn stream_preview_continues_committed_assistant_without_gap() {
     let mut app = test_app();
     app.push_transcript_entry(Entry::Assistant("Hello committed line\n".into()));
@@ -944,6 +959,7 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
         &mut terminal,
     )
     .unwrap();
+    app.play_out_streams(&mut terminal).unwrap();
     assert!(
         matches!(
             app.history.entries(),

@@ -311,7 +311,7 @@ impl App {
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
-                    self.drain_stream_preview(terminal)?;
+                    self.drain_stream_tick(terminal)?;
                     self.flush_due_paste_burst();
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }

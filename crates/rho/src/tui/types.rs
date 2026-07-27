@@ -17,6 +17,7 @@ use super::{
     prompt_turn::FailedTurn,
     questionnaire::QuestionnaireComposer,
     stream::AppendOnlyStream,
+    stream_pace::StreamPacer,
     theme::Theme,
     usage_cost::{AttemptAwareRunUsage, UsageCostTracker},
 };
@@ -60,8 +61,12 @@ pub(super) struct StreamUi {
     pub(in crate::tui) reasoning_stream: AppendOnlyStream,
     pub(in crate::tui) reasoning_stream_code_fence: CodeFenceState,
     pub(in crate::tui) current_stream_kind: Option<StreamKind>,
-    pub(in crate::tui) stream_preview_deadline: Option<Instant>,
+    /// Next opportunity to release held text and refresh the partial preview.
+    pub(in crate::tui) stream_tick_deadline: Option<Instant>,
     pub(in crate::tui) live_stream_preview: Option<LiveStreamPreview>,
+    /// Provider text waiting to be released into the active stream.
+    pub(in crate::tui) hold: String,
+    pub(in crate::tui) pacer: StreamPacer,
 }
 
 impl StreamUi {
@@ -71,12 +76,16 @@ impl StreamUi {
         self.reasoning_stream.reset();
         self.reasoning_stream_code_fence = CodeFenceState::default();
         self.current_stream_kind = None;
-        self.stream_preview_deadline = None;
+        self.stream_tick_deadline = None;
         self.live_stream_preview = None;
+        self.hold.clear();
+        self.pacer.reset();
     }
 
     pub(super) fn loading_streams_active(&self) -> bool {
-        !self.assistant_stream.is_empty() || !self.reasoning_stream.is_empty()
+        !self.hold.is_empty()
+            || !self.assistant_stream.is_empty()
+            || !self.reasoning_stream.is_empty()
     }
 }
 

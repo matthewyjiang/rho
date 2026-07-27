@@ -64,16 +64,16 @@ fn fact_texts(card: &ToolCard) -> Vec<String> {
 }
 
 #[test]
-fn shell_preview_uses_prompt_before_arguments_arrive() {
+fn tool_preview_waits_for_arguments_after_identity_arrives() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
 
     assert_eq!(
         preview_header(&mut presenter, 0, Some("bash".to_string()), ""),
-        Some("● $".to_string())
+        None
     );
     assert_eq!(
-        preview_header(&mut presenter, 1, Some("powershell".to_string()), ""),
-        Some("● PS".to_string())
+        preview_header(&mut presenter, 0, None, r#"{"command":"#),
+        Some("● $".to_string())
     );
 }
 
