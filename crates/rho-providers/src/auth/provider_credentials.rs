@@ -14,7 +14,8 @@ use crate::{
     },
     model::{
         registry::{
-            missing_credential_error, provider_runtime, AuthMode, ProviderRuntime, XaiAuthMode,
+            missing_credential_error, missing_credentials_error, provider_runtime, AuthMode,
+            ProviderRuntime, XaiAuthMode,
         },
         ModelError,
     },
@@ -87,12 +88,12 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     ProviderAuthKind::BearerCredential {
                         env_var,
                         account,
-                        missing,
+                        missing_message,
                         ..
                     } => CompatibleAuth::ApiKey(load_stored_bearer_key(
                         env_var,
                         account,
-                        missing,
+                        missing_message,
                         self.store.as_ref(),
                     )?),
                     ProviderAuthKind::KimiOAuth { .. } => {
@@ -100,6 +101,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             .auth_kind
                             .env_var()
                             .expect("Kimi OAuth must declare an environment variable");
+                        let missing = missing_credentials_error("kimi-code");
                         let (source, tokens) = env_or_stored(
                             env_var,
                             |access_token| KimiTokens {
@@ -111,7 +113,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                                 expires_in: None,
                             },
                             || Ok(load_kimi_tokens(self.store.as_ref())?),
-                            ModelError::MissingKimiAuth,
+                            missing,
                             KimiAuthSource::Env,
                             KimiAuthSource::Store,
                         )?;
@@ -152,7 +154,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                                 id_token: None,
                             },
                             || Ok(load_xai_tokens(self.store.as_ref())?),
-                            ModelError::MissingXaiAuth,
+                            missing_credentials_error("xai-oauth"),
                             XaiAuthSource::Env,
                             XaiAuthSource::Store,
                         )?
@@ -171,7 +173,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
 fn load_stored_bearer_key(
     env_var: &str,
     account: &str,
-    missing: provider::MissingCredential,
+    missing_message: &'static str,
     store: &dyn CredentialStore,
 ) -> Result<String, ModelError> {
     if let Ok(key) = std::env::var(env_var) {
@@ -182,7 +184,7 @@ fn load_stored_bearer_key(
     store
         .get_secret(account)?
         .filter(|key| !key.trim().is_empty())
-        .ok_or_else(|| missing_credential_error(missing))
+        .ok_or_else(|| missing_credential_error(missing_message))
 }
 
 fn env_or_stored<T, S>(
@@ -206,7 +208,9 @@ fn load_provider_api_key_auth(
     let descriptor = provider::provider_descriptor(provider_name)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider_name.into()))?;
     let ProviderAuthKind::ApiKey {
-        env_var, missing, ..
+        env_var,
+        missing_message,
+        ..
     } = descriptor.auth_kind
     else {
         return Err(ModelError::UnsupportedProvider(provider_name.into()));
@@ -216,14 +220,17 @@ fn load_provider_api_key_auth(
             return Ok(key);
         }
     }
-    load_provider_api_key(store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
+    load_provider_api_key(store, descriptor.name)?
+        .ok_or_else(|| missing_credential_error(missing_message))
 }
 
 fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
     let descriptor = provider::provider_descriptor("openai")
         .ok_or_else(|| ModelError::UnsupportedProvider("openai".into()))?;
     let ProviderAuthKind::ApiKey {
-        env_var, missing, ..
+        env_var,
+        missing_message,
+        ..
     } = descriptor.auth_kind
     else {
         return Err(ModelError::UnsupportedProvider("openai".into()));
@@ -234,7 +241,7 @@ fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelEr
         }
     }
     let key = load_provider_api_key(store, descriptor.name)?
-        .ok_or_else(|| missing_credential_error(missing))?;
+        .ok_or_else(|| missing_credential_error(missing_message))?;
     Ok(Auth::ApiKey(key))
 }
 
@@ -254,7 +261,8 @@ fn load_codex_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
             source: CodexAuthSource::Env,
         });
     }
-    let tokens = load_codex_tokens(store)?.ok_or(ModelError::MissingCodexAuth)?;
+    let tokens =
+        load_codex_tokens(store)?.ok_or_else(|| missing_credentials_error("openai-codex"))?;
     Ok(Auth::Codex {
         tokens,
         source: CodexAuthSource::Store,
@@ -265,7 +273,9 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
     let descriptor = provider::provider_descriptor("anthropic")
         .ok_or_else(|| ModelError::UnsupportedProvider("anthropic".into()))?;
     let ProviderAuthKind::ApiKey {
-        env_var, missing, ..
+        env_var,
+        missing_message,
+        ..
     } = descriptor.auth_kind
     else {
         return Err(ModelError::UnsupportedProvider("anthropic".into()));
@@ -275,13 +285,18 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
             return Ok(key);
         }
     }
-    load_provider_api_key(store, descriptor.name)?.ok_or_else(|| missing_credential_error(missing))
+    load_provider_api_key(store, descriptor.name)?
+        .ok_or_else(|| missing_credential_error(missing_message))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{CredentialResult, CredentialStore};
+    use crate::{
+        credentials::{CredentialResult, CredentialStore, MemoryCredentialStore},
+        provider::OLLAMA_CLOUD_API_KEY_ACCOUNT,
+    };
+    use pretty_assertions::assert_eq;
 
     struct RejectingStore;
 
@@ -309,5 +324,37 @@ mod tests {
             credential,
             ProviderCredential::OpenAiCompatible(CompatibleAuth::None)
         ));
+    }
+
+    #[test]
+    fn ollama_cloud_acquisition_reads_store_key_and_stays_isolated_from_local_ollama() {
+        let store = MemoryCredentialStore::default();
+        store
+            .set_secret(OLLAMA_CLOUD_API_KEY_ACCOUNT, "cloud-secret")
+            .unwrap();
+        let source = ApplicationCredentialSource::new(Arc::new(store));
+
+        let credential = source.acquire("ollama-cloud").unwrap();
+        assert!(matches!(
+            credential,
+            ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey(secret))
+                if secret == "cloud-secret"
+        ));
+
+        let local = ApplicationCredentialSource::new(Arc::new(RejectingStore));
+        assert!(matches!(
+            local.acquire("ollama").unwrap(),
+            ProviderCredential::OpenAiCompatible(CompatibleAuth::None)
+        ));
+    }
+
+    #[test]
+    fn ollama_cloud_acquisition_reports_missing_credentials_without_key() {
+        let source = ApplicationCredentialSource::new(Arc::new(MemoryCredentialStore::default()));
+        let error = source.acquire("ollama-cloud").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            missing_credentials_error("ollama-cloud").to_string()
+        );
     }
 }

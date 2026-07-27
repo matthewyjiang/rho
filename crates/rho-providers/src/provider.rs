@@ -121,29 +121,33 @@ pub enum ProviderAuthKind {
         env_var: &'static str,
         account: &'static str,
         entry_label: &'static str,
-        missing: MissingCredential,
+        missing_message: &'static str,
     },
     CodexOAuth {
         env_var: &'static str,
         account: &'static str,
+        missing_message: &'static str,
     },
     GithubCopilotDevice {
         env_var: &'static str,
         account: &'static str,
+        missing_message: &'static str,
     },
     XaiOAuth {
         env_var: &'static str,
         account: &'static str,
+        missing_message: &'static str,
     },
     BearerCredential {
         env_var: &'static str,
         account: &'static str,
-        missing: MissingCredential,
+        missing_message: &'static str,
         acquisition: BearerCredentialAcquisition,
     },
     KimiOAuth {
         env_var: &'static str,
         account: &'static str,
+        missing_message: &'static str,
     },
 }
 
@@ -239,19 +243,31 @@ impl ProviderAuthKind {
             | Self::KimiOAuth { account, .. } => Some(account),
         }
     }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MissingCredential {
-    OpenAi,
-    Anthropic,
-    Google,
-    Moonshot,
-    OllamaCloud,
-    Poolside,
-    OpenRouter,
-    Profile(&'static str),
-    Xai,
+    /// User-facing guidance when this auth kind has no usable credentials.
+    pub fn missing_message(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::ApiKey {
+                missing_message, ..
+            }
+            | Self::CodexOAuth {
+                missing_message, ..
+            }
+            | Self::GithubCopilotDevice {
+                missing_message, ..
+            }
+            | Self::XaiOAuth {
+                missing_message, ..
+            }
+            | Self::BearerCredential {
+                missing_message, ..
+            }
+            | Self::KimiOAuth {
+                missing_message, ..
+            } => Some(missing_message),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,7 +312,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "OLLAMA_API_KEY",
             account: OLLAMA_CLOUD_API_KEY_ACCOUNT,
             entry_label: "Ollama Cloud API key",
-            missing: MissingCredential::OllamaCloud,
+            missing_message: "missing Ollama Cloud API key; run /login ollama-cloud in the TUI or set OLLAMA_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
@@ -315,7 +331,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "OPENAI_API_KEY",
             account: OPENAI_API_KEY_ACCOUNT,
             entry_label: "OpenAI API key",
-            missing: MissingCredential::OpenAi,
+            missing_message: "missing OpenAI API key; run /login openai in the TUI or set OPENAI_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAi),
@@ -333,6 +349,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth_kind: ProviderAuthKind::CodexOAuth {
             env_var: "CODEX_ACCESS_TOKEN",
             account: CODEX_TOKENS_ACCOUNT,
+            missing_message: "missing Codex OAuth credentials; run /login openai-codex in the TUI or set CODEX_ACCESS_TOKEN as a CI/dev override",
         },
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
@@ -351,7 +368,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "ANTHROPIC_API_KEY",
             account: ANTHROPIC_API_KEY_ACCOUNT,
             entry_label: "Anthropic API key",
-            missing: MissingCredential::Anthropic,
+            missing_message: "missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Anthropic),
@@ -370,7 +387,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "GEMINI_API_KEY",
             account: GOOGLE_API_KEY_ACCOUNT,
             entry_label: "Google Gemini API key",
-            missing: MissingCredential::Google,
+            missing_message: "missing Google Gemini API key; run /login google in the TUI or set GEMINI_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Google),
@@ -388,6 +405,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth_kind: ProviderAuthKind::GithubCopilotDevice {
             env_var: "GITHUB_COPILOT_TOKEN",
             account: GITHUB_COPILOT_TOKENS_ACCOUNT,
+            missing_message: "missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
@@ -406,7 +424,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "MOONSHOT_API_KEY",
             account: MOONSHOT_API_KEY_ACCOUNT,
             entry_label: "Moonshot API key",
-            missing: MissingCredential::Moonshot,
+            missing_message: "missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
@@ -425,7 +443,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "POOLSIDE_API_KEY",
             account: POOLSIDE_API_KEY_ACCOUNT,
             entry_label: "Poolside API key",
-            missing: MissingCredential::Poolside,
+            missing_message: "missing Poolside API key; run /login poolside in the TUI or set POOLSIDE_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
@@ -444,7 +462,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "OPENROUTER_API_KEY",
             account: OPENROUTER_API_KEY_ACCOUNT,
             entry_label: "OpenRouter API key",
-            missing: MissingCredential::OpenRouter,
+            missing_message: "missing OpenRouter API key; run /login openrouter in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
@@ -462,9 +480,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth_kind: ProviderAuthKind::BearerCredential {
             env_var: "OPENROUTER_API_KEY",
             account: OPENROUTER_OAUTH_KEY_ACCOUNT,
-            missing: MissingCredential::Profile(
-                "missing OpenRouter OAuth credentials; run /login openrouter-oauth in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
-            ),
+            missing_message: "missing OpenRouter OAuth credentials; run /login openrouter-oauth in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
             acquisition: BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter),
         },
         model_source: ProviderModelSource::CachedProviderModels,
@@ -483,6 +499,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth_kind: ProviderAuthKind::KimiOAuth {
             env_var: "KIMI_ACCESS_TOKEN",
             account: KIMI_TOKENS_ACCOUNT,
+            missing_message: "missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
@@ -501,7 +518,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "XAI_API_KEY",
             account: XAI_API_KEY_ACCOUNT,
             entry_label: "xAI API key",
-            missing: MissingCredential::Xai,
+            missing_message: "missing xAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override",
         },
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
@@ -519,6 +536,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth_kind: ProviderAuthKind::XaiOAuth {
             env_var: "XAI_ACCESS_TOKEN",
             account: XAI_TOKENS_ACCOUNT,
+            missing_message: "missing xAI OAuth credentials; run /login xai-oauth in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override",
         },
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
@@ -552,6 +570,25 @@ pub fn credential_env_vars() -> &'static [&'static str] {
         vars
     })
     .as_slice()
+}
+
+/// Auth profile names accepted by CLI `--auth` and config `auth`.
+///
+/// Derived from [`PROVIDERS`] so newly registered profiles are included
+/// automatically. Keyless providers use `auth = "none"` and are omitted.
+pub fn auth_profiles() -> &'static [&'static str] {
+    use std::sync::OnceLock;
+
+    static PROFILES: OnceLock<Vec<&'static str>> = OnceLock::new();
+    PROFILES
+        .get_or_init(|| {
+            PROVIDERS
+                .iter()
+                .map(|descriptor| descriptor.auth)
+                .filter(|auth| *auth != "none")
+                .collect()
+        })
+        .as_slice()
 }
 
 pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {

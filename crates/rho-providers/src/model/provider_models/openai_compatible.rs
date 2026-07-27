@@ -59,20 +59,21 @@ pub(super) async fn fetch(
         ProviderAuthKind::BearerCredential {
             env_var,
             account,
-            missing,
+            missing_message,
             ..
         } => Some(match std::env::var(env_var) {
             Ok(key) if !key.trim().is_empty() => key,
             _ => store
                 .get_secret(account)?
                 .filter(|key| !key.trim().is_empty())
-                .ok_or_else(|| crate::model::registry::missing_credential_error(missing))?,
+                .ok_or_else(|| crate::model::registry::missing_credential_error(missing_message))?,
         }),
         ProviderAuthKind::KimiOAuth { .. } => {
             let env_var = descriptor
                 .auth_kind
                 .env_var()
                 .expect("Kimi OAuth must declare an environment variable");
+            let missing = || crate::model::registry::missing_credentials_error("kimi-code");
             let mut tokens = match std::env::var(env_var) {
                 Ok(access_token) if !access_token.trim().is_empty() => KimiTokens {
                     access_token,
@@ -82,17 +83,14 @@ pub(super) async fn fetch(
                     token_type: "Bearer".into(),
                     expires_in: None,
                 },
-                _ => load_kimi_tokens(store)?.ok_or(ModelError::MissingKimiAuth)?,
+                _ => load_kimi_tokens(store)?.ok_or_else(missing)?,
             };
             if token_is_expiring(&tokens) {
-                let refresh_token = tokens
-                    .refresh_token
-                    .as_deref()
-                    .ok_or(ModelError::MissingKimiAuth)?;
+                let refresh_token = tokens.refresh_token.as_deref().ok_or_else(missing)?;
                 tokens = refresh_kimi_tokens(&client, refresh_token)
                     .await
                     .map_err(|error| match error {
-                        KimiOAuthError::Unauthorized(_) => ModelError::MissingKimiAuth,
+                        KimiOAuthError::Unauthorized(_) => missing(),
                         error => ModelError::InvalidResponse(error.to_string()),
                     })?;
                 save_kimi_tokens(store, &tokens)?;

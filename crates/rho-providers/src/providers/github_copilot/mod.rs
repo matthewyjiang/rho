@@ -236,7 +236,9 @@ impl GitHubCopilotProvider {
 
 async fn error_for_status(response: reqwest::Response) -> Result<reqwest::Response, ModelError> {
     if response.status() == StatusCode::UNAUTHORIZED {
-        return Err(ModelError::MissingGithubCopilotAuth);
+        return Err(crate::model::registry::missing_credentials_error(
+            "github-copilot",
+        ));
     }
     crate::provider_backend::http_error::error_for_status(response).await
 }
@@ -305,7 +307,14 @@ mod tests {
         )
         .and_then(|auth| GitHubCopilotProvider::new("gpt-4.1".into(), auth));
 
-        assert!(matches!(result, Err(ModelError::MissingGithubCopilotAuth)));
+        let error = match result {
+            Ok(_) => panic!("provider construction should require auth"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.to_string(),
+            crate::model::registry::missing_credentials_error("github-copilot").to_string()
+        );
     }
 
     #[tokio::test]

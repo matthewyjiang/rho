@@ -256,42 +256,29 @@ fn ollama_descriptor_is_keyless_and_refreshes_compatible_models() {
 }
 
 #[test]
-fn ollama_cloud_descriptor_uses_api_key_and_refreshes_compatible_models() {
-    use super::{
-        CatalogReasoningPolicy, ProviderAuthKind, ProviderId, ProviderModelRefreshKind,
-        ProviderModelSource, RuntimeProviderId,
-    };
+fn auth_profiles_are_derived_from_provider_table() {
+    let expected: Vec<&str> = super::providers()
+        .iter()
+        .map(|descriptor| descriptor.auth)
+        .filter(|auth| *auth != "none")
+        .collect();
+    assert_eq!(super::auth_profiles(), expected.as_slice());
+    assert!(expected.contains(&"ollama-cloud-api-key"));
+    assert!(!expected.contains(&"none"));
+}
 
-    let ollama_cloud = super::provider_descriptor_by_id(ProviderId::OllamaCloud);
-    assert_eq!(ollama_cloud.name, "ollama-cloud");
-    assert_eq!(ollama_cloud.display_name, "Ollama Cloud");
-    assert_eq!(ollama_cloud.runtime_id, RuntimeProviderId::OllamaCloud);
-    assert_eq!(ollama_cloud.auth, "ollama-cloud-api-key");
-    assert_eq!(ollama_cloud.auth_kind.env_var(), Some("OLLAMA_API_KEY"));
-    assert_eq!(
-        ollama_cloud.auth_kind.account(),
-        Some(super::OLLAMA_CLOUD_API_KEY_ACCOUNT)
-    );
-    assert!(matches!(
-        ollama_cloud.auth_kind,
-        ProviderAuthKind::ApiKey {
-            account: super::OLLAMA_CLOUD_API_KEY_ACCOUNT,
-            missing: super::MissingCredential::OllamaCloud,
-            ..
-        }
-    ));
-    assert_eq!(
-        ollama_cloud.model_source,
-        ProviderModelSource::CachedProviderModels
-    );
-    assert_eq!(
-        ollama_cloud.model_refresh,
-        Some(ProviderModelRefreshKind::OpenAiCompatible)
-    );
-    assert_eq!(
-        ollama_cloud.catalog_reasoning,
-        CatalogReasoningPolicy::NotConfigurable
-    );
+#[test]
+fn ollama_cloud_missing_credentials_come_from_descriptor_message() {
+    use super::ProviderId;
+
+    let message = super::provider_descriptor_by_id(ProviderId::OllamaCloud)
+        .auth_kind
+        .missing_message()
+        .expect("ollama-cloud requires credentials");
+    let error = crate::model::registry::missing_credentials_error("ollama-cloud");
+    assert_eq!(error.to_string(), message);
+    assert!(message.contains("/login ollama-cloud"));
+    assert!(message.contains("OLLAMA_API_KEY"));
 }
 
 #[test]

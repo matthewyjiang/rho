@@ -345,7 +345,9 @@ async fn fetch_github_copilot_models(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return if status == StatusCode::UNAUTHORIZED {
-            Err(ModelError::MissingGithubCopilotAuth)
+            Err(crate::model::registry::missing_credentials_error(
+                "github-copilot",
+            ))
         } else {
             Err(ModelError::HttpStatus { status, body })
         };
@@ -418,7 +420,9 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
     let descriptor = provider::provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
     let ProviderAuthKind::ApiKey {
-        env_var, missing, ..
+        env_var,
+        missing_message,
+        ..
     } = descriptor.auth_kind
     else {
         return Err(ModelError::UnsupportedProvider(provider.to_string()));
@@ -428,7 +432,7 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
             return Ok(key);
         }
     }
-    load_provider_api_key(store, provider)?.ok_or_else(|| missing_credential_error(missing))
+    load_provider_api_key(store, provider)?.ok_or_else(|| missing_credential_error(missing_message))
 }
 
 fn is_supported_openai_model(model: &str) -> bool {

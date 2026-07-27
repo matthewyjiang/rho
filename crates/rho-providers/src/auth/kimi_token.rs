@@ -69,15 +69,16 @@ async fn refresh_locked(
     store: &dyn CredentialStore,
     tokens: &mut KimiTokens,
 ) -> Result<(), ModelError> {
-    let refresh_token = tokens
-        .refresh_token
-        .as_deref()
-        .ok_or(ModelError::MissingKimiAuth)?;
+    let refresh_token = tokens.refresh_token.as_deref().ok_or(
+        crate::model::registry::missing_credentials_error("kimi-code"),
+    )?;
     let refreshed =
         refresh_kimi_tokens(client, refresh_token)
             .await
             .map_err(|error| match error {
-                KimiOAuthError::Unauthorized(_) => ModelError::MissingKimiAuth,
+                KimiOAuthError::Unauthorized(_) => {
+                    crate::model::registry::missing_credentials_error("kimi-code")
+                }
                 error => ModelError::InvalidResponse(error.to_string()),
             })?;
     save_kimi_tokens(store, &refreshed)?;

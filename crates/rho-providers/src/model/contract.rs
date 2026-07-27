@@ -16,34 +16,12 @@ pub enum ProviderReportedErrorKind {
 
 #[derive(Debug, Error)]
 pub enum ModelError {
-    #[error("missing OpenAI API key; run /login openai in the TUI or set OPENAI_API_KEY as a CI/dev override")]
-    MissingApiKey,
-    #[error("missing Codex OAuth credentials; run /login openai-codex in the TUI or set CODEX_ACCESS_TOKEN as a CI/dev override")]
-    MissingCodexAuth,
-    #[error("missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override")]
-    MissingAnthropicApiKey,
-    #[error("missing Google Gemini API key; run /login google in the TUI or set GEMINI_API_KEY as a CI/dev override")]
-    MissingGoogleApiKey,
-    #[error("missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override")]
-    MissingGithubCopilotAuth,
-    #[error("missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override")]
-    MissingMoonshotApiKey,
-    #[error("missing Ollama Cloud API key; run /login ollama-cloud in the TUI or set OLLAMA_API_KEY as a CI/dev override")]
-    MissingOllamaCloudApiKey,
-    #[error("missing Poolside API key; run /login poolside in the TUI or set POOLSIDE_API_KEY as a CI/dev override")]
-    MissingPoolsideApiKey,
-    #[error("missing OpenRouter API key; run /login openrouter in the TUI or set OPENROUTER_API_KEY as a CI/dev override")]
-    MissingOpenRouterApiKey,
+    /// Missing API key, OAuth token, or other provider credentials.
+    ///
+    /// The message is owned by the provider descriptor table so new providers do
+    /// not need dedicated error variants.
     #[error("{0}")]
-    MissingCredentialProfile(&'static str),
-    #[error("missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override")]
-    MissingKimiAuth,
-    #[error(
-        "missing xAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override"
-    )]
-    MissingXaiApiKey,
-    #[error("missing xAI OAuth credentials; run /login xai-oauth in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override")]
-    MissingXaiAuth,
+    MissingCredentials(&'static str),
     #[error("credential store error: {0}")]
     Credentials(String),
     #[error("request failed: {0}")]
@@ -86,5 +64,9 @@ pub enum ModelError {
 impl ModelError {
     pub fn credentials(error: impl std::fmt::Display) -> Self {
         Self::Credentials(error.to_string())
+    }
+
+    pub fn missing_credentials(message: &'static str) -> Self {
+        Self::MissingCredentials(message)
     }
 }

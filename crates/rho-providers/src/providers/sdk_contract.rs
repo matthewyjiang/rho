@@ -26,19 +26,7 @@ use crate::model::ModelError;
 /// and provider-private content do not enter the SDK error contract.
 pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
     match error {
-        ModelError::MissingApiKey
-        | ModelError::MissingCodexAuth
-        | ModelError::MissingAnthropicApiKey
-        | ModelError::MissingGoogleApiKey
-        | ModelError::MissingGithubCopilotAuth
-        | ModelError::MissingMoonshotApiKey
-        | ModelError::MissingOllamaCloudApiKey
-        | ModelError::MissingPoolsideApiKey
-        | ModelError::MissingOpenRouterApiKey
-        | ModelError::MissingCredentialProfile(_)
-        | ModelError::MissingKimiAuth
-        | ModelError::MissingXaiApiKey
-        | ModelError::MissingXaiAuth => ProviderError::new(
+        ModelError::MissingCredentials(_) => ProviderError::new(
             ProviderErrorKind::Authentication,
             error.to_string(),
             Retryability::Permanent,
