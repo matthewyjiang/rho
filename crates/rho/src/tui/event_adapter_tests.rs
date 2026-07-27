@@ -141,7 +141,7 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             ref card,
             ..
-        }) if card_lines(&card) == ["✓ web_search(rho docs)"]
+        }) if card_lines(card) == ["✓ web_search(rho docs)"]
     ));
 }
 
@@ -269,7 +269,7 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
             card,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && card_lines(&card).iter().any(|line| line.contains("failed"))
+            && card_lines(card).iter().any(|line| line.contains("failed"))
     ));
     assert!(matches!(
         &events[1],
