@@ -270,12 +270,7 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AttachmentEvent::ToolFinished {
-                card: rho_tools::tool_card::ToolCard {
-                    status: rho_tools::tool_card::ToolStatus::Ok,
-                    ..
-                }
-            }
+            AttachmentEvent::ToolFinished { card, .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
         )),
         "tool finished: {events:?}"
     );

@@ -60,9 +60,13 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
         },
     );
     let running = running_card();
+    let key = Some(compaction_call_id().to_string());
     assert_eq!(
         started,
-        vec![AttachmentEvent::ToolStarted { card: running }]
+        vec![AttachmentEvent::ToolStarted {
+            key: key.clone(),
+            card: running
+        }]
     );
 
     // Completion is already tool-shaped at the view-model boundary; attach only
@@ -81,7 +85,7 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
             card: card.clone(),
             image_asset: None,
         }),
-        Some(AttachmentEvent::ToolFinished { card })
+        Some(AttachmentEvent::ToolFinished { key, card })
     );
 }
 
@@ -108,7 +112,13 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
         detail: "provider unavailable".into(),
     }
     .card();
-    assert_eq!(events[0], AttachmentEvent::ToolFinished { card: failed });
+    assert_eq!(
+        events[0],
+        AttachmentEvent::ToolFinished {
+            key: Some(compaction_call_id().to_string()),
+            card: failed
+        }
+    );
     assert_eq!(
         events[1],
         AttachmentEvent::Failed("provider unavailable".into())

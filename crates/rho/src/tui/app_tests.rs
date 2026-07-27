@@ -606,7 +606,7 @@ fn toggling_latest_truncated_tool_collapses_previous_tool() {
         .history
         .entries()
         .iter()
-        .rposition(|entry| expandable_tool_entry(entry, app.info.runtime.max_tool_output_lines))
+        .rposition(|entry| expandable_tool_entry(entry, app.info.runtime.max_tool_output_lines, 80))
         .unwrap();
     for entry in app.history.entries_mut() {
         if let Entry::Tool(tool) = entry {

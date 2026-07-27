@@ -67,13 +67,33 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
     match update {
         ViewModelEvent::OutputDelta(text) => Some(AttachmentEvent::AssistantTextDelta(text)),
         ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
-        ViewModelEvent::ToolStarted { card, .. }
-        | ViewModelEvent::ToolCallUpdated { card, .. }
-        | ViewModelEvent::ToolCallProposed { card, .. } => {
-            Some(AttachmentEvent::ToolStarted { card })
+        ViewModelEvent::ToolStarted { call_id, card }
+        | ViewModelEvent::ToolCallProposed { call_id, card } => {
+            Some(AttachmentEvent::ToolStarted {
+                key: Some(call_id.to_string()),
+                card,
+            })
         }
-        ViewModelEvent::ToolUpdated { card, .. } => Some(AttachmentEvent::ToolUpdated { card }),
-        ViewModelEvent::ToolFinished { card, .. } => Some(AttachmentEvent::ToolFinished { card }),
+        ViewModelEvent::ToolCallUpdated {
+            index,
+            call_id,
+            card,
+        } => Some(AttachmentEvent::ToolStarted {
+            key: Some(
+                call_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| format!("preview:{index}")),
+            ),
+            card,
+        }),
+        ViewModelEvent::ToolUpdated { call_id, card } => Some(AttachmentEvent::ToolUpdated {
+            key: Some(call_id.to_string()),
+            card,
+        }),
+        ViewModelEvent::ToolFinished { call_id, card, .. } => Some(AttachmentEvent::ToolFinished {
+            key: Some(call_id.to_string()),
+            card,
+        }),
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
         // This acknowledgement reconciles the interactive TUI's pending-input

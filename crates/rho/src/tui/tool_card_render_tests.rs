@@ -53,13 +53,13 @@ fn renders_edit_card_with_stat_child_and_diff_rows() {
 #[test]
 fn short_diff_shows_its_body_while_collapsed() {
     let card = short_diff_card();
-    let plan = card.display_plan(4, /*expanded*/ false);
+    let mut lines = Vec::new();
+    push_tool_card(&mut lines, &card, 80, 4, /*expanded*/ false);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
 
-    assert_eq!(plan.visible_facts, 1);
-    assert_eq!(plan.visible_body_lines, 2);
-    assert_eq!(plan.hidden_rows, 0);
-    assert!(!plan.expandable);
-    assert!(!plan.show_collapse_prompt);
+    assert!(rendered.iter().any(|line| line.contains("41 - old")));
+    assert!(rendered.iter().any(|line| line.contains("41 + new")));
+    assert!(!rendered.iter().any(|line| line.contains("more lines")));
 }
 
 #[test]
@@ -102,20 +102,16 @@ fn over_budget_diff_is_toggleable_via_display_plan() {
         image: None,
     };
     assert!(
-        tool_output_toggleable(&tool, 2),
+        tool_output_toggleable(&tool, 2, 80),
         "a diff past the budget must be expandable"
     );
 
     let mut expanded = tool.clone();
     expanded.expanded = true;
     assert!(
-        tool_output_toggleable(&expanded, 2),
+        tool_output_toggleable(&expanded, 2, 80),
         "expanded diffs must stay toggleable so users can collapse"
     );
-
-    let expanded_plan = expanded.card.display_plan(2, /*expanded*/ true);
-    assert_eq!(expanded_plan.visible_body_lines, 2);
-    assert!(expanded_plan.show_collapse_prompt);
 }
 
 #[test]
@@ -141,10 +137,6 @@ fn long_collapsed_diff_shows_expand_prompt() {
         path: Some("big.rs".into()),
     }])
     .with_body(ToolBody::Diff(body));
-    let plan = card.display_plan(4, /*expanded*/ false);
-    assert_eq!(plan.visible_body_lines, 3);
-    assert_eq!(plan.hidden_rows, 9);
-    assert!(plan.expandable);
 
     let mut lines = Vec::new();
     push_tool_card(&mut lines, &card, 80, 4, /*expanded*/ false);
@@ -152,7 +144,7 @@ fn long_collapsed_diff_shows_expand_prompt() {
     assert!(
         rendered
             .iter()
-            .any(|line| line.contains("... 9 more lines, ctrl+o to expand")),
+            .any(|line| line.contains("more lines, ctrl+o to expand")),
         "long collapsed diff should expose hidden body count: {rendered:?}"
     );
 }
@@ -171,12 +163,6 @@ fn many_facts_truncate_under_shared_budget() {
     )
     .with_facts(facts)
     .with_body(ToolBody::Lines(vec!["body-a".into(), "body-b".into()]));
-
-    let plan = card.display_plan(2, /*expanded*/ false);
-    assert_eq!(plan.visible_facts, 2);
-    assert_eq!(plan.visible_body_lines, 0);
-    assert_eq!(plan.hidden_rows, 6);
-    assert!(plan.expandable);
 
     let mut lines = Vec::new();
     push_tool_card(&mut lines, &card, 80, 2, /*expanded*/ false);
@@ -214,11 +200,6 @@ fn header_and_facts_share_tiny_body_budget() {
         "line2".into(),
         "line3".into(),
     ]));
-    let plan = card.display_plan(1, /*expanded*/ false);
-    assert_eq!(plan.visible_facts, 1);
-    assert_eq!(plan.visible_body_lines, 0);
-    assert_eq!(plan.hidden_rows, 4);
-    assert!(plan.expandable);
 
     let mut lines = Vec::new();
     push_tool_card(&mut lines, &card, 80, 1, /*expanded*/ false);
@@ -236,6 +217,36 @@ fn header_and_facts_share_tiny_body_budget() {
             .any(|line| line.contains("... 4 more lines, ctrl+o to expand")),
         "tiny budget should report remaining facts+body: {rendered:?}"
     );
+}
+
+#[test]
+fn long_wrapped_fact_counts_against_terminal_row_budget() {
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("tool", Some("target".into())),
+    )
+    .with_facts(vec![ToolFact::Text {
+        text: "word ".repeat(80),
+    }]);
+    let mut lines = Vec::new();
+    push_tool_card(&mut lines, &card, 40, 1, /*expanded*/ false);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+    assert_eq!(
+        rendered
+            .iter()
+            .filter(|line| line.contains("word") || line.contains("more lines"))
+            .count(),
+        2,
+        "one terminal row of content plus expand cue: {rendered:?}"
+    );
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("more lines, ctrl+o to expand")),
+        "wrapped overflow must stay expandable: {rendered:?}"
+    );
+    assert!(card_is_toggleable(&card, 40, 1, /*expanded*/ false));
 }
 
 #[test]

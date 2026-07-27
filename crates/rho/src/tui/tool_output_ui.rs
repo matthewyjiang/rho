@@ -2,12 +2,19 @@
 
 use ratatui::DefaultTerminal;
 
-use super::{App, Entry};
+use super::{tool_card_render::card_is_toggleable, App, Entry};
 
-pub(super) fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize) -> bool {
+/// Default history width used when a toggle check has no live terminal size yet.
+const TOGGLE_WIDTH_FALLBACK: usize = 80;
+
+pub(super) fn expandable_tool_entry(
+    entry: &Entry,
+    max_tool_output_lines: usize,
+    width: usize,
+) -> bool {
     matches!(
         entry,
-        Entry::Tool(tool) if tool_output_toggleable(tool, max_tool_output_lines)
+        Entry::Tool(tool) if tool_output_toggleable(tool, max_tool_output_lines, width)
     )
 }
 
@@ -15,18 +22,10 @@ pub(super) fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize)
 pub(super) fn tool_output_toggleable(
     tool: &super::ToolEntry,
     max_tool_output_lines: usize,
+    width: usize,
 ) -> bool {
-    let collapsed = tool
-        .card
-        .display_plan(max_tool_output_lines, /*expanded*/ false);
-    if tool.expanded {
-        let expanded_plan = tool
-            .card
-            .display_plan(max_tool_output_lines, /*expanded*/ true);
-        expanded_plan.show_collapse_prompt || collapsed.expandable
-    } else {
-        collapsed.expandable
-    }
+    let width = width.max(1);
+    card_is_toggleable(&tool.card, width, max_tool_output_lines, tool.expanded)
 }
 
 impl App {
@@ -34,8 +33,12 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
+        let width = terminal
+            .size()
+            .map(|size| size.width as usize)
+            .unwrap_or(TOGGLE_WIDTH_FALLBACK);
         if let Some(pending) = self.turn.latest_tool_mut() {
-            if !tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines) {
+            if !tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines, width) {
                 self.status = "no truncated tool output".into();
                 return Ok(());
             }
@@ -49,7 +52,7 @@ impl App {
         }
 
         let Some(index) = self.history.entries().iter().rposition(|entry| {
-            expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
+            expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines, width)
         }) else {
             self.status = "no truncated tool output".into();
             return Ok(());

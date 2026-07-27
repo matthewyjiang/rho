@@ -214,15 +214,17 @@ fn diff_rows_render_as_signed_plain_text() {
         DiffRow::new(DiffRowKind::Context, Some(1), "keep"),
         DiffRow::new(DiffRowKind::Added, Some(2), "new"),
         DiffRow::new(DiffRowKind::Removed, Some(2), "old"),
+        DiffRow::new(DiffRowKind::Added, None, "unnumbered"),
     ];
 
     assert_eq!(
         ToolBody::Diff(rows).plain_lines(),
         vec![
             "src/lib.rs".to_string(),
-            " keep".to_string(),
-            "+new".to_string(),
-            "-old".to_string(),
+            "1  keep".to_string(),
+            "2 +new".to_string(),
+            "2 -old".to_string(),
+            "+unnumbered".to_string(),
         ]
     );
 }
@@ -256,6 +258,48 @@ fn diff_stats_count_per_file() {
                 removed: 1,
             },
         ]
+    );
+}
+
+#[test]
+fn deleted_file_keeps_old_path_not_dev_null() {
+    let diff = "\
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-first
+-second
+";
+    let files = parse_unified_diff(diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "src/gone.rs");
+    assert_eq!(files[0].added, 0);
+    assert_eq!(files[0].removed, 2);
+    assert_eq!(
+        compact_diff_rows_from_files(&files, /*include_file_headers*/ true),
+        vec![
+            DiffRow::new(DiffRowKind::File, None, "src/gone.rs"),
+            DiffRow::new(DiffRowKind::Removed, Some(1), "first"),
+            DiffRow::new(DiffRowKind::Removed, Some(2), "second"),
+        ]
+    );
+}
+
+#[test]
+fn created_file_uses_new_path() {
+    let diff = "\
+--- /dev/null
++++ b/src/new.rs
+@@ -0,0 +1,2 @@
++first
++second
+";
+    assert_eq!(
+        parse_unified_diff(diff)
+            .into_iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>(),
+        vec!["src/new.rs".to_string()]
     );
 }
 

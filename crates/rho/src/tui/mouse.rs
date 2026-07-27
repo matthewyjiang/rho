@@ -255,7 +255,7 @@ impl App {
             );
             if let Some(index) = index.filter(|&index| {
                 self.history.get(index).is_some_and(|entry| {
-                    expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines)
+                    expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines, width)
                 })
             }) {
                 self.toggle_transcript_tool_output(index);
@@ -301,7 +301,7 @@ impl App {
                 tool_entry_lines(pending, width, self.info.runtime.max_tool_output_lines).len(),
             );
             if (pending_start..pending_end).contains(&line)
-                && tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines)
+                && tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines, width)
             {
                 target = Some(key);
                 break;

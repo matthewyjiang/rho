@@ -176,9 +176,10 @@ impl DiffRow {
     pub fn plain_text(&self) -> String {
         match self.kind {
             DiffRowKind::File | DiffRowKind::Skip => self.text.clone(),
-            DiffRowKind::Context | DiffRowKind::Added | DiffRowKind::Removed => {
-                format!("{}{}", self.kind.sign(), self.text)
-            }
+            DiffRowKind::Context | DiffRowKind::Added | DiffRowKind::Removed => match self.line {
+                Some(line) => format!("{line} {}{}", self.kind.sign(), self.text),
+                None => format!("{}{}", self.kind.sign(), self.text),
+            },
         }
     }
 }
@@ -410,47 +411,18 @@ pub struct DiffFileStat {
 
 /// One file section from a unified diff parse.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ParsedDiffFile {
-    path: String,
-    added: u64,
-    removed: u64,
-    rows: Vec<DiffRow>,
-    /// Next line numbers in the old and new files, advanced across a hunk.
-    next_old: u32,
-    next_new: u32,
-    /// Whether a hunk has been seen, so later hunks can draw a gap row.
-    seen_hunk: bool,
+pub struct ParsedDiffFile {
+    pub path: String,
+    pub added: u64,
+    pub removed: u64,
+    pub rows: Vec<DiffRow>,
 }
 
-/// Extract per-file `+N -M` stats from a unified diff.
-pub fn diff_file_stats(diff: &str) -> Vec<DiffFileStat> {
-    parse_unified_diff(diff)
-        .into_iter()
-        .map(|file| DiffFileStat {
-            path: file.path,
-            added: file.added,
-            removed: file.removed,
-        })
-        .collect()
-}
-
-/// Collapse a unified diff to numbered add/remove/context rows for the card body.
-pub fn compact_diff_rows(diff: &str, include_file_headers: bool) -> Vec<DiffRow> {
-    let files = parse_unified_diff(diff);
-    let mut rows = Vec::new();
-    for file in files {
-        if include_file_headers {
-            rows.push(DiffRow::new(DiffRowKind::File, None, file.path));
-        }
-        rows.extend(file.rows);
-    }
-    rows
-}
-
-/// Parse a unified diff once into per-file sections used by stats and the body.
-fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
+/// Parse a unified diff once; callers derive stats, body rows, and path counts.
+pub fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
     let mut files = Vec::new();
-    let mut current: Option<ParsedDiffFile> = None;
+    let mut current: Option<OpenDiffFile> = None;
+    let mut pending_old_path: Option<String> = None;
     let mut in_hunk = false;
 
     for line in diff.lines() {
@@ -458,12 +430,18 @@ fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
             in_hunk = false;
         }
 
-        if let Some(path) = plus_file_path(line) {
+        if let Some(path) = minus_file_path(line) {
+            pending_old_path = Some(path);
+            continue;
+        }
+
+        if let Some(new_path) = plus_file_path(line) {
             if let Some(file) = current.take() {
-                files.push(file);
+                files.push(file.finish());
             }
-            current = Some(ParsedDiffFile {
-                path,
+            let old_path = pending_old_path.take();
+            current = Some(OpenDiffFile {
+                path: display_diff_path(old_path.as_deref(), &new_path),
                 added: 0,
                 removed: 0,
                 rows: Vec::new(),
@@ -533,9 +511,72 @@ fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
     }
 
     if let Some(file) = current {
-        files.push(file);
+        files.push(file.finish());
     }
     files
+}
+
+/// Extract per-file `+N -M` stats from a unified diff.
+pub fn diff_file_stats(diff: &str) -> Vec<DiffFileStat> {
+    parse_unified_diff(diff)
+        .into_iter()
+        .map(|file| DiffFileStat {
+            path: file.path,
+            added: file.added,
+            removed: file.removed,
+        })
+        .collect()
+}
+
+/// Collapse a unified diff to numbered add/remove/context rows for the card body.
+pub fn compact_diff_rows(diff: &str, include_file_headers: bool) -> Vec<DiffRow> {
+    compact_diff_rows_from_files(&parse_unified_diff(diff), include_file_headers)
+}
+
+/// Build compact body rows from an already-parsed unified diff.
+pub fn compact_diff_rows_from_files(
+    files: &[ParsedDiffFile],
+    include_file_headers: bool,
+) -> Vec<DiffRow> {
+    let mut rows = Vec::new();
+    for file in files {
+        if include_file_headers {
+            rows.push(DiffRow::new(DiffRowKind::File, None, file.path.clone()));
+        }
+        rows.extend(file.rows.iter().cloned());
+    }
+    rows
+}
+
+#[derive(Clone, Debug)]
+struct OpenDiffFile {
+    path: String,
+    added: u64,
+    removed: u64,
+    rows: Vec<DiffRow>,
+    next_old: u32,
+    next_new: u32,
+    seen_hunk: bool,
+}
+
+impl OpenDiffFile {
+    fn finish(self) -> ParsedDiffFile {
+        ParsedDiffFile {
+            path: self.path,
+            added: self.added,
+            removed: self.removed,
+            rows: self.rows,
+        }
+    }
+}
+
+/// Prefer the surviving path: new path unless the file was deleted.
+fn display_diff_path(old_path: Option<&str>, new_path: &str) -> String {
+    if new_path == "/dev/null" {
+        old_path.unwrap_or(new_path).to_string()
+    } else {
+        new_path.to_string()
+    }
 }
 
 /// Old and new starting line numbers from an `@@ -a,b +c,d @@` header.
@@ -554,14 +595,30 @@ fn hunk_starts(line: &str) -> Option<(u32, u32)> {
     Some((start(old, '-')?, start(new, '+')?))
 }
 
-fn plus_file_path(line: &str) -> Option<String> {
-    if let Some(path) = line.strip_prefix("+++ b/") {
-        return Some(path.to_string());
+fn strip_diff_path(line: &str, prefixes: &[&str]) -> Option<String> {
+    for prefix in prefixes {
+        if let Some(path) = line.strip_prefix(prefix) {
+            let path = path.split('\t').next().unwrap_or(path).trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
     }
+    None
+}
+
+fn minus_file_path(line: &str) -> Option<String> {
+    if line.starts_with("--- /dev/null") {
+        return Some("/dev/null".into());
+    }
+    strip_diff_path(line, &["--- a/", "--- b/", "--- "])
+}
+
+fn plus_file_path(line: &str) -> Option<String> {
     if line.starts_with("+++ /dev/null") {
         return Some("/dev/null".into());
     }
-    None
+    strip_diff_path(line, &["+++ b/", "+++ a/", "+++ "])
 }
 
 /// Leave hunk mode at file boundaries so multi-file diffs need no blank separator.
@@ -570,12 +627,7 @@ fn should_exit_hunk(line: &str) -> bool {
 }
 
 fn is_file_header_line(line: &str) -> bool {
-    line.starts_with("--- a/")
-        || line.starts_with("--- b/")
-        || line.starts_with("--- /dev/null")
-        || line.starts_with("+++ b/")
-        || line.starts_with("+++ a/")
-        || line.starts_with("+++ /dev/null")
+    line.starts_with("--- ") || line.starts_with("+++ ")
 }
 
 #[cfg(test)]

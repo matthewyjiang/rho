@@ -15,9 +15,22 @@ pub(crate) enum AttachmentEvent {
     Prompt(String),
     AssistantTextDelta(String),
     ReasoningDelta(String),
-    ToolStarted { card: ToolCard },
-    ToolUpdated { card: ToolCard },
-    ToolFinished { card: ToolCard },
+    ToolStarted {
+        /// Stable tool identity for concurrent live cards. Absent on legacy journals.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        card: ToolCard,
+    },
+    ToolUpdated {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        card: ToolCard,
+    },
+    ToolFinished {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        card: ToolCard,
+    },
     Notice(String),
     ContextUsage(ContextUsage),
     Usage(ModelUsage),

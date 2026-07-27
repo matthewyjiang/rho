@@ -76,35 +76,15 @@ impl ToolKind {
     ///
     /// Zero re-evaluates on every delta so previews track the model as it
     /// writes; identical renders are still suppressed by `last_card`, so the
-    /// stride bounds parse cost rather than update rate. Agent streaming reads
-    /// a few known fields straight out of the raw buffer and stays cheap at any
-    /// size. Other tools parse the whole buffer, so only arguments past
-    /// [`PREVIEW_FULL_PARSE_LIMIT`] fall back to a coarse stride.
+    /// stride bounds parse cost rather than update rate. Ordinary tool calls
+    /// stay under [`PREVIEW_FULL_PARSE_LIMIT`] and re-render delta for delta.
+    /// Oversized buffers, including long agent prompts, fall back to a coarse
+    /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
-        match self {
-            Self::Agent => 0,
-            Self::Agents
-            | Self::Bash
-            | Self::PowerShell
-            | Self::Process
-            | Self::ListDir
-            | Self::Grep
-            | Self::Glob
-            | Self::ReadFile
-            | Self::WriteFile
-            | Self::EditFile
-            | Self::Skill
-            | Self::WebSearch
-            | Self::FetchContent
-            | Self::GetSearchContent
-            | Self::Questionnaire
-            | Self::Other => {
-                if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
-                    0
-                } else {
-                    PREVIEW_LARGE_PARSE_STRIDE
-                }
-            }
+        if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
+            0
+        } else {
+            PREVIEW_LARGE_PARSE_STRIDE
         }
     }
 }
@@ -124,6 +104,7 @@ struct StreamedPreview {
     name: Option<String>,
     arguments: String,
     next_parse_length: usize,
+    last_args: Option<serde_json::Value>,
     last_card: Option<ToolCard>,
 }
 
@@ -165,6 +146,7 @@ impl InteractiveToolPresenter {
         if name_changed {
             preview.arguments.clear();
             preview.next_parse_length = 0;
+            preview.last_args = None;
             preview.last_card = None;
         }
         preview.arguments.push_str(arguments_delta);
@@ -173,7 +155,20 @@ impl InteractiveToolPresenter {
         if !name_changed && preview.arguments.len() < preview.next_parse_length {
             return None;
         }
-        let card = streaming_preview_card(kind, name, &preview.arguments, &self.cwd);
+        if let Some(args) = parse_incomplete_json(&preview.arguments) {
+            preview.last_args = Some(args);
+        }
+        let card = match kind {
+            // Keep the last successful parse so a mid-stream incomplete fragment
+            // does not wipe a useful agent card back to a bare header.
+            ToolKind::Agent => agent_format::agent_streaming_preview_card(
+                preview
+                    .last_args
+                    .as_ref()
+                    .unwrap_or(&serde_json::Value::Object(Default::default())),
+            ),
+            _ => streaming_preview_card(kind, name, &preview.arguments, &self.cwd),
+        };
         preview.next_parse_length = preview
             .arguments
             .len()
@@ -182,14 +177,12 @@ impl InteractiveToolPresenter {
             return None;
         }
         preview.last_card = Some(card.clone());
-        let view = ToolView {
-            kind,
-            name: name.into(),
-            arguments: parse_incomplete_json(&preview.arguments)
-                .unwrap_or_else(|| serde_json::Value::Object(Default::default())),
-            metadata: ToolMetadata::default(),
-        };
-        Some(presentation(&view, card))
+        // Streaming previews carry no notices or image assets; skip a second
+        // argument parse just to assemble ToolPresentation.
+        Some(ToolPresentation {
+            card,
+            image_asset: None,
+        })
     }
 
     pub(crate) fn interrupted(

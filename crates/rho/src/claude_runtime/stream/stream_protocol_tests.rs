@@ -154,12 +154,7 @@ fn maps_tool_call_and_result_display() {
     let finished = effects.iter().any(|effect| {
         matches!(
             effect,
-            StreamEffect::Attachment(AttachmentEvent::ToolFinished {
-                card: rho_tools::tool_card::ToolCard {
-                    status: rho_tools::tool_card::ToolStatus::Ok,
-                    ..
-                }
-            })
+            StreamEffect::Attachment(AttachmentEvent::ToolFinished { card, .. }) if card.status == rho_tools::tool_card::ToolStatus::Ok
         )
     });
     assert!(finished);

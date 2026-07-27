@@ -61,37 +61,49 @@ pub(super) fn push_tool_card(
 ) {
     push_header_line(lines, card, card.status, width);
 
-    let plan = card.display_plan(max_tool_output_lines, expanded);
-    let show_expand_prompt = !expanded && plan.hidden_rows > 0;
-    let show_collapse_prompt = expanded && plan.show_collapse_prompt;
-    let has_prompt = show_expand_prompt || show_collapse_prompt;
+    let budget = max_tool_output_lines.max(1);
+    let children = render_child_groups(card, width);
+    let total_rows: usize = children.iter().map(Vec::len).sum();
+    let show_collapse_prompt = expanded && total_rows > budget;
+    let mut remaining = if expanded { usize::MAX } else { budget };
+    let mut hidden_rows = 0usize;
+    let mut emitted = Vec::new();
 
-    for (index, fact) in card.facts.iter().take(plan.visible_facts).enumerate() {
-        let is_last =
-            index + 1 == plan.visible_facts && plan.visible_body_lines == 0 && !has_prompt;
-        push_fact_line(lines, fact, is_last, width);
+    for group in children {
+        if remaining == 0 {
+            hidden_rows = hidden_rows.saturating_add(group.len());
+            continue;
+        }
+        if group.len() <= remaining {
+            remaining = remaining.saturating_sub(group.len());
+            emitted.push(group);
+            continue;
+        }
+        // Clip a wrapping child to the remaining terminal-row budget.
+        hidden_rows = hidden_rows.saturating_add(group.len() - remaining);
+        let mut clipped = group;
+        clipped.truncate(remaining);
+        remaining = 0;
+        if !clipped.is_empty() {
+            emitted.push(clipped);
+        }
     }
 
-    match &card.body {
-        ToolBody::None => {}
-        ToolBody::Lines(body) => {
-            for line in tool_diff::logical_lines(body)
-                .iter()
-                .take(plan.visible_body_lines)
-            {
-                push_body_line(lines, line, width, Theme::text());
+    let show_expand_prompt = !expanded && hidden_rows > 0;
+    let has_prompt = show_expand_prompt || show_collapse_prompt;
+    let last_child = emitted.len().saturating_sub(1);
+    for (index, group) in emitted.into_iter().enumerate() {
+        let is_last_child = index == last_child && !has_prompt;
+        for (row_index, mut row) in group.into_iter().enumerate() {
+            if row_index == 0 {
+                rewrite_fact_branch(&mut row, is_last_child);
             }
-        }
-        ToolBody::Diff(rows) => {
-            let gutter = tool_diff::gutter_width(rows);
-            for row in rows.iter().take(plan.visible_body_lines) {
-                push_diff_row(lines, row, gutter, width);
-            }
+            lines.push(row);
         }
     }
 
     if show_expand_prompt {
-        let prompt = format!("... {} more lines, ctrl+o to expand", plan.hidden_rows);
+        let prompt = format!("... {hidden_rows} more lines, ctrl+o to expand");
         push_wrapped_text(lines, &prompt, width, Theme::dim(), LineFill::PadToWidth);
     } else if show_collapse_prompt {
         push_wrapped_text(
@@ -101,6 +113,70 @@ pub(super) fn push_tool_card(
             Theme::dim(),
             LineFill::PadToWidth,
         );
+    }
+}
+
+/// Whether ctrl+o / click should toggle this tool at the given terminal width.
+pub(super) fn card_is_toggleable(
+    card: &ToolCard,
+    width: usize,
+    max_tool_output_lines: usize,
+    _expanded: bool,
+) -> bool {
+    let budget = max_tool_output_lines.max(1);
+    let total_rows: usize = render_child_groups(card, width).iter().map(Vec::len).sum();
+    total_rows > budget
+}
+
+/// Render each fact/body item into its full terminal-row group at `width`.
+fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<Line<'static>>> {
+    let mut groups = Vec::new();
+    for fact in &card.facts {
+        // Branch glyph is rewritten after budget clipping once last-child is known.
+        let mut lines = Vec::new();
+        push_fact_line(&mut lines, fact, /*is_last*/ false, width);
+        groups.push(lines);
+    }
+    match &card.body {
+        ToolBody::None => {}
+        ToolBody::Lines(body) => {
+            for line in tool_diff::logical_lines(body) {
+                let mut lines = Vec::new();
+                push_body_line(&mut lines, &line, width, Theme::text());
+                groups.push(lines);
+            }
+        }
+        ToolBody::Diff(rows) => {
+            let gutter = tool_diff::gutter_width(rows);
+            for row in rows {
+                let mut lines = Vec::new();
+                push_diff_row(&mut lines, row, gutter, width);
+                groups.push(lines);
+            }
+        }
+    }
+    groups
+}
+
+/// Facts draw ├ by default; the final visible fact becomes └ when it is last.
+fn rewrite_fact_branch(line: &mut Line<'static>, is_last: bool) {
+    let Some(first) = line.spans.first_mut() else {
+        return;
+    };
+    let content = first.content.as_ref();
+    let mid = format!("{TREE_INDENT}{TREE_BRANCH_MID}");
+    let end = format!("{TREE_INDENT}{TREE_BRANCH_END}");
+    if content.starts_with(&mid) || content.starts_with(&end) {
+        let suffix = &content[mid.len().min(content.len())..];
+        first.content = format!(
+            "{}{suffix}",
+            if is_last {
+                format!("{TREE_INDENT}{TREE_BRANCH_END}")
+            } else {
+                format!("{TREE_INDENT}{TREE_BRANCH_MID}")
+            }
+        )
+        .into();
     }
 }
 

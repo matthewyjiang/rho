@@ -412,7 +412,14 @@ pub(super) fn tool_started_effects(block: &Value) -> Vec<StreamEffect> {
         ));
     }
     vec![
-        StreamEffect::Attachment(AttachmentEvent::ToolStarted { card }),
+        StreamEffect::Attachment(AttachmentEvent::ToolStarted {
+            key: if id.is_empty() {
+                None
+            } else {
+                Some(id.to_string())
+            },
+            card,
+        }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool: {name}")),
             ..StatusPatch::default()
@@ -442,7 +449,14 @@ pub(super) fn tool_finished_effects(
         ));
     }
     vec![
-        StreamEffect::Attachment(AttachmentEvent::ToolFinished { card }),
+        StreamEffect::Attachment(AttachmentEvent::ToolFinished {
+            key: if tool_use_id.is_empty() {
+                None
+            } else {
+                Some(tool_use_id.to_string())
+            },
+            card,
+        }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool result: {tool_use_id}")),
             ..StatusPatch::default()

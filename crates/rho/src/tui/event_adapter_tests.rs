@@ -187,8 +187,8 @@ fn retains_structured_tool_metadata_until_completion() {
             "✓ edit_file(src/lib.rs)".to_string(),
             "  ├ +1 -1 lines | src/lib.rs".to_string(),
             String::new(),
-            "-old".to_string(),
-            "+new".to_string(),
+            "1 -old".to_string(),
+            "1 +new".to_string(),
         ]
     );
 }

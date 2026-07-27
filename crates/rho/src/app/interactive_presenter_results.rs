@@ -3,7 +3,8 @@
 use rho_tools::{
     parse_shell_content,
     tool_card::{
-        compact_diff_rows, diff_file_stats, ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus,
+        compact_diff_rows, compact_diff_rows_from_files, parse_unified_diff, ToolBody, ToolCard,
+        ToolFact, ToolFamily, ToolHeader, ToolStatus,
     },
 };
 
@@ -24,7 +25,11 @@ pub(super) fn shell_card(
         None => {
             let command =
                 string_arg(arguments, "command").filter(|command| !command.trim().is_empty());
-            draft_card(status, ToolHeader::shell(prompt, command))
+            draft_card(
+                status,
+                ToolFamily::FileCommand,
+                ToolHeader::shell(prompt, command),
+            )
         }
     }
 }
@@ -36,7 +41,11 @@ pub(super) fn shell_result_card(
     status: ToolStatus,
 ) -> ToolCard {
     let command = string_arg(arguments, "command").filter(|command| !command.trim().is_empty());
-    let mut card = draft_card(status, ToolHeader::shell(prompt, command));
+    let mut card = draft_card(
+        status,
+        ToolFamily::FileCommand,
+        ToolHeader::shell(prompt, command),
+    );
     if let Some(seconds) = arguments
         .get("timeout_seconds")
         .and_then(|value| value.as_u64())
@@ -105,36 +114,56 @@ pub(super) fn file_diff_card(
         }
     };
     let paths = if paths.is_empty() { arg_paths } else { paths };
-    let primary = match paths.as_slice() {
-        [] => None,
-        [path] => Some(path.clone()),
-        paths => Some(format!("{} files", paths.len())),
-    };
-    let mut card = draft_card(status, ToolHeader::call(view.name.as_str(), primary));
+    let mut card = draft_card(
+        status,
+        ToolFamily::FileDiff,
+        ToolHeader::call(view.name.as_str(), None),
+    );
     if ok {
         let diff = view.metadata.unified_diff().unwrap_or(content);
-        let stats = diff_file_stats(diff);
-        if stats.is_empty() {
-            if paths.len() == 1 {
+        let files = parse_unified_diff(diff);
+        // Prefer paths from the parsed diff so deleted files keep their old path
+        // and multi-file bodies get headers even when metadata is thin.
+        let header_paths = if files.is_empty() {
+            paths
+        } else {
+            files.iter().map(|file| file.path.clone()).collect()
+        };
+        let primary = match header_paths.as_slice() {
+            [] => None,
+            [path] => Some(path.clone()),
+            paths => Some(format!("{} files", paths.len())),
+        };
+        card.header = ToolHeader::call(view.name.as_str(), primary);
+        if files.is_empty() {
+            if header_paths.len() == 1 {
                 card.push_fact(ToolFact::Meta {
                     text: "no changes".into(),
                 });
             }
         } else {
-            for stat in &stats {
+            for file in &files {
                 card.push_fact(ToolFact::DiffStat {
-                    added: stat.added,
-                    removed: stat.removed,
-                    path: Some(stat.path.clone()),
+                    added: file.added,
+                    removed: file.removed,
+                    path: Some(file.path.clone()),
                 });
             }
+            let rows = compact_diff_rows_from_files(&files, files.len() > 1);
+            if !rows.is_empty() {
+                card.body = ToolBody::Diff(rows);
+            }
         }
-        let rows = compact_diff_rows(diff, paths.len() > 1);
-        if !rows.is_empty() {
-            card.body = ToolBody::Diff(rows);
+    } else {
+        let primary = match paths.as_slice() {
+            [] => None,
+            [path] => Some(path.clone()),
+            paths => Some(format!("{} files", paths.len())),
+        };
+        card.header = ToolHeader::call(view.name.as_str(), primary);
+        if !content.trim().is_empty() {
+            push_error_output(&mut card, content);
         }
-    } else if !content.trim().is_empty() {
-        push_error_output(&mut card, content);
     }
     card
 }
@@ -210,7 +239,11 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
 
     if let Ok(receipt) = serde_json::from_str::<StopReceipt>(content) {
         if receipt.stop_requested {
-            let mut card = draft_card(status, ToolHeader::call("process", Some("stop".into())));
+            let mut card = draft_card(
+                status,
+                ToolFamily::Default,
+                ToolHeader::call("process", Some("stop".into())),
+            );
             card.push_fact(ToolFact::Meta {
                 text: format!("stop requested: {}", receipt.process_id),
             });
@@ -218,7 +251,11 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
         }
     }
     let Ok(snapshot) = serde_json::from_str::<crate::tools::process::Snapshot>(content) else {
-        let mut card = draft_card(status, ToolHeader::call("process", None));
+        let mut card = draft_card(
+            status,
+            ToolFamily::Default,
+            ToolHeader::call("process", None),
+        );
         if !content.trim().is_empty() {
             card.body = ToolBody::Lines(split_body_lines(content));
         }
@@ -227,6 +264,7 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
 
     let mut card = draft_card(
         status,
+        ToolFamily::Default,
         ToolHeader::call("process", Some(process_state(snapshot.state).into())),
     );
     card.push_fact(ToolFact::Text {
@@ -288,7 +326,11 @@ pub(super) fn web_search_card(
     status: ToolStatus,
 ) -> ToolCard {
     let primary = search_terms(arguments);
-    let mut card = draft_card(status, ToolHeader::call("web_search", primary));
+    let mut card = draft_card(
+        status,
+        ToolFamily::Web,
+        ToolHeader::call("web_search", primary),
+    );
     if status == ToolStatus::Error {
         if !content.trim().is_empty() {
             push_error_output(&mut card, content);
@@ -337,7 +379,11 @@ pub(super) fn fetch_content_card(
     status: ToolStatus,
 ) -> ToolCard {
     let primary = first_url(arguments);
-    let mut card = draft_card(status, ToolHeader::call("fetch_content", primary));
+    let mut card = draft_card(
+        status,
+        ToolFamily::Web,
+        ToolHeader::call("fetch_content", primary),
+    );
     if status == ToolStatus::Error {
         if !content.trim().is_empty() {
             push_error_output(&mut card, content);
@@ -402,7 +448,11 @@ pub(super) fn fetch_content_card(
 }
 
 pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> ToolCard {
-    let mut card = draft_card(status, ToolHeader::call("get_search_content", None));
+    let mut card = draft_card(
+        status,
+        ToolFamily::Web,
+        ToolHeader::call("get_search_content", None),
+    );
     if status == ToolStatus::Error {
         if !content.trim().is_empty() {
             push_error_output(&mut card, content);
@@ -436,7 +486,11 @@ pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> Tool
 }
 
 pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -> ToolCard {
-    let mut card = draft_card(status, ToolHeader::call(view.name.as_str(), None));
+    let mut card = draft_card(
+        status,
+        ToolFamily::Default,
+        ToolHeader::call(view.name.as_str(), None),
+    );
     if let Some(command) = view.metadata.command_summary_text() {
         card.push_fact(ToolFact::Text {
             text: command.to_string(),

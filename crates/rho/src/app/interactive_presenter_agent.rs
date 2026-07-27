@@ -19,19 +19,16 @@ pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
 
 /// Streaming preview for an in-progress `agent` tool call.
 ///
-/// Reads fields from the raw partial JSON argument buffer instead of completing
-/// and parsing the whole object. Agent prompts are large; rebuilding a JSON
-/// value on every delta is the expensive path this avoids.
-pub(super) fn agent_streaming_preview_card(raw_arguments: &str) -> ToolCard {
-    let agent_id = partial_object_string_field(raw_arguments, "agent_id")
+/// Uses the shared incomplete-JSON path so agent previews share one parser and
+/// the same large-buffer stride as other tools.
+pub(super) fn agent_streaming_preview_card(arguments: &serde_json::Value) -> ToolCard {
+    let agent_id = string_value(arguments, "agent_id")
         .filter(|id| !id.is_empty())
-        .unwrap_or_else(|| "agent".into());
-    let background = partial_object_bool_field(raw_arguments, "background").unwrap_or(false);
+        .unwrap_or("agent");
+    let background = bool_value(arguments, "background");
     let mut card = bare_agent_card(ToolStatus::Running, agent_id, starting_detail(background));
-    if let Some(prompt) =
-        partial_object_string_field(raw_arguments, "prompt").filter(|prompt| !prompt.is_empty())
-    {
-        for line in live_tail_prompt_lines(&prompt) {
+    if let Some(prompt) = string_value(arguments, "prompt").filter(|prompt| !prompt.is_empty()) {
+        for line in live_tail_prompt_lines(prompt) {
             card.push_fact(ToolFact::Text { text: line });
         }
     }
@@ -172,7 +169,11 @@ fn bare_agent_card(
     identity: impl Into<String>,
     detail: impl Into<String>,
 ) -> ToolCard {
-    draft_card(status, ToolHeader::status_first(identity, detail))
+    draft_card(
+        status,
+        rho_tools::tool_card::ToolFamily::Agent,
+        ToolHeader::status_first(identity, detail),
+    )
 }
 
 fn push_agent_fact(card: &mut ToolCard, text: String) {
@@ -217,107 +218,6 @@ fn set_content_body(card: &mut ToolCard, content: &str) {
     if !content.trim().is_empty() {
         card.body = ToolBody::Lines(content.lines().map(str::to_string).collect());
     }
-}
-
-/// Pull a string object field out of incomplete tool-call JSON.
-///
-/// Returns the decoded value seen so far when the opening quote has arrived.
-/// Incomplete trailing escapes are dropped so previews stay stable mid-stream.
-fn partial_object_string_field(raw: &str, key: &str) -> Option<String> {
-    let content = partial_object_field_content(raw, key)?;
-    let content = content.trim_start();
-    if content.is_empty() {
-        return Some(String::new());
-    }
-    let content = content.strip_prefix('"')?;
-    Some(decode_partial_json_string(content))
-}
-
-fn partial_object_bool_field(raw: &str, key: &str) -> Option<bool> {
-    let content = partial_object_field_content(raw, key)?.trim_start();
-    if content.starts_with("true") {
-        return Some(true);
-    }
-    if content.starts_with("false") {
-        return Some(false);
-    }
-    None
-}
-
-/// After a top-level object key and colon, return the remainder of `raw`.
-///
-/// Skips matches that appear inside string values so prompt text cannot spoof
-/// later field names.
-fn partial_object_field_content<'a>(raw: &'a str, key: &str) -> Option<&'a str> {
-    let key_pattern = format!("\"{key}\"");
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut index = 0usize;
-    while index < raw.len() {
-        let character = raw[index..].chars().next()?;
-        let character_len = character.len_utf8();
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else {
-                match character {
-                    '\\' => escaped = true,
-                    '"' => in_string = false,
-                    _ => {}
-                }
-            }
-            index += character_len;
-            continue;
-        }
-        if character == '"' {
-            if raw[index..].starts_with(&key_pattern) {
-                let after_key = &raw[index + key_pattern.len()..];
-                if let Some(after_colon) = after_key.trim_start().strip_prefix(':') {
-                    return Some(after_colon);
-                }
-            }
-            in_string = true;
-            index += character_len;
-            continue;
-        }
-        index += character_len;
-    }
-    None
-}
-
-fn decode_partial_json_string(content: &str) -> String {
-    let mut decoded = String::new();
-    let mut chars = content.chars();
-    while let Some(character) = chars.next() {
-        match character {
-            '"' => break,
-            '\\' => match chars.next() {
-                Some('n') => decoded.push('\n'),
-                Some('r') => decoded.push('\r'),
-                Some('t') => decoded.push('\t'),
-                Some('"') => decoded.push('"'),
-                Some('\\') => decoded.push('\\'),
-                Some('/') => decoded.push('/'),
-                Some('b') => decoded.push('\u{0008}'),
-                Some('f') => decoded.push('\u{000c}'),
-                Some('u') => {
-                    let hex: String = chars.by_ref().take(4).collect();
-                    if hex.len() < 4 {
-                        break;
-                    }
-                    if let Ok(code) = u16::from_str_radix(&hex, 16) {
-                        if let Some(unicode) = char::from_u32(u32::from(code)) {
-                            decoded.push(unicode);
-                        }
-                    }
-                }
-                Some(other) => decoded.push(other),
-                None => break,
-            },
-            other => decoded.push(other),
-        }
-    }
-    decoded
 }
 
 fn live_tail_prompt_lines(task: &str) -> Vec<String> {
