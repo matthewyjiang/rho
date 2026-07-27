@@ -329,6 +329,7 @@ fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
 
 fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
+    let divider_col = side_by_side_divider_col(layout);
     lines.push(border_line(
         layout.outer.width as usize,
         '┌',
@@ -339,7 +340,11 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
         layout.inner_width,
         filter_line(content.filter, layout.inner_width),
     ));
-    lines.push(horizontal_rule(layout.outer.width as usize));
+    lines.push(horizontal_rule(
+        layout.outer.width as usize,
+        divider_col,
+        '┬',
+    ));
     lines.push(content_row(
         layout.inner_width,
         pane_header_line(layout, &content.chrome),
@@ -361,10 +366,16 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
     }
 
     while lines.len() + 3 < layout.outer.height as usize {
-        lines.push(content_row(layout.inner_width, Line::raw("")));
+        // Keep the column rule continuous through spare body rows so it meets
+        // the footer junction instead of leaving a gap.
+        lines.push(content_row(layout.inner_width, pane_filler_row(layout)));
     }
 
-    lines.push(horizontal_rule(layout.outer.width as usize));
+    lines.push(horizontal_rule(
+        layout.outer.width as usize,
+        divider_col,
+        '┴',
+    ));
     lines.push(content_row(
         layout.inner_width,
         footer_line(layout, &content),
@@ -804,8 +815,66 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
     }
 }
 
-fn horizontal_rule(width: usize) -> Line<'static> {
-    border_line(width, '├', '┤', None)
+/// Column of the side-by-side pane rule within a full outer-width border row.
+fn side_by_side_divider_col(layout: OverlayLayout) -> Option<usize> {
+    match layout.panes {
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::SideBySide,
+            nav_width,
+            ..
+        } => {
+            // left border │ + nav + leading space of " │ "
+            Some(1usize.saturating_add(nav_width).saturating_add(1))
+        }
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::Stacked,
+            ..
+        }
+        | OverlayPanes::NavOnly { .. } => None,
+    }
+}
+
+fn pane_filler_row(layout: OverlayLayout) -> Line<'static> {
+    match layout.panes {
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::SideBySide,
+            nav_width,
+            detail_width,
+            ..
+        } => Line::from(vec![
+            Span::raw(" ".repeat(nav_width)),
+            Span::styled(SEPARATOR, Theme::dim()),
+            Span::raw(" ".repeat(detail_width)),
+        ]),
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::Stacked,
+            ..
+        }
+        | OverlayPanes::NavOnly { .. } => Line::raw(""),
+    }
+}
+
+fn horizontal_rule(width: usize, divider_col: Option<usize>, junction: char) -> Line<'static> {
+    if width == 0 {
+        return Line::raw("");
+    }
+    if width == 1 {
+        return Line::from(Span::styled("├".to_string(), Theme::dim()));
+    }
+    let mut text = String::with_capacity(width);
+    text.push('├');
+    for col in 1..width.saturating_sub(1) {
+        if divider_col == Some(col) {
+            text.push(junction);
+        } else {
+            text.push('─');
+        }
+    }
+    text.push('┤');
+    if display_width(&text) > width {
+        text = truncate_one_line(&text, width);
+    }
+    Line::from(Span::styled(text, Theme::dim()))
 }
 
 fn filter_line(filter: &str, width: usize) -> Line<'static> {

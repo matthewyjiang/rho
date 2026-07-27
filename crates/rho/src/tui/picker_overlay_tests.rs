@@ -243,6 +243,45 @@ fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
     assert_eq!(first.lines.len(), layout.outer.height as usize);
     assert_eq!(second.lines.len(), first.lines.len());
     assert!(first_text.contains('│'));
+    assert!(first_text.contains('┬'), "{first_text}");
+    assert!(first_text.contains('┴'), "{first_text}");
+    let top_junction = first_text
+        .lines()
+        .find(|line| line.contains('┬'))
+        .expect("top junction");
+    let bottom_junction = first_text
+        .lines()
+        .find(|line| line.contains('┴'))
+        .expect("bottom junction");
+    let body_divider = first_text
+        .lines()
+        .find(|line| line.contains(" │ ") && line.contains('→'))
+        .expect("body divider");
+    let char_col = |line: &str, needle: char| line.chars().position(|ch| ch == needle);
+    let pane_divider_col = |line: &str| -> Option<usize> {
+        let chars = line.chars().collect::<Vec<_>>();
+        chars
+            .windows(3)
+            .position(|window| window == [' ', '│', ' '])
+            .map(|index| index + 1)
+    };
+    assert_eq!(char_col(top_junction, '┬'), pane_divider_col(body_divider));
+    assert_eq!(
+        char_col(bottom_junction, '┴'),
+        pane_divider_col(body_divider)
+    );
+    let split = pane_divider_col(body_divider);
+    // Spare body rows keep the rule so it meets the footer junction.
+    let divider_rows = first
+        .lines
+        .iter()
+        .map(line_text)
+        .filter(|line| pane_divider_col(line) == split)
+        .count();
+    assert!(
+        divider_rows >= layout.body_rows + 1,
+        "expected continuous divider through header/body, got {divider_rows}"
+    );
     assert!(first_text.contains("read-only investigation"));
     assert!(first_text.contains("internal"));
     assert!(!first_text.contains("implementation work"));
