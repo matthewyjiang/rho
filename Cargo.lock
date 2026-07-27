@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "async-trait",
  "globset",
@@ -3060,7 +3060,7 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "1.10.1"
+version = "1.10.2"
 dependencies = [
  "pretty_assertions",
  "proptest",
