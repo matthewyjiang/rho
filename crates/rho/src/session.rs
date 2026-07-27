@@ -17,6 +17,8 @@ use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 mod delete;
 mod index;
 mod layout;
+#[cfg(test)]
+mod performance_benchmarks;
 mod persistence;
 mod snapshot_delta;
 mod snapshot_store;

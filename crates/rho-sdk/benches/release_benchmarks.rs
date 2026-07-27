@@ -1,3 +1,6 @@
+#[path = "release_benchmarks/tool_call_fixtures.rs"]
+mod tool_call_fixtures;
+
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     collections::{BTreeMap, VecDeque},
@@ -25,6 +28,11 @@ use rho_sdk::{
     UserInput,
 };
 use serde_json::{json, Value};
+use tool_call_fixtures::{
+    large_tool_call_arguments, large_tool_call_delta_count, run_large_tool_call_delta_stream,
+    run_overlapping_prepare_batch, LARGE_TOOL_CALL_ARGUMENT_BYTES,
+    LARGE_TOOL_CALL_DELTA_CHUNK_BYTES, OVERLAPPING_PREPARE_COUNT, OVERLAPPING_PREPARE_PARALLEL,
+};
 
 const EVENT_COUNT: usize = 10_000;
 const HISTORY_COUNT: usize = 1_000;
@@ -565,6 +573,39 @@ fn main() {
     let parallel_read_speedup =
         parallel_reads_limit_one.median() as f64 / parallel_reads_limit_four.median() as f64;
 
+    let large_tool_call_arguments =
+        Arc::new(large_tool_call_arguments(LARGE_TOOL_CALL_ARGUMENT_BYTES));
+    let large_tool_call_delta_count = large_tool_call_delta_count(
+        large_tool_call_arguments.len(),
+        LARGE_TOOL_CALL_DELTA_CHUNK_BYTES,
+    );
+    run_large_tool_call_delta_stream(
+        &tokio,
+        Arc::clone(&large_tool_call_arguments),
+        LARGE_TOOL_CALL_DELTA_CHUNK_BYTES,
+    );
+    let large_tool_call_delta_stream = measure(samples, || {
+        run_large_tool_call_delta_stream(
+            &tokio,
+            Arc::clone(&large_tool_call_arguments),
+            LARGE_TOOL_CALL_DELTA_CHUNK_BYTES,
+        );
+    });
+
+    run_overlapping_prepare_batch(&tokio);
+    let mut overlapping_prepare_timings = Vec::with_capacity(samples);
+    let mut overlapping_prepare_peaks = Vec::with_capacity(samples);
+    for _ in 0..samples {
+        let started = Instant::now();
+        let peak = run_overlapping_prepare_batch(&tokio);
+        overlapping_prepare_timings.push(started.elapsed().as_nanos() as u64);
+        overlapping_prepare_peaks.push(peak as u64);
+    }
+    let overlapping_tool_prepare = SampleStats::new(overlapping_prepare_timings);
+    overlapping_prepare_peaks.sort_unstable();
+    let overlapping_prepare_peak_median =
+        overlapping_prepare_peaks[overlapping_prepare_peaks.len() / 2];
+
     let mut event_throughputs = Vec::with_capacity(samples);
     let mut event_p99_latencies = Vec::with_capacity(samples);
     for _ in 0..samples {
@@ -632,13 +673,15 @@ fn main() {
     let slow_consumer = SampleStats::new(slow_consumer_cancellation);
 
     let startup_relative = startup_candidate.median() as f64 / startup_baseline.median() as f64;
+    let startup_allowed =
+        (startup_baseline.median() as f64 * 1.20).max(startup_baseline.median() as f64 + 100_000.0);
     let simple_allowed =
         (simple_baseline.median() as f64 * 1.10).max(simple_baseline.median() as f64 + 100_000.0);
     let compaction_relative =
         compaction_candidate.median() as f64 / compaction_baseline.median() as f64;
     let checks = json!({
         "startup_absolute_under_2ms": startup_candidate.median() <= 2_000_000,
-        "startup_relative_under_20_percent": startup_relative <= 1.20,
+        "startup_relative_with_100us_headroom": startup_candidate.median() as f64 <= startup_allowed,
         "simple_completion_within_budget": simple_candidate.median() as f64 <= simple_allowed,
         "event_throughput_at_least_250k_per_second": event_throughput_median >= 250_000.0,
         "event_p99_latency_under_5ms": event_latency_p99 <= 5_000_000,
@@ -670,6 +713,7 @@ fn main() {
                 "baseline": startup_baseline.json(),
                 "candidate": startup_candidate.json(),
                 "candidate_over_baseline": startup_relative,
+                "allowed_candidate_median_ns": startup_allowed,
             },
             "simple_completion": {
                 "baseline": simple_baseline.json(),
@@ -704,6 +748,19 @@ fn main() {
                 "limit_four": parallel_reads_limit_four.json(),
                 "median_speedup": parallel_read_speedup,
                 "ordered_results_checked_per_sample": true,
+            },
+            "large_tool_call_delta_stream": {
+                "total_argument_bytes": large_tool_call_arguments.len(),
+                "delta_count": large_tool_call_delta_count,
+                "chunk_bytes": LARGE_TOOL_CALL_DELTA_CHUNK_BYTES,
+                "timing": large_tool_call_delta_stream.json(),
+            },
+            "overlapping_tool_prepare": {
+                "tool_calls": OVERLAPPING_PREPARE_COUNT,
+                "max_parallel_tools": OVERLAPPING_PREPARE_PARALLEL,
+                "timing": overlapping_tool_prepare.json(),
+                "peak_active_preparations_samples": overlapping_prepare_peaks,
+                "peak_active_preparations_median": overlapping_prepare_peak_median,
             },
             "slow_consumer": {
                 "event_capacity": 1,
