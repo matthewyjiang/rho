@@ -1,6 +1,7 @@
 use std::fs;
 
 use super::*;
+use pretty_assertions::assert_eq;
 use rho_providers::model::models_dev::ModelCost;
 
 fn priced_metadata() -> ModelMetadata {
@@ -216,4 +217,122 @@ fn git_branch_is_cached_until_explicit_refresh() {
     assert_eq!(cached, initial);
     assert!(line_text(&initial[0]).contains("(main)"));
     assert!(line_text(&refreshed[0]).contains("(feature)"));
+}
+
+#[test]
+fn shorten_path_keeps_trailing_segments() {
+    assert_eq!(
+        shorten_path_display("~/work/company/services/api-gateway", 24),
+        "~/…/services/api-gateway"
+    );
+    assert_eq!(
+        shorten_path_display("~/work/company/services/api-gateway", 18),
+        "~/…/api-gateway"
+    );
+    assert_eq!(
+        shorten_path_display("/tmp/claude-1000/home-emgym-herdr-work", 23),
+        "…/home-emgym-herdr-work"
+    );
+    assert_eq!(
+        shorten_path_display("/tmp/claude-1000/projects/api-gateway", 20),
+        "/…/api-gateway"
+    );
+}
+
+#[test]
+fn shorten_path_keeps_end_when_last_segment_is_long() {
+    let shortened = shorten_path_display("~/work/company/very-long-service-name", 14);
+    assert!(shortened.starts_with('…'), "{shortened}");
+    assert!(
+        shortened.ends_with("service-name") || shortened.ends_with("name"),
+        "{shortened}"
+    );
+    assert!(display_width(&shortened) <= 14, "{shortened}");
+    assert!(!shortened.starts_with("~/work"), "{shortened}");
+}
+
+#[test]
+fn fit_cwd_width_zero_is_empty() {
+    assert_eq!(fit_cwd("~/work/api-gateway", Some("main"), 0), "");
+    assert_eq!(fit_cwd("~/work/api-gateway", None, 0), "");
+}
+
+#[test]
+fn fit_cwd_drops_branch_when_suffix_fills_width() {
+    // " (main)" is wider than 4, so the branch must drop entirely.
+    let fitted = fit_cwd("~/work/company/services/api-gateway", Some("main"), 4);
+    assert!(!fitted.contains('('), "{fitted}");
+    assert!(display_width(&fitted) <= 4, "{fitted}");
+}
+
+#[test]
+fn fit_cwd_keeps_branch_while_basename_fits() {
+    let fitted = fit_cwd("~/work/company/services/api-gateway", Some("main"), 28);
+    assert_eq!(fitted, "~/…/api-gateway (main)");
+    assert!(display_width(&fitted) <= 28, "{fitted}");
+}
+
+#[test]
+fn fit_cwd_drops_branch_before_mangling_basename() {
+    let path = "~/work/company/services/api-gateway";
+    let fitted = fit_cwd(path, Some("very-long-feature-branch"), 18);
+    assert!(
+        fitted.contains("api-gateway"),
+        "basename must remain intact: {fitted}"
+    );
+    assert!(
+        !fitted.contains('('),
+        "branch should drop before basename is mangled: {fitted}"
+    );
+    assert!(display_width(&fitted) <= 18, "{fitted}");
+}
+
+#[test]
+fn fit_cwd_handles_branch_names_with_parentheses() {
+    let fitted = fit_cwd("/tmp/project", Some("feat (wip)"), 40);
+    assert_eq!(fitted, "/tmp/project (feat (wip))");
+
+    let fitted = fit_cwd(
+        "~/work/company/services/api-gateway",
+        Some("feat (wip)"),
+        30,
+    );
+    assert!(fitted.contains("api-gateway"), "{fitted}");
+    assert!(
+        fitted.ends_with(" (feat (wip))") || !fitted.contains('('),
+        "must not re-parse branch from the joined string: {fitted}"
+    );
+    assert!(display_width(&fitted) <= 30, "{fitted}");
+}
+
+#[test]
+fn narrow_statusline_keeps_cwd_basename() {
+    let mut state = test_state(ModelUsage::default());
+    state.cwd = PathBuf::from("/tmp/claude-1000/home-emgym-herdr-worktree-api-gateway");
+    state.branch = None;
+
+    let top = line_text(&statusline_lines(&state, 40, None)[0]);
+    let cwd = top.trim_end();
+
+    assert!(cwd.contains("api-gateway"), "{cwd}");
+    assert!(cwd.contains('…'), "{cwd}");
+    assert!(!cwd.ends_with('…'), "{cwd}");
+    assert!(display_width(cwd) <= 40, "{cwd}");
+}
+
+#[test]
+fn narrow_statusline_prefers_basename_over_branch() {
+    let mut state = test_state(ModelUsage::default());
+    state.cwd = PathBuf::from("/tmp/claude-1000/projects/api-gateway");
+    state.branch = Some("very-long-feature-branch-name".into());
+
+    let top = line_text(&statusline_lines(&state, 20, None)[0]);
+    let cwd = top.trim_end();
+
+    assert!(cwd.contains("api-gateway"), "{cwd}");
+    assert!(
+        !cwd.contains("very-long-feature-branch-name"),
+        "branch should yield to basename under pressure: {cwd}"
+    );
+    assert!(display_width(cwd) <= 20, "{cwd}");
 }

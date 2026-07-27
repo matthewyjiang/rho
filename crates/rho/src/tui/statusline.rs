@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 use ratatui::text::{Line, Span};
 
@@ -22,6 +19,13 @@ use {
     },
     rho_providers::reasoning::ReasoningLevel,
 };
+
+#[path = "statusline_path.rs"]
+mod path;
+use path::{compact_cwd, fit_cwd, format_cwd_left};
+
+#[cfg(test)]
+use path::shorten_path_display;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct StatusLineState {
@@ -92,13 +96,6 @@ impl StatusLineState {
             permission_mode: info.permission_mode,
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
-        }
-    }
-
-    fn left_top(&self) -> String {
-        match &self.branch {
-            Some(branch) => format!("{} ({branch})", compact_cwd(&self.cwd)),
-            None => compact_cwd(&self.cwd),
         }
     }
 }
@@ -216,14 +213,16 @@ fn statusline_lines(
             state.into(),
         ]
     });
-    let top_left = state.left_top();
+    let cwd_path = compact_cwd(&state.cwd);
+    let cwd_branch = state.branch.as_deref();
+    let top_left = format_cwd_left(&cwd_path, cwd_branch);
     let top_right = goal
         .as_ref()
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
     let (bottom_left, bottom_right) = bottom_status(state, width);
     vec![
-        render_row(top_left, top_right, width),
+        render_cwd_row(&cwd_path, cwd_branch, top_right, width),
         render_row(bottom_left, bottom_right, width),
     ]
 }
@@ -326,42 +325,52 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
 }
 
 fn render_row(left: String, right: String, width: usize) -> Line<'static> {
-    let style = Theme::dim();
+    match row_side_fit(display_width(&left), &right, width) {
+        None => status_row_line(left, right, width),
+        Some((left_budget, right)) => {
+            status_row_line(truncate_one_line(&left, left_budget), right, width)
+        }
+    }
+}
+
+fn render_cwd_row(path: &str, branch: Option<&str>, right: String, width: usize) -> Line<'static> {
+    let left = format_cwd_left(path, branch);
+    match row_side_fit(display_width(&left), &right, width) {
+        None => status_row_line(left, right, width),
+        Some((left_budget, right)) => {
+            status_row_line(fit_cwd(path, branch, left_budget), right, width)
+        }
+    }
+}
+
+/// Shared left/right budget math for a status row.
+///
+/// Returns `None` when both sides already fit. Otherwise right is head-truncated
+/// first, then the caller fits left into the remaining budget.
+fn row_side_fit(left_width: usize, right: &str, width: usize) -> Option<(usize, String)> {
     if right.is_empty() {
-        return Line::from(Span::styled(truncate_one_line(&left, width), style));
+        return Some((width, String::new()));
     }
 
-    let left_width = display_width(&left);
-    let right_width = display_width(&right);
-    if left_width + right_width + usize::from(!left.is_empty()) <= width {
-        let gap = " ".repeat(width - left_width - right_width);
-        return Line::from(Span::styled(format!("{left}{gap}{right}"), style));
+    let right_width = display_width(right);
+    if left_width + right_width + usize::from(left_width > 0) <= width {
+        return None;
     }
 
     let right_budget = right_width.min(width.saturating_div(2).max(1));
-    let right = truncate_one_line(&right, right_budget);
+    let right = truncate_one_line(right, right_budget);
     let right_width = display_width(&right);
-    let left = truncate_one_line(&left, width.saturating_sub(right_width + 1).max(1));
-    let left_width = display_width(&left);
-    let gap = " ".repeat(width.saturating_sub(left_width + right_width));
-    Line::from(Span::styled(format!("{left}{gap}{right}"), style))
+    let left_budget = width.saturating_sub(right_width + 1).max(1);
+    Some((left_budget, right))
 }
 
-fn compact_cwd(path: &Path) -> String {
-    let Some(home) = crate::paths::home_dir() else {
-        return path.display().to_string();
-    };
-
-    if let Ok(rest) = path.strip_prefix(home) {
-        let rel = rest.display().to_string();
-        if rel.is_empty() {
-            "~".to_string()
-        } else {
-            format!("~/{rel}")
-        }
-    } else {
-        path.display().to_string()
+fn status_row_line(left: String, right: String, width: usize) -> Line<'static> {
+    let style = Theme::dim();
+    if right.is_empty() {
+        return Line::from(Span::styled(left, style));
     }
+    let gap = " ".repeat(width.saturating_sub(display_width(&left) + display_width(&right)));
+    Line::from(Span::styled(format!("{left}{gap}{right}"), style))
 }
 
 #[cfg(test)]

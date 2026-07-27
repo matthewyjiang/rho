@@ -310,6 +310,33 @@ pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
     truncate_to_display_width(&text, width - 1).into_owned() + "…"
 }
 
+/// Truncate from the front, keeping the end of `text` with a leading ellipsis.
+pub(super) fn truncate_keep_end(text: &str, width: usize) -> String {
+    let text = text.replace('\n', " ");
+    if width == 0 {
+        return String::new();
+    }
+    if display_width(&text) <= width {
+        return text;
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+
+    let target = width - 1;
+    let mut start = text.len();
+    let mut used = 0usize;
+    for (index, ch) in text.char_indices().rev() {
+        let ch_width = char_display_width(ch);
+        if used + ch_width > target {
+            break;
+        }
+        used += ch_width;
+        start = index;
+    }
+    format!("…{}", &text[start..])
+}
+
 pub(super) fn display_width(text: &str) -> usize {
     text.split(char::is_control)
         .map(UnicodeWidthStr::width)
