@@ -21,8 +21,8 @@ const TREE_INDENT: &str = "  ";
 const TREE_BRANCH_MID: &str = "├ ";
 const TREE_BRANCH_END: &str = "└ ";
 const TREE_CONTINUE: &str = "  ";
-/// Vertical connector on wrapped header rows, in the same column as ├ / └.
-const HEADER_WRAP_ELBOW: &str = "  | ";
+/// Vertical stem on wrapped header rows; same box-drawing family as ├ / └.
+const HEADER_WRAP_STEM: &str = "  │ ";
 /// Content column after `  ├ ` / `  └ `.
 const CHILD_CONTENT_INDENT: &str = "    ";
 
@@ -239,15 +239,15 @@ fn push_wrapped_header(
     }
 }
 
-/// `  | ` in the child elbow column, then spaces out to the primary hang.
+/// `  │ ` in the child elbow column, then spaces out to the primary hang.
 fn header_wrap_continuation_prefix(hang: usize) -> Vec<Span<'static>> {
-    let elbow_width = display_width(HEADER_WRAP_ELBOW);
+    let stem_width = display_width(HEADER_WRAP_STEM);
     let mut spans = vec![Span::styled(
-        HEADER_WRAP_ELBOW.to_string(),
+        HEADER_WRAP_STEM.to_string(),
         Theme::tool_tree(),
     )];
-    if hang > elbow_width {
-        spans.push(Span::styled(" ".repeat(hang - elbow_width), Theme::text()));
+    if hang > stem_width {
+        spans.push(Span::styled(" ".repeat(hang - stem_width), Theme::text()));
     }
     spans
 }
@@ -607,11 +607,11 @@ mod tests {
             !rendered[0].contains('├') && !rendered[0].contains('└'),
             "header must not use tree glyphs: {rendered:?}"
         );
-        // Continuation uses a tree-column elbow, then hangs under the primary.
+        // Continuation uses a tree-column stem, then hangs under the primary.
         let cont = &rendered[1];
         assert!(
-            cont.contains('|'),
-            "header continuation should draw a | elbow: {rendered:?}"
+            cont.contains('│'),
+            "header continuation should draw a │ stem: {rendered:?}"
         );
         assert!(
             !cont.contains('├') && !cont.contains('└'),
@@ -657,12 +657,12 @@ mod tests {
         );
         assert!(rendered.len() >= 2, "long path should wrap: {rendered:?}");
         assert!(
-            rendered.iter().skip(1).all(|line| line.contains('|')),
-            "wrapped call primary should use | elbows: {rendered:?}"
+            rendered.iter().skip(1).all(|line| line.contains('│')),
+            "wrapped call primary should use │ stems: {rendered:?}"
         );
         let path_text: String = rendered
             .iter()
-            .map(|line| line.trim().trim_start_matches('|').trim().to_string())
+            .map(|line| line.trim().trim_start_matches('│').trim().to_string())
             .collect();
         assert!(
             path_text.contains("tool_card_render.rs") && path_text.contains(')'),
