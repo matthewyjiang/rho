@@ -313,15 +313,25 @@ impl App {
             self.status = "no login required".into();
             return Ok(());
         }
-        // Auth profile ids resolve directly. Multi-mode provider names open the
-        // method picker instead of guessing a default mode.
+        // Resolve in this order:
+        // 1. exact auth profile id (method picker values, `/login ollama-cloud-device`)
+        // 2. unique provider login target (`/login openai` → api-key only)
+        // 3. login group method picker (multi-mode providers / multi-product groups)
+        //
+        // Group lookup must not win over a unique provider target: the OpenAI
+        // group also offers Codex, but `/login openai` means the OpenAI provider.
         if let Some(target) = catalog::login_target_for_auth(provider) {
+            return self.start_login_for_target(target, terminal, agent).await;
+        }
+        if let Some(target) = catalog::login_target_for_provider(provider) {
             return self.start_login_for_target(target, terminal, agent).await;
         }
         if let Some(group) = catalog::login_group(provider) {
             match super::provider_picker::login_group_next(group) {
                 super::provider_picker::LoginGroupNext::Provider(value) => {
-                    let Some(target) = catalog::login_target_for_provider(&value) else {
+                    let Some(target) = catalog::login_target_for_auth(&value)
+                        .or_else(|| catalog::login_target_for_provider(&value))
+                    else {
                         self.insert_entry(&Entry::Error(format!(
                             "unsupported login provider '{value}'"
                         )));
@@ -332,27 +342,24 @@ impl App {
                 }
                 super::provider_picker::LoginGroupNext::MethodPicker(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(*picker));
-                    self.status = format!("select {provider} login method");
+                    self.status = format!("select {} login method", provider);
                     return Ok(());
                 }
             }
         }
-        let Some(target) = catalog::login_target_for_provider(provider) else {
-            let mut providers = catalog::login_targets()
-                .into_iter()
-                .map(|target| format!("/login {}", target.provider))
-                .collect::<Vec<_>>();
-            providers.sort();
-            providers.dedup();
-            let providers = providers.join(", ");
-            self.insert_entry(&Entry::Error(format!(
-                "unsupported login provider '{provider}'. Use {providers}, /login {}",
-                claude_login::CLAUDE_CODE_TARGET
-            )));
-            self.status = "login failed".into();
-            return Ok(());
-        };
-        self.start_login_for_target(target, terminal, agent).await
+        let mut providers = catalog::login_targets()
+            .into_iter()
+            .map(|target| format!("/login {}", target.provider))
+            .collect::<Vec<_>>();
+        providers.sort();
+        providers.dedup();
+        let providers = providers.join(", ");
+        self.insert_entry(&Entry::Error(format!(
+            "unsupported login provider '{provider}'. Use {providers}, /login {}",
+            claude_login::CLAUDE_CODE_TARGET
+        )));
+        self.status = "login failed".into();
+        Ok(())
     }
 
     async fn start_login_for_target(
