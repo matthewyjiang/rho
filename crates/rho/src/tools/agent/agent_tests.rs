@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::{ffi::OsString, num::NonZeroUsize, sync::MutexGuard};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -16,13 +16,62 @@ use crate::{
     tools::agent_output::MODEL_NOTIFICATION_BYTES,
 };
 
-fn manager(root: &Path) -> SubagentManager {
-    SubagentManager::new(AgentExecutor::new(
-        Config::default(),
-        root.join("rho.toml"),
-        root.to_path_buf(),
-        SubagentHostInputBridge::new(),
-    ))
+/// Isolates delegated-run storage from other tests that mutate `RHO_HOME`.
+struct IsolatedRhoHome {
+    _dir: tempfile::TempDir,
+    _guard: MutexGuard<'static, ()>,
+    previous: Option<OsString>,
+}
+
+impl IsolatedRhoHome {
+    fn new() -> Self {
+        let guard = crate::paths::process_env_lock();
+        let dir = tempfile::tempdir().expect("rho home tempdir");
+        let previous = std::env::var_os("RHO_HOME");
+        std::env::set_var("RHO_HOME", dir.path());
+        Self {
+            _dir: dir,
+            _guard: guard,
+            previous,
+        }
+    }
+}
+
+impl Drop for IsolatedRhoHome {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var("RHO_HOME", value),
+            None => std::env::remove_var("RHO_HOME"),
+        }
+    }
+}
+
+struct ManagerFixture {
+    manager: SubagentManager,
+    _rho_home: IsolatedRhoHome,
+}
+
+impl ManagerFixture {
+    fn new(root: &Path) -> Self {
+        let rho_home = IsolatedRhoHome::new();
+        Self {
+            manager: SubagentManager::new(AgentExecutor::new(
+                Config::default(),
+                root.join("rho.toml"),
+                root.to_path_buf(),
+                SubagentHostInputBridge::new(),
+            )),
+            _rho_home: rho_home,
+        }
+    }
+
+    fn manager(&self) -> SubagentManager {
+        self.manager.clone()
+    }
+}
+
+fn manager(root: &Path) -> ManagerFixture {
+    ManagerFixture::new(root)
 }
 
 fn invocation(arguments: serde_json::Value) -> ToolInvocation {
@@ -47,8 +96,9 @@ async fn call_agent(tool: &AgentTool, root: &Path, arguments: serde_json::Value)
 #[test]
 fn agent_tool_uses_agent_id_terminology() {
     let root = tempfile::tempdir().unwrap();
+    let _tool_fixture = manager(root.path());
     let tool = AgentTool::new(
-        manager(root.path()),
+        _tool_fixture.manager(),
         root.path(),
         BackgroundSubagents::Enabled,
     );
@@ -64,7 +114,8 @@ fn agent_tool_uses_agent_id_terminology() {
 #[test]
 fn delegated_manager_starts_empty() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     assert!(manager.list().is_empty());
     assert!(manager.status("missing").is_none());
     assert!(!manager.has_running_for_session("session-1"));
@@ -73,14 +124,16 @@ fn delegated_manager_starts_empty() {
 #[tokio::test]
 async fn stopping_unknown_run_is_actionable() {
     let root = tempfile::tempdir().unwrap();
-    let error = manager(root.path()).stop("abcdef").await.unwrap_err();
+    let fixture = manager(root.path());
+    let error = fixture.manager().stop("abcdef").await.unwrap_err();
     assert!(error.to_string().contains("unknown delegated run"));
 }
 
 #[tokio::test]
 async fn background_start_receipt_is_the_registration() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
     let result = call_agent(
         &tool,
@@ -106,13 +159,10 @@ async fn background_start_receipt_is_the_registration() {
 #[test]
 fn background_guidance_is_gated_by_capability() {
     let root = tempfile::tempdir().unwrap();
-    let enabled = AgentTool::new(
-        manager(root.path()),
-        root.path(),
-        BackgroundSubagents::Enabled,
-    );
+    let fixture = manager(root.path());
+    let enabled = AgentTool::new(fixture.manager(), root.path(), BackgroundSubagents::Enabled);
     let disabled = AgentTool::new(
-        manager(root.path()),
+        fixture.manager(),
         root.path(),
         BackgroundSubagents::Disabled,
     );
@@ -243,7 +293,8 @@ async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String 
 #[tokio::test]
 async fn running_queries_are_scoped_to_the_parent_session() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
         "session-1",
         None,
@@ -258,7 +309,8 @@ async fn running_queries_are_scoped_to_the_parent_session() {
 #[tokio::test]
 async fn observed_terminal_run_is_not_redelivered() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
         "session-1",
         None,
@@ -276,7 +328,8 @@ async fn observed_terminal_run_is_not_redelivered() {
 #[tokio::test]
 async fn unobserved_terminal_runs_drain_as_one_batch() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
         "session-1",
         None,
@@ -300,7 +353,8 @@ async fn unobserved_terminal_runs_drain_as_one_batch() {
 #[test]
 fn claim_terminal_costs_is_idempotent_and_session_scoped() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     manager.insert_completed_for_test("aaa111", "session-1", Some(0.034271));
     manager.insert_completed_for_test("bbb222", "session-1", Some(0.01));
     manager.insert_completed_for_test("ccc333", "session-2", Some(0.5));
@@ -317,7 +371,8 @@ fn claim_terminal_costs_is_idempotent_and_session_scoped() {
 #[test]
 fn lifecycle_tool_schema_is_stable() {
     let root = tempfile::tempdir().unwrap();
-    let tool = AgentsTool::new(manager(root.path()));
+    let fixture = manager(root.path());
+    let tool = AgentsTool::new(fixture.manager());
     let spec = tool.spec();
     assert_eq!(spec.name, "agents");
     assert_eq!(
@@ -347,7 +402,8 @@ fn preparation_context(root: &Path) -> ToolPreparationContext {
 #[tokio::test]
 async fn agent_and_agents_prepare_subagent_manager_resources() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     let agent = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
     let agents = AgentsTool::new(manager);
 
@@ -422,7 +478,8 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
 #[tokio::test]
 async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();
-    let manager = manager(root.path());
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
     let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
     let first = call_agent(
         &tool,
