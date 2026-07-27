@@ -251,12 +251,43 @@ fn shorten_path_keeps_end_when_last_segment_is_long() {
 }
 
 #[test]
-fn fit_status_cwd_keeps_branch_and_tail() {
-    let fitted = fit_status_cwd_left("~/work/company/services/api-gateway (main)", 28);
-    assert!(fitted.contains("api-gateway"), "{fitted}");
-    assert!(fitted.ends_with(" (main)"), "{fitted}");
+fn fit_cwd_keeps_branch_while_basename_fits() {
+    let fitted = fit_cwd("~/work/company/services/api-gateway", Some("main"), 28);
+    assert_eq!(fitted, "~/…/api-gateway (main)");
     assert!(display_width(&fitted) <= 28, "{fitted}");
-    assert!(!fitted.contains("work/company/services"), "{fitted}");
+}
+
+#[test]
+fn fit_cwd_drops_branch_before_mangling_basename() {
+    let path = "~/work/company/services/api-gateway";
+    let fitted = fit_cwd(path, Some("very-long-feature-branch"), 18);
+    assert!(
+        fitted.contains("api-gateway"),
+        "basename must remain intact: {fitted}"
+    );
+    assert!(
+        !fitted.contains('('),
+        "branch should drop before basename is mangled: {fitted}"
+    );
+    assert!(display_width(&fitted) <= 18, "{fitted}");
+}
+
+#[test]
+fn fit_cwd_handles_branch_names_with_parentheses() {
+    let fitted = fit_cwd("/tmp/project", Some("feat (wip)"), 40);
+    assert_eq!(fitted, "/tmp/project (feat (wip))");
+
+    let fitted = fit_cwd(
+        "~/work/company/services/api-gateway",
+        Some("feat (wip)"),
+        30,
+    );
+    assert!(fitted.contains("api-gateway"), "{fitted}");
+    assert!(
+        fitted.ends_with(" (feat (wip))") || !fitted.contains('('),
+        "must not re-parse branch from the joined string: {fitted}"
+    );
+    assert!(display_width(&fitted) <= 30, "{fitted}");
 }
 
 #[test]
@@ -272,4 +303,21 @@ fn narrow_statusline_keeps_cwd_basename() {
     assert!(cwd.contains('…'), "{cwd}");
     assert!(!cwd.ends_with('…'), "{cwd}");
     assert!(display_width(cwd) <= 40, "{cwd}");
+}
+
+#[test]
+fn narrow_statusline_prefers_basename_over_branch() {
+    let mut state = test_state(ModelUsage::default());
+    state.cwd = PathBuf::from("/tmp/claude-1000/projects/api-gateway");
+    state.branch = Some("very-long-feature-branch-name".into());
+
+    let top = line_text(&statusline_lines(&state, 20, None)[0]);
+    let cwd = top.trim_end();
+
+    assert!(cwd.contains("api-gateway"), "{cwd}");
+    assert!(
+        !cwd.contains("very-long-feature-branch-name"),
+        "branch should yield to basename under pressure: {cwd}"
+    );
+    assert!(display_width(cwd) <= 20, "{cwd}");
 }

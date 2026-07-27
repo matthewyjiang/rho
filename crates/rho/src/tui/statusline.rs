@@ -6,7 +6,7 @@ use std::{
 use ratatui::text::{Line, Span};
 
 use super::{
-    render::{display_width, truncate_one_line},
+    render::{display_width, truncate_keep_end, truncate_one_line},
     theme::Theme,
     usage_cost::{
         format_token_count, format_usd, resolved_usage_cost_usd_micros,
@@ -92,13 +92,6 @@ impl StatusLineState {
             permission_mode: info.permission_mode,
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
-        }
-    }
-
-    fn left_top(&self) -> String {
-        match &self.branch {
-            Some(branch) => format!("{} ({branch})", compact_cwd(&self.cwd)),
-            None => compact_cwd(&self.cwd),
         }
     }
 }
@@ -216,14 +209,16 @@ fn statusline_lines(
             state.into(),
         ]
     });
-    let top_left = state.left_top();
+    let cwd_path = compact_cwd(&state.cwd);
+    let cwd_branch = state.branch.as_deref();
+    let top_left = format_cwd_left(&cwd_path, cwd_branch);
     let top_right = goal
         .as_ref()
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
     let (bottom_left, bottom_right) = bottom_status(state, width);
     vec![
-        render_cwd_row(top_left, top_right, width),
+        render_cwd_row(&cwd_path, cwd_branch, top_right, width),
         render_row(bottom_left, bottom_right, width),
     ]
 }
@@ -326,37 +321,51 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
 }
 
 fn render_row(left: String, right: String, width: usize) -> Line<'static> {
-    render_row_with_left_fit(left, right, width, truncate_one_line)
+    match row_side_fit(display_width(&left), &right, width) {
+        None => status_row_line(left, right, width),
+        Some((left_budget, right)) => {
+            status_row_line(truncate_one_line(&left, left_budget), right, width)
+        }
+    }
 }
 
-fn render_cwd_row(left: String, right: String, width: usize) -> Line<'static> {
-    render_row_with_left_fit(left, right, width, fit_status_cwd_left)
+fn render_cwd_row(path: &str, branch: Option<&str>, right: String, width: usize) -> Line<'static> {
+    let left = format_cwd_left(path, branch);
+    match row_side_fit(display_width(&left), &right, width) {
+        None => status_row_line(left, right, width),
+        Some((left_budget, right)) => {
+            status_row_line(fit_cwd(path, branch, left_budget), right, width)
+        }
+    }
 }
 
-fn render_row_with_left_fit(
-    left: String,
-    right: String,
-    width: usize,
-    fit_left: fn(&str, usize) -> String,
-) -> Line<'static> {
-    let style = Theme::dim();
+/// Shared left/right budget math for a status row.
+///
+/// Returns `None` when both sides already fit. Otherwise right is head-truncated
+/// first, then the caller fits left into the remaining budget.
+fn row_side_fit(left_width: usize, right: &str, width: usize) -> Option<(usize, String)> {
     if right.is_empty() {
-        return Line::from(Span::styled(fit_left(&left, width), style));
+        return Some((width, String::new()));
     }
 
-    let left_width = display_width(&left);
-    let right_width = display_width(&right);
-    if left_width + right_width + usize::from(!left.is_empty()) <= width {
-        let gap = " ".repeat(width - left_width - right_width);
-        return Line::from(Span::styled(format!("{left}{gap}{right}"), style));
+    let right_width = display_width(right);
+    if left_width + right_width + usize::from(left_width > 0) <= width {
+        return None;
     }
 
     let right_budget = right_width.min(width.saturating_div(2).max(1));
-    let right = truncate_one_line(&right, right_budget);
+    let right = truncate_one_line(right, right_budget);
     let right_width = display_width(&right);
-    let left = fit_left(&left, width.saturating_sub(right_width + 1).max(1));
-    let left_width = display_width(&left);
-    let gap = " ".repeat(width.saturating_sub(left_width + right_width));
+    let left_budget = width.saturating_sub(right_width + 1).max(1);
+    Some((left_budget, right))
+}
+
+fn status_row_line(left: String, right: String, width: usize) -> Line<'static> {
+    let style = Theme::dim();
+    if right.is_empty() {
+        return Line::from(Span::styled(left, style));
+    }
+    let gap = " ".repeat(width.saturating_sub(display_width(&left) + display_width(&right)));
     Line::from(Span::styled(format!("{left}{gap}{right}"), style))
 }
 
@@ -377,42 +386,77 @@ fn compact_cwd(path: &Path) -> String {
     }
 }
 
-/// Fit a status-line cwd (optional ` (branch)` suffix) into `width`.
+fn format_cwd_left(path: &str, branch: Option<&str>) -> String {
+    match branch {
+        Some(branch) => format!("{path} ({branch})"),
+        None => path.to_string(),
+    }
+}
+
+/// Fit cwd path + optional branch into `width`.
 ///
-/// Prefers keeping the trailing path segments that identify the workspace, using a
-/// middle ellipsis for dropped leading segments: `~/work/…/api-gateway`.
-fn fit_status_cwd_left(text: &str, width: usize) -> String {
+/// Basename visibility outranks the branch suffix. Degradation order:
+/// 1. full `path (branch)`
+/// 2. shortened path + branch, only while the full basename remains
+/// 3. drop branch
+/// 4. shortened path (may end-truncate a too-long final segment)
+fn fit_cwd(path: &str, branch: Option<&str>, width: usize) -> String {
     if width == 0 {
         return String::new();
     }
-    if display_width(text) <= width {
-        return text.to_string();
+
+    let full = format_cwd_left(path, branch);
+    if display_width(&full) <= width {
+        return full;
     }
 
-    let (path, branch_suffix) = split_status_cwd_branch(text);
-    if branch_suffix.is_empty() {
-        return shorten_path_display(path, width);
-    }
-
-    let branch_width = display_width(branch_suffix);
-    if branch_width >= width {
-        // Branch alone fills the row; fall back to ordinary head truncation.
-        return truncate_one_line(text, width);
-    }
-
-    let shortened = shorten_path_display(path, width - branch_width);
-    format!("{shortened}{branch_suffix}")
-}
-
-fn split_status_cwd_branch(text: &str) -> (&str, &str) {
-    if let Some(open) = text.rfind(" (") {
-        if open > 0 && text.ends_with(')') {
-            return (&text[..open], &text[open..]);
+    if let Some(branch) = branch {
+        let suffix = format!(" ({branch})");
+        let suffix_width = display_width(&suffix);
+        if suffix_width < width {
+            let path_budget = width - suffix_width;
+            if let Some(shortened) = shorten_path_keeping_basename(path, path_budget) {
+                return format!("{shortened}{suffix}");
+            }
         }
+        // Branch is optional chrome; drop it before mangling the basename.
     }
-    (text, "")
+
+    shorten_path_display(path, width)
 }
 
+fn shorten_path_keeping_basename(path: &str, width: usize) -> Option<String> {
+    if display_width(path) <= width {
+        return Some(path.to_string());
+    }
+    let shortened = shorten_path_display(path, width);
+    retains_full_basename(path, &shortened).then_some(shortened)
+}
+
+fn retains_full_basename(path: &str, shortened: &str) -> bool {
+    let base = path_basename(path);
+    if base.is_empty() {
+        return true;
+    }
+    if shortened == base {
+        return true;
+    }
+    let Some(prefix) = shortened.strip_suffix(base) else {
+        return false;
+    };
+    prefix.ends_with('/') || prefix.ends_with('\\')
+}
+
+fn path_basename(path: &str) -> &str {
+    path.rsplit(['/', '\\'])
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(path)
+}
+
+/// Shorten a display path by dropping leading segments.
+///
+/// Keeps a root marker when it still fits (`~/…/api-gateway`, `/…/api-gateway`),
+/// otherwise falls back to `…/api-gateway`, then end-truncates the last segment.
 fn shorten_path_display(path: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
@@ -421,7 +465,7 @@ fn shorten_path_display(path: &str, width: usize) -> String {
         return path.to_string();
     }
     if width <= 1 {
-        return "…".chars().take(width).collect();
+        return truncate_keep_end(path, width);
     }
 
     let sep = path_display_separator(path);
@@ -431,18 +475,16 @@ fn shorten_path_display(path: &str, width: usize) -> String {
         .filter(|segment| !segment.is_empty())
         .collect();
     if segments.len() <= 1 {
-        // No interior segments to drop; keep the identifying end of the name.
         return truncate_keep_end(path, width);
     }
 
     // Prefer the longest trailing-segment form that still fits.
     let mut best: Option<String> = None;
     for keep in 1..segments.len() {
-        let tail = segments[segments.len() - keep..].join(&sep.to_string());
+        let tail = segments[segments.len() - keep..].join(sep.to_string().as_str());
         let candidate = if prefix.is_empty() {
             format!("…{sep}{tail}")
         } else {
-            // `~/…/tail` or `/…/tail`
             format!("{prefix}…{sep}{tail}")
         };
 
@@ -458,10 +500,9 @@ fn shorten_path_display(path: &str, width: usize) -> String {
         return candidate;
     }
 
-    // Even the shortest rooted form failed. Try dropping the root prefix:
+    // Even the shortest rooted form failed. Drop the root prefix:
     // `…/last` instead of `~/…/last`.
-    let last = segments[segments.len() - 1];
-    let minimal = format!("…{sep}{last}");
+    let minimal = format!("…{sep}{}", segments[segments.len() - 1]);
     if display_width(&minimal) <= width {
         return minimal;
     }
@@ -488,32 +529,6 @@ fn split_path_display_prefix(path: &str, sep: char) -> (&str, &str) {
         return (&path[..sep.len_utf8()], rest);
     }
     ("", path)
-}
-
-/// Truncate from the front, keeping the end of `text` with a leading ellipsis.
-fn truncate_keep_end(text: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if display_width(text) <= width {
-        return text.to_string();
-    }
-    if width <= 1 {
-        return "…".chars().take(width).collect();
-    }
-
-    let target = width - 1;
-    let mut start = text.len();
-    let mut used = 0usize;
-    for (index, ch) in text.char_indices().rev() {
-        let ch_width = super::render::char_display_width(ch);
-        if used + ch_width > target {
-            break;
-        }
-        used += ch_width;
-        start = index;
-    }
-    format!("…{}", &text[start..])
 }
 
 #[cfg(test)]
