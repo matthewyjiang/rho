@@ -345,6 +345,64 @@ fn markdown_drain_uses_display_width_in_code_blocks() {
 }
 
 #[test]
+fn markdown_preview_keeps_closed_emphasis_with_trailing_text() {
+    let width = 20;
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("word word word word ");
+    while stream.drain_renderable_markdown(width, false).is_some() {}
+
+    stream.push_delta("**bold text**");
+    let preview = stream
+        .drain_preview_markdown(width, false)
+        .expect("closed bold without trailing text should preview");
+    assert_eq!(preview.render_text(), "**bold text**");
+    let height_at_close = rendered_markdown_text(
+        &format!("{}{}", stream.emitted_text(), preview.render_text()),
+        width,
+        false,
+    )
+    .len();
+
+    stream.push_delta(" tail");
+    let preview = stream
+        .drain_preview_markdown(width, false)
+        .expect("closed bold with trailing text must keep previewing");
+    assert_eq!(preview.render_text(), "**bold text** tail");
+    let height_after_tail = rendered_markdown_text(
+        &format!("{}{}", stream.emitted_text(), preview.render_text()),
+        width,
+        false,
+    )
+    .len();
+    assert!(
+        height_after_tail >= height_at_close,
+        "trailing text after bold must not collapse stream height ({height_at_close} -> {height_after_tail})"
+    );
+
+    let mut italic = AppendOnlyStream::default();
+    italic.push_delta("*italic* tail");
+    let preview = italic
+        .drain_preview_markdown(width, false)
+        .expect("closed italic with trailing text should preview");
+    assert_eq!(preview.render_text(), "*italic* tail");
+}
+
+#[test]
+fn markdown_preview_still_holds_unclosed_emphasis() {
+    let mut stream = AppendOnlyStream::default();
+    stream.push_delta("before **bold");
+    assert_eq!(stream.drain_preview_markdown(40, false), None);
+    assert_eq!(stream.drain_renderable_markdown(40, false), None);
+
+    stream.push_delta("** after");
+    let preview = stream
+        .drain_preview_markdown(40, false)
+        .expect("closed bold should unlock the line");
+    assert_eq!(preview.render_text(), "before **bold** after");
+}
+
+#[test]
 fn reset_clears_pending_emitted_and_leading_blank_state() {
     let mut stream = AppendOnlyStream::default();
     stream.push_delta("done\n");
