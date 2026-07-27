@@ -98,7 +98,8 @@ fn reasoning_stream_preview_renders_markdown() {
         .find(|span| span.content == "boldly")
         .expect("bold reasoning span");
     assert!(bold.style.add_modifier.contains(Modifier::BOLD));
-    assert!(bold.style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(bold.style.fg, Some(Color::DarkGray));
+    assert!(!(bold.style.add_modifier - bold.style.sub_modifier).contains(Modifier::DIM));
 }
 
 #[test]
