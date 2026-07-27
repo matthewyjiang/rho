@@ -1,11 +1,14 @@
 //! Generic picker overlay geometry and line rendering.
 //!
 //! Feature policy (what items mean, confirm verbs, filters, chrome labels)
-//! stays at call sites. This module only lays out a bordered overlay with a
+//! stays at call sites. This module only lays out a solid popup panel with a
 //! navigation list and an optional independently scrollable detail pane.
-//! Detail presence is derived from item data, not a separate layout mode.
+//! Visual separation from the transcript comes from the panel background
+//! (applied at draw time), not box-drawing borders. Detail presence is derived
+//! from item data, not a separate layout mode.
 
 use ratatui::{
+    buffer::Buffer,
     layout::{Position, Rect},
     text::{Line, Span},
 };
@@ -20,12 +23,14 @@ const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
 const MIN_NAV_WIDTH: usize = 14;
 const MAX_NAV_WIDTH: usize = 28;
 const SEPARATOR: &str = " │ ";
-/// Rows consumed inside the border: search, divider, pane header, status divider, footer.
+/// Rows consumed inside the panel padding: search, spacer, pane header, spacer, footer.
 const INNER_CHROME_ROWS: usize = 5;
 const FILTER_PREFIX: &str = " Search  > ";
 const DEFAULT_NAV_LABEL: &str = " NAV";
 const DEFAULT_DETAIL_LABEL: &str = " DETAILS";
 const DEFAULT_NAV_KEYS_HINT: &str = "↑↓ items";
+/// One-cell inset so content does not sit on the panel edge.
+const PANEL_INSET: usize = 1;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct OverlayChrome {
@@ -219,6 +224,18 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
     }
 }
 
+/// Paint the solid popup surface. Call after rendering `overlay.lines` so every
+/// cell keeps the panel background even when spans only set foreground colors.
+pub(super) fn apply_overlay_panel_background(buffer: &mut Buffer, area: Rect) {
+    let panel = Theme::overlay_panel();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let cell = &mut buffer[(x, y)];
+            cell.set_style(panel.patch(cell.style()));
+        }
+    }
+}
+
 pub(super) fn overlay_detail_lines(detail: &str, detail_width: usize) -> Vec<String> {
     detail_wrapped_lines(detail, detail_width.max(1))
 }
@@ -263,8 +280,12 @@ fn outer_rect(area: Rect) -> Rect {
 fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
     let outer_width = outer.width as usize;
     let outer_height = outer.height as usize;
-    let inner_width = outer_width.saturating_sub(2).max(1);
-    let inner_height = outer_height.saturating_sub(2).max(1);
+    let inner_width = outer_width
+        .saturating_sub(PANEL_INSET.saturating_mul(2))
+        .max(1);
+    let inner_height = outer_height
+        .saturating_sub(PANEL_INSET.saturating_mul(2))
+        .max(1);
     let body_rows = inner_height.saturating_sub(INNER_CHROME_ROWS).max(1);
 
     let panes = if !has_details {
@@ -329,17 +350,14 @@ fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
 
 fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
-    lines.push(border_line(
-        layout.outer.width as usize,
-        '┌',
-        '┐',
-        Some(content.title),
-    ));
+    // Title row replaces the old top border; side inset is plain padding so the
+    // panel background is the only window chrome.
+    lines.push(title_row(layout.outer.width as usize, content.title));
     lines.push(content_row(
         layout.inner_width,
         filter_line(content.filter, layout.inner_width),
     ));
-    lines.push(horizontal_rule(layout.outer.width as usize));
+    lines.push(content_row(layout.inner_width, Line::raw("")));
     lines.push(content_row(
         layout.inner_width,
         pane_header_line(layout, &content.chrome),
@@ -364,15 +382,15 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
         lines.push(content_row(layout.inner_width, Line::raw("")));
     }
 
-    lines.push(horizontal_rule(layout.outer.width as usize));
+    lines.push(content_row(layout.inner_width, Line::raw("")));
     lines.push(content_row(
         layout.inner_width,
         footer_line(layout, &content),
     ));
-    lines.push(border_line(layout.outer.width as usize, '└', '┘', None));
+    lines.push(content_row(layout.inner_width, Line::raw("")));
     lines.truncate(layout.outer.height as usize);
     while lines.len() < layout.outer.height as usize {
-        lines.push(Line::raw(""));
+        lines.push(content_row(layout.inner_width, Line::raw("")));
     }
     lines
 }
@@ -804,10 +822,6 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
     }
 }
 
-fn horizontal_rule(width: usize) -> Line<'static> {
-    border_line(width, '├', '┤', None)
-}
-
 fn filter_line(filter: &str, width: usize) -> Line<'static> {
     if width <= 1 {
         return Line::from(Span::styled(">", Theme::text_strong()));
@@ -823,32 +837,26 @@ fn filter_line(filter: &str, width: usize) -> Line<'static> {
     ])
 }
 
-fn border_line(width: usize, left: char, right: char, title: Option<&str>) -> Line<'static> {
+fn title_row(width: usize, title: &str) -> Line<'static> {
     if width == 0 {
         return Line::raw("");
     }
-    if width == 1 {
-        return Line::from(Span::styled(left.to_string(), Theme::dim()));
-    }
-    let mut text = left.to_string();
-    if let Some(title) = title.filter(|title| !title.is_empty()) {
-        let label = format!(" {title} ");
-        let label = truncate_one_line(&label, width.saturating_sub(2));
-        text.push_str(&label);
-        let fill = width.saturating_sub(display_width(&text)).saturating_sub(1);
-        text.push_str(&"─".repeat(fill));
+    let label = if title.is_empty() {
+        String::new()
     } else {
-        text.push_str(&"─".repeat(width.saturating_sub(2)));
-    }
-    text.push(right);
-    if display_width(&text) > width {
-        text = truncate_one_line(&text, width);
-    }
-    Line::from(Span::styled(text, Theme::dim()))
+        format!(" {title} ")
+    };
+    styled_line(
+        truncate_one_line(&label, width),
+        width,
+        Theme::text_strong(),
+        LineFill::PadToWidth,
+    )
 }
 
 fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
-    let mut spans = vec![Span::styled("│", Theme::dim())];
+    // Inset with spaces (not box edges) so Theme::overlay_panel fills the frame.
+    let mut spans = vec![Span::raw(" ".repeat(PANEL_INSET))];
     let content_width = content
         .spans
         .iter()
@@ -858,7 +866,7 @@ fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
     if content_width < inner_width {
         spans.push(Span::raw(" ".repeat(inner_width - content_width)));
     }
-    spans.push(Span::styled("│", Theme::dim()));
+    spans.push(Span::raw(" ".repeat(PANEL_INSET)));
     Line::from(spans)
 }
 

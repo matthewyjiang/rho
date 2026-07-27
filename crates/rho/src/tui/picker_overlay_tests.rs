@@ -1,9 +1,9 @@
 use pretty_assertions::assert_eq;
-use ratatui::{layout::Rect, text::Line};
+use ratatui::{layout::Rect, text::Line, widgets::Paragraph};
 
 use super::super::{
     PickerAction, PickerBadge, PickerBadgePlacement, PickerBadgeTone, PickerItem, PickerLayout,
-    UiPicker,
+    Theme, UiPicker,
 };
 use super::*;
 
@@ -380,7 +380,7 @@ fn overlay_detail_end_scroll_uses_max_without_sentinel() {
 }
 
 #[test]
-fn overlay_uses_single_line_box_chrome() {
+fn overlay_uses_panel_chrome_without_box_drawing() {
     let frame = render_picker_overlay(
         &sample_picker("agent detail", "worker detail"),
         Rect::new(0, 0, 80, 24),
@@ -392,12 +392,47 @@ fn overlay_uses_single_line_box_chrome() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    assert!(text.contains('┌'), "{text}");
-    assert!(text.contains('└'), "{text}");
+    assert!(text.contains("loaded agents"), "{text}");
+    assert!(text.contains("Search"), "{text}");
+    // Window separation is the panel background, not box-drawing chrome.
+    for ch in ['┌', '┐', '└', '┘', '├', '┤', '╔', '╗', '╚', '╝', '║', '═'] {
+        assert!(
+            !text.contains(ch),
+            "unexpected box chrome {ch:?} in:\n{text}"
+        );
+    }
+    // Side-by-side still uses a light column divider inside the panel.
     assert!(text.contains('│'), "{text}");
-    assert!(!text.contains('╔'), "{text}");
-    assert!(!text.contains('║'), "{text}");
-    assert!(!text.contains('═'), "{text}");
+}
+
+#[test]
+fn overlay_panel_background_fills_every_cell() {
+    use ratatui::{buffer::Buffer, widgets::Widget};
+
+    let overlay = render_picker_overlay(
+        &sample_picker("agent detail", "worker detail"),
+        Rect::new(0, 0, 80, 24),
+    );
+    // Render into a zero-based buffer the same way the live view paints.
+    let area = Rect::new(0, 0, overlay.outer.width, overlay.outer.height);
+    let mut buffer = Buffer::empty(area);
+    Paragraph::new(overlay.lines)
+        .style(Theme::overlay_panel())
+        .render(area, &mut buffer);
+    apply_overlay_panel_background(&mut buffer, area);
+
+    let expected_bg = Theme::overlay_panel()
+        .bg
+        .expect("overlay panel defines a background");
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            assert_eq!(
+                buffer[(x, y)].bg,
+                expected_bg,
+                "missing panel bg at ({x},{y})"
+            );
+        }
+    }
 }
 
 #[test]
