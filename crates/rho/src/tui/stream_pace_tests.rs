@@ -224,6 +224,9 @@ fn held_text_keeps_rescheduling_until_the_reserve_drains() {
         saw_reschedule = true;
         now = deadline;
     }
-    assert!(saw_reschedule, "paced hold should reschedule while draining");
+    assert!(
+        saw_reschedule,
+        "paced hold should reschedule while draining"
+    );
     assert!(streams.hold.is_empty());
 }
