@@ -351,6 +351,122 @@ fn streams_partial_codex_tool_call_arguments() {
 }
 
 #[test]
+fn completed_tool_call_item_publishes_arguments_that_never_streamed() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut on_event = |event| {
+        events.push(event);
+        Ok(())
+    };
+
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":""}}"#,
+        &mut state,
+        &mut Some(&mut on_event),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}"#,
+        &mut state,
+        &mut Some(&mut on_event),
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                ModelEvent::ToolCallDelta { arguments, .. },
+                ModelEvent::ToolCallDelta {
+                    index: 0,
+                    id: Some(id),
+                    name: Some(name),
+                    arguments: completed,
+                }
+            ] if arguments.is_empty()
+                && id == "call_1"
+                && name == "read_file"
+                && completed == r#"{"path":"src/main.rs"}"#
+        ),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn completed_tool_call_arguments_are_published_exactly_once() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut on_event = |event| {
+        events.push(event);
+        Ok(())
+    };
+
+    for line in [
+        r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":""}}"#,
+        r#"data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":"}"#,
+        r#"data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"src/main.rs\"}"}"#,
+        r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}"#,
+    ] {
+        handle_codex_sse_line(line, &mut state, &mut Some(&mut on_event)).unwrap();
+    }
+
+    let streamed = events
+        .iter()
+        .filter_map(|event| match event {
+            ModelEvent::ToolCallDelta { arguments, .. } => Some(arguments.as_str()),
+            ModelEvent::OutputDelta(_)
+            | ModelEvent::ReasoningDelta(_)
+            | ModelEvent::ReasoningSummaryDelta(_)
+            | ModelEvent::WebSearch(_)
+            | ModelEvent::ProviderContext { .. }
+            | ModelEvent::Usage(_) => None,
+        })
+        .collect::<String>();
+    assert_eq!(streamed, r#"{"path":"src/main.rs"}"#);
+}
+
+#[test]
+fn parallel_tool_calls_stream_arguments_per_output_index() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut on_event = |event| {
+        events.push(event);
+        Ok(())
+    };
+
+    for line in [
+        r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":""}}"#,
+        r#"data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_2","name":"read_file","arguments":""}}"#,
+        r#"data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"call_2","name":"read_file","arguments":"{\"path\":\"b.rs\"}"}}"#,
+        r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"a.rs\"}"}}"#,
+    ] {
+        handle_codex_sse_line(line, &mut state, &mut Some(&mut on_event)).unwrap();
+    }
+
+    let published = events
+        .iter()
+        .filter_map(|event| match event {
+            ModelEvent::ToolCallDelta {
+                index, arguments, ..
+            } => (!arguments.is_empty()).then(|| (*index, arguments.clone())),
+            ModelEvent::OutputDelta(_)
+            | ModelEvent::ReasoningDelta(_)
+            | ModelEvent::ReasoningSummaryDelta(_)
+            | ModelEvent::WebSearch(_)
+            | ModelEvent::ProviderContext { .. }
+            | ModelEvent::Usage(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        published,
+        vec![
+            (1, r#"{"path":"b.rs"}"#.to_string()),
+            (0, r#"{"path":"a.rs"}"#.to_string()),
+        ]
+    );
+}
+
+#[test]
 fn chat_stream_usage_normalizes_prompt_cache_tokens() {
     let mut text = String::new();
     let mut tool_calls = Vec::new();
