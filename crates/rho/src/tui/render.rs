@@ -14,15 +14,11 @@ use super::{
     limits_command::usage_limit_lines,
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
-    theme::{Theme, ToolStyle},
-    tool_diff, Entry, FeedImage, PickerBadgeTone, PickerItem, ToolEntryState, UiPicker,
-    DEFAULT_TUI_HEIGHT,
+    theme::Theme,
+    Entry, FeedImage, PickerBadgeTone, PickerItem, UiPicker, DEFAULT_TUI_HEIGHT,
 };
+use rho_providers::model::{image_summary, ImageContent};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-use {
-    rho_providers::model::{image_summary, ImageContent},
-    rho_tools::tool::ToolDisplayStyle,
-};
 
 use ratatui::{
     layout::Position,
@@ -555,25 +551,14 @@ fn render_non_assistant_entry(
             unreachable!("assistant and reasoning entries are rendered as markdown")
         }
         Entry::Tool(tool) => {
-            if let Some(card) = tool.card.as_ref() {
-                super::tool_card_render::push_tool_card(
-                    lines,
-                    card,
-                    tool.state,
-                    width,
-                    max_tool_output_lines,
-                    tool.expanded,
-                );
-            } else {
-                push_tool_block(
-                    lines,
-                    &tool.display_lines,
-                    tool.state,
-                    width,
-                    max_tool_output_lines,
-                    tool.expanded,
-                );
-            }
+            super::tool_card_render::push_tool_card(
+                lines,
+                &tool.card,
+                tool.state,
+                width,
+                max_tool_output_lines,
+                tool.expanded,
+            );
         }
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
@@ -586,87 +571,6 @@ fn render_non_assistant_entry(
     }
 }
 
-fn push_tool_block(
-    lines: &mut Vec<Line<'static>>,
-    display_lines: &[String],
-    state: ToolEntryState,
-    width: usize,
-    max_tool_output_lines: usize,
-    expanded: bool,
-) {
-    let style = match state {
-        ToolEntryState::Running => Theme::user_message(),
-        ToolEntryState::Finished { ok, display_style } => tool_style(display_style).for_result(ok),
-    };
-    push_tool_block_with_style(
-        lines,
-        display_lines,
-        width,
-        max_tool_output_lines,
-        expanded,
-        style,
-        matches!(
-            state,
-            ToolEntryState::Finished {
-                display_style: ToolDisplayStyle::FileDiff,
-                ..
-            }
-        ),
-    );
-}
-
-fn push_tool_block_with_style(
-    lines: &mut Vec<Line<'static>>,
-    display_lines: &[String],
-    width: usize,
-    max_tool_output_lines: usize,
-    expanded: bool,
-    style: Style,
-    color_diff: bool,
-) {
-    let logical_lines = tool_diff::logical_lines(display_lines);
-    let max_tool_output_lines = max_tool_output_lines.max(1);
-    let truncated = logical_lines.len() > max_tool_output_lines;
-    let visible_count = if truncated && !expanded {
-        max_tool_output_lines
-    } else {
-        logical_lines.len()
-    };
-
-    for line in logical_lines.iter().take(visible_count) {
-        let line_style = if color_diff {
-            tool_diff::line_style(line, style)
-        } else {
-            style
-        };
-        push_hard_wrapped_text(lines, line, width, line_style, LineFill::PadToWidth);
-    }
-
-    if truncated {
-        let prompt = if expanded {
-            "ctrl+o to collapse".to_string()
-        } else {
-            format!(
-                "... {} more lines, ctrl+o to expand",
-                logical_lines.len() - visible_count
-            )
-        };
-        push_wrapped_text(lines, &prompt, width, style, LineFill::PadToWidth);
-    }
-}
-
-fn tool_style(style: ToolDisplayStyle) -> ToolStyle {
-    match style {
-        ToolDisplayStyle::DefaultTool => Theme::tool_default(),
-        ToolDisplayStyle::FileOrCommand | ToolDisplayStyle::FileDiff => {
-            Theme::tool_file_or_command()
-        }
-        ToolDisplayStyle::Skill => Theme::tool_skill(),
-        ToolDisplayStyle::Web => Theme::tool_web(),
-        ToolDisplayStyle::Questionnaire => Theme::tool_questionnaire(),
-    }
-}
-
 pub(super) fn push_wrapped_text(
     lines: &mut Vec<Line<'static>>,
     text: &str,
@@ -675,16 +579,6 @@ pub(super) fn push_wrapped_text(
     fill: LineFill,
 ) {
     push_wrapped_text_with(lines, text, width, style, fill, wrap_line_at_whitespace);
-}
-
-pub(super) fn push_hard_wrapped_text(
-    lines: &mut Vec<Line<'static>>,
-    text: &str,
-    width: usize,
-    style: Style,
-    fill: LineFill,
-) {
-    push_wrapped_text_with(lines, text, width, style, fill, wrap_line_hard);
 }
 
 pub(super) fn push_wrapped_text_with(

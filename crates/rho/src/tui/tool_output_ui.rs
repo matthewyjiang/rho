@@ -12,21 +12,11 @@ pub(super) fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize)
 }
 
 pub(super) fn tool_expandable_line_count(tool: &super::ToolEntry) -> usize {
-    if let Some(card) = tool.card.as_ref() {
-        // Diff bodies are hidden until expanded; other bodies use the line budget.
-        if matches!(card.body, rho_tools::tool_card::ToolBody::DiffLines(_)) {
-            return card.body.line_count().max(1);
-        }
-        return card.expandable_line_count();
+    // Diff bodies are hidden until expanded; other bodies use the line budget.
+    if matches!(tool.card.body, rho_tools::tool_card::ToolBody::DiffLines(_)) {
+        return tool.card.body.line_count().max(1);
     }
-    tool_display_line_count(&tool.display_lines)
-}
-
-pub(super) fn tool_display_line_count(display_lines: &[String]) -> usize {
-    display_lines
-        .iter()
-        .map(|line| line.lines().count().max(1))
-        .sum()
+    tool.card.expandable_line_count()
 }
 
 impl App {

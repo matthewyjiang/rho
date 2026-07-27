@@ -10,9 +10,8 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     feed_image::reserve_optional_image_rows,
     render::{
-        display_width, pad_entry_line, padded_inner_width, push_hard_wrapped_text,
-        push_wrapped_text, styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard,
-        LineFill,
+        display_width, pad_entry_line, padded_inner_width, push_wrapped_text, styled_blank_line,
+        wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
     theme::Theme,
     tool_diff, ToolEntry, ToolEntryState,
@@ -34,25 +33,14 @@ pub(super) fn tool_entry_lines(
 ) -> Vec<Line<'static>> {
     let inner_width = padded_inner_width(width);
     let mut lines = Vec::new();
-    if let Some(card) = tool.card.as_ref() {
-        push_tool_card(
-            &mut lines,
-            card,
-            tool.state,
-            inner_width,
-            max_tool_output_lines,
-            tool.expanded,
-        );
-    } else {
-        push_legacy_tool_block(
-            &mut lines,
-            &tool.display_lines,
-            tool.state,
-            inner_width,
-            max_tool_output_lines,
-            tool.expanded,
-        );
-    }
+    push_tool_card(
+        &mut lines,
+        &tool.card,
+        tool.state,
+        inner_width,
+        max_tool_output_lines,
+        tool.expanded,
+    );
     reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
     // One trailing spacer only. Prior entries own the blank above this card.
     let padding_style = Theme::tool_card_padding();
@@ -432,65 +420,6 @@ fn body_logical_lines(body: &ToolBody) -> Vec<String> {
     }
 }
 
-fn push_legacy_tool_block(
-    lines: &mut Vec<Line<'static>>,
-    display_lines: &[String],
-    state: ToolEntryState,
-    width: usize,
-    max_tool_output_lines: usize,
-    expanded: bool,
-) {
-    use rho_tools::tool::ToolDisplayStyle;
-    let style = match state {
-        ToolEntryState::Running => Theme::user_message(),
-        ToolEntryState::Finished { ok, display_style } => match display_style {
-            ToolDisplayStyle::DefaultTool => Theme::tool_default().for_result(ok),
-            ToolDisplayStyle::FileOrCommand | ToolDisplayStyle::FileDiff => {
-                Theme::tool_file_or_command().for_result(ok)
-            }
-            ToolDisplayStyle::Skill => Theme::tool_skill().for_result(ok),
-            ToolDisplayStyle::Web => Theme::tool_web().for_result(ok),
-            ToolDisplayStyle::Questionnaire => Theme::tool_questionnaire().for_result(ok),
-        },
-    };
-    let color_diff = matches!(
-        state,
-        ToolEntryState::Finished {
-            display_style: ToolDisplayStyle::FileDiff,
-            ..
-        }
-    );
-    let logical_lines = tool_diff::logical_lines(display_lines);
-    let max_tool_output_lines = max_tool_output_lines.max(1);
-    let truncated = logical_lines.len() > max_tool_output_lines;
-    let visible_count = if truncated && !expanded {
-        max_tool_output_lines
-    } else {
-        logical_lines.len()
-    };
-
-    for line in logical_lines.iter().take(visible_count) {
-        let line_style = if color_diff {
-            tool_diff::line_style(line, style)
-        } else {
-            style
-        };
-        push_hard_wrapped_text(lines, line, width, line_style, LineFill::PadToWidth);
-    }
-
-    if truncated {
-        let prompt = if expanded {
-            "ctrl+o to collapse".to_string()
-        } else {
-            format!(
-                "... {} more lines, ctrl+o to expand",
-                logical_lines.len() - visible_count
-            )
-        };
-        push_wrapped_text(lines, &prompt, width, style, LineFill::PadToWidth);
-    }
-}
-
 fn pad_spans_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
     let used = spans
         .iter()
@@ -566,10 +495,7 @@ mod tests {
         push_tool_card(
             &mut lines,
             &card,
-            ToolEntryState::Finished {
-                ok: true,
-                display_style: rho_tools::tool::ToolDisplayStyle::file_diff(),
-            },
+            ToolEntryState::Finished { ok: true },
             80,
             4,
             /*expanded*/ false,
@@ -607,10 +533,7 @@ mod tests {
         push_tool_card(
             &mut lines,
             &card,
-            ToolEntryState::Finished {
-                ok: true,
-                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
-            },
+            ToolEntryState::Finished { ok: true },
             80,
             1,
             /*expanded*/ false,
@@ -630,12 +553,8 @@ mod tests {
             ToolHeader::call("read_file", Some("main.rs".into())),
         );
         let tool = crate::tui::ToolEntry {
-            state: ToolEntryState::Finished {
-                ok: true,
-                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
-            },
-            display_lines: vec!["read_file".into()],
-            card: Some(card),
+            state: ToolEntryState::Finished { ok: true },
+            card: card,
             expanded: false,
             image: None,
         };
@@ -726,10 +645,7 @@ mod tests {
         push_tool_card(
             &mut lines,
             &card,
-            ToolEntryState::Finished {
-                ok: true,
-                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
-            },
+            ToolEntryState::Finished { ok: true },
             28,
             4,
             /*expanded*/ false,
@@ -775,8 +691,7 @@ mod tests {
         ]));
         let tool = crate::tui::ToolEntry {
             state: ToolEntryState::Running,
-            display_lines: card.to_display_lines(),
-            card: Some(card),
+            card: card,
             expanded: false,
             image: None,
         };
@@ -811,10 +726,7 @@ mod tests {
         push_tool_card(
             &mut lines,
             &card,
-            ToolEntryState::Finished {
-                ok: true,
-                display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
-            },
+            ToolEntryState::Finished { ok: true },
             80,
             10,
             /*expanded*/ false,

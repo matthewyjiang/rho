@@ -198,9 +198,17 @@ impl AttachmentApp {
                 display_lines,
                 card,
             } => {
+                let card = card.unwrap_or_else(|| {
+                    rho_tools::tool_card::ToolCard::from_plain_lines(
+                        rho_tools::tool_card::ToolStatus::Running,
+                        rho_tools::tool_card::ToolFamily::from_display_style(
+                            rho_tools::tool::ToolDisplayStyle::default_tool(),
+                        ),
+                        &display_lines,
+                    )
+                });
                 self.pending_tool = Some(ToolEntry {
                     state: ToolEntryState::Running,
-                    display_lines,
                     card,
                     expanded: false,
                     image: None,
@@ -212,10 +220,21 @@ impl AttachmentApp {
                 display_lines,
                 card,
             } => {
+                let status = if ok {
+                    rho_tools::tool_card::ToolStatus::Ok
+                } else {
+                    rho_tools::tool_card::ToolStatus::Error
+                };
+                let card = card.unwrap_or_else(|| {
+                    rho_tools::tool_card::ToolCard::from_plain_lines(
+                        status,
+                        rho_tools::tool_card::ToolFamily::from_display_style(display_style),
+                        &display_lines,
+                    )
+                });
                 self.pending_tool = None;
                 self.transcript.push(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished { ok, display_style },
-                    display_lines,
+                    state: ToolEntryState::Finished { ok },
                     card,
                     expanded: false,
                     image: None,

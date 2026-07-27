@@ -2,16 +2,6 @@
 
 use std::time::{Duration, Instant};
 
-use ratatui::{
-    style::{Modifier, Style},
-    text::Line,
-};
-use rho_providers::model::{
-    catalog::{LoginTarget, ModelSelection},
-    ContextUsage, ModelUsage,
-};
-use rho_tools::tool::ToolDisplayStyle;
-
 use super::{
     approval::ApprovalComposer,
     commands::{self, CommandSpec},
@@ -29,6 +19,14 @@ use super::{
     stream::AppendOnlyStream,
     theme::Theme,
     usage_cost::{AttemptAwareRunUsage, UsageCostTracker},
+};
+use ratatui::{
+    style::{Modifier, Style},
+    text::Line,
+};
+use rho_providers::model::{
+    catalog::{LoginTarget, ModelSelection},
+    ContextUsage, ModelUsage,
 };
 
 #[cfg(test)]
@@ -243,9 +241,8 @@ pub(super) enum CommandChoiceKind {
 #[derive(Clone, Debug)]
 pub(super) struct ToolEntry {
     pub(in crate::tui) state: ToolEntryState,
-    pub(in crate::tui) display_lines: Vec<String>,
-    /// Structured Call + Children card when available.
-    pub(in crate::tui) card: Option<rho_tools::tool_card::ToolCard>,
+    /// Structured Call + Children card. Sole render input for tool rows.
+    pub(in crate::tui) card: rho_tools::tool_card::ToolCard,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
 }
@@ -253,10 +250,7 @@ pub(super) struct ToolEntry {
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ToolEntryState {
     Running,
-    Finished {
-        ok: bool,
-        display_style: ToolDisplayStyle,
-    },
+    Finished { ok: bool },
 }
 
 #[derive(Clone, Debug)]

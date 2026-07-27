@@ -2,6 +2,7 @@ pub(super) use crate::config::default_inline_shell as default_shell;
 
 use std::{path::Path, process::Stdio};
 
+use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
@@ -215,20 +216,43 @@ pub(super) fn context_text(output: &ShellOutput) -> String {
 }
 
 pub(super) fn display_text(output: &ShellOutput, included_in_context: bool) -> String {
-    display_lines(output, included_in_context).join("\n")
+    display_card(output, included_in_context)
+        .to_display_lines()
+        .join("\n")
 }
 
-pub(super) fn display_lines(output: &ShellOutput, _included_in_context: bool) -> Vec<String> {
+pub(super) fn display_card(output: &ShellOutput, _included_in_context: bool) -> ToolCard {
     let prompt = match output.shell.to_ascii_lowercase().as_str() {
         "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => "PS",
         _ => "$",
     };
-    let mut lines = vec![format!("{prompt} {}", output.command)];
-    if !output.stdout.is_empty() {
-        lines.push(String::new());
-        lines.push(output.stdout.trim_end().to_string());
+    let status = if output.exit_code == "running" {
+        ToolStatus::Running
+    } else if output.ok {
+        ToolStatus::Ok
+    } else if output.exit_code == "cancelled" {
+        ToolStatus::Interrupted
+    } else {
+        ToolStatus::Error
+    };
+    let mut card = ToolCard::new(
+        status,
+        ToolFamily::FileCommand,
+        ToolHeader::shell(prompt, Some(output.command.clone())),
+    );
+    if output.exit_code != "running" && !output.ok && output.exit_code != "cancelled" {
+        card.push_fact(ToolFact::Meta {
+            text: format!("exit {}", output.exit_code),
+        });
     }
-    lines
+    if !output.stdout.is_empty() {
+        card.body = ToolBody::Lines(vec![output.stdout.trim_end().to_string()]);
+    } else if !output.stderr.is_empty() && !output.ok {
+        card.push_fact(ToolFact::Error {
+            text: output.stderr.trim_end().to_string(),
+        });
+    }
+    card
 }
 
 fn executable_name(shell: &str) -> &str {
@@ -291,12 +315,8 @@ impl super::App {
                 ok: false,
             };
             self.insert_entry(&super::Entry::Tool(super::ToolEntry {
-                state: super::ToolEntryState::Finished {
-                    ok: false,
-                    display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
-                },
-                display_lines: display_lines(&output, task.mode.included_in_context()),
-                card: None,
+                state: super::ToolEntryState::Finished { ok: false },
+                card: display_card(&output, task.mode.included_in_context()),
                 expanded: true,
                 image: None,
             }));
@@ -427,18 +447,10 @@ impl super::App {
                     ),
                 });
         }
-        let display_text = rho_tools::tool::truncate(
-            display_text(&output, task.mode.included_in_context()),
-            task.max_output_bytes,
-        );
         self.finish_streams();
         self.insert_entry(&super::Entry::Tool(super::ToolEntry {
-            state: super::ToolEntryState::Finished {
-                ok: output.ok,
-                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
-            },
-            display_lines: display_text.lines().map(str::to_string).collect(),
-            card: None,
+            state: super::ToolEntryState::Finished { ok: output.ok },
+            card: display_card(&output, task.mode.included_in_context()),
             expanded: true,
             image: None,
         }));
@@ -515,8 +527,7 @@ impl PendingShellTask {
         };
         super::ToolEntry {
             state: super::ToolEntryState::Running,
-            display_lines: display_lines(&output, self.mode.included_in_context()),
-            card: None,
+            card: display_card(&output, self.mode.included_in_context()),
             expanded: true,
             image: None,
         }

@@ -19,15 +19,13 @@ use super::{agent_format, ToolKind, ToolPresentation, ToolView};
 pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
     card.push_notice_facts(view.metadata.presentation_notices());
     let display_style = view.kind.display_style(&view.metadata);
-    // Keep family aligned with the legacy style enum used by attach fallbacks.
+    // Keep family aligned with the legacy style enum used by attach wire.
     if card.family == ToolFamily::Default {
         card.family = ToolFamily::from_display_style(display_style);
     }
-    let display_lines = card.to_display_lines();
     ToolPresentation {
         command: command(view),
         display_style,
-        display_lines,
         card,
         image_asset: view
             .metadata

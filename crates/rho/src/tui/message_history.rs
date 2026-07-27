@@ -111,12 +111,8 @@ pub(super) fn transcript_entries_from_messages(
                     let presented =
                         presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
                     entries.push(Entry::Tool(ToolEntry {
-                        state: ToolEntryState::Finished {
-                            ok: false,
-                            display_style: presented.display_style,
-                        },
-                        display_lines: presented.display_lines,
-                        card: Some(presented.card),
+                        state: ToolEntryState::Finished { ok: false },
+                        card: presented.card,
                         expanded: false,
                         image: None,
                     }));
@@ -131,12 +127,8 @@ pub(super) fn transcript_entries_from_messages(
                 });
                 let presented = presenter.historical(&call, result.ok, &result.content);
                 entries.push(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished {
-                        ok: result.ok,
-                        display_style: presented.display_style,
-                    },
-                    display_lines: presented.display_lines,
-                    card: Some(presented.card),
+                    state: ToolEntryState::Finished { ok: result.ok },
+                    card: presented.card,
                     expanded: false,
                     image: None,
                 }));

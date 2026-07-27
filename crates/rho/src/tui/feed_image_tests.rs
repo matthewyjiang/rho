@@ -3,7 +3,6 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageFormat};
 use ratatui_image::picker::{Picker, ProtocolType};
 use rho_sdk::tool::ToolAsset;
-use rho_tools::tool::ToolDisplayStyle;
 
 use super::{kitty_graphics_environment, picker_for_environment, FeedImage, IMAGE_HEIGHT};
 use crate::tui::{
@@ -37,12 +36,12 @@ fn kitty_picker() -> Picker {
 
 fn image_tool() -> Entry {
     Entry::Tool(ToolEntry {
-        state: ToolEntryState::Finished {
-            ok: true,
-            display_style: ToolDisplayStyle::FileOrCommand,
-        },
-        display_lines: vec!["read_file photo.png".into()],
-        card: None,
+        state: ToolEntryState::Finished { ok: true },
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
+        ),
         expanded: false,
         image: Some(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap()),
     })

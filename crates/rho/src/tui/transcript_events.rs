@@ -239,38 +239,24 @@ impl App {
                 self.mark_steering_applied(&ids);
                 None
             }
-            ViewModelEvent::ToolStarted {
-                call_id,
-                display_lines,
-                card,
-            } => {
-                self.turn.tool_started(call_id, display_lines, card);
+            ViewModelEvent::ToolStarted { call_id, card } => {
+                self.turn.tool_started(call_id, card);
                 None
             }
-            ViewModelEvent::ToolUpdated {
-                call_id,
-                display_lines,
-                card,
-            } => {
-                self.turn.tool_updated(call_id, display_lines, card);
+            ViewModelEvent::ToolUpdated { call_id, card } => {
+                self.turn.tool_updated(call_id, card);
                 None
             }
             ViewModelEvent::ToolCallUpdated {
                 index,
                 call_id,
-                display_lines,
                 card,
             } => {
-                self.turn
-                    .tool_call_preview(index, call_id, display_lines, card);
+                self.turn.tool_call_preview(index, call_id, card);
                 None
             }
-            ViewModelEvent::ToolCallProposed {
-                call_id,
-                display_lines,
-                card,
-            } => {
-                self.turn.tool_call_proposed(call_id, display_lines, card);
+            ViewModelEvent::ToolCallProposed { call_id, card } => {
+                self.turn.tool_call_proposed(call_id, card);
                 None
             }
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
@@ -320,9 +306,8 @@ impl App {
             ViewModelEvent::ToolFinished {
                 call_id,
                 ok,
-                display_style,
-                mut display_lines,
-                card,
+                display_style: _,
+                mut card,
                 image_asset,
             } => {
                 self.statusline.refresh_git_branch();
@@ -339,13 +324,14 @@ impl App {
                         .and_then(|asset| match self.load_feed_image(asset) {
                             Ok(image) => image,
                             Err(error) => {
-                                display_lines.push(format!("image preview unavailable: {error}"));
+                                card.push_fact(rho_tools::tool_card::ToolFact::Error {
+                                    text: format!("image preview unavailable: {error}"),
+                                });
                                 None
                             }
                         });
                 Some(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished { ok, display_style },
-                    display_lines,
+                    state: ToolEntryState::Finished { ok },
                     card,
                     expanded,
                     image,

@@ -1,10 +1,5 @@
 use super::*;
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-    widgets::{Paragraph, Widget},
-};
+use ratatui::style::{Color, Style};
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -125,31 +120,6 @@ fn display_width_ignores_control_characters_filtered_by_ratatui() {
     assert_eq!(display_width("left\tright"), 9);
     assert_eq!(display_width("left\rright"), 9);
     assert_eq!(display_width("left\u{1b}right"), 9);
-}
-
-#[test]
-fn tool_block_with_tabs_fills_the_full_width() {
-    let width = 20;
-    let mut lines = Vec::new();
-    push_tool_block_with_style(
-        &mut lines,
-        &["bash".into(), "one\ttwo\tthree".into()],
-        width,
-        10,
-        false,
-        Style::default().bg(Color::Green),
-        false,
-    );
-
-    assert!(lines
-        .iter()
-        .all(|line| display_width(&line_text(line)) == width));
-
-    let area = Rect::new(0, 0, width as u16, lines.len() as u16);
-    let mut buffer = Buffer::empty(area);
-    Paragraph::new(lines).render(area, &mut buffer);
-    assert!((0..area.height)
-        .all(|row| { (0..area.width).all(|column| buffer[(column, row)].bg == Color::Green) }));
 }
 
 #[test]

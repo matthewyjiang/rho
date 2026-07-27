@@ -99,13 +99,22 @@ fn buffer_row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
 }
 
 fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
+    let lines = display_lines
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect::<Vec<_>>();
+    let status = if ok {
+        rho_tools::tool_card::ToolStatus::Ok
+    } else {
+        rho_tools::tool_card::ToolStatus::Error
+    };
     Entry::Tool(ToolEntry {
-        state: ToolEntryState::Finished {
-            ok,
-            display_style: ToolDisplayStyle::file_or_command(),
-        },
-        display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
-        card: None,
+        state: ToolEntryState::Finished { ok },
+        card: rho_tools::tool_card::ToolCard::from_plain_lines(
+            status,
+            rho_tools::tool_card::ToolFamily::Default,
+            &lines,
+        ),
         expanded: false,
         image: None,
     })
@@ -416,13 +425,13 @@ fn recovered_session_messages_become_transcript_entries() {
     assert!(matches!(
         entries[2],
         Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished {
-                ok: false,
-                display_style: ToolDisplayStyle::FileOrCommand,
-            },
-            ref display_lines,
+            state: ToolEntryState::Finished { ok: false },
+            ref card,
             ..
-        }) if display_lines.iter().any(|line| line.contains("read_file") && line.contains("src/main.rs"))
+        }) if card
+            .to_display_lines()
+            .iter()
+            .any(|line| line.contains("read_file") && line.contains("src/main.rs"))
     ));
     let lines = entry_lines(&entries[2], 40, 10);
     // Call + Children: failure is a red status marker, not a washed surface.
@@ -463,12 +472,12 @@ fn read_file_tool_block_shows_file_name_only() {
 fn skill_tool_block_shows_single_magenta_status_line() {
     let lines = entry_lines(
         &Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished {
-                ok: true,
-                display_style: ToolDisplayStyle::skill(),
-            },
-            display_lines: vec!["skill caveman".into()],
-            card: None,
+            state: ToolEntryState::Finished { ok: true },
+            card: rho_tools::tool_card::ToolCard::new(
+                rho_tools::tool_card::ToolStatus::Ok,
+                rho_tools::tool_card::ToolFamily::Skill,
+                rho_tools::tool_card::ToolHeader::call("skill", Some("caveman".into())),
+            ),
             expanded: false,
             image: None,
         }),
@@ -477,23 +486,45 @@ fn skill_tool_block_shows_single_magenta_status_line() {
     );
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-    assert_eq!(lines[0].spans[0].style.fg, Some(Color::White));
-    assert_eq!(lines[0].spans[0].style.bg, Some(Color::Magenta));
-    assert!(!lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
-    assert!(rendered.contains("skill caveman"));
+    // Marker is success green; skill identity is magenta on the verb span.
+    // pad_entry_line prefixes a padding span that inherits the marker style.
+    assert!(
+        lines[0]
+            .spans
+            .iter()
+            .any(|span| span.content.contains('✓') && span.style.fg == Some(Color::Green)),
+        "expected green success marker"
+    );
+    assert!(
+        lines[0].spans.iter().all(|span| span.style.bg.is_none()),
+        "card path must not use legacy wash backgrounds"
+    );
+    assert!(
+        lines[0]
+            .spans
+            .iter()
+            .any(|span| span.style.fg == Some(Color::Magenta) && span.content.contains("skill")),
+        "expected magenta skill verb, spans={:?}",
+        lines[0]
+            .spans
+            .iter()
+            .map(|span| (span.content.as_ref(), span.style.fg))
+            .collect::<Vec<_>>()
+    );
+    assert!(rendered.contains("skill(caveman)"));
     assert_eq!(rendered.matches("skill").count(), 1);
 }
 
 #[test]
-fn skill_tool_block_uses_subtle_red_failure_background() {
+fn skill_tool_block_uses_error_marker_without_wash() {
     let lines = entry_lines(
         &Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished {
-                ok: false,
-                display_style: ToolDisplayStyle::skill(),
-            },
-            display_lines: vec!["unknown skill".into()],
-            card: None,
+            state: ToolEntryState::Finished { ok: false },
+            card: rho_tools::tool_card::ToolCard::new(
+                rho_tools::tool_card::ToolStatus::Error,
+                rho_tools::tool_card::ToolFamily::Skill,
+                rho_tools::tool_card::ToolHeader::call("skill", Some("unknown".into())),
+            ),
             expanded: false,
             image: None,
         }),
@@ -501,9 +532,9 @@ fn skill_tool_block_uses_subtle_red_failure_background() {
         10,
     );
 
-    assert_eq!(lines[0].spans[0].style.fg, Some(Color::White));
-    assert_eq!(lines[0].spans[0].style.bg, Some(Color::Red));
-    assert!(!lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Red));
+    assert_eq!(lines[0].spans[0].style.bg, None);
+    assert!(line_text(&lines[0]).contains('✗'));
 }
 
 #[test]
@@ -529,8 +560,9 @@ fn tool_block_truncates_multiline_output_with_expand_prompt() {
 
     assert!(rendered.contains("bash"));
     assert!(rendered.contains("line 1"));
-    assert!(!rendered.contains("line 2"));
-    assert!(rendered.contains("... 2 more lines, ctrl+o to expand"));
+    assert!(rendered.contains("line 2"));
+    assert!(!rendered.contains("line 3"));
+    assert!(rendered.contains("... 1 more lines, ctrl+o to expand"));
 }
 
 #[test]
@@ -752,9 +784,15 @@ fn active_lines_for_height_uses_actual_viewport_height() {
 fn spinner_is_anchored_immediately_above_composer_divider() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
-    app.turn
-        .tool_calls_mut()
-        .preview(0, None, vec!["bash".into(), "cargo test".into()], None);
+    app.turn.tool_calls_mut().preview(
+        0,
+        None,
+        rho_tools::tool_card::ToolCard::from_plain_lines(
+            rho_tools::tool_card::ToolStatus::Running,
+            rho_tools::tool_card::ToolFamily::Default,
+            &vec!["bash".into(), "cargo test".into()],
+        ),
+    );
     let width = 40;
     let height = 24;
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -1615,9 +1653,15 @@ fn complete_slash_command_inserts_prefixed_skill_command() {
 fn history_lines_include_header_transcript_pending_preview_but_not_activity_row() {
     let mut app = test_app();
     app.push_transcript_entry(Entry::User("hello".into()));
-    app.turn
-        .tool_calls_mut()
-        .preview(0, None, vec!["bash".into(), "cargo test".into()], None);
+    app.turn.tool_calls_mut().preview(
+        0,
+        None,
+        rho_tools::tool_card::ToolCard::from_plain_lines(
+            rho_tools::tool_card::ToolStatus::Running,
+            rho_tools::tool_card::ToolFamily::Default,
+            &vec!["bash".into(), "cargo test".into()],
+        ),
+    );
     app.streams.live_stream_preview = Some(LiveStreamPreview {
         kind: StreamKind::Assistant,
         text: "partial answer".into(),

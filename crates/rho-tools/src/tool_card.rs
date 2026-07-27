@@ -304,6 +304,50 @@ impl ToolCard {
             }
         }
     }
+
+    /// Build a card from plain transcript lines.
+    ///
+    /// Used when an older attach journal (or a non-presenter producer) only has
+    /// line text. The first line becomes the call header; remaining lines become
+    /// body text after tree-prefix stripping.
+    pub fn from_plain_lines(status: ToolStatus, family: ToolFamily, lines: &[String]) -> Self {
+        let mut lines = lines.iter().map(String::as_str);
+        let heading = lines.next().unwrap_or("tool");
+        let heading = strip_leading_status_marker(heading);
+        let mut card = Self::new(status, family, ToolHeader::call(heading, None));
+        let body = lines
+            .map(|line| {
+                line.strip_prefix("  ├ ")
+                    .or_else(|| line.strip_prefix("  └ "))
+                    .unwrap_or(line)
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let body = match body.as_slice() {
+            [first, rest @ ..] if first.is_empty() => rest.to_vec(),
+            _ => body,
+        };
+        if !body.is_empty() {
+            card.body = ToolBody::Lines(body);
+        }
+        card
+    }
+}
+
+fn strip_leading_status_marker(heading: &str) -> &str {
+    let trimmed = heading.trim_start();
+    for marker in ["● ", "✓ ", "✗ ", "■ ", "! ", "○ "] {
+        if let Some(rest) = trimmed.strip_prefix(marker) {
+            return rest.trim_start();
+        }
+    }
+    // Markers without a trailing space (compact legacy lines).
+    for marker in ['●', '✓', '✗', '■', '!', '○'] {
+        if let Some(rest) = trimmed.strip_prefix(marker) {
+            return rest.trim_start();
+        }
+    }
+    trimmed
 }
 
 fn fact_plain_text(fact: &ToolFact) -> String {

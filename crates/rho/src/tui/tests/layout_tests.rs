@@ -1036,19 +1036,28 @@ fn started_tool_display_ignores_late_argument_previews() {
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: Some(call_id.clone()),
-        display_lines: vec!["edit_file".into()],
-        card: None,
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Running,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("edit_file", None),
+        ),
     });
     app.record_agent_event(ViewModelEvent::ToolStarted {
         call_id,
-        display_lines: vec!["edit_file src/main.rs".into()],
-        card: None,
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Running,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("edit_file src/main.rs", None),
+        ),
     });
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: None,
-        display_lines: vec!["edit_file".into()],
-        card: None,
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Running,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("edit_file", None),
+        ),
     });
 
     assert_eq!(
@@ -1057,8 +1066,8 @@ fn started_tool_display_ignores_late_argument_previews() {
             .running
             .values()
             .next()
-            .map(|tool| tool.display_lines.as_slice()),
-        Some(["edit_file src/main.rs".to_string()].as_slice())
+            .map(|tool| tool.card.to_display_lines()),
+        Some(vec!["● edit_file src/main.rs".to_string()])
     );
 }
 

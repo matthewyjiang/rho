@@ -3,7 +3,11 @@ use rho_providers::{
     model::provider_models::{probe_provider_models, ProviderModelHealth},
     provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
 };
-use {crate::commands::CommandInvocation, crate::export, rho_tools::tool::ToolDisplayStyle};
+use {
+    crate::commands::CommandInvocation,
+    crate::export,
+    rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus},
+};
 
 use super::{doctor, local_diff, App, Entry, ToolEntry, ToolEntryState};
 use crate::claude_runtime::auth::ClaudeProbeSnapshot;
@@ -18,13 +22,19 @@ impl App {
                 return Ok(());
             }
         };
+        let body = if diff.has_changes {
+            ToolBody::DiffLines(diff.lines)
+        } else {
+            ToolBody::Lines(diff.lines)
+        };
         self.insert_entry(&Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished {
-                ok: true,
-                display_style: ToolDisplayStyle::FileDiff,
-            },
-            display_lines: diff.lines,
-            card: None,
+            state: ToolEntryState::Finished { ok: true },
+            card: ToolCard::new(
+                ToolStatus::Ok,
+                ToolFamily::FileCommand,
+                ToolHeader::call("diff", None),
+            )
+            .with_body(body),
             expanded: true,
             image: None,
         }));

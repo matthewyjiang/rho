@@ -17,8 +17,8 @@ use format::*;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
     pub(crate) command: Option<String>,
+    /// Legacy attach wire style; derived from kind/metadata, not used for render.
     pub(crate) display_style: ToolDisplayStyle,
-    pub(crate) display_lines: Vec<String>,
     pub(crate) card: ToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }
@@ -94,15 +94,14 @@ impl ToolKind {
         }
     }
 
-    fn preview_uses_arguments(self) -> bool {
-        !matches!(self, Self::WriteFile | Self::EditFile)
-    }
-
     /// How many new argument bytes to wait before re-rendering a live preview.
     ///
-    /// Agent re-evaluates on every growth: streaming reads a few known fields from
-    /// the raw buffer, and identical renders are suppressed by `last_card`. Other
-    /// tools keep exponential backoff around full incomplete-JSON parses.
+    /// Zero re-evaluates on every delta so previews track the model as it
+    /// writes; identical renders are still suppressed by `last_card`, so the
+    /// stride bounds parse cost rather than update rate. Agent streaming reads
+    /// a few known fields straight out of the raw buffer and stays cheap at any
+    /// size. Other tools parse the whole buffer, so only arguments past
+    /// [`PREVIEW_FULL_PARSE_LIMIT`] fall back to a coarse stride.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
         match self {
             Self::Agent => 0,
@@ -121,10 +120,26 @@ impl ToolKind {
             | Self::FetchContent
             | Self::GetSearchContent
             | Self::Questionnaire
-            | Self::Other => arguments_len.max(1),
+            | Self::Other => {
+                if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
+                    0
+                } else {
+                    PREVIEW_LARGE_PARSE_STRIDE
+                }
+            }
         }
     }
 }
+
+/// Argument-buffer size above which live previews stop parsing every delta.
+///
+/// Ordinary tool calls stay far below this and re-render delta for delta. A
+/// long `write_file` body would otherwise re-parse the whole buffer thousands
+/// of times, so oversized buffers switch to [`PREVIEW_LARGE_PARSE_STRIDE`].
+const PREVIEW_FULL_PARSE_LIMIT: usize = 4096;
+
+/// Argument bytes accumulated between parses past [`PREVIEW_FULL_PARSE_LIMIT`].
+const PREVIEW_LARGE_PARSE_STRIDE: usize = 4096;
 
 #[derive(Clone, Debug, Default)]
 struct StreamedPreview {
@@ -177,10 +192,7 @@ impl InteractiveToolPresenter {
         preview.arguments.push_str(arguments_delta);
         let name = preview.name.as_deref()?;
         let kind = ToolKind::from_name(name);
-        if !name_changed
-            && (!kind.preview_uses_arguments()
-                || preview.arguments.len() < preview.next_parse_length)
-        {
+        if !name_changed && preview.arguments.len() < preview.next_parse_length {
             return None;
         }
         let card = streaming_preview_card(kind, name, &preview.arguments, &self.cwd);

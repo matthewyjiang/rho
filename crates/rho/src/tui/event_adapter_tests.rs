@@ -105,9 +105,9 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
         })),
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             ok: true,
-            display_lines,
+            ref card,
             ..
-        }) if display_lines == ["web search: rho docs"]
+        }) if card.to_display_lines() == ["✓ web_search(rho docs)"]
     ));
 }
 
@@ -147,7 +147,7 @@ fn retains_structured_tool_metadata_until_completion() {
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
         ok,
-        display_lines,
+        card,
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
@@ -160,7 +160,7 @@ fn retains_structured_tool_metadata_until_completion() {
     assert_eq!(translated_call_id, call_id);
     assert!(ok);
     assert_eq!(
-        display_lines,
+        card.to_display_lines(),
         vec![
             "✓ edit_file(src/lib.rs)".to_string(),
             "  ├ +1 -1 lines | src/lib.rs".to_string(),
@@ -190,7 +190,7 @@ fn forwards_image_asset_on_tool_completion() {
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
         image_asset,
-        display_lines,
+        card,
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
@@ -203,7 +203,7 @@ fn forwards_image_asset_on_tool_completion() {
     assert_eq!(translated_call_id, call_id);
     assert_eq!(image_asset, Some(asset));
     assert_eq!(
-        display_lines,
+        card.to_display_lines(),
         [
             "✓ read_file".to_string(),
             "  ├ 1 line".to_string(),
@@ -220,9 +220,9 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
             trigger: rho_sdk::CompactionTrigger::Automatic,
             message_count: 3,
         })),
-        ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, display_lines, .. })
+        ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, card, .. })
             if call_id == crate::tui::compaction_display::compaction_call_id()
-                && display_lines == crate::tui::compaction_display::running_display_lines()
+                && card == crate::tui::compaction_display::running_card()
     ));
 
     let events = adapter.translate(RunEvent::Failed {
@@ -235,10 +235,10 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
             ok: false,
-            display_lines,
+            card,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && display_lines.iter().any(|line| line == "failed")
+            && card.to_display_lines().iter().any(|line| line.contains("failed"))
     ));
     assert!(matches!(
         &events[1],

@@ -12,8 +12,11 @@ fn retry_removes_only_replaceable_provider_output() {
         Entry::Notice("keep notice".into()),
         Entry::Tool(ToolEntry {
             state: ToolEntryState::Running,
-            display_lines: vec!["keep tool".into()],
-            card: None,
+            card: rho_tools::tool_card::ToolCard::new(
+                rho_tools::tool_card::ToolStatus::Running,
+                rho_tools::tool_card::ToolFamily::Default,
+                rho_tools::tool_card::ToolHeader::call("keep tool", None),
+            ),
             expanded: false,
             image: None,
         }),
@@ -29,7 +32,7 @@ fn retry_removes_only_replaceable_provider_output() {
         [Entry::User(prompt), Entry::Notice(notice), Entry::Tool(tool)]
             if prompt == "prompt"
                 && notice == "keep notice"
-                && tool.display_lines == ["keep tool"]
+                && tool.card.to_display_lines() == ["● keep tool"]
     ));
 }
 

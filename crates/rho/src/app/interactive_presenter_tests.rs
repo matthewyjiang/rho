@@ -24,7 +24,7 @@ fn preview_lines(
 ) -> Option<Vec<String>> {
     presenter
         .preview(index, name, arguments_delta)
-        .map(|presented| presented.display_lines)
+        .map(|presented| presented.card.to_display_lines())
 }
 
 #[test]
@@ -68,6 +68,57 @@ fn step_boundary_resets_streamed_previews_for_reused_indexes() {
 }
 
 #[test]
+fn shell_previews_track_each_streamed_argument_delta() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    assert_eq!(
+        preview_lines(
+            &mut presenter,
+            0,
+            Some("bash".to_string()),
+            r#"{"command":""#
+        ),
+        Some(vec!["● $".to_string()])
+    );
+
+    let mut headers = Vec::new();
+    for delta in ["cargo", " test", " --all", "\"}"] {
+        if let Some(lines) = preview_lines(&mut presenter, 0, None, delta) {
+            headers.push(lines[0].clone());
+        }
+    }
+
+    // Every delta that changes the visible command renders; the closing delta
+    // adds nothing new, so it is suppressed instead of repeating the card.
+    assert_eq!(
+        headers,
+        vec![
+            "● $ cargo".to_string(),
+            "● $ cargo test".to_string(),
+            "● $ cargo test --all".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn file_write_preview_shows_its_path_while_arguments_stream() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    assert_eq!(
+        preview_lines(
+            &mut presenter,
+            0,
+            Some("write_file".to_string()),
+            r#"{"path":"notes.md""#
+        ),
+        Some(vec!["● write_file(notes.md)".to_string()])
+    );
+    assert_eq!(
+        preview_lines(&mut presenter, 0, None, r#","content":"first line"#),
+        None,
+        "a streamed file body must not churn the card once the path is known"
+    );
+}
+
+#[test]
 fn command_preview_and_result_preserve_command_summary() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
     assert_eq!(
@@ -97,7 +148,7 @@ fn command_preview_and_result_preserve_command_summary() {
     );
     assert!(ok);
     assert_eq!(
-        finished.display_lines,
+        finished.card.to_display_lines(),
         vec![
             "✓ $ cargo test".to_string(),
             "  ├ timeout 30s".to_string(),
@@ -123,7 +174,7 @@ fn shell_result_preserves_stderr_like_stdout_and_timeout_notice() {
     );
 
     assert_eq!(
-        finished.display_lines,
+        finished.card.to_display_lines(),
         vec![
             "✗ $ slow-command".to_string(),
             "  ├ timeout 5s".to_string(),
@@ -162,13 +213,15 @@ fn file_results_use_structured_paths_and_compact_diff() {
 
     assert!(ok);
     assert_eq!(finished.display_style, ToolDisplayStyle::file_diff());
-    assert_eq!(finished.display_lines[0], "✓ edit_file(2 files)");
+    assert_eq!(finished.card.to_display_lines()[0], "✓ edit_file(2 files)");
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("+1 -1 lines | src/lib.rs")));
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("+1 -1 lines | src/main.rs")));
     assert_eq!(finished.card.facts.len(), 2);
@@ -197,7 +250,7 @@ fn web_skill_progress_and_unknown_tools_have_explicit_presentations() {
     );
     assert_eq!(web.display_style, ToolDisplayStyle::web());
     assert_eq!(
-        web.display_lines,
+        web.card.to_display_lines(),
         vec![
             "✓ web_search(\"rust tui\")".to_string(),
             "  └ 2 results stored".to_string(),
@@ -213,7 +266,7 @@ fn web_skill_progress_and_unknown_tools_have_explicit_presentations() {
     let skill = presenter.started(skill_id, "skill".to_string(), ToolMetadata::default());
     assert_eq!(skill.display_style, ToolDisplayStyle::skill());
     assert_eq!(
-        skill.display_lines,
+        skill.card.to_display_lines(),
         vec!["● skill(rho-tui-herdr-testing)".to_string()]
     );
 
@@ -232,7 +285,10 @@ fn web_skill_progress_and_unknown_tools_have_explicit_presentations() {
         .units(1, 2)
         .metadata(ToolMetadata::new().operation(OperationKind::Execute));
     assert_eq!(
-        presenter.updated(&unknown_id, &progress).display_lines,
+        presenter
+            .updated(&unknown_id, &progress)
+            .card
+            .to_display_lines(),
         vec![
             "● custom".to_string(),
             "  ├ 1/2".to_string(),
@@ -269,7 +325,7 @@ fn agent_tools_use_status_first_presentations() {
     let started = presenter.started(id.clone(), "agent".to_string(), ToolMetadata::default());
     assert_eq!(started.display_style, ToolDisplayStyle::default_tool());
     assert_eq!(
-        started.display_lines,
+        started.card.to_display_lines(),
         vec![
             "● explorer  starting in background".to_string(),
             "  └ Audit the repository for architecture issues".to_string(),
@@ -284,15 +340,17 @@ fn agent_tools_use_status_first_presentations() {
     );
     assert!(ok);
     assert_eq!(
-        finished.display_lines[0],
+        finished.card.to_display_lines()[0],
         "● explorer  running in background"
     );
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("Audit the repository for architecture issues")));
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("abc123 · rho attach abc123")));
 
@@ -327,7 +385,8 @@ fn agent_tools_use_status_first_presentations() {
         )
         .unwrap();
     let prompt_line = long_preview
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .find(|line| line.contains("tail marker"))
         .cloned()
@@ -346,8 +405,8 @@ fn agent_tools_use_status_first_presentations() {
             "prompt": format!("{}tail marker", "architecture ".repeat(30)),
         }),
     ));
-    let started_task = started_long
-        .display_lines
+    let started_lines = started_long.card.to_display_lines();
+    let started_task = started_lines
         .iter()
         .find(|line| line.contains('…') || line.contains("architecture"))
         .expect("task fact");
@@ -428,13 +487,15 @@ fn agent_progress_and_completion_keep_task_state_and_result_distinct() {
         &id,
         &ToolProgress::message("agent def456 running\nattach: rho attach def456"),
     );
-    assert_eq!(progress.display_lines[0], "● reviewer  running");
+    assert_eq!(progress.card.to_display_lines()[0], "● reviewer  running");
     assert!(progress
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("Review the change")));
     assert!(progress
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("def456 · rho attach def456")));
 
@@ -445,17 +506,20 @@ fn agent_progress_and_completion_keep_task_state_and_result_distinct() {
         )),
     );
     assert!(ok);
-    assert!(finished.display_lines[0].starts_with("✓ reviewer  completed"));
+    assert!(finished.card.to_display_lines()[0].starts_with("✓ reviewer  completed"));
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("Review the change")));
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("def456")));
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("first paragraph")));
 
@@ -471,9 +535,10 @@ fn agent_progress_and_completion_keep_task_state_and_result_distinct() {
          error: provider stream failed\n\
          this delegated task did not complete; treat its work as unverified",
     );
-    assert!(failed.display_lines[0].starts_with("✗ reviewer  failed"));
+    assert!(failed.card.to_display_lines()[0].starts_with("✗ reviewer  failed"));
     assert!(failed
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("error: provider stream failed")));
 }
@@ -491,13 +556,15 @@ fn agents_list_and_status_share_the_agent_state_language() {
         "abc123  explorer  running  18s  Auditing repository structure\n\
          def456  reviewer  ok  51s  Review finished",
     );
-    assert_eq!(listed.display_lines[0], "✓ delegated agents");
+    assert_eq!(listed.card.to_display_lines()[0], "✓ delegated agents");
     assert!(listed
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("abc123") && line.contains("running")));
     assert!(listed
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("def456") && line.contains("completed")));
 
@@ -516,13 +583,15 @@ fn agents_list_and_status_share_the_agent_state_language() {
          second paragraph\n\
          attach: rho attach abc123",
     );
-    assert!(status.display_lines[0].starts_with("● explorer  running"));
+    assert!(status.card.to_display_lines()[0].starts_with("● explorer  running"));
     assert!(status
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("searching files")));
     assert!(status
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("abc123")));
 }
@@ -541,15 +610,17 @@ fn historical_legacy_agent_output_keeps_terminal_state() {
         "subagent abc123 (explorer) started in background\nattach: rho attach abc123",
     );
     assert_eq!(
-        receipt.display_lines[0],
+        receipt.card.to_display_lines()[0],
         "● explorer  running in background"
     );
     assert!(receipt
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("Map the repository")));
     assert!(receipt
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("abc123 · rho attach abc123")));
 
@@ -561,9 +632,10 @@ fn historical_legacy_agent_output_keeps_terminal_state() {
          \n\
          legacy result",
     );
-    assert!(completion.display_lines[0].starts_with("✓ explorer  completed"));
+    assert!(completion.card.to_display_lines()[0].starts_with("✓ explorer  completed"));
     assert!(completion
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("legacy result")));
 
@@ -579,9 +651,10 @@ fn historical_legacy_agent_output_keeps_terminal_state() {
          activity: reading files\n\
          attach: rho attach abc123",
     );
-    assert!(status.display_lines[0].starts_with("● explorer  running"));
+    assert!(status.card.to_display_lines()[0].starts_with("● explorer  running"));
     assert!(status
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("reading files")));
 
@@ -594,8 +667,8 @@ fn historical_legacy_agent_output_keeps_terminal_state() {
         true,
         "subagent abc123 (explorer): stopped\nturns: 1 · tokens: 400 in / 60 out",
     );
-    assert!(stopped.display_lines[0].contains("explorer"));
-    assert!(stopped.display_lines[0].contains("stopped"));
+    assert!(stopped.card.to_display_lines()[0].contains("explorer"));
+    assert!(stopped.card.to_display_lines()[0].contains("stopped"));
 
     let malformed = presenter.historical(
         &call(
@@ -606,9 +679,10 @@ fn historical_legacy_agent_output_keeps_terminal_state() {
         true,
         "unrecognized status payload",
     );
-    assert!(malformed.display_lines[0].contains("abc123"));
+    assert!(malformed.card.to_display_lines()[0].contains("abc123"));
     assert!(malformed
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("unrecognized status payload")));
 
@@ -621,9 +695,10 @@ fn historical_legacy_agent_output_keeps_terminal_state() {
         true,
         "no subagents",
     );
-    assert_eq!(empty.display_lines[0], "✓ delegated agents");
+    assert_eq!(empty.card.to_display_lines()[0], "✓ delegated agents");
     assert!(empty
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("no runs")));
 }
@@ -641,7 +716,7 @@ fn exact_tool_names_do_not_use_suffix_inference() {
 
     assert_eq!(started.display_style, ToolDisplayStyle::default_tool());
     assert_eq!(
-        started.display_lines,
+        started.card.to_display_lines(),
         vec!["● custom_read_file".to_string()]
     );
 }
@@ -660,9 +735,10 @@ fn edit_failure_uses_error_fact_not_diff_body() {
         /*ok*/ false,
         "no matches found for old_string",
     );
-    assert_eq!(finished.display_lines[0], "✗ edit_file(theme.rs)");
+    assert_eq!(finished.card.to_display_lines()[0], "✗ edit_file(theme.rs)");
     assert!(finished
-        .display_lines
+        .card
+        .to_display_lines()
         .iter()
         .any(|line| line.contains("no matches found for old_string")));
 }
@@ -684,22 +760,24 @@ fn shell_progress_streams_stdout_into_card_body() {
             "stdout:\ncompiling rho\nrunning 12 tests\n\nstderr:\n\n\ntime: running",
         ),
     );
-    assert_eq!(progress.display_lines[0], "● $ cargo test");
+    assert_eq!(progress.card.to_display_lines()[0], "● $ cargo test");
     assert!(
         progress
-            .display_lines
+            .card
+            .to_display_lines()
             .iter()
             .any(|line| line.contains("compiling rho")),
         "stdout should stream into the tool display: {:?}",
-        progress.display_lines
+        progress.card.to_display_lines()
     );
     assert!(
         progress
-            .display_lines
+            .card
+            .to_display_lines()
             .iter()
             .any(|line| line.contains("running 12 tests")),
         "multi-line stdout should stream: {:?}",
-        progress.display_lines
+        progress.card.to_display_lines()
     );
     match &progress.card.body {
         rho_tools::tool_card::ToolBody::Lines(lines) => {
@@ -735,48 +813,31 @@ fn background_agent_finish_keeps_running_card_status() {
         finished.card.status,
         rho_tools::tool_card::ToolStatus::Running
     );
-    assert!(finished.display_lines[0].starts_with("● worker  running in background"));
+    assert!(finished.card.to_display_lines()[0].starts_with("● worker  running in background"));
 }
 
 #[test]
-fn bash_argument_streaming_updates_command_in_preview() {
+fn oversized_streamed_arguments_render_on_a_coarse_stride() {
     let mut presenter = InteractiveToolPresenter::new("/workspace".into());
-    assert_eq!(
-        preview_lines(
-            &mut presenter,
-            0,
-            Some("bash".to_string()),
-            r#"{"command":""#
-        ),
-        Some(vec!["● $".to_string()])
+    let _ = preview_lines(
+        &mut presenter,
+        0,
+        Some("bash".to_string()),
+        r#"{"command":""#,
     );
+    // Push the argument buffer past the full-parse limit before measuring.
+    let _ = preview_lines(&mut presenter, 0, None, &"echo marker; ".repeat(512));
 
-    // Backoff is exponential on parse length; send large enough chunks to cross
-    // the stride so the live command keeps advancing.
-    let mut last_header = String::new();
+    // Oversized arguments keep advancing, but re-parse the whole buffer once per
+    // stride rather than once per delta.
     let mut updates = 0usize;
-    for chunk in [
-        r#"cargo test -p rho"#,
-        r#" --features all-features -- --nocapture"#,
-        r#" long_tail_marker"#,
-    ] {
-        if let Some(lines) = preview_lines(&mut presenter, 0, None, chunk) {
+    for _ in 0..64 {
+        if preview_lines(&mut presenter, 0, None, &"echo marker; ".repeat(16)).is_some() {
             updates += 1;
-            let header = lines[0].clone();
-            assert!(
-                header.starts_with("● $"),
-                "streamed bash preview should keep shell header: {lines:?}"
-            );
-            assert_ne!(header, last_header, "each emit should advance the command");
-            last_header = header;
         }
     }
     assert!(
-        updates >= 2,
-        "bash command streaming should emit multiple previews, got {updates}; last={last_header}"
-    );
-    assert!(
-        last_header.contains("cargo test -p rho") || last_header.contains("long_tail_marker"),
-        "final streamed command missing expected text: {last_header}"
+        (1..8).contains(&updates),
+        "long shell arguments should keep streaming on a coarse stride, got {updates}"
     );
 }

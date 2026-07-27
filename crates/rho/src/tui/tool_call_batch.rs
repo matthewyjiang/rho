@@ -66,12 +66,7 @@ impl ToolCallBatch {
         }
     }
 
-    pub(super) fn started(
-        &mut self,
-        call_id: ToolCallId,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
-    ) {
+    pub(super) fn started(&mut self, call_id: ToolCallId, card: ToolCard) {
         if let Some(index) = self.preview_call_ids.remove(&call_id) {
             self.previews.remove(&index);
             self.model_order
@@ -82,15 +77,10 @@ impl ToolCallBatch {
             self.unindexed_running_order.push(call_id.clone());
         }
         self.running
-            .insert(call_id, running_entry(display_lines, card, false));
+            .insert(call_id, running_entry(card, /*expanded*/ false));
     }
 
-    pub(super) fn updated(
-        &mut self,
-        call_id: ToolCallId,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
-    ) {
+    pub(super) fn updated(&mut self, call_id: ToolCallId, card: ToolCard) {
         let expanded = self
             .running
             .get(&call_id)
@@ -98,21 +88,14 @@ impl ToolCallBatch {
         if !self.running.contains_key(&call_id) {
             self.unindexed_running_order.push(call_id.clone());
         }
-        self.running
-            .insert(call_id, running_entry(display_lines, card, expanded));
+        self.running.insert(call_id, running_entry(card, expanded));
     }
 
     /// Stream preview addressed by provider output index.
     ///
     /// When `call_id` is known it owns the slot: later stream or proposal traffic
     /// for that id updates the same card even if indexes differ.
-    pub(super) fn preview(
-        &mut self,
-        index: usize,
-        call_id: Option<ToolCallId>,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
-    ) {
+    pub(super) fn preview(&mut self, index: usize, call_id: Option<ToolCallId>, card: ToolCard) {
         if call_id
             .as_ref()
             .is_some_and(|id| self.running.contains_key(id))
@@ -129,19 +112,14 @@ impl ToolCallBatch {
         if let Some(call_id) = call_id {
             self.bind_call_id(call_id, slot);
         }
-        self.write_preview(slot, display_lines, card);
+        self.write_preview(slot, card);
     }
 
     /// Proposal preview addressed only by call id.
     ///
     /// Reuses the stream slot when the id already appeared; otherwise appends a
     /// new slot. Does not invent a dense index in the provider namespace.
-    pub(super) fn preview_call(
-        &mut self,
-        call_id: ToolCallId,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
-    ) {
+    pub(super) fn preview_call(&mut self, call_id: ToolCallId, card: ToolCard) {
         if self.running.contains_key(&call_id) {
             return;
         }
@@ -151,7 +129,7 @@ impl ToolCallBatch {
             .copied()
             .unwrap_or_else(|| self.next_slot());
         self.bind_call_id(call_id, slot);
-        self.write_preview(slot, display_lines, card);
+        self.write_preview(slot, card);
     }
 
     pub(super) fn finished(&mut self, call_id: &ToolCallId) -> bool {
@@ -181,17 +159,9 @@ impl ToolCallBatch {
             .retain(|id, existing| *id == call_id || *existing != slot);
     }
 
-    fn write_preview(&mut self, slot: usize, display_lines: Vec<String>, card: Option<ToolCard>) {
-        if display_lines.is_empty() {
-            self.previews.remove(&slot);
-            self.model_order.remove(&slot);
-            self.preview_call_ids
-                .retain(|_, existing| *existing != slot);
-            return;
-        }
+    fn write_preview(&mut self, slot: usize, card: ToolCard) {
         let expanded = self.previews.get(&slot).is_some_and(|entry| entry.expanded);
-        self.previews
-            .insert(slot, running_entry(display_lines, card, expanded));
+        self.previews.insert(slot, running_entry(card, expanded));
         self.model_order.insert(slot, LiveToolKey::Preview(slot));
     }
 
@@ -205,10 +175,9 @@ impl ToolCallBatch {
     }
 }
 
-fn running_entry(display_lines: Vec<String>, card: Option<ToolCard>, expanded: bool) -> ToolEntry {
+fn running_entry(card: ToolCard, expanded: bool) -> ToolEntry {
     ToolEntry {
         state: ToolEntryState::Running,
-        display_lines,
         card,
         expanded,
         image: None,

@@ -394,19 +394,27 @@ pub(super) fn tool_started_effects(block: &Value) -> Vec<StreamEffect> {
         .unwrap_or("tool");
     let id = block.get("id").and_then(Value::as_str).unwrap_or("");
     let input = block.get("input");
-    let mut lines = vec![if id.is_empty() {
-        format!("tool {name}")
+    let primary = if id.is_empty() {
+        None
     } else {
-        format!("tool {name} ({id})")
-    }];
+        Some(id.to_string())
+    };
+    let mut card = rho_tools::tool_card::ToolCard::new(
+        rho_tools::tool_card::ToolStatus::Running,
+        rho_tools::tool_card::ToolFamily::from_display_style(CLAUDE_TOOL_DISPLAY_STYLE),
+        rho_tools::tool_card::ToolHeader::call(name, primary),
+    );
     let rendered = stringify_content(input);
     if !rendered.is_empty() && rendered != "null" {
-        lines.extend(truncate_payload_lines(&rendered, MAX_TOOL_DISPLAY_LINES));
+        card.body = rho_tools::tool_card::ToolBody::Lines(truncate_payload_lines(
+            &rendered,
+            MAX_TOOL_DISPLAY_LINES,
+        ));
     }
     vec![
         StreamEffect::Attachment(AttachmentEvent::ToolStarted {
-            display_lines: lines,
-            card: None,
+            display_lines: card.to_display_lines(),
+            card: Some(card),
         }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool: {name}")),
@@ -420,16 +428,28 @@ pub(super) fn tool_finished_effects(
     ok: bool,
     content_text: &str,
 ) -> Vec<StreamEffect> {
-    let mut lines = vec![format!("tool result ({tool_use_id})")];
+    let status = if ok {
+        rho_tools::tool_card::ToolStatus::Ok
+    } else {
+        rho_tools::tool_card::ToolStatus::Error
+    };
+    let mut card = rho_tools::tool_card::ToolCard::new(
+        status,
+        rho_tools::tool_card::ToolFamily::from_display_style(CLAUDE_TOOL_DISPLAY_STYLE),
+        rho_tools::tool_card::ToolHeader::call("tool result", Some(tool_use_id.to_string())),
+    );
     if !content_text.is_empty() {
-        lines.extend(truncate_payload_lines(content_text, MAX_TOOL_DISPLAY_LINES));
+        card.body = rho_tools::tool_card::ToolBody::Lines(truncate_payload_lines(
+            content_text,
+            MAX_TOOL_DISPLAY_LINES,
+        ));
     }
     vec![
         StreamEffect::Attachment(AttachmentEvent::ToolFinished {
             ok,
             display_style: CLAUDE_TOOL_DISPLAY_STYLE,
-            display_lines: lines,
-            card: None,
+            display_lines: card.to_display_lines(),
+            card: Some(card),
         }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool result: {tool_use_id}")),

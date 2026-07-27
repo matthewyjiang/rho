@@ -8,7 +8,6 @@ use ratatui::{
 use super::markdown::HeadingLevel;
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
-const TOOL_BACKGROUND_ALPHA: f32 = 0.16;
 
 static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
 
@@ -136,11 +135,6 @@ struct Palette {
     skill: Color,
     user_background: BlockColor,
     neutral_tool_background: BlockColor,
-    success_tool_background: BlockColor,
-    failure_tool_background: BlockColor,
-    skill_tool_background: BlockColor,
-    web_tool_background: BlockColor,
-    questionnaire_tool_background: BlockColor,
 }
 
 impl Palette {
@@ -168,36 +162,6 @@ impl Palette {
                 AnsiColor::Gray,
                 USER_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
-            ),
-            success_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Green,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Green.color()),
-            ),
-            failure_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Red,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Red.color()),
-            ),
-            skill_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Magenta,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Magenta.color()),
-            ),
-            web_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Blue,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Blue.color()),
-            ),
-            questionnaire_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Yellow,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_rgb(Rgb::new(128, 128, 0)),
             ),
         }
     }
@@ -392,46 +356,6 @@ impl Theme {
         Self::dim_block(Palette::current().neutral_tool_background)
     }
 
-    pub(super) fn tool_default() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.neutral_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
-    }
-
-    pub(super) fn tool_file_or_command() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.success_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
-    }
-
-    pub(super) fn tool_skill() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.skill_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
-    }
-
-    pub(super) fn tool_web() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.web_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
-    }
-
-    pub(super) fn tool_questionnaire() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.questionnaire_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
-    }
-
     /// Status marker color for Call + Children tool cards.
     pub(super) fn tool_marker(status: rho_tools::tool_card::ToolStatus) -> Style {
         use rho_tools::tool_card::ToolStatus;
@@ -516,26 +440,6 @@ fn block_foreground(background: Option<Rgb>) -> Color {
 
 fn relative_luminance(red: u8, green: u8, blue: u8) -> f32 {
     (0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)) / 255.0
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ToolStyle {
-    success: Style,
-    failure: Style,
-}
-
-impl ToolStyle {
-    const fn new(success: Style, failure: Style) -> Self {
-        Self { success, failure }
-    }
-
-    pub(super) fn for_result(self, ok: bool) -> Style {
-        if ok {
-            self.success
-        } else {
-            self.failure
-        }
-    }
 }
 
 fn blended_or_fallback(

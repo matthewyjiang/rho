@@ -22,8 +22,12 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
     app.apply_event(AttachmentEvent::ToolFinished {
         ok: true,
         display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
-        display_lines: vec!["keep tool".into()],
-        card: None,
+        display_lines: vec!["✓ keep tool".into()],
+        card: Some(rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("keep tool", None),
+        )),
     });
     app.apply_event(AttachmentEvent::ReasoningDelta("discard reasoning".into()));
     app.apply_event(AttachmentEvent::ProviderStreamReset);
@@ -38,7 +42,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
             Entry::Assistant(answer)
         ] if prompt == "delegated task"
             && notice == "keep notice"
-            && tool.display_lines == ["keep tool"]
+            && tool.card.to_display_lines() == ["✓ keep tool"]
             && answer == "keep me"
     ));
 }

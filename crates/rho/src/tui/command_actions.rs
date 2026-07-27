@@ -66,9 +66,8 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         use super::compaction_display::{
-            compaction_call_id, running_display_lines, CompactionDisplayFacts, CompactionUiOutcome,
+            compaction_call_id, running_card, CompactionDisplayFacts, CompactionUiOutcome,
         };
-        use rho_tools::tool::ToolDisplayStyle;
 
         self.pending.steering_prompts_mut().clear();
         self.pending_input_changed();
@@ -76,8 +75,7 @@ impl App {
         self.begin_compact_ui();
         self.turn.set_activity_phase(ActivityPhase::Compacting);
         self.turn.start_loading();
-        self.turn
-            .tool_started(compaction_call_id(), running_display_lines(), None);
+        self.turn.tool_started(compaction_call_id(), running_card());
         terminal.draw(|frame| self.draw(frame))?;
 
         let interrupt_requested = AtomicBool::new(false);
@@ -147,12 +145,8 @@ impl App {
             ),
         };
         self.insert_entry(&Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished {
-                ok: outcome.ok(),
-                display_style: ToolDisplayStyle::default_tool(),
-            },
-            display_lines: outcome.display_lines(),
-            card: None,
+            state: ToolEntryState::Finished { ok: outcome.ok() },
+            card: outcome.card(),
             expanded,
             image: None,
         }));

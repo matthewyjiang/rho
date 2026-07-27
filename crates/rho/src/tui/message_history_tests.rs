@@ -24,11 +24,10 @@ fn interrupted_tool_call_uses_the_tool_name_without_a_preparing_label() {
         std::path::Path::new(""),
     );
 
-    let [Entry::Tool(ToolEntry { display_lines, .. }), Entry::Notice(notice)] = entries.as_slice()
-    else {
+    let [Entry::Tool(ToolEntry { card, .. }), Entry::Notice(notice)] = entries.as_slice() else {
         panic!("expected an interrupted tool entry followed by a notice");
     };
-    assert_eq!(display_lines[0], "■ read_file(src/main.rs)");
+    assert_eq!(card.to_display_lines()[0], "■ read_file(src/main.rs)");
     assert_eq!(notice, "model interrupted");
 }
 
@@ -63,13 +62,12 @@ fn interrupted_agent_tools_hide_partial_json() {
             std::path::Path::new(""),
         );
 
-        let [Entry::Tool(ToolEntry { display_lines, .. }), Entry::Notice(_)] = entries.as_slice()
-        else {
+        let [Entry::Tool(ToolEntry { card, .. }), Entry::Notice(_)] = entries.as_slice() else {
             panic!("expected an interrupted tool entry followed by a notice");
         };
         assert_eq!(
-            display_lines,
-            &expected.into_iter().map(str::to_string).collect::<Vec<_>>()
+            card.to_display_lines(),
+            expected.into_iter().map(str::to_string).collect::<Vec<_>>()
         );
     }
 }

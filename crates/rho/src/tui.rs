@@ -173,6 +173,8 @@ use text_selection::{highlight_selection, render_copy_notice};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
 
+#[cfg(test)]
+use rho_providers::model::ModelUsage;
 use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
@@ -192,8 +194,6 @@ use {
     rho_providers::provider,
     rho_providers::reasoning::ReasoningLevel,
 };
-#[cfg(test)]
-use {rho_providers::model::ModelUsage, rho_tools::tool::ToolDisplayStyle};
 const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;

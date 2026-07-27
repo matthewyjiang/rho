@@ -10,7 +10,7 @@ use {
 
 use super::{
     activity::ActivityPhase,
-    compaction_display::{compaction_call_id, running_display_lines},
+    compaction_display::compaction_call_id,
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
@@ -23,8 +23,7 @@ pub(super) enum ViewModelEvent {
     SteeringApplied(Vec<rho_sdk::SteeringId>),
     ToolStarted {
         call_id: rho_sdk::ToolCallId,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
+        card: ToolCard,
     },
     ProviderStreamReset,
     ProviderRetry,
@@ -34,14 +33,12 @@ pub(super) enum ViewModelEvent {
     Usage(ModelUsage),
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
+        card: ToolCard,
     },
     ToolCallUpdated {
         index: usize,
         call_id: Option<rho_sdk::ToolCallId>,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
+        card: ToolCard,
     },
     /// Final proposal for a tool call, keyed only by call id.
     ///
@@ -49,15 +46,14 @@ pub(super) enum ViewModelEvent {
     /// index in the provider output_index namespace.
     ToolCallProposed {
         call_id: rho_sdk::ToolCallId,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
+        card: ToolCard,
     },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
         ok: bool,
+        /// Attach wire style only; TUI render uses the card.
         display_style: ToolDisplayStyle,
-        display_lines: Vec<String>,
-        card: Option<ToolCard>,
+        card: ToolCard,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
 }
@@ -164,8 +160,7 @@ impl SdkEventAdapter {
                         vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
                             index,
                             call_id,
-                            display_lines: presented.display_lines,
-                            card: Some(presented.card),
+                            card: presented.card,
                         })]
                     })
             }
@@ -176,8 +171,7 @@ impl SdkEventAdapter {
                 let presented = self.presenter().proposed(call);
                 vec![ViewEvent::Update(ViewModelEvent::ToolCallProposed {
                     call_id,
-                    display_lines: presented.display_lines,
-                    card: Some(presented.card),
+                    card: presented.card,
                 })]
             }
             RunEvent::ToolStarted {
@@ -188,16 +182,14 @@ impl SdkEventAdapter {
                 let presented = self.presenter().started(call_id.clone(), name, metadata);
                 vec![ViewEvent::Update(ViewModelEvent::ToolStarted {
                     call_id,
-                    display_lines: presented.display_lines,
-                    card: Some(presented.card),
+                    card: presented.card,
                 })]
             }
             RunEvent::ToolUpdated { call_id, progress } => {
                 let presented = self.presenter().updated(&call_id, &progress);
                 vec![ViewEvent::Update(ViewModelEvent::ToolUpdated {
                     call_id,
-                    display_lines: presented.display_lines,
-                    card: Some(presented.card),
+                    card: presented.card,
                 })]
             }
             RunEvent::ToolFinished { call_id, result } => {
@@ -206,8 +198,7 @@ impl SdkEventAdapter {
                     call_id,
                     ok,
                     display_style: presented.display_style,
-                    display_lines: presented.display_lines,
-                    card: Some(presented.card),
+                    card: presented.card,
                     image_asset: presented.image_asset,
                 })]
             }
@@ -215,12 +206,16 @@ impl SdkEventAdapter {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]
             }
             RunEvent::WebSearch { detail } => {
+                use rho_tools::tool_card::{ToolFamily, ToolHeader, ToolStatus};
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id: rho_sdk::ToolCallId::new(),
                     ok: true,
                     display_style: ToolDisplayStyle::web(),
-                    display_lines: vec![format!("web search: {detail}")],
-                    card: None,
+                    card: ToolCard::new(
+                        ToolStatus::Ok,
+                        ToolFamily::Web,
+                        ToolHeader::call("web_search", Some(detail)),
+                    ),
                     image_asset: None,
                 })]
             }
@@ -296,8 +291,7 @@ impl SdkEventAdapter {
 fn compaction_started() -> ViewModelEvent {
     ViewModelEvent::ToolStarted {
         call_id: compaction_call_id(),
-        display_lines: running_display_lines(),
-        card: None,
+        card: super::compaction_display::running_card(),
     }
 }
 
@@ -306,8 +300,7 @@ fn compaction_finished(outcome: CompactionUiOutcome) -> ViewModelEvent {
         call_id: compaction_call_id(),
         ok: outcome.ok(),
         display_style: ToolDisplayStyle::default_tool(),
-        display_lines: outcome.display_lines(),
-        card: None,
+        card: outcome.card(),
         image_asset: None,
     }
 }
