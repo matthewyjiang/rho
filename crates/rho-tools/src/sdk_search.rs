@@ -3,7 +3,9 @@
 //! One adapter serves every [`WorkspaceSearch`]: it requests a single `Read`
 //! capability on the resolved search root and declares a shared directory-tree
 //! resource so concurrent walks can overlap safely. Adding a search tool means
-//! implementing the trait, not writing another adapter.
+//! implementing the trait, not writing another adapter. Like the filesystem
+//! adapters, these implement [`rho_sdk::tool::Tool::prepare`] only and need the
+//! published default [`rho_sdk::tool::Tool::call`] body.
 
 use std::marker::PhantomData;
 
