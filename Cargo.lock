@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "globset",
@@ -2978,7 +2978,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "1.18.0"
+version = "1.18.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "rho-providers"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3060,7 +3060,7 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "pretty_assertions",
  "proptest",

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.18.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.18.0...rho-coding-agent-v1.18.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **tui:** keep cwd basename visible in status line ([#591](https://github.com/matthewyjiang/rho/issues/591)) ([3390a4d](https://github.com/matthewyjiang/rho/commit/3390a4d6ad8954d2c4bcc712cff664777c7aaa36))
+* **tui:** stabilize live stream tool cards and markdown previews ([#595](https://github.com/matthewyjiang/rho/issues/595)) ([752794f](https://github.com/matthewyjiang/rho/commit/752794f407d65533e97924d6e89ceeba443886c0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.10.2 to 1.10.3
+    * rho-providers bumped from 0.11.0 to 0.11.1
+
 ## [1.18.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.17.1...rho-coding-agent-v1.18.0) (2026-07-27)
 
 
