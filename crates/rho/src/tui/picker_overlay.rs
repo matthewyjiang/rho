@@ -691,17 +691,34 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
     styled_line(text, layout.inner_width, Theme::dim(), LineFill::PadToWidth)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailOverflow {
+    Below,
+    Above,
+}
+
+impl DetailOverflow {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Below => "↓ more",
+            Self::Above => "↑ more",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DetailFooterStatus {
     range: String,
-    overflow: Option<&'static str>,
+    overflow: Option<DetailOverflow>,
 }
 
 impl DetailFooterStatus {
     fn full(&self) -> String {
-        match self.overflow {
-            Some(overflow) => format!("{} {overflow}", self.range),
-            None => self.range.clone(),
+        match (self.range.is_empty(), self.overflow) {
+            (false, Some(overflow)) => format!("{} {}", self.range, overflow.label()),
+            (false, None) => self.range.clone(),
+            (true, Some(overflow)) => overflow.label().to_string(),
+            (true, None) => String::new(),
         }
     }
 }
@@ -714,31 +731,28 @@ fn detail_footer_status(
 ) -> DetailFooterStatus {
     let detail_lines = detail_content_line_count(detail_len, has_badge);
     let scroll = clamp_detail_scroll(detail_scroll, detail_lines, detail_viewport_rows);
-    let visible_end = if detail_lines == 0 {
-        0
+    let (range, overflow) = if detail_lines == 0 {
+        (String::new(), None)
     } else {
-        (scroll + detail_viewport_rows).min(detail_lines)
-    };
-    let visible_start = if detail_lines == 0 {
-        0
-    } else {
-        scroll.saturating_add(1)
-    };
-    let overflow = if detail_lines > detail_viewport_rows {
-        if scroll + detail_viewport_rows < detail_lines {
-            Some("↓ more")
-        } else if scroll > 0 {
-            Some("↑ more")
+        let visible_end = (scroll + detail_viewport_rows).min(detail_lines);
+        let visible_start = scroll.saturating_add(1);
+        let overflow = if detail_lines > detail_viewport_rows {
+            if scroll + detail_viewport_rows < detail_lines {
+                Some(DetailOverflow::Below)
+            } else if scroll > 0 {
+                Some(DetailOverflow::Above)
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
+        };
+        (
+            format!("lines {visible_start}-{visible_end} of {detail_lines}"),
+            overflow,
+        )
     };
-    DetailFooterStatus {
-        range: format!("lines {visible_start}-{visible_end} of {detail_lines}"),
-        overflow,
-    }
+    DetailFooterStatus { range, overflow }
 }
 
 fn fit_overlay_footer(
@@ -750,18 +764,24 @@ fn fit_overlay_footer(
     let essential_text = join_footer_segments(essential.iter().copied());
     if let Some(detail) = detail {
         let full = detail.full();
-        let with_range = join_footer_segments(
-            essential
-                .iter()
-                .copied()
-                .chain(std::iter::once(full.as_str())),
-        );
-        if display_width(&with_range) <= width {
-            return with_range;
+        if !full.is_empty() {
+            let with_range = join_footer_segments(
+                essential
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(full.as_str())),
+            );
+            if display_width(&with_range) <= width {
+                return with_range;
+            }
         }
         if let Some(overflow) = detail.overflow {
-            let with_overflow =
-                join_footer_segments(essential.iter().copied().chain(std::iter::once(overflow)));
+            let with_overflow = join_footer_segments(
+                essential
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(overflow.label())),
+            );
             if display_width(&with_overflow) <= width {
                 return with_overflow;
             }

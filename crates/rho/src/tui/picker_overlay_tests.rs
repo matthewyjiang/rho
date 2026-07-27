@@ -280,7 +280,7 @@ fn side_by_side_layout_keeps_stable_height_and_shows_selected_detail() {
         .filter(|line| pane_divider_col(line) == split)
         .count();
     assert!(
-        divider_rows >= layout.body_rows + 1,
+        divider_rows > layout.body_rows,
         "expected continuous divider through header/body, got {divider_rows}"
     );
     assert!(first_text.contains("read-only investigation"));
@@ -486,7 +486,7 @@ fn overlay_footer_drops_detail_range_before_hard_truncation() {
     ];
     let detail = DetailFooterStatus {
         range: "lines 1-12 of 40".into(),
-        overflow: Some("↓ more"),
+        overflow: Some(DetailOverflow::Below),
     };
 
     let full = fit_overlay_footer(&essential, Some(&detail), 120);
@@ -535,8 +535,13 @@ fn overlay_footer_elides_on_narrow_rendered_frames() {
     );
     // Long detail ranges are optional chrome; overflow cue may remain.
     if footer.contains("lines ") {
+        let content = footer
+            .trim_end()
+            .strip_prefix('│')
+            .and_then(|line| line.strip_suffix('│'))
+            .unwrap_or(footer.trim_end());
         assert!(
-            display_width(footer.trim_end())
+            display_width(content)
                 <= picker_overlay_layout(Rect::new(0, 0, 80, 24), true).inner_width,
             "{footer}"
         );
