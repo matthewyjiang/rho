@@ -1,12 +1,9 @@
 //! Structured tool transcript cards for Call + Children rendering.
 //!
 //! Presenters build [`ToolCard`] values. Renderers draw them with multi-span
-//! styles. Plain-text fallbacks keep older attach readers working for one
-//! release while cards ship alongside `display_lines`.
+//! styles from the card structure (header, facts, body).
 
 use serde::{Deserialize, Serialize};
-
-use crate::tool::ToolDisplayStyle;
 
 /// Tool-family identity used for header verb color.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,30 +16,6 @@ pub enum ToolFamily {
     Form,
     Agent,
     Default,
-}
-
-impl ToolFamily {
-    pub fn from_display_style(style: ToolDisplayStyle) -> Self {
-        match style {
-            ToolDisplayStyle::FileOrCommand => Self::FileCommand,
-            ToolDisplayStyle::FileDiff => Self::FileDiff,
-            ToolDisplayStyle::Web => Self::Web,
-            ToolDisplayStyle::Skill => Self::Skill,
-            ToolDisplayStyle::Questionnaire => Self::Form,
-            ToolDisplayStyle::DefaultTool => Self::Default,
-        }
-    }
-
-    pub fn display_style(self) -> ToolDisplayStyle {
-        match self {
-            Self::FileCommand => ToolDisplayStyle::FileOrCommand,
-            Self::FileDiff => ToolDisplayStyle::FileDiff,
-            Self::Web => ToolDisplayStyle::Web,
-            Self::Skill => ToolDisplayStyle::Skill,
-            Self::Form => ToolDisplayStyle::Questionnaire,
-            Self::Agent | Self::Default => ToolDisplayStyle::DefaultTool,
-        }
-    }
 }
 
 /// Lifecycle status for the card marker.
@@ -184,16 +157,24 @@ impl ToolBody {
         }
     }
 
-    pub fn lines(&self) -> &[String] {
-        match self {
-            Self::None => &[],
-            Self::Lines(lines) | Self::DiffLines(lines) => lines,
-        }
-    }
-
     pub fn is_diff(&self) -> bool {
         matches!(self, Self::DiffLines(_))
     }
+}
+
+/// Fact + body visibility for Call + Children rendering and expand/collapse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolCardDisplayPlan {
+    /// How many leading facts to show.
+    pub visible_facts: usize,
+    /// How many body logical lines to show.
+    pub visible_body_lines: usize,
+    /// Child rows hidden (facts + body lines not shown).
+    pub hidden_rows: usize,
+    /// Whether Ctrl-O can toggle expand/collapse.
+    pub expandable: bool,
+    /// Show "ctrl+o to collapse" when expanded past budget / revealing hidden diff.
+    pub show_collapse_prompt: bool,
 }
 
 /// Structured tool presentation for Call + Children rendering.
@@ -246,45 +227,63 @@ impl ToolCard {
         }
     }
 
-    /// Body-only line budget used by expand/collapse chrome.
-    pub fn expandable_line_count(&self) -> usize {
-        self.body.line_count()
-    }
-
-    /// Plain-text fallback for attach readers that do not understand cards.
-    pub fn to_display_lines(&self) -> Vec<String> {
-        let mut lines = vec![self.header_text()];
+    /// Plan fact+body visibility for a card.
+    ///
+    /// Rules:
+    /// - Always keep header out of this plan (caller always draws header).
+    /// - Facts and body form ONE child sequence under `max_lines` budget
+    ///   (`max_lines.max(1)`).
+    /// - When collapsed: apply budget across facts first, then body.
+    /// - Diff bodies ([`ToolBody::DiffLines`]) are HIDDEN when collapsed
+    ///   (0 visible body lines) but still count toward `hidden_rows` and make
+    ///   the card expandable if non-empty.
+    /// - When expanded: show all facts and all body lines.
+    /// - `expandable` is true if there is anything to reveal/hide via toggle:
+    ///   non-empty collapsed diff, OR any hidden rows when collapsed, OR when
+    ///   expanded after having been over budget / having a diff body that
+    ///   collapses away.
+    /// - When collapsed and `hidden_rows > 0`, caller shows
+    ///   `... {hidden_rows} more lines, ctrl+o to expand`.
+    /// - When expanded and `show_collapse_prompt`, show `ctrl+o to collapse`.
+    ///
+    /// Collapse prompt when expanded: true if a non-empty diff body exists OR
+    /// total children (facts + body lines) > `max_lines`.
+    pub fn display_plan(&self, max_lines: usize, expanded: bool) -> ToolCardDisplayPlan {
+        let budget = max_lines.max(1);
         let fact_count = self.facts.len();
-        for (index, fact) in self.facts.iter().enumerate() {
-            let branch = if index + 1 == fact_count && self.body.is_empty() {
-                "└"
-            } else {
-                "├"
+        let body_lines = self.body.line_count();
+        let total_children = fact_count + body_lines;
+        let non_empty_diff = self.body.is_diff() && body_lines > 0;
+
+        if expanded {
+            let show_collapse_prompt = non_empty_diff || total_children > budget;
+            return ToolCardDisplayPlan {
+                visible_facts: fact_count,
+                visible_body_lines: body_lines,
+                hidden_rows: 0,
+                expandable: show_collapse_prompt,
+                show_collapse_prompt,
             };
-            lines.push(format!("  {branch} {}", fact_plain_text(fact)));
         }
-        match &self.body {
-            ToolBody::None => {}
-            ToolBody::Lines(body) | ToolBody::DiffLines(body) => {
-                for (index, line) in body.iter().enumerate() {
-                    if index == 0 && self.facts.is_empty() {
-                        // Keep body readable under the header without a lone branch.
-                        if body.len() == 1 && !line.contains('\n') {
-                            lines.push(format!("  └ {line}"));
-                        } else {
-                            lines.push(String::new());
-                            lines.push(line.clone());
-                        }
-                    } else if index == 0 {
-                        lines.push(String::new());
-                        lines.push(line.clone());
-                    } else {
-                        lines.push(line.clone());
-                    }
-                }
-            }
+
+        // Collapsed: budget covers facts first, then non-diff body lines.
+        // Diff bodies stay fully hidden until expanded.
+        let visible_facts = fact_count.min(budget);
+        let remaining = budget.saturating_sub(visible_facts);
+        let visible_body_lines = if self.body.is_diff() {
+            0
+        } else {
+            body_lines.min(remaining)
+        };
+        let hidden_rows = fact_count.saturating_sub(visible_facts)
+            + body_lines.saturating_sub(visible_body_lines);
+        ToolCardDisplayPlan {
+            visible_facts,
+            visible_body_lines,
+            hidden_rows,
+            expandable: hidden_rows > 0,
+            show_collapse_prompt: false,
         }
-        lines
     }
 
     pub fn header_text(&self) -> String {
@@ -307,87 +306,44 @@ impl ToolCard {
             }
         }
     }
-
-    /// Build a card from plain transcript lines.
-    ///
-    /// Used when an older attach journal (or a non-presenter producer) only has
-    /// line text. The first line becomes the call header; remaining lines become
-    /// body text after tree-prefix stripping.
-    pub fn from_plain_lines(status: ToolStatus, family: ToolFamily, lines: &[String]) -> Self {
-        let mut lines = lines.iter().map(String::as_str);
-        let heading = lines.next().unwrap_or("tool");
-        let heading = strip_leading_status_marker(heading);
-        let mut card = Self::new(status, family, ToolHeader::call(heading, None));
-        let body = lines
-            .map(|line| {
-                line.strip_prefix("  ├ ")
-                    .or_else(|| line.strip_prefix("  └ "))
-                    .unwrap_or(line)
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        let body = match body.as_slice() {
-            [first, rest @ ..] if first.is_empty() => rest.to_vec(),
-            _ => body,
-        };
-        if !body.is_empty() {
-            card.body = ToolBody::Lines(body);
-        }
-        card
-    }
 }
 
-fn strip_leading_status_marker(heading: &str) -> &str {
-    let trimmed = heading.trim_start();
-    for marker in ["● ", "✓ ", "✗ ", "■ ", "! ", "○ "] {
-        if let Some(rest) = trimmed.strip_prefix(marker) {
-            return rest.trim_start();
-        }
-    }
-    // Markers without a trailing space (compact legacy lines).
-    for marker in ['●', '✓', '✗', '■', '!', '○'] {
-        if let Some(rest) = trimmed.strip_prefix(marker) {
-            return rest.trim_start();
-        }
-    }
-    trimmed
-}
-
-fn fact_plain_text(fact: &ToolFact) -> String {
-    match fact {
-        ToolFact::DiffStat {
-            added,
-            removed,
-            path,
-        } => {
-            let stats = format!("+{added} -{removed} lines");
-            match path {
-                Some(path) if !path.is_empty() => format!("{stats} | {path}"),
-                Some(_) | None => stats,
+impl ToolFact {
+    /// Plain text for a fact, used by text-only surfaces and tests.
+    pub fn plain_text(&self) -> String {
+        match self {
+            Self::DiffStat {
+                added,
+                removed,
+                path,
+            } => {
+                let stats = format!("+{added} -{removed} lines");
+                match path {
+                    Some(path) if !path.is_empty() => format!("{stats} | {path}"),
+                    Some(_) | None => stats,
+                }
             }
+            Self::Exit { code, duration_ms } => match duration_ms {
+                Some(ms) => {
+                    let secs = *ms as f64 / 1000.0;
+                    format!("exit {code} · {secs:.1}s")
+                }
+                None => format!("exit {code}"),
+            },
+            Self::Count {
+                label,
+                value,
+                detail,
+            } => match detail {
+                Some(detail) if !detail.is_empty() => format!("{value} {label} {detail}"),
+                Some(_) | None => format!("{value} {label}"),
+            },
+            Self::Meta { text } | Self::Error { text } | Self::Text { text } => text.clone(),
+            Self::Progress { completed, total } => match total {
+                Some(total) => format!("{completed}/{total}"),
+                None => format!("{completed}"),
+            },
         }
-        ToolFact::Exit { code, duration_ms } => match duration_ms {
-            Some(ms) => {
-                let secs = *ms as f64 / 1000.0;
-                format!("exit {code} · {secs:.1}s")
-            }
-            None => format!("exit {code}"),
-        },
-        ToolFact::Count {
-            label,
-            value,
-            detail,
-        } => match detail {
-            Some(detail) if !detail.is_empty() => format!("{value} {label} {detail}"),
-            Some(_) | None => format!("{value} {label}"),
-        },
-        ToolFact::Meta { text } | ToolFact::Error { text } | ToolFact::Text { text } => {
-            text.clone()
-        }
-        ToolFact::Progress { completed, total } => match total {
-            Some(total) => format!("{completed}/{total}"),
-            None => format!("{completed}"),
-        },
     }
 }
 
@@ -399,177 +355,130 @@ pub struct DiffFileStat {
     pub removed: u64,
 }
 
+/// One file section from a unified diff parse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ParsedDiffFile {
+    path: String,
+    added: u64,
+    removed: u64,
+    compact_lines: Vec<String>,
+}
+
 /// Extract per-file `+N -M` stats from a unified diff.
 pub fn diff_file_stats(diff: &str) -> Vec<DiffFileStat> {
-    let mut stats = Vec::new();
-    let mut current: Option<DiffFileStat> = None;
-
-    for line in diff.lines() {
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            if let Some(stat) = current.take() {
-                stats.push(stat);
-            }
-            current = Some(DiffFileStat {
-                path: path.to_string(),
-                added: 0,
-                removed: 0,
-            });
-            continue;
-        }
-        if line.starts_with("+++ /dev/null") {
-            if let Some(stat) = current.take() {
-                stats.push(stat);
-            }
-            current = Some(DiffFileStat {
-                path: "/dev/null".into(),
-                added: 0,
-                removed: 0,
-            });
-            continue;
-        }
-        let Some(stat) = current.as_mut() else {
-            continue;
-        };
-        if line.starts_with("@@") || line.starts_with('\\') || line.is_empty() {
-            continue;
-        }
-        match line.as_bytes().first() {
-            Some(b'+') if !line.starts_with("+++") => stat.added += 1,
-            Some(b'-') if !line.starts_with("---") => stat.removed += 1,
-            Some(_) | None => {}
-        }
-    }
-    if let Some(stat) = current {
-        stats.push(stat);
-    }
-    stats
+    parse_unified_diff(diff)
+        .into_iter()
+        .map(|file| DiffFileStat {
+            path: file.path,
+            added: file.added,
+            removed: file.removed,
+        })
+        .collect()
 }
 
 /// Collapse a unified diff to compact add/remove/context lines for expand body.
 pub fn compact_diff_lines(diff: &str, include_file_headers: bool) -> Vec<String> {
-    let mut in_hunk = false;
+    let files = parse_unified_diff(diff);
     let mut lines = Vec::new();
-    for line in diff.lines() {
-        if in_hunk {
-            if line.is_empty() {
-                in_hunk = false;
-                continue;
+    for file in files {
+        if include_file_headers {
+            if !lines.is_empty() {
+                lines.push(String::new());
             }
-            if line.starts_with("@@") || line.starts_with('\\') {
-                continue;
-            }
-            let Some(content) = line.get(1..) else {
-                continue;
-            };
-            match &line[..1] {
-                "+" | "-" => lines.push(line.to_string()),
-                " " => lines.push(content.to_string()),
-                _ => {}
-            }
-            continue;
+            lines.push(file.path);
         }
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            if include_file_headers {
-                if !lines.is_empty() {
-                    lines.push(String::new());
-                }
-                lines.push(path.to_string());
-            }
-            continue;
-        }
-        if line.starts_with("@@") {
-            in_hunk = true;
-        }
+        lines.extend(file.compact_lines);
     }
     lines
 }
 
-#[cfg(test)]
-mod tests {
-    use pretty_assertions::assert_eq;
+/// Parse a unified diff once into per-file sections used by stats and compact body.
+fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
+    let mut files = Vec::new();
+    let mut current: Option<ParsedDiffFile> = None;
+    let mut in_hunk = false;
 
-    use super::*;
+    for line in diff.lines() {
+        if should_exit_hunk(line) {
+            in_hunk = false;
+        }
 
-    #[test]
-    fn diff_stats_count_per_file() {
-        let diff = "\
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -1 +1 @@
--old
-+new
+        if let Some(path) = plus_file_path(line) {
+            if let Some(file) = current.take() {
+                files.push(file);
+            }
+            current = Some(ParsedDiffFile {
+                path,
+                added: 0,
+                removed: 0,
+                compact_lines: Vec::new(),
+            });
+            continue;
+        }
 
---- a/src/main.rs
-+++ b/src/main.rs
-@@ -1 +1 @@
--before
-+after
-";
-        assert_eq!(
-            diff_file_stats(diff),
-            vec![
-                DiffFileStat {
-                    path: "src/lib.rs".into(),
-                    added: 1,
-                    removed: 1,
-                },
-                DiffFileStat {
-                    path: "src/main.rs".into(),
-                    added: 1,
-                    removed: 1,
-                },
-            ]
-        );
-    }
+        if line.starts_with("@@") {
+            in_hunk = true;
+            continue;
+        }
 
-    #[test]
-    fn card_display_lines_include_marker_and_tree() {
-        let card = ToolCard::new(
-            ToolStatus::Ok,
-            ToolFamily::FileCommand,
-            ToolHeader::call("edit_file", Some("theme.rs".into())),
-        )
-        .with_facts(vec![ToolFact::DiffStat {
-            added: 54,
-            removed: 2,
-            path: Some("theme.rs".into()),
-        }]);
-        assert_eq!(
-            card.to_display_lines(),
-            vec![
-                "✓ edit_file(theme.rs)".to_string(),
-                "  └ +54 -2 lines | theme.rs".to_string(),
-            ]
-        );
-    }
+        if !in_hunk || line.is_empty() || line.starts_with('\\') {
+            continue;
+        }
 
-    #[test]
-    fn tool_body_variants_round_trip() {
-        for body in [
-            ToolBody::None,
-            ToolBody::Lines(vec!["line".into()]),
-            ToolBody::DiffLines(vec!["+line".into()]),
-        ] {
-            let encoded = serde_json::to_string(&body).unwrap();
-            assert_eq!(serde_json::from_str::<ToolBody>(&encoded).unwrap(), body);
+        let Some(file) = current.as_mut() else {
+            continue;
+        };
+        let Some(marker) = line.as_bytes().first().copied() else {
+            continue;
+        };
+        match marker {
+            b'+' => {
+                file.added += 1;
+                file.compact_lines.push(line.to_string());
+            }
+            b'-' => {
+                file.removed += 1;
+                file.compact_lines.push(line.to_string());
+            }
+            b' ' => {
+                if let Some(content) = line.get(1..) {
+                    file.compact_lines.push(content.to_string());
+                }
+            }
+            _ => {}
         }
     }
 
-    #[test]
-    fn card_round_trips_through_json() {
-        let card = ToolCard::new(
-            ToolStatus::Running,
-            ToolFamily::Web,
-            ToolHeader::call("web_search", Some("\"rust\"".into())),
-        )
-        .with_facts(vec![ToolFact::Count {
-            label: "results".into(),
-            value: 8,
-            detail: Some("stored".into()),
-        }])
-        .with_body(ToolBody::Lines(vec!["body".into()]));
-        let encoded = serde_json::to_string(&card).unwrap();
-        let decoded: ToolCard = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(decoded, card);
+    if let Some(file) = current {
+        files.push(file);
     }
+    files
 }
+
+fn plus_file_path(line: &str) -> Option<String> {
+    if let Some(path) = line.strip_prefix("+++ b/") {
+        return Some(path.to_string());
+    }
+    if line.starts_with("+++ /dev/null") {
+        return Some("/dev/null".into());
+    }
+    None
+}
+
+/// Leave hunk mode at file boundaries so multi-file diffs need no blank separator.
+fn should_exit_hunk(line: &str) -> bool {
+    line.is_empty() || line.starts_with("diff --git") || is_file_header_line(line)
+}
+
+fn is_file_header_line(line: &str) -> bool {
+    line.starts_with("--- a/")
+        || line.starts_with("--- b/")
+        || line.starts_with("--- /dev/null")
+        || line.starts_with("+++ b/")
+        || line.starts_with("+++ a/")
+        || line.starts_with("+++ /dev/null")
+}
+
+#[cfg(test)]
+#[path = "tool_card_tests.rs"]
+mod tests;

@@ -216,9 +216,23 @@ pub(super) fn context_text(output: &ShellOutput) -> String {
 }
 
 pub(super) fn display_text(output: &ShellOutput, included_in_context: bool) -> String {
-    display_card(output, included_in_context)
-        .to_display_lines()
-        .join("\n")
+    let card = display_card(output, included_in_context);
+    let mut parts = vec![card.header_text()];
+    for fact in &card.facts {
+        parts.push(fact.plain_text());
+    }
+    match &card.body {
+        ToolBody::Lines(lines) | ToolBody::DiffLines(lines) => {
+            if !lines.is_empty() {
+                if !card.facts.is_empty() {
+                    parts.push(String::new());
+                }
+                parts.extend(lines.iter().cloned());
+            }
+        }
+        ToolBody::None => {}
+    }
+    parts.join("\n")
 }
 
 pub(super) fn display_card(output: &ShellOutput, _included_in_context: bool) -> ToolCard {

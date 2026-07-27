@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use pretty_assertions::assert_eq;
-use rho_tools::tool::ToolDisplayStyle;
 use tempfile::TempDir;
 
 use super::*;
@@ -63,10 +62,7 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
     let running = running_card();
     assert_eq!(
         started,
-        vec![AttachmentEvent::ToolStarted {
-            display_lines: running.to_display_lines(),
-            card: Some(running),
-        }]
+        vec![AttachmentEvent::ToolStarted { card: running }]
     );
 
     // Completion is already tool-shaped at the view-model boundary; attach only
@@ -82,17 +78,10 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
     assert_eq!(
         attachment_update(ViewModelEvent::ToolFinished {
             call_id: compaction_call_id(),
-            ok: true,
-            display_style: ToolDisplayStyle::default_tool(),
             card: card.clone(),
             image_asset: None,
         }),
-        Some(AttachmentEvent::ToolFinished {
-            ok: true,
-            display_style: ToolDisplayStyle::default_tool(),
-            display_lines: card.to_display_lines(),
-            card: Some(card),
-        })
+        Some(AttachmentEvent::ToolFinished { card })
     );
 }
 
@@ -119,15 +108,7 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
         detail: "provider unavailable".into(),
     }
     .card();
-    assert_eq!(
-        events[0],
-        AttachmentEvent::ToolFinished {
-            ok: false,
-            display_style: ToolDisplayStyle::default_tool(),
-            display_lines: failed.to_display_lines(),
-            card: Some(failed),
-        }
-    );
+    assert_eq!(events[0], AttachmentEvent::ToolFinished { card: failed });
     assert_eq!(
         events[1],
         AttachmentEvent::Failed("provider unavailable".into())

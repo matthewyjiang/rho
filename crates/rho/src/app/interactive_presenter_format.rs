@@ -18,9 +18,9 @@ use super::{agent_format, ToolKind, ToolPresentation, ToolView};
 
 pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
     card.push_notice_facts(view.metadata.presentation_notices());
+    // Family is assigned only here so draft builders stay family-agnostic.
     card.family = family_for_kind(view.kind, Some(&view.metadata));
     ToolPresentation {
-        command: command(view),
         card,
         image_asset: view
             .metadata
@@ -31,19 +31,9 @@ pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentat
     }
 }
 
-pub(super) fn command(view: &ToolView) -> Option<String> {
-    view.metadata
-        .command_summary_text()
-        .map(str::to_string)
-        .or_else(|| match view.kind {
-            ToolKind::Bash | ToolKind::PowerShell => string_arg(&view.arguments, "command"),
-            ToolKind::Process
-                if view.arguments.get("action").and_then(|v| v.as_str()) == Some("start") =>
-            {
-                string_arg(&view.arguments, "command")
-            }
-            _ => None,
-        })
+/// Draft card with a placeholder family; [`presentation`] sets the real one.
+pub(super) fn draft_card(status: ToolStatus, header: ToolHeader) -> ToolCard {
+    ToolCard::new(status, ToolFamily::Default, header)
 }
 
 pub(super) fn start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
@@ -79,14 +69,13 @@ pub(super) fn preview_card(
     cwd: &std::path::Path,
     status: ToolStatus,
 ) -> ToolCard {
-    let family = family_for_kind(kind, None);
     let Some(arguments) = arguments else {
         let header = match kind {
             ToolKind::Bash => ToolHeader::shell("$", None),
             ToolKind::PowerShell => ToolHeader::shell("PS", None),
             _ => ToolHeader::call(name, None),
         };
-        return ToolCard::new(status, family, header);
+        return draft_card(status, header);
     };
     match kind {
         ToolKind::Agent => agent_format::agent_start_card(arguments),
@@ -96,9 +85,8 @@ pub(super) fn preview_card(
         ToolKind::Process => {
             let action = string_arg(arguments, "action");
             let primary = action.clone().or_else(|| string_arg(arguments, "command"));
-            let mut card = ToolCard::new(
+            let mut card = draft_card(
                 status,
-                family,
                 ToolHeader::call(
                     "process",
                     action.as_deref().map(str::to_string).or(primary.clone()),
@@ -111,47 +99,41 @@ pub(super) fn preview_card(
             }
             card
         }
-        ToolKind::ListDir => ToolCard::new(
+        ToolKind::ListDir => draft_card(
             status,
-            family,
             ToolHeader::call(
                 "list_dir",
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::Grep => ToolCard::new(
+        ToolKind::Grep => draft_card(
             status,
-            family,
             ToolHeader::call("grep", Some(grep_primary(arguments, cwd))),
         ),
-        ToolKind::Glob => ToolCard::new(
+        ToolKind::Glob => draft_card(
             status,
-            family,
             ToolHeader::call(
                 "glob",
                 string_arg(arguments, "pattern").filter(|pattern| !pattern.is_empty()),
             ),
         ),
-        ToolKind::ReadFile => ToolCard::new(
+        ToolKind::ReadFile => draft_card(
             status,
-            family,
             ToolHeader::call(
                 "read_file",
                 Some(read_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::WriteFile => ToolCard::new(
+        ToolKind::WriteFile => draft_card(
             status,
-            family,
             ToolHeader::call(
                 "write_file",
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
         ToolKind::EditFile => edit_start_card(arguments, cwd, status),
-        ToolKind::Skill => ToolCard::new(
+        ToolKind::Skill => draft_card(
             status,
-            family,
             ToolHeader::call(
                 "skill",
                 string_arg(arguments, "name").filter(|name| !name.is_empty()),
@@ -160,8 +142,7 @@ pub(super) fn preview_card(
         ToolKind::Questionnaire => match crate::questionnaire::parse_request(arguments.clone()) {
             Ok(request) => {
                 let primary = request.title.clone().or_else(|| Some(name.to_string()));
-                let mut card =
-                    ToolCard::new(status, family, ToolHeader::call("questionnaire", primary));
+                let mut card = draft_card(status, ToolHeader::call("questionnaire", primary));
                 for (index, question) in request.questions.iter().enumerate() {
                     card.push_fact(ToolFact::Text {
                         text: format!("{}. {}", index + 1, question.question),
@@ -169,32 +150,30 @@ pub(super) fn preview_card(
                 }
                 card
             }
-            Err(_) => ToolCard::new(status, family, ToolHeader::call(name, None)),
+            Err(_) => draft_card(status, ToolHeader::call(name, None)),
         },
         ToolKind::Other => {
             if name == "rho" {
-                return ToolCard::new(
+                return draft_card(
                     status,
-                    family,
                     ToolHeader::call(
                         "rho",
                         string_arg(arguments, "action").filter(|action| !action.is_empty()),
                     ),
                 );
             }
-            ToolCard::new(status, family, ToolHeader::call(name, None))
+            draft_card(status, ToolHeader::call(name, None))
         }
         ToolKind::WebSearch => {
             let primary = search_terms(arguments).or_else(|| Some(name.to_string()));
-            ToolCard::new(status, family, ToolHeader::call("web_search", primary))
+            draft_card(status, ToolHeader::call("web_search", primary))
         }
         ToolKind::FetchContent => {
             let primary = first_url(arguments).or_else(|| Some(name.to_string()));
-            ToolCard::new(status, family, ToolHeader::call("fetch_content", primary))
+            draft_card(status, ToolHeader::call("fetch_content", primary))
         }
-        ToolKind::GetSearchContent => ToolCard::new(
+        ToolKind::GetSearchContent => draft_card(
             status,
-            family,
             ToolHeader::call("get_search_content", Some(get_search_primary(arguments))),
         ),
     }
@@ -211,11 +190,7 @@ fn edit_start_card(
         [path] => Some(path.clone()),
         paths => Some(format!("{} files", paths.len())),
     };
-    ToolCard::new(
-        status,
-        ToolFamily::FileDiff,
-        ToolHeader::call("edit_file", primary),
-    )
+    draft_card(status, ToolHeader::call("edit_file", primary))
 }
 
 pub(super) fn finished_card(
@@ -232,9 +207,8 @@ pub(super) fn finished_card(
         ToolKind::PowerShell => shell_result_card("PS", &view.arguments, content, status),
         ToolKind::Process => process_result_card(content, status),
         ToolKind::ListDir => {
-            let mut card = ToolCard::new(
+            let mut card = draft_card(
                 status,
-                ToolFamily::FileCommand,
                 ToolHeader::call(
                     "list_dir",
                     Some(metadata_path(view, cwd)).filter(|path| !path.is_empty()),
@@ -257,9 +231,8 @@ pub(super) fn finished_card(
         }
         ToolKind::Grep | ToolKind::Glob => search_result_card(view, content, ok, cwd),
         ToolKind::ReadFile => {
-            let mut card = ToolCard::new(
+            let mut card = draft_card(
                 status,
-                ToolFamily::FileCommand,
                 ToolHeader::call(
                     "read_file",
                     Some(metadata_read_path(view, cwd)).filter(|path| !path.is_empty()),
@@ -315,13 +288,7 @@ pub(super) fn progress_card(
         }
     }
     let mut card = view.map_or_else(
-        || {
-            ToolCard::new(
-                ToolStatus::Running,
-                ToolFamily::Default,
-                ToolHeader::call("tool", None),
-            )
-        },
+        || draft_card(ToolStatus::Running, ToolHeader::call("tool", None)),
         |(view, cwd)| start_card(view, cwd),
     );
     if !progress.text().trim().is_empty() {
@@ -357,7 +324,7 @@ pub(super) fn interrupted_card(
     }
 }
 
-pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -> ToolFamily {
+fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -> ToolFamily {
     match kind {
         ToolKind::Agent | ToolKind::Agents => ToolFamily::Agent,
         ToolKind::Bash

@@ -1066,8 +1066,8 @@ fn started_tool_display_ignores_late_argument_previews() {
             .running
             .values()
             .next()
-            .map(|tool| tool.card.to_display_lines()),
-        Some(vec!["● edit_file src/main.rs".to_string()])
+            .map(|tool| tool.card.header_text()),
+        Some("● edit_file src/main.rs".to_string())
     );
 }
 

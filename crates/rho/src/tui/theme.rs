@@ -382,7 +382,7 @@ impl Theme {
     }
 
     /// Primary argument style in the header.
-    pub(super) fn tool_primary(_family: rho_tools::tool_card::ToolFamily) -> Style {
+    pub(super) fn tool_primary() -> Style {
         Self::text()
     }
 

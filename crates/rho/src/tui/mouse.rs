@@ -7,7 +7,7 @@ use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
     render::tool_entry_lines,
     text_selection::{CopyNotice, TextSelection},
-    tool_output_ui::{expandable_tool_entry, tool_expandable_line_count},
+    tool_output_ui::{expandable_tool_entry, tool_output_toggleable},
     App, ComposerMode,
 };
 
@@ -301,7 +301,7 @@ impl App {
                 tool_entry_lines(pending, width, self.info.runtime.max_tool_output_lines).len(),
             );
             if (pending_start..pending_end).contains(&line)
-                && tool_expandable_line_count(pending) > self.info.runtime.max_tool_output_lines
+                && tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines)
             {
                 target = Some(key);
                 break;

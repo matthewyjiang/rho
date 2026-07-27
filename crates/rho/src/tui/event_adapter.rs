@@ -5,7 +5,7 @@ use rho_sdk::{
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
     crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
-    rho_tools::{tool::ToolDisplayStyle, tool_card::ToolCard},
+    rho_tools::tool_card::ToolCard,
 };
 
 use super::{
@@ -50,9 +50,6 @@ pub(super) enum ViewModelEvent {
     },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
-        ok: bool,
-        /// Attach wire style only; TUI render uses the card.
-        display_style: ToolDisplayStyle,
         card: ToolCard,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
@@ -193,11 +190,9 @@ impl SdkEventAdapter {
                 })]
             }
             RunEvent::ToolFinished { call_id, result } => {
-                let (ok, presented) = self.presenter().finished(&call_id, result);
+                let (_ok, presented) = self.presenter().finished(&call_id, result);
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id,
-                    ok,
-                    display_style: presented.card.family.display_style(),
                     card: presented.card,
                     image_asset: presented.image_asset,
                 })]
@@ -209,8 +204,6 @@ impl SdkEventAdapter {
                 use rho_tools::tool_card::{ToolFamily, ToolHeader, ToolStatus};
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id: rho_sdk::ToolCallId::new(),
-                    ok: true,
-                    display_style: ToolDisplayStyle::web(),
                     card: ToolCard::new(
                         ToolStatus::Ok,
                         ToolFamily::Web,
@@ -298,8 +291,6 @@ fn compaction_started() -> ViewModelEvent {
 fn compaction_finished(outcome: CompactionUiOutcome) -> ViewModelEvent {
     ViewModelEvent::ToolFinished {
         call_id: compaction_call_id(),
-        ok: outcome.ok(),
-        display_style: ToolDisplayStyle::default_tool(),
         card: outcome.card(),
         image_asset: None,
     }

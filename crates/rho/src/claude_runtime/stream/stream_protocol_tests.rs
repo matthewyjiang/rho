@@ -144,8 +144,8 @@ fn maps_live_success_capture_round_trip() {
 fn maps_tool_call_and_result_display() {
     let effects = effects_from_fixture("tool_call.ndjson");
     let started = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines, .. }) => {
-            Some(display_lines.clone())
+        StreamEffect::Attachment(AttachmentEvent::ToolStarted { card, .. }) => {
+            Some(vec![card.header_text()])
         }
         _ => None,
     });
@@ -154,7 +154,12 @@ fn maps_tool_call_and_result_display() {
     let finished = effects.iter().any(|effect| {
         matches!(
             effect,
-            StreamEffect::Attachment(AttachmentEvent::ToolFinished { ok: true, .. })
+            StreamEffect::Attachment(AttachmentEvent::ToolFinished {
+                card: rho_tools::tool_card::ToolCard {
+                    status: rho_tools::tool_card::ToolStatus::Ok,
+                    ..
+                }
+            })
         )
     });
     assert!(finished);
@@ -442,8 +447,8 @@ fn bounds_retained_text_result_and_tool_payloads() {
     );
     let effects = map_line(&tool_line);
     let started = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines, .. }) => {
-            Some(display_lines.join("\n"))
+        StreamEffect::Attachment(AttachmentEvent::ToolStarted { card, .. }) => {
+            Some(card.header_text())
         }
         _ => None,
     });

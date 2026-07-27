@@ -7,16 +7,26 @@ use super::{App, Entry};
 pub(super) fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize) -> bool {
     matches!(
         entry,
-        Entry::Tool(tool) if tool_expandable_line_count(tool) > max_tool_output_lines
+        Entry::Tool(tool) if tool_output_toggleable(tool, max_tool_output_lines)
     )
 }
 
-pub(super) fn tool_expandable_line_count(tool: &super::ToolEntry) -> usize {
-    // Diff bodies are hidden until expanded; other bodies use the line budget.
-    if matches!(tool.card.body, rho_tools::tool_card::ToolBody::DiffLines(_)) {
-        return tool.card.body.line_count().max(1);
+/// Whether ctrl+o / click should toggle this tool's expanded body.
+pub(super) fn tool_output_toggleable(
+    tool: &super::ToolEntry,
+    max_tool_output_lines: usize,
+) -> bool {
+    let collapsed = tool
+        .card
+        .display_plan(max_tool_output_lines, /*expanded*/ false);
+    if tool.expanded {
+        let expanded_plan = tool
+            .card
+            .display_plan(max_tool_output_lines, /*expanded*/ true);
+        expanded_plan.show_collapse_prompt || collapsed.expandable
+    } else {
+        collapsed.expandable
     }
-    tool.card.expandable_line_count()
 }
 
 impl App {
@@ -25,7 +35,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
         if let Some(pending) = self.turn.latest_tool_mut() {
-            if tool_expandable_line_count(pending) <= self.info.runtime.max_tool_output_lines {
+            if !tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines) {
                 self.status = "no truncated tool output".into();
                 return Ok(());
             }

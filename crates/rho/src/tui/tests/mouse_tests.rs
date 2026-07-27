@@ -186,11 +186,16 @@ fn clicking_expandable_pending_tool_output_toggles_it() {
     app.turn.tool_calls_mut().preview(
         0,
         None,
-        rho_tools::tool_card::ToolCard::from_plain_lines(
+        rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Running,
             rho_tools::tool_card::ToolFamily::Default,
-            &["bash".into(), "first\nsecond\nthird".into()],
-        ),
+            rho_tools::tool_card::ToolHeader::call("bash", None),
+        )
+        .with_body(rho_tools::tool_card::ToolBody::Lines(vec![
+            "first".into(),
+            "second".into(),
+            "third".into(),
+        ])),
     );
     let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
     let now = Instant::now();

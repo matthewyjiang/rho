@@ -305,8 +305,6 @@ impl App {
             }
             ViewModelEvent::ToolFinished {
                 call_id,
-                ok: _,
-                display_style: _,
                 mut card,
                 image_asset,
             } => {

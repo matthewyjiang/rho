@@ -1,0 +1,277 @@
+use pretty_assertions::assert_eq;
+
+use super::*;
+
+fn base_card() -> ToolCard {
+    ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileCommand,
+        ToolHeader::call("tool", Some("x".into())),
+    )
+}
+
+fn meta_facts(count: usize) -> Vec<ToolFact> {
+    (0..count)
+        .map(|i| ToolFact::Meta {
+            text: format!("fact-{i}"),
+        })
+        .collect()
+}
+
+#[test]
+fn display_plan_short_diff_collapsed_hides_body() {
+    let card = base_card().with_body(ToolBody::DiffLines(vec!["-old".into(), "+new".into()]));
+    let plan = card.display_plan(10, /*expanded*/ false);
+    assert_eq!(
+        plan,
+        ToolCardDisplayPlan {
+            visible_facts: 0,
+            visible_body_lines: 0,
+            hidden_rows: 2,
+            expandable: true,
+            show_collapse_prompt: false,
+        }
+    );
+}
+
+#[test]
+fn display_plan_short_diff_expanded_shows_collapse_prompt() {
+    let card = base_card().with_body(ToolBody::DiffLines(vec!["-old".into(), "+new".into()]));
+    let plan = card.display_plan(10, /*expanded*/ true);
+    assert_eq!(
+        plan,
+        ToolCardDisplayPlan {
+            visible_facts: 0,
+            visible_body_lines: 2,
+            hidden_rows: 0,
+            expandable: true,
+            show_collapse_prompt: true,
+        }
+    );
+}
+
+#[test]
+fn display_plan_long_non_diff_body_truncated_when_collapsed() {
+    let body = (0..8).map(|i| format!("line-{i}")).collect();
+    let card = base_card().with_body(ToolBody::Lines(body));
+    let plan = card.display_plan(3, /*expanded*/ false);
+    assert_eq!(
+        plan,
+        ToolCardDisplayPlan {
+            visible_facts: 0,
+            visible_body_lines: 3,
+            hidden_rows: 5,
+            expandable: true,
+            show_collapse_prompt: false,
+        }
+    );
+}
+
+#[test]
+fn display_plan_many_facts_exceed_budget_when_collapsed() {
+    let card = base_card().with_facts(meta_facts(5));
+    let plan = card.display_plan(2, /*expanded*/ false);
+    assert_eq!(
+        plan,
+        ToolCardDisplayPlan {
+            visible_facts: 2,
+            visible_body_lines: 0,
+            hidden_rows: 3,
+            expandable: true,
+            show_collapse_prompt: false,
+        }
+    );
+}
+
+#[test]
+fn display_plan_facts_and_body_share_one_budget() {
+    let body = (0..5).map(|i| format!("line-{i}")).collect();
+    let card = base_card()
+        .with_facts(meta_facts(2))
+        .with_body(ToolBody::Lines(body));
+    let plan = card.display_plan(3, /*expanded*/ false);
+    assert_eq!(
+        plan,
+        ToolCardDisplayPlan {
+            visible_facts: 2,
+            visible_body_lines: 1,
+            hidden_rows: 4,
+            expandable: true,
+            show_collapse_prompt: false,
+        }
+    );
+}
+
+#[test]
+fn display_plan_expanded_long_body_shows_collapse_prompt() {
+    let body = (0..8).map(|i| format!("line-{i}")).collect();
+    let card = base_card()
+        .with_facts(meta_facts(1))
+        .with_body(ToolBody::Lines(body));
+    let plan = card.display_plan(3, /*expanded*/ true);
+    assert_eq!(
+        plan,
+        ToolCardDisplayPlan {
+            visible_facts: 1,
+            visible_body_lines: 8,
+            hidden_rows: 0,
+            expandable: true,
+            show_collapse_prompt: true,
+        }
+    );
+}
+
+#[test]
+fn compact_diff_lines_two_files_without_blank_separator() {
+    // No blank line between file sections - second header must not become +/- content.
+    let diff = "\
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1 @@
+-old
++new
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1 +1 @@
+-before
++after
+";
+    assert_eq!(
+        compact_diff_lines(diff, /*include_file_headers*/ true),
+        vec![
+            "src/lib.rs".to_string(),
+            "-old".to_string(),
+            "+new".to_string(),
+            String::new(),
+            "src/main.rs".to_string(),
+            "-before".to_string(),
+            "+after".to_string(),
+        ]
+    );
+    assert_eq!(
+        compact_diff_lines(diff, /*include_file_headers*/ false),
+        vec![
+            "-old".to_string(),
+            "+new".to_string(),
+            "-before".to_string(),
+            "+after".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn diff_stats_count_per_file() {
+    let diff = "\
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1 @@
+-old
++new
+
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1 +1 @@
+-before
++after
+";
+    assert_eq!(
+        diff_file_stats(diff),
+        vec![
+            DiffFileStat {
+                path: "src/lib.rs".into(),
+                added: 1,
+                removed: 1,
+            },
+            DiffFileStat {
+                path: "src/main.rs".into(),
+                added: 1,
+                removed: 1,
+            },
+        ]
+    );
+}
+
+#[test]
+fn diff_stats_multi_file_without_blank_separator() {
+    let diff = "\
+--- a/a.rs
++++ b/a.rs
+@@ -1 +1 @@
+-a
++A
+--- a/b.rs
++++ b/b.rs
+@@ -1 +1 @@
+-b
++B
+";
+    assert_eq!(
+        diff_file_stats(diff),
+        vec![
+            DiffFileStat {
+                path: "a.rs".into(),
+                added: 1,
+                removed: 1,
+            },
+            DiffFileStat {
+                path: "b.rs".into(),
+                added: 1,
+                removed: 1,
+            },
+        ]
+    );
+}
+
+#[test]
+fn card_header_and_facts_include_marker_and_diff_stat() {
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileCommand,
+        ToolHeader::call("edit_file", Some("theme.rs".into())),
+    )
+    .with_facts(vec![ToolFact::DiffStat {
+        added: 54,
+        removed: 2,
+        path: Some("theme.rs".into()),
+    }]);
+    assert_eq!(card.header_text(), "✓ edit_file(theme.rs)");
+    assert_eq!(
+        card.facts,
+        vec![ToolFact::DiffStat {
+            added: 54,
+            removed: 2,
+            path: Some("theme.rs".into()),
+        }]
+    );
+    assert_eq!(card.facts[0].plain_text(), "+54 -2 lines | theme.rs");
+}
+
+#[test]
+fn tool_body_variants_round_trip() {
+    for body in [
+        ToolBody::None,
+        ToolBody::Lines(vec!["line".into()]),
+        ToolBody::DiffLines(vec!["+line".into()]),
+    ] {
+        let encoded = serde_json::to_string(&body).unwrap();
+        assert_eq!(serde_json::from_str::<ToolBody>(&encoded).unwrap(), body);
+    }
+}
+
+#[test]
+fn card_round_trips_through_json() {
+    let card = ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Web,
+        ToolHeader::call("web_search", Some("\"rust\"".into())),
+    )
+    .with_facts(vec![ToolFact::Count {
+        label: "results".into(),
+        value: 8,
+        detail: Some("stored".into()),
+    }])
+    .with_body(ToolBody::Lines(vec!["body".into()]));
+    let encoded = serde_json::to_string(&card).unwrap();
+    let decoded: ToolCard = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, card);
+}

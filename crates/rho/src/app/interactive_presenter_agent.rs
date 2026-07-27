@@ -1,6 +1,6 @@
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
 
-use super::ToolView;
+use super::{format::draft_card, ToolView};
 
 const TASK_PREVIEW_BYTES: usize = 160;
 /// Live agent prompts are long; show a trailing window so argument streaming keeps
@@ -172,11 +172,7 @@ fn bare_agent_card(
     identity: impl Into<String>,
     detail: impl Into<String>,
 ) -> ToolCard {
-    ToolCard::new(
-        status,
-        ToolFamily::Agent,
-        ToolHeader::status_first(identity, detail),
-    )
+    draft_card(status, ToolHeader::status_first(identity, detail))
 }
 
 fn push_agent_fact(card: &mut ToolCard, text: String) {

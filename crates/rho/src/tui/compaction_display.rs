@@ -58,10 +58,6 @@ pub(super) enum CompactionUiOutcome {
 }
 
 impl CompactionUiOutcome {
-    pub(super) fn ok(&self) -> bool {
-        !matches!(self, Self::Failed { .. })
-    }
-
     pub(super) fn card(&self) -> ToolCard {
         match self {
             Self::Completed(facts) => completed_card(*facts),

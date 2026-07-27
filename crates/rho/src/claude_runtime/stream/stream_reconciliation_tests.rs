@@ -27,7 +27,15 @@ fn mixed_partial_and_complete_envelopes_emit_presentation_once() {
     );
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })
+            matches!(
+                event,
+                AttachmentEvent::ToolFinished {
+                    card: rho_tools::tool_card::ToolCard {
+                        status: rho_tools::tool_card::ToolStatus::Ok,
+                        ..
+                    }
+                }
+            )
         }),
         1,
         "ToolFinished once"
@@ -72,14 +80,22 @@ fn partial_tool_only_plus_complete_only_text_and_reasoning() {
     assert_eq!(joined_text(&effects), "text complete-only");
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { display_lines, .. }
-                if display_lines.iter().any(|line| line.contains("toolu_partial_1")))
+            matches!(event, AttachmentEvent::ToolStarted { card, .. }
+                if card.header_text().contains("toolu_partial_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_partial_1")) || matches!(&card.body, rho_tools::tool_card::ToolBody::Lines(lines) | rho_tools::tool_card::ToolBody::DiffLines(lines) if lines.iter().any(|line| line.contains("toolu_partial_1"))))
         }),
         1
     );
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })
+            matches!(
+                event,
+                AttachmentEvent::ToolFinished {
+                    card: rho_tools::tool_card::ToolCard {
+                        status: rho_tools::tool_card::ToolStatus::Ok,
+                        ..
+                    }
+                }
+            )
         }),
         1
     );
@@ -141,14 +157,22 @@ fn indexless_partials_do_not_duplicate_on_complete_envelope() {
     assert_eq!(joined_text(&effects), "Hello indexless.");
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { display_lines, .. }
-                if display_lines.iter().any(|line| line.contains("toolu_indexless_1")))
+            matches!(event, AttachmentEvent::ToolStarted { card, .. }
+                if card.header_text().contains("toolu_indexless_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_indexless_1")) || matches!(&card.body, rho_tools::tool_card::ToolBody::Lines(lines) | rho_tools::tool_card::ToolBody::DiffLines(lines) if lines.iter().any(|line| line.contains("toolu_indexless_1"))))
         }),
         1
     );
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })
+            matches!(
+                event,
+                AttachmentEvent::ToolFinished {
+                    card: rho_tools::tool_card::ToolCard {
+                        status: rho_tools::tool_card::ToolStatus::Ok,
+                        ..
+                    }
+                }
+            )
         }),
         1
     );
@@ -290,8 +314,8 @@ fn ordered_indexless_slots_preserve_complete_only_then_streamed_tool() {
     let started: Vec<_> = effects
         .iter()
         .filter_map(|effect| match effect {
-            StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines, .. }) => {
-                Some(display_lines.join(" | "))
+            StreamEffect::Attachment(AttachmentEvent::ToolStarted { card, .. }) => {
+                Some(card.header_text())
             }
             _ => None,
         })
@@ -347,7 +371,15 @@ fn some_blocks_streamed_others_complete_only_within_one_message() {
     );
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })
+            matches!(
+                event,
+                AttachmentEvent::ToolFinished {
+                    card: rho_tools::tool_card::ToolCard {
+                        status: rho_tools::tool_card::ToolStatus::Ok,
+                        ..
+                    }
+                }
+            )
         }),
         1
     );
@@ -360,16 +392,24 @@ fn maps_live_tool_roundtrip_capture() {
 
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { display_lines, .. }
-                if display_lines.iter().any(|line| line.contains("Read"))
-                    && display_lines.iter().any(|line| line.contains("toolu_0liveToolRoundtrip")))
+            matches!(event, AttachmentEvent::ToolStarted { card, .. }
+                if card.header_text().contains("Read")
+                    && card.header_text().contains("toolu_0liveToolRoundtrip"))
         }),
         1,
         "tool start"
     );
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })
+            matches!(
+                event,
+                AttachmentEvent::ToolFinished {
+                    card: rho_tools::tool_card::ToolCard {
+                        status: rho_tools::tool_card::ToolStatus::Ok,
+                        ..
+                    }
+                }
+            )
         }),
         1,
         "tool finish"

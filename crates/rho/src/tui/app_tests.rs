@@ -99,21 +99,27 @@ fn buffer_row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
 }
 
 fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
-    let lines = display_lines
-        .iter()
-        .map(|line| (*line).to_string())
-        .collect::<Vec<_>>();
     let status = if ok {
         rho_tools::tool_card::ToolStatus::Ok
     } else {
         rho_tools::tool_card::ToolStatus::Error
     };
+    let heading = display_lines.first().copied().unwrap_or("tool");
+    let mut card = rho_tools::tool_card::ToolCard::new(
+        status,
+        rho_tools::tool_card::ToolFamily::Default,
+        rho_tools::tool_card::ToolHeader::call(heading, None),
+    );
+    if display_lines.len() > 1 {
+        card = card.with_body(rho_tools::tool_card::ToolBody::Lines(
+            display_lines[1..]
+                .iter()
+                .map(|line| (*line).to_string())
+                .collect(),
+        ));
+    }
     Entry::Tool(ToolEntry {
-        card: rho_tools::tool_card::ToolCard::from_plain_lines(
-            status,
-            rho_tools::tool_card::ToolFamily::Default,
-            &lines,
-        ),
+        card,
         expanded: false,
         image: None,
     })
@@ -426,10 +432,8 @@ fn recovered_session_messages_become_transcript_entries() {
         Entry::Tool(ToolEntry {
             ref card,
             ..
-        }) if card
-            .to_display_lines()
-            .iter()
-            .any(|line| line.contains("read_file") && line.contains("src/main.rs"))
+        }) if card.header_text().contains("read_file")
+            && card.header_text().contains("src/main.rs")
     ));
     let lines = entry_lines(&entries[2], 40, 10);
     // Call + Children: failure is a red status marker, not a washed surface.
@@ -780,15 +784,16 @@ fn active_lines_for_height_uses_actual_viewport_height() {
 fn spinner_is_anchored_immediately_above_composer_divider() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
-    app.turn.tool_calls_mut().preview(
-        0,
-        None,
-        rho_tools::tool_card::ToolCard::from_plain_lines(
+    app.turn.tool_calls_mut().preview(0, None, {
+        rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Running,
             rho_tools::tool_card::ToolFamily::Default,
-            &["bash".into(), "cargo test".into()],
-        ),
-    );
+            rho_tools::tool_card::ToolHeader::call("bash", None),
+        )
+        .with_body(rho_tools::tool_card::ToolBody::Lines(vec![
+            "cargo test".into()
+        ]))
+    });
     let width = 40;
     let height = 24;
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -1649,15 +1654,16 @@ fn complete_slash_command_inserts_prefixed_skill_command() {
 fn history_lines_include_header_transcript_pending_preview_but_not_activity_row() {
     let mut app = test_app();
     app.push_transcript_entry(Entry::User("hello".into()));
-    app.turn.tool_calls_mut().preview(
-        0,
-        None,
-        rho_tools::tool_card::ToolCard::from_plain_lines(
+    app.turn.tool_calls_mut().preview(0, None, {
+        rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Running,
             rho_tools::tool_card::ToolFamily::Default,
-            &["bash".into(), "cargo test".into()],
-        ),
-    );
+            rho_tools::tool_card::ToolHeader::call("bash", None),
+        )
+        .with_body(rho_tools::tool_card::ToolBody::Lines(vec![
+            "cargo test".into()
+        ]))
+    });
     app.streams.live_stream_preview = Some(LiveStreamPreview {
         kind: StreamKind::Assistant,
         text: "partial answer".into(),

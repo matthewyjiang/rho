@@ -16,7 +16,6 @@ use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
-    pub(crate) command: Option<String>,
     pub(crate) card: ToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }

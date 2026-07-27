@@ -15,7 +15,7 @@ use super::protocol::{ErrorMessage, RateLimitMessage, SystemMessage};
 use super::types::{
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult, MAX_RESULT_CHARS,
 };
-use super::{describe_rate_limit, MessageStreamState, CLAUDE_TOOL_DISPLAY_STYLE};
+use super::{describe_rate_limit, MessageStreamState};
 
 /// Bound on content-block indices recorded per message.
 pub(super) const MAX_BLOCKS_PER_MESSAGE: usize = 256;
@@ -401,7 +401,7 @@ pub(super) fn tool_started_effects(block: &Value) -> Vec<StreamEffect> {
     };
     let mut card = rho_tools::tool_card::ToolCard::new(
         rho_tools::tool_card::ToolStatus::Running,
-        rho_tools::tool_card::ToolFamily::from_display_style(CLAUDE_TOOL_DISPLAY_STYLE),
+        rho_tools::tool_card::ToolFamily::Default,
         rho_tools::tool_card::ToolHeader::call(name, primary),
     );
     let rendered = stringify_content(input);
@@ -412,10 +412,7 @@ pub(super) fn tool_started_effects(block: &Value) -> Vec<StreamEffect> {
         ));
     }
     vec![
-        StreamEffect::Attachment(AttachmentEvent::ToolStarted {
-            display_lines: card.to_display_lines(),
-            card: Some(card),
-        }),
+        StreamEffect::Attachment(AttachmentEvent::ToolStarted { card }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool: {name}")),
             ..StatusPatch::default()
@@ -435,7 +432,7 @@ pub(super) fn tool_finished_effects(
     };
     let mut card = rho_tools::tool_card::ToolCard::new(
         status,
-        rho_tools::tool_card::ToolFamily::from_display_style(CLAUDE_TOOL_DISPLAY_STYLE),
+        rho_tools::tool_card::ToolFamily::Default,
         rho_tools::tool_card::ToolHeader::call("tool result", Some(tool_use_id.to_string())),
     );
     if !content_text.is_empty() {
@@ -445,12 +442,7 @@ pub(super) fn tool_finished_effects(
         ));
     }
     vec![
-        StreamEffect::Attachment(AttachmentEvent::ToolFinished {
-            ok,
-            display_style: CLAUDE_TOOL_DISPLAY_STYLE,
-            display_lines: card.to_display_lines(),
-            card: Some(card),
-        }),
+        StreamEffect::Attachment(AttachmentEvent::ToolFinished { card }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool result: {tool_use_id}")),
             ..StatusPatch::default()

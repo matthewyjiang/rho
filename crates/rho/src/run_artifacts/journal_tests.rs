@@ -23,10 +23,7 @@ fn attachment_stream_writes_and_reads_events() {
     )
     .with_body(ToolBody::Lines(vec!["cargo test".into()]));
     writer
-        .write_event(&AttachmentEvent::ToolStarted {
-            display_lines: card.to_display_lines(),
-            card: Some(card.clone()),
-        })
+        .write_event(&AttachmentEvent::ToolStarted { card: card.clone() })
         .unwrap();
     drop(writer);
 
@@ -38,10 +35,7 @@ fn attachment_stream_writes_and_reads_events() {
         vec![
             AttachmentEvent::Prompt("inspect the code".into()),
             AttachmentEvent::AssistantTextDelta("found it".into()),
-            AttachmentEvent::ToolStarted {
-                display_lines: card.to_display_lines(),
-                card: Some(card),
-            },
+            AttachmentEvent::ToolStarted { card },
         ]
     );
     assert!(reader.read_new().unwrap().is_empty());

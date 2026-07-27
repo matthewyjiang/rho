@@ -31,7 +31,7 @@ fn retry_removes_only_replaceable_provider_output() {
         [Entry::User(prompt), Entry::Notice(notice), Entry::Tool(tool)]
             if prompt == "prompt"
                 && notice == "keep notice"
-                && tool.card.to_display_lines() == ["● keep tool"]
+                && tool.card.header_text() == "● keep tool"
     ));
 }
 

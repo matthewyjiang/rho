@@ -262,15 +262,21 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AttachmentEvent::ToolStarted { display_lines, .. }
-                if display_lines.iter().any(|line| line.contains("Read"))
+            AttachmentEvent::ToolStarted { card, .. }
+                if card.header_text().contains("Read") || card.facts.iter().any(|f| f.plain_text().contains("Read")) || matches!(&card.body, rho_tools::tool_card::ToolBody::Lines(lines) | rho_tools::tool_card::ToolBody::DiffLines(lines) if lines.iter().any(|line| line.contains("Read")))
         )),
         "tool started: {events:?}"
     );
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, AttachmentEvent::ToolFinished { ok: true, .. })),
+        events.iter().any(|event| matches!(
+            event,
+            AttachmentEvent::ToolFinished {
+                card: rho_tools::tool_card::ToolCard {
+                    status: rho_tools::tool_card::ToolStatus::Ok,
+                    ..
+                }
+            }
+        )),
         "tool finished: {events:?}"
     );
     let assistant_text: String = events

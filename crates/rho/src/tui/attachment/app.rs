@@ -190,47 +190,14 @@ impl AttachmentApp {
                     can_append,
                 );
             }
-            AttachmentEvent::ToolStarted {
-                display_lines,
-                card,
-            }
-            | AttachmentEvent::ToolUpdated {
-                display_lines,
-                card,
-            } => {
-                let card = card.unwrap_or_else(|| {
-                    rho_tools::tool_card::ToolCard::from_plain_lines(
-                        rho_tools::tool_card::ToolStatus::Running,
-                        rho_tools::tool_card::ToolFamily::from_display_style(
-                            rho_tools::tool::ToolDisplayStyle::default_tool(),
-                        ),
-                        &display_lines,
-                    )
-                });
+            AttachmentEvent::ToolStarted { card } | AttachmentEvent::ToolUpdated { card } => {
                 self.pending_tool = Some(ToolEntry {
                     card,
                     expanded: false,
                     image: None,
                 });
             }
-            AttachmentEvent::ToolFinished {
-                ok,
-                display_style,
-                display_lines,
-                card,
-            } => {
-                let status = if ok {
-                    rho_tools::tool_card::ToolStatus::Ok
-                } else {
-                    rho_tools::tool_card::ToolStatus::Error
-                };
-                let card = card.unwrap_or_else(|| {
-                    rho_tools::tool_card::ToolCard::from_plain_lines(
-                        status,
-                        rho_tools::tool_card::ToolFamily::from_display_style(display_style),
-                        &display_lines,
-                    )
-                });
+            AttachmentEvent::ToolFinished { card } => {
                 self.pending_tool = None;
                 self.transcript.push(Entry::Tool(ToolEntry {
                     card,

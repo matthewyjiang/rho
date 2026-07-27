@@ -69,25 +69,11 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
         ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
         ViewModelEvent::ToolStarted { card, .. }
         | ViewModelEvent::ToolCallUpdated { card, .. }
-        | ViewModelEvent::ToolCallProposed { card, .. } => Some(AttachmentEvent::ToolStarted {
-            display_lines: card.to_display_lines(),
-            card: Some(card),
-        }),
-        ViewModelEvent::ToolUpdated { card, .. } => Some(AttachmentEvent::ToolUpdated {
-            display_lines: card.to_display_lines(),
-            card: Some(card),
-        }),
-        ViewModelEvent::ToolFinished {
-            ok,
-            display_style,
-            card,
-            ..
-        } => Some(AttachmentEvent::ToolFinished {
-            ok,
-            display_style,
-            display_lines: card.to_display_lines(),
-            card: Some(card),
-        }),
+        | ViewModelEvent::ToolCallProposed { card, .. } => {
+            Some(AttachmentEvent::ToolStarted { card })
+        }
+        ViewModelEvent::ToolUpdated { card, .. } => Some(AttachmentEvent::ToolUpdated { card }),
+        ViewModelEvent::ToolFinished { card, .. } => Some(AttachmentEvent::ToolFinished { card }),
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
         // This acknowledgement reconciles the interactive TUI's pending-input

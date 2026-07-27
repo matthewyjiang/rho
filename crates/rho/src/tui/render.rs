@@ -735,6 +735,87 @@ pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
     chunks
 }
 
+/// Display width of concatenated styled spans.
+pub(super) fn spans_display_width(spans: &[Span<'_>]) -> usize {
+    spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum()
+}
+
+/// Slice concatenated spans by byte offsets into their joined UTF-8 text.
+pub(super) fn slice_spans_by_bytes(
+    spans: &[Span<'static>],
+    start: usize,
+    end: usize,
+) -> Vec<Span<'static>> {
+    if start >= end {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for span in spans {
+        let content = span.content.as_ref();
+        let span_start = offset;
+        let span_end = offset + content.len();
+        offset = span_end;
+        if span_end <= start || span_start >= end {
+            continue;
+        }
+        let from = start.saturating_sub(span_start);
+        let to = (end - span_start).min(content.len());
+        if from >= to {
+            continue;
+        }
+        // Ranges come from the concatenated UTF-8 text, so byte edges are char edges.
+        out.push(Span::styled(content[from..to].to_string(), span.style));
+    }
+    out
+}
+
+/// Hard-wrap multi-span content to `width` display columns, preserving styles.
+pub(super) fn wrap_spans_hard(spans: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut used = 0;
+
+    for span in spans {
+        let mut chunk = String::new();
+        for character in span.content.chars() {
+            if character == '\n' {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+                continue;
+            }
+            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+            if used > 0 && used + character_width > width {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+            }
+            chunk.push(character);
+            used += character_width;
+            if used >= width {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+            }
+        }
+        push_span_chunk(&mut row, &mut chunk, span.style);
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+fn push_span_chunk(row: &mut Vec<Span<'static>>, chunk: &mut String, style: Style) {
+    if !chunk.is_empty() {
+        row.push(Span::styled(std::mem::take(chunk), style));
+    }
+}
+
 pub(super) fn labeled_divider_line(
     labels: &[&str],
     style: Style,

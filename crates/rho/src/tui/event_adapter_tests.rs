@@ -24,6 +24,41 @@ fn only_event(events: Vec<ViewEvent>) -> ViewEvent {
     events.into_iter().next().expect("one event")
 }
 
+fn card_lines(card: &rho_tools::tool_card::ToolCard) -> Vec<String> {
+    let mut lines = vec![card.header_text()];
+    let fact_count = card.facts.len();
+    for (index, fact) in card.facts.iter().enumerate() {
+        let branch = if index + 1 == fact_count && card.body.is_empty() {
+            "└"
+        } else {
+            "├"
+        };
+        lines.push(format!("  {branch} {}", fact.plain_text()));
+    }
+    match &card.body {
+        rho_tools::tool_card::ToolBody::None => {}
+        rho_tools::tool_card::ToolBody::Lines(body)
+        | rho_tools::tool_card::ToolBody::DiffLines(body) => {
+            for (index, line) in body.iter().enumerate() {
+                if index == 0 && card.facts.is_empty() {
+                    if body.len() == 1 && !line.contains('\n') {
+                        lines.push(format!("  └ {line}"));
+                    } else {
+                        lines.push(String::new());
+                        lines.push(line.clone());
+                    }
+                } else if index == 0 {
+                    lines.push(String::new());
+                    lines.push(line.clone());
+                } else {
+                    lines.push(line.clone());
+                }
+            }
+        }
+    }
+    lines
+}
+
 #[test]
 fn translates_streaming_and_usage_events_without_rendering_state() {
     let mut adapter = SdkEventAdapter::default();
@@ -104,10 +139,9 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
             detail: "rho docs".into(),
         })),
         ViewEvent::Update(ViewModelEvent::ToolFinished {
-            ok: true,
             ref card,
             ..
-        }) if card.to_display_lines() == ["✓ web_search(rho docs)"]
+        }) if card_lines(&card) == ["✓ web_search(rho docs)"]
     ));
 }
 
@@ -146,7 +180,6 @@ fn retains_structured_tool_metadata_until_completion() {
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
-        ok,
         card,
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
@@ -158,9 +191,8 @@ fn retains_structured_tool_metadata_until_completion() {
     };
 
     assert_eq!(translated_call_id, call_id);
-    assert!(ok);
     assert_eq!(
-        card.to_display_lines(),
+        card_lines(&card),
         vec![
             "✓ edit_file(src/lib.rs)".to_string(),
             "  ├ +1 -1 lines | src/lib.rs".to_string(),
@@ -203,7 +235,7 @@ fn forwards_image_asset_on_tool_completion() {
     assert_eq!(translated_call_id, call_id);
     assert_eq!(image_asset, Some(asset));
     assert_eq!(
-        card.to_display_lines(),
+        card_lines(&card),
         [
             "✓ read_file".to_string(),
             "  ├ 1 line".to_string(),
@@ -234,11 +266,10 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            ok: false,
             card,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && card.to_display_lines().iter().any(|line| line.contains("failed"))
+            && card_lines(&card).iter().any(|line| line.contains("failed"))
     ));
     assert!(matches!(
         &events[1],
@@ -261,7 +292,6 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            ok: true,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
     ));
