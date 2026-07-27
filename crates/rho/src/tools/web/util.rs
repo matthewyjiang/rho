@@ -39,7 +39,8 @@ pub(super) fn http_client() -> reqwest::Client {
 }
 
 /// Client for one content fetch, wired to connect only to the addresses that
-/// passed the SSRF checks for that target.
+/// passed the SSRF checks for that target. It shares [`TLS_CONNECTOR`] with
+/// every other client, so building one per fetch costs microseconds.
 ///
 /// The override replaces DNS for this hostname alone, so the request keeps the
 /// original hostname for TLS SNI, certificate verification, and the `Host`
@@ -51,11 +52,25 @@ pub(super) fn pinned_http_client(target: &VettedTarget) -> Result<reqwest::Clien
         .map_err(|error| ToolError::Message(format!("failed to build HTTP client: {error}")))
 }
 
+/// One TLS connector for the process.
+///
+/// Building it loads the system trust store, which costs about 7ms, and a
+/// content fetch needs its own client to pin the connection. Sharing the
+/// connector keeps that client build in the microseconds. `None` means TLS is
+/// unavailable, and reqwest then reports the same failure it would have
+/// reported for a connector it built itself.
+static TLS_CONNECTOR: LazyLock<Option<native_tls::TlsConnector>> =
+    LazyLock::new(|| native_tls::TlsConnector::new().ok());
+
 fn client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
+        .no_proxy();
+    match TLS_CONNECTOR.as_ref() {
+        Some(tls) => builder.use_preconfigured_tls(tls.clone()),
+        None => builder,
+    }
 }
 
 pub(super) fn html_to_text(content: &str) -> String {

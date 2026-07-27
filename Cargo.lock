@@ -2994,6 +2994,7 @@ dependencies = [
  "keyring",
  "libc",
  "mermaid-rs-renderer",
+ "native-tls",
  "pretty_assertions",
  "pulldown-cmark",
  "rand 0.8.6",
