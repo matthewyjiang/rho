@@ -1,12 +1,9 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
 use ratatui::text::{Line, Span};
 
 use super::{
-    render::{display_width, truncate_keep_end, truncate_one_line},
+    render::{display_width, truncate_one_line},
     theme::Theme,
     usage_cost::{
         format_token_count, format_usd, resolved_usage_cost_usd_micros,
@@ -22,6 +19,13 @@ use {
     },
     rho_providers::reasoning::ReasoningLevel,
 };
+
+#[path = "statusline_path.rs"]
+mod path;
+use path::{compact_cwd, fit_cwd, format_cwd_left};
+
+#[cfg(test)]
+use path::shorten_path_display;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct StatusLineState {
@@ -367,168 +371,6 @@ fn status_row_line(left: String, right: String, width: usize) -> Line<'static> {
     }
     let gap = " ".repeat(width.saturating_sub(display_width(&left) + display_width(&right)));
     Line::from(Span::styled(format!("{left}{gap}{right}"), style))
-}
-
-fn compact_cwd(path: &Path) -> String {
-    let Some(home) = crate::paths::home_dir() else {
-        return path.display().to_string();
-    };
-
-    if let Ok(rest) = path.strip_prefix(home) {
-        let rel = rest.display().to_string();
-        if rel.is_empty() {
-            "~".to_string()
-        } else {
-            format!("~/{rel}")
-        }
-    } else {
-        path.display().to_string()
-    }
-}
-
-fn format_cwd_left(path: &str, branch: Option<&str>) -> String {
-    match branch {
-        Some(branch) => format!("{path} ({branch})"),
-        None => path.to_string(),
-    }
-}
-
-/// Fit cwd path + optional branch into `width`.
-///
-/// Basename visibility outranks the branch suffix. Degradation order:
-/// 1. full `path (branch)`
-/// 2. shortened path + branch, only while the full basename remains
-/// 3. drop branch
-/// 4. shortened path (may end-truncate a too-long final segment)
-fn fit_cwd(path: &str, branch: Option<&str>, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-
-    let full = format_cwd_left(path, branch);
-    if display_width(&full) <= width {
-        return full;
-    }
-
-    if let Some(branch) = branch {
-        let suffix = format!(" ({branch})");
-        let suffix_width = display_width(&suffix);
-        if suffix_width < width {
-            let path_budget = width - suffix_width;
-            if let Some(shortened) = shorten_path_keeping_basename(path, path_budget) {
-                return format!("{shortened}{suffix}");
-            }
-        }
-        // Branch is optional chrome; drop it before mangling the basename.
-    }
-
-    shorten_path_display(path, width)
-}
-
-fn shorten_path_keeping_basename(path: &str, width: usize) -> Option<String> {
-    if display_width(path) <= width {
-        return Some(path.to_string());
-    }
-    let shortened = shorten_path_display(path, width);
-    retains_full_basename(path, &shortened).then_some(shortened)
-}
-
-fn retains_full_basename(path: &str, shortened: &str) -> bool {
-    let base = path_basename(path);
-    if base.is_empty() {
-        return true;
-    }
-    if shortened == base {
-        return true;
-    }
-    let Some(prefix) = shortened.strip_suffix(base) else {
-        return false;
-    };
-    prefix.ends_with('/') || prefix.ends_with('\\')
-}
-
-fn path_basename(path: &str) -> &str {
-    path.rsplit(['/', '\\'])
-        .find(|segment| !segment.is_empty())
-        .unwrap_or(path)
-}
-
-/// Shorten a display path by dropping leading segments.
-///
-/// Keeps a root marker when it still fits (`~/…/api-gateway`, `/…/api-gateway`),
-/// otherwise falls back to `…/api-gateway`, then end-truncates the last segment.
-fn shorten_path_display(path: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if display_width(path) <= width {
-        return path.to_string();
-    }
-    if width <= 1 {
-        return truncate_keep_end(path, width);
-    }
-
-    let sep = path_display_separator(path);
-    let (prefix, rest) = split_path_display_prefix(path, sep);
-    let segments: Vec<&str> = rest
-        .split(sep)
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    if segments.len() <= 1 {
-        return truncate_keep_end(path, width);
-    }
-
-    // Prefer the longest trailing-segment form that still fits.
-    let mut best: Option<String> = None;
-    for keep in 1..segments.len() {
-        let tail = segments[segments.len() - keep..].join(sep.to_string().as_str());
-        let candidate = if prefix.is_empty() {
-            format!("…{sep}{tail}")
-        } else {
-            format!("{prefix}…{sep}{tail}")
-        };
-
-        if display_width(&candidate) <= width {
-            best = Some(candidate);
-        } else if best.is_some() {
-            // Further candidates only grow.
-            break;
-        }
-    }
-
-    if let Some(candidate) = best {
-        return candidate;
-    }
-
-    // Even the shortest rooted form failed. Drop the root prefix:
-    // `…/last` instead of `~/…/last`.
-    let minimal = format!("…{sep}{}", segments[segments.len() - 1]);
-    if display_width(&minimal) <= width {
-        return minimal;
-    }
-
-    // Last segment itself is too long: keep its end so the name stays identifiable.
-    truncate_keep_end(&minimal, width)
-}
-
-fn path_display_separator(path: &str) -> char {
-    if path.contains('/') {
-        '/'
-    } else if path.contains('\\') {
-        '\\'
-    } else {
-        '/'
-    }
-}
-
-fn split_path_display_prefix(path: &str, sep: char) -> (&str, &str) {
-    if let Some(rest) = path.strip_prefix("~/") {
-        return ("~/", rest);
-    }
-    if let Some(rest) = path.strip_prefix(sep) {
-        return (&path[..sep.len_utf8()], rest);
-    }
-    ("", path)
 }
 
 #[cfg(test)]

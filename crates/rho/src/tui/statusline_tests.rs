@@ -1,6 +1,7 @@
 use std::fs;
 
 use super::*;
+use pretty_assertions::assert_eq;
 use rho_providers::model::models_dev::ModelCost;
 
 fn priced_metadata() -> ModelMetadata {
@@ -248,6 +249,20 @@ fn shorten_path_keeps_end_when_last_segment_is_long() {
     );
     assert!(display_width(&shortened) <= 14, "{shortened}");
     assert!(!shortened.starts_with("~/work"), "{shortened}");
+}
+
+#[test]
+fn fit_cwd_width_zero_is_empty() {
+    assert_eq!(fit_cwd("~/work/api-gateway", Some("main"), 0), "");
+    assert_eq!(fit_cwd("~/work/api-gateway", None, 0), "");
+}
+
+#[test]
+fn fit_cwd_drops_branch_when_suffix_fills_width() {
+    // " (main)" is wider than 4, so the branch must drop entirely.
+    let fitted = fit_cwd("~/work/company/services/api-gateway", Some("main"), 4);
+    assert!(!fitted.contains('('), "{fitted}");
+    assert!(display_width(&fitted) <= 4, "{fitted}");
 }
 
 #[test]
