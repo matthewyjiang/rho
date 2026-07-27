@@ -1,4 +1,5 @@
 use rho_providers::model::{AbortedAssistant, Message, ModelUsage, PartialToolCall};
+use rho_tools::tool_card::{ToolFact, ToolStatus};
 
 use super::{
     super::{Entry, ToolEntry},
@@ -24,26 +25,27 @@ fn interrupted_tool_call_uses_the_tool_name_without_a_preparing_label() {
         std::path::Path::new(""),
     );
 
-    let [Entry::Tool(ToolEntry { display_lines, .. }), Entry::Notice(notice)] = entries.as_slice()
-    else {
+    let [Entry::Tool(ToolEntry { card, .. }), Entry::Notice(notice)] = entries.as_slice() else {
         panic!("expected an interrupted tool entry followed by a notice");
     };
-    assert_eq!(display_lines[0], "read_file");
+    assert_eq!(card.header_text(), "■ read_file(src/main.rs)");
     assert_eq!(notice, "model interrupted");
 }
 
 #[test]
 fn interrupted_agent_tools_hide_partial_json() {
-    for (name, arguments, expected) in [
+    for (name, arguments, expected_header, expected_facts) in [
         (
             "agent",
             r#"{"agent_id":"explorer","prompt":"Audit the repository"#,
-            vec!["■ explorer  interrupted", "  Audit the repository"],
+            "■ explorer  interrupted",
+            vec!["Audit the repository".to_string()],
         ),
         (
             "agents",
             r#"{"action":"status","id":"abc123"#,
-            vec!["■ abc123  status interrupted"],
+            "■ abc123  status interrupted",
+            Vec::<String>::new(),
         ),
     ] {
         let entries = transcript_entries_from_messages(
@@ -63,13 +65,12 @@ fn interrupted_agent_tools_hide_partial_json() {
             std::path::Path::new(""),
         );
 
-        let [Entry::Tool(ToolEntry { display_lines, .. }), Entry::Notice(_)] = entries.as_slice()
-        else {
+        let [Entry::Tool(ToolEntry { card, .. }), Entry::Notice(_)] = entries.as_slice() else {
             panic!("expected an interrupted tool entry followed by a notice");
         };
-        assert_eq!(
-            display_lines,
-            &expected.into_iter().map(str::to_string).collect::<Vec<_>>()
-        );
+        assert_eq!(card.status, ToolStatus::Interrupted);
+        assert_eq!(card.header_text(), expected_header);
+        let facts: Vec<String> = card.facts.iter().map(ToolFact::plain_text).collect();
+        assert_eq!(facts, expected_facts);
     }
 }

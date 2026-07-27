@@ -1,9 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::{
-    entry_lines, render_entry_with_images, render_entry_with_options, TrailingBlank,
-};
+use crate::tui::render::{entry_lines, render_entry_with_images};
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -27,7 +25,7 @@ fn caches_code_block_copy_target_and_raw_contents() {
 
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0].text.as_ref(), "let x = 1;\nprintln!(\"{x}\");");
-    assert_eq!(blocks[0].line, 2);
+    assert_eq!(blocks[0].line, 1);
     assert_eq!(blocks[0].copy_columns, 32..38);
 }
 
@@ -55,7 +53,7 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
     assert_eq!(
         blocks,
         &[CachedCodeBlock {
-            line: 3,
+            line: 2,
             copy_columns: 4..10,
             text: Arc::from("λ🙂"),
         }]
@@ -349,16 +347,15 @@ fn markdown_image_placement_renders_after_images_resolve() {
             vec![(0, feed.clone())]
         });
     assert_eq!(placements.len(), 1, "expected one markdown image placement");
-    assert_eq!(placements[0].row, 3);
-    let fallback = render_entry_with_images(&entries[0], 40, 20, None);
-    let expected_code_line = fallback.code_blocks[0].top_line + placements[0].height;
+    assert_eq!(placements[0].row, 2);
+    let with_images = render_entry_with_images(&entries[0], 40, 20, Some(&[(0, feed.clone())]));
     assert_eq!(
         cache.code_blocks(&entries, 40, 20, &|_index, _sources| vec![(
             0,
             feed.clone()
         )])[0]
             .line,
-        expected_code_line
+        with_images.code_blocks[0].top_line
     );
 
     let Entry::Assistant(text) = &mut entries[0] else {
@@ -383,7 +380,65 @@ fn markdown_image_placement_renders_after_images_resolve() {
 }
 
 #[test]
+fn transcript_entries_use_trailing_blank_only() {
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![
+        Entry::Assistant("Hello model output".into()),
+        Entry::Reasoning(crate::tui::ReasoningEntry::new("thinking about it")),
+        Entry::User("follow up".into()),
+    ];
+
+    let mut lines = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        60,
+        10,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut lines,
+        &no_images,
+    );
+
+    let expected = entries
+        .iter()
+        .flat_map(|entry| entry_lines(entry, 60, 10))
+        .collect::<Vec<_>>();
+    assert_eq!(lines, expected);
+
+    // Each entry owns exactly one trailing spacer; consecutive blocks stay one
+    // blank apart without stacking trailing+leading gaps.
+    let mut content_starts = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line_text(line).trim().is_empty() {
+            content_starts.push(index);
+        }
+    }
+    assert!(content_starts.len() >= 3);
+    // First content line of the first entry sits at the top of the entry.
+    assert_eq!(content_starts[0], 0);
+    for window in content_starts.windows(2) {
+        // Within an entry content is contiguous; across entries there is one blank.
+        assert!(
+            window[1] == window[0] + 1 || window[1] == window[0] + 2,
+            "unexpected gap between content rows {}:{} in {lines:?}",
+            window[0],
+            window[1],
+            lines = lines.iter().map(line_text).collect::<Vec<_>>()
+        );
+    }
+
+    let first_entry_end = entry_lines(&entries[0], 60, 10).len();
+    assert!(!line_text(&lines[0]).trim().is_empty());
+    assert!(line_text(&lines[first_entry_end - 1]).trim().is_empty());
+    assert!(!line_text(&lines[first_entry_end]).trim().is_empty());
+}
+
+#[test]
 fn open_stream_tail_omits_trailing_blank_until_closed() {
+    use crate::tui::render::{render_entry_with_options, TrailingBlank};
+
     let mut cache = HistoryLineCache::default();
     let entries = vec![Entry::Assistant("Hello committed line\n".into())];
 

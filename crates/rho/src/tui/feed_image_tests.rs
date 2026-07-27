@@ -3,12 +3,11 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageFormat};
 use ratatui_image::picker::{Picker, ProtocolType};
 use rho_sdk::tool::ToolAsset;
-use rho_tools::tool::ToolDisplayStyle;
 
 use super::{kitty_graphics_environment, picker_for_environment, FeedImage, IMAGE_HEIGHT};
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice},
-    Entry, ToolEntry, ToolEntryState,
+    Entry, ToolEntry,
 };
 
 fn no_images(
@@ -37,11 +36,11 @@ fn kitty_picker() -> Picker {
 
 fn image_tool() -> Entry {
     Entry::Tool(ToolEntry {
-        state: ToolEntryState::Finished {
-            ok: true,
-            display_style: ToolDisplayStyle::FileOrCommand,
-        },
-        display_lines: vec!["read_file photo.png".into()],
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
+        ),
         expanded: false,
         image: Some(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap()),
     })
@@ -143,10 +142,10 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     let width = 40;
     let line_count = cache.line_count(&entries, width, 20, &no_images);
 
-    // A one-line tool has a leading block row and one text row before its image.
+    // A one-line tool has one text row before its image; the trailing spacer is after.
     let full = cache.visible_image_placements(&entries, width, 20, 0, line_count, &no_images);
     assert_eq!(full.len(), 1);
-    assert_eq!(full[0].row, 2);
+    assert_eq!(full[0].row, 1);
     assert_eq!(full[0].height, IMAGE_HEIGHT as usize);
 
     // Avoid resizing an image into a partial viewport. Reserved rows remain

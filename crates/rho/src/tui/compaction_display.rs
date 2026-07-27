@@ -1,9 +1,10 @@
-//! Human-readable compaction tool-block display lines.
+//! Compaction tool cards.
 //!
-//! Compaction is shown like a tool call: a running block while work is in
-//! flight, then a finished block with the outcome facts we actually have.
+//! Compaction is shown like a tool call: a running card while work is in
+//! flight, then a finished card with the outcome facts we actually have.
 
 use rho_sdk::ToolCallId;
+use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
 use super::usage_cost::{format_token_count, format_usd};
 
@@ -41,10 +42,6 @@ impl CompactionDisplayFacts {
     pub(super) fn removed_messages(self) -> usize {
         self.previous_messages.saturating_sub(self.current_messages)
     }
-
-    pub(super) fn reduced(self) -> bool {
-        self.removed_tokens() > 0 || self.removed_messages() > 0
-    }
 }
 
 /// Terminal presentation state for a compaction tool block.
@@ -57,32 +54,41 @@ pub(super) enum CompactionUiOutcome {
 }
 
 impl CompactionUiOutcome {
-    pub(super) fn ok(&self) -> bool {
-        !matches!(self, Self::Failed { .. })
-    }
-
-    pub(super) fn display_lines(&self) -> Vec<String> {
+    pub(super) fn card(&self) -> ToolCard {
         match self {
-            Self::Completed(facts) => completed_display_lines(*facts),
-            Self::Unchanged { detail } => unchanged_display_lines(detail.clone()),
-            Self::Failed { detail } => failed_display_lines(detail.clone()),
-            Self::Cancelled => cancelled_display_lines(),
+            Self::Completed(facts) => completed_card(*facts),
+            Self::Unchanged { detail } => unchanged_card(detail.clone()),
+            Self::Failed { detail } => failed_card(detail.clone()),
+            Self::Cancelled => cancelled_card(),
         }
     }
 }
 
-/// Running tool-block lines (layout A).
-pub(super) fn running_display_lines() -> Vec<String> {
-    vec!["compact".into(), "shrinking context…".into()]
+/// Running compaction card.
+pub(super) fn running_card() -> ToolCard {
+    ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Default,
+        ToolHeader::call("compact", None),
+    )
+    .with_facts(vec![ToolFact::Meta {
+        text: "shrinking context…".into(),
+    }])
 }
 
-/// Finished tool-block lines (layout 1), driven only by available facts.
-pub(super) fn completed_display_lines(facts: CompactionDisplayFacts) -> Vec<String> {
-    let mut lines = vec!["compact".into()];
+/// Finished compaction card driven only by available facts.
+pub(super) fn completed_card(facts: CompactionDisplayFacts) -> ToolCard {
+    let mut card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("compact", None),
+    );
 
     let has_token_signal = facts.previous_tokens > 0 || facts.current_tokens > 0;
     if has_token_signal {
-        lines.push(token_summary_line(facts));
+        card.push_fact(ToolFact::Meta {
+            text: token_summary_line(facts),
+        });
     }
 
     // Always show messages when tokens are missing, or when the message count
@@ -91,33 +97,59 @@ pub(super) fn completed_display_lines(facts: CompactionDisplayFacts) -> Vec<Stri
         || facts.previous_messages != facts.current_messages
         || facts.previous_messages > 0
     {
-        lines.push(message_summary_line(facts));
+        card.push_fact(ToolFact::Meta {
+            text: message_summary_line(facts),
+        });
     }
 
     if let Some(cost) = facts.cost_usd_micros.filter(|cost| *cost > 0) {
-        lines.push(format!("cost {}", format_usd(cost)));
+        card.push_fact(ToolFact::Meta {
+            text: format!("cost {}", format_usd(cost)),
+        });
     }
 
-    if !facts.reduced() && lines.len() == 1 {
-        lines.push("no reduction".into());
-    }
-
-    lines
+    card
 }
 
-/// Failed compact tool-block lines.
-pub(super) fn failed_display_lines(detail: impl Into<String>) -> Vec<String> {
-    vec!["compact".into(), "failed".into(), detail.into()]
+/// Failed compact card.
+pub(super) fn failed_card(detail: impl Into<String>) -> ToolCard {
+    ToolCard::new(
+        ToolStatus::Error,
+        ToolFamily::Default,
+        ToolHeader::call("compact", None),
+    )
+    .with_facts(vec![
+        ToolFact::Meta {
+            text: "failed".into(),
+        },
+        ToolFact::Error {
+            text: detail.into(),
+        },
+    ])
 }
 
-/// Cancelled compact tool-block lines.
-pub(super) fn cancelled_display_lines() -> Vec<String> {
-    vec!["compact".into(), "cancelled".into()]
+/// Cancelled compact card.
+pub(super) fn cancelled_card() -> ToolCard {
+    ToolCard::new(
+        ToolStatus::Interrupted,
+        ToolFamily::Default,
+        ToolHeader::call("compact", None),
+    )
+    .with_facts(vec![ToolFact::Meta {
+        text: "cancelled".into(),
+    }])
 }
 
-/// Unchanged / not-enough-history finished block.
-pub(super) fn unchanged_display_lines(detail: impl Into<String>) -> Vec<String> {
-    vec!["compact".into(), detail.into()]
+/// Unchanged / not-enough-history finished card.
+pub(super) fn unchanged_card(detail: impl Into<String>) -> ToolCard {
+    ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("compact", None),
+    )
+    .with_facts(vec![ToolFact::Meta {
+        text: detail.into(),
+    }])
 }
 
 fn token_summary_line(facts: CompactionDisplayFacts) -> String {

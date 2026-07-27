@@ -18,9 +18,10 @@ mod paths;
 mod process_env;
 mod process_stream;
 mod search;
-#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod shell_process;
+pub use shell_process::{parse_shell_content, ShellContent};
 pub mod tool;
+pub mod tool_card;
 pub mod workspace_walk;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -48,9 +49,7 @@ pub use image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 pub use process_env::apply_process_environment;
 pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
 pub use sdk_shell::{shell_invocation, shell_tool, ShellToolOptions};
-pub use tool::{
-    compact_display_path, resolve_path, truncate, Tool, ToolContext, ToolDisplayStyle, ToolError,
-};
+pub use tool::{compact_display_path, resolve_path, truncate, Tool, ToolContext, ToolError};
 
 /// Default per-tool output budget, in bytes, when the host does not configure
 /// one explicitly.

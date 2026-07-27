@@ -330,6 +330,69 @@ fn timeout_error(
     ))
 }
 
+/// Structured view of the shell tool's stable output envelope.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct ShellContent {
+    pub notice: Option<String>,
+    pub stdout: String,
+    pub exit_code: Option<i64>,
+    /// Non-numeric exit token (for example `signal`) when no exit code is present.
+    pub exit_status: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub running: bool,
+}
+
+/// Parse output produced by this module into presentation fields.
+pub fn parse_shell_content(content: &str) -> ShellContent {
+    let mut parsed = ShellContent::default();
+    let (notice, rest) = if let Some(stdout) = content.strip_prefix("stdout:\n") {
+        (None, stdout)
+    } else if let Some((notice, stdout)) = content.split_once("\n\nstdout:\n") {
+        (Some(notice.to_string()), stdout)
+    } else if content.trim().is_empty() {
+        return parsed;
+    } else {
+        parsed.notice = Some(content.trim().to_string());
+        return parsed;
+    };
+    parsed.notice = notice;
+
+    let (stdout_and_maybe_more, footer) = rest
+        .rsplit_once("\n\ntime:")
+        .map_or((rest, None), |(body, footer)| (body, Some(footer.trim())));
+    parsed.stdout = stdout_and_maybe_more
+        .rsplit_once("\n\nstderr:")
+        .map_or(stdout_and_maybe_more, |(stdout, _)| stdout)
+        .trim_end()
+        .to_string();
+
+    if let Some(footer) = footer {
+        if footer.starts_with("running") {
+            parsed.running = true;
+        } else {
+            parsed.duration_ms = footer
+                .split_whitespace()
+                .next()
+                .and_then(|token| token.strip_suffix('s'))
+                .and_then(|seconds| seconds.parse::<f64>().ok())
+                .map(|seconds| (seconds * 1000.0).round() as u64);
+            if let Some(raw) = footer
+                .split("exit code:")
+                .nth(1)
+                .map(str::trim)
+                .filter(|code| !code.is_empty())
+            {
+                if let Ok(code) = raw.parse::<i64>() {
+                    parsed.exit_code = Some(code);
+                } else {
+                    parsed.exit_status = Some(raw.to_string());
+                }
+            }
+        }
+    }
+    parsed
+}
+
 #[cfg(test)]
 #[path = "shell_process_tests.rs"]
 mod tests;

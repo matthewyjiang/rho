@@ -50,47 +50,77 @@ pub(crate) fn translate_run_event(
         .translate(event.clone())
         .into_iter()
         .filter_map(|view_event| match view_event {
-            ViewEvent::Update(update) => attachment_update(update),
+            ViewEvent::Update(update) => attachment_update(adapter, update),
             ViewEvent::Notice(notice) => Some(AttachmentEvent::Notice(notice)),
             ViewEvent::Questionnaire { request, .. } => Some(AttachmentEvent::Notice(format!(
                 "input requested but unavailable in a delegated agent: {}",
                 request.title()
             ))),
-            ViewEvent::Completed => Some(AttachmentEvent::Completed),
-            ViewEvent::Cancelled => Some(AttachmentEvent::Cancelled),
-            ViewEvent::Failed(message) => Some(AttachmentEvent::Failed(message)),
+            ViewEvent::Completed => {
+                adapter.clear_attachment_preview_keys();
+                Some(AttachmentEvent::Completed)
+            }
+            ViewEvent::Cancelled => {
+                adapter.clear_attachment_preview_keys();
+                Some(AttachmentEvent::Cancelled)
+            }
+            ViewEvent::Failed(message) => {
+                adapter.clear_attachment_preview_keys();
+                Some(AttachmentEvent::Failed(message))
+            }
         })
         .collect()
 }
 
-fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
+fn attachment_update(
+    adapter: &mut SdkEventAdapter,
+    update: ViewModelEvent,
+) -> Option<AttachmentEvent> {
     match update {
         ViewModelEvent::OutputDelta(text) => Some(AttachmentEvent::AssistantTextDelta(text)),
         ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
-        ViewModelEvent::ToolStarted { display_lines, .. }
-        | ViewModelEvent::ToolCallUpdated { display_lines, .. }
-        | ViewModelEvent::ToolCallProposed { display_lines, .. } => {
-            Some(AttachmentEvent::ToolStarted { display_lines })
+        ViewModelEvent::ToolStarted { call_id, card }
+        | ViewModelEvent::ToolCallProposed { call_id, card } => {
+            let key = adapter.attachment_key_for_call(&call_id);
+            Some(AttachmentEvent::ToolStarted {
+                key: Some(key),
+                card,
+            })
         }
-        ViewModelEvent::ToolUpdated { display_lines, .. } => {
-            Some(AttachmentEvent::ToolUpdated { display_lines })
+        ViewModelEvent::ToolCallUpdated {
+            index,
+            call_id,
+            card,
+        } => {
+            let key = adapter.attachment_key_for_preview(index, call_id.as_ref());
+            Some(AttachmentEvent::ToolStarted {
+                key: Some(key),
+                card,
+            })
         }
-        ViewModelEvent::ToolFinished {
-            ok,
-            display_style,
-            display_lines,
-            ..
-        } => Some(AttachmentEvent::ToolFinished {
-            ok,
-            display_style,
-            display_lines,
-        }),
+        ViewModelEvent::ToolUpdated { call_id, card } => {
+            let key = adapter.attachment_key_for_call(&call_id);
+            Some(AttachmentEvent::ToolUpdated {
+                key: Some(key),
+                card,
+            })
+        }
+        ViewModelEvent::ToolFinished { call_id, card, .. } => {
+            let key = adapter.take_attachment_key_for_call(&call_id);
+            Some(AttachmentEvent::ToolFinished {
+                key: Some(key),
+                card,
+            })
+        }
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
         // This acknowledgement reconciles the interactive TUI's pending-input
         // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,
-        ViewModelEvent::ProviderStreamReset => Some(AttachmentEvent::ProviderStreamReset),
+        ViewModelEvent::ProviderStreamReset => {
+            adapter.clear_attachment_preview_keys();
+            Some(AttachmentEvent::ProviderStreamReset)
+        }
         ViewModelEvent::ProviderRetry => None,
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),

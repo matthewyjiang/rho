@@ -1,10 +1,5 @@
 use super::*;
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-    widgets::{Paragraph, Widget},
-};
+use ratatui::style::{Color, Style};
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -85,35 +80,46 @@ fn reasoning_entry_renders_thought_duration_footer() {
 }
 
 #[test]
+fn user_message_trailing_spacer_has_no_background() {
+    let rendered = render_entry(&Entry::User("hello there".into()), 40, 10);
+    assert!(
+        rendered.lines.len() >= 2,
+        "user entry should keep content plus a trailing spacer"
+    );
+
+    let spacer = rendered.lines.last().expect("trailing spacer");
+    assert!(line_text(spacer).trim().is_empty());
+    assert!(
+        spacer.spans.iter().all(|span| span.style.bg.is_none()),
+        "trailing spacer must not inherit the user-message background: {spacer:?}"
+    );
+
+    let content = rendered
+        .lines
+        .iter()
+        .find(|line| line_text(line).contains("hello there"))
+        .expect("user content line");
+    assert!(
+        content.spans.iter().any(|span| span.style.bg.is_some()),
+        "content rows should keep the user-message background: {content:?}"
+    );
+    assert_eq!(
+        rendered
+            .lines
+            .first()
+            .map(line_text)
+            .as_deref()
+            .map(str::trim),
+        Some("hello there"),
+        "user entry should not keep a leading spacer"
+    );
+}
+
+#[test]
 fn display_width_ignores_control_characters_filtered_by_ratatui() {
     assert_eq!(display_width("left\tright"), 9);
     assert_eq!(display_width("left\rright"), 9);
     assert_eq!(display_width("left\u{1b}right"), 9);
-}
-
-#[test]
-fn tool_block_with_tabs_fills_the_full_width() {
-    let width = 20;
-    let mut lines = Vec::new();
-    push_tool_block_with_style(
-        &mut lines,
-        &["bash".into(), "one\ttwo\tthree".into()],
-        width,
-        10,
-        false,
-        Style::default().bg(Color::Green),
-        false,
-    );
-
-    assert!(lines
-        .iter()
-        .all(|line| display_width(&line_text(line)) == width));
-
-    let area = Rect::new(0, 0, width as u16, lines.len() as u16);
-    let mut buffer = Buffer::empty(area);
-    Paragraph::new(lines).render(area, &mut buffer);
-    assert!((0..area.height)
-        .all(|row| { (0..area.width).all(|column| buffer[(column, row)].bg == Color::Green) }));
 }
 
 #[test]
@@ -219,7 +225,7 @@ fn assistant_markdown_styles_inline_code_bold_and_italic() {
         10,
     );
 
-    let content = &lines[1];
+    let content = &lines[0];
     assert_eq!(line_text(content), " use cargo test, then ship the fix ");
     let styles = line_styles(content);
     assert!(styles.contains(&Theme::markdown_inline_code()));
@@ -233,20 +239,20 @@ fn assistant_markdown_styles_inline_code_bold_and_italic() {
 fn assistant_markdown_styles_code_blocks() {
     let lines = entry_lines(&Entry::Assistant("```rust\nlet x = 1;\n```".into()), 80, 10);
 
-    assert!(line_text(&lines[1]).contains("╭"));
-    assert!(line_text(&lines[2]).contains("│ let x = 1;"));
-    assert!(line_text(&lines[3]).contains("╰"));
-    assert_eq!(lines[2].spans[1].style, Theme::markdown_code_block());
+    assert!(line_text(&lines[0]).contains("╭"));
+    assert!(line_text(&lines[1]).contains("│ let x = 1;"));
+    assert!(line_text(&lines[2]).contains("╰"));
+    assert_eq!(lines[1].spans[1].style, Theme::markdown_code_block());
 }
 
 #[test]
 fn assistant_markdown_renders_divider_lines() {
     let lines = entry_lines(&Entry::Assistant("before\n---\nafter".into()), 20, 10);
 
-    assert_eq!(line_text(&lines[1]), " before ");
-    assert_eq!(line_text(&lines[2]), format!(" {} ", "─".repeat(18)));
-    assert_eq!(lines[2].spans[1].style, Theme::dim());
-    assert_eq!(line_text(&lines[3]), " after ");
+    assert_eq!(line_text(&lines[0]), " before ");
+    assert_eq!(line_text(&lines[1]), format!(" {} ", "─".repeat(18)));
+    assert_eq!(lines[1].spans[1].style, Theme::dim());
+    assert_eq!(line_text(&lines[2]), " after ");
 }
 
 #[test]

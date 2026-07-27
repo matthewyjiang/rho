@@ -5,7 +5,6 @@ use crate::session::tree::{NodeId, SessionTreeItem};
 use super::{
     message_history::{recovered_history_tail, transcript_entries_from_messages},
     picker_overlay::OverlayChrome,
-    tool_output_ui::is_tool_entry,
     App, ComposerMode, Entry, InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone,
     PickerItem, PickerLayout, UiPicker, ViewModelEvent, RECOVERED_HISTORY_LINE_LIMIT,
 };
@@ -136,8 +135,6 @@ impl App {
         self.history.set_entries(visible_entries);
         self.history.images_mut().clear();
         self.history.invalidate_from(0);
-        self.history
-            .set_last_inserted_was_tool(self.history.last().is_some_and(is_tool_entry));
         self.scroll_history_to_bottom();
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));

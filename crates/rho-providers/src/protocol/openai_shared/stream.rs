@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use futures_util::StreamExt;
 
 use crate::{
@@ -237,6 +239,14 @@ pub(crate) struct CodexSseState {
     pub(crate) tool_calls: Vec<ToolCall>,
     pub(crate) response_id: Option<String>,
     pub(crate) output_items: Vec<serde_json::Value>,
+    /// Tool-call argument text already published as [`ModelEvent::ToolCallDelta`],
+    /// keyed by provider output index.
+    ///
+    /// Argument completion events restate the whole argument string. Publishing
+    /// only the part that never streamed keeps live previews complete for
+    /// responses that carry arguments without incremental deltas, while never
+    /// re-appending text consumers already hold.
+    published_tool_arguments: BTreeMap<usize, String>,
 }
 
 impl CodexSseState {
@@ -322,6 +332,38 @@ fn truncate_detail(value: &str, max_chars: usize) -> String {
     truncated
 }
 
+/// Stream index a tool-call event belongs to.
+///
+/// Responses events carry `output_index`; a stream that omits it addresses the
+/// call currently being assembled, which is the next one to complete.
+fn tool_call_index(value: &serde_json::Value, state: &CodexSseState) -> usize {
+    value
+        .get("output_index")
+        .and_then(|index| index.as_u64())
+        .and_then(|index| usize::try_from(index).ok())
+        .unwrap_or(state.tool_calls.len())
+}
+
+/// Argument text for `index` that has not been published yet, recording it as
+/// published.
+///
+/// Returns `None` when nothing is left to publish, or when `arguments` does not
+/// extend what already streamed, so a restatement that diverges mid-call can
+/// never corrupt a consumer's argument buffer.
+fn unpublished_tool_arguments(
+    state: &mut CodexSseState,
+    index: usize,
+    arguments: &str,
+) -> Option<String> {
+    let published = state.published_tool_arguments.entry(index).or_default();
+    let unpublished = arguments.strip_prefix(published.as_str())?.to_string();
+    if unpublished.is_empty() {
+        return None;
+    }
+    published.push_str(&unpublished);
+    Some(unpublished)
+}
+
 fn extract_codex_function_call(item: &serde_json::Value) -> Result<Option<ToolCall>, ModelError> {
     if item.get("type").and_then(|v| v.as_str()) != Some("function_call") {
         return Ok(None);
@@ -402,13 +444,18 @@ pub(crate) fn handle_codex_sse_value(
     } else if event_type == "response.output_item.added" {
         let item = value.get("item").unwrap_or(value);
         if item.get("type").and_then(|kind| kind.as_str()) == Some("function_call") {
+            let index = tool_call_index(value, state);
+            let arguments = item
+                .get("arguments")
+                .and_then(|arguments| arguments.as_str())
+                .unwrap_or_default()
+                .to_string();
+            state
+                .published_tool_arguments
+                .insert(index, arguments.clone());
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::ToolCallDelta {
-                    index: value
-                        .get("output_index")
-                        .and_then(|index| index.as_u64())
-                        .and_then(|index| usize::try_from(index).ok())
-                        .unwrap_or(state.tool_calls.len()),
+                    index,
                     id: item
                         .get("call_id")
                         .or_else(|| item.get("id"))
@@ -418,30 +465,48 @@ pub(crate) fn handle_codex_sse_value(
                         .get("name")
                         .and_then(|name| name.as_str())
                         .map(str::to_string),
-                    arguments: item
-                        .get("arguments")
-                        .and_then(|arguments| arguments.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
+                    arguments,
                 })?;
             }
         }
     } else if event_type == "response.function_call_arguments.delta" {
+        let index = tool_call_index(value, state);
+        let delta = value
+            .get("delta")
+            .and_then(|delta| delta.as_str())
+            .unwrap_or_default()
+            .to_string();
+        state
+            .published_tool_arguments
+            .entry(index)
+            .or_default()
+            .push_str(&delta);
         if let Some(on_event) = on_event.as_mut() {
             on_event(ModelEvent::ToolCallDelta {
-                index: value
-                    .get("output_index")
-                    .and_then(|index| index.as_u64())
-                    .and_then(|index| usize::try_from(index).ok())
-                    .unwrap_or(state.tool_calls.len()),
+                index,
                 id: None,
                 name: None,
-                arguments: value
-                    .get("delta")
-                    .and_then(|delta| delta.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+                arguments: delta,
             })?;
+        }
+    } else if event_type == "response.function_call_arguments.done" {
+        // Providers may finish a call's arguments in one restatement instead of
+        // incremental deltas. Publish whatever never streamed so previews are
+        // complete before the tool runs.
+        let index = tool_call_index(value, state);
+        let arguments = value
+            .get("arguments")
+            .and_then(|arguments| arguments.as_str())
+            .unwrap_or_default();
+        if let Some(arguments) = unpublished_tool_arguments(state, index, arguments) {
+            if let Some(on_event) = on_event.as_mut() {
+                on_event(ModelEvent::ToolCallDelta {
+                    index,
+                    id: None,
+                    name: None,
+                    arguments,
+                })?;
+            }
         }
     } else if event_type == "response.output_item.done" {
         let item = value.get("item").unwrap_or(value);
@@ -464,6 +529,24 @@ pub(crate) fn handle_codex_sse_value(
             }
         }
         if let Some(call) = extract_codex_function_call(item)? {
+            // The finished item is the authoritative argument text. Identity is
+            // repeated so a stream that never announced the call still reaches
+            // consumers as a complete tool call.
+            let index = tool_call_index(value, state);
+            let arguments = item
+                .get("arguments")
+                .and_then(|arguments| arguments.as_str())
+                .unwrap_or_default();
+            if let Some(arguments) = unpublished_tool_arguments(state, index, arguments) {
+                if let Some(on_event) = on_event.as_mut() {
+                    on_event(ModelEvent::ToolCallDelta {
+                        index,
+                        id: Some(call.id.clone()),
+                        name: Some(call.name.clone()),
+                        arguments,
+                    })?;
+                }
+            }
             state.tool_calls.push(call);
         }
     } else if event_type == "response.completed" {

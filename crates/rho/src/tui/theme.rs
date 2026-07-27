@@ -8,7 +8,7 @@ use ratatui::{
 use super::markdown::HeadingLevel;
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
-const TOOL_BACKGROUND_ALPHA: f32 = 0.16;
+const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
 
 static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
 
@@ -136,11 +136,6 @@ struct Palette {
     skill: Color,
     user_background: BlockColor,
     neutral_tool_background: BlockColor,
-    success_tool_background: BlockColor,
-    failure_tool_background: BlockColor,
-    skill_tool_background: BlockColor,
-    web_tool_background: BlockColor,
-    questionnaire_tool_background: BlockColor,
 }
 
 impl Palette {
@@ -163,41 +158,13 @@ impl Palette {
                 USER_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
+            // Same blend recipe as user prompts today; keep a dedicated field so
+            // tool chrome can diverge later without rewriting call sites.
             neutral_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Gray,
-                USER_BACKGROUND_ALPHA,
+                NEUTRAL_TOOL_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
-            ),
-            success_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Green,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Green.color()),
-            ),
-            failure_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Red,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Red.color()),
-            ),
-            skill_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Magenta,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Magenta.color()),
-            ),
-            web_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Blue,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(AnsiColor::Blue.color()),
-            ),
-            questionnaire_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Yellow,
-                TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_rgb(Rgb::new(128, 128, 0)),
             ),
         }
     }
@@ -380,56 +347,91 @@ impl Theme {
             .add_modifier(Modifier::UNDERLINED)
     }
 
-    pub(super) fn diff_addition(base: Style) -> Style {
-        base.fg(Palette::current().success)
-    }
-
-    pub(super) fn diff_removal(base: Style) -> Style {
-        base.fg(Palette::current().error)
-    }
-
     pub(super) fn command_block() -> Style {
         Self::dim_block(Palette::current().neutral_tool_background)
     }
 
-    pub(super) fn tool_default() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.neutral_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
+    /// Status marker color for Call + Children tool cards.
+    pub(super) fn tool_marker(status: rho_tools::tool_card::ToolStatus) -> Style {
+        use rho_tools::tool_card::ToolStatus;
+        match status {
+            ToolStatus::Running => Self::accent(),
+            ToolStatus::Ok => Self::success(),
+            ToolStatus::Error => Self::error(),
+            ToolStatus::Interrupted => Self::warning(),
+        }
     }
 
-    pub(super) fn tool_file_or_command() -> ToolStyle {
+    /// Family color for the tool verb / shell prompt.
+    pub(super) fn tool_verb(family: rho_tools::tool_card::ToolFamily) -> Style {
+        use rho_tools::tool_card::ToolFamily;
         let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.success_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
+        match family {
+            ToolFamily::FileCommand | ToolFamily::FileDiff => Style::default().fg(palette.success),
+            ToolFamily::Web => Style::default().fg(AnsiColor::Blue.color()),
+            ToolFamily::Skill => Style::default().fg(palette.skill),
+            ToolFamily::Form => Style::default().fg(palette.warning),
+            ToolFamily::Agent => Self::text(),
+            ToolFamily::Default => Self::dim(),
+        }
     }
 
-    pub(super) fn tool_skill() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.skill_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
+    /// Primary argument style in the header.
+    pub(super) fn tool_primary() -> Style {
+        Self::text()
     }
 
-    pub(super) fn tool_web() -> ToolStyle {
-        let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.web_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
+    pub(super) fn tool_tree() -> Style {
+        Self::dim()
     }
 
-    pub(super) fn tool_questionnaire() -> ToolStyle {
+    pub(super) fn tool_meta() -> Style {
+        Self::dim()
+    }
+
+    pub(super) fn tool_path() -> Style {
+        Self::dim()
+    }
+
+    pub(super) fn tool_stat_add() -> Style {
+        Style::default().fg(Palette::current().success)
+    }
+
+    pub(super) fn tool_stat_del() -> Style {
+        Style::default().fg(Palette::current().error)
+    }
+
+    /// Text color for one diff row. Context stays plain so changes stand out.
+    pub(super) fn tool_diff_text(kind: rho_tools::tool_card::DiffRowKind) -> Style {
+        use rho_tools::tool_card::DiffRowKind;
         let palette = Palette::current();
-        ToolStyle::new(
-            Self::dim_block(palette.questionnaire_tool_background),
-            Self::dim_block(palette.failure_tool_background),
-        )
+        match kind {
+            DiffRowKind::Added => Style::default().fg(palette.success),
+            DiffRowKind::Removed => Style::default().fg(palette.error),
+            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip => Self::text(),
+        }
+    }
+
+    /// Line-number gutter. The sign carries the change, so numbers stay chrome.
+    pub(super) fn tool_diff_gutter() -> Style {
+        Self::dim()
+    }
+
+    pub(super) fn tool_exit(status: rho_tools::tool_card::ToolStatus) -> Style {
+        use rho_tools::tool_card::ToolStatus;
+        match status {
+            ToolStatus::Ok | ToolStatus::Running => Self::success(),
+            ToolStatus::Error | ToolStatus::Interrupted => Self::error(),
+        }
+    }
+
+    pub(super) fn tool_error_text() -> Style {
+        Self::error()
+    }
+
+    /// Explicit padding style for tool cards (never sample the marker span).
+    pub(super) fn tool_card_padding() -> Style {
+        Self::text()
     }
 
     fn dim_block(background: BlockColor) -> Style {
@@ -448,26 +450,6 @@ fn block_foreground(background: Option<Rgb>) -> Color {
 
 fn relative_luminance(red: u8, green: u8, blue: u8) -> f32 {
     (0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)) / 255.0
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ToolStyle {
-    success: Style,
-    failure: Style,
-}
-
-impl ToolStyle {
-    const fn new(success: Style, failure: Style) -> Self {
-        Self { success, failure }
-    }
-
-    pub(super) fn for_result(self, ok: bool) -> Style {
-        if ok {
-            self.success
-        } else {
-            self.failure
-        }
-    }
 }
 
 fn blended_or_fallback(

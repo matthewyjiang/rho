@@ -9,7 +9,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender},
-        Arc,
+        Arc, Mutex,
     },
     thread::JoinHandle,
     time::{Duration, Instant},
@@ -57,6 +57,7 @@ pub(crate) struct RunArtifactSink {
     last_write: Instant,
     closed: bool,
     attachment_enabled: bool,
+    attachment_error: Arc<Mutex<Option<String>>>,
     /// Shared with the background writer so a failed status update is warned once.
     status_write_failed: Arc<AtomicBool>,
     tx: Option<SyncSender<WriterCommand>>,
@@ -128,6 +129,7 @@ impl RunArtifactSink {
         };
         status.attachment_error = attachment_error;
         let attachment_enabled = status.attachment_error.is_none();
+        let attachment_error = Arc::new(Mutex::new(status.attachment_error.clone()));
         let status_write_failed = Arc::new(AtomicBool::new(false));
         if status.attachment_error.is_some() {
             write_status_best_effort(&path, &status, &status_write_failed);
@@ -140,10 +142,17 @@ impl RunArtifactSink {
         let (done_tx, done_rx) = mpsc::channel();
         let worker_path = path.clone();
         let worker_write_failed = Arc::clone(&status_write_failed);
+        let worker_attachment_error = Arc::clone(&attachment_error);
         let join = std::thread::Builder::new()
             .name("rho-run-artifacts".into())
             .spawn(move || {
-                writer_loop(worker_path, attachment, rx, worker_write_failed);
+                writer_loop(
+                    worker_path,
+                    attachment,
+                    rx,
+                    worker_write_failed,
+                    worker_attachment_error,
+                );
                 let _ = done_tx.send(());
             })
             .ok();
@@ -155,6 +164,7 @@ impl RunArtifactSink {
             last_write: Instant::now(),
             closed: false,
             attachment_enabled,
+            attachment_error,
             status_write_failed,
             tx: Some(tx),
             done_rx: Some(done_rx),
@@ -164,6 +174,7 @@ impl RunArtifactSink {
 
     /// Publish the current status to the watch channel and disk queue.
     pub(crate) fn publish(&mut self) {
+        self.sync_attachment_error();
         self.last_write = Instant::now();
         if let Some(tx) = &self.status_tx {
             tx.send_replace(self.status.clone());
@@ -189,13 +200,17 @@ impl RunArtifactSink {
 
     /// Append one journal event. Attachment failures are sticky on status.
     pub(crate) fn write_attachment(&mut self, event: AttachmentEvent) {
+        self.sync_attachment_error();
         if self.closed || !self.attachment_enabled {
             return;
         }
         if !self.enqueue(WriterCommand::Attachment(event)) {
             self.attachment_enabled = false;
-            self.status.attachment_error =
-                Some("could not record attach output: recording could not keep up".into());
+            let error = "could not record attach output: recording could not keep up".to_string();
+            self.status.attachment_error = Some(error.clone());
+            if let Ok(mut attachment_error) = self.attachment_error.lock() {
+                *attachment_error = Some(error);
+            }
             self.publish();
         }
     }
@@ -286,17 +301,46 @@ impl RunArtifactSink {
             if finished {
                 let _ = join.join();
             } else {
-                // Detach: best-effort direct status write so attach sees terminal.
+                // Detach: best-effort direct status write so attach sees terminal,
+                // then publish again after the worker exits so attachment_error
+                // recorded during Finish still reaches watch subscribers.
                 write_status_best_effort(&self.path, &self.status, &self.status_write_failed);
+                let path = self.path.clone();
+                let mut status = self.status.clone();
+                let status_tx = self.status_tx.clone();
+                let attachment_error = Arc::clone(&self.attachment_error);
+                let status_write_failed = Arc::clone(&self.status_write_failed);
                 std::thread::spawn(move || {
                     let _ = join.join();
+                    if let Some(error) =
+                        attachment_error.lock().ok().and_then(|error| error.clone())
+                    {
+                        status.attachment_error = Some(error);
+                    }
+                    write_status_best_effort(&path, &status, &status_write_failed);
+                    if let Some(tx) = status_tx {
+                        tx.send_replace(status);
+                    }
                 });
             }
         } else {
             write_status_best_effort(&self.path, &self.status, &self.status_write_failed);
         }
+        self.sync_attachment_error();
         if let Some(tx) = &self.status_tx {
             tx.send_replace(self.status.clone());
+        }
+    }
+
+    fn sync_attachment_error(&mut self) {
+        let error = self
+            .attachment_error
+            .lock()
+            .ok()
+            .and_then(|error| error.clone());
+        if let Some(error) = error {
+            self.attachment_enabled = false;
+            self.status.attachment_error = Some(error);
         }
     }
 
@@ -341,6 +385,7 @@ fn writer_loop(
     mut attachment: Option<AttachmentWriter>,
     rx: mpsc::Receiver<WriterCommand>,
     status_write_failed: Arc<AtomicBool>,
+    attachment_error: Arc<Mutex<Option<String>>>,
 ) {
     // Coalesce replaceable status snapshots so a burst of Running updates does
     // not serialize every write behind the attachment journal.
@@ -378,20 +423,26 @@ fn writer_loop(
                     write_status_best_effort(&path, &status, &status_write_failed);
                 }
                 if let Some(writer) = attachment.as_mut() {
-                    if writer.write_event(&event).is_err() {
+                    if let Err(error) = writer.write_event(&event) {
+                        record_attachment_error(&attachment_error, error);
                         attachment = None;
                     }
                 }
             }
             WriterCommand::Finish {
-                status,
+                mut status,
                 terminal_attachment,
             } => {
                 if let Some(previous) = pending_status.take() {
                     write_status_best_effort(&path, &previous, &status_write_failed);
                 }
                 if let (Some(event), Some(writer)) = (terminal_attachment, attachment.as_mut()) {
-                    let _ = writer.write_event(&event);
+                    if let Err(error) = writer.write_event(&event) {
+                        record_attachment_error(&attachment_error, error);
+                    }
+                }
+                if let Some(error) = attachment_error.lock().ok().and_then(|error| error.clone()) {
+                    status.attachment_error = Some(error);
                 }
                 write_status_best_effort(&path, &status, &status_write_failed);
                 // Drain anything already queued, then exit.
@@ -403,6 +454,12 @@ fn writer_loop(
                 break;
             }
         }
+    }
+}
+
+fn record_attachment_error(attachment_error: &Mutex<Option<String>>, error: anyhow::Error) {
+    if let Ok(mut recorded) = attachment_error.lock() {
+        recorded.get_or_insert_with(|| format!("could not record attach output: {error}"));
     }
 }
 

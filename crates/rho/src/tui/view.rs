@@ -21,7 +21,6 @@ use super::{
     picker_overlay::picker_overlay_frame,
     render::{pad_display_line, padded_content_width},
     render_copy_notice, session_header_lines, styled_line, tool_entry_lines,
-    tool_output_ui::is_tool_entry,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -564,25 +563,23 @@ impl App {
 
     pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        for pending in self.running_inline_shell_entries() {
-            if !lines.is_empty()
-                || self.history.last_inserted_was_tool()
-                || self.history.last().is_some_and(is_tool_entry)
-            {
-                lines.push(Line::raw(""));
-            }
+        let shells = self.running_inline_shell_entries().collect::<Vec<_>>();
+        let tools = self.turn.tool_calls().live_entries().collect::<Vec<_>>();
+        let has_pending_tools = !shells.is_empty() || !tools.is_empty();
+        // Open stream tails omit the history trailing blank so previews can abut
+        // committed text. Live tools still need one row of separation above them.
+        if has_pending_tools && self.open_stream_tail_active() {
+            lines.push(Line::raw(""));
+        }
+        for pending in &shells {
+            // tool_entry_lines owns the trailing spacer under each card.
             lines.extend(tool_entry_lines(
-                &pending,
+                pending,
                 width,
                 self.info.runtime.max_tool_output_lines,
             ));
         }
-        for pending in self.turn.tool_calls().live_entries() {
-            if self.history.last_inserted_was_tool()
-                || self.history.last().is_some_and(is_tool_entry)
-            {
-                lines.push(Line::raw(""));
-            }
+        for pending in tools {
             lines.extend(tool_entry_lines(
                 pending,
                 width,
@@ -602,6 +599,17 @@ impl App {
             )));
         }
         lines
+    }
+
+    pub(super) fn open_stream_tail_active(&self) -> bool {
+        match self.streams.current_stream_kind {
+            None => false,
+            Some(StreamKind::Assistant) => matches!(self.history.last(), Some(Entry::Assistant(_))),
+            Some(StreamKind::Reasoning) => matches!(
+                self.history.last(),
+                Some(Entry::Reasoning(reasoning)) if !reasoning.text.is_empty()
+            ),
+        }
     }
 
     pub(super) fn visible_history_window(
@@ -858,8 +866,6 @@ impl App {
                     | Entry::Error(_) => None,
                 },
             ));
-        self.history
-            .set_last_inserted_was_tool(self.history.last().is_some_and(is_tool_entry));
         Ok(())
     }
 }

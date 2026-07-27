@@ -1,15 +1,27 @@
-use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
+//! Builds structured [`ToolCard`] values for interactive tool presentation.
 
-use rho_tools::tool::{compact_display_path, ToolDisplayStyle};
+use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
+use rho_tools::{
+    tool::compact_display_path,
+    tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
+};
+
+#[path = "interactive_presenter_results.rs"]
+mod results;
+use results::{
+    count_nonempty_lines, fetch_content_card, file_diff_card, generic_card,
+    get_search_content_card, process_result_card, push_error_output, search_result_card,
+    shell_card, shell_result_card, split_body_lines, web_search_card,
+};
 
 use super::{agent_format, ToolKind, ToolPresentation, ToolView};
 
-pub(super) fn presentation(view: &ToolView, mut display_lines: Vec<String>) -> ToolPresentation {
-    display_lines.extend(view.metadata.presentation_notices().iter().cloned());
+pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
+    card.push_notice_facts(view.metadata.presentation_notices());
+    // Metadata can refine Process/Other family after start; keep builders honest.
+    card.family = family_for_kind(view.kind, Some(&view.metadata));
     ToolPresentation {
-        command: command(view),
-        display_style: view.kind.display_style(&view.metadata),
-        display_lines,
+        card,
         image_asset: view
             .metadata
             .assets()
@@ -19,131 +31,258 @@ pub(super) fn presentation(view: &ToolView, mut display_lines: Vec<String>) -> T
     }
 }
 
-pub(super) fn command(view: &ToolView) -> Option<String> {
-    view.metadata
-        .command_summary_text()
-        .map(str::to_string)
-        .or_else(|| match view.kind {
-            ToolKind::Bash | ToolKind::PowerShell => string_arg(&view.arguments, "command"),
-            ToolKind::Process
-                if view.arguments.get("action").and_then(|v| v.as_str()) == Some("start") =>
-            {
-                string_arg(&view.arguments, "command")
-            }
-            _ => None,
-        })
+/// Build a card with a real family so intermediate state stays renderable.
+pub(super) fn draft_card(status: ToolStatus, family: ToolFamily, header: ToolHeader) -> ToolCard {
+    ToolCard::new(status, family, header)
 }
 
-pub(super) fn start_lines(view: &ToolView, cwd: &std::path::Path) -> Vec<String> {
-    preview_lines(view.kind, &view.name, Some(&view.arguments), cwd)
+fn kind_card(status: ToolStatus, kind: ToolKind, header: ToolHeader) -> ToolCard {
+    draft_card(status, family_for_kind(kind, None), header)
+}
+
+pub(super) fn start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
+    preview_card(
+        view.kind,
+        &view.name,
+        Some(&view.arguments),
+        cwd,
+        ToolStatus::Running,
+    )
 }
 
 /// Live tool-call argument preview while the provider is still streaming JSON.
-///
-/// Most tools parse incomplete JSON and reuse the start layout. Agent is
-/// different: its payload is a long prompt, so streaming reads fields from the
-/// raw argument buffer and shows a live tail without rebuilding a JSON value.
-pub(super) fn streaming_preview_lines(
-    kind: ToolKind,
-    name: &str,
-    raw_arguments: &str,
-    cwd: &std::path::Path,
-) -> Vec<String> {
-    match kind {
-        ToolKind::Agent => agent_format::agent_streaming_preview_from_raw(raw_arguments),
-        _ => {
-            let arguments = parse_incomplete_json(raw_arguments);
-            preview_lines(kind, name, arguments.as_ref(), cwd)
-        }
-    }
-}
-
-pub(super) fn preview_lines(
+pub(super) fn streaming_preview_card(
     kind: ToolKind,
     name: &str,
     arguments: Option<&serde_json::Value>,
     cwd: &std::path::Path,
-) -> Vec<String> {
-    let Some(arguments) = arguments else {
-        return vec![match kind {
-            ToolKind::Bash => "$".into(),
-            ToolKind::PowerShell => "PS".into(),
-            _ => name.to_string(),
-        }];
-    };
+) -> ToolCard {
     match kind {
-        ToolKind::Agent => agent_format::agent_start_lines_for(arguments),
-        ToolKind::Agents => agent_format::agents_start_lines_for(arguments),
-        ToolKind::Bash => vec![command_line("$", arguments)],
-        ToolKind::PowerShell => vec![command_line("PS", arguments)],
-        ToolKind::Process => {
-            let mut lines = vec!["process".into()];
-            if arguments.get("action").and_then(|value| value.as_str()) == Some("start") {
-                if let Some(command) = string_arg(arguments, "command") {
-                    lines.push(command);
-                }
-            }
-            lines
-        }
-        ToolKind::ListDir => vec![format!("list_dir {}", display_path(arguments, cwd))],
-        ToolKind::Grep => vec![grep_header(arguments, cwd)],
-        ToolKind::Glob => vec![glob_header(arguments)],
-        ToolKind::ReadFile => vec![format!("read_file {}", read_path(arguments, cwd))],
-        ToolKind::WriteFile => vec![format!("write_file {}", display_path(arguments, cwd))],
-        ToolKind::EditFile => vec![format!(
-            "edit_file {}",
-            edit_paths(arguments, cwd).join(", ")
-        )],
-        ToolKind::Skill => vec![string_arg(arguments, "name")
-            .map_or_else(|| "skill".into(), |name| format!("skill {name}"))],
-        ToolKind::Questionnaire => crate::questionnaire::parse_request(arguments.clone())
-            .map(|request| crate::questionnaire::start_display_lines(&request))
-            .unwrap_or_else(|_| vec![name.to_string()]),
-        ToolKind::Other => {
-            if name == "rho" {
-                return vec![string_arg(arguments, "action")
-                    .map_or_else(|| "rho".into(), |action| format!("rho {action}"))];
-            }
-            vec![name.to_string()]
-        }
-        ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
-            vec![name.to_string()]
-        }
+        ToolKind::Agent => agent_format::agent_streaming_preview_card(
+            arguments.unwrap_or(&serde_json::Value::Object(Default::default())),
+        ),
+        _ => preview_card(kind, name, arguments, cwd, ToolStatus::Running),
     }
 }
 
-pub(super) fn finished_lines(
+pub(super) fn preview_card(
+    kind: ToolKind,
+    name: &str,
+    arguments: Option<&serde_json::Value>,
+    cwd: &std::path::Path,
+    status: ToolStatus,
+) -> ToolCard {
+    let Some(arguments) = arguments else {
+        let header = match kind {
+            ToolKind::Bash => ToolHeader::shell("$", None),
+            ToolKind::PowerShell => ToolHeader::shell("PS", None),
+            _ => ToolHeader::call(name, None),
+        };
+        return kind_card(status, kind, header);
+    };
+    match kind {
+        ToolKind::Agent => agent_format::agent_start_card(arguments),
+        ToolKind::Agents => agent_format::agents_start_card(arguments),
+        ToolKind::Bash => shell_card("$", arguments, status),
+        ToolKind::PowerShell => shell_card("PS", arguments, status),
+        ToolKind::Process => {
+            let action = string_arg(arguments, "action");
+            let primary = action.clone().or_else(|| string_arg(arguments, "command"));
+            let mut card = kind_card(status, kind, ToolHeader::call("process", primary));
+            if action.as_deref() == Some("start") {
+                if let Some(command) = string_arg(arguments, "command") {
+                    card.push_fact(ToolFact::Text { text: command });
+                }
+            }
+            card
+        }
+        ToolKind::ListDir => kind_card(
+            status,
+            kind,
+            ToolHeader::call(
+                "list_dir",
+                Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
+            ),
+        ),
+        ToolKind::Grep => kind_card(
+            status,
+            kind,
+            ToolHeader::call("grep", Some(grep_primary(arguments, cwd))),
+        ),
+        ToolKind::Glob => kind_card(
+            status,
+            kind,
+            ToolHeader::call(
+                "glob",
+                string_arg(arguments, "pattern").filter(|pattern| !pattern.is_empty()),
+            ),
+        ),
+        ToolKind::ReadFile => kind_card(
+            status,
+            kind,
+            ToolHeader::call(
+                "read_file",
+                Some(read_path(arguments, cwd)).filter(|p| !p.is_empty()),
+            ),
+        ),
+        ToolKind::WriteFile => kind_card(
+            status,
+            kind,
+            ToolHeader::call(
+                "write_file",
+                Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
+            ),
+        ),
+        ToolKind::EditFile => edit_start_card(arguments, cwd, status),
+        ToolKind::Skill => kind_card(
+            status,
+            kind,
+            ToolHeader::call(
+                "skill",
+                string_arg(arguments, "name").filter(|name| !name.is_empty()),
+            ),
+        ),
+        ToolKind::Questionnaire => match crate::questionnaire::parse_request(arguments.clone()) {
+            Ok(request) => {
+                let primary = request.title.clone().or_else(|| Some(name.to_string()));
+                let mut card = kind_card(status, kind, ToolHeader::call("questionnaire", primary));
+                for (index, question) in request.questions.iter().enumerate() {
+                    card.push_fact(ToolFact::Text {
+                        text: format!("{}. {}", index + 1, question.question),
+                    });
+                }
+                card
+            }
+            Err(_) => kind_card(status, kind, ToolHeader::call(name, None)),
+        },
+        ToolKind::Other => {
+            if name == "rho" {
+                return kind_card(
+                    status,
+                    kind,
+                    ToolHeader::call(
+                        "rho",
+                        string_arg(arguments, "action").filter(|action| !action.is_empty()),
+                    ),
+                );
+            }
+            kind_card(status, kind, ToolHeader::call(name, None))
+        }
+        ToolKind::WebSearch => {
+            let primary = search_terms(arguments).or_else(|| Some(name.to_string()));
+            kind_card(status, kind, ToolHeader::call("web_search", primary))
+        }
+        ToolKind::FetchContent => {
+            let primary = first_url(arguments).or_else(|| Some(name.to_string()));
+            kind_card(status, kind, ToolHeader::call("fetch_content", primary))
+        }
+        ToolKind::GetSearchContent => kind_card(
+            status,
+            kind,
+            ToolHeader::call("get_search_content", Some(get_search_primary(arguments))),
+        ),
+    }
+}
+
+fn edit_start_card(
+    arguments: &serde_json::Value,
+    cwd: &std::path::Path,
+    status: ToolStatus,
+) -> ToolCard {
+    let paths = edit_paths(arguments, cwd);
+    let primary = match paths.as_slice() {
+        [] => None,
+        [path] => Some(path.clone()),
+        paths => Some(format!("{} files", paths.len())),
+    };
+    kind_card(
+        status,
+        ToolKind::EditFile,
+        ToolHeader::call("edit_file", primary),
+    )
+}
+
+pub(super) fn finished_card(
     view: &ToolView,
     content: &str,
     ok: bool,
     cwd: &std::path::Path,
-) -> Vec<String> {
+) -> ToolCard {
+    let status = ToolStatus::from_finished(ok);
     match view.kind {
-        ToolKind::Agent => agent_format::agent_finished_lines(view, content, ok),
-        ToolKind::Agents => agent_format::agents_finished_lines(view, content, ok),
-        ToolKind::Bash => command_result_lines("$", &view.arguments, content),
-        ToolKind::PowerShell => command_result_lines("PS", &view.arguments, content),
-        ToolKind::Process => process_result_lines(content),
-        ToolKind::ListDir => vec![format!("list_dir {}", metadata_path(view, cwd))],
-        ToolKind::Grep | ToolKind::Glob => header_with_output(start_lines(view, cwd), content),
-        ToolKind::ReadFile => vec![format!("read_file {}", metadata_read_path(view, cwd))],
-        ToolKind::WriteFile | ToolKind::EditFile => file_diff_lines(view, content, ok, cwd),
-        ToolKind::Skill => preview_lines(view.kind, &view.name, Some(&view.arguments), cwd),
-        ToolKind::WebSearch => vec![web_search_line(&view.arguments, content)],
-        ToolKind::FetchContent => vec![fetch_content_line(content)],
-        ToolKind::GetSearchContent => vec![get_search_content_line(content)],
-        ToolKind::Questionnaire => preview_lines(view.kind, &view.name, Some(&view.arguments), cwd),
-        ToolKind::Other => generic_lines(view, content),
+        ToolKind::Agent => agent_format::agent_finished_card(view, content, ok),
+        ToolKind::Agents => agent_format::agents_finished_card(view, content, ok),
+        ToolKind::Bash => shell_result_card("$", &view.arguments, content, status),
+        ToolKind::PowerShell => shell_result_card("PS", &view.arguments, content, status),
+        ToolKind::Process => process_result_card(content, status),
+        ToolKind::ListDir => {
+            let mut card = kind_card(
+                status,
+                view.kind,
+                ToolHeader::call(
+                    "list_dir",
+                    Some(metadata_path(view, cwd)).filter(|path| !path.is_empty()),
+                ),
+            );
+            if !ok && !content.trim().is_empty() {
+                push_error_output(&mut card, content);
+            } else if let Some(count) = count_nonempty_lines(content) {
+                card.push_fact(ToolFact::Count {
+                    label: if count == 1 {
+                        "entry".into()
+                    } else {
+                        "entries".into()
+                    },
+                    value: count,
+                    detail: None,
+                });
+            }
+            card
+        }
+        ToolKind::Grep | ToolKind::Glob => search_result_card(view, content, ok, cwd),
+        ToolKind::ReadFile => {
+            let mut card = kind_card(
+                status,
+                view.kind,
+                ToolHeader::call(
+                    "read_file",
+                    Some(metadata_read_path(view, cwd)).filter(|path| !path.is_empty()),
+                ),
+            );
+            if !ok && !content.trim().is_empty() {
+                push_error_output(&mut card, content);
+            } else if let Some(count) = count_nonempty_lines(content) {
+                card.push_fact(ToolFact::Count {
+                    label: if count == 1 {
+                        "line".into()
+                    } else {
+                        "lines".into()
+                    },
+                    value: count,
+                    detail: None,
+                });
+            }
+            card
+        }
+        ToolKind::WriteFile | ToolKind::EditFile => file_diff_card(view, content, ok, cwd),
+        ToolKind::Skill => preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status),
+        ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
+        ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
+        ToolKind::GetSearchContent => get_search_content_card(content, status),
+        ToolKind::Questionnaire => {
+            preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
+        }
+        ToolKind::Other => generic_card(view, content, status),
     }
 }
 
-pub(super) fn progress_lines(
+pub(super) fn progress_card(
     view: Option<(&ToolView, &std::path::Path)>,
     progress: &ToolProgress,
-) -> Vec<String> {
+) -> ToolCard {
     if let Some((view, _)) = view {
         if view.kind == ToolKind::Agent {
-            return agent_format::agent_progress_lines(view, progress.text());
+            return agent_format::agent_progress_card(view, progress.text());
         }
         if matches!(view.kind, ToolKind::Bash | ToolKind::PowerShell) {
             let prompt = if view.kind == ToolKind::Bash {
@@ -151,87 +290,87 @@ pub(super) fn progress_lines(
             } else {
                 "PS"
             };
-            return command_result_lines(prompt, &view.arguments, progress.text());
+            return shell_result_card(
+                prompt,
+                &view.arguments,
+                progress.text(),
+                ToolStatus::Running,
+            );
         }
     }
-    let header = view.map_or_else(|| vec!["tool".into()], |(view, cwd)| start_lines(view, cwd));
-    let mut lines = header_with_output(header, progress.text());
-    if let (Some(completed), Some(total)) = (progress.completed_units(), progress.total_units()) {
-        lines.push(format!("progress: {completed}/{total}"));
-    }
-    lines
-}
-
-/// Appends a tool's output beneath its header lines, dropping blank output.
-fn header_with_output(mut header: Vec<String>, output: &str) -> Vec<String> {
-    if !output.trim().is_empty() {
-        header.push(output.to_string());
-    }
-    header
-}
-
-pub(super) fn file_diff_lines(
-    view: &ToolView,
-    content: &str,
-    ok: bool,
-    cwd: &std::path::Path,
-) -> Vec<String> {
-    let paths = metadata_paths(view, cwd);
-    let label = if paths.is_empty() {
-        if view.kind == ToolKind::EditFile {
-            edit_paths(&view.arguments, cwd).join(", ")
-        } else {
-            display_path(&view.arguments, cwd)
-        }
-    } else {
-        paths.join(", ")
-    };
-    let mut lines = vec![format!("{} {label}", view.name)];
-    if ok {
-        let diff = view.metadata.unified_diff().unwrap_or(content);
-        let compact = compact_diff(diff, paths.len() > 1);
-        if let Some(compact) = compact {
-            lines.push(compact);
-        }
-    } else if !content.trim().is_empty() {
-        lines.push(content.to_string());
-    }
-    lines
-}
-
-pub(super) fn generic_lines(view: &ToolView, content: &str) -> Vec<String> {
-    let mut lines = vec![view.name.clone()];
-    if let Some(command) = view.metadata.command_summary_text() {
-        lines.push(command.to_string());
-    }
-    lines.extend(
-        view.metadata
-            .affected_paths()
-            .iter()
-            .map(|path| path.display().to_string()),
+    let mut card = view.map_or_else(
+        || {
+            kind_card(
+                ToolStatus::Running,
+                ToolKind::Other,
+                ToolHeader::call("tool", None),
+            )
+        },
+        |(view, cwd)| start_card(view, cwd),
     );
-    lines.extend(view.metadata.urls().iter().cloned());
-    if let Some(diff) = view.metadata.unified_diff() {
-        lines.push(diff.to_string());
+    if !progress.text().trim().is_empty() {
+        card.body = ToolBody::Lines(split_body_lines(progress.text()));
     }
-    if lines.len() == 1 && view.arguments != serde_json::Value::Object(Default::default()) {
-        lines.push(view.arguments.to_string());
+    if let (Some(completed), total) = (progress.completed_units(), progress.total_units()) {
+        card.push_fact(ToolFact::Progress { completed, total });
     }
-    if !content.trim().is_empty() {
-        lines.push(content.to_string());
-    }
-    lines
+    card
 }
 
-pub(super) fn style_from_metadata(metadata: &ToolMetadata) -> ToolDisplayStyle {
-    match metadata.operation_kind() {
-        Some(OperationKind::Read | OperationKind::Execute) => ToolDisplayStyle::file_or_command(),
-        Some(OperationKind::Write) => ToolDisplayStyle::file_diff(),
-        Some(OperationKind::Network) => ToolDisplayStyle::web(),
-        Some(OperationKind::Other(kind)) if kind == "questionnaire" => {
-            ToolDisplayStyle::questionnaire()
+pub(super) fn interrupted_card(
+    view: &ToolView,
+    partial_arguments: &str,
+    cwd: &std::path::Path,
+) -> ToolCard {
+    match view.kind {
+        ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
+        ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
+        _ => {
+            let mut card = preview_card(
+                view.kind,
+                &view.name,
+                Some(&view.arguments),
+                cwd,
+                ToolStatus::Interrupted,
+            );
+            if !partial_arguments.is_empty() && card.body.is_empty() && card.facts.is_empty() {
+                card.body = ToolBody::Lines(vec![partial_arguments.to_string()]);
+            }
+            card
         }
-        Some(OperationKind::Other(_)) | None | Some(_) => ToolDisplayStyle::default_tool(),
+    }
+}
+
+pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -> ToolFamily {
+    match kind {
+        ToolKind::Agent | ToolKind::Agents => ToolFamily::Agent,
+        ToolKind::Bash
+        | ToolKind::PowerShell
+        | ToolKind::ListDir
+        | ToolKind::Grep
+        | ToolKind::Glob
+        | ToolKind::ReadFile => ToolFamily::FileCommand,
+        ToolKind::WriteFile | ToolKind::EditFile => ToolFamily::FileDiff,
+        ToolKind::Skill => ToolFamily::Skill,
+        ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
+            ToolFamily::Web
+        }
+        ToolKind::Questionnaire => ToolFamily::Form,
+        ToolKind::Process | ToolKind::Other => metadata
+            .map(family_from_metadata)
+            .unwrap_or(ToolFamily::Default),
+    }
+}
+
+fn family_from_metadata(metadata: &ToolMetadata) -> ToolFamily {
+    match metadata.operation_kind() {
+        Some(OperationKind::Read | OperationKind::Execute) => ToolFamily::FileCommand,
+        Some(OperationKind::Write) => ToolFamily::FileDiff,
+        Some(OperationKind::Network) => ToolFamily::Web,
+        Some(OperationKind::Other(kind)) if kind == "questionnaire" => ToolFamily::Form,
+        Some(OperationKind::Other(_)) | None => ToolFamily::Default,
+        // OperationKind is non_exhaustive; unknown future variants stay default.
+        Some(_) => ToolFamily::Default,
     }
 }
 
@@ -242,74 +381,22 @@ pub(super) fn string_arg(arguments: &serde_json::Value, key: &str) -> Option<Str
         .map(str::to_string)
 }
 
-pub(super) fn command_line(shell: &str, arguments: &serde_json::Value) -> String {
-    string_arg(arguments, "command")
-        .filter(|command| !command.trim().is_empty())
-        .map_or_else(|| shell.to_string(), |command| format!("{shell} {command}"))
-}
-
-pub(super) fn command_result_lines(
-    shell: &str,
-    arguments: &serde_json::Value,
-    content: &str,
-) -> Vec<String> {
-    let mut lines = vec![command_line(shell, arguments)];
-    lines.push(
-        arguments
-            .get("timeout_seconds")
-            .and_then(|value| value.as_u64())
-            .map_or_else(
-                || "timeout: none".into(),
-                |seconds| format!("timeout: {seconds}s"),
-            ),
-    );
-    if let Some((notice, stdout)) = shell_output(content) {
-        if let Some(notice) = notice {
-            lines.push(notice.to_string());
-        }
-        if !stdout.trim().is_empty() {
-            lines.push(String::new());
-            lines.push(stdout.trim_end().to_string());
-        }
-    } else if !content.trim().is_empty() {
-        lines.push(String::new());
-        lines.push(content.to_string());
-    }
-    lines
-}
-
-fn shell_output(content: &str) -> Option<(Option<&str>, &str)> {
-    let (notice, output) = if let Some(stdout) = content.strip_prefix("stdout:\n") {
-        (None, stdout)
-    } else {
-        let (notice, stdout) = content.split_once("\n\nstdout:\n")?;
-        (Some(notice), stdout)
-    };
-    let stdout = output
-        .rsplit_once("\n\nstderr:")
-        .map_or(output, |(stdout, _)| stdout);
-    Some((notice, stdout))
-}
-
 pub(super) fn display_path(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {
     string_arg(arguments, "path")
         .map(|path| compact_display_path(cwd, &path))
         .unwrap_or_default()
 }
 
-fn grep_header(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {
+fn grep_primary(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {
     let pattern = string_arg(arguments, "pattern").unwrap_or_default();
     let path = display_path(arguments, cwd);
     if path.is_empty() {
-        format!("grep {pattern}")
+        pattern
+    } else if pattern.is_empty() {
+        path
     } else {
-        format!("grep {pattern} {path}")
+        format!("{pattern}, {path}")
     }
-}
-
-fn glob_header(arguments: &serde_json::Value) -> String {
-    let pattern = string_arg(arguments, "pattern").unwrap_or_default();
-    format!("glob {pattern}")
 }
 
 pub(super) fn read_path(arguments: &serde_json::Value, cwd: &std::path::Path) -> String {
@@ -360,208 +447,6 @@ pub(super) fn metadata_read_path(view: &ToolView, cwd: &std::path::Path) -> Stri
         .unwrap_or_else(|| read_path(&view.arguments, cwd))
 }
 
-pub(super) fn compact_diff(diff: &str, include_file_headers: bool) -> Option<String> {
-    let mut in_hunk = false;
-    let mut lines = Vec::new();
-    for line in diff.lines() {
-        if in_hunk {
-            if line.is_empty() {
-                in_hunk = false;
-                continue;
-            }
-            if line.starts_with("@@") || line.starts_with('\\') {
-                continue;
-            }
-            let Some(content) = line.get(1..) else {
-                continue;
-            };
-            match &line[..1] {
-                "+" | "-" => lines.push(line.to_string()),
-                " " => lines.push(content.to_string()),
-                _ => {}
-            }
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            if include_file_headers {
-                if !lines.is_empty() {
-                    lines.push(String::new());
-                }
-                lines.push(path.to_string());
-            }
-            continue;
-        }
-        if line.starts_with("@@") {
-            in_hunk = true;
-        }
-    }
-    (!lines.is_empty()).then(|| lines.join("\n"))
-}
-
-pub(super) fn process_result_lines(content: &str) -> Vec<String> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-        return vec!["process".into(), content.to_string()];
-    };
-    if value
-        .get("stop_requested")
-        .and_then(|value| value.as_bool())
-        == Some(true)
-    {
-        if let Some(id) = value.get("process_id").and_then(|value| value.as_str()) {
-            return vec!["process".into(), format!("stop requested: {id}")];
-        }
-    }
-    let Some(command) = value.get("command").and_then(|value| value.as_str()) else {
-        return vec!["process".into(), content.to_string()];
-    };
-    let mut lines = vec!["process".into(), command.to_string()];
-    let state = value
-        .get("state")
-        .and_then(|value| value.as_str())
-        .unwrap_or("running");
-    let id = value
-        .get("process_id")
-        .and_then(|value| value.as_str())
-        .unwrap_or("unknown");
-    let runtime = value
-        .get("runtime_seconds")
-        .and_then(|value| value.as_f64())
-        .unwrap_or_default();
-    let exit = value
-        .get("exit_code")
-        .and_then(|value| value.as_i64())
-        .map_or_else(String::new, |code| format!(", exit code {code}"));
-    lines.push(format!(
-        "{} - {id} - {runtime:.1}s{exit}",
-        state.replace('_', " ")
-    ));
-    if value.get("truncated").and_then(|value| value.as_bool()) == Some(true) {
-        let cursor = value
-            .get("first_cursor")
-            .and_then(|value| value.as_u64())
-            .unwrap_or_default();
-        lines.push(format!(
-            "output before cursor {cursor} is no longer available"
-        ));
-    }
-    if let Some(chunks) = value.get("chunks").and_then(|value| value.as_array()) {
-        for chunk in chunks {
-            let stream = chunk
-                .get("stream")
-                .and_then(|value| value.as_str())
-                .unwrap_or("stdout");
-            lines.push(format!("{stream}:"));
-            lines.push(
-                chunk
-                    .get("text")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-            );
-        }
-    }
-    if value
-        .get("output_pending")
-        .and_then(|value| value.as_bool())
-        == Some(true)
-    {
-        let cursor = value
-            .get("next_cursor")
-            .and_then(|value| value.as_u64())
-            .unwrap_or_default();
-        lines.push(format!("more output available at cursor {cursor}"));
-    }
-    if let Some(detail) = value
-        .get("terminal_detail")
-        .and_then(|value| value.as_str())
-    {
-        lines.push(format!("detail: {detail}"));
-    }
-    lines
-}
-
-pub(super) fn web_search_line(arguments: &serde_json::Value, content: &str) -> String {
-    let status = serde_json::from_str::<serde_json::Value>(content)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("answer")
-                .and_then(|answer| answer.as_str())
-                .map(str::to_string)
-        })
-        .map(|answer| {
-            if answer.starts_with("No configured search provider") {
-                "no live results".into()
-            } else {
-                pluralized(
-                    answer
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .count(),
-                    "result",
-                    "stored",
-                )
-            }
-        })
-        .unwrap_or_else(|| "finished".into());
-    let base = format!("web search: {status}");
-    search_terms(arguments).map_or(base.clone(), |terms| format!("{base} for {terms}"))
-}
-
-pub(super) fn fetch_content_line(content: &str) -> String {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-        return "fetch content finished".into();
-    };
-    if let Some(count) = value.get("itemCount").and_then(|count| count.as_u64()) {
-        let truncated = value
-            .get("contentTruncated")
-            .and_then(|flag| flag.as_bool())
-            .unwrap_or(false);
-        return if truncated && count == 1 {
-            "fetch content: fetched 1 item (truncated)".into()
-        } else {
-            format!(
-                "fetch content: fetched {}",
-                pluralized(count as usize, "item", "")
-            )
-        };
-    }
-    if let Some(items) = value.get("items").and_then(|items| items.as_array()) {
-        return format!(
-            "fetch content: fetched {}",
-            pluralized(items.len(), "item", "")
-        );
-    }
-    if value.get("content").is_some() {
-        let truncated = value
-            .get("contentTruncated")
-            .and_then(|flag| flag.as_bool())
-            .unwrap_or(false);
-        return if truncated {
-            "fetch content: fetched 1 item (truncated)".into()
-        } else {
-            "fetch content: fetched 1 item".into()
-        };
-    }
-    "fetch content finished".into()
-}
-
-pub(super) fn get_search_content_line(content: &str) -> String {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-        return "retrieved stored content".into();
-    };
-    if let Some(query) = value.get("query").and_then(|value| value.as_str()) {
-        return format!("retrieved content for {}", quoted(query, 80));
-    }
-    let label = value
-        .get("title")
-        .and_then(|value| value.as_str())
-        .or_else(|| value.get("url").and_then(|value| value.as_str()))
-        .map(|value| truncate(value, 80))
-        .unwrap_or_else(|| "stored content".into());
-    format!("retrieved content: {label}")
-}
-
 pub(super) fn search_terms(arguments: &serde_json::Value) -> Option<String> {
     let terms = arguments
         .get("queries")
@@ -590,17 +475,27 @@ pub(super) fn search_terms(arguments: &serde_json::Value) -> Option<String> {
     Some(rendered.join(", "))
 }
 
-pub(super) fn pluralized(count: usize, noun: &str, suffix: &str) -> String {
-    let noun = if count == 1 {
-        noun.to_string()
-    } else {
-        format!("{noun}s")
-    };
-    if suffix.is_empty() {
-        format!("{count} {noun}")
-    } else {
-        format!("{count} {noun} {suffix}")
-    }
+pub(super) fn first_url(arguments: &serde_json::Value) -> Option<String> {
+    arguments
+        .get("urls")
+        .and_then(|value| value.as_array())
+        .and_then(|urls| urls.first())
+        .and_then(|value| value.as_str())
+        .map(|url| truncate(url, 80))
+        .or_else(|| string_arg(arguments, "url").map(|url| truncate(&url, 80)))
+}
+
+fn get_search_primary(arguments: &serde_json::Value) -> String {
+    string_arg(arguments, "query")
+        .map(|query| quoted(&query, 48))
+        .or_else(|| string_arg(arguments, "url").map(|url| truncate(&url, 48)))
+        .or_else(|| {
+            arguments
+                .get("responseId")
+                .and_then(|value| value.as_str())
+                .map(|id| truncate(id, 24))
+        })
+        .unwrap_or_else(|| "...".into())
 }
 
 pub(super) fn quoted(value: &str, max: usize) -> String {

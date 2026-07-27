@@ -6,7 +6,7 @@ use rho_sdk::{
     ToolCallId, ToolCompletion,
 };
 
-use rho_tools::tool::ToolDisplayStyle;
+use rho_tools::tool_card::ToolCard;
 
 #[path = "interactive_presenter_agent.rs"]
 mod agent_format;
@@ -16,9 +16,7 @@ use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
-    pub(crate) command: Option<String>,
-    pub(crate) display_style: ToolDisplayStyle,
-    pub(crate) display_lines: Vec<String>,
+    pub(crate) card: ToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -74,63 +72,40 @@ impl ToolKind {
         }
     }
 
-    fn display_style(self, metadata: &ToolMetadata) -> ToolDisplayStyle {
-        match self {
-            Self::Agent | Self::Agents => ToolDisplayStyle::default_tool(),
-            Self::Bash
-            | Self::PowerShell
-            | Self::ListDir
-            | Self::Grep
-            | Self::Glob
-            | Self::ReadFile => ToolDisplayStyle::file_or_command(),
-            Self::WriteFile | Self::EditFile => ToolDisplayStyle::file_diff(),
-            Self::Skill => ToolDisplayStyle::skill(),
-            Self::WebSearch | Self::FetchContent | Self::GetSearchContent => {
-                ToolDisplayStyle::web()
-            }
-            Self::Questionnaire => ToolDisplayStyle::questionnaire(),
-            Self::Process | Self::Other => style_from_metadata(metadata),
-        }
-    }
-
-    fn preview_uses_arguments(self) -> bool {
-        !matches!(self, Self::WriteFile | Self::EditFile)
-    }
-
     /// How many new argument bytes to wait before re-rendering a live preview.
     ///
-    /// Agent re-evaluates on every growth: streaming reads a few known fields from
-    /// the raw buffer, and identical renders are suppressed by `last_lines`. Other
-    /// tools keep exponential backoff around full incomplete-JSON parses.
+    /// Zero re-evaluates on every delta so previews track the model as it
+    /// writes; identical renders are still suppressed by `last_card`, so the
+    /// stride bounds parse cost rather than update rate. Ordinary tool calls
+    /// stay under [`PREVIEW_FULL_PARSE_LIMIT`] and re-render delta for delta.
+    /// Oversized buffers, including long agent prompts, fall back to a coarse
+    /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
-        match self {
-            Self::Agent => 0,
-            Self::Agents
-            | Self::Bash
-            | Self::PowerShell
-            | Self::Process
-            | Self::ListDir
-            | Self::Grep
-            | Self::Glob
-            | Self::ReadFile
-            | Self::WriteFile
-            | Self::EditFile
-            | Self::Skill
-            | Self::WebSearch
-            | Self::FetchContent
-            | Self::GetSearchContent
-            | Self::Questionnaire
-            | Self::Other => arguments_len.max(1),
+        if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
+            0
+        } else {
+            PREVIEW_LARGE_PARSE_STRIDE
         }
     }
 }
+
+/// Argument-buffer size above which live previews stop parsing every delta.
+///
+/// Ordinary tool calls stay far below this and re-render delta for delta. A
+/// long `write_file` body would otherwise re-parse the whole buffer thousands
+/// of times, so oversized buffers switch to [`PREVIEW_LARGE_PARSE_STRIDE`].
+const PREVIEW_FULL_PARSE_LIMIT: usize = 4096;
+
+/// Argument bytes accumulated between parses past [`PREVIEW_FULL_PARSE_LIMIT`].
+const PREVIEW_LARGE_PARSE_STRIDE: usize = 4096;
 
 #[derive(Clone, Debug, Default)]
 struct StreamedPreview {
     name: Option<String>,
     arguments: String,
     next_parse_length: usize,
-    last_lines: Option<Vec<String>>,
+    last_args: Option<serde_json::Value>,
+    last_card: Option<ToolCard>,
 }
 
 pub(crate) struct InteractiveToolPresenter {
@@ -160,7 +135,7 @@ impl InteractiveToolPresenter {
         index: usize,
         name: Option<String>,
         arguments_delta: &str,
-    ) -> Option<Vec<String>> {
+    ) -> Option<ToolPresentation> {
         let preview = self.streamed.entry(index).or_default();
         let name_changed = name
             .as_ref()
@@ -171,27 +146,43 @@ impl InteractiveToolPresenter {
         if name_changed {
             preview.arguments.clear();
             preview.next_parse_length = 0;
-            preview.last_lines = None;
+            preview.last_args = None;
+            preview.last_card = None;
         }
         preview.arguments.push_str(arguments_delta);
         let name = preview.name.as_deref()?;
         let kind = ToolKind::from_name(name);
-        if !name_changed
-            && (!kind.preview_uses_arguments()
-                || preview.arguments.len() < preview.next_parse_length)
-        {
+        if !name_changed && preview.arguments.len() < preview.next_parse_length {
             return None;
         }
-        let lines = streaming_preview_lines(kind, name, &preview.arguments, &self.cwd);
+        if let Some(args) = parse_incomplete_json(&preview.arguments) {
+            preview.last_args = Some(args);
+        }
+        let card = match kind {
+            // Keep the last successful parse so a mid-stream incomplete fragment
+            // does not wipe a useful card back to a bare header.
+            ToolKind::Agent => agent_format::agent_streaming_preview_card(
+                preview
+                    .last_args
+                    .as_ref()
+                    .unwrap_or(&serde_json::Value::Object(Default::default())),
+            ),
+            _ => streaming_preview_card(kind, name, preview.last_args.as_ref(), &self.cwd),
+        };
         preview.next_parse_length = preview
             .arguments
             .len()
             .saturating_add(kind.preview_parse_stride(preview.arguments.len()));
-        if preview.last_lines.as_ref() == Some(&lines) {
+        if preview.last_card.as_ref() == Some(&card) {
             return None;
         }
-        preview.last_lines = Some(lines.clone());
-        Some(lines)
+        preview.last_card = Some(card.clone());
+        // Streaming previews carry no notices or image assets; skip a second
+        // argument parse just to assemble ToolPresentation.
+        Some(ToolPresentation {
+            card,
+            image_asset: None,
+        })
     }
 
     pub(crate) fn interrupted(
@@ -209,18 +200,7 @@ impl InteractiveToolPresenter {
             arguments,
             metadata: ToolMetadata::default(),
         };
-        let display_lines = match kind {
-            ToolKind::Agent => agent_format::agent_interrupted_lines_for(&view.arguments),
-            ToolKind::Agents => agent_format::agents_interrupted_lines_for(&view.arguments),
-            _ => {
-                let mut lines = vec![name.to_string()];
-                if !partial_arguments.is_empty() {
-                    lines.push(partial_arguments.to_string());
-                }
-                lines
-            }
-        };
-        presentation(&view, display_lines)
+        presentation(&view, interrupted_card(&view, partial_arguments, &self.cwd))
     }
 
     pub(crate) fn historical(&self, call: &ToolCall, ok: bool, content: &str) -> ToolPresentation {
@@ -230,11 +210,10 @@ impl InteractiveToolPresenter {
             arguments: call.arguments.clone(),
             metadata: ToolMetadata::default(),
         };
-        let lines = finished_lines(&view, content, ok, &self.cwd);
-        presentation(&view, lines)
+        presentation(&view, finished_card(&view, content, ok, &self.cwd))
     }
 
-    pub(crate) fn proposed(&mut self, call: ToolCall) -> Vec<String> {
+    pub(crate) fn proposed(&mut self, call: ToolCall) -> ToolPresentation {
         let id = call.id.clone();
         let view = ToolView {
             kind: ToolKind::from_name(&call.name),
@@ -242,9 +221,9 @@ impl InteractiveToolPresenter {
             arguments: call.arguments,
             metadata: ToolMetadata::default(),
         };
-        let lines = start_lines(&view, &self.cwd);
+        let presented = presentation(&view, start_card(&view, &self.cwd));
         self.calls.insert(id, view);
-        lines
+        presented
     }
 
     pub(crate) fn started(
@@ -263,17 +242,29 @@ impl InteractiveToolPresenter {
         view.kind = ToolKind::from_name(&name);
         view.name = name;
         view.metadata = metadata;
-        presentation(view, start_lines(view, &self.cwd))
+        presentation(view, start_card(view, &self.cwd))
     }
 
-    pub(crate) fn updated(&mut self, call_id: &ToolCallId, progress: &ToolProgress) -> Vec<String> {
-        let Some(view) = self.calls.get_mut(&call_id.to_string()) else {
-            return progress_lines(None, progress);
-        };
-        if progress.presentation() != &ToolMetadata::default() {
-            view.metadata = progress.presentation().clone();
+    pub(crate) fn updated(
+        &mut self,
+        call_id: &ToolCallId,
+        progress: &ToolProgress,
+    ) -> ToolPresentation {
+        if let Some(view) = self.calls.get_mut(&call_id.to_string()) {
+            if progress.presentation() != &ToolMetadata::default() {
+                view.metadata = progress.presentation().clone();
+            }
+            let card = progress_card(Some((view, &self.cwd)), progress);
+            return presentation(view, card);
         }
-        progress_lines(Some((view, &self.cwd)), progress)
+        let card = progress_card(None, progress);
+        let view = ToolView {
+            kind: ToolKind::Other,
+            name: "tool".into(),
+            arguments: serde_json::Value::Object(Default::default()),
+            metadata: ToolMetadata::default(),
+        };
+        presentation(&view, card)
     }
 
     pub(crate) fn finished(
@@ -301,8 +292,8 @@ impl InteractiveToolPresenter {
             ToolCompletion::Unavailable => (false, "tool is unavailable".into()),
             _ => (false, "unknown tool result".into()),
         };
-        let lines = finished_lines(&view, &content, ok, &self.cwd);
-        (ok, presentation(&view, lines))
+        let card = finished_card(&view, &content, ok, &self.cwd);
+        (ok, presentation(&view, card))
     }
 }
 

@@ -220,3 +220,33 @@ async fn stream_read_failure_is_reported_on_stderr() {
         "\n[rho: stdout capture ended early: pipe exploded]\n"
     );
 }
+
+#[test]
+fn shell_content_parses_exit_and_stdout() {
+    let parsed = parse_shell_content(
+        "stdout:\ntests passed\n\nstderr:\nwarning\n\ntime: 0.1s  exit code: 0",
+    );
+    assert_eq!(parsed.stdout, "tests passed");
+    assert_eq!(parsed.exit_code, Some(0));
+    assert_eq!(parsed.exit_status, None);
+    assert_eq!(parsed.duration_ms, Some(100));
+    assert!(!parsed.running);
+}
+
+#[test]
+fn shell_content_preserves_signal_exit_status() {
+    let parsed =
+        parse_shell_content("stdout:\nout\n\nstderr:\nerr\n\ntime: 1.5s  exit code: signal");
+    assert_eq!(parsed.exit_code, None);
+    assert_eq!(parsed.exit_status.as_deref(), Some("signal"));
+    assert_eq!(parsed.duration_ms, Some(1500));
+}
+
+#[test]
+fn shell_content_parses_timeout_notice() {
+    let parsed = parse_shell_content(
+        "command timed out after 5s\n\nstdout:\na\n\nstderr:\nb\n\nstderr:\nwarning",
+    );
+    assert_eq!(parsed.notice.as_deref(), Some("command timed out after 5s"));
+    assert_eq!(parsed.stdout, "a\n\nstderr:\nb");
+}

@@ -178,7 +178,8 @@ impl AppendOnlyStream {
     fn pending_preview(&self, byte_index: usize, skip_leading_newline: bool) -> StreamPreview {
         StreamPreview {
             text: self.pending[..byte_index].to_string(),
-            include_leading_blank: !self.leading_blank_emitted,
+            // Prior entries own the separator blank. Stream text never inserts one.
+            include_leading_blank: false,
             skip_leading_newline,
         }
     }
@@ -190,13 +191,12 @@ impl AppendOnlyStream {
         ends_with_wrap: bool,
     ) -> StreamFragment {
         let text: String = self.pending.drain(..byte_index).collect();
-        let include_leading_blank = !self.leading_blank_emitted;
         self.leading_blank_emitted = true;
         self.previous_emission_ended_at_wrap = ends_with_wrap;
         self.emitted_text.push_str(&text);
         StreamFragment {
             text,
-            include_leading_blank,
+            include_leading_blank: false,
             skip_leading_newline,
         }
     }

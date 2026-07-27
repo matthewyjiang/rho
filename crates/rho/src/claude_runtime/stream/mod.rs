@@ -34,7 +34,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde_json::Value;
 
 use rho_sdk::model::ModelUsage;
-use rho_tools::tool::ToolDisplayStyle;
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
@@ -61,10 +60,6 @@ pub(crate) use types::{
 };
 #[cfg(test)]
 pub(crate) use types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS};
-
-/// Claude tools are rendered with the generic default style. Claude tool names
-/// do not map onto Rho's file/diff/web display kinds.
-pub(crate) const CLAUDE_TOOL_DISPLAY_STYLE: ToolDisplayStyle = ToolDisplayStyle::DefaultTool;
 
 /// Bound on concurrently tracked assistant messages.
 const MAX_TRACKED_MESSAGES: usize = 64;

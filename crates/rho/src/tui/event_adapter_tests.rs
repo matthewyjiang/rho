@@ -5,6 +5,9 @@ use rho_sdk::{
     HostChoice, HostInputRequest, HostQuestion, ProviderStreamResetReason, Revision, RunEvent,
     RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
+use rho_tools::tool_card::{
+    DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+};
 
 use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
 use crate::{
@@ -99,16 +102,20 @@ fn physical_provider_retry_maps_to_typed_view_model_event() {
 fn provider_native_web_search_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
-    assert!(matches!(
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
         only_event(adapter.translate(RunEvent::WebSearch {
             detail: "rho docs".into(),
-        })),
-        ViewEvent::Update(ViewModelEvent::ToolFinished {
-            ok: true,
-            display_lines,
-            ..
-        }) if display_lines == ["web search: rho docs"]
-    ));
+        }))
+    else {
+        panic!("expected web search tool finished");
+    };
+    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.family, ToolFamily::Web);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("web_search", Some("rho docs".into()))
+    );
+    assert!(card.facts.is_empty());
 }
 
 #[test]
@@ -146,8 +153,7 @@ fn retains_structured_tool_metadata_until_completion() {
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
-        ok,
-        display_lines,
+        card,
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
@@ -158,8 +164,26 @@ fn retains_structured_tool_metadata_until_completion() {
     };
 
     assert_eq!(translated_call_id, call_id);
-    assert!(ok);
-    assert_eq!(display_lines, vec!["edit_file src/lib.rs", "-old\n+new"]);
+    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("edit_file", Some("src/lib.rs".into()))
+    );
+    assert_eq!(
+        card.facts,
+        vec![ToolFact::DiffStat {
+            added: 1,
+            removed: 1,
+            path: Some("src/lib.rs".into()),
+        }]
+    );
+    assert_eq!(
+        card.body,
+        ToolBody::Diff(vec![
+            DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
+            DiffRow::new(DiffRowKind::Added, Some(1), "new"),
+        ])
+    );
 }
 
 #[test]
@@ -181,7 +205,7 @@ fn forwards_image_asset_on_tool_completion() {
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
         image_asset,
-        display_lines,
+        card,
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
@@ -193,9 +217,20 @@ fn forwards_image_asset_on_tool_completion() {
 
     assert_eq!(translated_call_id, call_id);
     assert_eq!(image_asset, Some(asset));
+    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.header, ToolHeader::call("read_file", None));
     assert_eq!(
-        display_lines,
-        ["read_file ", "image preview unavailable: invalid image"]
+        card.facts,
+        vec![
+            ToolFact::Count {
+                label: "line".into(),
+                value: 1,
+                detail: None,
+            },
+            ToolFact::Meta {
+                text: "image preview unavailable: invalid image".into(),
+            },
+        ]
     );
 }
 
@@ -207,9 +242,9 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
             trigger: rho_sdk::CompactionTrigger::Automatic,
             message_count: 3,
         })),
-        ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, display_lines })
+        ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, card, .. })
             if call_id == crate::tui::compaction_display::compaction_call_id()
-                && display_lines == crate::tui::compaction_display::running_display_lines()
+                && card == crate::tui::compaction_display::running_card()
     ));
 
     let events = adapter.translate(RunEvent::Failed {
@@ -221,11 +256,14 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            ok: false,
-            display_lines,
+            card,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && display_lines.iter().any(|line| line == "failed")
+            && card.status == ToolStatus::Error
+            && card.facts.iter().any(|fact| matches!(
+                fact,
+                ToolFact::Meta { text } if text == "failed"
+            ))
     ));
     assert!(matches!(
         &events[1],
@@ -248,9 +286,10 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            ok: true,
+            card,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
+            && card.status == ToolStatus::Interrupted
     ));
     assert!(matches!(&events[1], ViewEvent::Cancelled));
 }

@@ -13,7 +13,6 @@ use super::{
     catalog,
     message_history::{recovered_history_tail, transcript_entries_from_messages},
     session_picker::short_session_id,
-    tool_output_ui::is_tool_entry,
     App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
     InlineChoicePending, InteractiveModelSelection, InteractiveRuntime, UiPicker,
     RECOVERED_HISTORY_LINE_LIMIT,
@@ -607,8 +606,6 @@ impl App {
         self.history.set_entries(visible_entries);
         self.history.images_mut().clear();
         self.history.invalidate_from(0);
-        self.history
-            .set_last_inserted_was_tool(self.history.last().is_some_and(is_tool_entry));
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));

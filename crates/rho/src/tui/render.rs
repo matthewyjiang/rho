@@ -9,22 +9,16 @@ pub(super) use entry_render::{
 };
 
 use super::{
-    feed_image::{
-        reserve_entry_image_rows, reserve_markdown_image_rows, reserve_optional_image_rows,
-    },
+    feed_image::{reserve_entry_image_rows, reserve_markdown_image_rows},
     info_command::runtime_info_lines,
     limits_command::usage_limit_lines,
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
-    theme::{Theme, ToolStyle},
-    tool_diff, Entry, FeedImage, PickerBadgeTone, PickerItem, ToolEntryState, UiPicker,
-    DEFAULT_TUI_HEIGHT,
+    theme::Theme,
+    Entry, FeedImage, PickerBadgeTone, PickerItem, UiPicker, DEFAULT_TUI_HEIGHT,
 };
+use rho_providers::model::{image_summary, ImageContent};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-use {
-    rho_providers::model::{image_summary, ImageContent},
-    rho_tools::tool::ToolDisplayStyle,
-};
 
 use ratatui::{
     layout::Position,
@@ -536,27 +530,7 @@ pub(super) fn tool_entry_lines(
     width: usize,
     max_tool_output_lines: usize,
 ) -> Vec<Line<'static>> {
-    let inner_width = padded_inner_width(width);
-    let mut lines = Vec::new();
-    push_tool_block(
-        &mut lines,
-        &tool.display_lines,
-        tool.state,
-        inner_width,
-        max_tool_output_lines,
-        tool.expanded,
-    );
-    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
-    let style = lines
-        .first()
-        .and_then(|line| line.spans.first())
-        .map(|span| span.style)
-        .unwrap_or_default();
-    let mut padded = Vec::with_capacity(lines.len() + 2);
-    padded.push(styled_blank_line(width, style));
-    padded.extend(lines.into_iter().map(pad_line));
-    padded.push(styled_blank_line(width, style));
-    padded
+    super::tool_card_render::tool_entry_lines(tool, width, max_tool_output_lines)
 }
 
 fn render_non_assistant_entry(
@@ -576,14 +550,15 @@ fn render_non_assistant_entry(
         Entry::Assistant(_) | Entry::Reasoning(_) => {
             unreachable!("assistant and reasoning entries are rendered as markdown")
         }
-        Entry::Tool(tool) => push_tool_block(
-            lines,
-            &tool.display_lines,
-            tool.state,
-            width,
-            max_tool_output_lines,
-            tool.expanded,
-        ),
+        Entry::Tool(tool) => {
+            super::tool_card_render::push_tool_card(
+                lines,
+                &tool.card,
+                width,
+                max_tool_output_lines,
+                tool.expanded,
+            );
+        }
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
@@ -595,87 +570,6 @@ fn render_non_assistant_entry(
     }
 }
 
-fn push_tool_block(
-    lines: &mut Vec<Line<'static>>,
-    display_lines: &[String],
-    state: ToolEntryState,
-    width: usize,
-    max_tool_output_lines: usize,
-    expanded: bool,
-) {
-    let style = match state {
-        ToolEntryState::Running => Theme::user_message(),
-        ToolEntryState::Finished { ok, display_style } => tool_style(display_style).for_result(ok),
-    };
-    push_tool_block_with_style(
-        lines,
-        display_lines,
-        width,
-        max_tool_output_lines,
-        expanded,
-        style,
-        matches!(
-            state,
-            ToolEntryState::Finished {
-                display_style: ToolDisplayStyle::FileDiff,
-                ..
-            }
-        ),
-    );
-}
-
-fn push_tool_block_with_style(
-    lines: &mut Vec<Line<'static>>,
-    display_lines: &[String],
-    width: usize,
-    max_tool_output_lines: usize,
-    expanded: bool,
-    style: Style,
-    color_diff: bool,
-) {
-    let logical_lines = tool_diff::logical_lines(display_lines);
-    let max_tool_output_lines = max_tool_output_lines.max(1);
-    let truncated = logical_lines.len() > max_tool_output_lines;
-    let visible_count = if truncated && !expanded {
-        max_tool_output_lines
-    } else {
-        logical_lines.len()
-    };
-
-    for line in logical_lines.iter().take(visible_count) {
-        let line_style = if color_diff {
-            tool_diff::line_style(line, style)
-        } else {
-            style
-        };
-        push_hard_wrapped_text(lines, line, width, line_style, LineFill::PadToWidth);
-    }
-
-    if truncated {
-        let prompt = if expanded {
-            "ctrl+o to collapse".to_string()
-        } else {
-            format!(
-                "... {} more lines, ctrl+o to expand",
-                logical_lines.len() - visible_count
-            )
-        };
-        push_wrapped_text(lines, &prompt, width, style, LineFill::PadToWidth);
-    }
-}
-
-fn tool_style(style: ToolDisplayStyle) -> ToolStyle {
-    match style {
-        ToolDisplayStyle::DefaultTool => Theme::tool_default(),
-        ToolDisplayStyle::FileOrCommand | ToolDisplayStyle::FileDiff => {
-            Theme::tool_file_or_command()
-        }
-        ToolDisplayStyle::Skill => Theme::tool_skill(),
-        ToolDisplayStyle::Web => Theme::tool_web(),
-        ToolDisplayStyle::Questionnaire => Theme::tool_questionnaire(),
-    }
-}
-
 pub(super) fn push_wrapped_text(
     lines: &mut Vec<Line<'static>>,
     text: &str,
@@ -684,16 +578,6 @@ pub(super) fn push_wrapped_text(
     fill: LineFill,
 ) {
     push_wrapped_text_with(lines, text, width, style, fill, wrap_line_at_whitespace);
-}
-
-fn push_hard_wrapped_text(
-    lines: &mut Vec<Line<'static>>,
-    text: &str,
-    width: usize,
-    style: Style,
-    fill: LineFill,
-) {
-    push_wrapped_text_with(lines, text, width, style, fill, wrap_line_hard);
 }
 
 pub(super) fn push_wrapped_text_with(
@@ -755,7 +639,7 @@ fn pad_line(line: Line<'static>) -> Line<'static> {
     Line::from(spans)
 }
 
-fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
+pub(super) fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".repeat(width.max(1)), style))
 }
 
@@ -849,6 +733,88 @@ pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
         chunks.push(current);
     }
     chunks
+}
+
+/// Display width of concatenated styled spans.
+pub(super) fn spans_display_width(spans: &[Span<'_>]) -> usize {
+    spans
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum()
+}
+
+/// Slice concatenated spans by byte offsets into their joined UTF-8 text.
+pub(super) fn slice_spans_by_bytes(
+    spans: &[Span<'static>],
+    start: usize,
+    end: usize,
+) -> Vec<Span<'static>> {
+    if start >= end {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for span in spans {
+        let content = span.content.as_ref();
+        let span_start = offset;
+        let span_end = offset + content.len();
+        offset = span_end;
+        if span_end <= start || span_start >= end {
+            continue;
+        }
+        let from = start.saturating_sub(span_start);
+        let to = (end - span_start).min(content.len());
+        if from >= to {
+            continue;
+        }
+        // Ranges come from the concatenated UTF-8 text, so byte edges are char edges.
+        out.push(Span::styled(content[from..to].to_string(), span.style));
+    }
+    out
+}
+
+/// Hard-wrap multi-span content to `width` display columns, preserving styles.
+pub(super) fn wrap_spans_hard(spans: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>>> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut used = 0;
+
+    for span in spans {
+        let mut chunk = String::new();
+        for character in span.content.chars() {
+            if character == '\n' {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+                continue;
+            }
+            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+            if used > 0 && used + character_width > width {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+            }
+            chunk.push(character);
+            used += character_width;
+            if used >= width {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+            }
+        }
+        push_span_chunk(&mut row, &mut chunk, span.style);
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+fn push_span_chunk(row: &mut Vec<Span<'static>>, chunk: &mut String, style: Style) {
+    if !chunk.is_empty() {
+        row.push(Span::styled(std::mem::take(chunk), style));
+    }
 }
 
 pub(super) fn labeled_divider_line(

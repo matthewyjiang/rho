@@ -4,7 +4,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     ActivityPhase, App, CommandId, CommandInvocation, ComposerMode, Entry, InteractiveRuntime,
-    LoadingSpinner, RunningInputMode, StreamControl, ToolEntry, ToolEntryState, ViewModelEvent,
+    LoadingSpinner, RunningInputMode, StreamControl, ToolEntry, ViewModelEvent,
 };
 
 impl App {
@@ -66,9 +66,8 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         use super::compaction_display::{
-            compaction_call_id, running_display_lines, CompactionDisplayFacts, CompactionUiOutcome,
+            compaction_call_id, running_card, CompactionDisplayFacts, CompactionUiOutcome,
         };
-        use rho_tools::tool::ToolDisplayStyle;
 
         self.pending.steering_prompts_mut().clear();
         self.pending_input_changed();
@@ -76,8 +75,7 @@ impl App {
         self.begin_compact_ui();
         self.turn.set_activity_phase(ActivityPhase::Compacting);
         self.turn.start_loading();
-        self.turn
-            .tool_started(compaction_call_id(), running_display_lines());
+        self.turn.tool_started(compaction_call_id(), running_card());
         terminal.draw(|frame| self.draw(frame))?;
 
         let interrupt_requested = AtomicBool::new(false);
@@ -147,11 +145,7 @@ impl App {
             ),
         };
         self.insert_entry(&Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished {
-                ok: outcome.ok(),
-                display_style: ToolDisplayStyle::default_tool(),
-            },
-            display_lines: outcome.display_lines(),
+            card: outcome.card(),
             expanded,
             image: None,
         }));
@@ -197,7 +191,6 @@ impl App {
         self.history.images_mut().clear();
         self.history.set_images_dirty_from(None);
         self.history.lines_mut().invalidate_from(0);
-        self.history.set_last_inserted_was_tool(false);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.status = "new session".into();

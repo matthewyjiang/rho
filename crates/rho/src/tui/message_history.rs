@@ -5,7 +5,7 @@ use {
     rho_providers::model::{image_summary, ContentBlock, ImageContent, Message, ToolCall},
 };
 
-use super::{render::entry_lines, tool_output_ui::is_tool_entry, Entry, ToolEntry, ToolEntryState};
+use super::{render::entry_lines, Entry, ToolEntry};
 
 pub(super) fn recovered_history_tail(
     entries: &[Entry],
@@ -15,18 +15,14 @@ pub(super) fn recovered_history_tail(
 ) -> (usize, Vec<Entry>) {
     let mut selected_start = entries.len();
     let mut line_count = 0usize;
-    let mut next_is_tool = false;
 
     for (index, entry) in entries.iter().enumerate().rev() {
-        let spacing = is_tool_entry(entry) && next_is_tool;
-        let entry_line_count =
-            entry_lines(entry, width, max_tool_output_lines).len() + usize::from(spacing);
+        let entry_line_count = entry_lines(entry, width, max_tool_output_lines).len();
         if selected_start < entries.len() && line_count + entry_line_count > line_limit {
             break;
         }
         selected_start = index;
         line_count += entry_line_count;
-        next_is_tool = is_tool_entry(entry);
     }
 
     (selected_start, entries[selected_start..].to_vec())
@@ -115,11 +111,7 @@ pub(super) fn transcript_entries_from_messages(
                     let presented =
                         presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
                     entries.push(Entry::Tool(ToolEntry {
-                        state: ToolEntryState::Finished {
-                            ok: false,
-                            display_style: presented.display_style,
-                        },
-                        display_lines: presented.display_lines,
+                        card: presented.card,
                         expanded: false,
                         image: None,
                     }));
@@ -134,11 +126,7 @@ pub(super) fn transcript_entries_from_messages(
                 });
                 let presented = presenter.historical(&call, result.ok, &result.content);
                 entries.push(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished {
-                        ok: result.ok,
-                        display_style: presented.display_style,
-                    },
-                    display_lines: presented.display_lines,
+                    card: presented.card,
                     expanded: false,
                     image: None,
                 }));

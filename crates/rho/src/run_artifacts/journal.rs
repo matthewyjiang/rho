@@ -7,7 +7,7 @@ use std::{
 use rho_sdk::model::{ContextUsage, ModelUsage};
 use serde::{Deserialize, Serialize};
 
-use {crate::subagent, rho_tools::tool::ToolDisplayStyle};
+use {crate::subagent, rho_tools::tool_card::ToolCard};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
@@ -16,15 +16,20 @@ pub(crate) enum AttachmentEvent {
     AssistantTextDelta(String),
     ReasoningDelta(String),
     ToolStarted {
-        display_lines: Vec<String>,
+        /// Stable tool identity for concurrent live cards. Absent on legacy journals.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        card: ToolCard,
     },
     ToolUpdated {
-        display_lines: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        card: ToolCard,
     },
     ToolFinished {
-        ok: bool,
-        display_style: ToolDisplayStyle,
-        display_lines: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        card: ToolCard,
     },
     Notice(String),
     ContextUsage(ContextUsage),

@@ -102,7 +102,7 @@ fn display_text_preserves_output_and_context_state() {
 
     assert_eq!(
         display_text(&output, /*included_in_context*/ true),
-        "$ printf hello\n\nhello"
+        "✓ $ printf hello\nhello"
     );
 }
 
@@ -119,6 +119,6 @@ fn inline_powershell_uses_ps_prompt_and_hides_diagnostics() {
 
     assert_eq!(
         display_text(&output, /*included_in_context*/ false),
-        "PS Write-Output hello\n\nhello"
+        "✗ PS Write-Output hello\nexit 1\n\nhello"
     );
 }

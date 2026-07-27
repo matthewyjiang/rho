@@ -13,6 +13,7 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 use rho_sdk::model::{ContextUsage, ModelUsage};
+use rho_tools::tool_card::ToolCard;
 
 use crate::{
     herdr::{HerdrReporter, HerdrState},
@@ -31,7 +32,7 @@ use super::super::{
         format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
         AttemptAwareRunUsage,
     },
-    Entry, HistoryScroll, ReasoningEntry, ToolEntry, ToolEntryState, HISTORY_MOUSE_SCROLL_LINES,
+    Entry, HistoryScroll, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
@@ -80,7 +81,9 @@ struct AttachmentApp {
     directory: PathBuf,
     reader: AttachmentReader,
     transcript: Vec<Entry>,
-    pending_tool: Option<ToolEntry>,
+    /// Live tools keyed by call id (or a legacy singleton key for old journals).
+    pending_tools: std::collections::BTreeMap<String, ToolEntry>,
+    pending_order: Vec<String>,
     context_usage: Option<ContextUsage>,
     /// Latest provider usage for the attached run, including failed attempts.
     run_usage: AttemptAwareRunUsage,
@@ -104,7 +107,8 @@ impl AttachmentApp {
             directory,
             reader,
             transcript: Vec::new(),
-            pending_tool: None,
+            pending_tools: std::collections::BTreeMap::new(),
+            pending_order: Vec::new(),
             context_usage: None,
             run_usage: AttemptAwareRunUsage::default(),
             provider_attempt: ProviderAttempt::default(),
@@ -190,27 +194,12 @@ impl AttachmentApp {
                     can_append,
                 );
             }
-            AttachmentEvent::ToolStarted { display_lines }
-            | AttachmentEvent::ToolUpdated { display_lines } => {
-                self.pending_tool = Some(ToolEntry {
-                    state: ToolEntryState::Running,
-                    display_lines,
-                    expanded: false,
-                    image: None,
-                });
+            AttachmentEvent::ToolStarted { key, card }
+            | AttachmentEvent::ToolUpdated { key, card } => {
+                self.upsert_pending_tool(key, card);
             }
-            AttachmentEvent::ToolFinished {
-                ok,
-                display_style,
-                display_lines,
-            } => {
-                self.pending_tool = None;
-                self.transcript.push(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished { ok, display_style },
-                    display_lines,
-                    expanded: false,
-                    image: None,
-                }));
+            AttachmentEvent::ToolFinished { key, card } => {
+                self.finish_pending_tool(key, card);
             }
             AttachmentEvent::Notice(notice) => self.transcript.push(Entry::Notice(notice)),
             AttachmentEvent::ContextUsage(usage) => self.context_usage = Some(usage),
@@ -223,21 +212,56 @@ impl AttachmentApp {
             }
             AttachmentEvent::ProviderStreamReset => {
                 self.provider_attempt.reset_output(&mut self.transcript);
-                self.pending_tool = None;
+                self.clear_pending_tools();
                 self.run_usage.attempt_reset();
             }
             AttachmentEvent::Completed => {
-                self.pending_tool = None;
+                self.clear_pending_tools();
             }
             AttachmentEvent::Cancelled => {
-                self.pending_tool = None;
+                self.clear_pending_tools();
                 self.transcript.push(Entry::Notice("agent stopped".into()));
             }
             AttachmentEvent::Failed(message) => {
-                self.pending_tool = None;
+                self.clear_pending_tools();
                 self.transcript.push(Entry::Error(message));
             }
         }
+    }
+
+    fn upsert_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
+        let key = attachment_tool_key(key);
+        let expanded = self
+            .pending_tools
+            .get(&key)
+            .is_some_and(|entry| entry.expanded);
+        if !self.pending_tools.contains_key(&key) {
+            self.pending_order.push(key.clone());
+        }
+        self.pending_tools.insert(
+            key,
+            ToolEntry {
+                card,
+                expanded,
+                image: None,
+            },
+        );
+    }
+
+    fn finish_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
+        let key = attachment_tool_key(key);
+        self.pending_tools.remove(&key);
+        self.pending_order.retain(|pending| pending != &key);
+        self.transcript.push(Entry::Tool(ToolEntry {
+            card,
+            expanded: false,
+            image: None,
+        }));
+    }
+
+    fn clear_pending_tools(&mut self) {
+        self.pending_tools.clear();
+        self.pending_order.clear();
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -405,12 +429,14 @@ impl AttachmentApp {
         for entry in &self.transcript {
             lines.extend(entry_lines(entry, width, MAX_TOOL_OUTPUT_LINES));
         }
-        if let Some(tool) = &self.pending_tool {
-            lines.extend(entry_lines(
-                &Entry::Tool(tool.clone()),
-                width,
-                MAX_TOOL_OUTPUT_LINES,
-            ));
+        for key in &self.pending_order {
+            if let Some(tool) = self.pending_tools.get(key) {
+                lines.extend(entry_lines(
+                    &Entry::Tool(tool.clone()),
+                    width,
+                    MAX_TOOL_OUTPUT_LINES,
+                ));
+            }
         }
         let has_assistant = self
             .transcript
@@ -552,6 +578,14 @@ fn append_stream(
             transcript.push(Entry::Reasoning(ReasoningEntry::new(text)))
         }
     }
+}
+
+/// Map optional journal keys onto a stable pending-tool slot.
+///
+/// Legacy unkeyed events share one singleton slot so old journals keep working.
+fn attachment_tool_key(key: Option<String>) -> String {
+    key.filter(|key| !key.is_empty())
+        .unwrap_or_else(|| "__legacy__".into())
 }
 
 fn herdr_status(id: &str, status: &RunStatus) -> (HerdrState, String) {

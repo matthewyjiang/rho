@@ -4,10 +4,33 @@ use std::{
     process::{Command, Output},
 };
 
+use rho_tools::tool_card::{DiffRow, DiffRowKind};
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct WorktreeDiff {
     pub(super) lines: Vec<String>,
     pub(super) has_changes: bool,
+}
+
+impl WorktreeDiff {
+    /// Patch text as diff rows so `/diff` colors changes like a tool card.
+    ///
+    /// Git output here mixes status, section titles and several patches, so
+    /// rows carry no line numbers and the body renders without a gutter.
+    pub(super) fn rows(&self) -> Vec<DiffRow> {
+        self.lines
+            .iter()
+            .map(|line| match line.as_bytes().first() {
+                Some(b'+') if !line.starts_with("+++") => {
+                    DiffRow::new(DiffRowKind::Added, None, &line[1..])
+                }
+                Some(b'-') if !line.starts_with("---") => {
+                    DiffRow::new(DiffRowKind::Removed, None, &line[1..])
+                }
+                Some(_) | None => DiffRow::new(DiffRowKind::Context, None, line.clone()),
+            })
+            .collect()
+    }
 }
 
 pub(super) fn collect(cwd: &Path) -> anyhow::Result<WorktreeDiff> {
@@ -120,7 +143,36 @@ fn section(title: &str, content: &str) -> Vec<String> {
 mod tests {
     use std::fs;
 
+    use rho_tools::tool_card::DiffRowKind;
+
     use super::*;
+
+    #[test]
+    fn rows_classifies_added_removed_and_keeps_headers_as_context() {
+        let diff = WorktreeDiff {
+            lines: vec![
+                "--- a/file.txt".into(),
+                "+++ b/file.txt".into(),
+                " context".into(),
+                "-old".into(),
+                "+new".into(),
+            ],
+            has_changes: true,
+        };
+
+        let rows = diff.rows();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0].kind, DiffRowKind::Context);
+        assert_eq!(rows[0].text, "--- a/file.txt");
+        assert_eq!(rows[1].kind, DiffRowKind::Context);
+        assert_eq!(rows[1].text, "+++ b/file.txt");
+        assert_eq!(rows[2].kind, DiffRowKind::Context);
+        assert_eq!(rows[2].text, " context");
+        assert_eq!(rows[3].kind, DiffRowKind::Removed);
+        assert_eq!(rows[3].text, "old");
+        assert_eq!(rows[4].kind, DiffRowKind::Added);
+        assert_eq!(rows[4].text, "new");
+    }
 
     #[test]
     fn reports_status_and_patch_for_modified_worktree() {

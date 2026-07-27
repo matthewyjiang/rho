@@ -8,6 +8,65 @@ use tempfile::TempDir;
 use super::*;
 
 #[test]
+fn parallel_pending_tools_keep_independent_slots() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        HerdrReporter::default(),
+    );
+    let card_a = rho_tools::tool_card::ToolCard::new(
+        rho_tools::tool_card::ToolStatus::Running,
+        rho_tools::tool_card::ToolFamily::FileCommand,
+        rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+    );
+    let card_b = rho_tools::tool_card::ToolCard::new(
+        rho_tools::tool_card::ToolStatus::Running,
+        rho_tools::tool_card::ToolFamily::FileCommand,
+        rho_tools::tool_card::ToolHeader::call("read_file", Some("b.rs".into())),
+    );
+    app.apply_event(AttachmentEvent::ToolStarted {
+        key: Some("call-a".into()),
+        card: card_a.clone(),
+    });
+    app.apply_event(AttachmentEvent::ToolStarted {
+        key: Some("call-b".into()),
+        card: card_b.clone(),
+    });
+    app.apply_event(AttachmentEvent::ToolUpdated {
+        key: Some("call-a".into()),
+        card: card_a
+            .clone()
+            .with_facts(vec![rho_tools::tool_card::ToolFact::Meta {
+                text: "reading".into(),
+            }]),
+    });
+    assert_eq!(
+        app.pending_order,
+        vec!["call-a".to_string(), "call-b".to_string()]
+    );
+    assert_eq!(app.pending_tools.len(), 2);
+
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-b".into()),
+        card: card_b
+            .clone()
+            .with_facts(vec![rho_tools::tool_card::ToolFact::Count {
+                label: "lines".into(),
+                value: 2,
+                detail: None,
+            }]),
+    });
+    assert_eq!(app.pending_order, vec!["call-a".to_string()]);
+    assert!(app.pending_tools.contains_key("call-a"));
+    assert!(!app.pending_tools.contains_key("call-b"));
+    assert!(matches!(
+        app.transcript.last(),
+        Some(Entry::Tool(tool)) if tool.card.header_text() == "● read_file(b.rs)"
+    ));
+}
+
+#[test]
 fn provider_retry_replaces_output_but_preserves_presented_events() {
     let directory = TempDir::new().unwrap();
     let mut app = AttachmentApp::new(
@@ -20,9 +79,12 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
     app.apply_event(AttachmentEvent::AssistantTextDelta("discard me".into()));
     app.apply_event(AttachmentEvent::Notice("keep notice".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
-        ok: true,
-        display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
-        display_lines: vec!["keep tool".into()],
+        key: None,
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("keep tool", None),
+        ),
     });
     app.apply_event(AttachmentEvent::ReasoningDelta("discard reasoning".into()));
     app.apply_event(AttachmentEvent::ProviderStreamReset);
@@ -37,7 +99,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
             Entry::Assistant(answer)
         ] if prompt == "delegated task"
             && notice == "keep notice"
-            && tool.display_lines == ["keep tool"]
+            && tool.card.header_text() == "✓ keep tool"
             && answer == "keep me"
     ));
 }

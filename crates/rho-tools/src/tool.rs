@@ -1,48 +1,10 @@
 use std::path::{Component, Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::cancellation::RunCancellation;
 pub use rho_sdk::model::{ToolCall, ToolResult, ToolSpec};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolDisplayStyle {
-    DefaultTool,
-    FileOrCommand,
-    FileDiff,
-    Skill,
-    Web,
-    Questionnaire,
-}
-
-impl ToolDisplayStyle {
-    pub const fn default_tool() -> Self {
-        Self::DefaultTool
-    }
-
-    pub const fn file_or_command() -> Self {
-        Self::FileOrCommand
-    }
-
-    pub const fn file_diff() -> Self {
-        Self::FileDiff
-    }
-
-    pub const fn skill() -> Self {
-        Self::Skill
-    }
-
-    pub const fn web() -> Self {
-        Self::Web
-    }
-
-    pub const fn questionnaire() -> Self {
-        Self::Questionnaire
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct ToolContext {

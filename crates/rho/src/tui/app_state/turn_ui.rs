@@ -1,6 +1,7 @@
 //! Live-turn UI: provider attempt, activity, spinner, and in-flight tools.
 
 use rho_sdk::ToolCallId;
+use rho_tools::tool_card::ToolCard;
 
 use crate::tui::{
     activity::{ActivityPhase, LoadingSpinner},
@@ -139,29 +140,25 @@ impl TurnUi {
         self.tool_calls.clear();
     }
 
-    pub(in crate::tui) fn tool_started(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
-        self.tool_calls.started(call_id, display_lines);
+    pub(in crate::tui) fn tool_started(&mut self, call_id: ToolCallId, card: ToolCard) {
+        self.tool_calls.started(call_id, card);
     }
 
-    pub(in crate::tui) fn tool_updated(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
-        self.tool_calls.updated(call_id, display_lines);
+    pub(in crate::tui) fn tool_updated(&mut self, call_id: ToolCallId, card: ToolCard) {
+        self.tool_calls.updated(call_id, card);
     }
 
     pub(in crate::tui) fn tool_call_preview(
         &mut self,
         index: usize,
         call_id: Option<ToolCallId>,
-        display_lines: Vec<String>,
+        card: ToolCard,
     ) {
-        self.tool_calls.preview(index, call_id, display_lines);
+        self.tool_calls.preview(index, call_id, card);
     }
 
-    pub(in crate::tui) fn tool_call_proposed(
-        &mut self,
-        call_id: ToolCallId,
-        display_lines: Vec<String>,
-    ) {
-        self.tool_calls.preview_call(call_id, display_lines);
+    pub(in crate::tui) fn tool_call_proposed(&mut self, call_id: ToolCallId, card: ToolCard) {
+        self.tool_calls.preview_call(call_id, card);
     }
 
     pub(in crate::tui) fn tool_finished(&mut self, call_id: &ToolCallId) -> bool {

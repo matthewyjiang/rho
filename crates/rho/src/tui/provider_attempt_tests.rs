@@ -1,5 +1,5 @@
 use super::*;
-use crate::tui::{ReasoningEntry, ToolEntry, ToolEntryState};
+use crate::tui::{ReasoningEntry, ToolEntry};
 use std::time::Duration;
 
 #[test]
@@ -11,8 +11,11 @@ fn retry_removes_only_replaceable_provider_output() {
         Entry::Assistant("discard assistant".into()),
         Entry::Notice("keep notice".into()),
         Entry::Tool(ToolEntry {
-            state: ToolEntryState::Running,
-            display_lines: vec!["keep tool".into()],
+            card: rho_tools::tool_card::ToolCard::new(
+                rho_tools::tool_card::ToolStatus::Running,
+                rho_tools::tool_card::ToolFamily::Default,
+                rho_tools::tool_card::ToolHeader::call("keep tool", None),
+            ),
             expanded: false,
             image: None,
         }),
@@ -28,7 +31,7 @@ fn retry_removes_only_replaceable_provider_output() {
         [Entry::User(prompt), Entry::Notice(notice), Entry::Tool(tool)]
             if prompt == "prompt"
                 && notice == "keep notice"
-                && tool.display_lines == ["keep tool"]
+                && tool.card.header_text() == "● keep tool"
     ));
 }
 

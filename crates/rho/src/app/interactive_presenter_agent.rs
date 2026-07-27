@@ -1,4 +1,6 @@
-use super::ToolView;
+use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
+
+use super::{format::draft_card, ToolView};
 
 const TASK_PREVIEW_BYTES: usize = 160;
 /// Live agent prompts are long; show a trailing window so argument streaming keeps
@@ -6,108 +8,131 @@ const TASK_PREVIEW_BYTES: usize = 160;
 const STREAMING_PROMPT_CHARS: usize = 400;
 const STREAMING_PROMPT_LINES: usize = 8;
 
-pub(super) fn agent_start_lines_for(arguments: &serde_json::Value) -> Vec<String> {
-    task_lines(arguments, starting_heading(arguments))
+pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
+    agent_card(
+        arguments,
+        ToolStatus::Running,
+        agent_identity(arguments).unwrap_or("agent"),
+        starting_detail(bool_value(arguments, "background")),
+    )
 }
 
 /// Streaming preview for an in-progress `agent` tool call.
 ///
-/// Reads fields from the raw partial JSON argument buffer instead of completing
-/// and parsing the whole object. Agent prompts are large; rebuilding a JSON
-/// value on every delta is the expensive path this avoids.
-pub(super) fn agent_streaming_preview_from_raw(raw_arguments: &str) -> Vec<String> {
-    let agent_id = partial_object_string_field(raw_arguments, "agent_id")
+/// Uses the shared incomplete-JSON path so agent previews share one parser and
+/// the same large-buffer stride as other tools.
+pub(super) fn agent_streaming_preview_card(arguments: &serde_json::Value) -> ToolCard {
+    let agent_id = agent_identity(arguments)
         .filter(|id| !id.is_empty())
-        .unwrap_or_else(|| "agent".into());
-    let background = partial_object_bool_field(raw_arguments, "background").unwrap_or(false);
-    let mut lines = vec![starting_heading_for(&agent_id, background)];
-    if let Some(prompt) =
-        partial_object_string_field(raw_arguments, "prompt").filter(|prompt| !prompt.is_empty())
-    {
-        lines.extend(live_tail_prompt_lines(&prompt));
+        .unwrap_or("agent");
+    let background = bool_value(arguments, "background");
+    let mut card = bare_agent_card(ToolStatus::Running, agent_id, starting_detail(background));
+    if let Some(prompt) = string_value(arguments, "prompt").filter(|prompt| !prompt.is_empty()) {
+        for line in live_tail_prompt_lines(prompt) {
+            card.push_fact(ToolFact::Text { text: line });
+        }
     }
-    lines
+    card
 }
 
-pub(super) fn agent_interrupted_lines_for(arguments: &serde_json::Value) -> Vec<String> {
-    let agent_id = agent_identity(arguments).unwrap_or("agent");
-    task_lines(arguments, format!("■ {agent_id}  interrupted"))
+pub(super) fn agent_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
+    agent_card(
+        arguments,
+        ToolStatus::Interrupted,
+        agent_identity(arguments).unwrap_or("agent"),
+        "interrupted",
+    )
 }
 
-pub(super) fn agents_interrupted_lines_for(arguments: &serde_json::Value) -> Vec<String> {
+pub(super) fn agents_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
     let action = string_value(arguments, "action").unwrap_or("request");
-    let heading = string_value(arguments, "id").map_or_else(
-        || format!("■ delegated agents  {action} interrupted"),
-        |id| format!("■ {id}  {action} interrupted"),
-    );
-    vec![heading]
+    bare_agent_card(
+        ToolStatus::Interrupted,
+        string_value(arguments, "id").unwrap_or("delegated agents"),
+        format!("{action} interrupted"),
+    )
 }
 
-pub(super) fn agent_progress_lines(view: &ToolView, content: &str) -> Vec<String> {
+pub(super) fn agent_progress_card(view: &ToolView, content: &str) -> ToolCard {
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
-    let mut lines = task_lines(&view.arguments, format!("● {agent_id}  running"));
+    let mut card = agent_card(&view.arguments, ToolStatus::Running, agent_id, "running");
     if let Some(run_id) = run_id_from_agent_line(content.lines().next().unwrap_or_default()) {
-        lines.push(String::new());
-        lines.push(format!("  {run_id} · rho attach {run_id}"));
+        card.body = ToolBody::Lines(vec![format!("{run_id} · rho attach {run_id}")]);
     }
-    lines
+    card
 }
 
-pub(super) fn agent_finished_lines(view: &ToolView, content: &str, ok: bool) -> Vec<String> {
+pub(super) fn agent_finished_card(view: &ToolView, content: &str, ok: bool) -> ToolCard {
     if let (true, Some(receipt)) = (ok, parse_background_receipt(content)) {
-        let mut lines = task_lines(
+        let mut card = agent_card(
             &view.arguments,
-            format!("● {}  running in background", receipt.agent_id),
+            ToolStatus::Running,
+            receipt.agent_id,
+            "running in background",
         );
-        lines.push(String::new());
-        lines.push(format!(
-            "  {} · rho attach {}",
+        card.body = ToolBody::Lines(vec![format!(
+            "{} · rho attach {}",
             receipt.run_id, receipt.run_id
-        ));
-        return lines;
+        )]);
+        return card;
     }
     if let Some(snapshot) = parse_snapshot(content) {
-        return snapshot_lines(view, snapshot, SnapshotDisplay::Completion);
-    }
-    if !ok {
-        let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
-        let mut lines = task_lines(&view.arguments, format!("✗ {agent_id}  failed"));
-        push_content(&mut lines, content);
-        return lines;
+        return snapshot_card(
+            view,
+            snapshot,
+            SnapshotDisplay::Completion,
+            ToolStatus::from_finished(ok),
+        );
     }
 
-    let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
-    let mut lines = task_lines(&view.arguments, format!("✓ {agent_id}  completed"));
-    push_content(&mut lines, content);
-    lines
+    let status = ToolStatus::from_finished(ok);
+    let mut card = agent_card(
+        &view.arguments,
+        status,
+        agent_identity(&view.arguments).unwrap_or("agent"),
+        if ok { "completed" } else { "failed" },
+    );
+    set_content_body(&mut card, content);
+    card
 }
 
-pub(super) fn agents_start_lines_for(arguments: &serde_json::Value) -> Vec<String> {
-    match string_value(arguments, "action") {
-        Some("list") => vec!["● delegated agents  loading".into()],
-        Some("status") => vec![format!(
-            "● {}  checking status",
-            string_value(arguments, "id").unwrap_or("delegated agent")
-        )],
-        Some("stop") => vec![format!(
-            "● {}  stopping",
-            string_value(arguments, "id").unwrap_or("delegated agent")
-        )],
-        Some(action) => vec![format!("● agents  {action}")],
-        None => vec!["agents".into()],
-    }
+pub(super) fn agents_start_card(arguments: &serde_json::Value) -> ToolCard {
+    let (identity, detail) = match string_value(arguments, "action") {
+        Some("list") => ("delegated agents", "loading"),
+        Some("status") => (
+            string_value(arguments, "id").unwrap_or("delegated agent"),
+            "checking status",
+        ),
+        Some("stop") => (
+            string_value(arguments, "id").unwrap_or("delegated agent"),
+            "stopping",
+        ),
+        Some(action) => ("agents", action),
+        None => ("agents", "ready"),
+    };
+    bare_agent_card(ToolStatus::Running, identity, detail)
 }
 
-pub(super) fn agents_finished_lines(view: &ToolView, content: &str, ok: bool) -> Vec<String> {
+pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> ToolCard {
     if !ok {
         let action = string_argument(view, "action").unwrap_or("request");
-        let mut lines = vec![format!("✗ agents {action}  failed")];
-        push_content(&mut lines, content);
-        return lines;
+        let mut card = bare_agent_card(ToolStatus::Error, "agents", format!("{action} failed"));
+        set_content_body(&mut card, content);
+        return card;
     }
 
     match string_argument(view, "action") {
-        Some("list") => agent_list_lines(content),
+        Some("list") => {
+            let mut lines = agent_list_lines(content).into_iter();
+            let mut card = bare_agent_card(ToolStatus::Ok, "delegated agents", "");
+            lines.next();
+            for text in lines {
+                card.push_fact(ToolFact::Text {
+                    text: text.trim_start().to_string(),
+                });
+            }
+            card
+        }
         Some(action @ ("status" | "stop")) => parse_snapshot(content)
             .map(|snapshot| {
                 let display = if action == "status" || snapshot.has_status_metrics() {
@@ -115,155 +140,84 @@ pub(super) fn agents_finished_lines(view: &ToolView, content: &str, ok: bool) ->
                 } else {
                     SnapshotDisplay::Completion
                 };
-                snapshot_lines(view, snapshot, display)
+                snapshot_card(view, snapshot, display, ToolStatus::Ok)
             })
-            .unwrap_or_else(|| agents_result_fallback_lines(view, content)),
+            .unwrap_or_else(|| agents_result_fallback_card(view, content)),
         _ => {
-            let mut lines = vec!["agents".into()];
-            push_content(&mut lines, content);
-            lines
+            let mut card = bare_agent_card(ToolStatus::Ok, "agents", "result");
+            set_content_body(&mut card, content);
+            card
         }
     }
 }
 
-fn agents_result_fallback_lines(view: &ToolView, content: &str) -> Vec<String> {
-    let action = string_argument(view, "action").unwrap_or("request");
-    let id = string_argument(view, "id");
-    let heading = id.map_or_else(
-        || format!("○ agents  {action} result"),
-        |id| format!("○ {id}  {action} result"),
-    );
-    let mut lines = vec![heading];
-    push_content(&mut lines, content);
-    lines
+fn agent_card(
+    arguments: &serde_json::Value,
+    status: ToolStatus,
+    identity: impl Into<String>,
+    detail: impl Into<String>,
+) -> ToolCard {
+    let mut card = bare_agent_card(status, identity, detail);
+    if let Some(task) = task_preview(arguments) {
+        push_agent_fact(&mut card, task);
+    }
+    card
 }
 
-fn starting_heading(arguments: &serde_json::Value) -> String {
-    starting_heading_for(
-        agent_identity(arguments).unwrap_or("agent"),
-        bool_value(arguments, "background"),
+fn bare_agent_card(
+    status: ToolStatus,
+    identity: impl Into<String>,
+    detail: impl Into<String>,
+) -> ToolCard {
+    draft_card(
+        status,
+        rho_tools::tool_card::ToolFamily::Agent,
+        ToolHeader::status_first(identity, detail),
     )
 }
 
-fn starting_heading_for(agent_id: &str, background: bool) -> String {
-    let mode = if background {
+fn push_agent_fact(card: &mut ToolCard, text: String) {
+    if card.status == ToolStatus::Error
+        || text.starts_with("error:")
+        || text.starts_with("attachment error:")
+    {
+        card.push_fact(ToolFact::Error { text });
+    } else {
+        card.push_fact(ToolFact::Text { text });
+    }
+}
+
+fn task_preview(arguments: &serde_json::Value) -> Option<String> {
+    let task = string_value(arguments, "prompt")?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!task.is_empty()).then(|| truncate_preview(&task))
+}
+
+fn starting_detail(background: bool) -> &'static str {
+    if background {
         "starting in background"
     } else {
         "starting"
-    };
-    format!("● {agent_id}  {mode}")
+    }
 }
 
-fn task_lines(arguments: &serde_json::Value, heading: String) -> Vec<String> {
-    let mut lines = vec![heading];
-    if let Some(task) = string_value(arguments, "prompt").filter(|task| !task.is_empty()) {
-        let task = task.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !task.is_empty() {
-            lines.push(format!("  {}", truncate_preview(&task)));
-        }
-    }
-    lines
+fn agents_result_fallback_card(view: &ToolView, content: &str) -> ToolCard {
+    let action = string_argument(view, "action").unwrap_or("request");
+    let mut card = bare_agent_card(
+        ToolStatus::Ok,
+        string_argument(view, "id").unwrap_or("agents"),
+        format!("{action} result"),
+    );
+    set_content_body(&mut card, content);
+    card
 }
 
-/// Pull a string object field out of incomplete tool-call JSON.
-///
-/// Returns the decoded value seen so far when the opening quote has arrived.
-/// Incomplete trailing escapes are dropped so previews stay stable mid-stream.
-fn partial_object_string_field(raw: &str, key: &str) -> Option<String> {
-    let content = partial_object_field_content(raw, key)?;
-    let content = content.trim_start();
-    if content.is_empty() {
-        return Some(String::new());
+fn set_content_body(card: &mut ToolCard, content: &str) {
+    if !content.trim().is_empty() {
+        card.body = ToolBody::Lines(content.lines().map(str::to_string).collect());
     }
-    let content = content.strip_prefix('"')?;
-    Some(decode_partial_json_string(content))
-}
-
-fn partial_object_bool_field(raw: &str, key: &str) -> Option<bool> {
-    let content = partial_object_field_content(raw, key)?.trim_start();
-    if content.starts_with("true") {
-        return Some(true);
-    }
-    if content.starts_with("false") {
-        return Some(false);
-    }
-    None
-}
-
-/// After a top-level object key and colon, return the remainder of `raw`.
-///
-/// Skips matches that appear inside string values so prompt text cannot spoof
-/// later field names.
-fn partial_object_field_content<'a>(raw: &'a str, key: &str) -> Option<&'a str> {
-    let key_pattern = format!("\"{key}\"");
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut index = 0usize;
-    while index < raw.len() {
-        let character = raw[index..].chars().next()?;
-        let character_len = character.len_utf8();
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else {
-                match character {
-                    '\\' => escaped = true,
-                    '"' => in_string = false,
-                    _ => {}
-                }
-            }
-            index += character_len;
-            continue;
-        }
-        if character == '"' {
-            if raw[index..].starts_with(&key_pattern) {
-                let after_key = &raw[index + key_pattern.len()..];
-                if let Some(after_colon) = after_key.trim_start().strip_prefix(':') {
-                    return Some(after_colon);
-                }
-            }
-            in_string = true;
-            index += character_len;
-            continue;
-        }
-        index += character_len;
-    }
-    None
-}
-
-fn decode_partial_json_string(content: &str) -> String {
-    let mut decoded = String::new();
-    let mut chars = content.chars();
-    while let Some(character) = chars.next() {
-        match character {
-            '"' => break,
-            '\\' => match chars.next() {
-                Some('n') => decoded.push('\n'),
-                Some('r') => decoded.push('\r'),
-                Some('t') => decoded.push('\t'),
-                Some('"') => decoded.push('"'),
-                Some('\\') => decoded.push('\\'),
-                Some('/') => decoded.push('/'),
-                Some('b') => decoded.push('\u{0008}'),
-                Some('f') => decoded.push('\u{000c}'),
-                Some('u') => {
-                    let hex: String = chars.by_ref().take(4).collect();
-                    if hex.len() < 4 {
-                        break;
-                    }
-                    if let Ok(code) = u16::from_str_radix(&hex, 16) {
-                        if let Some(unicode) = char::from_u32(u32::from(code)) {
-                            decoded.push(unicode);
-                        }
-                    }
-                }
-                Some(other) => decoded.push(other),
-                None => break,
-            },
-            other => decoded.push(other),
-        }
-    }
-    decoded
 }
 
 fn live_tail_prompt_lines(task: &str) -> Vec<String> {
@@ -297,9 +251,9 @@ fn live_tail_prompt_lines(task: &str) -> Vec<String> {
         .enumerate()
         .map(|(index, line)| {
             if index == 0 && mark_omission {
-                format!("  …{}", line.trim_start())
+                format!("…{}", line.trim_start())
             } else {
-                format!("  {line}")
+                (*line).to_string()
             }
         })
         .collect()
@@ -394,40 +348,25 @@ fn parse_snapshot(content: &str) -> Option<Snapshot<'_>> {
     })
 }
 
-fn snapshot_lines(
+fn snapshot_card(
     view: &ToolView,
     snapshot: Snapshot<'_>,
     display: SnapshotDisplay,
-) -> Vec<String> {
+    fallback_status: ToolStatus,
+) -> ToolCard {
     let metrics_index = snapshot
         .remaining
         .iter()
         .position(|line| line.starts_with("turns: ") || line.starts_with("elapsed: "));
     let metrics = metrics_index.map(|index| snapshot.remaining[index]);
-    let turns = metrics.and_then(turns_from_metrics);
-    let elapsed = metrics.and_then(elapsed_from_metrics);
-
-    let mut details = Vec::new();
-    if let Some(elapsed) = elapsed {
-        details.push(elapsed.to_string());
-    }
-    if let Some(turns) = turns {
-        details.push(turns);
-    }
-    let detail = if details.is_empty() {
-        String::new()
-    } else {
-        format!(" · {}", details.join(" · "))
-    };
-    let mut lines = task_lines(
+    let mut detail = vec![display_state(snapshot.state).to_string()];
+    detail.extend(metrics.and_then(elapsed_from_metrics).map(str::to_string));
+    detail.extend(metrics.and_then(turns_from_metrics));
+    let mut card = agent_card(
         &view.arguments,
-        format!(
-            "{} {}  {}{}",
-            state_glyph(snapshot.state),
-            snapshot.agent_id,
-            display_state(snapshot.state),
-            detail
-        ),
+        snapshot_status(snapshot.state, fallback_status),
+        snapshot.agent_id,
+        detail.join(" · "),
     );
 
     let tokens = metrics.and_then(tokens_from_metrics);
@@ -437,26 +376,40 @@ fn snapshot_lines(
         .find_map(|line| line.strip_prefix("attach: "));
     let (summary_lines, result_lines) =
         snapshot_sections(&snapshot.remaining, metrics_index, display);
-    lines.extend(summary_lines);
+    for text in summary_lines {
+        if !text.is_empty() {
+            push_agent_fact(&mut card, text.trim_start().to_string());
+        }
+    }
 
+    let mut body = Vec::new();
     if tokens.is_some() || attach.is_some() || !snapshot.run_id.is_empty() {
-        lines.push(String::new());
-        lines.push(match (tokens, attach) {
-            (Some(tokens), _) => format!("  {} · {tokens}", snapshot.run_id),
-            (None, Some(attach)) => format!("  {} · {attach}", snapshot.run_id),
-            (None, None) => format!("  {}", snapshot.run_id),
+        body.push(match (tokens, attach) {
+            (Some(tokens), _) => format!("{} · {tokens}", snapshot.run_id),
+            (None, Some(attach)) => format!("{} · {attach}", snapshot.run_id),
+            (None, None) => snapshot.run_id.to_string(),
         });
         if tokens.is_some() {
             if let Some(attach) = attach {
-                lines.push(format!("  {attach}"));
+                body.push(attach.to_string());
             }
         }
     }
-    if !result_lines.is_empty() {
-        lines.push(String::new());
-        lines.extend(result_lines);
+    body.extend(result_lines);
+    if !body.is_empty() {
+        card.body = ToolBody::Lines(body);
     }
-    lines
+    card
+}
+
+fn snapshot_status(state: &str, fallback: ToolStatus) -> ToolStatus {
+    match state {
+        "starting" | "running" => ToolStatus::Running,
+        "ok" => ToolStatus::Ok,
+        "error" => ToolStatus::Error,
+        "stopped" => ToolStatus::Interrupted,
+        _ => fallback,
+    }
 }
 
 fn snapshot_sections(
@@ -576,11 +529,4 @@ fn bool_value(arguments: &serde_json::Value, key: &str) -> bool {
         .get(key)
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
-}
-
-fn push_content(lines: &mut Vec<String>, content: &str) {
-    if !content.trim().is_empty() {
-        lines.push(String::new());
-        lines.push(content.to_string());
-    }
 }

@@ -1,13 +1,14 @@
-use super::theme::Theme;
-use ratatui::style::Style;
+use rho_tools::tool_card::DiffRow;
 
-/// Returns the foreground style for one compact file-diff line.
-pub(super) fn line_style(line: &str, base: Style) -> Style {
-    match line.as_bytes().first() {
-        Some(b'+') => Theme::diff_addition(base),
-        Some(b'-') => Theme::diff_removal(base),
-        Some(_) | None => base,
-    }
+/// Width of the line-number gutter for a diff body.
+///
+/// Zero when no row carries a number, so patch text without numbering (the
+/// `/diff` command) renders without an empty column.
+pub(super) fn gutter_width(rows: &[DiffRow]) -> usize {
+    rows.iter()
+        .filter_map(|row| row.line)
+        .max()
+        .map_or(0, |line| line.to_string().len())
 }
 
 pub(super) fn logical_lines(display_lines: &[String]) -> Vec<String> {
@@ -26,14 +27,25 @@ pub(super) fn logical_lines(display_lines: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Color;
+    use rho_tools::tool_card::DiffRowKind;
 
     use super::*;
 
     #[test]
-    fn colors_added_and_removed_lines() {
-        assert_eq!(line_style("-old", Style::default()).fg, Some(Color::Red));
-        assert_eq!(line_style("+new", Style::default()).fg, Some(Color::Green));
-        assert_eq!(line_style("context", Style::default()), Style::default());
+    fn sizes_gutter_to_the_widest_line_number() {
+        let rows = vec![
+            DiffRow::new(DiffRowKind::Context, Some(9), "keep"),
+            DiffRow::new(DiffRowKind::Added, Some(1204), "new"),
+            DiffRow::new(DiffRowKind::File, None, "src/lib.rs"),
+        ];
+
+        assert_eq!(gutter_width(&rows), 4);
+    }
+
+    #[test]
+    fn drops_the_gutter_when_no_row_is_numbered() {
+        let rows = vec![DiffRow::new(DiffRowKind::Added, None, "new")];
+
+        assert_eq!(gutter_width(&rows), 0);
     }
 }

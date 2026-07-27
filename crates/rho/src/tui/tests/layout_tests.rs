@@ -1,4 +1,13 @@
 use super::*;
+use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+
+fn running_card(verb: &str) -> ToolCard {
+    ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Default,
+        ToolHeader::call(verb, None),
+    )
+}
 
 #[test]
 fn stream_preview_continues_committed_assistant_without_gap() {
@@ -74,6 +83,26 @@ fn finished_stream_restores_trailing_blank_before_next_entry() {
         closed_len,
         open_len + 1,
         "closing the stream should restore the entry trailing blank"
+    );
+
+    app.push_transcript_entry(Entry::User("next prompt".into()));
+    let lines = app
+        .history_lines(60, Instant::now())
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let done_idx = lines
+        .iter()
+        .position(|line| line.contains("Done streaming"))
+        .expect("assistant line");
+    let next_idx = lines
+        .iter()
+        .position(|line| line.contains("next prompt"))
+        .expect("user line");
+    assert_eq!(
+        next_idx,
+        done_idx + 2,
+        "expected exactly one blank between closed stream and next entry, got {lines:#?}"
     );
 }
 
@@ -1016,16 +1045,16 @@ fn started_tool_display_ignores_late_argument_previews() {
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: Some(call_id.clone()),
-        display_lines: vec!["edit_file".into()],
+        card: running_card("edit_file"),
     });
     app.record_agent_event(ViewModelEvent::ToolStarted {
         call_id,
-        display_lines: vec!["edit_file src/main.rs".into()],
+        card: running_card("edit_file src/main.rs"),
     });
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: None,
-        display_lines: vec!["edit_file".into()],
+        card: running_card("edit_file"),
     });
 
     assert_eq!(
@@ -1034,8 +1063,8 @@ fn started_tool_display_ignores_late_argument_previews() {
             .running
             .values()
             .next()
-            .map(|tool| tool.display_lines.as_slice()),
-        Some(["edit_file src/main.rs".to_string()].as_slice())
+            .map(|tool| tool.card.header_text()),
+        Some("● edit_file src/main.rs".to_string())
     );
 }
 
