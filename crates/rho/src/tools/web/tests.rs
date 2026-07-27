@@ -503,12 +503,18 @@ async fn fetch_url_text_pins_the_connection_to_the_vetted_address() {
 
 /// Every connection candidate comes from the validated answer set: the first
 /// vetted address has no listener, so the fetch falls through to the second.
+///
+/// The unreachable candidate is IPv6 loopback, which refuses at once on every
+/// platform. `127.0.0.2` is not routed on macOS, so it stalls instead.
 #[tokio::test]
 async fn fetch_url_text_tries_every_vetted_address() {
     let (address, server) = serve_once_reporting_host("second answer");
-    let candidates = vec!["127.0.0.2".parse().unwrap(), address.ip()];
+    let candidates = vec!["::1".parse().unwrap(), address.ip()];
     let url = format!("http://pinned.invalid:{}/page", address.port());
-    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let loopback = vec![
+        super::ssrf::Cidr::parse("127.0.0.0/8").unwrap(),
+        super::ssrf::Cidr::parse("::1/128").unwrap(),
+    ];
 
     let content = super::ssrf::with_resolver(
         move |_hostname| candidates.clone(),
