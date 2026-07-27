@@ -127,6 +127,7 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
         .expect("session index connection poisoned");
     let workspace_key = workspace_key(cwd);
     let dir = session_dir_in_root(session_root, cwd);
+    let indexed_files = indexed_workspace_files(&connection, &workspace_key)?;
     let mut seen = HashSet::new();
 
     if dir.exists() {
@@ -141,14 +142,10 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
             let transcript = unit.transcript_path();
             seen.insert(id.clone());
             let (file_size, file_mtime) = session_file_stats(&transcript);
-            if indexed_file_is_current(
-                &connection,
-                &workspace_key,
-                &id,
-                &transcript,
-                file_size,
-                file_mtime,
-            )? {
+            if indexed_files
+                .get(&id)
+                .is_some_and(|indexed| indexed.is_current(&transcript, file_size, file_mtime))
+            {
                 continue;
             }
             if let Ok(record) = summarize_session_file(&transcript, cwd) {
@@ -427,6 +424,47 @@ fn set_private_file_permissions(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct IndexedFile {
+    path: String,
+    file_size: Option<i64>,
+    file_mtime: Option<i64>,
+    message_count: i64,
+    first_user_message: Option<String>,
+}
+
+impl IndexedFile {
+    fn is_current(&self, path: &Path, file_size: Option<i64>, file_mtime: Option<i64>) -> bool {
+        self.path == path.to_string_lossy().as_ref()
+            && self.file_size == file_size
+            && self.file_mtime == file_mtime
+            && (self.message_count == 0 || self.first_user_message.is_some())
+    }
+}
+
+fn indexed_workspace_files(
+    connection: &Connection,
+    workspace_key: &str,
+) -> rusqlite::Result<HashMap<String, IndexedFile>> {
+    let mut statement = connection.prepare(
+        "select id, path, file_size, file_mtime, message_count, first_user_message
+         from sessions where workspace_key = ?1",
+    )?;
+    let rows = statement.query_map(params![workspace_key], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            IndexedFile {
+                path: row.get(1)?,
+                file_size: row.get(2)?,
+                file_mtime: row.get(3)?,
+                message_count: row.get(4)?,
+                first_user_message: row.get(5)?,
+            },
+        ))
+    })?;
+    rows.collect()
+}
+
 fn indexed_file_is_current(
     connection: &Connection,
     workspace_key: &str,
@@ -441,24 +479,17 @@ fn indexed_file_is_current(
              from sessions where workspace_key = ?1 and id = ?2",
             params![workspace_key, id],
             |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<i64>>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
+                Ok(IndexedFile {
+                    path: row.get(0)?,
+                    file_size: row.get(1)?,
+                    file_mtime: row.get(2)?,
+                    message_count: row.get(3)?,
+                    first_user_message: row.get(4)?,
+                })
             },
         )
         .optional()?;
-    Ok(current.is_some_and(
-        |(indexed_path, indexed_size, indexed_mtime, message_count, first_user_message)| {
-            indexed_path == path.to_string_lossy().as_ref()
-                && indexed_size == file_size
-                && indexed_mtime == file_mtime
-                && (message_count == 0 || first_user_message.is_some())
-        },
-    ))
+    Ok(current.is_some_and(|indexed| indexed.is_current(path, file_size, file_mtime)))
 }
 
 fn upsert_record(
