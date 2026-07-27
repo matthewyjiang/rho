@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::{StreamPacer, MAX_RESERVE_CHARS};
+use super::{StreamPacer, MAX_RESERVE_CHARS, TARGET_LEAD};
 
 /// Frame interval the TUI ticks the pacer at.
 const TICK: Duration = Duration::from_millis(24);
@@ -17,13 +17,17 @@ fn play(burst: usize, flush: Duration, bursts: usize) -> Vec<usize> {
     let mut now = start;
     let ticks = (flush.as_secs_f64() / TICK.as_secs_f64()).round() as usize;
     for index in 0..bursts {
+        let was_empty = reserve == 0;
         reserve += burst;
-        pacer.record_arrival(now, burst, reserve == burst);
+        if was_empty {
+            pacer.note_refill(now);
+        }
         for _ in 0..ticks.max(1) {
             now += TICK;
             let allowance = pacer.release_allowance(now, reserve);
             reserve -= allowance;
-            // The very first tick has no interval to bill against.
+            // The very first tick has no interval to bill against when note_refill
+            // already stamped last_release at the arrival instant.
             if index > 0 || allowance > 0 {
                 released.push(allowance);
             }
@@ -73,11 +77,14 @@ fn keeps_playing_while_the_provider_stalls() {
     let mut pacer = StreamPacer::default();
     let mut now = start;
 
-    // Establish a rate, then go quiet for far longer than a normal flush.
+    // Establish a reserve, then go quiet for far longer than a normal flush.
     let mut reserve = 0usize;
     for _ in 0..20 {
+        let was_empty = reserve == 0;
         reserve += 13;
-        pacer.record_arrival(now, 13, reserve == 13);
+        if was_empty {
+            pacer.note_refill(now);
+        }
         for _ in 0..2 {
             now += TICK;
             reserve -= pacer.release_allowance(now, reserve);
@@ -99,6 +106,11 @@ fn keeps_playing_while_the_provider_stalls() {
         moved > 0,
         "the reserve should keep text moving through a stall"
     );
+    // Proportional drain empties over roughly TARGET_LEAD once arrivals stop.
+    assert!(
+        reserve < 3,
+        "stall longer than {TARGET_LEAD:?} should nearly empty the reserve, left {reserve}"
+    );
 }
 
 #[test]
@@ -106,7 +118,7 @@ fn releases_a_whole_response_without_pacing_it() {
     let mut pacer = StreamPacer::default();
     let now = Instant::now();
     let reserve = MAX_RESERVE_CHARS + 1;
-    pacer.record_arrival(now, reserve, true);
+    pacer.note_refill(now);
 
     assert_eq!(
         pacer.release_allowance(now + TICK, reserve),
@@ -120,11 +132,11 @@ fn a_new_burst_cannot_spend_time_when_the_reserve_was_empty() {
     let mut pacer = StreamPacer::default();
     let start = Instant::now();
 
-    pacer.record_arrival(start, 5, true);
+    pacer.note_refill(start);
     assert_eq!(pacer.release_allowance(start, 5), 0);
 
     let next_arrival = start + Duration::from_secs(1);
-    pacer.record_arrival(next_arrival, 5, true);
+    pacer.note_refill(next_arrival);
     assert_eq!(
         pacer.release_allowance(next_arrival, 5),
         0,

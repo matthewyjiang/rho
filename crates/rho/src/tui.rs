@@ -201,7 +201,8 @@ const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
 const MIN_COMMAND_DESCRIPTION_WIDTH: usize = 7;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
-const STREAM_PREVIEW_DELAY: Duration = Duration::from_millis(24);
+/// Shared cadence for releasing held stream text and refreshing partial previews.
+const STREAM_UI_TICK: Duration = Duration::from_millis(24);
 const STREAM_PREVIEW_MIN_CHARS: usize = 2;
 const HISTORY_SCROLLBAR_REVEAL_DURATION: Duration = Duration::from_millis(1200);
 const HISTORY_MOUSE_SCROLL_LINES: usize = 3;

@@ -5,13 +5,6 @@ use super::render::{complete_visual_prefix, display_width};
 #[derive(Debug, Default)]
 pub(super) struct AppendOnlyStream {
     pending: String,
-    /// Byte length of the [`Self::pending`] prefix allowed to reach the screen.
-    ///
-    /// Providers flush the network socket in bursts, so text arrives in lumps
-    /// far larger than the pieces the model produced. Only this prefix is
-    /// renderable, which lets [`super::stream_pace::StreamPacer`] hand the burst
-    /// out evenly instead of showing all of it in one frame.
-    released: usize,
     emitted_text: String,
     leading_blank_emitted: bool,
     previous_emission_ended_at_wrap: bool,
@@ -41,7 +34,6 @@ struct RenderableSplit {
 impl AppendOnlyStream {
     pub(super) fn reset(&mut self) {
         self.pending.clear();
-        self.released = 0;
         self.emitted_text.clear();
         self.leading_blank_emitted = false;
         self.previous_emission_ended_at_wrap = false;
@@ -51,40 +43,8 @@ impl AppendOnlyStream {
         self.pending.push_str(delta);
     }
 
-    /// Appends `delta` and makes it renderable at once.
-    ///
-    /// Lets tests of the splitting rules work with the whole buffer, which is
-    /// the pacer's business rather than theirs.
-    #[cfg(test)]
-    pub(super) fn push_delta_released(&mut self, delta: &str) {
-        self.push_delta(delta);
-        self.released = self.pending.len();
-    }
-
     pub(super) fn pending_text(&self) -> &str {
         &self.pending
-    }
-
-    /// Characters held back from the screen.
-    pub(super) fn reserved_chars(&self) -> usize {
-        self.pending[self.released..].chars().count()
-    }
-
-    /// Lets up to `chars` more characters reach the screen.
-    pub(super) fn release(&mut self, chars: usize) {
-        if chars == 0 {
-            return;
-        }
-        let reserve = &self.pending[self.released..];
-        self.released += reserve
-            .char_indices()
-            .nth(chars)
-            .map_or(reserve.len(), |(byte_index, _)| byte_index);
-    }
-
-    /// Text the pacer has allowed onto the screen.
-    fn released_pending(&self) -> &str {
-        &self.pending[..self.released]
     }
 
     #[cfg(test)]
@@ -119,15 +79,10 @@ impl AppendOnlyStream {
         Some(self.pending_preview(split.byte_index, split.skip_leading_newline))
     }
 
-    /// Emits everything still pending, ignoring the release cursor.
-    ///
-    /// A finished stream has nothing left to pace against, so holding a reserve
-    /// would only make the last words late.
     pub(super) fn finish(&mut self) -> Option<StreamFragment> {
         if self.pending.is_empty() {
             return None;
         }
-        self.released = self.pending.len();
         let skip_leading_newline = self.should_skip_leading_newline();
         Some(self.take_pending_prefix(self.pending.len(), skip_leading_newline, false))
     }
@@ -152,10 +107,7 @@ impl AppendOnlyStream {
     ) -> Option<RenderableSplit> {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
-        if self.released <= scan_start {
-            return None;
-        }
-        let pending = &self.released_pending()[scan_start..];
+        let pending = &self.pending[scan_start..];
         let prefix = markdown_stream_prefix(pending, inner_width, in_code_block);
         let mut renderable_byte_index = prefix.byte_index;
         let mut ends_with_wrap = prefix.ends_with_wrap;
@@ -182,10 +134,7 @@ impl AppendOnlyStream {
     fn preview_with_width(&self, rendered_width: impl Fn(&str) -> usize) -> Option<StreamPreview> {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
-        if self.released <= scan_start {
-            return None;
-        }
-        let pending = &self.released_pending()[scan_start..];
+        let pending = &self.pending[scan_start..];
         let split_at = scan_start + self.preview_byte_index(pending, rendered_width)?;
         Some(self.pending_preview(split_at, skip_leading_newline))
     }
@@ -242,7 +191,6 @@ impl AppendOnlyStream {
         ends_with_wrap: bool,
     ) -> StreamFragment {
         let text: String = self.pending.drain(..byte_index).collect();
-        self.released = self.released.saturating_sub(byte_index);
         self.leading_blank_emitted = true;
         self.previous_emission_ended_at_wrap = ends_with_wrap;
         self.emitted_text.push_str(&text);

@@ -5,33 +5,21 @@
 //! 57ms, and occasionally stall for far longer. Drawing each burst as it lands
 //! shows the network's timing rather than the model's.
 //!
-//! The pacer keeps a short reserve of text in hand and releases it at the rate
-//! the model is actually producing. The reserve covers a late flush so text
-//! keeps moving through it, and the measured rate keeps the reserve from either
-//! draining empty or trailing further and further behind.
+//! Held text is drained over [`TARGET_LEAD`]. That keeps about a lead's worth of
+//! characters in reserve at steady state, which covers a late flush, and plays
+//! text at the arrival rate without measuring it.
 
 use std::time::{Duration, Instant};
+
+use super::{
+    markdown::CodeFenceState, stream::AppendOnlyStream, StreamKind, StreamUi,
+    STREAM_PREVIEW_MIN_CHARS, STREAM_UI_TICK,
+};
 
 /// Text kept in reserve, measured as how long it takes to play out.
 ///
 /// This is the stall the pacer can absorb, and the lag it adds in exchange.
 const TARGET_LEAD: Duration = Duration::from_millis(100);
-
-/// How quickly a reserve that is too big or too small is steered back to
-/// [`TARGET_LEAD`].
-///
-/// Short enough to correct within a sentence, long enough that a single late
-/// flush does not visibly change the reading speed.
-const LEAD_CORRECTION: Duration = Duration::from_millis(500);
-
-/// Release rate used until arrivals have been observed for [`MIN_RATE_SAMPLE`].
-///
-/// Close to the rate measured from grok-4.5, so the opening words of a stream
-/// are paced sensibly before there is anything to measure.
-const INITIAL_CHARS_PER_SEC: f64 = 240.0;
-
-/// Arrival window needed before the measured rate replaces the initial guess.
-const MIN_RATE_SAMPLE: Duration = Duration::from_millis(250);
 
 /// Reserve above which text is released without pacing.
 ///
@@ -39,29 +27,12 @@ const MIN_RATE_SAMPLE: Duration = Duration::from_millis(250);
 /// a replayed transcript, must appear at once rather than type itself out.
 const MAX_RESERVE_CHARS: usize = 2048;
 
-/// Interval between opportunities to release reserved text.
-pub(super) const STREAM_PACE_INTERVAL: Duration = Duration::from_millis(24);
-
-/// Releases streamed text at the model's measured speed.
-#[derive(Debug)]
+/// Releases held text by draining the reserve over [`TARGET_LEAD`].
+#[derive(Debug, Default)]
 pub(super) struct StreamPacer {
-    /// Start of the arrival window backing the rate estimate.
-    first_arrival: Option<Instant>,
-    chars_arrived: u64,
     last_release: Option<Instant>,
     /// Fraction of a character carried into the next release.
     carry: f64,
-}
-
-impl Default for StreamPacer {
-    fn default() -> Self {
-        Self {
-            first_arrival: None,
-            chars_arrived: 0,
-            last_release: None,
-            carry: 0.0,
-        }
-    }
 }
 
 impl StreamPacer {
@@ -69,24 +40,16 @@ impl StreamPacer {
         *self = Self::default();
     }
 
-    /// Records text arriving from the provider, for the rate estimate.
+    /// Starts a fresh playback interval after the reserve was empty.
     ///
-    /// `reserve_was_empty` starts a fresh playback interval. Time spent with no
-    /// text available must not be charged against a later burst.
-    pub(super) fn record_arrival(&mut self, now: Instant, chars: usize, reserve_was_empty: bool) {
-        if reserve_was_empty {
-            self.first_arrival = Some(now);
-            self.chars_arrived = chars as u64;
-            self.last_release = Some(now);
-            self.carry = 0.0;
-        } else {
-            self.first_arrival.get_or_insert(now);
-            self.chars_arrived = self.chars_arrived.saturating_add(chars as u64);
-        }
+    /// Time spent with no text available must not be charged against a later burst.
+    fn note_refill(&mut self, now: Instant) {
+        self.last_release = Some(now);
+        self.carry = 0.0;
     }
 
     /// Characters the screen may take now, given how many are held back.
-    pub(super) fn release_allowance(&mut self, now: Instant, reserve_chars: usize) -> usize {
+    fn release_allowance(&mut self, now: Instant, reserve_chars: usize) -> usize {
         if reserve_chars == 0 {
             self.last_release = Some(now);
             self.carry = 0.0;
@@ -109,32 +72,146 @@ impl StreamPacer {
         }
         self.last_release = Some(now);
 
-        let rate = self.arrival_rate(now);
-        let lead = rate * TARGET_LEAD.as_secs_f64();
-        // Steer the reserve toward the target lead: a reserve above it releases
-        // faster, one below it releases slower, so playback tracks the model.
-        let correction = (reserve_chars as f64 - lead) / LEAD_CORRECTION.as_secs_f64();
-        let released = (rate + correction).max(0.0) * elapsed + self.carry;
+        // Drain the reserve over TARGET_LEAD. At steady arrival rate R the
+        // reserve settles near R * TARGET_LEAD, so release rate matches R.
+        let released = reserve_chars as f64 * elapsed / TARGET_LEAD.as_secs_f64() + self.carry;
         let whole = released.floor();
         self.carry = released - whole;
         (whole as usize).min(reserve_chars)
     }
+}
 
-    /// Characters per second the provider has been producing.
-    fn arrival_rate(&self, now: Instant) -> f64 {
-        let Some(first_arrival) = self.first_arrival else {
-            return INITIAL_CHARS_PER_SEC;
+impl StreamUi {
+    pub(super) fn stream(&self, kind: StreamKind) -> &AppendOnlyStream {
+        match kind {
+            StreamKind::Assistant => &self.assistant_stream,
+            StreamKind::Reasoning => &self.reasoning_stream,
+        }
+    }
+
+    pub(super) fn stream_mut(&mut self, kind: StreamKind) -> &mut AppendOnlyStream {
+        match kind {
+            StreamKind::Assistant => &mut self.assistant_stream,
+            StreamKind::Reasoning => &mut self.reasoning_stream,
+        }
+    }
+
+    pub(super) fn code_fence(&self, kind: StreamKind) -> &CodeFenceState {
+        match kind {
+            StreamKind::Assistant => &self.assistant_stream_code_fence,
+            StreamKind::Reasoning => &self.reasoning_stream_code_fence,
+        }
+    }
+
+    pub(super) fn code_fence_mut(&mut self, kind: StreamKind) -> &mut CodeFenceState {
+        match kind {
+            StreamKind::Assistant => &mut self.assistant_stream_code_fence,
+            StreamKind::Reasoning => &mut self.reasoning_stream_code_fence,
+        }
+    }
+
+    /// Characters still held back from the active stream.
+    #[cfg(test)]
+    pub(super) fn held_chars(&self) -> usize {
+        self.hold.chars().count()
+    }
+
+    /// Appends provider text into the hold and releases what the pacer allows.
+    pub(super) fn push_delta(&mut self, kind: StreamKind, text: &str, now: Instant) {
+        if text.is_empty() {
+            self.schedule_tick(kind, now);
+            return;
+        }
+        let was_empty = self.hold.is_empty();
+        self.hold.push_str(text);
+        if was_empty {
+            self.pacer.note_refill(now);
+        }
+        self.release_into(kind, now);
+        self.schedule_tick(kind, now);
+    }
+
+    /// Advances a due stream UI tick: release held text, then leave preview to
+    /// the caller.
+    ///
+    /// Returns whether any held text was moved into the stream.
+    pub(super) fn on_tick(&mut self, now: Instant) -> bool {
+        if self
+            .stream_tick_deadline
+            .is_none_or(|deadline| now < deadline)
+        {
+            return false;
+        }
+        self.stream_tick_deadline = None;
+        let Some(kind) = self.current_stream_kind else {
+            return false;
         };
-        let window = now.saturating_duration_since(first_arrival);
-        if window < MIN_RATE_SAMPLE {
-            return INITIAL_CHARS_PER_SEC;
+        let released = self.release_into(kind, now);
+        self.schedule_tick(kind, now);
+        released
+    }
+
+    /// Dumps every held character into `kind` without pacing.
+    pub(super) fn flush_hold(&mut self, kind: StreamKind) {
+        if self.hold.is_empty() {
+            return;
         }
-        let rate = self.chars_arrived as f64 / window.as_secs_f64();
-        if rate > 0.0 {
-            rate
+        let text = std::mem::take(&mut self.hold);
+        self.stream_mut(kind).push_delta(&text);
+        self.pacer.reset();
+    }
+
+    /// Drops held text without showing it.
+    pub(super) fn discard_hold(&mut self) {
+        self.hold.clear();
+        self.pacer.reset();
+    }
+
+    /// Plays out everything the pacer is holding.
+    ///
+    /// Stands in for the frame ticks a live terminal supplies, so tests can
+    /// assert on streamed text without depending on wall-clock timing.
+    #[cfg(test)]
+    pub(super) fn play_out(&mut self) {
+        if let Some(kind) = self.current_stream_kind {
+            self.flush_hold(kind);
         } else {
-            INITIAL_CHARS_PER_SEC
+            self.discard_hold();
         }
+        self.stream_tick_deadline = None;
+    }
+
+    pub(super) fn schedule_tick(&mut self, kind: StreamKind, now: Instant) {
+        let pending_chars = self.stream(kind).pending_text().chars().count();
+        let needs_tick = !self.hold.is_empty() || pending_chars >= STREAM_PREVIEW_MIN_CHARS;
+        if !needs_tick {
+            self.stream_tick_deadline = None;
+        } else if self.stream_tick_deadline.is_none() {
+            self.stream_tick_deadline = Some(now + STREAM_UI_TICK);
+        }
+    }
+
+    pub(super) fn clear_tick_deadline(&mut self) {
+        self.stream_tick_deadline = None;
+    }
+
+    /// Moves up to the pacer's allowance from the hold into the stream.
+    ///
+    /// Returns whether any text was released.
+    fn release_into(&mut self, kind: StreamKind, now: Instant) -> bool {
+        let reserve = self.hold.chars().count();
+        let chars = self.pacer.release_allowance(now, reserve);
+        if chars == 0 {
+            return false;
+        }
+        let byte_end = self
+            .hold
+            .char_indices()
+            .nth(chars)
+            .map_or(self.hold.len(), |(byte_index, _)| byte_index);
+        let released: String = self.hold.drain(..byte_end).collect();
+        self.stream_mut(kind).push_delta(&released);
+        true
     }
 }
 

@@ -668,11 +668,7 @@ impl App {
         });
         let deadline = self
             .streams
-            .stream_pace_deadline
-            .map_or(deadline, |pace_deadline| pace_deadline.min(deadline));
-        let deadline = self
-            .streams
-            .stream_preview_deadline
+            .stream_tick_deadline
             .map_or(deadline, |stream_deadline| stream_deadline.min(deadline));
         let deadline = self
             .input_ui

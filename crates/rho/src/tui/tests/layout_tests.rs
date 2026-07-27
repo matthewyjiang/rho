@@ -10,7 +10,7 @@ fn running_card(verb: &str) -> ToolCard {
 }
 
 #[test]
-fn a_single_character_reserve_schedules_pacing_without_a_preview() {
+fn a_single_character_hold_schedules_a_stream_tick_without_painting() {
     let mut app = test_app();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     app.begin_provider_turn_ui();
@@ -18,9 +18,10 @@ fn a_single_character_reserve_schedules_pacing_without_a_preview() {
     app.handle_agent_event(ViewModelEvent::OutputDelta("x".into()), &mut terminal)
         .unwrap();
 
-    assert_eq!(app.streams.assistant_stream.reserved_chars(), 1);
-    assert!(app.streams.stream_pace_deadline.is_some());
-    assert!(app.streams.stream_preview_deadline.is_none());
+    assert_eq!(app.streams.held_chars(), 1);
+    assert!(app.streams.assistant_stream.pending_text().is_empty());
+    assert!(app.streams.stream_tick_deadline.is_some());
+    assert!(app.streams.live_stream_preview.is_none());
 }
 
 #[test]
