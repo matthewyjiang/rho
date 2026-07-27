@@ -60,6 +60,7 @@ impl Drop for PendingSessionTitle {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // provider/model/auth identity plus run context
 pub(super) async fn generate_session_title(
     provider_name: String,
     model: String,

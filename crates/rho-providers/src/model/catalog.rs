@@ -163,13 +163,14 @@ pub fn login_targets() -> Vec<LoginTarget> {
     provider::providers()
         .iter()
         .flat_map(|provider| {
-            provider.auth_modes().filter_map(|mode| {
-                (mode.auth_kind != ProviderAuthKind::None).then(|| LoginTarget {
+            provider
+                .auth_modes()
+                .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
+                .map(|mode| LoginTarget {
                     provider: provider.name.into(),
                     auth: mode.id.into(),
                     label: mode.login_label.into(),
                 })
-            })
         })
         .collect()
 }

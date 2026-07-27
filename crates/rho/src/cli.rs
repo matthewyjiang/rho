@@ -12,7 +12,7 @@ fn parse_credential_store_backend(value: &str) -> Result<CredentialStoreBackend,
 
 fn parse_auth_profile(value: &str) -> Result<String, String> {
     let profiles = rho_providers::auth_profiles();
-    if profiles.iter().any(|profile| *profile == value) {
+    if profiles.contains(&value) {
         return Ok(value.to_string());
     }
     Err(format!(
