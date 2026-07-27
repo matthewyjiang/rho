@@ -36,6 +36,7 @@ const XAI_API_BASE: &str = "https://api.x.ai/v1";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderBuildOptions {
     provider: String,
+    auth: String,
     model: String,
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
@@ -61,15 +62,25 @@ impl ProviderBuildOptions {
                 "model name must not be empty".into(),
             ));
         }
-        if provider_runtime(&provider).is_none() {
-            return Err(ModelError::UnsupportedProvider(provider));
-        }
+        let descriptor = provider::provider_descriptor(&provider)
+            .ok_or_else(|| ModelError::UnsupportedProvider(provider.clone()))?;
         Ok(Self {
             provider,
+            auth: descriptor.auth.into(),
             model,
             endpoint: None,
             request_timeout: None,
         })
+    }
+
+    /// Selects an auth profile registered for this provider (or a same-runtime legacy profile).
+    pub fn with_auth(mut self, auth: impl Into<String>) -> Result<Self, ModelError> {
+        let auth = auth.into();
+        let descriptor = provider::resolve_profile(&self.provider, &auth)
+            .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
+        self.provider = descriptor.name.into();
+        self.auth = provider::resolved_auth_id(descriptor, &auth).into();
+        Ok(self)
     }
 
     /// Overrides the provider API base or chat endpoint.
@@ -96,6 +107,10 @@ impl ProviderBuildOptions {
 
     pub(crate) fn provider(&self) -> &str {
         &self.provider
+    }
+
+    pub(crate) fn auth(&self) -> &str {
+        &self.auth
     }
 
     #[cfg(any(debug_assertions, test))]
@@ -161,7 +176,10 @@ impl ProviderBuilder {
         let runtime =
             provider_runtime(descriptor.name).expect("registered providers must declare a runtime");
         let provider_name = descriptor.name;
-        let auth_kind = descriptor.auth_kind;
+        let auth_kind = descriptor
+            .auth_mode(&self.options.auth)
+            .map(|mode| mode.auth_kind)
+            .unwrap_or(descriptor.auth_kind);
         let client = provider_http_client(self.options.request_timeout)?;
         let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
 

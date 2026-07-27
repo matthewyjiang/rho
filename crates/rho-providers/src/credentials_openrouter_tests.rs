@@ -24,7 +24,7 @@ fn blank_openrouter_oauth_keys_are_rejected() {
 #[test]
 fn missing_openrouter_oauth_credentials_name_the_selected_login_profile() {
     let source = ApplicationCredentialSource::new(Arc::new(MemoryCredentialStore::default()));
-    let error = match source.acquire("openrouter-oauth") {
+    let error = match source.acquire("openrouter-oauth", "openrouter-oauth") {
         Ok(_) => panic!("credential acquisition unexpectedly succeeded"),
         Err(error) => error,
     };

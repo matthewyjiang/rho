@@ -107,10 +107,9 @@ enum OAuthCredentials {
 pub struct ProviderAuthentication;
 
 impl ProviderAuthentication {
-    pub fn method(provider_name: &str) -> Result<AuthenticationMethod, AuthenticationError> {
-        let descriptor = provider::provider_descriptor(provider_name)
-            .ok_or_else(|| AuthenticationError::UnsupportedProvider(provider_name.into()))?;
-        Ok(match descriptor.auth_kind {
+    pub fn method(provider_or_auth: &str) -> Result<AuthenticationMethod, AuthenticationError> {
+        let auth_kind = resolve_login_auth_kind(provider_or_auth)?;
+        Ok(match auth_kind {
             ProviderAuthKind::None => AuthenticationMethod::None,
             ProviderAuthKind::ApiKey { entry_label, .. } => {
                 AuthenticationMethod::ApiKey { entry_label }
@@ -138,10 +137,10 @@ impl ProviderAuthentication {
         })
     }
 
-    pub fn supports_device_login(provider_name: &str) -> bool {
-        provider::provider_descriptor(provider_name).is_some_and(|descriptor| {
+    pub fn supports_device_login(provider_or_auth: &str) -> bool {
+        resolve_login_auth_kind(provider_or_auth).is_ok_and(|auth_kind| {
             matches!(
-                descriptor.auth_kind,
+                auth_kind,
                 ProviderAuthKind::CodexOAuth { .. }
                     | ProviderAuthKind::GithubCopilotDevice { .. }
                     | ProviderAuthKind::KimiOAuth { .. }
@@ -152,14 +151,13 @@ impl ProviderAuthentication {
     }
 
     pub async fn start_oauth(
-        provider_name: &str,
+        provider_or_auth: &str,
         mode: OAuthMode,
     ) -> Result<OAuthLogin, AuthenticationError> {
-        let descriptor = provider::provider_descriptor(provider_name)
-            .ok_or_else(|| AuthenticationError::UnsupportedProvider(provider_name.into()))?;
-        match descriptor.auth_kind {
+        let auth_kind = resolve_login_auth_kind(provider_or_auth)?;
+        match auth_kind {
             ProviderAuthKind::None | ProviderAuthKind::ApiKey { .. } => {
-                Err(AuthenticationError::NotOAuth(provider_name.into()))
+                Err(AuthenticationError::NotOAuth(provider_or_auth.into()))
             }
             ProviderAuthKind::CodexOAuth { .. } => start_codex(mode).await,
             ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await,
@@ -176,35 +174,68 @@ impl ProviderAuthentication {
 
     pub fn save_api_key(
         store: &dyn CredentialStore,
-        provider_name: &str,
+        provider_or_auth: &str,
         key: &str,
     ) -> CredentialResult<()> {
-        credentials::save_provider_api_key(store, provider_name, key)
+        credentials::save_provider_api_key(store, provider_or_auth, key)
     }
 
     pub fn delete_credentials(
         store: &dyn CredentialStore,
-        provider_name: &str,
+        provider_or_auth: &str,
     ) -> CredentialResult<bool> {
-        credentials::delete_provider_credentials(store, provider_name)
+        if provider::resolve_auth_mode(provider_or_auth).is_some() {
+            credentials::delete_auth_credentials(store, provider_or_auth)
+        } else {
+            credentials::delete_provider_credentials(store, provider_or_auth)
+        }
     }
 
     pub fn has_credentials(
         store: &dyn CredentialStore,
-        provider_name: &str,
+        provider_or_auth: &str,
     ) -> CredentialResult<bool> {
-        credentials::provider_has_credentials(store, provider_name)
+        if provider::resolve_auth_mode(provider_or_auth).is_some() {
+            credentials::auth_has_credentials(store, provider_or_auth)
+        } else {
+            credentials::provider_has_credentials(store, provider_or_auth)
+        }
     }
 
     pub fn has_stored_credentials(
         store: &dyn CredentialStore,
-        provider_name: &str,
+        provider_or_auth: &str,
     ) -> CredentialResult<bool> {
-        credentials::provider_has_stored_credentials(store, provider_name)
+        if provider::resolve_auth_mode(provider_or_auth).is_some() {
+            credentials::auth_has_stored_credentials(store, provider_or_auth)
+        } else {
+            credentials::provider_has_stored_credentials(store, provider_or_auth)
+        }
     }
 
-    pub fn has_environment_override(provider_name: &str) -> bool {
-        credentials::provider_has_env_override(provider_name)
+    pub fn has_environment_override(provider_or_auth: &str) -> bool {
+        if provider::resolve_auth_mode(provider_or_auth).is_some() {
+            credentials::auth_has_env_override(provider_or_auth)
+        } else {
+            credentials::provider_has_env_override(provider_or_auth)
+        }
+    }
+}
+
+fn resolve_login_auth_kind(
+    provider_or_auth: &str,
+) -> Result<ProviderAuthKind, AuthenticationError> {
+    if let Some((_, mode)) = provider::resolve_auth_mode(provider_or_auth) {
+        return Ok(mode.auth_kind);
+    }
+    let descriptor = provider::provider_descriptor(provider_or_auth)
+        .ok_or_else(|| AuthenticationError::UnsupportedProvider(provider_or_auth.into()))?;
+    let modes = descriptor.auth_modes().collect::<Vec<_>>();
+    match modes.as_slice() {
+        [only] => Ok(only.auth_kind),
+        _ => Err(AuthenticationError::UnsupportedProvider(
+            provider_or_auth.into(),
+        )),
     }
 }
 

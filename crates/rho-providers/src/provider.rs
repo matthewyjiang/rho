@@ -22,7 +22,6 @@ pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 pub enum ProviderId {
     Ollama,
     OllamaCloud,
-    OllamaCloudDevice,
     OpenAi,
     OpenAiCodex,
     Anthropic,
@@ -281,19 +280,45 @@ impl ProviderAuthKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthMode {
+    pub id: &'static str,
+    pub login_label: &'static str,
+    pub auth_kind: ProviderAuthKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProviderDescriptor {
     pub id: ProviderId,
     pub runtime_id: RuntimeProviderId,
     pub name: &'static str,
     pub display_name: &'static str,
+    /// Default auth profile id for this provider.
     pub auth: &'static str,
     pub login_label: &'static str,
     pub auth_kind: ProviderAuthKind,
+    /// Additional auth profiles that share this provider identity and API.
+    pub extra_auth_modes: &'static [AuthMode],
     pub model_source: ProviderModelSource,
     pub model_refresh: Option<ProviderModelRefreshKind>,
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
+}
+
+impl ProviderDescriptor {
+    /// Default auth mode plus any extra modes registered on this provider.
+    pub fn auth_modes(self) -> impl Iterator<Item = AuthMode> {
+        std::iter::once(AuthMode {
+            id: self.auth,
+            login_label: self.login_label,
+            auth_kind: self.auth_kind,
+        })
+        .chain(self.extra_auth_modes.iter().copied())
+    }
+
+    pub fn auth_mode(self, auth: &str) -> Option<AuthMode> {
+        self.auth_modes().find(|mode| mode.id == auth)
+    }
 }
 
 pub const PROVIDERS: &[ProviderDescriptor] = &[
@@ -305,6 +330,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth: "none",
         login_label: "No authentication required",
         auth_kind: ProviderAuthKind::None,
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
@@ -324,23 +350,14 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "Ollama Cloud API key",
             missing_message: "missing Ollama Cloud API key; run /login ollama-cloud in the TUI or set OLLAMA_API_KEY as a CI/dev override",
         },
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "ollama",
-        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
-    },
-    ProviderDescriptor {
-        id: ProviderId::OllamaCloudDevice,
-        runtime_id: RuntimeProviderId::OllamaCloud,
-        name: "ollama-cloud-device",
-        display_name: "Ollama Cloud",
-        auth: "ollama-cloud-device",
-        login_label: "Ollama Cloud device key",
-        auth_kind: ProviderAuthKind::OllamaDeviceKey {
-            account: OLLAMA_CLOUD_DEVICE_SESSION_ACCOUNT,
-            missing_message: "missing Ollama Cloud device key; run /login ollama-cloud-device in the TUI, or sign in with `ollama signin` so ~/.ollama/id_ed25519 is registered",
-        },
+        extra_auth_modes: &[AuthMode {
+            id: "ollama-cloud-device",
+            login_label: "Ollama Cloud device key",
+            auth_kind: ProviderAuthKind::OllamaDeviceKey {
+                account: OLLAMA_CLOUD_DEVICE_SESSION_ACCOUNT,
+                missing_message: "missing Ollama Cloud device key; run /login ollama-cloud in the TUI and choose Device Key, or sign in with `ollama signin` so ~/.ollama/id_ed25519 is registered",
+            },
+        }],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
@@ -360,6 +377,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "OpenAI API key",
             missing_message: "missing OpenAI API key; run /login openai in the TUI or set OPENAI_API_KEY as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAi),
         model_id_codec: ModelIdCodec::Plain,
@@ -378,6 +396,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             account: CODEX_TOKENS_ACCOUNT,
             missing_message: "missing Codex OAuth credentials; run /login openai-codex in the TUI or set CODEX_ACCESS_TOKEN as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
         model_id_codec: ModelIdCodec::Plain,
@@ -397,6 +416,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "Anthropic API key",
             missing_message: "missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Anthropic),
         model_id_codec: ModelIdCodec::Plain,
@@ -416,6 +436,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "Google Gemini API key",
             missing_message: "missing Google Gemini API key; run /login google in the TUI or set GEMINI_API_KEY as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::Google),
         model_id_codec: ModelIdCodec::Plain,
@@ -434,6 +455,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             account: GITHUB_COPILOT_TOKENS_ACCOUNT,
             missing_message: "missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
         model_id_codec: ModelIdCodec::Plain,
@@ -453,6 +475,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "Moonshot API key",
             missing_message: "missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
@@ -472,6 +495,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "Poolside API key",
             missing_message: "missing Poolside API key; run /login poolside in the TUI or set POOLSIDE_API_KEY as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::ProviderPrefixed,
@@ -491,6 +515,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "OpenRouter API key",
             missing_message: "missing OpenRouter API key; run /login openrouter in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
@@ -510,6 +535,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             missing_message: "missing OpenRouter OAuth credentials; run /login openrouter-oauth in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
             acquisition: BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter),
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
@@ -528,6 +554,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             account: KIMI_TOKENS_ACCOUNT,
             missing_message: "missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
@@ -547,6 +574,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             entry_label: "xAI API key",
             missing_message: "missing xAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
         model_id_codec: ModelIdCodec::Plain,
@@ -565,6 +593,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             account: XAI_TOKENS_ACCOUNT,
             missing_message: "missing xAI OAuth credentials; run /login xai-oauth in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override",
         },
+        extra_auth_modes: &[],
         model_source: ProviderModelSource::StaticCatalog,
         model_refresh: None,
         model_id_codec: ModelIdCodec::Plain,
@@ -590,7 +619,8 @@ pub fn credential_env_vars() -> &'static [&'static str] {
     VARS.get_or_init(|| {
         let mut vars: Vec<&'static str> = PROVIDERS
             .iter()
-            .filter_map(|descriptor| descriptor.auth_kind.env_var())
+            .flat_map(|descriptor| descriptor.auth_modes())
+            .filter_map(|mode| mode.auth_kind.env_var())
             .collect();
         vars.sort_unstable();
         vars.dedup();
@@ -611,7 +641,8 @@ pub fn auth_profiles() -> &'static [&'static str] {
         .get_or_init(|| {
             PROVIDERS
                 .iter()
-                .map(|descriptor| descriptor.auth)
+                .flat_map(|descriptor| descriptor.auth_modes())
+                .map(|mode| mode.id)
                 .filter(|auth| *auth != "none")
                 .collect()
         })
@@ -632,32 +663,48 @@ pub fn model_reference(provider: &str, model: &str) -> String {
 pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
     providers()
         .iter()
-        .find(|descriptor| descriptor.auth == auth)
+        .find(|descriptor| descriptor.auth_mode(auth).is_some())
 }
 
-/// Resolves a provider/auth pair to one registered profile.
+/// Resolves an auth profile id to its provider and mode.
+pub fn resolve_auth_mode(auth: &str) -> Option<(&'static ProviderDescriptor, AuthMode)> {
+    let descriptor = provider_descriptor_for_auth(auth)?;
+    let mode = descriptor.auth_mode(auth)?;
+    Some((descriptor, mode))
+}
+
+/// Resolves a provider/auth pair to one registered provider identity.
 ///
-/// An auth profile may replace the named profile only when both use the same
-/// runtime provider. This keeps persisted and nested selections consistent
-/// without teaching config, CLI, or TUI code about individual providers.
+/// - Auth modes registered on the named provider keep that provider name.
+/// - Legacy dual-provider auth profiles (same runtime, different provider name)
+///   still switch to the auth profile's provider when needed.
 pub fn resolve_profile(
     provider_name: &str,
     auth: &str,
 ) -> Result<&'static ProviderDescriptor, ProfileResolutionError> {
     let provider = provider_descriptor(provider_name)
         .ok_or_else(|| ProfileResolutionError::UnknownProvider(provider_name.into()))?;
-    if provider.auth == auth {
+    if provider.auth_mode(auth).is_some() {
         return Ok(provider);
     }
-    let auth_profile = providers()
-        .iter()
-        .find(|descriptor| descriptor.auth == auth)
+    let auth_profile = provider_descriptor_for_auth(auth)
         .ok_or_else(|| ProfileResolutionError::UnknownAuth(auth.into()))?;
     if provider.runtime_id == auth_profile.runtime_id {
         Ok(auth_profile)
     } else {
         Ok(provider)
     }
+}
+
+/// Auth id to persist after [`resolve_profile`].
+///
+/// Keeps an in-provider extra auth mode when valid; otherwise uses the resolved
+/// provider's default auth profile.
+pub fn resolved_auth_id(provider: &ProviderDescriptor, requested_auth: &str) -> &'static str {
+    provider
+        .auth_mode(requested_auth)
+        .map(|mode| mode.id)
+        .unwrap_or(provider.auth)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

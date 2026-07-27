@@ -58,7 +58,8 @@ impl SdkBootstrapOptions {
         request_timeout: Option<Duration>,
     ) -> Result<Self, ModelError> {
         let mut provider =
-            ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?;
+            ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?
+                .with_auth(&config.auth)?;
         if let Some(endpoint) = endpoint {
             provider = provider.endpoint(endpoint)?;
         }

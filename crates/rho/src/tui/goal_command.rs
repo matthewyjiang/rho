@@ -301,11 +301,16 @@ impl App {
             self.turn.start_loading();
             terminal.draw(|frame| self.draw(frame))?;
 
-            let (condition, provider, model) = {
+            let (condition, provider, model, auth) = {
                 let goal = self.goal.as_ref().expect("goal checked above");
                 let selection =
                     self.internal_agent_model_selection(crate::agent::GOAL_JUDGE_AGENT_ID);
-                (goal.condition.clone(), selection.provider, selection.model)
+                (
+                    goal.condition.clone(),
+                    selection.provider,
+                    selection.model,
+                    selection.auth,
+                )
             };
             let history = agent.history();
             let evaluation = {
@@ -316,6 +321,7 @@ impl App {
                     goal::EvaluationRequest {
                         provider_name: &provider,
                         model: &model,
+                        auth: &auth,
                         condition: &condition,
                         messages: &history,
                         cancellation: cancellation.clone(),

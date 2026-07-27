@@ -103,6 +103,7 @@ impl App {
             &self.info.runtime.provider,
             &self.info.runtime.model,
             reasoning,
+            &self.info.runtime.auth,
         ) {
             Ok(provider) => provider,
             Err(err) => {

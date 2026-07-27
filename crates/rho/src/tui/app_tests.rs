@@ -1223,7 +1223,7 @@ async fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
         .map(|item| item.value.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(values, vec!["anthropic", "openai"]);
+    assert_eq!(values, vec!["anthropic-api-key", "api-key"]);
 }
 
 #[tokio::test]
@@ -1239,7 +1239,7 @@ async fn logout_provider_picker_can_include_claude_code_when_signed_in() {
         .map(|item| item.value.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(values, vec!["claude-code", "openai"]);
+    assert_eq!(values, vec!["claude-code", "api-key"]);
 }
 
 #[tokio::test]

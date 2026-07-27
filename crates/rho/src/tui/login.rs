@@ -314,12 +314,38 @@ impl App {
             self.status = "no login required".into();
             return Ok(());
         }
+        // Auth profile ids resolve directly. Multi-mode provider names open the
+        // method picker instead of guessing a default mode.
+        if let Some(target) = catalog::login_target_for_auth(provider) {
+            return self.start_login_for_target(target, terminal, agent).await;
+        }
+        if let Some(group) = catalog::login_group(provider) {
+            match super::provider_picker::login_group_next(group) {
+                super::provider_picker::LoginGroupNext::Provider(value) => {
+                    let Some(target) = catalog::login_target_for_provider(&value) else {
+                        self.insert_entry(&Entry::Error(format!(
+                            "unsupported login provider '{value}'"
+                        )));
+                        self.status = "login failed".into();
+                        return Ok(());
+                    };
+                    return self.start_login_for_target(target, terminal, agent).await;
+                }
+                super::provider_picker::LoginGroupNext::MethodPicker(picker) => {
+                    self.input_ui.set_composer(ComposerMode::Picker(*picker));
+                    self.status = format!("select {provider} login method");
+                    return Ok(());
+                }
+            }
+        }
         let Some(target) = catalog::login_target_for_provider(provider) else {
-            let providers = catalog::login_targets()
+            let mut providers = catalog::login_targets()
                 .into_iter()
                 .map(|target| format!("/login {}", target.provider))
-                .collect::<Vec<_>>()
-                .join(", ");
+                .collect::<Vec<_>>();
+            providers.sort();
+            providers.dedup();
+            let providers = providers.join(", ");
             self.insert_entry(&Entry::Error(format!(
                 "unsupported login provider '{provider}'. Use {providers}, /login {}",
                 claude_login::CLAUDE_CODE_TARGET
@@ -327,8 +353,16 @@ impl App {
             self.status = "login failed".into();
             return Ok(());
         };
+        self.start_login_for_target(target, terminal, agent).await
+    }
 
-        match ProviderAuthentication::method(&target.provider)
+    async fn start_login_for_target(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        match ProviderAuthentication::method(&target.auth)
             .expect("catalog returned unsupported login provider")
         {
             AuthenticationMethod::None => {
@@ -367,7 +401,7 @@ impl App {
         self.cancel_limits_command().await;
         let saved = ProviderAuthentication::save_api_key(
             self.credential_store.as_ref(),
-            &target.provider,
+            &target.auth,
             &key,
         );
         match saved {
@@ -397,19 +431,18 @@ impl App {
         let remote_or_nested = std::env::var_os("SSH_CONNECTION").is_some()
             || std::env::var_os("SSH_TTY").is_some()
             || std::env::var_os("HERDR_ENV").is_some();
-        let mode = if remote_or_nested
-            && ProviderAuthentication::supports_device_login(&target.provider)
-        {
-            OAuthMode::Device
-        } else {
-            OAuthMode::Browser
-        };
+        let mode =
+            if remote_or_nested && ProviderAuthentication::supports_device_login(&target.auth) {
+                OAuthMode::Device
+            } else {
+                OAuthMode::Browser
+            };
         self.status = match mode {
             OAuthMode::Browser => format!("starting {provider_label} login"),
             OAuthMode::Device => format!("starting {provider_label} device login"),
         };
         terminal.draw(|frame| self.draw(frame))?;
-        let login = match ProviderAuthentication::start_oauth(&target.provider, mode).await {
+        let login = match ProviderAuthentication::start_oauth(&target.auth, mode).await {
             Ok(login) => login,
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
@@ -622,17 +655,18 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&provider, &model) else {
             return Ok(false);
         };
-        let new_provider = match build_provider(&provider, &model, reasoning.effective) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but could not refresh {}: {err}",
-                    target.provider
-                )));
-                self.status = "login saved".into();
-                return Ok(false);
-            }
-        };
+        let new_provider =
+            match build_provider(&provider, &model, reasoning.effective, &target.auth) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(format!(
+                        "stored credentials, but could not refresh {}: {err}",
+                        target.provider
+                    )));
+                    self.status = "login saved".into();
+                    return Ok(false);
+                }
+            };
 
         agent.replace_provider(new_provider, reasoning.effective)?;
         self.info
@@ -669,17 +703,18 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
             return Ok(false);
         };
-        let new_provider = match build_provider(&target.provider, &model, reasoning.effective) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but could not activate {}: {err}",
-                    target.provider
-                )));
-                self.status = "login saved".into();
-                return Ok(false);
-            }
-        };
+        let new_provider =
+            match build_provider(&target.provider, &model, reasoning.effective, &target.auth) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(format!(
+                        "stored credentials, but could not activate {}: {err}",
+                        target.provider
+                    )));
+                    self.status = "login saved".into();
+                    return Ok(false);
+                }
+            };
 
         agent.replace_provider(new_provider, reasoning.effective)?;
         self.info.runtime.provider = target.provider.clone();
@@ -735,13 +770,13 @@ impl App {
         self.cancel_limits_command().await;
         let deleted = ProviderAuthentication::delete_credentials(
             self.credential_store.as_ref(),
-            &target.provider,
+            &target.auth,
         );
 
         match deleted {
             Ok(deleted) => {
                 self.refresh_available_auths();
-                let env_active = ProviderAuthentication::has_environment_override(&target.provider);
+                let env_active = ProviderAuthentication::has_environment_override(&target.auth);
                 let message = if env_active {
                     format!(
                         "deleted stored credentials for {}, but an env override is still active",
@@ -780,7 +815,7 @@ impl App {
             self.status = "logout complete".into();
             return false;
         }
-        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.provider)
+        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.auth)
             .unwrap_or(false)
         {
             self.status = "logout complete".into();

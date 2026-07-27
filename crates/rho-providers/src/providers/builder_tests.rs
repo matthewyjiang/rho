@@ -188,16 +188,18 @@ fn explicit_builder_constructs_ollama_cloud_provider() {
 }
 
 #[test]
-fn explicit_builder_constructs_ollama_cloud_device_provider() {
+fn explicit_builder_constructs_ollama_cloud_device_auth_mode() {
     let dir = tempfile::tempdir().unwrap();
     let key = crate::auth::ollama_device::OllamaDeviceKey::load_or_create(dir.path()).unwrap();
-    let options =
-        ProviderBuildOptions::new("ollama-cloud-device", "kimi-k2.6", ReasoningLevel::Off).unwrap();
+    let options = ProviderBuildOptions::new("ollama-cloud", "kimi-k2.6", ReasoningLevel::Off)
+        .unwrap()
+        .with_auth("ollama-cloud-device")
+        .unwrap();
     let credential = ProviderCredential::OpenAiCompatible(CompatibleAuth::OllamaDevice(key));
 
     let provider = ProviderBuilder::new(options, credential).build().unwrap();
 
-    assert_eq!(provider.identity().provider, "ollama-cloud-device");
+    assert_eq!(provider.identity().provider, "ollama-cloud");
     assert_eq!(provider.identity().api, "openai-chat-completions");
     assert_eq!(provider.identity().model, "kimi-k2.6");
 }

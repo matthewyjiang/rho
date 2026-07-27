@@ -523,7 +523,7 @@ impl App {
                 return Ok(None);
             }
         };
-        let new_provider = match build_provider(&provider, &model, reasoning.effective) {
+        let new_provider = match build_provider(&provider, &model, reasoning.effective, &auth) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(

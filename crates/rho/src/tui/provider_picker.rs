@@ -61,7 +61,7 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
             detail: None,
             preview: None,
             badge: None,
-            value: method.target.provider,
+            value: method.target.auth,
         })
         .collect::<Vec<_>>();
     items.extend(
@@ -97,13 +97,17 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
     let mut providers = provider::providers()
         .iter()
         .filter(|descriptor| descriptor.model_refresh.is_some())
-        .filter(|descriptor| available_auths.iter().any(|auth| auth == descriptor.auth))
+        .filter(|descriptor| {
+            descriptor
+                .auth_modes()
+                .any(|mode| available_auths.iter().any(|auth| auth == mode.id))
+        })
         .map(|descriptor| PickerItem {
             section: None,
             label: descriptor.display_name.into(),
             detail: Some(format!(
-                "Refresh cached {} models with {}.",
-                descriptor.display_name, descriptor.login_label
+                "Refresh cached {} models.",
+                descriptor.display_name
             )),
             preview: None,
             badge: None,
@@ -126,7 +130,7 @@ pub(super) fn logout_provider_picker(
 ) -> rho_providers::credentials::CredentialResult<UiPicker> {
     let mut targets = Vec::new();
     for target in catalog::login_targets() {
-        if ProviderAuthentication::has_stored_credentials(store, &target.provider)? {
+        if ProviderAuthentication::has_stored_credentials(store, &target.auth)? {
             targets.push(target);
         }
     }
@@ -155,13 +159,25 @@ fn provider_picker_for_targets(
 ) -> UiPicker {
     let mut items = targets
         .into_iter()
-        .map(|target| PickerItem {
-            section: None,
-            label: target.provider.clone(),
-            detail: Some(target.label),
-            preview: None,
-            badge: None,
-            value: target.provider,
+        .map(|target| {
+            let multi_mode = catalog::login_targets()
+                .iter()
+                .filter(|candidate| candidate.provider == target.provider)
+                .count()
+                > 1;
+            let label = if multi_mode {
+                format!("{} · {}", target.provider, target.label)
+            } else {
+                target.provider.clone()
+            };
+            PickerItem {
+                section: None,
+                label,
+                detail: Some(target.label),
+                preview: None,
+                badge: None,
+                value: target.auth,
+            }
         })
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut items);

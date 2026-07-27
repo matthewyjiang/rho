@@ -33,7 +33,6 @@ The runtime registry includes:
 - `moonshot`
 - `ollama`
 - `ollama-cloud`
-- `ollama-cloud-device`
 - `poolside`
 - `openrouter`
 - `kimi-code`

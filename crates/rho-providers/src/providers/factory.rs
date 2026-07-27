@@ -30,7 +30,7 @@ pub fn build_sdk_provider_with_source(
         return Ok(provider);
     }
 
-    let credential = credentials.acquire(options.provider())?;
+    let credential = credentials.acquire(options.provider(), options.auth())?;
     build_sdk_provider_explicit(options, credential)
 }
 

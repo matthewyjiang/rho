@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    kimi_capabilities, load_api_key_auth, provider_models_client, OpenAiModelsResponse,
-    ProviderModel, ProviderModelHealth,
+    kimi_capabilities, provider_models_client, OpenAiModelsResponse, ProviderModel,
+    ProviderModelHealth,
 };
 
 pub async fn probe_provider_models(
@@ -54,63 +54,25 @@ pub(super) async fn fetch(
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
     let client = provider_models_client()?;
-    let auth = match descriptor.auth_kind {
-        ProviderAuthKind::None => ModelRequestAuth::None,
-        ProviderAuthKind::ApiKey { .. } => {
-            ModelRequestAuth::Bearer(load_api_key_auth(descriptor.name, store)?)
-        }
-        ProviderAuthKind::BearerCredential {
-            env_var,
-            account,
-            missing_message,
-            ..
-        } => ModelRequestAuth::Bearer(match std::env::var(env_var) {
-            Ok(key) if !key.trim().is_empty() => key,
-            _ => store
-                .get_secret(account)?
-                .filter(|key| !key.trim().is_empty())
-                .ok_or_else(|| crate::model::registry::missing_credential_error(missing_message))?,
-        }),
-        ProviderAuthKind::KimiOAuth { .. } => {
-            let env_var = descriptor
-                .auth_kind
-                .env_var()
-                .expect("Kimi OAuth must declare an environment variable");
-            let missing = || crate::model::registry::missing_credentials_error("kimi-code");
-            let mut tokens = match std::env::var(env_var) {
-                Ok(access_token) if !access_token.trim().is_empty() => KimiTokens {
-                    access_token,
-                    refresh_token: None,
-                    expires_at_unix: None,
-                    scope: String::new(),
-                    token_type: "Bearer".into(),
-                    expires_in: None,
-                },
-                _ => load_kimi_tokens(store)?.ok_or_else(missing)?,
-            };
-            if token_is_expiring(&tokens) {
-                let refresh_token = tokens.refresh_token.as_deref().ok_or_else(missing)?;
-                tokens = refresh_kimi_tokens(&client, refresh_token)
-                    .await
-                    .map_err(|error| match error {
-                        KimiOAuthError::Unauthorized(_) => missing(),
-                        error => ModelError::InvalidResponse(error.to_string()),
-                    })?;
-                save_kimi_tokens(store, &tokens)?;
+    let mut last_missing = None;
+    let mut auth = None;
+    for mode in descriptor.auth_modes() {
+        match load_model_request_auth(mode.auth_kind, store, &client).await {
+            Ok(loaded) => {
+                auth = Some(loaded);
+                break;
             }
-            ModelRequestAuth::Bearer(tokens.access_token)
+            Err(error) if is_missing_credentials(&error) => last_missing = Some(error),
+            Err(error) => return Err(error),
         }
-        ProviderAuthKind::OllamaDeviceKey {
-            missing_message, ..
-        } => ModelRequestAuth::OllamaDevice(OllamaDeviceKey::load_default().map_err(|error| {
-            match error {
-                crate::auth::ollama_device::OllamaDeviceError::MissingKey(_) => {
-                    crate::model::registry::missing_credential_error(missing_message)
-                }
-                error => ModelError::InvalidResponse(error.to_string()),
-            }
-        })?),
-        _ => return Err(ModelError::UnsupportedProvider(descriptor.name.into())),
+    }
+    let auth = match auth {
+        Some(auth) => auth,
+        None => {
+            return Err(last_missing.unwrap_or_else(|| {
+                crate::model::registry::missing_credentials_error(descriptor.name)
+            }))
+        }
     };
     let models_url = Url::parse(&format!(
         "{}/models",
@@ -158,6 +120,77 @@ pub(super) async fn fetch(
     models.sort_by(|left, right| left.model.cmp(&right.model));
     models.dedup_by(|left, right| left.model == right.model);
     Ok(models)
+}
+
+async fn load_model_request_auth(
+    auth_kind: ProviderAuthKind,
+    store: &dyn CredentialStore,
+    client: &reqwest::Client,
+) -> Result<ModelRequestAuth, ModelError> {
+    match auth_kind {
+        ProviderAuthKind::None => Ok(ModelRequestAuth::None),
+        ProviderAuthKind::ApiKey {
+            env_var,
+            account,
+            missing_message,
+            ..
+        }
+        | ProviderAuthKind::BearerCredential {
+            env_var,
+            account,
+            missing_message,
+            ..
+        } => Ok(ModelRequestAuth::Bearer(match std::env::var(env_var) {
+            Ok(key) if !key.trim().is_empty() => key,
+            _ => store
+                .get_secret(account)?
+                .filter(|key| !key.trim().is_empty())
+                .ok_or_else(|| crate::model::registry::missing_credential_error(missing_message))?,
+        })),
+        ProviderAuthKind::KimiOAuth { .. } => {
+            let env_var = auth_kind
+                .env_var()
+                .expect("Kimi OAuth must declare an environment variable");
+            let missing = || crate::model::registry::missing_credentials_error("kimi-code");
+            let mut tokens = match std::env::var(env_var) {
+                Ok(access_token) if !access_token.trim().is_empty() => KimiTokens {
+                    access_token,
+                    refresh_token: None,
+                    expires_at_unix: None,
+                    scope: String::new(),
+                    token_type: "Bearer".into(),
+                    expires_in: None,
+                },
+                _ => load_kimi_tokens(store)?.ok_or_else(missing)?,
+            };
+            if token_is_expiring(&tokens) {
+                let refresh_token = tokens.refresh_token.as_deref().ok_or_else(missing)?;
+                tokens = refresh_kimi_tokens(client, refresh_token)
+                    .await
+                    .map_err(|error| match error {
+                        KimiOAuthError::Unauthorized(_) => missing(),
+                        error => ModelError::InvalidResponse(error.to_string()),
+                    })?;
+                save_kimi_tokens(store, &tokens)?;
+            }
+            Ok(ModelRequestAuth::Bearer(tokens.access_token))
+        }
+        ProviderAuthKind::OllamaDeviceKey {
+            missing_message, ..
+        } => Ok(ModelRequestAuth::OllamaDevice(
+            OllamaDeviceKey::load_default().map_err(|error| match error {
+                crate::auth::ollama_device::OllamaDeviceError::MissingKey(_) => {
+                    crate::model::registry::missing_credential_error(missing_message)
+                }
+                error => ModelError::InvalidResponse(error.to_string()),
+            })?,
+        )),
+        _ => Err(ModelError::UnsupportedProvider("auth mode".into())),
+    }
+}
+
+fn is_missing_credentials(error: &ModelError) -> bool {
+    matches!(error, ModelError::MissingCredentials(_))
 }
 
 enum ModelRequestAuth {

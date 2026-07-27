@@ -690,7 +690,13 @@ fn model_identity_for_selection(
     selection: &ModelSelection,
     reasoning: rho_providers::reasoning::ReasoningLevel,
 ) -> Result<ModelIdentity, rho_providers::model::ModelError> {
-    Ok(build_provider(&selection.provider, &selection.model, reasoning)?.identity())
+    Ok(build_provider(
+        &selection.provider,
+        &selection.model,
+        reasoning,
+        &selection.auth,
+    )?
+    .identity())
 }
 
 fn current_runtime_selection(app: &App) -> InteractiveModelSelection {

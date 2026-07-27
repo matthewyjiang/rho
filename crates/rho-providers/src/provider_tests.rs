@@ -259,7 +259,8 @@ fn ollama_descriptor_is_keyless_and_refreshes_compatible_models() {
 fn auth_profiles_are_derived_from_provider_table() {
     let expected: Vec<&str> = super::providers()
         .iter()
-        .map(|descriptor| descriptor.auth)
+        .flat_map(|descriptor| descriptor.auth_modes())
+        .map(|mode| mode.id)
         .filter(|auth| *auth != "none")
         .collect();
     assert_eq!(super::auth_profiles(), expected.as_slice());
@@ -283,16 +284,19 @@ fn ollama_cloud_missing_credentials_come_from_descriptor_message() {
 }
 
 #[test]
-fn ollama_cloud_device_missing_credentials_come_from_descriptor_message() {
+fn ollama_cloud_device_auth_mode_is_registered_on_provider() {
     use super::ProviderId;
 
-    let message = super::provider_descriptor_by_id(ProviderId::OllamaCloudDevice)
+    let descriptor = super::provider_descriptor_by_id(ProviderId::OllamaCloud);
+    let mode = descriptor
+        .auth_mode("ollama-cloud-device")
+        .expect("device auth mode");
+    assert_eq!(mode.id, "ollama-cloud-device");
+    let message = mode
         .auth_kind
         .missing_message()
-        .expect("ollama-cloud-device requires credentials");
-    let error = crate::model::registry::missing_credentials_error("ollama-cloud-device");
-    assert_eq!(error.to_string(), message);
-    assert!(message.contains("/login ollama-cloud-device"));
+        .expect("device mode requires credentials");
+    assert!(message.contains("/login ollama-cloud"));
     assert!(message.contains("ollama signin"));
 }
 
@@ -300,7 +304,8 @@ fn ollama_cloud_device_missing_credentials_come_from_descriptor_message() {
 fn credential_env_vars_track_provider_auth_kinds() {
     let mut expected: Vec<&str> = super::providers()
         .iter()
-        .filter_map(|descriptor| descriptor.auth_kind.env_var())
+        .flat_map(|descriptor| descriptor.auth_modes())
+        .filter_map(|mode| mode.auth_kind.env_var())
         .collect();
     expected.sort_unstable();
     expected.dedup();

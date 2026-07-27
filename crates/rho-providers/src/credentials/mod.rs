@@ -209,19 +209,23 @@ pub fn save_provider_api_key(
     provider: &str,
     key: &str,
 ) -> CredentialResult<()> {
-    let Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) =
-        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
-    else {
+    // Prefer an exact auth profile id, then fall back to the provider default.
+    let auth_kind = provider::resolve_auth_mode(provider)
+        .map(|(_, mode)| mode.auth_kind)
+        .or_else(|| {
+            provider::provider_descriptor(provider).and_then(|descriptor| {
+                descriptor
+                    .auth_modes()
+                    .find(|mode| matches!(mode.auth_kind, ProviderAuthKind::ApiKey { .. }))
+                    .map(|mode| mode.auth_kind)
+            })
+        });
+    let Some(ProviderAuthKind::ApiKey { account, .. }) = auth_kind else {
         return Err(CredentialError::InvalidData(format!(
             "provider '{provider}' does not use API key credentials"
         )));
     };
-    store.set_secret(
-        auth_kind
-            .account()
-            .expect("API key provider must declare a credential account"),
-        key,
-    )
+    store.set_secret(account, key)
 }
 
 pub fn save_openrouter_oauth_key(store: &dyn CredentialStore, key: &str) -> CredentialResult<()> {
@@ -237,11 +241,27 @@ pub fn delete_provider_credentials(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<bool> {
-    let Some(auth_kind) =
-        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
-    else {
+    let Some(descriptor) = provider::provider_descriptor(provider) else {
         return Ok(false);
     };
+    let mut deleted = false;
+    for mode in descriptor.auth_modes() {
+        deleted |= delete_auth_kind_credentials(store, mode.auth_kind)?;
+    }
+    Ok(deleted)
+}
+
+pub fn delete_auth_credentials(store: &dyn CredentialStore, auth: &str) -> CredentialResult<bool> {
+    let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
+        return Ok(false);
+    };
+    delete_auth_kind_credentials(store, mode.auth_kind)
+}
+
+fn delete_auth_kind_credentials(
+    store: &dyn CredentialStore,
+    auth_kind: ProviderAuthKind,
+) -> CredentialResult<bool> {
     let Some(account) = auth_kind.account() else {
         return Ok(false);
     };
@@ -322,30 +342,67 @@ pub fn provider_has_env_override(provider: &str) -> bool {
 
 fn provider_has_env_override_from(
     provider: &str,
-    env_value: impl FnOnce(&str) -> Option<String>,
+    env_value: impl Fn(&str) -> Option<String>,
 ) -> bool {
     let Some(descriptor) = provider::provider_descriptor(provider) else {
         return false;
     };
-    let Some(env_var) = descriptor.auth_kind.env_var() else {
+    descriptor.auth_modes().any(|mode| {
+        mode.auth_kind
+            .env_var()
+            .is_some_and(|env_var| env_value(env_var).is_some_and(|value| !value.trim().is_empty()))
+    })
+}
+
+pub fn auth_has_env_override(auth: &str) -> bool {
+    let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
         return false;
     };
-    env_value(env_var).is_some_and(|value| !value.trim().is_empty())
+    mode.auth_kind
+        .env_var()
+        .is_some_and(|env_var| std::env::var(env_var).is_ok_and(|value| !value.trim().is_empty()))
 }
 
 pub fn provider_has_stored_credentials(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<bool> {
-    let Some(auth_kind) =
-        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
-    else {
+    let Some(descriptor) = provider::provider_descriptor(provider) else {
         return Ok(false);
     };
-    let Some(account) = auth_kind.account() else {
+    for mode in descriptor.auth_modes() {
+        if auth_mode_has_stored_credentials(store, mode.auth_kind)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub fn auth_has_stored_credentials(
+    store: &dyn CredentialStore,
+    auth: &str,
+) -> CredentialResult<bool> {
+    let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
         return Ok(false);
     };
-    Ok(store.get_secret(account)?.is_some())
+    auth_mode_has_stored_credentials(store, mode.auth_kind)
+}
+
+fn auth_mode_has_stored_credentials(
+    store: &dyn CredentialStore,
+    auth_kind: ProviderAuthKind,
+) -> CredentialResult<bool> {
+    match auth_kind {
+        ProviderAuthKind::None => Ok(true),
+        auth_kind => {
+            let Some(account) = auth_kind.account() else {
+                return Ok(false);
+            };
+            Ok(store
+                .get_secret(account)?
+                .is_some_and(|value| !value.trim().is_empty()))
+        }
+    }
 }
 
 pub fn provider_has_credentials(
@@ -355,35 +412,54 @@ pub fn provider_has_credentials(
     if provider_has_env_override(provider) {
         return Ok(true);
     }
-    match provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind) {
-        Some(ProviderAuthKind::None) => Ok(true),
-        Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) => Ok(store
-            .get_secret(
-                auth_kind
-                    .account()
-                    .expect("API key provider must declare a credential account"),
-            )?
-            .is_some()),
-        Some(ProviderAuthKind::CodexOAuth { .. }) => Ok(load_codex_tokens(store)?.is_some()),
-        Some(ProviderAuthKind::GithubCopilotDevice { .. }) => {
-            Ok(load_github_copilot_tokens(store)?.is_some())
+    let Some(descriptor) = provider::provider_descriptor(provider) else {
+        return Ok(false);
+    };
+    for mode in descriptor.auth_modes() {
+        if auth_mode_has_credentials(store, mode.auth_kind)? {
+            return Ok(true);
         }
-        Some(ProviderAuthKind::XaiOAuth { .. }) => Ok(load_xai_tokens(store)?.is_some()),
-        Some(ProviderAuthKind::BearerCredential { account, .. }) => Ok(store
+    }
+    Ok(false)
+}
+
+pub fn auth_has_credentials(store: &dyn CredentialStore, auth: &str) -> CredentialResult<bool> {
+    if auth_has_env_override(auth) {
+        return Ok(true);
+    }
+    let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
+        return Ok(false);
+    };
+    auth_mode_has_credentials(store, mode.auth_kind)
+}
+
+fn auth_mode_has_credentials(
+    store: &dyn CredentialStore,
+    auth_kind: ProviderAuthKind,
+) -> CredentialResult<bool> {
+    match auth_kind {
+        ProviderAuthKind::None => Ok(true),
+        ProviderAuthKind::ApiKey { account, .. }
+        | ProviderAuthKind::BearerCredential { account, .. } => Ok(store
             .get_secret(account)?
             .is_some_and(|key| !key.trim().is_empty())),
-        Some(ProviderAuthKind::KimiOAuth { .. }) => Ok(load_kimi_tokens(store)?.is_some()),
-        Some(ProviderAuthKind::OllamaDeviceKey { .. }) => {
+        ProviderAuthKind::CodexOAuth { .. } => Ok(load_codex_tokens(store)?.is_some()),
+        ProviderAuthKind::GithubCopilotDevice { .. } => {
+            Ok(load_github_copilot_tokens(store)?.is_some())
+        }
+        ProviderAuthKind::XaiOAuth { .. } => Ok(load_xai_tokens(store)?.is_some()),
+        ProviderAuthKind::KimiOAuth { .. } => Ok(load_kimi_tokens(store)?.is_some()),
+        ProviderAuthKind::OllamaDeviceKey { .. } => {
             crate::auth::ollama_device::ollama_device_credentials_available(store)
         }
-        None => Ok(false),
     }
 }
 
 pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
     provider::providers()
         .iter()
-        .filter(|provider| provider_has_credentials(store, provider.name).unwrap_or(false))
-        .map(|provider| provider.auth.to_string())
+        .flat_map(|provider| provider.auth_modes())
+        .filter(|mode| auth_mode_has_credentials(store, mode.auth_kind).unwrap_or(false))
+        .map(|mode| mode.id.to_string())
         .collect()
 }
