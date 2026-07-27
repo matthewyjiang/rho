@@ -18,7 +18,7 @@ fn line_styles(line: &Line<'_>) -> Vec<Style> {
 }
 
 #[test]
-fn reasoning_entry_renders_inline_markdown_and_remains_dim() {
+fn reasoning_entry_renders_inline_markdown_with_dim_foreground() {
     let rendered = render_entry(
         &Entry::Reasoning("thinking with **bold** and *emphasis*".into()),
         80,
@@ -45,9 +45,11 @@ fn reasoning_entry_renders_inline_markdown_and_remains_dim() {
         .find(|span| span.content == "emphasis")
         .expect("italic span");
     assert!(bold.style.add_modifier.contains(Modifier::BOLD));
-    assert!(bold.style.add_modifier.contains(Modifier::DIM));
     assert!(italic.style.add_modifier.contains(Modifier::ITALIC));
-    assert!(italic.style.add_modifier.contains(Modifier::DIM));
+    for span in [bold, italic] {
+        assert_eq!(span.style.fg, Some(Color::DarkGray));
+        assert!(!(span.style.add_modifier - span.style.sub_modifier).contains(Modifier::DIM));
+    }
 }
 
 #[test]
