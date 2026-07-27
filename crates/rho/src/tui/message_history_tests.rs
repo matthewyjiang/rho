@@ -28,7 +28,7 @@ fn interrupted_tool_call_uses_the_tool_name_without_a_preparing_label() {
     else {
         panic!("expected an interrupted tool entry followed by a notice");
     };
-    assert_eq!(display_lines[0], "read_file");
+    assert_eq!(display_lines[0], "■ read_file(src/main.rs)");
     assert_eq!(notice, "model interrupted");
 }
 
@@ -38,7 +38,7 @@ fn interrupted_agent_tools_hide_partial_json() {
         (
             "agent",
             r#"{"agent_id":"explorer","prompt":"Audit the repository"#,
-            vec!["■ explorer  interrupted", "  Audit the repository"],
+            vec!["■ explorer  interrupted", "  └ Audit the repository"],
         ),
         (
             "agents",

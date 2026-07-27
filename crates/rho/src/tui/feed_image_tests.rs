@@ -42,6 +42,7 @@ fn image_tool() -> Entry {
             display_style: ToolDisplayStyle::FileOrCommand,
         },
         display_lines: vec!["read_file photo.png".into()],
+        card: None,
         expanded: false,
         image: Some(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap()),
     })

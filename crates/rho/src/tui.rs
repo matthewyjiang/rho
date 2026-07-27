@@ -108,6 +108,7 @@ mod terminal_session;
 mod text_selection;
 mod theme;
 mod tool_call_batch;
+mod tool_card_render;
 mod tool_diff;
 mod tool_output_ui;
 mod tree_actions;

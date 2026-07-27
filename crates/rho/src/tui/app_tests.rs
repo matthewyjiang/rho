@@ -105,6 +105,7 @@ fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
             display_style: ToolDisplayStyle::file_or_command(),
         },
         display_lines: display_lines.iter().map(|line| (*line).into()).collect(),
+        card: None,
         expanded: false,
         image: None,
     })
@@ -418,12 +419,14 @@ fn recovered_session_messages_become_transcript_entries() {
             },
             ref display_lines,
             ..
-        }) if display_lines == &vec!["read_file src/main.rs".to_string()]
+        }) if display_lines.iter().any(|line| line.contains("read_file") && line.contains("src/main.rs"))
     ));
     let lines = entry_lines(&entries[2], 40, 10);
-    assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[0].style.bg, Some(Color::Red));
-    assert!(!lines[1].spans[0].style.add_modifier.contains(Modifier::DIM));
+    // Call + Children: failure is a red status marker, not a washed surface.
+    assert_eq!(lines[1].spans[0].style.fg, Some(Color::Red));
+    assert_eq!(lines[1].spans[0].style.bg, None);
+    assert!(line_text(&lines[1]).contains('✗'));
+    assert!(line_text(&lines[1]).contains("read_file"));
 }
 
 #[test]
@@ -462,6 +465,7 @@ fn skill_tool_block_shows_single_magenta_status_line() {
                 display_style: ToolDisplayStyle::skill(),
             },
             display_lines: vec!["skill caveman".into()],
+            card: None,
             expanded: false,
             image: None,
         }),
@@ -486,6 +490,7 @@ fn skill_tool_block_uses_subtle_red_failure_background() {
                 display_style: ToolDisplayStyle::skill(),
             },
             display_lines: vec!["unknown skill".into()],
+            card: None,
             expanded: false,
             image: None,
         }),
@@ -746,7 +751,7 @@ fn spinner_is_anchored_immediately_above_composer_divider() {
     app.begin_provider_turn_ui();
     app.turn
         .tool_calls_mut()
-        .preview(0, None, vec!["bash".into(), "cargo test".into()]);
+        .preview(0, None, vec!["bash".into(), "cargo test".into()], None);
     let width = 40;
     let height = 24;
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -1609,7 +1614,7 @@ fn history_lines_include_header_transcript_pending_preview_but_not_activity_row(
     app.push_transcript_entry(Entry::User("hello".into()));
     app.turn
         .tool_calls_mut()
-        .preview(0, None, vec!["bash".into(), "cargo test".into()]);
+        .preview(0, None, vec!["bash".into(), "cargo test".into()], None);
     app.streams.live_stream_preview = Some(LiveStreamPreview {
         kind: StreamKind::Assistant,
         text: "partial answer".into(),

@@ -64,6 +64,7 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
         started,
         vec![AttachmentEvent::ToolStarted {
             display_lines: running_display_lines(),
+            card: None,
         }]
     );
 
@@ -83,12 +84,14 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
             ok: true,
             display_style: ToolDisplayStyle::default_tool(),
             display_lines: display_lines.clone(),
+            card: None,
             image_asset: None,
         }),
         Some(AttachmentEvent::ToolFinished {
             ok: true,
             display_style: ToolDisplayStyle::default_tool(),
             display_lines,
+            card: None,
         })
     );
 }
@@ -122,6 +125,7 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
             ok: false,
             display_style: ToolDisplayStyle::default_tool(),
             display_lines: failed_lines,
+            card: None,
         }
     );
     assert_eq!(

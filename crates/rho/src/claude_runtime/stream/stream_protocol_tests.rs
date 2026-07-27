@@ -144,7 +144,7 @@ fn maps_live_success_capture_round_trip() {
 fn maps_tool_call_and_result_display() {
     let effects = effects_from_fixture("tool_call.ndjson");
     let started = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines }) => {
+        StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines, .. }) => {
             Some(display_lines.clone())
         }
         _ => None,
@@ -442,7 +442,7 @@ fn bounds_retained_text_result_and_tool_payloads() {
     );
     let effects = map_line(&tool_line);
     let started = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines }) => {
+        StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines, .. }) => {
             Some(display_lines.join("\n"))
         }
         _ => None,

@@ -120,6 +120,7 @@ pub(super) fn transcript_entries_from_messages(
                             display_style: presented.display_style,
                         },
                         display_lines: presented.display_lines,
+                        card: Some(presented.card),
                         expanded: false,
                         image: None,
                     }));
@@ -139,6 +140,7 @@ pub(super) fn transcript_entries_from_messages(
                         display_style: presented.display_style,
                     },
                     display_lines: presented.display_lines,
+                    card: Some(presented.card),
                     expanded: false,
                     image: None,
                 }));

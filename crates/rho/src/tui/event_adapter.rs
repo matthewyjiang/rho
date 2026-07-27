@@ -5,7 +5,7 @@ use rho_sdk::{
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
     crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
-    rho_tools::tool::ToolDisplayStyle,
+    rho_tools::{tool::ToolDisplayStyle, tool_card::ToolCard},
 };
 
 use super::{
@@ -24,6 +24,7 @@ pub(super) enum ViewModelEvent {
     ToolStarted {
         call_id: rho_sdk::ToolCallId,
         display_lines: Vec<String>,
+        card: Option<ToolCard>,
     },
     ProviderStreamReset,
     ProviderRetry,
@@ -34,11 +35,13 @@ pub(super) enum ViewModelEvent {
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
         display_lines: Vec<String>,
+        card: Option<ToolCard>,
     },
     ToolCallUpdated {
         index: usize,
         call_id: Option<rho_sdk::ToolCallId>,
         display_lines: Vec<String>,
+        card: Option<ToolCard>,
     },
     /// Final proposal for a tool call, keyed only by call id.
     ///
@@ -47,12 +50,14 @@ pub(super) enum ViewModelEvent {
     ToolCallProposed {
         call_id: rho_sdk::ToolCallId,
         display_lines: Vec<String>,
+        card: Option<ToolCard>,
     },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
         ok: bool,
         display_style: ToolDisplayStyle,
         display_lines: Vec<String>,
+        card: Option<ToolCard>,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
 }
@@ -155,11 +160,12 @@ impl SdkEventAdapter {
                 let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
                 self.presenter()
                     .preview(index, name, &arguments_delta)
-                    .map_or_else(Vec::new, |display_lines| {
+                    .map_or_else(Vec::new, |presented| {
                         vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
                             index,
                             call_id,
-                            display_lines,
+                            display_lines: presented.display_lines,
+                            card: Some(presented.card),
                         })]
                     })
             }
@@ -167,10 +173,11 @@ impl SdkEventAdapter {
                 let Ok(call_id) = rho_sdk::ToolCallId::from_string(call.id.clone()) else {
                     return Vec::new();
                 };
-                let display_lines = self.presenter().proposed(call);
+                let presented = self.presenter().proposed(call);
                 vec![ViewEvent::Update(ViewModelEvent::ToolCallProposed {
                     call_id,
-                    display_lines,
+                    display_lines: presented.display_lines,
+                    card: Some(presented.card),
                 })]
             }
             RunEvent::ToolStarted {
@@ -178,20 +185,19 @@ impl SdkEventAdapter {
                 name,
                 metadata,
             } => {
-                let display_lines = self
-                    .presenter()
-                    .started(call_id.clone(), name, metadata)
-                    .display_lines;
+                let presented = self.presenter().started(call_id.clone(), name, metadata);
                 vec![ViewEvent::Update(ViewModelEvent::ToolStarted {
                     call_id,
-                    display_lines,
+                    display_lines: presented.display_lines,
+                    card: Some(presented.card),
                 })]
             }
             RunEvent::ToolUpdated { call_id, progress } => {
-                let display_lines = self.presenter().updated(&call_id, &progress);
+                let presented = self.presenter().updated(&call_id, &progress);
                 vec![ViewEvent::Update(ViewModelEvent::ToolUpdated {
                     call_id,
-                    display_lines,
+                    display_lines: presented.display_lines,
+                    card: Some(presented.card),
                 })]
             }
             RunEvent::ToolFinished { call_id, result } => {
@@ -201,6 +207,7 @@ impl SdkEventAdapter {
                     ok,
                     display_style: presented.display_style,
                     display_lines: presented.display_lines,
+                    card: Some(presented.card),
                     image_asset: presented.image_asset,
                 })]
             }
@@ -213,6 +220,7 @@ impl SdkEventAdapter {
                     ok: true,
                     display_style: ToolDisplayStyle::web(),
                     display_lines: vec![format!("web search: {detail}")],
+                    card: None,
                     image_asset: None,
                 })]
             }
@@ -289,6 +297,7 @@ fn compaction_started() -> ViewModelEvent {
     ViewModelEvent::ToolStarted {
         call_id: compaction_call_id(),
         display_lines: running_display_lines(),
+        card: None,
     }
 }
 
@@ -298,6 +307,7 @@ fn compaction_finished(outcome: CompactionUiOutcome) -> ViewModelEvent {
         ok: outcome.ok(),
         display_style: ToolDisplayStyle::default_tool(),
         display_lines: outcome.display_lines(),
+        card: None,
         image_asset: None,
     }
 }

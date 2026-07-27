@@ -408,6 +408,74 @@ impl Theme {
         )
     }
 
+    /// Status marker color for Call + Children tool cards.
+    pub(super) fn tool_marker(status: rho_tools::tool_card::ToolStatus) -> Style {
+        use rho_tools::tool_card::ToolStatus;
+        match status {
+            ToolStatus::Running => Self::accent(),
+            ToolStatus::Ok => Self::success(),
+            ToolStatus::Error => Self::error(),
+            ToolStatus::Interrupted => Self::warning(),
+            ToolStatus::Blocked => Self::warning().add_modifier(Modifier::BOLD),
+        }
+    }
+
+    /// Family color for the tool verb / shell prompt.
+    pub(super) fn tool_verb(family: rho_tools::tool_card::ToolFamily) -> Style {
+        use rho_tools::tool_card::ToolFamily;
+        let palette = Palette::current();
+        match family {
+            ToolFamily::FileCommand => Style::default().fg(palette.success),
+            ToolFamily::Web => Style::default().fg(AnsiColor::Blue.color()),
+            ToolFamily::Skill => Style::default().fg(palette.skill),
+            ToolFamily::Form => Style::default().fg(palette.warning),
+            ToolFamily::Agent => Self::text(),
+            ToolFamily::Default => Self::dim(),
+        }
+    }
+
+    /// Primary argument style in the header.
+    pub(super) fn tool_primary(_family: rho_tools::tool_card::ToolFamily) -> Style {
+        Self::text()
+    }
+
+    pub(super) fn tool_tree() -> Style {
+        Self::dim()
+    }
+
+    pub(super) fn tool_meta() -> Style {
+        Self::dim()
+    }
+
+    pub(super) fn tool_path() -> Style {
+        Self::dim()
+    }
+
+    pub(super) fn tool_stat_add() -> Style {
+        Style::default().fg(Palette::current().success)
+    }
+
+    pub(super) fn tool_stat_del() -> Style {
+        Style::default().fg(Palette::current().error)
+    }
+
+    pub(super) fn tool_exit(ok: bool) -> Style {
+        if ok {
+            Self::success()
+        } else {
+            Self::error()
+        }
+    }
+
+    pub(super) fn tool_error_text() -> Style {
+        Self::error()
+    }
+
+    /// Explicit padding style for tool cards (never sample the marker span).
+    pub(super) fn tool_card_padding() -> Style {
+        Self::text()
+    }
+
     fn dim_block(background: BlockColor) -> Style {
         Style::default()
             .fg(block_foreground(background.rgb))

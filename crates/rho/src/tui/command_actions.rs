@@ -77,7 +77,7 @@ impl App {
         self.turn.set_activity_phase(ActivityPhase::Compacting);
         self.turn.start_loading();
         self.turn
-            .tool_started(compaction_call_id(), running_display_lines());
+            .tool_started(compaction_call_id(), running_display_lines(), None);
         terminal.draw(|frame| self.draw(frame))?;
 
         let interrupt_requested = AtomicBool::new(false);
@@ -152,6 +152,7 @@ impl App {
                 display_style: ToolDisplayStyle::default_tool(),
             },
             display_lines: outcome.display_lines(),
+            card: None,
             expanded,
             image: None,
         }));

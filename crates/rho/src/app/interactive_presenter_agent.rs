@@ -1,3 +1,5 @@
+use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
 use super::ToolView;
 
 const TASK_PREVIEW_BYTES: usize = 160;
@@ -6,8 +8,11 @@ const TASK_PREVIEW_BYTES: usize = 160;
 const STREAMING_PROMPT_CHARS: usize = 400;
 const STREAMING_PROMPT_LINES: usize = 8;
 
-pub(super) fn agent_start_lines_for(arguments: &serde_json::Value) -> Vec<String> {
-    task_lines(arguments, starting_heading(arguments))
+pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
+    card_from_agent_lines(
+        task_lines(arguments, starting_heading(arguments)),
+        ToolStatus::Running,
+    )
 }
 
 /// Streaming preview for an in-progress `agent` tool call.
@@ -15,7 +20,7 @@ pub(super) fn agent_start_lines_for(arguments: &serde_json::Value) -> Vec<String
 /// Reads fields from the raw partial JSON argument buffer instead of completing
 /// and parsing the whole object. Agent prompts are large; rebuilding a JSON
 /// value on every delta is the expensive path this avoids.
-pub(super) fn agent_streaming_preview_from_raw(raw_arguments: &str) -> Vec<String> {
+pub(super) fn agent_streaming_preview_card(raw_arguments: &str) -> ToolCard {
     let agent_id = partial_object_string_field(raw_arguments, "agent_id")
         .filter(|id| !id.is_empty())
         .unwrap_or_else(|| "agent".into());
@@ -26,34 +31,37 @@ pub(super) fn agent_streaming_preview_from_raw(raw_arguments: &str) -> Vec<Strin
     {
         lines.extend(live_tail_prompt_lines(&prompt));
     }
-    lines
+    card_from_agent_lines(lines, ToolStatus::Running)
 }
 
-pub(super) fn agent_interrupted_lines_for(arguments: &serde_json::Value) -> Vec<String> {
+pub(super) fn agent_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
     let agent_id = agent_identity(arguments).unwrap_or("agent");
-    task_lines(arguments, format!("■ {agent_id}  interrupted"))
+    card_from_agent_lines(
+        task_lines(arguments, format!("■ {agent_id}  interrupted")),
+        ToolStatus::Interrupted,
+    )
 }
 
-pub(super) fn agents_interrupted_lines_for(arguments: &serde_json::Value) -> Vec<String> {
+pub(super) fn agents_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
     let action = string_value(arguments, "action").unwrap_or("request");
     let heading = string_value(arguments, "id").map_or_else(
         || format!("■ delegated agents  {action} interrupted"),
         |id| format!("■ {id}  {action} interrupted"),
     );
-    vec![heading]
+    card_from_agent_lines(vec![heading], ToolStatus::Interrupted)
 }
 
-pub(super) fn agent_progress_lines(view: &ToolView, content: &str) -> Vec<String> {
+pub(super) fn agent_progress_card(view: &ToolView, content: &str) -> ToolCard {
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
     let mut lines = task_lines(&view.arguments, format!("● {agent_id}  running"));
     if let Some(run_id) = run_id_from_agent_line(content.lines().next().unwrap_or_default()) {
         lines.push(String::new());
         lines.push(format!("  {run_id} · rho attach {run_id}"));
     }
-    lines
+    card_from_agent_lines(lines, ToolStatus::Running)
 }
 
-pub(super) fn agent_finished_lines(view: &ToolView, content: &str, ok: bool) -> Vec<String> {
+pub(super) fn agent_finished_card(view: &ToolView, content: &str, ok: bool) -> ToolCard {
     if let (true, Some(receipt)) = (ok, parse_background_receipt(content)) {
         let mut lines = task_lines(
             &view.arguments,
@@ -64,26 +72,29 @@ pub(super) fn agent_finished_lines(view: &ToolView, content: &str, ok: bool) -> 
             "  {} · rho attach {}",
             receipt.run_id, receipt.run_id
         ));
-        return lines;
+        return card_from_agent_lines(lines, ToolStatus::Running);
     }
     if let Some(snapshot) = parse_snapshot(content) {
-        return snapshot_lines(view, snapshot, SnapshotDisplay::Completion);
+        return card_from_agent_lines(
+            snapshot_lines(view, snapshot, SnapshotDisplay::Completion),
+            ToolStatus::from_finished(ok),
+        );
     }
     if !ok {
         let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
         let mut lines = task_lines(&view.arguments, format!("✗ {agent_id}  failed"));
         push_content(&mut lines, content);
-        return lines;
+        return card_from_agent_lines(lines, ToolStatus::Error);
     }
 
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
     let mut lines = task_lines(&view.arguments, format!("✓ {agent_id}  completed"));
     push_content(&mut lines, content);
-    lines
+    card_from_agent_lines(lines, ToolStatus::Ok)
 }
 
-pub(super) fn agents_start_lines_for(arguments: &serde_json::Value) -> Vec<String> {
-    match string_value(arguments, "action") {
+pub(super) fn agents_start_card(arguments: &serde_json::Value) -> ToolCard {
+    let lines = match string_value(arguments, "action") {
         Some("list") => vec!["● delegated agents  loading".into()],
         Some("status") => vec![format!(
             "● {}  checking status",
@@ -94,20 +105,21 @@ pub(super) fn agents_start_lines_for(arguments: &serde_json::Value) -> Vec<Strin
             string_value(arguments, "id").unwrap_or("delegated agent")
         )],
         Some(action) => vec![format!("● agents  {action}")],
-        None => vec!["agents".into()],
-    }
+        None => vec!["● agents  ready".into()],
+    };
+    card_from_agent_lines(lines, ToolStatus::Running)
 }
 
-pub(super) fn agents_finished_lines(view: &ToolView, content: &str, ok: bool) -> Vec<String> {
+pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> ToolCard {
     if !ok {
         let action = string_argument(view, "action").unwrap_or("request");
         let mut lines = vec![format!("✗ agents {action}  failed")];
         push_content(&mut lines, content);
-        return lines;
+        return card_from_agent_lines(lines, ToolStatus::Error);
     }
 
     match string_argument(view, "action") {
-        Some("list") => agent_list_lines(content),
+        Some("list") => card_from_agent_lines(agent_list_lines(content), ToolStatus::Ok),
         Some(action @ ("status" | "stop")) => parse_snapshot(content)
             .map(|snapshot| {
                 let display = if action == "status" || snapshot.has_status_metrics() {
@@ -115,14 +127,91 @@ pub(super) fn agents_finished_lines(view: &ToolView, content: &str, ok: bool) ->
                 } else {
                     SnapshotDisplay::Completion
                 };
-                snapshot_lines(view, snapshot, display)
+                card_from_agent_lines(snapshot_lines(view, snapshot, display), ToolStatus::Ok)
             })
-            .unwrap_or_else(|| agents_result_fallback_lines(view, content)),
+            .unwrap_or_else(|| {
+                card_from_agent_lines(agents_result_fallback_lines(view, content), ToolStatus::Ok)
+            }),
         _ => {
-            let mut lines = vec!["agents".into()];
+            let mut lines = vec!["○ agents  result".into()];
             push_content(&mut lines, content);
-            lines
+            card_from_agent_lines(lines, ToolStatus::Ok)
         }
+    }
+}
+
+fn card_from_agent_lines(lines: Vec<String>, fallback_status: ToolStatus) -> ToolCard {
+    let mut lines = lines.into_iter();
+    let heading = lines.next().unwrap_or_else(|| "agent".into());
+    let (status, identity, detail) = parse_agent_heading(&heading, fallback_status);
+    let mut card = ToolCard::new(
+        status,
+        ToolFamily::Agent,
+        ToolHeader::status_first(identity, detail),
+    );
+
+    let mut body = Vec::new();
+    let mut in_body = false;
+    for line in lines {
+        if line.is_empty() {
+            in_body = true;
+            continue;
+        }
+        let text = line
+            .strip_prefix("  ")
+            .unwrap_or(line.as_str())
+            .trim_start_matches('…')
+            .to_string();
+        // Preserve a leading omission marker when the streaming tail dropped prefix text.
+        let text = if line.trim_start().starts_with('…') {
+            format!("…{text}")
+        } else {
+            text
+        };
+        if in_body {
+            body.push(text);
+            continue;
+        }
+        if status == ToolStatus::Error
+            || text.starts_with("error:")
+            || text.starts_with("attachment error:")
+        {
+            card.push_fact(ToolFact::Error { text });
+        } else {
+            card.push_fact(ToolFact::Text { text });
+        }
+    }
+    if !body.is_empty() {
+        card.body = ToolBody::Lines(body);
+    }
+    card
+}
+
+fn parse_agent_heading(heading: &str, fallback: ToolStatus) -> (ToolStatus, String, String) {
+    let heading = heading.trim();
+    let (status, rest) = if let Some(rest) = heading.strip_prefix('●') {
+        (ToolStatus::Running, rest.trim_start())
+    } else if let Some(rest) = heading.strip_prefix('✓') {
+        (ToolStatus::Ok, rest.trim_start())
+    } else if let Some(rest) = heading.strip_prefix('✗') {
+        (ToolStatus::Error, rest.trim_start())
+    } else if let Some(rest) = heading.strip_prefix('■') {
+        (ToolStatus::Interrupted, rest.trim_start())
+    } else if let Some(rest) = heading.strip_prefix('○') {
+        (fallback, rest.trim_start())
+    } else if heading == "delegated agents" {
+        return (fallback, "delegated agents".into(), String::new());
+    } else {
+        (fallback, heading)
+    };
+    if let Some((identity, detail)) = rest.split_once("  ") {
+        (
+            status,
+            identity.trim().to_string(),
+            detail.trim().to_string(),
+        )
+    } else {
+        (status, rest.to_string(), String::new())
     }
 }
 

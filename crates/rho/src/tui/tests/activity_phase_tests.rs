@@ -53,6 +53,7 @@ fn provider_stream_reset_clears_attempt_owned_tool_previews() {
             index: 0,
             call_id: Some(rho_sdk::ToolCallId::from_string("stale-call").unwrap()),
             display_lines: vec!["stale preview".into()],
+            card: None,
         },
         &mut terminal,
     )

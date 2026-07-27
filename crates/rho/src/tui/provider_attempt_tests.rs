@@ -13,6 +13,7 @@ fn retry_removes_only_replaceable_provider_output() {
         Entry::Tool(ToolEntry {
             state: ToolEntryState::Running,
             display_lines: vec!["keep tool".into()],
+            card: None,
             expanded: false,
             image: None,
         }),

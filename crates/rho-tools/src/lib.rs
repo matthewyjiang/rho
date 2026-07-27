@@ -21,6 +21,7 @@ mod search;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod shell_process;
 pub mod tool;
+pub mod tool_card;
 pub mod workspace_walk;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

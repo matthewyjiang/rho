@@ -24,6 +24,7 @@ impl App {
                 display_style: ToolDisplayStyle::FileDiff,
             },
             display_lines: diff.lines,
+            card: None,
             expanded: true,
             image: None,
         }));

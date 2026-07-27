@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use rho_sdk::ToolCallId;
 
+use rho_tools::tool_card::ToolCard;
+
 use super::{ToolEntry, ToolEntryState};
 
 #[derive(Clone)]
@@ -64,7 +66,12 @@ impl ToolCallBatch {
         }
     }
 
-    pub(super) fn started(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
+    pub(super) fn started(
+        &mut self,
+        call_id: ToolCallId,
+        display_lines: Vec<String>,
+        card: Option<ToolCard>,
+    ) {
         if let Some(index) = self.preview_call_ids.remove(&call_id) {
             self.previews.remove(&index);
             self.model_order
@@ -75,10 +82,15 @@ impl ToolCallBatch {
             self.unindexed_running_order.push(call_id.clone());
         }
         self.running
-            .insert(call_id, running_entry(display_lines, false));
+            .insert(call_id, running_entry(display_lines, card, false));
     }
 
-    pub(super) fn updated(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
+    pub(super) fn updated(
+        &mut self,
+        call_id: ToolCallId,
+        display_lines: Vec<String>,
+        card: Option<ToolCard>,
+    ) {
         let expanded = self
             .running
             .get(&call_id)
@@ -87,7 +99,7 @@ impl ToolCallBatch {
             self.unindexed_running_order.push(call_id.clone());
         }
         self.running
-            .insert(call_id, running_entry(display_lines, expanded));
+            .insert(call_id, running_entry(display_lines, card, expanded));
     }
 
     /// Stream preview addressed by provider output index.
@@ -99,6 +111,7 @@ impl ToolCallBatch {
         index: usize,
         call_id: Option<ToolCallId>,
         display_lines: Vec<String>,
+        card: Option<ToolCard>,
     ) {
         if call_id
             .as_ref()
@@ -116,14 +129,19 @@ impl ToolCallBatch {
         if let Some(call_id) = call_id {
             self.bind_call_id(call_id, slot);
         }
-        self.write_preview(slot, display_lines);
+        self.write_preview(slot, display_lines, card);
     }
 
     /// Proposal preview addressed only by call id.
     ///
     /// Reuses the stream slot when the id already appeared; otherwise appends a
     /// new slot. Does not invent a dense index in the provider namespace.
-    pub(super) fn preview_call(&mut self, call_id: ToolCallId, display_lines: Vec<String>) {
+    pub(super) fn preview_call(
+        &mut self,
+        call_id: ToolCallId,
+        display_lines: Vec<String>,
+        card: Option<ToolCard>,
+    ) {
         if self.running.contains_key(&call_id) {
             return;
         }
@@ -133,7 +151,7 @@ impl ToolCallBatch {
             .copied()
             .unwrap_or_else(|| self.next_slot());
         self.bind_call_id(call_id, slot);
-        self.write_preview(slot, display_lines);
+        self.write_preview(slot, display_lines, card);
     }
 
     pub(super) fn finished(&mut self, call_id: &ToolCallId) -> bool {
@@ -163,7 +181,7 @@ impl ToolCallBatch {
             .retain(|id, existing| *id == call_id || *existing != slot);
     }
 
-    fn write_preview(&mut self, slot: usize, display_lines: Vec<String>) {
+    fn write_preview(&mut self, slot: usize, display_lines: Vec<String>, card: Option<ToolCard>) {
         if display_lines.is_empty() {
             self.previews.remove(&slot);
             self.model_order.remove(&slot);
@@ -173,7 +191,7 @@ impl ToolCallBatch {
         }
         let expanded = self.previews.get(&slot).is_some_and(|entry| entry.expanded);
         self.previews
-            .insert(slot, running_entry(display_lines, expanded));
+            .insert(slot, running_entry(display_lines, card, expanded));
         self.model_order.insert(slot, LiveToolKey::Preview(slot));
     }
 
@@ -187,10 +205,11 @@ impl ToolCallBatch {
     }
 }
 
-fn running_entry(display_lines: Vec<String>, expanded: bool) -> ToolEntry {
+fn running_entry(display_lines: Vec<String>, card: Option<ToolCard>, expanded: bool) -> ToolEntry {
     ToolEntry {
         state: ToolEntryState::Running,
         display_lines,
+        card,
         expanded,
         image: None,
     }

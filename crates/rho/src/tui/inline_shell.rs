@@ -296,6 +296,7 @@ impl super::App {
                     display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
                 },
                 display_lines: display_lines(&output, task.mode.included_in_context()),
+                card: None,
                 expanded: true,
                 image: None,
             }));
@@ -437,6 +438,7 @@ impl super::App {
                 display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
             },
             display_lines: display_text.lines().map(str::to_string).collect(),
+            card: None,
             expanded: true,
             image: None,
         }));
@@ -514,6 +516,7 @@ impl PendingShellTask {
         super::ToolEntry {
             state: super::ToolEntryState::Running,
             display_lines: display_lines(&output, self.mode.included_in_context()),
+            card: None,
             expanded: true,
             image: None,
         }

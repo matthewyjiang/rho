@@ -262,7 +262,7 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AttachmentEvent::ToolStarted { display_lines }
+            AttachmentEvent::ToolStarted { display_lines, .. }
                 if display_lines.iter().any(|line| line.contains("Read"))
         )),
         "tool started: {events:?}"

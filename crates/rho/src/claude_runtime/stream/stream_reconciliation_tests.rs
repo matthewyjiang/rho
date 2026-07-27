@@ -72,7 +72,7 @@ fn partial_tool_only_plus_complete_only_text_and_reasoning() {
     assert_eq!(joined_text(&effects), "text complete-only");
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { display_lines }
+            matches!(event, AttachmentEvent::ToolStarted { display_lines, .. }
                 if display_lines.iter().any(|line| line.contains("toolu_partial_1")))
         }),
         1
@@ -141,7 +141,7 @@ fn indexless_partials_do_not_duplicate_on_complete_envelope() {
     assert_eq!(joined_text(&effects), "Hello indexless.");
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { display_lines }
+            matches!(event, AttachmentEvent::ToolStarted { display_lines, .. }
                 if display_lines.iter().any(|line| line.contains("toolu_indexless_1")))
         }),
         1
@@ -290,7 +290,7 @@ fn ordered_indexless_slots_preserve_complete_only_then_streamed_tool() {
     let started: Vec<_> = effects
         .iter()
         .filter_map(|effect| match effect {
-            StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines }) => {
+            StreamEffect::Attachment(AttachmentEvent::ToolStarted { display_lines, .. }) => {
                 Some(display_lines.join(" | "))
             }
             _ => None,
@@ -360,7 +360,7 @@ fn maps_live_tool_roundtrip_capture() {
 
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { display_lines }
+            matches!(event, AttachmentEvent::ToolStarted { display_lines, .. }
                 if display_lines.iter().any(|line| line.contains("Read"))
                     && display_lines.iter().any(|line| line.contains("toolu_0liveToolRoundtrip")))
         }),

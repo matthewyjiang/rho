@@ -84,11 +84,14 @@ pub(in crate::tui) fn render_entry_with_options(
     };
 
     let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
-    let block_style = lines
-        .first()
-        .and_then(|line| line.spans.first())
-        .map(|span| span.style)
-        .unwrap_or_default();
+    let block_style = match entry {
+        crate::tui::Entry::Tool(_) => Theme::tool_card_padding(),
+        _ => lines
+            .first()
+            .and_then(|line| line.spans.first())
+            .map(|span| span.style)
+            .unwrap_or_default(),
+    };
     let mut padded =
         Vec::with_capacity(lines.len() + 1 + usize::from(trailing_blank.is_included()));
     padded.push(styled_blank_line(width, block_style));

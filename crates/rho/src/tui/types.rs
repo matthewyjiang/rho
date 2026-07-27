@@ -244,6 +244,8 @@ pub(super) enum CommandChoiceKind {
 pub(super) struct ToolEntry {
     pub(in crate::tui) state: ToolEntryState,
     pub(in crate::tui) display_lines: Vec<String>,
+    /// Structured Call + Children card when available.
+    pub(in crate::tui) card: Option<rho_tools::tool_card::ToolCard>,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
 }

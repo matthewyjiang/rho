@@ -67,23 +67,43 @@ fn attachment_update(update: ViewModelEvent) -> Option<AttachmentEvent> {
     match update {
         ViewModelEvent::OutputDelta(text) => Some(AttachmentEvent::AssistantTextDelta(text)),
         ViewModelEvent::ReasoningDelta(text) => Some(AttachmentEvent::ReasoningDelta(text)),
-        ViewModelEvent::ToolStarted { display_lines, .. }
-        | ViewModelEvent::ToolCallUpdated { display_lines, .. }
-        | ViewModelEvent::ToolCallProposed { display_lines, .. } => {
-            Some(AttachmentEvent::ToolStarted { display_lines })
+        ViewModelEvent::ToolStarted {
+            display_lines,
+            card,
+            ..
         }
-        ViewModelEvent::ToolUpdated { display_lines, .. } => {
-            Some(AttachmentEvent::ToolUpdated { display_lines })
+        | ViewModelEvent::ToolCallUpdated {
+            display_lines,
+            card,
+            ..
         }
+        | ViewModelEvent::ToolCallProposed {
+            display_lines,
+            card,
+            ..
+        } => Some(AttachmentEvent::ToolStarted {
+            display_lines,
+            card,
+        }),
+        ViewModelEvent::ToolUpdated {
+            display_lines,
+            card,
+            ..
+        } => Some(AttachmentEvent::ToolUpdated {
+            display_lines,
+            card,
+        }),
         ViewModelEvent::ToolFinished {
             ok,
             display_style,
             display_lines,
+            card,
             ..
         } => Some(AttachmentEvent::ToolFinished {
             ok,
             display_style,
             display_lines,
+            card,
         }),
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),

@@ -9,7 +9,21 @@ pub(super) fn is_tool_entry(entry: &Entry) -> bool {
 }
 
 pub(super) fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize) -> bool {
-    matches!(entry, Entry::Tool(tool) if tool_display_line_count(&tool.display_lines) > max_tool_output_lines)
+    matches!(
+        entry,
+        Entry::Tool(tool) if tool_expandable_line_count(tool) > max_tool_output_lines
+    )
+}
+
+pub(super) fn tool_expandable_line_count(tool: &super::ToolEntry) -> usize {
+    if let Some(card) = tool.card.as_ref() {
+        // Diff bodies are hidden until expanded; other bodies use the line budget.
+        if matches!(card.body, rho_tools::tool_card::ToolBody::DiffLines(_)) {
+            return card.body.line_count().max(1);
+        }
+        return card.expandable_line_count();
+    }
+    tool_display_line_count(&tool.display_lines)
 }
 
 pub(super) fn tool_display_line_count(display_lines: &[String]) -> usize {
@@ -25,9 +39,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
         if let Some(pending) = self.turn.latest_tool_mut() {
-            if tool_display_line_count(&pending.display_lines)
-                <= self.info.runtime.max_tool_output_lines
-            {
+            if tool_expandable_line_count(pending) <= self.info.runtime.max_tool_output_lines {
                 self.status = "no truncated tool output".into();
                 return Ok(());
             }

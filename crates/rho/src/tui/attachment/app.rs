@@ -190,11 +190,18 @@ impl AttachmentApp {
                     can_append,
                 );
             }
-            AttachmentEvent::ToolStarted { display_lines }
-            | AttachmentEvent::ToolUpdated { display_lines } => {
+            AttachmentEvent::ToolStarted {
+                display_lines,
+                card,
+            }
+            | AttachmentEvent::ToolUpdated {
+                display_lines,
+                card,
+            } => {
                 self.pending_tool = Some(ToolEntry {
                     state: ToolEntryState::Running,
                     display_lines,
+                    card,
                     expanded: false,
                     image: None,
                 });
@@ -203,11 +210,13 @@ impl AttachmentApp {
                 ok,
                 display_style,
                 display_lines,
+                card,
             } => {
                 self.pending_tool = None;
                 self.transcript.push(Entry::Tool(ToolEntry {
                     state: ToolEntryState::Finished { ok, display_style },
                     display_lines,
+                    card,
                     expanded: false,
                     image: None,
                 }));

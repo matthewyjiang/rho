@@ -9,9 +9,7 @@ pub(super) use entry_render::{
 };
 
 use super::{
-    feed_image::{
-        reserve_entry_image_rows, reserve_markdown_image_rows, reserve_optional_image_rows,
-    },
+    feed_image::{reserve_entry_image_rows, reserve_markdown_image_rows},
     info_command::runtime_info_lines,
     limits_command::usage_limit_lines,
     message_render::{render_assistant_content, render_reasoning_content},
@@ -534,27 +532,7 @@ pub(super) fn tool_entry_lines(
     width: usize,
     max_tool_output_lines: usize,
 ) -> Vec<Line<'static>> {
-    let inner_width = padded_inner_width(width);
-    let mut lines = Vec::new();
-    push_tool_block(
-        &mut lines,
-        &tool.display_lines,
-        tool.state,
-        inner_width,
-        max_tool_output_lines,
-        tool.expanded,
-    );
-    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
-    let style = lines
-        .first()
-        .and_then(|line| line.spans.first())
-        .map(|span| span.style)
-        .unwrap_or_default();
-    let mut padded = Vec::with_capacity(lines.len() + 2);
-    padded.push(styled_blank_line(width, style));
-    padded.extend(lines.into_iter().map(pad_line));
-    padded.push(styled_blank_line(width, style));
-    padded
+    super::tool_card_render::tool_entry_lines(tool, width, max_tool_output_lines)
 }
 
 fn render_non_assistant_entry(
@@ -574,14 +552,27 @@ fn render_non_assistant_entry(
         Entry::Assistant(_) | Entry::Reasoning(_) => {
             unreachable!("assistant and reasoning entries are rendered as markdown")
         }
-        Entry::Tool(tool) => push_tool_block(
-            lines,
-            &tool.display_lines,
-            tool.state,
-            width,
-            max_tool_output_lines,
-            tool.expanded,
-        ),
+        Entry::Tool(tool) => {
+            if let Some(card) = tool.card.as_ref() {
+                super::tool_card_render::push_tool_card(
+                    lines,
+                    card,
+                    tool.state,
+                    width,
+                    max_tool_output_lines,
+                    tool.expanded,
+                );
+            } else {
+                push_tool_block(
+                    lines,
+                    &tool.display_lines,
+                    tool.state,
+                    width,
+                    max_tool_output_lines,
+                    tool.expanded,
+                );
+            }
+        }
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
@@ -684,7 +675,7 @@ pub(super) fn push_wrapped_text(
     push_wrapped_text_with(lines, text, width, style, fill, wrap_line_at_whitespace);
 }
 
-fn push_hard_wrapped_text(
+pub(super) fn push_hard_wrapped_text(
     lines: &mut Vec<Line<'static>>,
     text: &str,
     width: usize,
@@ -753,7 +744,7 @@ fn pad_line(line: Line<'static>) -> Line<'static> {
     Line::from(spans)
 }
 
-fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
+pub(super) fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".repeat(width.max(1)), style))
 }
 

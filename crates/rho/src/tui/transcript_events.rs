@@ -243,30 +243,35 @@ impl App {
             ViewModelEvent::ToolStarted {
                 call_id,
                 display_lines,
+                card,
             } => {
-                self.turn.tool_started(call_id, display_lines);
+                self.turn.tool_started(call_id, display_lines, card);
                 None
             }
             ViewModelEvent::ToolUpdated {
                 call_id,
                 display_lines,
+                card,
             } => {
-                self.turn.tool_updated(call_id, display_lines);
+                self.turn.tool_updated(call_id, display_lines, card);
                 None
             }
             ViewModelEvent::ToolCallUpdated {
                 index,
                 call_id,
                 display_lines,
+                card,
             } => {
-                self.turn.tool_call_preview(index, call_id, display_lines);
+                self.turn
+                    .tool_call_preview(index, call_id, display_lines, card);
                 None
             }
             ViewModelEvent::ToolCallProposed {
                 call_id,
                 display_lines,
+                card,
             } => {
-                self.turn.tool_call_proposed(call_id, display_lines);
+                self.turn.tool_call_proposed(call_id, display_lines, card);
                 None
             }
             ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
@@ -318,6 +323,7 @@ impl App {
                 ok,
                 display_style,
                 mut display_lines,
+                card,
                 image_asset,
             } => {
                 self.statusline.refresh_git_branch();
@@ -341,6 +347,7 @@ impl App {
                 Some(Entry::Tool(ToolEntry {
                     state: ToolEntryState::Finished { ok, display_style },
                     display_lines,
+                    card,
                     expanded,
                     image,
                 }))

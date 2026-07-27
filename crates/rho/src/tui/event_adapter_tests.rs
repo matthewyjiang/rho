@@ -159,7 +159,16 @@ fn retains_structured_tool_metadata_until_completion() {
 
     assert_eq!(translated_call_id, call_id);
     assert!(ok);
-    assert_eq!(display_lines, vec!["edit_file src/lib.rs", "-old\n+new"]);
+    assert_eq!(
+        display_lines,
+        vec![
+            "✓ edit_file(src/lib.rs)".to_string(),
+            "  ├ +1 -1 lines | src/lib.rs".to_string(),
+            String::new(),
+            "-old".to_string(),
+            "+new".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -195,7 +204,11 @@ fn forwards_image_asset_on_tool_completion() {
     assert_eq!(image_asset, Some(asset));
     assert_eq!(
         display_lines,
-        ["read_file ", "image preview unavailable: invalid image"]
+        [
+            "✓ read_file".to_string(),
+            "  ├ 1 line".to_string(),
+            "  └ image preview unavailable: invalid image".to_string(),
+        ]
     );
 }
 
@@ -207,7 +220,7 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
             trigger: rho_sdk::CompactionTrigger::Automatic,
             message_count: 3,
         })),
-        ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, display_lines })
+        ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, display_lines, .. })
             if call_id == crate::tui::compaction_display::compaction_call_id()
                 && display_lines == crate::tui::compaction_display::running_display_lines()
     ));

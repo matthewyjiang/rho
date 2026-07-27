@@ -406,6 +406,7 @@ pub(super) fn tool_started_effects(block: &Value) -> Vec<StreamEffect> {
     vec![
         StreamEffect::Attachment(AttachmentEvent::ToolStarted {
             display_lines: lines,
+            card: None,
         }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool: {name}")),
@@ -428,6 +429,7 @@ pub(super) fn tool_finished_effects(
             ok,
             display_style: CLAUDE_TOOL_DISPLAY_STYLE,
             display_lines: lines,
+            card: None,
         }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool result: {tool_use_id}")),

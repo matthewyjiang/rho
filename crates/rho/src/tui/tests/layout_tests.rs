@@ -1016,15 +1016,18 @@ fn started_tool_display_ignores_late_argument_previews() {
         index: 0,
         call_id: Some(call_id.clone()),
         display_lines: vec!["edit_file".into()],
+        card: None,
     });
     app.record_agent_event(ViewModelEvent::ToolStarted {
         call_id,
         display_lines: vec!["edit_file src/main.rs".into()],
+        card: None,
     });
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: None,
         display_lines: vec!["edit_file".into()],
+        card: None,
     });
 
     assert_eq!(
