@@ -50,6 +50,22 @@ impl TerminalPalette {
             BlockColor::from_rgb(rgb)
         })
     }
+
+    fn dim_foreground(&self) -> Color {
+        if relative_luminance(
+            self.background.red,
+            self.background.green,
+            self.background.blue,
+        ) > 0.55
+        {
+            Color::Black
+        } else {
+            self.ansi
+                .get(&AnsiColor::Gray)
+                .copied()
+                .map_or(Color::DarkGray, Rgb::color)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,8 +146,12 @@ struct Palette {
 impl Palette {
     fn current() -> Self {
         let terminal = TERMINAL_PALETTE.get();
+        Self::from_terminal(terminal)
+    }
+
+    fn from_terminal(terminal: Option<&TerminalPalette>) -> Self {
         Self {
-            dim: Color::DarkGray,
+            dim: terminal.map_or(Color::DarkGray, TerminalPalette::dim_foreground),
             accent: AnsiColor::Cyan.color(),
             success: AnsiColor::Green.color(),
             warning: AnsiColor::Yellow.color(),
@@ -272,11 +292,15 @@ impl Theme {
     }
 
     pub(super) fn reasoning_output(lines: &mut [Line<'static>]) {
-        let reasoning_style = Self::dim().add_modifier(Modifier::DIM);
+        let reasoning_style = Self::dim();
         for line in lines {
-            line.style = reasoning_style.patch(line.style);
+            line.style = reasoning_style
+                .patch(line.style)
+                .remove_modifier(Modifier::DIM);
             for span in &mut line.spans {
-                span.style = reasoning_style.patch(span.style);
+                span.style = reasoning_style
+                    .patch(span.style)
+                    .remove_modifier(Modifier::DIM);
             }
         }
     }
@@ -932,5 +956,37 @@ mod tests {
 
         assert_eq!(background.color, Color::Rgb(254, 254, 254));
         assert_eq!(block_foreground(background.rgb), Color::Black);
+    }
+
+    #[test]
+    fn adapts_dim_foreground_to_terminal_background() {
+        let dark = TerminalPalette {
+            background: Rgb::new(10, 10, 10),
+            ansi: HashMap::from([(AnsiColor::Gray, Rgb::new(170, 170, 170))]),
+        };
+        let light = TerminalPalette {
+            background: Rgb::new(245, 245, 245),
+            ansi: HashMap::from([(AnsiColor::Gray, Rgb::new(210, 210, 210))]),
+        };
+
+        assert_eq!(
+            Palette::from_terminal(Some(&dark)).dim,
+            Color::Rgb(170, 170, 170)
+        );
+        assert_eq!(Palette::from_terminal(Some(&light)).dim, Color::Black);
+    }
+
+    #[test]
+    fn reasoning_output_uses_one_dimming_mechanism() {
+        let styled = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
+        let mut lines = vec![Line::styled("reasoning", styled).style(styled)];
+
+        Theme::reasoning_output(&mut lines);
+
+        for style in [lines[0].style, lines[0].spans[0].style] {
+            let effective_modifiers = style.add_modifier - style.sub_modifier;
+            assert!(!effective_modifiers.contains(Modifier::DIM));
+            assert_eq!(style.fg, Some(Color::DarkGray));
+        }
     }
 }
