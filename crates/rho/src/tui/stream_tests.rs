@@ -389,17 +389,116 @@ fn markdown_preview_keeps_closed_emphasis_with_trailing_text() {
 }
 
 #[test]
-fn markdown_preview_still_holds_unclosed_emphasis() {
+fn markdown_preview_keeps_stable_prefix_while_emphasis_is_open() {
+    let width = 40;
     let mut stream = AppendOnlyStream::default();
-    stream.push_delta("before **bold");
-    assert_eq!(stream.drain_preview_markdown(40, false), None);
+
+    stream.push_delta("before ");
+    let preview = stream
+        .drain_preview_markdown(width, false)
+        .expect("plain prefix should preview");
+    assert_eq!(preview.render_text(), "before ");
+    let height_before = rendered_markdown_text(preview.render_text(), width, false).len();
+
+    stream.push_delta("**bold");
+    let preview = stream
+        .drain_preview_markdown(width, false)
+        .expect("open bold must keep the stable prefix visible");
+    assert_eq!(preview.render_text(), "before ");
+    assert!(stream.drain_renderable_markdown(width, false).is_none());
+    let height_while_open = rendered_markdown_text(preview.render_text(), width, false).len();
+    assert!(
+        height_while_open >= height_before,
+        "opening bold must not collapse already-drawn prose ({height_before} -> {height_while_open})"
+    );
+
+    stream.push_delta("** after");
+    let preview = stream
+        .drain_preview_markdown(width, false)
+        .expect("closed bold should unlock the full line");
+    assert_eq!(preview.render_text(), "before **bold** after");
+    let height_after_close = rendered_markdown_text(preview.render_text(), width, false).len();
+    assert!(
+        height_after_close >= height_while_open,
+        "closing bold must not pull the line back up ({height_while_open} -> {height_after_close})"
+    );
+}
+
+#[test]
+fn markdown_preview_still_holds_unclosed_emphasis_body() {
+    let mut stream = AppendOnlyStream::default();
+    stream.push_delta("**bold");
+    assert_eq!(
+        stream.drain_preview_markdown(40, false),
+        None,
+        "open emphasis with no stable prefix stays held"
+    );
     assert_eq!(stream.drain_renderable_markdown(40, false), None);
 
     stream.push_delta("** after");
     let preview = stream
         .drain_preview_markdown(40, false)
         .expect("closed bold should unlock the line");
-    assert_eq!(preview.render_text(), "before **bold** after");
+    assert_eq!(preview.render_text(), "**bold** after");
+}
+
+#[test]
+fn markdown_preview_keeps_stable_prefix_after_complete_line() {
+    let mut stream = AppendOnlyStream::default();
+    stream.push_delta("done\nbefore **bold");
+    let preview = stream
+        .drain_preview_markdown(40, false)
+        .expect("complete line plus stable prefix should preview together");
+    assert_eq!(preview.render_text(), "done\nbefore ");
+    assert!(
+        stream
+            .drain_renderable_markdown(40, false)
+            .is_some_and(|fragment| fragment.render_text() == "done\n"),
+        "only the complete line should drain while emphasis stays open"
+    );
+}
+
+#[test]
+fn markdown_preview_open_emphasis_does_not_shrink_wrapped_height() {
+    // Soft-wrapped stable prose must stay put while a later emphasis span
+    // completes. Marker removal shortens the source, and rejoining without a
+    // kept break would pull the second visual line back up.
+    let width = 20;
+    let mut stream = AppendOnlyStream::default();
+    stream.push_delta("word word word word ");
+    while stream.drain_renderable_markdown(width, false).is_some() {}
+    let wrapped_height = rendered_markdown_text(stream.emitted_text(), width, false).len();
+    assert!(wrapped_height >= 1, "prefix should soft-wrap or commit");
+
+    stream.push_delta("**bold text**");
+    let preview = stream
+        .drain_preview_markdown(width, false)
+        .expect("closed bold after a wrap should preview");
+    let height_at_close = rendered_markdown_text(
+        &format!("{}{}", stream.emitted_text(), preview.render_text()),
+        width,
+        false,
+    )
+    .len();
+
+    stream.push_delta(" tail");
+    let preview = stream
+        .drain_preview_markdown(width, false)
+        .expect("trailing text after bold should keep previewing");
+    let height_after_tail = rendered_markdown_text(
+        &format!("{}{}", stream.emitted_text(), preview.render_text()),
+        width,
+        false,
+    )
+    .len();
+    assert!(
+        height_after_tail >= height_at_close,
+        "completed emphasis must not collapse wrapped height ({height_at_close} -> {height_after_tail})"
+    );
+    assert!(
+        height_after_tail >= wrapped_height,
+        "wrapped stable prefix must remain after emphasis completes ({wrapped_height} -> {height_after_tail})"
+    );
 }
 
 #[test]
