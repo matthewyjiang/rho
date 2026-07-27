@@ -578,6 +578,8 @@ pub trait Tool: Send + Sync {
     ///
     /// The runtime enters through [`Self::prepare`], so this is called directly
     /// only by the default `prepare` and by hosts driving a tool by hand.
+    /// Prepare-only out-of-tree tools therefore depend on this default body
+    /// being present in the published `rho-sdk` version they compile against.
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         call_prepared_for(self, invocation, context)
     }

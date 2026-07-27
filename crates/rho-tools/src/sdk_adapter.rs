@@ -8,6 +8,11 @@
 //! [`ApprovalHandler`](rho_sdk::ApprovalHandler). Default SDK construction still
 //! grants no capabilities.
 //!
+//! Resource-aware adapters implement [`Tool::prepare`] only and rely on the
+//! default [`Tool::call`] body from `rho-sdk`. That default must stay available
+//! in the crates.io `rho-sdk` version pinned by this crate; bump both together
+//! when the prepare-only contract changes.
+//!
 //! The interactive and automation runtimes register these adapters on the public
 //! SDK runtime. They do not participate in tool presentation, which is derived
 //! from SDK events and metadata by the application presenter.
