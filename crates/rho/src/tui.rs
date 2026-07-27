@@ -142,7 +142,7 @@ use inline_choice::{
 };
 #[cfg(test)]
 use inline_shell::InlineShellMode;
-use login::PendingOAuthLogin;
+use login::PendingInteractiveLogin;
 #[cfg(test)]
 use login::SecretInput;
 use paste_burst::PasteBurstEnter;
@@ -323,7 +323,7 @@ struct App {
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
-    pending_oauth_login: Option<PendingOAuthLogin>,
+    pending_interactive_login: Option<PendingInteractiveLogin>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     usage_limits_client: reqwest::Client,
     usage: UsageUi,

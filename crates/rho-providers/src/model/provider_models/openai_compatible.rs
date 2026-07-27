@@ -8,7 +8,7 @@ use crate::{
     },
     credentials::{load_kimi_tokens, save_kimi_tokens, CredentialStore, KimiTokens},
     model::{ModelError, ReasoningCapabilities},
-    provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
+    provider::{self, AuthMode, ProviderAuthKind, ProviderModelRefreshKind},
     provider_backend::http_error,
 };
 
@@ -32,7 +32,7 @@ pub async fn probe_provider_models(
             error: format!("provider '{provider}' does not use OpenAI-compatible model discovery"),
         };
     }
-    match fetch(descriptor, api_base, store).await {
+    match fetch(descriptor, descriptor.default_auth(), api_base, store).await {
         Ok(models) if models.is_empty() => ProviderModelHealth::ReachableWithoutModels,
         Ok(models) => ProviderModelHealth::ReachableWithModels {
             model_count: models.len(),
@@ -50,30 +50,12 @@ pub async fn probe_provider_models(
 
 pub(super) async fn fetch(
     descriptor: &provider::ProviderDescriptor,
+    auth: AuthMode,
     api_base: &Url,
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
     let client = provider_models_client()?;
-    let mut last_missing = None;
-    let mut auth = None;
-    for mode in descriptor.auth_modes() {
-        match load_model_request_auth(mode.auth_kind, store, &client).await {
-            Ok(loaded) => {
-                auth = Some(loaded);
-                break;
-            }
-            Err(error) if is_missing_credentials(&error) => last_missing = Some(error),
-            Err(error) => return Err(error),
-        }
-    }
-    let auth = match auth {
-        Some(auth) => auth,
-        None => {
-            return Err(last_missing.unwrap_or_else(|| {
-                crate::model::registry::missing_credentials_error(descriptor.name)
-            }))
-        }
-    };
+    let auth = load_model_request_auth(auth.auth_kind, store, &client).await?;
     let models_url = Url::parse(&format!(
         "{}/models",
         api_base.as_str().trim_end_matches('/')
@@ -175,22 +157,18 @@ async fn load_model_request_auth(
             }
             Ok(ModelRequestAuth::Bearer(tokens.access_token))
         }
-        ProviderAuthKind::OllamaDeviceKey {
-            missing_message, ..
-        } => Ok(ModelRequestAuth::OllamaDevice(
-            OllamaDeviceKey::load_default().map_err(|error| match error {
-                crate::auth::ollama_device::OllamaDeviceError::MissingKey(_) => {
-                    crate::model::registry::missing_credential_error(missing_message)
-                }
-                error => ModelError::InvalidResponse(error.to_string()),
-            })?,
-        )),
+        ProviderAuthKind::OllamaDeviceKey { missing_message } => {
+            Ok(ModelRequestAuth::OllamaDevice(
+                OllamaDeviceKey::load_default().map_err(|error| match error {
+                    crate::auth::ollama_device::OllamaDeviceError::MissingKey(_) => {
+                        crate::model::registry::missing_credential_error(missing_message)
+                    }
+                    error => ModelError::InvalidResponse(error.to_string()),
+                })?,
+            ))
+        }
         _ => Err(ModelError::UnsupportedProvider("auth mode".into())),
     }
-}
-
-fn is_missing_credentials(error: &ModelError) -> bool {
-    matches!(error, ModelError::MissingCredentials(_))
 }
 
 enum ModelRequestAuth {

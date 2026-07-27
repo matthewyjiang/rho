@@ -61,6 +61,7 @@ impl XaiAuthManager {
             provider::provider_descriptor("xai-oauth").expect("xAI OAuth provider must exist");
         let (source, tokens) = match std::env::var(
             descriptor
+                .default_auth()
                 .auth_kind
                 .env_var()
                 .expect("authenticated provider must declare an environment variable"),

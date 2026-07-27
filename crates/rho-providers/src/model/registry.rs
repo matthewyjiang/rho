@@ -48,7 +48,7 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
             default_api_base: OLLAMA_CLOUD_API_BASE,
         },
         RuntimeProviderId::OpenAi => ProviderRuntime::OpenAi {
-            auth_mode: match descriptor.auth_kind {
+            auth_mode: match descriptor.default_auth().auth_kind {
                 ProviderAuthKind::ApiKey { .. } => AuthMode::ApiKey,
                 ProviderAuthKind::CodexOAuth { .. } => AuthMode::Codex,
                 ProviderAuthKind::None
@@ -79,7 +79,7 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
             default_api_base: "https://openrouter.ai/api/v1",
         },
         RuntimeProviderId::Xai => ProviderRuntime::Xai {
-            auth_mode: match descriptor.auth_kind {
+            auth_mode: match descriptor.default_auth().auth_kind {
                 ProviderAuthKind::ApiKey { .. } => XaiAuthMode::ApiKey,
                 ProviderAuthKind::XaiOAuth { .. } => XaiAuthMode::OAuth,
                 ProviderAuthKind::None
@@ -99,7 +99,10 @@ pub fn missing_credential_error(message: &'static str) -> ModelError {
 
 pub fn missing_credentials_error(provider_name: &str) -> ModelError {
     match provider::provider_descriptor(provider_name) {
-        Some(descriptor) => match descriptor.auth_kind.missing_message() {
+        Some(descriptor) if descriptor.is_keyless() => ModelError::InvalidResponse(format!(
+            "provider '{provider_name}' does not require credentials"
+        )),
+        Some(descriptor) => match descriptor.default_auth().auth_kind.missing_message() {
             Some(message) => ModelError::missing_credentials(message),
             None => ModelError::InvalidResponse(format!(
                 "provider '{provider_name}' does not require credentials"

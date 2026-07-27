@@ -192,16 +192,17 @@ pub fn load_provider_api_key(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<Option<String>> {
-    let Some(auth_kind @ ProviderAuthKind::ApiKey { .. }) =
-        provider::provider_descriptor(provider).map(|descriptor| descriptor.auth_kind)
+    let Some(descriptor) = provider::provider_descriptor(provider) else {
+        return Ok(None);
+    };
+    let Some(ProviderAuthKind::ApiKey { account, .. }) = descriptor
+        .auth_modes()
+        .map(|mode| mode.auth_kind)
+        .find(|kind| matches!(kind, ProviderAuthKind::ApiKey { .. }))
     else {
         return Ok(None);
     };
-    store.get_secret(
-        auth_kind
-            .account()
-            .expect("API key provider must declare a credential account"),
-    )
+    store.get_secret(account)
 }
 
 pub fn save_provider_api_key(
@@ -262,6 +263,10 @@ fn delete_auth_kind_credentials(
     store: &dyn CredentialStore,
     auth_kind: ProviderAuthKind,
 ) -> CredentialResult<bool> {
+    // External device keys live outside the Rho credential store; logout is a no-op.
+    if matches!(auth_kind, ProviderAuthKind::OllamaDeviceKey { .. }) {
+        return Ok(false);
+    }
     let Some(account) = auth_kind.account() else {
         return Ok(false);
     };
@@ -394,6 +399,9 @@ fn auth_mode_has_stored_credentials(
 ) -> CredentialResult<bool> {
     match auth_kind {
         ProviderAuthKind::None => Ok(true),
+        ProviderAuthKind::OllamaDeviceKey { .. } => {
+            Ok(crate::auth::ollama_device::ollama_device_credentials_available())
+        }
         auth_kind => {
             let Some(account) = auth_kind.account() else {
                 return Ok(false);
@@ -450,7 +458,7 @@ fn auth_mode_has_credentials(
         ProviderAuthKind::XaiOAuth { .. } => Ok(load_xai_tokens(store)?.is_some()),
         ProviderAuthKind::KimiOAuth { .. } => Ok(load_kimi_tokens(store)?.is_some()),
         ProviderAuthKind::OllamaDeviceKey { .. } => {
-            crate::auth::ollama_device::ollama_device_credentials_available(store)
+            Ok(crate::auth::ollama_device::ollama_device_credentials_available())
         }
     }
 }

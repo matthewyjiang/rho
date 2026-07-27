@@ -8,7 +8,10 @@ use crate::{
         self, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens, KimiTokens,
         XaiTokens,
     },
-    provider::{self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind},
+    provider::{
+        self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind,
+        ResolvedProviderProfile,
+    },
 };
 
 pub type AuthenticationFuture = Pin<
@@ -19,18 +22,23 @@ pub type AuthenticationFuture = Pin<
 pub enum AuthenticationMethod {
     None,
     ApiKey { entry_label: &'static str },
-    OAuth { provider_label: &'static str },
+    Interactive { provider_label: &'static str },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OAuthMode {
+pub enum InteractiveLoginMode {
     Browser,
     Device,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OAuthUserAction {
+pub enum InteractiveUserAction {
     BrowserOpened,
+    /// Show a URL to open manually (no device code). Used by Ollama device-key connect.
+    OpenUrl {
+        url: String,
+        instruction: String,
+    },
     DeviceCode {
         verification_uri: String,
         user_code: String,
@@ -38,16 +46,16 @@ pub enum OAuthUserAction {
     },
 }
 
-pub struct OAuthLogin {
+pub struct InteractiveLogin {
     pub provider_label: &'static str,
-    pub user_action: OAuthUserAction,
+    pub user_action: InteractiveUserAction,
     pub completion: AuthenticationFuture,
 }
 
-impl std::fmt::Debug for OAuthLogin {
+impl std::fmt::Debug for InteractiveLogin {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("OAuthLogin")
+            .debug_struct("InteractiveLogin")
             .field("provider_label", &self.provider_label)
             .field("user_action", &self.user_action)
             .field("completion", &"<authentication future>")
@@ -59,31 +67,38 @@ impl std::fmt::Debug for OAuthLogin {
 pub enum AuthenticationError {
     #[error("unsupported login provider '{0}'")]
     UnsupportedProvider(String),
-    #[error("provider '{0}' does not use OAuth")]
-    NotOAuth(String),
+    #[error(
+        "provider '{provider}' has multiple auth modes; specify one of: {auth_ids}",
+        auth_ids = .auth_ids.join(", ")
+    )]
+    AmbiguousProvider {
+        provider: String,
+        auth_ids: Vec<&'static str>,
+    },
+    #[error("provider '{0}' does not use interactive login")]
+    NotInteractive(String),
     #[error("{0}")]
     Flow(String),
 }
 
 pub struct CompletedAuthentication {
-    credentials: OAuthCredentials,
+    credentials: LoginCredentials,
 }
 
 impl CompletedAuthentication {
     pub fn save(self, store: &dyn CredentialStore) -> CredentialResult<()> {
         match self.credentials {
-            OAuthCredentials::Codex(tokens) => credentials::save_codex_tokens(store, &tokens),
-            OAuthCredentials::GithubCopilot(tokens) => {
+            LoginCredentials::Codex(tokens) => credentials::save_codex_tokens(store, &tokens),
+            LoginCredentials::GithubCopilot(tokens) => {
                 credentials::save_github_copilot_tokens(store, &tokens)
             }
-            OAuthCredentials::Kimi(tokens) => credentials::save_kimi_tokens(store, &tokens),
-            OAuthCredentials::OpenRouter(key) => {
+            LoginCredentials::Kimi(tokens) => credentials::save_kimi_tokens(store, &tokens),
+            LoginCredentials::OpenRouter(key) => {
                 credentials::save_openrouter_oauth_key(store, &key)
             }
-            OAuthCredentials::Xai(tokens) => credentials::save_xai_tokens(store, &tokens),
-            OAuthCredentials::OllamaDevice(session) => {
-                ollama_device::save_ollama_device_session(store, &session)
-            }
+            LoginCredentials::Xai(tokens) => credentials::save_xai_tokens(store, &tokens),
+            // Device key already lives on disk outside the Rho store.
+            LoginCredentials::ExternalNoStore => Ok(()),
         }
     }
 }
@@ -94,13 +109,13 @@ impl std::fmt::Debug for CompletedAuthentication {
     }
 }
 
-enum OAuthCredentials {
+enum LoginCredentials {
     Codex(CodexTokens),
     GithubCopilot(GitHubCopilotTokens),
     Kimi(KimiTokens),
     OpenRouter(String),
     Xai(XaiTokens),
-    OllamaDevice(ollama_device::OllamaDeviceSession),
+    ExternalNoStore,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -108,39 +123,41 @@ pub struct ProviderAuthentication;
 
 impl ProviderAuthentication {
     pub fn method(provider_or_auth: &str) -> Result<AuthenticationMethod, AuthenticationError> {
-        let auth_kind = resolve_login_auth_kind(provider_or_auth)?;
-        Ok(match auth_kind {
+        let profile = resolve_login_profile(provider_or_auth)?;
+        Ok(match profile.auth_kind() {
             ProviderAuthKind::None => AuthenticationMethod::None,
             ProviderAuthKind::ApiKey { entry_label, .. } => {
                 AuthenticationMethod::ApiKey { entry_label }
             }
-            ProviderAuthKind::CodexOAuth { .. } => AuthenticationMethod::OAuth {
+            ProviderAuthKind::CodexOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Codex",
             },
-            ProviderAuthKind::GithubCopilotDevice { .. } => AuthenticationMethod::OAuth {
+            ProviderAuthKind::GithubCopilotDevice { .. } => AuthenticationMethod::Interactive {
                 provider_label: "GitHub Copilot",
             },
-            ProviderAuthKind::KimiOAuth { .. } => AuthenticationMethod::OAuth {
+            ProviderAuthKind::KimiOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Kimi",
             },
-            ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::OAuth {
+            ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "xAI",
             },
-            ProviderAuthKind::OllamaDeviceKey { .. } => AuthenticationMethod::OAuth {
+            ProviderAuthKind::OllamaDeviceKey { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Ollama Cloud",
             },
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
-                BearerCredentialAcquisition::BrowserOAuth(flow) => AuthenticationMethod::OAuth {
-                    provider_label: flow.provider_label(),
-                },
+                BearerCredentialAcquisition::BrowserOAuth(flow) => {
+                    AuthenticationMethod::Interactive {
+                        provider_label: flow.provider_label(),
+                    }
+                }
             },
         })
     }
 
     pub fn supports_device_login(provider_or_auth: &str) -> bool {
-        resolve_login_auth_kind(provider_or_auth).is_ok_and(|auth_kind| {
+        resolve_login_profile(provider_or_auth).is_ok_and(|profile| {
             matches!(
-                auth_kind,
+                profile.auth_kind(),
                 ProviderAuthKind::CodexOAuth { .. }
                     | ProviderAuthKind::GithubCopilotDevice { .. }
                     | ProviderAuthKind::KimiOAuth { .. }
@@ -150,14 +167,14 @@ impl ProviderAuthentication {
         })
     }
 
-    pub async fn start_oauth(
+    pub async fn start_interactive_login(
         provider_or_auth: &str,
-        mode: OAuthMode,
-    ) -> Result<OAuthLogin, AuthenticationError> {
-        let auth_kind = resolve_login_auth_kind(provider_or_auth)?;
-        match auth_kind {
+        mode: InteractiveLoginMode,
+    ) -> Result<InteractiveLogin, AuthenticationError> {
+        let profile = resolve_login_profile(provider_or_auth)?;
+        match profile.auth_kind() {
             ProviderAuthKind::None | ProviderAuthKind::ApiKey { .. } => {
-                Err(AuthenticationError::NotOAuth(provider_or_auth.into()))
+                Err(AuthenticationError::NotInteractive(provider_or_auth.into()))
             }
             ProviderAuthKind::CodexOAuth { .. } => start_codex(mode).await,
             ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await,
@@ -180,6 +197,10 @@ impl ProviderAuthentication {
         credentials::save_provider_api_key(store, provider_or_auth, key)
     }
 
+    /// Deletes credentials for an auth profile id, or every mode on a provider name.
+    ///
+    /// Auth profile ids are preferred. Provider names delete all modes for that
+    /// provider (used by doctor/logout at provider granularity).
     pub fn delete_credentials(
         store: &dyn CredentialStore,
         provider_or_auth: &str,
@@ -191,14 +212,19 @@ impl ProviderAuthentication {
         }
     }
 
+    /// True when the auth profile or any mode on the provider has credentials.
+    ///
+    /// Auth profile ids check one mode. Provider names check any mode (doctor).
     pub fn has_credentials(
         store: &dyn CredentialStore,
         provider_or_auth: &str,
     ) -> CredentialResult<bool> {
         if provider::resolve_auth_mode(provider_or_auth).is_some() {
             credentials::auth_has_credentials(store, provider_or_auth)
-        } else {
+        } else if provider::provider_descriptor(provider_or_auth).is_some() {
             credentials::provider_has_credentials(store, provider_or_auth)
+        } else {
+            Ok(false)
         }
     }
 
@@ -208,8 +234,10 @@ impl ProviderAuthentication {
     ) -> CredentialResult<bool> {
         if provider::resolve_auth_mode(provider_or_auth).is_some() {
             credentials::auth_has_stored_credentials(store, provider_or_auth)
-        } else {
+        } else if provider::provider_descriptor(provider_or_auth).is_some() {
             credentials::provider_has_stored_credentials(store, provider_or_auth)
+        } else {
+            Ok(false)
         }
     }
 
@@ -222,33 +250,43 @@ impl ProviderAuthentication {
     }
 }
 
-fn resolve_login_auth_kind(
+fn resolve_login_profile(
     provider_or_auth: &str,
-) -> Result<ProviderAuthKind, AuthenticationError> {
-    if let Some((_, mode)) = provider::resolve_auth_mode(provider_or_auth) {
-        return Ok(mode.auth_kind);
+) -> Result<ResolvedProviderProfile, AuthenticationError> {
+    if let Some((provider, mode)) = provider::resolve_auth_mode(provider_or_auth) {
+        return Ok(ResolvedProviderProfile {
+            provider,
+            auth: mode,
+        });
     }
     let descriptor = provider::provider_descriptor(provider_or_auth)
         .ok_or_else(|| AuthenticationError::UnsupportedProvider(provider_or_auth.into()))?;
-    let modes = descriptor.auth_modes().collect::<Vec<_>>();
-    match modes.as_slice() {
-        [only] => Ok(only.auth_kind),
-        _ => Err(AuthenticationError::UnsupportedProvider(
-            provider_or_auth.into(),
-        )),
+    match descriptor.auth_modes {
+        [only] => Ok(ResolvedProviderProfile {
+            provider: descriptor,
+            auth: *only,
+        }),
+        modes => Err(AuthenticationError::AmbiguousProvider {
+            provider: provider_or_auth.into(),
+            auth_ids: modes
+                .iter()
+                .map(|mode| mode.id)
+                .filter(|id| *id != "none")
+                .collect(),
+        }),
     }
 }
 
-async fn start_codex(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
-    if mode == OAuthMode::Browser {
-        return Ok(OAuthLogin {
+async fn start_codex(mode: InteractiveLoginMode) -> Result<InteractiveLogin, AuthenticationError> {
+    if mode == InteractiveLoginMode::Browser {
+        return Ok(InteractiveLogin {
             provider_label: "Codex",
-            user_action: OAuthUserAction::BrowserOpened,
+            user_action: InteractiveUserAction::BrowserOpened,
             completion: Box::pin(async {
                 codex_oauth::run_codex_oauth_flow()
                     .await
                     .map(|tokens| CompletedAuthentication {
-                        credentials: OAuthCredentials::Codex(tokens),
+                        credentials: LoginCredentials::Codex(tokens),
                     })
                     .map_err(flow_error)
             }),
@@ -258,101 +296,103 @@ async fn start_codex(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError>
     let login = codex_oauth::start_codex_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = OAuthUserAction::DeviceCode {
+    let user_action = InteractiveUserAction::DeviceCode {
         verification_uri: login.verification_uri.clone(),
         user_code: login.user_code.clone(),
         verification_uri_complete: None,
     };
-    Ok(OAuthLogin {
+    Ok(InteractiveLogin {
         provider_label: "Codex",
         user_action,
         completion: Box::pin(async move {
             codex_oauth::complete_codex_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
-                    credentials: OAuthCredentials::Codex(tokens),
+                    credentials: LoginCredentials::Codex(tokens),
                 })
                 .map_err(flow_error)
         }),
     })
 }
 
-async fn start_github_copilot() -> Result<OAuthLogin, AuthenticationError> {
+async fn start_github_copilot() -> Result<InteractiveLogin, AuthenticationError> {
     let login = github_copilot_device::start_github_copilot_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = OAuthUserAction::DeviceCode {
+    let user_action = InteractiveUserAction::DeviceCode {
         verification_uri: login.verification_uri.clone(),
         user_code: login.user_code.clone(),
         verification_uri_complete: login.verification_uri_complete.clone(),
     };
-    Ok(OAuthLogin {
+    Ok(InteractiveLogin {
         provider_label: "GitHub Copilot",
         user_action,
         completion: Box::pin(async move {
             github_copilot_device::complete_github_copilot_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
-                    credentials: OAuthCredentials::GithubCopilot(tokens),
+                    credentials: LoginCredentials::GithubCopilot(tokens),
                 })
                 .map_err(flow_error)
         }),
     })
 }
 
-async fn start_kimi() -> Result<OAuthLogin, AuthenticationError> {
+async fn start_kimi() -> Result<InteractiveLogin, AuthenticationError> {
     let login = kimi_oauth::start_kimi_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = OAuthUserAction::DeviceCode {
+    let user_action = InteractiveUserAction::DeviceCode {
         verification_uri: login.verification_uri.clone(),
         user_code: login.user_code.clone(),
         verification_uri_complete: login.verification_uri_complete.clone(),
     };
-    Ok(OAuthLogin {
+    Ok(InteractiveLogin {
         provider_label: "Kimi",
         user_action,
         completion: Box::pin(async move {
             kimi_oauth::complete_kimi_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
-                    credentials: OAuthCredentials::Kimi(tokens),
+                    credentials: LoginCredentials::Kimi(tokens),
                 })
                 .map_err(flow_error)
         }),
     })
 }
 
-async fn start_openrouter(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
-    if mode == OAuthMode::Device {
+async fn start_openrouter(
+    mode: InteractiveLoginMode,
+) -> Result<InteractiveLogin, AuthenticationError> {
+    if mode == InteractiveLoginMode::Device {
         return Err(AuthenticationError::Flow(
             "OpenRouter does not support device login; use browser login or an API key".into(),
         ));
     }
-    Ok(OAuthLogin {
+    Ok(InteractiveLogin {
         provider_label: "OpenRouter",
-        user_action: OAuthUserAction::BrowserOpened,
+        user_action: InteractiveUserAction::BrowserOpened,
         completion: Box::pin(async {
             openrouter_oauth::run_openrouter_oauth_flow()
                 .await
                 .map(|key| CompletedAuthentication {
-                    credentials: OAuthCredentials::OpenRouter(key),
+                    credentials: LoginCredentials::OpenRouter(key),
                 })
                 .map_err(flow_error)
         }),
     })
 }
 
-async fn start_xai(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
-    if mode == OAuthMode::Browser {
-        return Ok(OAuthLogin {
+async fn start_xai(mode: InteractiveLoginMode) -> Result<InteractiveLogin, AuthenticationError> {
+    if mode == InteractiveLoginMode::Browser {
+        return Ok(InteractiveLogin {
             provider_label: "xAI",
-            user_action: OAuthUserAction::BrowserOpened,
+            user_action: InteractiveUserAction::BrowserOpened,
             completion: Box::pin(async {
                 xai_oauth::run_xai_oauth_flow()
                     .await
                     .map(|tokens| CompletedAuthentication {
-                        credentials: OAuthCredentials::Xai(tokens),
+                        credentials: LoginCredentials::Xai(tokens),
                     })
                     .map_err(flow_error)
             }),
@@ -362,47 +402,53 @@ async fn start_xai(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
     let login = xai_oauth::start_xai_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = OAuthUserAction::DeviceCode {
+    let user_action = InteractiveUserAction::DeviceCode {
         verification_uri: login.verification_uri.clone(),
         user_code: login.user_code.clone(),
         verification_uri_complete: login.verification_uri_complete.clone(),
     };
-    Ok(OAuthLogin {
+    Ok(InteractiveLogin {
         provider_label: "xAI",
         user_action,
         completion: Box::pin(async move {
             xai_oauth::complete_xai_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
-                    credentials: OAuthCredentials::Xai(tokens),
+                    credentials: LoginCredentials::Xai(tokens),
                 })
                 .map_err(flow_error)
         }),
     })
 }
 
-async fn start_ollama_device(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
-    let open_browser = mode == OAuthMode::Browser;
+async fn start_ollama_device(
+    mode: InteractiveLoginMode,
+) -> Result<InteractiveLogin, AuthenticationError> {
+    let open_browser = mode == InteractiveLoginMode::Browser;
     let login = ollama_device::start_ollama_device_login(open_browser)
         .await
         .map_err(flow_error)?;
-    let user_action = if open_browser {
-        OAuthUserAction::BrowserOpened
+    let user_action = if login.already_registered {
+        InteractiveUserAction::OpenUrl {
+            url: login.connect_url.clone(),
+            instruction: "Using existing registered Ollama device key".into(),
+        }
+    } else if open_browser {
+        InteractiveUserAction::BrowserOpened
     } else {
-        OAuthUserAction::DeviceCode {
-            verification_uri: login.connect_url.clone(),
-            user_code: "approve this device".into(),
-            verification_uri_complete: Some(login.connect_url.clone()),
+        InteractiveUserAction::OpenUrl {
+            url: login.connect_url.clone(),
+            instruction: "Open this URL and approve the device for Ollama Cloud.".into(),
         }
     };
-    Ok(OAuthLogin {
+    Ok(InteractiveLogin {
         provider_label: "Ollama Cloud",
         user_action,
         completion: Box::pin(async move {
             ollama_device::complete_ollama_device_login(login)
                 .await
-                .map(|session| CompletedAuthentication {
-                    credentials: OAuthCredentials::OllamaDevice(session),
+                .map(|()| CompletedAuthentication {
+                    credentials: LoginCredentials::ExternalNoStore,
                 })
                 .map_err(flow_error)
         }),

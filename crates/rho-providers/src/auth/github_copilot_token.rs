@@ -360,6 +360,7 @@ fn now_unix_seconds() -> i64 {
 
 fn nonempty_env_copilot_token() -> Option<String> {
     let env_var = provider::provider_descriptor_by_id(ProviderId::GithubCopilot)
+        .default_auth()
         .auth_kind
         .env_var()
         .expect("authenticated provider must declare an environment variable");

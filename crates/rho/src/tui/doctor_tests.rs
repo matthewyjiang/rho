@@ -74,12 +74,14 @@ fn ollama_diagnostics_show_no_auth_and_each_connection_state() {
             .map(|item| item.label.as_str())
             .collect::<Vec<_>>();
         for label in [
+            "Ollama Cloud API key",
+            "Ollama Cloud device key",
             "OpenRouter API key",
             "OpenRouter OAuth",
             "xAI API key",
             "xAI OAuth",
-            "OpenRouter API key model cache",
-            "OpenRouter OAuth model cache",
+            "OpenRouter model cache",
+            "Ollama Cloud model cache",
         ] {
             assert!(labels.contains(&label), "missing {label} in {labels:?}");
         }

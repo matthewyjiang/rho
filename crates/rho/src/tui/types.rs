@@ -120,7 +120,7 @@ pub(super) enum ComposerMode {
     SecretInput(SecretInput),
     ConfigNumberInput(ConfigNumberInput),
     ConfigTextInput(ConfigTextInput),
-    OAuthPending(LoginTarget),
+    InteractivePending(LoginTarget),
     InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),

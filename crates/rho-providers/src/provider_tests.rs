@@ -11,6 +11,11 @@ fn provider_ids_have_unique_descriptors_and_lookup_round_trips() {
         assert!(providers[..index]
             .iter()
             .all(|other| { other.id != descriptor.id && other.name != descriptor.name }));
+        assert!(
+            !descriptor.auth_modes.is_empty(),
+            "{} must declare at least one auth mode",
+            descriptor.name
+        );
     }
 }
 
@@ -100,21 +105,19 @@ fn openrouter_profiles_share_runtime_policy_and_resolve_by_auth() {
     let oauth = super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth);
     assert_eq!(api_key.runtime_id, RuntimeProviderId::OpenRouter);
     assert_eq!(oauth.runtime_id, api_key.runtime_id);
-    assert_eq!(
-        super::resolve_profile("openrouter", "openrouter-oauth").unwrap(),
-        oauth
-    );
-    assert_eq!(
-        super::resolve_profile("openrouter-oauth", "openrouter-api-key").unwrap(),
-        api_key
-    );
+    let resolved = super::resolve_profile("openrouter", "openrouter-oauth").unwrap();
+    assert_eq!(resolved.provider, oauth);
+    assert_eq!(resolved.auth_id(), "openrouter-oauth");
+    let resolved = super::resolve_profile("openrouter-oauth", "openrouter-api-key").unwrap();
+    assert_eq!(resolved.provider, api_key);
+    assert_eq!(resolved.auth_id(), "openrouter-api-key");
 }
 
 #[test]
 fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
     use super::{ProviderAuthKind, ProviderId};
 
-    let openai = super::provider_descriptor_by_id(ProviderId::OpenAi);
+    let openai = super::provider_descriptor_by_id(ProviderId::OpenAi).default_auth();
     assert_eq!(openai.auth_kind.env_var(), Some("OPENAI_API_KEY"));
     assert_eq!(
         openai.auth_kind.account(),
@@ -128,7 +131,7 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
-    let codex = super::provider_descriptor_by_id(ProviderId::OpenAiCodex);
+    let codex = super::provider_descriptor_by_id(ProviderId::OpenAiCodex).default_auth();
     assert_eq!(codex.auth_kind.env_var(), Some("CODEX_ACCESS_TOKEN"));
     assert_eq!(codex.auth_kind.account(), Some(super::CODEX_TOKENS_ACCOUNT));
     assert!(matches!(
@@ -139,8 +142,8 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
-    let google = super::provider_descriptor_by_id(ProviderId::Google);
-    assert_eq!(google.auth, "google-api-key");
+    let google = super::provider_descriptor_by_id(ProviderId::Google).default_auth();
+    assert_eq!(google.id, "google-api-key");
     assert_eq!(google.auth_kind.env_var(), Some("GEMINI_API_KEY"));
     assert_eq!(
         google.auth_kind.account(),
@@ -154,32 +157,33 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
-    let moonshot = super::provider_descriptor_by_id(ProviderId::Moonshot);
-    assert_eq!(moonshot.auth, "moonshot-api-key");
+    let moonshot = super::provider_descriptor_by_id(ProviderId::Moonshot).default_auth();
+    assert_eq!(moonshot.id, "moonshot-api-key");
     assert_eq!(moonshot.auth_kind.env_var(), Some("MOONSHOT_API_KEY"));
     assert_eq!(
         moonshot.auth_kind.account(),
         Some(super::MOONSHOT_API_KEY_ACCOUNT)
     );
 
-    let poolside = super::provider_descriptor_by_id(ProviderId::Poolside);
-    assert_eq!(poolside.auth, "poolside-api-key");
+    let poolside = super::provider_descriptor_by_id(ProviderId::Poolside).default_auth();
+    assert_eq!(poolside.id, "poolside-api-key");
     assert_eq!(poolside.auth_kind.env_var(), Some("POOLSIDE_API_KEY"));
     assert_eq!(
         poolside.auth_kind.account(),
         Some(super::POOLSIDE_API_KEY_ACCOUNT)
     );
 
-    let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);
-    assert_eq!(openrouter.auth, "openrouter-api-key");
+    let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter).default_auth();
+    assert_eq!(openrouter.id, "openrouter-api-key");
     assert_eq!(openrouter.auth_kind.env_var(), Some("OPENROUTER_API_KEY"));
     assert_eq!(
         openrouter.auth_kind.account(),
         Some(super::OPENROUTER_API_KEY_ACCOUNT)
     );
 
-    let openrouter_oauth = super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth);
-    assert_eq!(openrouter_oauth.auth, "openrouter-oauth");
+    let openrouter_oauth =
+        super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth).default_auth();
+    assert_eq!(openrouter_oauth.id, "openrouter-oauth");
     assert_eq!(
         openrouter_oauth.auth_kind.env_var(),
         Some("OPENROUTER_API_KEY")
@@ -196,8 +200,8 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
-    let kimi = super::provider_descriptor_by_id(ProviderId::KimiCode);
-    assert_eq!(kimi.auth, "kimi-oauth");
+    let kimi = super::provider_descriptor_by_id(ProviderId::KimiCode).default_auth();
+    assert_eq!(kimi.id, "kimi-oauth");
     assert_eq!(kimi.auth_kind.env_var(), Some("KIMI_ACCESS_TOKEN"));
     assert_eq!(kimi.auth_kind.account(), Some(super::KIMI_TOKENS_ACCOUNT));
     assert!(matches!(
@@ -208,8 +212,8 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
-    let xai = super::provider_descriptor_by_id(ProviderId::Xai);
-    assert_eq!(xai.auth, "xai-api-key");
+    let xai = super::provider_descriptor_by_id(ProviderId::Xai).default_auth();
+    assert_eq!(xai.id, "xai-api-key");
     assert_eq!(xai.auth_kind.env_var(), Some("XAI_API_KEY"));
     assert_eq!(xai.auth_kind.account(), Some(super::XAI_API_KEY_ACCOUNT));
     assert!(matches!(
@@ -220,7 +224,7 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
-    let xai_oauth = super::provider_descriptor_by_id(ProviderId::XaiOAuth);
+    let xai_oauth = super::provider_descriptor_by_id(ProviderId::XaiOAuth).default_auth();
     assert_eq!(xai_oauth.auth_kind.env_var(), Some("XAI_ACCESS_TOKEN"));
     assert_eq!(
         xai_oauth.auth_kind.account(),
@@ -242,9 +246,10 @@ fn ollama_descriptor_is_keyless_and_refreshes_compatible_models() {
     let ollama = super::provider_descriptor_by_id(ProviderId::Ollama);
     assert_eq!(ollama.name, "ollama");
     assert_eq!(ollama.display_name, "Ollama");
-    assert_eq!(ollama.auth_kind, ProviderAuthKind::None);
-    assert_eq!(ollama.auth_kind.env_var(), None);
-    assert_eq!(ollama.auth_kind.account(), None);
+    assert!(ollama.is_keyless());
+    assert_eq!(ollama.default_auth().auth_kind, ProviderAuthKind::None);
+    assert_eq!(ollama.default_auth().auth_kind.env_var(), None);
+    assert_eq!(ollama.default_auth().auth_kind.account(), None);
     assert_eq!(
         ollama.model_source,
         ProviderModelSource::CachedProviderModels
@@ -273,14 +278,18 @@ fn auth_profiles_are_derived_from_provider_table() {
 fn ollama_cloud_missing_credentials_come_from_descriptor_message() {
     use super::ProviderId;
 
-    let message = super::provider_descriptor_by_id(ProviderId::OllamaCloud)
+    let error = crate::model::registry::missing_credentials_error("ollama-cloud");
+    // Provider-level missing credentials use the default auth mode message.
+    assert!(error.to_string().contains("ollama-cloud"));
+    assert!(error.to_string().contains("/login ollama-cloud"));
+    assert!(error.to_string().contains("OLLAMA_API_KEY"));
+
+    let default_message = super::provider_descriptor_by_id(ProviderId::OllamaCloud)
+        .default_auth()
         .auth_kind
         .missing_message()
-        .expect("ollama-cloud requires credentials");
-    let error = crate::model::registry::missing_credentials_error("ollama-cloud");
-    assert_eq!(error.to_string(), message);
-    assert!(message.contains("/login ollama-cloud"));
-    assert!(message.contains("OLLAMA_API_KEY"));
+        .expect("ollama-cloud default mode requires credentials");
+    assert_eq!(error.to_string(), default_message);
 }
 
 #[test]
@@ -292,12 +301,17 @@ fn ollama_cloud_device_auth_mode_is_registered_on_provider() {
         .auth_mode("ollama-cloud-device")
         .expect("device auth mode");
     assert_eq!(mode.id, "ollama-cloud-device");
+    assert!(mode.auth_kind.account().is_none());
     let message = mode
         .auth_kind
         .missing_message()
         .expect("device mode requires credentials");
     assert!(message.contains("/login ollama-cloud"));
     assert!(message.contains("ollama signin"));
+
+    let profile = super::resolve_profile("ollama-cloud", "ollama-cloud-device").unwrap();
+    assert_eq!(profile.provider_name(), "ollama-cloud");
+    assert_eq!(profile.auth_id(), "ollama-cloud-device");
 }
 
 #[test]
@@ -319,4 +333,11 @@ fn credential_env_vars_track_provider_auth_kinds() {
     assert!(expected.contains(&"XAI_ACCESS_TOKEN"));
     // Keyless providers must not invent env vars.
     assert!(!expected.iter().any(|name| name.is_empty()));
+}
+
+#[test]
+fn no_session_account_constant_for_ollama_device() {
+    // Session markers were removed; device keys live only on disk.
+    let source = include_str!("provider.rs");
+    assert!(!source.contains("OLLAMA_CLOUD_DEVICE_SESSION"));
 }

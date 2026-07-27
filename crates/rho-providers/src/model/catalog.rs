@@ -318,7 +318,7 @@ fn cached_provider_entries(provider: &str, auth_modes: &[String]) -> Vec<ModelCa
 }
 
 fn provider_default_auth(provider: &str) -> Option<&'static str> {
-    provider::provider_descriptor(provider).map(|descriptor| descriptor.auth)
+    provider::provider_descriptor(provider).map(|descriptor| descriptor.default_auth().id)
 }
 
 fn provider_uses_cached_models(provider: &str) -> bool {

@@ -66,7 +66,7 @@ impl ProviderBuildOptions {
             .ok_or_else(|| ModelError::UnsupportedProvider(provider.clone()))?;
         Ok(Self {
             provider,
-            auth: descriptor.auth.into(),
+            auth: descriptor.default_auth().id.into(),
             model,
             endpoint: None,
             request_timeout: None,
@@ -76,10 +76,10 @@ impl ProviderBuildOptions {
     /// Selects an auth profile registered for this provider (or a same-runtime legacy profile).
     pub fn with_auth(mut self, auth: impl Into<String>) -> Result<Self, ModelError> {
         let auth = auth.into();
-        let descriptor = provider::resolve_profile(&self.provider, &auth)
+        let profile = provider::resolve_profile(&self.provider, &auth)
             .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
-        self.provider = descriptor.name.into();
-        self.auth = provider::resolved_auth_id(descriptor, &auth).into();
+        self.provider = profile.provider_name().into();
+        self.auth = profile.auth_id().into();
         Ok(self)
     }
 
@@ -179,7 +179,7 @@ impl ProviderBuilder {
         let auth_kind = descriptor
             .auth_mode(&self.options.auth)
             .map(|mode| mode.auth_kind)
-            .unwrap_or(descriptor.auth_kind);
+            .unwrap_or_else(|| descriptor.default_auth().auth_kind);
         let client = provider_http_client(self.options.request_timeout)?;
         let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
 

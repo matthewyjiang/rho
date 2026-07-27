@@ -129,9 +129,9 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             tokens,
                         ))
                     }
-                    ProviderAuthKind::OllamaDeviceKey {
-                        missing_message, ..
-                    } => CompatibleAuth::OllamaDevice(load_ollama_device_key(missing_message)?),
+                    ProviderAuthKind::OllamaDeviceKey { missing_message } => {
+                        CompatibleAuth::OllamaDevice(load_ollama_device_key(missing_message)?)
+                    }
                     _ => return Err(ModelError::UnsupportedProvider(provider.into())),
                 };
                 Ok(ProviderCredential::OpenAiCompatible(auth))
@@ -151,6 +151,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                         let descriptor = provider::provider_descriptor("xai-oauth")
                             .expect("xAI OAuth provider must be registered");
                         let env_var = descriptor
+                            .default_auth()
                             .auth_kind
                             .env_var()
                             .expect("xAI OAuth must declare an environment variable");
@@ -246,7 +247,7 @@ fn load_provider_api_key_auth(
         env_var,
         missing_message,
         ..
-    } = descriptor.auth_kind
+    } = descriptor.default_auth().auth_kind
     else {
         return Err(ModelError::UnsupportedProvider(provider_name.into()));
     };
@@ -266,7 +267,7 @@ fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelEr
         env_var,
         missing_message,
         ..
-    } = descriptor.auth_kind
+    } = descriptor.default_auth().auth_kind
     else {
         return Err(ModelError::UnsupportedProvider("openai".into()));
     };
@@ -282,6 +283,7 @@ fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelEr
 
 fn load_codex_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
     let env_var = provider::provider_descriptor_by_id(provider::ProviderId::OpenAiCodex)
+        .default_auth()
         .auth_kind
         .env_var()
         .expect("Codex OAuth must declare an environment variable");
@@ -311,7 +313,7 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
         env_var,
         missing_message,
         ..
-    } = descriptor.auth_kind
+    } = descriptor.default_auth().auth_kind
     else {
         return Err(ModelError::UnsupportedProvider("anthropic".into()));
     };

@@ -60,20 +60,18 @@ impl ProviderConfigs {
 impl Config {
     pub(crate) fn normalize_provider_profiles(&mut self) -> anyhow::Result<()> {
         let profile = rho_providers::provider::resolve_profile(&self.provider, &self.auth)?;
-        let auth = rho_providers::provider::resolved_auth_id(profile, &self.auth);
-        self.provider = profile.name.into();
-        self.auth = auth.into();
+        self.provider = profile.provider_name().into();
+        self.auth = profile.auth_id().into();
         // Collapse legacy wire ids (for example poolside/laguna-m.1) to the
         // internal model id used by cache, config, and display joins.
-        self.model = profile.canonicalize_model_id(&self.model);
+        self.model = profile.provider.canonicalize_model_id(&self.model);
         for (id, selection) in &mut self.internal_agents {
             let profile =
                 rho_providers::provider::resolve_profile(&selection.provider, &selection.auth)
                     .map_err(|error| anyhow::anyhow!("internal agent '{id}': {error}"))?;
-            let auth = rho_providers::provider::resolved_auth_id(profile, &selection.auth);
-            selection.provider = profile.name.into();
-            selection.auth = auth.into();
-            selection.model = profile.canonicalize_model_id(&selection.model);
+            selection.provider = profile.provider_name().into();
+            selection.auth = profile.auth_id().into();
+            selection.model = profile.provider.canonicalize_model_id(&selection.model);
         }
         Ok(())
     }

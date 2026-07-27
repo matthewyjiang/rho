@@ -160,11 +160,16 @@ fn provider_picker_for_targets(
     let mut items = targets
         .into_iter()
         .map(|target| {
-            let multi_mode = catalog::login_targets()
-                .iter()
-                .filter(|candidate| candidate.provider == target.provider)
-                .count()
-                > 1;
+            let multi_mode = provider::provider_descriptor(&target.provider)
+                .map(|descriptor| {
+                    descriptor
+                        .auth_modes
+                        .iter()
+                        .filter(|mode| mode.auth_kind != provider::ProviderAuthKind::None)
+                        .count()
+                        > 1
+                })
+                .unwrap_or(false);
             let label = if multi_mode {
                 format!("{} · {}", target.provider, target.label)
             } else {

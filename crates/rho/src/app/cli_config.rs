@@ -81,8 +81,10 @@ pub(super) async fn refresh_model_cache(
         ProviderModelEndpoint::ProviderOwned,
         ProviderModelEndpoint::OpenAiCompatible,
     );
+    let auth = cli.auth.as_deref().unwrap_or(&config.auth);
     let attempted = refresh_model_list_for_provider(
         provider,
+        auth,
         selected_model.as_deref(),
         /*explicit_selection*/
         cli.provider.is_some() || cli.model.is_some() || cli.auth.is_some(),
@@ -110,13 +112,18 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         save_config = true;
     }
     if let Some(profile) = cli_auth_profile(cli)? {
+        let auth = cli
+            .auth
+            .as_deref()
+            .expect("cli_auth_profile is only Some when --auth is set");
         let current_runtime =
             provider::provider_descriptor(&config.provider).map(|descriptor| descriptor.runtime_id);
         if cli.model.is_none() && current_runtime == Some(profile.runtime_id) {
             config.provider = profile.name.into();
-            config.auth = profile.auth.into();
+            config.auth = auth.into();
         } else {
             apply_provider_override(config, profile.name, cli.model.is_some())?;
+            config.auth = auth.into();
         }
         save_config = true;
     }
@@ -190,7 +197,13 @@ pub(super) async fn prepare_model_metadata(
             ProviderModelEndpoint::ProviderOwned,
             ProviderModelEndpoint::OpenAiCompatible,
         );
-        let _ = refresh_provider_models_with_store(&config.provider, store, model_endpoint).await;
+        let _ = refresh_provider_models_with_store(
+            &config.provider,
+            &config.auth,
+            store,
+            model_endpoint,
+        )
+        .await;
     }
     // models.dev metadata is optional and fetched asynchronously by the TUI.
     // Blocking automation and background-agent startup on the full catalog makes
@@ -246,7 +259,8 @@ pub(super) fn apply_provider_override(
     if !catalog::implemented_providers().contains(&provider) {
         anyhow::bail!("unknown provider '{provider}' for --provider");
     }
-    let auth = provider::provider_descriptor(provider).map(|descriptor| descriptor.auth);
+    let auth =
+        provider::provider_descriptor(provider).map(|descriptor| descriptor.default_auth().id);
     let model = if has_model_override {
         None
     } else {
@@ -317,6 +331,7 @@ fn effective_model_override(
 
 async fn refresh_model_list_for_provider(
     provider: &str,
+    auth: &str,
     selected_model: Option<&str>,
     explicit_selection: bool,
     store: &dyn credentials::CredentialStore,
@@ -332,7 +347,7 @@ async fn refresh_model_list_for_provider(
     if descriptor.model_refresh.is_none() || (!needs_model_discovery && !needs_capabilities) {
         return Ok(false);
     }
-    match refresh_provider_models_with_store(provider, store, endpoint).await {
+    match refresh_provider_models_with_store(provider, auth, store, endpoint).await {
         Ok(_) => Ok(true),
         Err(error)
             if explicit_selection

@@ -13,12 +13,10 @@ use std::{
 
 use base64::{engine::general_purpose, Engine as _};
 use rand::rngs::OsRng;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use signature::Signer;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};
 use tokio::time::sleep;
-
-use crate::credentials::{CredentialError, CredentialResult, CredentialStore};
 
 const DEFAULT_PRIVATE_KEY_NAME: &str = "id_ed25519";
 const DEFAULT_PUBLIC_KEY_NAME: &str = "id_ed25519.pub";
@@ -61,9 +59,12 @@ impl OllamaDeviceKey {
             Ok(key) => Ok(key),
             Err(OllamaDeviceError::MissingKey(_)) => {
                 ensure_key_dir(dir)?;
-                let key = generate_key()?;
-                write_key_pair(dir, &key)?;
-                Ok(key)
+                match create_key_pair(dir) {
+                    Ok(key) => Ok(key),
+                    // Another process won the create race; reload its key.
+                    Err(OllamaDeviceError::AlreadyExists) => Self::load_from_dir(dir),
+                    Err(error) => Err(error),
+                }
             }
             Err(error) => Err(error),
         }
@@ -153,13 +154,6 @@ impl OllamaDeviceKey {
     }
 }
 
-/// Session marker stored after a successful device-key sign-in.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct OllamaDeviceSession {
-    pub username: String,
-    pub public_key_openssh: String,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum OllamaDeviceError {
     #[error("missing Ollama device key at {0}")]
@@ -172,6 +166,8 @@ pub enum OllamaDeviceError {
     Io(String),
     #[error("Ollama device login setup failed: {0}")]
     Setup(String),
+    #[error("Ollama device key already exists")]
+    AlreadyExists,
     #[error("could not open a browser for Ollama device login")]
     Browser,
     #[error("timed out waiting for Ollama device login")]
@@ -186,6 +182,8 @@ pub enum OllamaDeviceError {
 pub struct OllamaDeviceLogin {
     pub connect_url: String,
     pub key: OllamaDeviceKey,
+    /// True when the key was already registered before this login attempt.
+    pub already_registered: bool,
     expires_in: Duration,
     interval: Duration,
 }
@@ -196,6 +194,7 @@ impl std::fmt::Debug for OllamaDeviceLogin {
             .debug_struct("OllamaDeviceLogin")
             .field("connect_url", &self.connect_url)
             .field("key", &self.key)
+            .field("already_registered", &self.already_registered)
             .field("expires_in", &self.expires_in)
             .field("interval", &self.interval)
             .finish()
@@ -217,6 +216,7 @@ pub async fn start_ollama_device_login(
         return Ok(OllamaDeviceLogin {
             connect_url,
             key,
+            already_registered: true,
             expires_in: Duration::from_secs(1),
             interval: Duration::from_millis(1),
         });
@@ -227,23 +227,24 @@ pub async fn start_ollama_device_login(
     Ok(OllamaDeviceLogin {
         connect_url,
         key,
+        already_registered: false,
         expires_in: DEFAULT_POLL_TIMEOUT,
         interval: DEFAULT_POLL_INTERVAL,
     })
 }
 
 /// Polls ollama.com until the device key is associated with an account.
+///
+/// The local key is the credential; nothing is persisted in Rho's store.
 pub async fn complete_ollama_device_login(
     login: OllamaDeviceLogin,
-) -> Result<OllamaDeviceSession, OllamaDeviceError> {
+) -> Result<(), OllamaDeviceError> {
     let client = http_client()?;
     let deadline = Instant::now() + login.expires_in;
     loop {
         if let Some(username) = whoami(&client, &login.key).await? {
-            return Ok(OllamaDeviceSession {
-                username,
-                public_key_openssh: login.key.public_key_openssh().to_string(),
-            });
+            let _ = username;
+            return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(OllamaDeviceError::Timeout);
@@ -252,44 +253,9 @@ pub async fn complete_ollama_device_login(
     }
 }
 
-pub fn save_ollama_device_session(
-    store: &dyn CredentialStore,
-    session: &OllamaDeviceSession,
-) -> CredentialResult<()> {
-    if session.username.trim().is_empty() {
-        return Err(CredentialError::InvalidData(
-            "Ollama device session username cannot be empty".into(),
-        ));
-    }
-    let secret = serde_json::to_string(session).map_err(|error| {
-        CredentialError::InvalidData(format!("could not encode Ollama device session: {error}"))
-    })?;
-    store.set_secret(
-        crate::provider::OLLAMA_CLOUD_DEVICE_SESSION_ACCOUNT,
-        &secret,
-    )
-}
-
-pub fn load_ollama_device_session(
-    store: &dyn CredentialStore,
-) -> CredentialResult<Option<OllamaDeviceSession>> {
-    let Some(secret) = store.get_secret(crate::provider::OLLAMA_CLOUD_DEVICE_SESSION_ACCOUNT)?
-    else {
-        return Ok(None);
-    };
-    serde_json::from_str(&secret).map(Some).map_err(|error| {
-        CredentialError::InvalidData(format!(
-            "invalid stored Ollama device session JSON: {error}"
-        ))
-    })
-}
-
-/// True when Rho has a saved session or a usable local Ollama device key.
-pub fn ollama_device_credentials_available(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    if load_ollama_device_session(store)?.is_some() {
-        return Ok(true);
-    }
-    Ok(OllamaDeviceKey::load_default().is_ok())
+/// True when a usable local Ollama device key exists on disk.
+pub fn ollama_device_credentials_available() -> bool {
+    OllamaDeviceKey::load_default().is_ok()
 }
 
 async fn whoami(
@@ -370,39 +336,66 @@ fn generate_key() -> Result<OllamaDeviceKey, OllamaDeviceError> {
     OllamaDeviceKey::from_openssh_private_key(&pem)
 }
 
-fn write_key_pair(dir: &Path, key: &OllamaDeviceKey) -> Result<(), OllamaDeviceError> {
+/// Creates a new key pair without truncating an existing private key.
+fn create_key_pair(dir: &Path) -> Result<OllamaDeviceKey, OllamaDeviceError> {
+    let key = generate_key()?;
     let private_path = dir.join(DEFAULT_PRIVATE_KEY_NAME);
     let public_path = dir.join(DEFAULT_PUBLIC_KEY_NAME);
-    write_secret_file(
+    write_private_key_exclusive(
         &private_path,
         format!("{}\n", key.private_key_openssh.trim()),
     )?;
+    // Public key is derived from private; rewrite is safe if the private write won.
     fs::write(&public_path, format!("{}\n", key.public_key_openssh.trim())).map_err(|error| {
         OllamaDeviceError::Io(format!("write {}: {error}", public_path.display()))
     })?;
-    Ok(())
+    Ok(key)
 }
 
 #[cfg(unix)]
-fn write_secret_file(path: &Path, contents: String) -> Result<(), OllamaDeviceError> {
-    use std::os::unix::fs::OpenOptionsExt;
-    fs::OpenOptions::new()
+fn write_private_key_exclusive(path: &Path, contents: String) -> Result<(), OllamaDeviceError> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+
+    // create_new refuses to truncate an existing key if two processes race.
+    match fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
+        .open(path)
+    {
+        Ok(mut file) => file
+            .write_all(contents.as_bytes())
+            .and_then(|_| file.sync_all())
+            .map_err(|error| OllamaDeviceError::Io(format!("write {}: {error}", path.display()))),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(OllamaDeviceError::AlreadyExists)
+        }
+        Err(error) => Err(OllamaDeviceError::Io(format!(
+            "create {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+#[cfg(not(unix))]
+fn write_private_key_exclusive(path: &Path, contents: String) -> Result<(), OllamaDeviceError> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
         .open(path)
         .and_then(|mut file| {
             use std::io::Write;
             file.write_all(contents.as_bytes())
-        })
-        .map_err(|error| OllamaDeviceError::Io(format!("write {}: {error}", path.display())))
-}
-
-#[cfg(not(unix))]
-fn write_secret_file(path: &Path, contents: String) -> Result<(), OllamaDeviceError> {
-    fs::write(path, contents)
-        .map_err(|error| OllamaDeviceError::Io(format!("write {}: {error}", path.display())))
+        }) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(OllamaDeviceError::AlreadyExists)
+        }
+        Err(error) => Err(OllamaDeviceError::Io(format!(
+            "write {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 fn public_key_payload_b64(openssh: &str) -> Result<String, OllamaDeviceError> {
@@ -466,6 +459,31 @@ mod tests {
         assert_eq!(created.public_key_openssh(), loaded.public_key_openssh());
         assert!(dir.path().join(DEFAULT_PRIVATE_KEY_NAME).exists());
         assert!(dir.path().join(DEFAULT_PUBLIC_KEY_NAME).exists());
+    }
+
+    #[test]
+    fn load_or_create_does_not_truncate_existing_private_key() {
+        let dir = tempdir().unwrap();
+        let first = OllamaDeviceKey::load_or_create(dir.path()).unwrap();
+        let private_path = dir.path().join(DEFAULT_PRIVATE_KEY_NAME);
+        let before = std::fs::read_to_string(&private_path).unwrap();
+        let second = OllamaDeviceKey::load_or_create(dir.path()).unwrap();
+        let after = std::fs::read_to_string(&private_path).unwrap();
+        assert_eq!(first.public_key_openssh(), second.public_key_openssh());
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn create_new_reports_already_exists_without_truncating() {
+        let dir = tempdir().unwrap();
+        let first = create_key_pair(dir.path()).unwrap();
+        let before = std::fs::read_to_string(dir.path().join(DEFAULT_PRIVATE_KEY_NAME)).unwrap();
+        let err = create_key_pair(dir.path()).unwrap_err();
+        assert!(matches!(err, OllamaDeviceError::AlreadyExists));
+        let after = std::fs::read_to_string(dir.path().join(DEFAULT_PRIVATE_KEY_NAME)).unwrap();
+        assert_eq!(before, after);
+        let loaded = OllamaDeviceKey::load_from_dir(dir.path()).unwrap();
+        assert_eq!(first.public_key_openssh(), loaded.public_key_openssh());
     }
 
     #[test]

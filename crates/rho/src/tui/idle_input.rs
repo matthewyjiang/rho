@@ -21,7 +21,7 @@ impl App {
     ) -> anyhow::Result<bool> {
         match self.input_ui.composer() {
             ComposerMode::Input => Ok(false),
-            ComposerMode::OAuthPending(_) => self.handle_oauth_pending_key(key),
+            ComposerMode::InteractivePending(_) => self.handle_interactive_pending_key(key),
             ComposerMode::InlineChoice(_) => {
                 self.handle_inline_choice_key(key, terminal, agent).await
             }

@@ -2,7 +2,7 @@ use super::{InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePen
 use {
     crate::credential_store::build_provider,
     rho_providers::auth::login_dispatch::{
-        AuthenticationMethod, CompletedAuthentication, OAuthMode, OAuthUserAction,
+        AuthenticationMethod, CompletedAuthentication, InteractiveLoginMode, InteractiveUserAction,
         ProviderAuthentication,
     },
     rho_providers::model::{provider_models::ProviderModelEndpoint, registry},
@@ -71,7 +71,7 @@ impl SecretInput {
 }
 
 #[derive(Debug)]
-pub(super) struct PendingOAuthLogin {
+pub(super) struct PendingInteractiveLogin {
     pub(super) target: LoginTarget,
     pub(super) handle: tokio::task::JoinHandle<Result<CompletedAuthentication, String>>,
 }
@@ -305,8 +305,7 @@ impl App {
             return Ok(());
         }
         let provider = provider.trim();
-        if provider::provider_descriptor(provider)
-            .is_some_and(|descriptor| descriptor.auth_kind == provider::ProviderAuthKind::None)
+        if provider::provider_descriptor(provider).is_some_and(|descriptor| descriptor.is_keyless())
         {
             self.insert_entry(&Entry::Notice(format!(
                 "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
@@ -379,8 +378,8 @@ impl App {
                 self.status = format!("enter {entry_label}");
                 Ok(())
             }
-            AuthenticationMethod::OAuth { provider_label } => {
-                self.start_oauth_login(target, provider_label, terminal, agent)
+            AuthenticationMethod::Interactive { provider_label } => {
+                self.start_interactive_login_flow(target, provider_label, terminal, agent)
                     .await
             }
         }
@@ -414,14 +413,14 @@ impl App {
         }
     }
 
-    async fn start_oauth_login(
+    async fn start_interactive_login_flow(
         &mut self,
         target: LoginTarget,
         provider_label: &'static str,
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.pending_oauth_login.is_some() {
+        if self.pending_interactive_login.is_some() {
             self.insert_entry(&Entry::Notice(
                 "OAuth login is already in progress. Press esc to cancel.".into(),
             ));
@@ -433,16 +432,17 @@ impl App {
             || std::env::var_os("HERDR_ENV").is_some();
         let mode =
             if remote_or_nested && ProviderAuthentication::supports_device_login(&target.auth) {
-                OAuthMode::Device
+                InteractiveLoginMode::Device
             } else {
-                OAuthMode::Browser
+                InteractiveLoginMode::Browser
             };
         self.status = match mode {
-            OAuthMode::Browser => format!("starting {provider_label} login"),
-            OAuthMode::Device => format!("starting {provider_label} device login"),
+            InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
+            InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
         };
         terminal.draw(|frame| self.draw(frame))?;
-        let login = match ProviderAuthentication::start_oauth(&target.auth, mode).await {
+        let login = match ProviderAuthentication::start_interactive_login(&target.auth, mode).await
+        {
             Ok(login) => login,
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
@@ -452,14 +452,18 @@ impl App {
         };
 
         let provider_label = login.provider_label;
-        let device_flow = matches!(&login.user_action, OAuthUserAction::DeviceCode { .. });
+        let device_flow = matches!(&login.user_action, InteractiveUserAction::DeviceCode { .. });
         match login.user_action {
-            OAuthUserAction::BrowserOpened => {
+            InteractiveUserAction::BrowserOpened => {
                 self.insert_entry(&Entry::Notice(format!(
                     "opening browser for {provider_label} login. Press esc to cancel."
                 )));
             }
-            OAuthUserAction::DeviceCode {
+            InteractiveUserAction::OpenUrl { url, instruction } => {
+                self.insert_entry(&Entry::Notice(format!("{provider_label}: {instruction}")));
+                self.insert_entry(&Entry::Notice(url));
+            }
+            InteractiveUserAction::DeviceCode {
                 verification_uri,
                 user_code,
                 verification_uri_complete,
@@ -477,8 +481,8 @@ impl App {
         let flow = if device_flow { " device" } else { "" };
         self.status = format!("waiting for {provider_label}{flow} login; press esc to cancel");
         self.input_ui
-            .set_composer(ComposerMode::OAuthPending(target.clone()));
-        self.pending_oauth_login = Some(PendingOAuthLogin {
+            .set_composer(ComposerMode::InteractivePending(target.clone()));
+        self.pending_interactive_login = Some(PendingInteractiveLogin {
             target,
             handle: tokio::spawn(
                 async move { login.completion.await.map_err(|err| err.to_string()) },
@@ -487,19 +491,19 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn poll_pending_oauth_login(
+    pub(super) async fn poll_pending_interactive_login(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let Some(pending) = self.pending_oauth_login.as_ref() else {
+        let Some(pending) = self.pending_interactive_login.as_ref() else {
             return Ok(());
         };
         if !pending.handle.is_finished() {
             return Ok(());
         }
 
-        let pending = self.pending_oauth_login.take().unwrap();
+        let pending = self.pending_interactive_login.take().unwrap();
         let target = pending.target;
         match pending.handle.await {
             Ok(Ok(result)) => {
@@ -599,6 +603,7 @@ impl App {
         );
         match refresh_provider_models_with_store(
             &target.provider,
+            &target.auth,
             self.credential_store.as_ref(),
             model_endpoint,
         )
@@ -871,7 +876,7 @@ pub(super) fn secret_input_lines(
     ]
 }
 
-pub(super) fn oauth_pending_lines(
+pub(super) fn interactive_pending_lines(
     target: &LoginTarget,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {

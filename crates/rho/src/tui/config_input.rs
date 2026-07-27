@@ -9,13 +9,16 @@ use super::{
 };
 
 impl App {
-    pub(super) fn handle_oauth_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::OAuthPending(_)) {
+    pub(super) fn handle_interactive_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::InteractivePending(_)
+        ) {
             return Ok(false);
         }
 
         if key.code == KeyCode::Esc {
-            let provider = if let Some(pending) = self.pending_oauth_login.take() {
+            let provider = if let Some(pending) = self.pending_interactive_login.take() {
                 let provider = pending.target.provider;
                 pending.handle.abort();
                 provider

@@ -74,7 +74,7 @@ impl App {
             credential_store,
             available_auths,
             using_unavailable_provider,
-            pending_oauth_login: None,
+            pending_interactive_login: None,
             pending_usage_limits: None,
             usage_limits_client: reqwest::Client::new(),
             usage: UsageUi::default(),
