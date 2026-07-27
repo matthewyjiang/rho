@@ -100,6 +100,7 @@ mod skill_picker;
 mod smoke_injection;
 mod statusline;
 mod stream;
+mod stream_pace;
 mod stream_preview;
 mod subagent_attach;
 mod subagent_panel;

@@ -944,6 +944,7 @@ fn toggling_reasoning_output_off_mid_turn_hides_later_deltas() {
         &mut terminal,
     )
     .unwrap();
+    app.play_out_streams(&mut terminal).unwrap();
     assert!(
         matches!(
             app.history.entries(),

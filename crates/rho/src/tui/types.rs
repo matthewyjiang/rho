@@ -17,6 +17,7 @@ use super::{
     prompt_turn::FailedTurn,
     questionnaire::QuestionnaireComposer,
     stream::AppendOnlyStream,
+    stream_pace::StreamPacer,
     theme::Theme,
     usage_cost::{AttemptAwareRunUsage, UsageCostTracker},
 };
@@ -62,6 +63,7 @@ pub(super) struct StreamUi {
     pub(in crate::tui) current_stream_kind: Option<StreamKind>,
     pub(in crate::tui) stream_preview_deadline: Option<Instant>,
     pub(in crate::tui) live_stream_preview: Option<LiveStreamPreview>,
+    pub(in crate::tui) pacer: StreamPacer,
 }
 
 impl StreamUi {
@@ -73,6 +75,7 @@ impl StreamUi {
         self.current_stream_kind = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
+        self.pacer.reset();
     }
 
     pub(super) fn loading_streams_active(&self) -> bool {

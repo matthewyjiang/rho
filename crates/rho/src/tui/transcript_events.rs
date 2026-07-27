@@ -76,7 +76,10 @@ impl App {
             ViewModelEvent::OutputDelta(text) => {
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
                 self.streams.assistant_stream.push_delta(&text);
-                let drained = self.drain_stream(terminal, StreamKind::Assistant)?;
+                self.streams
+                    .pacer
+                    .record_arrival(Instant::now(), text.chars().count());
+                let drained = self.advance_stream_release(terminal, StreamKind::Assistant)?;
                 self.update_stream_preview_deadline(StreamKind::Assistant);
                 Ok(switched || drained)
             }
@@ -90,7 +93,10 @@ impl App {
                 }
                 let switched = self.switch_stream_kind(StreamKind::Reasoning);
                 self.streams.reasoning_stream.push_delta(&text);
-                let drained = self.drain_stream(terminal, StreamKind::Reasoning)?;
+                self.streams
+                    .pacer
+                    .record_arrival(Instant::now(), text.chars().count());
+                let drained = self.advance_stream_release(terminal, StreamKind::Reasoning)?;
                 self.update_stream_preview_deadline(StreamKind::Reasoning);
                 Ok(switched || drained)
             }
@@ -140,6 +146,47 @@ impl App {
         Ok(reasoning_drained || assistant_drained)
     }
 
+    /// Hands the pacer's allowance to `kind` and commits whatever that made
+    /// renderable.
+    ///
+    /// Called both when text arrives and on every frame tick, so a burst keeps
+    /// playing out after the network has gone quiet.
+    pub(super) fn advance_stream_release<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        kind: StreamKind,
+    ) -> Result<bool, B::Error> {
+        let reserved = match kind {
+            StreamKind::Assistant => self.streams.assistant_stream.reserved_chars(),
+            StreamKind::Reasoning => self.streams.reasoning_stream.reserved_chars(),
+        };
+        let allowance = self
+            .streams
+            .pacer
+            .release_allowance(Instant::now(), reserved);
+        match kind {
+            StreamKind::Assistant => self.streams.assistant_stream.release(allowance),
+            StreamKind::Reasoning => self.streams.reasoning_stream.release(allowance),
+        }
+        self.drain_stream(terminal, kind)
+    }
+
+    /// Plays out everything the pacer is holding.
+    ///
+    /// Stands in for the frame ticks a live terminal supplies, so tests can
+    /// assert on streamed text without depending on wall-clock timing.
+    #[cfg(test)]
+    pub(super) fn play_out_streams<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error> {
+        let assistant = self.streams.assistant_stream.reserved_chars();
+        self.streams.assistant_stream.release(assistant);
+        let reasoning = self.streams.reasoning_stream.reserved_chars();
+        self.streams.reasoning_stream.release(reasoning);
+        self.drain_streams(terminal)
+    }
+
     pub(super) fn drain_stream<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
@@ -187,6 +234,9 @@ impl App {
             self.streams.stream_preview_deadline = None;
             return Ok(false);
         };
+        // The tick is the pacer's clock. Without it a burst that arrived while
+        // the socket was busy would sit in reserve until the next one landed.
+        let committed = self.advance_stream_release(terminal, kind)?;
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
         let preview = match kind {
@@ -209,7 +259,7 @@ impl App {
             });
             Ok(true)
         } else {
-            Ok(false)
+            Ok(committed)
         }
     }
 
