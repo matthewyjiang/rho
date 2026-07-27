@@ -100,7 +100,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             .auth_kind
                             .env_var()
                             .expect("Kimi OAuth must declare an environment variable");
-                        let (origin, tokens) = env_or_stored(
+                        let (source, tokens) = env_or_stored(
                             env_var,
                             |access_token| KimiTokens {
                                 access_token,
@@ -112,13 +112,12 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             },
                             || Ok(load_kimi_tokens(self.store.as_ref())?),
                             ModelError::MissingKimiAuth,
+                            KimiAuthSource::Env,
+                            KimiAuthSource::Store,
                         )?;
                         CompatibleAuth::KimiOAuth(KimiAuthManager::from_tokens(
                             self.store.clone(),
-                            match origin {
-                                CredentialOrigin::Env => KimiAuthSource::Env,
-                                CredentialOrigin::Store => KimiAuthSource::Store,
-                            },
+                            source,
                             tokens,
                         ))
                     }
@@ -144,7 +143,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             .auth_kind
                             .env_var()
                             .expect("xAI OAuth must declare an environment variable");
-                        let (origin, tokens) = env_or_stored(
+                        env_or_stored(
                             env_var,
                             |access_token| XaiTokens {
                                 access_token,
@@ -154,14 +153,9 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             },
                             || Ok(load_xai_tokens(self.store.as_ref())?),
                             ModelError::MissingXaiAuth,
-                        )?;
-                        (
-                            match origin {
-                                CredentialOrigin::Env => XaiAuthSource::Env,
-                                CredentialOrigin::Store => XaiAuthSource::Store,
-                            },
-                            tokens,
-                        )
+                            XaiAuthSource::Env,
+                            XaiAuthSource::Store,
+                        )?
                     }
                 };
                 Ok(ProviderCredential::Xai(XaiAuthManager::from_tokens(
@@ -191,21 +185,17 @@ fn load_stored_bearer_key(
         .ok_or_else(|| missing_credential_error(missing))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CredentialOrigin {
-    Env,
-    Store,
-}
-
-fn env_or_stored<T>(
+fn env_or_stored<T, S>(
     env_var: &str,
     from_env: impl FnOnce(String) -> T,
     load: impl FnOnce() -> Result<Option<T>, ModelError>,
     missing: ModelError,
-) -> Result<(CredentialOrigin, T), ModelError> {
+    env_source: S,
+    store_source: S,
+) -> Result<(S, T), ModelError> {
     match std::env::var(env_var) {
-        Ok(value) if !value.trim().is_empty() => Ok((CredentialOrigin::Env, from_env(value))),
-        _ => Ok((CredentialOrigin::Store, load()?.ok_or(missing)?)),
+        Ok(value) if !value.trim().is_empty() => Ok((env_source, from_env(value))),
+        _ => Ok((store_source, load()?.ok_or(missing)?)),
     }
 }
 

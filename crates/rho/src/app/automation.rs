@@ -7,21 +7,16 @@ use std::{
     time::Duration,
 };
 
-use rho_sdk::{SessionOptions, SystemPrompt, UserInput};
+use rho_sdk::{SessionOptions, UserInput};
 
 use {
-    crate::agent::{PromptPolicy, ToolCapability},
     crate::cli::{Command, OutputFormat},
     crate::config::Config,
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
-    crate::prompt,
     crate::subagent::{RunState, RunStatus},
-    crate::tools::{
-        agent::BackgroundSubagents,
-        sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
-    },
+    crate::tools::agent::BackgroundSubagents,
     rho_providers::providers::build_automation_provider,
 };
 
@@ -34,6 +29,7 @@ use super::{
         build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
     },
     sdk_config::SdkBootstrapOptions,
+    tools_prompt::{assemble_tools_and_prompt, ToolsAndPromptOptions},
 };
 
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
@@ -443,58 +439,19 @@ async fn run_session_with_output(
         Arc::new(AppCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let mut capabilities = startup
-        .agent
-        .rho_capabilities()
-        .cloned()
-        .unwrap_or_default();
-    if startup.no_subagents {
-        capabilities.remove(&ToolCapability::Agent);
-        capabilities.remove(&ToolCapability::Agents);
-    }
-    let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
-    let delegation_enabled =
-        launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
-    let tool_set = if startup.no_tools {
-        AppToolSet::disabled()
-    } else {
-        let mut options = ToolSetOptions::new(capabilities);
-        if delegation_enabled {
-            options = options.delegation(DelegationConfig::new(
-                startup.cwd.clone(),
-                startup.config_path.clone(),
-                BackgroundSubagents::Disabled,
-            ));
-        }
-        AppToolSet::new(startup.config, startup.diagnostics.clone(), options)
-    };
-    let tool_specs = tool_set.specs();
-    let system_prompt = if startup.no_system_prompt {
-        startup.diagnostics.update_prompt_sources(Vec::new());
-        SystemPrompt::None
-    } else {
-        let mut text = match startup.agent.prompt() {
-            PromptPolicy::Replace(text) => text.clone(),
-            PromptPolicy::Extend(extra) => {
-                let built = prompt::system_prompt(&tool_specs, &startup.cwd);
-                startup.diagnostics.update_prompt_sources(built.sources);
-                let mut text = built.text;
-                if !launch_delegation_enabled {
-                    prompt::append_subagents_disabled_instruction(&mut text);
-                }
-                if !extra.is_empty() {
-                    text.push_str("\n\n# Agent instructions\n\n");
-                    text.push_str(extra);
-                }
-                text
-            }
-        };
-        if text.is_empty() {
-            text = "You are a coding agent.".into();
-        }
-        SystemPrompt::Custom(text)
-    };
-    startup.diagnostics.update_tools(&tool_specs);
+    let (tool_set, system_prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
+        config: startup.config,
+        config_path: startup.config_path.clone(),
+        cwd: &startup.cwd,
+        no_system_prompt: startup.no_system_prompt,
+        no_tools: startup.no_tools,
+        no_subagents: startup.no_subagents,
+        // Automation keeps questionnaire capability when the agent exposes it.
+        questionnaire_enabled: true,
+        background_subagents: BackgroundSubagents::Disabled,
+        diagnostics: &startup.diagnostics,
+        agent: &startup.agent,
+    })?;
 
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace()?;

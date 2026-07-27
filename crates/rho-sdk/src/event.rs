@@ -4,6 +4,25 @@ use crate::{
     Revision, RunId, SteeringId, ToolCallId,
 };
 
+/// Legacy provider activity kind emitted when a malformed response is retried.
+///
+/// Prefer [`RunEvent::ProviderStreamReset`]. Still emitted before the typed reset
+/// for 1.0 hosts; will be removed in the next major release.
+#[deprecated(note = "use RunEvent::ProviderStreamReset")]
+pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
+/// Legacy provider activity kind emitted when a physical provider request is retried.
+///
+/// Prefer [`RunEvent::ProviderRequestRetry`]. Still dual-emitted for 1.0 hosts;
+/// will be removed in the next major release.
+#[deprecated(note = "use RunEvent::ProviderRequestRetry")]
+pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
+/// Legacy provider activity kind emitted for provider-native web searches.
+///
+/// Prefer [`RunEvent::WebSearch`]. Still dual-emitted for 1.0 hosts; will be
+/// removed in the next major release.
+#[deprecated(note = "use RunEvent::WebSearch")]
+pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
+
 /// Why the current provider attempt was abandoned before a fresh request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -159,6 +178,16 @@ pub enum RunEvent {
     },
     /// A physical provider request failed and will be retried.
     ProviderRequestRetry,
+    /// Legacy stringly-typed provider activity.
+    ///
+    /// Prefer [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], or
+    /// [`RunEvent::ProviderStreamReset`]. Still dual-emitted alongside those
+    /// typed events for 1.0 hosts; will be removed in the next major release.
+    #[deprecated(note = "use WebSearch, ProviderRequestRetry, or ProviderStreamReset")]
+    ProviderActivity {
+        kind: String,
+        detail: String,
+    },
     ProviderContextUpdated {
         kind: String,
     },

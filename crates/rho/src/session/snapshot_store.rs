@@ -216,29 +216,6 @@ impl Session {
         self.snapshot_from_state(read_session_state(&self.path)?, provider, prompt_cache_key)
     }
 
-    /// Appends `entry`, emitting a legacy upgrade marker first when the tree still
-    /// needs one. Callers no longer need to remember the marker invariant.
-    fn append_tree_entry(
-        &self,
-        cursor: &mut super::persistence::AppendCursor,
-        tree: &SessionTree,
-        entry: &SessionEntry,
-    ) -> anyhow::Result<()> {
-        if tree.needs_upgrade_marker() {
-            let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
-                anyhow::anyhow!("legacy session has no state node to upgrade from")
-            })?;
-            self.append_entry_unlocked(
-                cursor,
-                &SessionEntry::Upgrade {
-                    timestamp: timestamp(),
-                    active_leaf_id,
-                },
-            )?;
-        }
-        self.append_entry_unlocked(cursor, entry)
-    }
-
     fn snapshot_from_state(
         &self,
         state: super::persistence::PersistedSessionState,

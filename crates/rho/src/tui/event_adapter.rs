@@ -219,6 +219,9 @@ impl SdkEventAdapter {
             RunEvent::ProviderRequestRetry => {
                 vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
             }
+            // Legacy dual-emitted activity; typed variants above drive the TUI.
+            #[allow(deprecated)]
+            RunEvent::ProviderActivity { .. } => Vec::new(),
             RunEvent::ProviderStreamReset { .. } => {
                 self.presenter().step_started();
                 vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset)]

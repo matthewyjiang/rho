@@ -8,18 +8,13 @@ use rho_sdk::{
 };
 
 use {
-    crate::agent::{PromptPolicy, ToolCapability},
     crate::compaction::CompactionConfig,
     crate::config::Config,
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::permission::PermissionMode,
-    crate::prompt,
     crate::session::Session as StoredSession,
-    crate::tools::{
-        agent::BackgroundSubagents,
-        sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
-    },
+    crate::tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
     rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider},
 };
 
@@ -32,6 +27,7 @@ use super::{
     runtime_builder::{
         build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
     },
+    tools_prompt::{assemble_tools_and_prompt, ToolsAndPromptOptions},
 };
 
 pub(crate) use super::interactive_run_controller::{
@@ -127,6 +123,7 @@ impl InteractiveRuntime {
             no_tools,
             no_subagents,
             questionnaire_enabled,
+            background_subagents: BackgroundSubagents::Enabled,
             diagnostics: &diagnostics,
             agent: &agent,
         })?;
@@ -823,82 +820,6 @@ fn resolve_provider(
             )?)
         }
     }
-}
-
-struct ToolsAndPromptOptions<'a> {
-    config: &'a Config,
-    config_path: PathBuf,
-    cwd: &'a PathBuf,
-    no_system_prompt: bool,
-    no_tools: bool,
-    no_subagents: bool,
-    questionnaire_enabled: bool,
-    diagnostics: &'a RuntimeDiagnostics,
-    agent: &'a BoundAgent,
-}
-
-/// Capability resolution plus system prompt assembly for interactive startup.
-fn assemble_tools_and_prompt(
-    options: ToolsAndPromptOptions<'_>,
-) -> anyhow::Result<(AppToolSet, SystemPrompt)> {
-    // Claude-cli agents bind no Rho host tools. Root interactive/automation
-    // still uses the Rho loop and parent config; Claude execution is via
-    // AgentExecutor for delegated runs.
-    let mut capabilities = options
-        .agent
-        .rho_capabilities()
-        .cloned()
-        .unwrap_or_default();
-    if options.no_subagents {
-        capabilities.remove(&ToolCapability::Agent);
-        capabilities.remove(&ToolCapability::Agents);
-    }
-    if !options.questionnaire_enabled {
-        capabilities.remove(&ToolCapability::Questionnaire);
-    }
-    let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
-    let delegation_enabled =
-        launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
-    let tools = if options.no_tools {
-        AppToolSet::disabled()
-    } else {
-        let mut tool_options = ToolSetOptions::new(capabilities);
-        if delegation_enabled {
-            tool_options = tool_options.delegation(DelegationConfig::new(
-                options.cwd.clone(),
-                options.config_path,
-                BackgroundSubagents::Enabled,
-            ));
-        }
-        AppToolSet::new(options.config, options.diagnostics.clone(), tool_options)
-    };
-    let specs = tools.specs();
-    let system_prompt = if options.no_system_prompt {
-        options.diagnostics.update_prompt_sources(Vec::new());
-        SystemPrompt::None
-    } else {
-        let mut text = match options.agent.prompt() {
-            PromptPolicy::Replace(text) => text.clone(),
-            PromptPolicy::Extend(extra) => {
-                let mut built = prompt::system_prompt(&specs, options.cwd);
-                options.diagnostics.update_prompt_sources(built.sources);
-                if !launch_delegation_enabled {
-                    prompt::append_subagents_disabled_instruction(&mut built.text);
-                }
-                if !extra.is_empty() {
-                    built.text.push_str("\n\n# Agent instructions\n\n");
-                    built.text.push_str(extra);
-                }
-                built.text
-            }
-        };
-        if text.is_empty() {
-            text = "You are a coding agent.".into();
-        }
-        SystemPrompt::Custom(text)
-    };
-    options.diagnostics.update_tools(&specs);
-    Ok((tools, system_prompt))
 }
 
 fn resolve_session_options(

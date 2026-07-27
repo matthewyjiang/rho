@@ -112,6 +112,18 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
 }
 
 #[test]
+fn legacy_provider_activity_is_ignored_by_tui() {
+    let mut adapter = SdkEventAdapter::default();
+
+    #[allow(deprecated)]
+    let events = adapter.translate(RunEvent::ProviderActivity {
+        kind: rho_sdk::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
+        detail: "rho docs".into(),
+    });
+    assert!(events.is_empty());
+}
+
+#[test]
 fn retains_structured_tool_metadata_until_completion() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-1").unwrap();

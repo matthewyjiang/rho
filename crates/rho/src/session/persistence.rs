@@ -211,7 +211,50 @@ impl Session {
         self.append_entry_unlocked(&mut cursor, entry)
     }
 
+    /// Appends a tree-mutating entry, emitting a legacy upgrade marker first when
+    /// the tree still needs one. This is the only path for `Node` / `SetLeaf`.
+    pub(super) fn append_tree_entry(
+        &self,
+        cursor: &mut AppendCursor,
+        tree: &super::tree::SessionTree,
+        entry: &SessionEntry,
+    ) -> anyhow::Result<()> {
+        match entry {
+            SessionEntry::Node { .. } | SessionEntry::SetLeaf { .. } => {}
+            _ => {
+                anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
+            }
+        }
+        if tree.needs_upgrade_marker() {
+            let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
+                anyhow::anyhow!("legacy session has no state node to upgrade from")
+            })?;
+            self.write_jsonl_entry(
+                cursor,
+                &SessionEntry::Upgrade {
+                    timestamp: timestamp(),
+                    active_leaf_id,
+                },
+            )?;
+        }
+        self.write_jsonl_entry(cursor, entry)
+    }
+
     pub(super) fn append_entry_unlocked(
+        &self,
+        cursor: &mut AppendCursor,
+        entry: &SessionEntry,
+    ) -> anyhow::Result<()> {
+        if matches!(
+            entry,
+            SessionEntry::Node { .. } | SessionEntry::SetLeaf { .. }
+        ) {
+            anyhow::bail!("tree-mutating entries must use append_tree_entry");
+        }
+        self.write_jsonl_entry(cursor, entry)
+    }
+
+    fn write_jsonl_entry(
         &self,
         cursor: &mut AppendCursor,
         entry: &SessionEntry,

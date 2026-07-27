@@ -61,7 +61,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
 async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
-    if let Some(result) = dispatch_early_command(&cli).await? {
+    if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
         return result;
     }
 
@@ -113,23 +113,30 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     .await
 }
 
-async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<Option<anyhow::Result<()>>> {
+enum EarlyDispatch {
+    Handled(anyhow::Result<()>),
+    Continue,
+}
+
+async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     if let Some(Command::CredentialStore { command }) = &cli.command {
-        return Ok(Some(run_credential_store_command(
+        return Ok(EarlyDispatch::Handled(run_credential_store_command(
             command,
             cli.config.clone(),
         )));
     }
     if let Some(Command::Sessions { command }) = &cli.command {
-        return Ok(Some(sessions_cli::run(command)));
+        return Ok(EarlyDispatch::Handled(sessions_cli::run(command)));
     }
     if let Some(Command::Attach { id }) = &cli.command {
-        return Ok(Some(
+        return Ok(EarlyDispatch::Handled(
             crate::tui::run_attachment(id, HerdrReporter::from_env()).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {
-        return Ok(Some(update::run_update(env!("CARGO_PKG_VERSION")).await));
+        return Ok(EarlyDispatch::Handled(
+            update::run_update(env!("CARGO_PKG_VERSION")).await,
+        ));
     }
     if let Some(Command::Login {
         provider,
@@ -141,9 +148,11 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<Option<anyhow::Resu
         let config_path = absolute_config_path(&config_repository)?;
         ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
         crate::credential_store::initialize_from_config(&mut config, &config_path)?;
-        return Ok(Some(login::run(provider, *device_auth).await));
+        return Ok(EarlyDispatch::Handled(
+            login::run(provider, *device_auth).await,
+        ));
     }
-    Ok(None)
+    Ok(EarlyDispatch::Continue)
 }
 
 struct PreparedStartup {
@@ -253,11 +262,7 @@ struct AutomationStartup<'a> {
 }
 
 async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Result<()> {
-    let diagnostics = RuntimeDiagnostics::new(startup.config);
-    diagnostics.update_agent(
-        startup.bound_agent.id().as_str(),
-        &startup.bound_agent.fingerprint().to_string(),
-    );
+    let diagnostics = bind_agent_diagnostics(startup.config, &startup.bound_agent);
     automation::run(
         startup.prompt,
         automation::Startup {
@@ -293,11 +298,7 @@ struct InteractiveStartup<'a> {
 }
 
 async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Result<()> {
-    let diagnostics = RuntimeDiagnostics::new(&startup.config);
-    diagnostics.update_agent(
-        startup.bound_agent.id().as_str(),
-        &startup.bound_agent.fingerprint().to_string(),
-    );
+    let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
 
     let pending_update_notice = startup
         .config
@@ -334,6 +335,15 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         reasoning_source: startup.bound_reasoning_source,
     })
     .await
+}
+
+fn bind_agent_diagnostics(
+    config: &crate::config::Config,
+    agent: &super::agent_binding::BoundAgent,
+) -> RuntimeDiagnostics {
+    let diagnostics = RuntimeDiagnostics::new(config);
+    diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());
+    diagnostics
 }
 
 fn ensure_cli_credential_store_choice(
