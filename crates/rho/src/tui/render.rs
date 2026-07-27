@@ -242,7 +242,14 @@ fn picker_item_line(
     if let Some(badge) = &item.badge {
         let remaining = width.saturating_sub(used_width.saturating_add(2));
         if remaining > 1 {
-            let badge_text = truncate_one_line(&badge.text, remaining.min(24));
+            // Cap only when a preview also needs room; value badges (config)
+            // should use the free width instead of truncating early.
+            let badge_budget = if item.preview.is_some() {
+                remaining.min(24)
+            } else {
+                remaining
+            };
+            let badge_text = truncate_one_line(&badge.text, badge_budget);
             used_width += 2 + display_width(&badge_text);
             spans.push(Span::raw("  "));
             spans.push(Span::styled(badge_text, picker_badge_style(badge.tone)));

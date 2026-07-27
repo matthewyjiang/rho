@@ -104,7 +104,7 @@ fn disable_modified_keys() -> std::io::Result<()> {
 /// Rho as BackTab. Legacy `\x1b[Z` is reverse-mapped to VK_TAB+SHIFT and works.
 ///
 /// Both extended protocols are gated together on purpose: under ConPTY+Herdr
-/// we prefer reliable Shift+Tab (permission-mode cycle) over the extra
+/// we prefer reliable Shift+Tab (reasoning-level cycle) over the extra
 /// modified-Enter fidelity those protocols provide on other platforms.
 pub(super) fn should_request_extended_keyboard_protocols() -> bool {
     !cfg!(windows)

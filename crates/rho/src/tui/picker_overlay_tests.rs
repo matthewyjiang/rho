@@ -378,3 +378,50 @@ fn overlay_detail_end_scroll_uses_max_without_sentinel() {
     let expected = line_count.saturating_sub(viewport.rows.max(1));
     assert_eq!(picker.detail_scroll, expected);
 }
+
+#[test]
+fn overlay_uses_single_line_box_chrome() {
+    let frame = render_picker_overlay(
+        &sample_picker("agent detail", "worker detail"),
+        Rect::new(0, 0, 80, 24),
+    );
+    let text = frame
+        .lines
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains('┌'), "{text}");
+    assert!(text.contains('└'), "{text}");
+    assert!(text.contains('│'), "{text}");
+    assert!(!text.contains('╔'), "{text}");
+    assert!(!text.contains('║'), "{text}");
+    assert!(!text.contains('═'), "{text}");
+}
+
+#[test]
+fn overlay_footer_stays_compact_and_collapses_identical_exits() {
+    let mut picker = sample_picker("agent detail", "worker detail").with_confirm_verb("close");
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 90, 24));
+    let footer = frame
+        .lines
+        .iter()
+        .rev()
+        .map(line_text)
+        .find(|line| line.contains("PgUp/PgDn"))
+        .expect("footer");
+
+    assert!(footer.contains("Enter/Esc close"), "{footer}");
+    assert!(!footer.contains("Enter close · Esc close"), "{footer}");
+    assert!(!footer.contains("Type search"), "{footer}");
+    assert!(!footer.contains("PgUp/PgDn details"), "{footer}");
+    assert!(footer.contains("1/2"), "{footer}");
+    assert!(
+        !footer.contains('…'),
+        "footer should fit common terminal widths without truncating: {footer}"
+    );
+
+    picker = sample_picker("agent detail", "worker detail");
+    assert_eq!(picker.action_footer(), "Enter configure · Esc close");
+}

@@ -331,8 +331,8 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
     lines.push(border_line(
         layout.outer.width as usize,
-        '╔',
-        '╗',
+        '┌',
+        '┐',
         Some(content.title),
     ));
     lines.push(content_row(
@@ -369,7 +369,7 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
         layout.inner_width,
         footer_line(layout, &content),
     ));
-    lines.push(border_line(layout.outer.width as usize, '╚', '╝', None));
+    lines.push(border_line(layout.outer.width as usize, '└', '┘', None));
     lines.truncate(layout.outer.height as usize);
     while lines.len() < layout.outer.height as usize {
         lines.push(Line::raw(""));
@@ -655,9 +655,11 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             content.match_count
         )
     };
+    // Keep the chrome short: search is already visible in the filter row, and
+    // Enter/Esc collapse happens in action_footer when both close the picker.
     let text = match layout.panes {
         OverlayPanes::NavOnly { .. } => format!(
-            " {} · PgUp/PgDn · Type search · {} · {position}",
+            " {} · PgUp/PgDn · {} · {position}",
             content.chrome.nav_keys_hint, content.footer
         ),
         OverlayPanes::NavAndDetail {
@@ -692,7 +694,7 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             let detail_position =
                 format!("lines {visible_start}-{visible_end} of {detail_lines}{overflow}");
             format!(
-                " {} · PgUp/PgDn details · Type search · {} · {position} · {detail_position}",
+                " {} · PgUp/PgDn · {} · {position} · {detail_position}",
                 content.chrome.nav_keys_hint, content.footer
             )
         }
@@ -740,7 +742,7 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
 }
 
 fn horizontal_rule(width: usize) -> Line<'static> {
-    border_line(width, '╟', '╢', None)
+    border_line(width, '├', '┤', None)
 }
 
 fn filter_line(filter: &str, width: usize) -> Line<'static> {
@@ -765,19 +767,15 @@ fn border_line(width: usize, left: char, right: char, title: Option<&str>) -> Li
     if width == 1 {
         return Line::from(Span::styled(left.to_string(), Theme::dim()));
     }
-    let fill_char = match left {
-        '╔' | '╚' => '═',
-        _ => '─',
-    };
     let mut text = left.to_string();
     if let Some(title) = title.filter(|title| !title.is_empty()) {
         let label = format!(" {title} ");
         let label = truncate_one_line(&label, width.saturating_sub(2));
         text.push_str(&label);
         let fill = width.saturating_sub(display_width(&text)).saturating_sub(1);
-        text.push_str(&fill_char.to_string().repeat(fill));
+        text.push_str(&"─".repeat(fill));
     } else {
-        text.push_str(&fill_char.to_string().repeat(width.saturating_sub(2)));
+        text.push_str(&"─".repeat(width.saturating_sub(2)));
     }
     text.push(right);
     if display_width(&text) > width {
@@ -787,7 +785,7 @@ fn border_line(width: usize, left: char, right: char, title: Option<&str>) -> Li
 }
 
 fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
-    let mut spans = vec![Span::styled("║", Theme::dim())];
+    let mut spans = vec![Span::styled("│", Theme::dim())];
     let content_width = content
         .spans
         .iter()
@@ -797,7 +795,7 @@ fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
     if content_width < inner_width {
         spans.push(Span::raw(" ".repeat(inner_width - content_width)));
     }
-    spans.push(Span::styled("║", Theme::dim()));
+    spans.push(Span::styled("│", Theme::dim()));
     Line::from(spans)
 }
 
