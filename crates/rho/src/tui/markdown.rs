@@ -65,6 +65,7 @@ pub(super) struct RenderedMarkdown {
     pub(super) image_rows: Vec<usize>,
 }
 
+#[cfg(test)]
 pub(super) fn markdown_lines(
     text: &str,
     width: usize,
@@ -675,11 +676,20 @@ fn complete_link_ranges(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -
                 open_at: Some(start),
             };
         };
-        let target_start = close_label + "](".len();
-        if !line[close_label + ']'.len_utf8()..].starts_with('(') {
-            search_from = close_label + ']'.len_utf8();
+        let after_label = close_label + ']'.len_utf8();
+        // A trailing `]` may still grow into `](url)`. Hold from `[` until more
+        // input arrives; a following non-'(' character means plain brackets.
+        if after_label >= line.len() {
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
+        }
+        if !line[after_label..].starts_with('(') {
+            search_from = after_label;
             continue;
         }
+        let target_start = close_label + "](".len();
         if target_start >= line.len() {
             return InlineDelimScan {
                 ranges,

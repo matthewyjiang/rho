@@ -483,6 +483,16 @@ fn stable_prefix_stops_at_earliest_open_marker() {
         "see ".len()
     );
     assert_eq!(
+        inline_markdown_stable_prefix_len("see [x]"),
+        "see ".len(),
+        "trailing ] may still become a link target"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("see [x] plain"),
+        "see [x] plain".len(),
+        "] followed by non-( stays plain text"
+    );
+    assert_eq!(
         inline_markdown_stable_prefix_len("go https://ex"),
         "go ".len()
     );

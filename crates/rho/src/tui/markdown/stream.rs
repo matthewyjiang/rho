@@ -47,26 +47,15 @@ pub(in crate::tui) fn markdown_stream_bounds(
         }
         return MarkdownStreamBounds {
             drain,
-            preview_end: previewable_prefix_end(
-                text,
-                current_line_start,
-                current_line.len(),
-                width,
-                in_code_block,
-            ),
+            preview_end: previewable_prefix_end(current_line_start, current_line, true),
         };
     }
 
     // Only wrap/preview inside the stable prefix. Open markers stay pending so
     // already-drawn prose is not pulled back when the span finally closes shorter.
     let stable_line_len = inline_markdown_stable_prefix_len(current_line);
-    let preview_end = previewable_prefix_end(
-        text,
-        current_line_start,
-        stable_line_len,
-        width,
-        in_code_block,
-    );
+    let stable_line = &current_line[..stable_line_len];
+    let preview_end = previewable_prefix_end(current_line_start, stable_line, false);
 
     if !matches!(
         heading_stream_state(current_line),
@@ -83,14 +72,29 @@ pub(in crate::tui) fn markdown_stream_bounds(
         };
     }
 
-    let stable_line = &current_line[..stable_line_len];
     let rendered_line = markdown_inline_text(stable_line);
     let complete = complete_word_wrap_prefix(&rendered_line, width);
     if complete.byte_index == 0 {
         return MarkdownStreamBounds { drain, preview_end };
     }
 
-    let rendered_prefix = &rendered_line[..complete.byte_index];
+    if let Some(wrapped) =
+        stable_wrap_drain_prefix(stable_line, &rendered_line[..complete.byte_index], complete)
+    {
+        drain.byte_index = current_line_start + wrapped.byte_index;
+        drain.ends_with_wrap = wrapped.ends_with_wrap;
+    }
+
+    MarkdownStreamBounds { drain, preview_end }
+}
+
+/// Map a rendered soft-wrap cut back onto the stable source prefix.
+fn stable_wrap_drain_prefix(
+    stable_line: &str,
+    rendered_prefix: &str,
+    complete: CompleteStreamPrefix,
+) -> Option<CompleteStreamPrefix> {
+    let mut matched = None;
     for candidate in stable_line
         .char_indices()
         .map(|(index, _)| index)
@@ -102,12 +106,13 @@ pub(in crate::tui) fn markdown_stream_bounds(
         if starts_with_code_fence_fragment(&stable_line[..candidate]) {
             continue;
         }
-        let absolute_candidate = current_line_start + candidate;
         let candidate_source = &stable_line[..candidate];
         let candidate_rendered = markdown_inline_text(candidate_source);
         if candidate_rendered == rendered_prefix {
-            drain.byte_index = absolute_candidate;
-            drain.ends_with_wrap = complete.ends_with_wrap;
+            matched = Some(CompleteStreamPrefix {
+                byte_index: candidate,
+                ends_with_wrap: complete.ends_with_wrap,
+            });
         } else if candidate_source.len() != candidate_rendered.len()
             && !candidate_source
                 .chars()
@@ -115,38 +120,34 @@ pub(in crate::tui) fn markdown_stream_bounds(
                 .is_some_and(char::is_whitespace)
             && candidate_rendered.starts_with(rendered_prefix)
         {
-            drain.byte_index = absolute_candidate;
-            drain.ends_with_wrap = false;
+            matched = Some(CompleteStreamPrefix {
+                byte_index: candidate,
+                ends_with_wrap: false,
+            });
         }
     }
-
-    MarkdownStreamBounds { drain, preview_end }
+    matched
 }
 
-/// Byte end of the live preview, including complete prior lines plus the stable
-/// prefix of the open line when that prefix renders non-empty.
+/// Byte end of the live preview when the stable open-line prefix renders non-empty.
+///
+/// Uses a local width check on the current line only. Prior complete lines are
+/// already covered by the drain bound; re-running `markdown_lines` over the full
+/// prefix is unnecessary for a non-zero visibility test.
 fn previewable_prefix_end(
-    text: &str,
     current_line_start: usize,
-    stable_line_len: usize,
-    width: usize,
-    in_code_block: bool,
+    stable_line: &str,
+    line_in_code_block: bool,
 ) -> Option<usize> {
-    if stable_line_len == 0 {
+    if stable_line.is_empty() {
         return None;
     }
-    let prefix_len = current_line_start + stable_line_len;
-    let mut probe_code_block = in_code_block;
-    let rendered_width = markdown_lines(&text[..prefix_len], width, &mut probe_code_block)
-        .last()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| display_width(span.content.as_ref()))
-                .sum::<usize>()
-        })
-        .unwrap_or_default();
-    (rendered_width > 0).then_some(prefix_len)
+    let rendered_width = if line_in_code_block {
+        display_width(stable_line)
+    } else {
+        display_width(&markdown_inline_text(stable_line))
+    };
+    (rendered_width > 0).then_some(current_line_start + stable_line.len())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
