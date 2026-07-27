@@ -273,10 +273,14 @@ fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
             nav_viewport_rows: body_rows,
         }
     } else if inner_width < TWO_COLUMN_MIN_INNER_WIDTH {
-        let detail_viewport_rows = (body_rows.saturating_mul(3) / 5)
-            .max(2)
-            .min(body_rows.saturating_sub(1));
-        let nav_viewport_rows = body_rows.saturating_sub(detail_viewport_rows);
+        // One body row is the horizontal rule between detail and nav when there
+        // is room for both panes plus the separator.
+        let separator_rows = usize::from(body_rows > 2);
+        let usable_rows = body_rows.saturating_sub(separator_rows).max(1);
+        let detail_viewport_rows = (usable_rows.saturating_mul(3) / 5)
+            .max(2.min(usable_rows.saturating_sub(1)))
+            .min(usable_rows.saturating_sub(1));
+        let nav_viewport_rows = usable_rows.saturating_sub(detail_viewport_rows);
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::Stacked,
             nav_width: inner_width,
@@ -329,47 +333,89 @@ fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
 
 fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
+    let divider_col = side_by_side_divider_col(layout);
     lines.push(border_line(
         layout.outer.width as usize,
-        '╔',
-        '╗',
+        '┌',
+        '┐',
         Some(content.title),
     ));
     lines.push(content_row(
         layout.inner_width,
         filter_line(content.filter, layout.inner_width),
     ));
-    lines.push(horizontal_rule(layout.outer.width as usize));
+    lines.push(horizontal_rule(
+        layout.outer.width as usize,
+        divider_col,
+        '┬',
+    ));
     lines.push(content_row(
         layout.inner_width,
         pane_header_line(layout, &content.chrome),
     ));
 
-    let body = match layout.panes {
-        OverlayPanes::NavOnly { .. } => nav_only_body(layout, &content),
+    let body_sections = match layout.panes {
+        OverlayPanes::NavOnly { .. } => vec![nav_only_body(layout, &content)],
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::SideBySide,
             ..
-        } => side_by_side_body(layout, &content),
+        } => vec![side_by_side_body(layout, &content)],
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::Stacked,
+            detail_viewport_rows: detail_rows_budget,
+            nav_viewport_rows: nav_rows_budget,
             ..
-        } => stacked_body(layout, &content),
+        } => {
+            let detail_rows = detail_viewport_rows(
+                content.detail,
+                content.detail_badge,
+                content.detail_scroll,
+                layout.inner_width,
+                detail_rows_budget,
+            );
+            let nav_rows = nav_item_rows(
+                content.items,
+                content.matching,
+                content.selected,
+                layout.nav_width(),
+                nav_rows_budget,
+                content.show_nav_badges,
+            );
+            if detail_rows_budget > 0 && nav_rows_budget > 0 {
+                vec![detail_rows, nav_rows]
+            } else if detail_rows_budget > 0 {
+                vec![detail_rows]
+            } else {
+                vec![nav_rows]
+            }
+        }
     };
-    for row in body {
-        lines.push(content_row(layout.inner_width, row));
+    for (index, section) in body_sections.into_iter().enumerate() {
+        if index > 0 {
+            // Stacked detail/nav split: join the side borders with ├─┤.
+            lines.push(horizontal_rule(layout.outer.width as usize, None, '─'));
+        }
+        for row in section {
+            lines.push(content_row(layout.inner_width, row));
+        }
     }
 
     while lines.len() + 3 < layout.outer.height as usize {
-        lines.push(content_row(layout.inner_width, Line::raw("")));
+        // Keep the column rule continuous through spare body rows so it meets
+        // the footer junction instead of leaving a gap.
+        lines.push(content_row(layout.inner_width, pane_filler_row(layout)));
     }
 
-    lines.push(horizontal_rule(layout.outer.width as usize));
+    lines.push(horizontal_rule(
+        layout.outer.width as usize,
+        divider_col,
+        '┴',
+    ));
     lines.push(content_row(
         layout.inner_width,
         footer_line(layout, &content),
     ));
-    lines.push(border_line(layout.outer.width as usize, '╚', '╝', None));
+    lines.push(border_line(layout.outer.width as usize, '└', '┘', None));
     lines.truncate(layout.outer.height as usize);
     while lines.len() < layout.outer.height as usize {
         lines.push(Line::raw(""));
@@ -414,40 +460,6 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
         spans.push(Span::styled(SEPARATOR, Theme::dim()));
         spans.extend(right.spans);
         rows.push(Line::from(spans));
-    }
-    rows
-}
-
-fn stacked_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
-    let OverlayPanes::NavAndDetail {
-        nav_width,
-        detail_width,
-        detail_viewport_rows: detail_rows_budget,
-        nav_viewport_rows,
-        ..
-    } = layout.panes
-    else {
-        return Vec::new();
-    };
-    let mut rows = Vec::with_capacity(layout.body_rows);
-    rows.extend(detail_viewport_rows(
-        content.detail,
-        content.detail_badge,
-        content.detail_scroll,
-        detail_width,
-        detail_rows_budget,
-    ));
-    rows.extend(nav_item_rows(
-        content.items,
-        content.matching,
-        content.selected,
-        nav_width,
-        nav_viewport_rows,
-        content.show_nav_badges,
-    ));
-    rows.truncate(layout.body_rows);
-    while rows.len() < layout.body_rows {
-        rows.push(Line::raw(""));
     }
     rows
 }
@@ -646,6 +658,8 @@ fn detail_wrapped_lines(detail: &str, width: usize) -> Vec<String> {
 }
 
 fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'static> {
+    // Priority when width is tight: keep nav/page/action/match count, then a
+    // short overflow cue, and only then the full detail line-range.
     let position = if content.match_count == 0 {
         "0/0".to_string()
     } else {
@@ -655,54 +669,137 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             content.match_count
         )
     };
-    let text = match layout.panes {
-        OverlayPanes::NavOnly { .. } => format!(
-            " {} · PgUp/PgDn · Type search · {} · {position}",
-            content.chrome.nav_keys_hint, content.footer
-        ),
+    let essential = [
+        content.chrome.nav_keys_hint,
+        "PgUp/PgDn",
+        content.footer,
+        position.as_str(),
+    ];
+    let detail = match layout.panes {
+        OverlayPanes::NavOnly { .. } => None,
         OverlayPanes::NavAndDetail {
             detail_viewport_rows,
             ..
-        } => {
-            let detail_lines =
-                detail_content_line_count(content.detail.len(), content.detail_badge.is_some());
-            let scroll =
-                clamp_detail_scroll(content.detail_scroll, detail_lines, detail_viewport_rows);
-            let visible_end = if detail_lines == 0 {
-                0
-            } else {
-                (scroll + detail_viewport_rows).min(detail_lines)
-            };
-            let visible_start = if detail_lines == 0 {
-                0
-            } else {
-                scroll.saturating_add(1)
-            };
-            let overflow = if detail_lines > detail_viewport_rows {
-                if scroll + detail_viewport_rows < detail_lines {
-                    " ↓ more"
-                } else if scroll > 0 {
-                    " ↑ more"
-                } else {
-                    ""
-                }
-            } else {
-                ""
-            };
-            let detail_position =
-                format!("lines {visible_start}-{visible_end} of {detail_lines}{overflow}");
-            format!(
-                " {} · PgUp/PgDn details · Type search · {} · {position} · {detail_position}",
-                content.chrome.nav_keys_hint, content.footer
-            )
-        }
+        } => Some(detail_footer_status(
+            content.detail.len(),
+            content.detail_badge.is_some(),
+            content.detail_scroll,
+            detail_viewport_rows,
+        )),
     };
-    styled_line(
-        truncate_one_line(&text, layout.inner_width),
-        layout.inner_width,
-        Theme::dim(),
-        LineFill::PadToWidth,
-    )
+    let text = fit_overlay_footer(&essential, detail.as_ref(), layout.inner_width);
+    styled_line(text, layout.inner_width, Theme::dim(), LineFill::PadToWidth)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailOverflow {
+    Below,
+    Above,
+}
+
+impl DetailOverflow {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Below => "↓ more",
+            Self::Above => "↑ more",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DetailFooterStatus {
+    range: String,
+    overflow: Option<DetailOverflow>,
+}
+
+impl DetailFooterStatus {
+    fn full(&self) -> String {
+        match (self.range.is_empty(), self.overflow) {
+            (false, Some(overflow)) => format!("{} {}", self.range, overflow.label()),
+            (false, None) => self.range.clone(),
+            (true, Some(overflow)) => overflow.label().to_string(),
+            (true, None) => String::new(),
+        }
+    }
+}
+
+fn detail_footer_status(
+    detail_len: usize,
+    has_badge: bool,
+    detail_scroll: usize,
+    detail_viewport_rows: usize,
+) -> DetailFooterStatus {
+    let detail_lines = detail_content_line_count(detail_len, has_badge);
+    let scroll = clamp_detail_scroll(detail_scroll, detail_lines, detail_viewport_rows);
+    let (range, overflow) = if detail_lines == 0 {
+        (String::new(), None)
+    } else {
+        let visible_end = (scroll + detail_viewport_rows).min(detail_lines);
+        let visible_start = scroll.saturating_add(1);
+        let overflow = if detail_lines > detail_viewport_rows {
+            if scroll + detail_viewport_rows < detail_lines {
+                Some(DetailOverflow::Below)
+            } else if scroll > 0 {
+                Some(DetailOverflow::Above)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        (
+            format!("lines {visible_start}-{visible_end} of {detail_lines}"),
+            overflow,
+        )
+    };
+    DetailFooterStatus { range, overflow }
+}
+
+fn fit_overlay_footer(
+    essential: &[&str],
+    detail: Option<&DetailFooterStatus>,
+    width: usize,
+) -> String {
+    // Prefer fullest chrome first; drop low-value detail segments before hard truncation.
+    let essential_text = join_footer_segments(essential.iter().copied());
+    if let Some(detail) = detail {
+        let full = detail.full();
+        if !full.is_empty() {
+            let with_range = join_footer_segments(
+                essential
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(full.as_str())),
+            );
+            if display_width(&with_range) <= width {
+                return with_range;
+            }
+        }
+        if let Some(overflow) = detail.overflow {
+            let with_overflow = join_footer_segments(
+                essential
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(overflow.label())),
+            );
+            if display_width(&with_overflow) <= width {
+                return with_overflow;
+            }
+        }
+    }
+    if display_width(&essential_text) <= width {
+        return essential_text;
+    }
+    truncate_one_line(&essential_text, width)
+}
+
+fn join_footer_segments<'a>(segments: impl IntoIterator<Item = &'a str>) -> String {
+    let body = segments
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    format!(" {body}")
 }
 
 fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Line<'static> {
@@ -739,8 +836,66 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
     }
 }
 
-fn horizontal_rule(width: usize) -> Line<'static> {
-    border_line(width, '╟', '╢', None)
+/// Column of the side-by-side pane rule within a full outer-width border row.
+fn side_by_side_divider_col(layout: OverlayLayout) -> Option<usize> {
+    match layout.panes {
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::SideBySide,
+            nav_width,
+            ..
+        } => {
+            // left border │ + nav + leading space of " │ "
+            Some(1usize.saturating_add(nav_width).saturating_add(1))
+        }
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::Stacked,
+            ..
+        }
+        | OverlayPanes::NavOnly { .. } => None,
+    }
+}
+
+fn pane_filler_row(layout: OverlayLayout) -> Line<'static> {
+    match layout.panes {
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::SideBySide,
+            nav_width,
+            detail_width,
+            ..
+        } => Line::from(vec![
+            Span::raw(" ".repeat(nav_width)),
+            Span::styled(SEPARATOR, Theme::dim()),
+            Span::raw(" ".repeat(detail_width)),
+        ]),
+        OverlayPanes::NavAndDetail {
+            orientation: OverlayOrientation::Stacked,
+            ..
+        }
+        | OverlayPanes::NavOnly { .. } => Line::raw(""),
+    }
+}
+
+fn horizontal_rule(width: usize, divider_col: Option<usize>, junction: char) -> Line<'static> {
+    if width == 0 {
+        return Line::raw("");
+    }
+    if width == 1 {
+        return Line::from(Span::styled("├".to_string(), Theme::dim()));
+    }
+    let mut text = String::with_capacity(width);
+    text.push('├');
+    for col in 1..width.saturating_sub(1) {
+        if divider_col == Some(col) {
+            text.push(junction);
+        } else {
+            text.push('─');
+        }
+    }
+    text.push('┤');
+    if display_width(&text) > width {
+        text = truncate_one_line(&text, width);
+    }
+    Line::from(Span::styled(text, Theme::dim()))
 }
 
 fn filter_line(filter: &str, width: usize) -> Line<'static> {
@@ -765,19 +920,15 @@ fn border_line(width: usize, left: char, right: char, title: Option<&str>) -> Li
     if width == 1 {
         return Line::from(Span::styled(left.to_string(), Theme::dim()));
     }
-    let fill_char = match left {
-        '╔' | '╚' => '═',
-        _ => '─',
-    };
     let mut text = left.to_string();
     if let Some(title) = title.filter(|title| !title.is_empty()) {
         let label = format!(" {title} ");
         let label = truncate_one_line(&label, width.saturating_sub(2));
         text.push_str(&label);
         let fill = width.saturating_sub(display_width(&text)).saturating_sub(1);
-        text.push_str(&fill_char.to_string().repeat(fill));
+        text.push_str(&"─".repeat(fill));
     } else {
-        text.push_str(&fill_char.to_string().repeat(width.saturating_sub(2)));
+        text.push_str(&"─".repeat(width.saturating_sub(2)));
     }
     text.push(right);
     if display_width(&text) > width {
@@ -787,7 +938,7 @@ fn border_line(width: usize, left: char, right: char, title: Option<&str>) -> Li
 }
 
 fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
-    let mut spans = vec![Span::styled("║", Theme::dim())];
+    let mut spans = vec![Span::styled("│", Theme::dim())];
     let content_width = content
         .spans
         .iter()
@@ -797,7 +948,7 @@ fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
     if content_width < inner_width {
         spans.push(Span::raw(" ".repeat(inner_width - content_width)));
     }
-    spans.push(Span::styled("║", Theme::dim()));
+    spans.push(Span::styled("│", Theme::dim()));
     Line::from(spans)
 }
 
