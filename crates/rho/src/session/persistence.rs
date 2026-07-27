@@ -213,6 +213,9 @@ impl Session {
 
     /// Appends a tree-mutating entry, emitting a legacy upgrade marker first when
     /// the tree still needs one. This is the only path for `Node` / `SetLeaf`.
+    ///
+    /// When a marker is required, the marker and entry are written as one append
+    /// so a failed entry write cannot leave a bare upgrade marker on disk.
     pub(super) fn append_tree_entry(
         &self,
         cursor: &mut AppendCursor,
@@ -221,7 +224,12 @@ impl Session {
     ) -> anyhow::Result<()> {
         match entry {
             SessionEntry::Node { .. } | SessionEntry::SetLeaf { .. } => {}
-            _ => {
+            SessionEntry::Session { .. }
+            | SessionEntry::Message { .. }
+            | SessionEntry::ReplaceHistory { .. }
+            | SessionEntry::Snapshot { .. }
+            | SessionEntry::SnapshotDelta { .. }
+            | SessionEntry::Upgrade { .. } => {
                 anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
             }
         }
@@ -229,15 +237,14 @@ impl Session {
             let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
                 anyhow::anyhow!("legacy session has no state node to upgrade from")
             })?;
-            self.write_jsonl_entry(
-                cursor,
-                &SessionEntry::Upgrade {
-                    timestamp: timestamp(),
-                    active_leaf_id,
-                },
-            )?;
+            let upgrade = SessionEntry::Upgrade {
+                timestamp: timestamp(),
+                active_leaf_id,
+            };
+            self.write_jsonl_entries(cursor, &[&upgrade, entry])
+        } else {
+            self.write_jsonl_entry(cursor, entry)
         }
-        self.write_jsonl_entry(cursor, entry)
     }
 
     pub(super) fn append_entry_unlocked(
@@ -259,8 +266,20 @@ impl Session {
         cursor: &mut AppendCursor,
         entry: &SessionEntry,
     ) -> anyhow::Result<()> {
-        let mut serialized = serde_json::to_vec(entry)?;
-        serialized.push(b'\n');
+        self.write_jsonl_entries(cursor, &[entry])
+    }
+
+    fn write_jsonl_entries(
+        &self,
+        cursor: &mut AppendCursor,
+        entries: &[&SessionEntry],
+    ) -> anyhow::Result<()> {
+        let mut serialized = Vec::new();
+        for entry in entries {
+            let mut bytes = serde_json::to_vec(entry)?;
+            bytes.push(b'\n');
+            serialized.extend_from_slice(&bytes);
+        }
         let mut options = OpenOptions::new();
         options.create(true).read(true).append(true);
         #[cfg(unix)]
