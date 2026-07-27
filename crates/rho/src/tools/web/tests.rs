@@ -105,8 +105,7 @@ async fn search_item_content_preserves_snippet_when_fetch_fails() {
         snippet: "original snippet".into(),
     };
 
-    let (content, content_kind) =
-        search::item_content(&super::util::http_client(), &item, true).await;
+    let (content, content_kind) = search::item_content(&item, true).await;
 
     assert_eq!(content_kind, "snippet_with_fetch_warning");
     assert!(content.contains("original snippet"));
@@ -277,11 +276,10 @@ async fn fetch_url_text_truncates_large_bodies_without_utf8_errors() {
         let _ = stream.write_all(body.as_bytes());
     });
 
-    let client = super::util::http_client();
     let url = format!("http://{address}/big");
     let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
     let result = super::ssrf::with_allow_ranges(loopback, async {
-        super::fetch::fetch_url_text(&client, &url).await
+        super::fetch::fetch_url_text(&url).await
     })
     .await;
     server.join().unwrap();
@@ -320,11 +318,10 @@ async fn fetch_url_text_rejects_invalid_utf8_below_the_byte_cap() {
         let _ = stream.write_all(body);
     });
 
-    let client = super::util::http_client();
     let url = format!("http://{address}/small");
     let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
     let result = super::ssrf::with_allow_ranges(loopback, async {
-        super::fetch::fetch_url_text(&client, &url).await
+        super::fetch::fetch_url_text(&url).await
     })
     .await;
     server.join().unwrap();
@@ -362,11 +359,10 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
         let _ = stream.write_all(&body);
     });
 
-    let client = super::util::http_client();
     let url = format!("http://{address}/exact-cap");
     let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
     let result = super::ssrf::with_allow_ranges(loopback, async {
-        super::fetch::fetch_url_text(&client, &url).await
+        super::fetch::fetch_url_text(&url).await
     })
     .await;
     server.join().unwrap();
@@ -376,8 +372,7 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
 
 #[tokio::test]
 async fn fetch_url_text_blocks_loopback_by_default() {
-    let client = super::util::http_client();
-    let error = super::fetch::fetch_url_text(&client, "http://127.0.0.1:9/")
+    let error = super::fetch::fetch_url_text("http://127.0.0.1:9/")
         .await
         .expect_err("loopback must be refused");
     assert!(
@@ -410,11 +405,10 @@ async fn fetch_url_text_refuses_redirect_responses() {
         let _ = stream.write_all(response.as_bytes());
     });
 
-    let client = super::util::http_client();
     let url = format!("http://{address}/public");
     let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
     let error = super::ssrf::with_allow_ranges(loopback, async {
-        super::fetch::fetch_url_text(&client, &url).await
+        super::fetch::fetch_url_text(&url).await
     })
     .await
     .expect_err("redirect responses must be refused");
@@ -422,6 +416,134 @@ async fn fetch_url_text_refuses_redirect_responses() {
 
     assert!(
         error.to_string().contains("refusing to follow redirect"),
+        "unexpected error: {error}"
+    );
+}
+
+/// Serves one plain-text response on loopback and reports the `Host` header it
+/// received, so pinning tests can prove the request kept its original hostname.
+fn serve_once_reporting_host(
+    body: &'static str,
+) -> (
+    std::net::SocketAddr,
+    std::thread::JoinHandle<Option<String>>,
+) {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        let mut host = None;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("host") {
+                    host = Some(value.trim().to_string());
+                }
+            }
+        }
+        drop(reader);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        host
+    });
+    (address, server)
+}
+
+/// DNS rebinding regression: the hostname resolves to a permitted address for
+/// the SSRF check and to the cloud metadata address afterwards. The fetch must
+/// connect to the checked address and never resolve the name a second time.
+///
+/// `pinned.invalid` cannot resolve through the system resolver, so a successful
+/// fetch is only possible through the pinned address.
+#[tokio::test]
+async fn fetch_url_text_pins_the_connection_to_the_vetted_address() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (address, server) = serve_once_reporting_host("pinned body");
+    let lookups = std::sync::Arc::new(AtomicUsize::new(0));
+    let answers = lookups.clone();
+    let url = format!("http://pinned.invalid:{}/page", address.port());
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+
+    let content = super::ssrf::with_resolver(
+        move |_hostname| {
+            if answers.fetch_add(1, Ordering::SeqCst) == 0 {
+                vec![address.ip()]
+            } else {
+                vec!["169.254.169.254".parse().unwrap()]
+            }
+        },
+        super::ssrf::with_allow_ranges(loopback, async {
+            super::fetch::fetch_url_text(&url).await
+        }),
+    )
+    .await
+    .expect("fetch must reach the vetted address");
+    let host = server.join().unwrap();
+
+    assert_eq!(content, "pinned body");
+    assert_eq!(lookups.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        host.as_deref(),
+        Some(format!("pinned.invalid:{}", address.port()).as_str())
+    );
+}
+
+/// Every connection candidate comes from the validated answer set: the first
+/// vetted address has no listener, so the fetch falls through to the second.
+#[tokio::test]
+async fn fetch_url_text_tries_every_vetted_address() {
+    let (address, server) = serve_once_reporting_host("second answer");
+    let candidates = vec!["127.0.0.2".parse().unwrap(), address.ip()];
+    let url = format!("http://pinned.invalid:{}/page", address.port());
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+
+    let content = super::ssrf::with_resolver(
+        move |_hostname| candidates.clone(),
+        super::ssrf::with_allow_ranges(loopback, async {
+            super::fetch::fetch_url_text(&url).await
+        }),
+    )
+    .await
+    .expect("fetch must fall through to the reachable vetted address");
+    let host = server.join().unwrap();
+
+    assert_eq!(content, "second answer");
+    assert_eq!(
+        host.as_deref(),
+        Some(format!("pinned.invalid:{}", address.port()).as_str())
+    );
+}
+
+/// A blocked answer still fails the whole target, even mixed with public ones.
+#[tokio::test]
+async fn fetch_url_text_rejects_targets_with_any_blocked_answer() {
+    let error = super::ssrf::with_resolver(
+        |_hostname| {
+            vec![
+                "93.184.216.34".parse().unwrap(),
+                "169.254.169.254".parse().unwrap(),
+            ]
+        },
+        super::fetch::fetch_url_text("http://mixed.invalid/page"),
+    )
+    .await
+    .expect_err("a blocked answer must reject the fetch");
+
+    assert!(
+        error.to_string().contains("blocked"),
         "unexpected error: {error}"
     );
 }

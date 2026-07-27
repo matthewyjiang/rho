@@ -21,11 +21,10 @@ pub(super) struct FetchedTarget {
 }
 
 pub(super) async fn fetch_http_url(
-    client: &reqwest::Client,
     url: &Url,
     prompt: Option<&str>,
 ) -> Result<FetchedTarget, ToolError> {
-    let content = fetch_url_text(client, url.as_str()).await?;
+    let content = fetch_url_text(url.as_str()).await?;
     let title = extract_title(&content);
     let markdown = html_to_text(&content);
     Ok(FetchedTarget {
@@ -42,25 +41,23 @@ pub(super) async fn fetch_http_url(
 }
 
 /// Content-fetch choke point: SSRF allow-ranges are resolved here, not in tool
-/// plan types. Callers must use a client with redirects disabled (see
-/// [`super::util::http_client`]).
-pub(super) async fn fetch_url_text(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<String, ToolError> {
-    fetch_url_text_with_auth(client, url, None).await
+/// plan types. The client is built here too, so no caller can reach an
+/// arbitrary URL through a client that resolves the hostname itself.
+pub(super) async fn fetch_url_text(url: &str) -> Result<String, ToolError> {
+    fetch_url_text_with_auth(url, None).await
 }
 
 async fn fetch_url_text_with_auth(
-    client: &reqwest::Client,
     url: &str,
     bearer_token: Option<&str>,
 ) -> Result<String, ToolError> {
-    // Resolve and reject private/loopback targets before connecting. Redirects
-    // are disabled on the shared web clients, so this single check is the full
+    // Resolve and reject private/loopback targets, then connect only to the
+    // vetted addresses so a changed DNS answer cannot move the request after
+    // the check. Redirects are disabled on the client, so this is the full
     // guard; 3xx responses are refused below as defense in depth.
     let allow_ranges = super::ssrf::configured_allow_ranges()?;
-    super::ssrf::ensure_public_url(url, &allow_ranges).await?;
+    let target = super::ssrf::resolve_public_target(url, &allow_ranges).await?;
+    let client = super::util::pinned_http_client(&target)?;
     let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
     if let Some(token) = bearer_token {
         request = request.bearer_auth(token);

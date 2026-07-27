@@ -4,6 +4,10 @@ use regex::Regex;
 use serde_json::Value;
 use url::Url;
 
+use rho_tools::tool::ToolError;
+
+use super::ssrf::VettedTarget;
+
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 static SCRIPT: LazyLock<Regex> =
@@ -24,21 +28,34 @@ pub(super) fn to_pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
-/// Shared HTTP client for web tools.
+/// Shared HTTP client for provider API calls to fixed hosts.
 ///
-/// Redirects are disabled so the resolve-then-check SSRF guard in `ssrf` remains
-/// valid for every content fetch. Provider API calls do not need redirects.
+/// Redirects are disabled so a 3xx cannot carry a request to a host that was
+/// never checked. Content fetches use [`pinned_http_client`] instead.
 pub(super) fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
+    client_builder()
         .build()
         .expect("HTTP client configuration must be valid")
 }
 
-pub(super) fn fetch_http_client() -> reqwest::Client {
-    http_client()
+/// Client for one content fetch, wired to connect only to the addresses that
+/// passed the SSRF checks for that target.
+///
+/// The override replaces DNS for this hostname alone, so the request keeps the
+/// original hostname for TLS SNI, certificate verification, and the `Host`
+/// header while the connection cannot follow a changed DNS answer.
+pub(super) fn pinned_http_client(target: &VettedTarget) -> Result<reqwest::Client, ToolError> {
+    client_builder()
+        .resolve_to_addrs(target.hostname(), target.socket_addrs())
+        .build()
+        .map_err(|error| ToolError::Message(format!("failed to build HTTP client: {error}")))
+}
+
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
 }
 
 pub(super) fn html_to_text(content: &str) -> String {

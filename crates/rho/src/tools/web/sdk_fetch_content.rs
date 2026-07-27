@@ -24,7 +24,9 @@ use github_clone::{GitHubCloneConfig, GitHubClonePlan};
 const DEFAULT_FRAMES: usize = 6;
 
 pub(in crate::tools) struct SdkFetchContent {
-    client: reqwest::Client,
+    /// Fixed-host GitHub API client. Generic URL fetches build their own client
+    /// pinned to SSRF-vetted addresses, so they never borrow this one.
+    github_client: reqwest::Client,
     max_output_bytes: usize,
     process_environment: rho_sdk::ProcessEnvironment,
     store: WebAccessStore,
@@ -41,7 +43,7 @@ impl SdkFetchContent {
         store: WebAccessStore,
     ) -> Self {
         Self {
-            client: util::fetch_http_client(),
+            github_client: util::http_client(),
             max_output_bytes,
             process_environment,
             store,
@@ -56,7 +58,7 @@ impl SdkFetchContent {
         allow_ranges: Vec<super::ssrf::Cidr>,
     ) -> Self {
         Self {
-            client: util::fetch_http_client(),
+            github_client: util::http_client(),
             max_output_bytes,
             process_environment: rho_sdk::ProcessEnvironment::InheritAll,
             store: WebAccessStore::new(),
@@ -195,7 +197,7 @@ impl FetchPlan {
 
     async fn execute(
         self,
-        client: &reqwest::Client,
+        github_client: &reqwest::Client,
         context: &ToolContext,
         max_output_bytes: usize,
     ) -> Result<ToolOutput, ToolError> {
@@ -203,7 +205,7 @@ impl FetchPlan {
         let mut previews = Vec::with_capacity(self.targets.len());
         for target in self.targets {
             let requested = target.requested().to_owned();
-            let fetched = target.execute(client, context).await?;
+            let fetched = target.execute(github_client, context).await?;
             previews.push(fetched.preview.clone());
             items.push(StoredItem {
                 url: Some(requested),
@@ -350,7 +352,7 @@ impl TargetPlan {
 
     async fn execute(
         self,
-        client: &reqwest::Client,
+        github_client: &reqwest::Client,
         context: &ToolContext,
     ) -> Result<FetchedTarget, ToolError> {
         match self {
@@ -372,7 +374,7 @@ impl TargetPlan {
                 )
                 .map_err(map_app_tool_error)
             }
-            Self::Http(plan) => fetch::fetch_http_url(client, &plan.url, plan.prompt.as_deref())
+            Self::Http(plan) => fetch::fetch_http_url(&plan.url, plan.prompt.as_deref())
                 .await
                 .map_err(map_app_tool_error),
             Self::Placeholder(plan) => Ok(match plan.kind {
@@ -384,7 +386,7 @@ impl TargetPlan {
                 ),
                 PlaceholderKind::RemotePdf => fetch::remote_pdf_fallback(&plan.requested),
             }),
-            Self::GitHubApi(plan) => github::fetch_via_api(client, &plan.target)
+            Self::GitHubApi(plan) => github::fetch_via_api(github_client, &plan.target)
                 .await
                 .map_err(map_app_tool_error),
             Self::GitHubClone(plan) => plan.execute().await,
@@ -433,7 +435,7 @@ impl Tool for SdkFetchContent {
                 self.store.clone(),
             )?;
             plan.authorize(&context).await?;
-            let execute = plan.execute(&self.client, &context, self.max_output_bytes);
+            let execute = plan.execute(&self.github_client, &context, self.max_output_bytes);
             #[cfg(test)]
             if let Some(ranges) = self.allow_ranges_override.clone() {
                 return super::ssrf::with_allow_ranges(ranges, execute).await;

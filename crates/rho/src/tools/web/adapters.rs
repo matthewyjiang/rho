@@ -132,7 +132,7 @@ impl Tool for WebSearch {
                 Ok(search_items) if !search_items.is_empty() => {
                     for (index, item) in search_items.into_iter().enumerate() {
                         let (content, content_kind) =
-                            search::item_content(&self.client, &item, include_content).await;
+                            search::item_content(&item, include_content).await;
                         summaries.push(format!(
                             "{}. [{}] {}{}",
                             index + 1,
