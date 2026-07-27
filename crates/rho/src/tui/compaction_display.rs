@@ -42,10 +42,6 @@ impl CompactionDisplayFacts {
     pub(super) fn removed_messages(self) -> usize {
         self.previous_messages.saturating_sub(self.current_messages)
     }
-
-    pub(super) fn reduced(self) -> bool {
-        self.removed_tokens() > 0 || self.removed_messages() > 0
-    }
 }
 
 /// Terminal presentation state for a compaction tool block.
@@ -109,12 +105,6 @@ pub(super) fn completed_card(facts: CompactionDisplayFacts) -> ToolCard {
     if let Some(cost) = facts.cost_usd_micros.filter(|cost| *cost > 0) {
         card.push_fact(ToolFact::Meta {
             text: format!("cost {}", format_usd(cost)),
-        });
-    }
-
-    if !facts.reduced() && card.facts.is_empty() {
-        card.push_fact(ToolFact::Meta {
-            text: "no reduction".into(),
         });
     }
 

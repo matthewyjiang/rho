@@ -5,7 +5,7 @@ use rho_sdk::{
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
     crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
-    rho_tools::tool_card::ToolCard,
+    rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
 use super::{
@@ -99,6 +99,10 @@ pub(super) enum ViewEvent {
 pub(crate) struct SdkEventAdapter {
     presenter: Option<InteractiveToolPresenter>,
     compaction_open: bool,
+    /// Provider output_index -> attachment journal key for live tool previews.
+    attachment_preview_keys: std::collections::BTreeMap<usize, String>,
+    /// call_id -> attachment journal key so later events reuse the preview slot.
+    attachment_call_keys: std::collections::BTreeMap<String, String>,
 }
 
 impl SdkEventAdapter {
@@ -106,6 +110,8 @@ impl SdkEventAdapter {
         Self {
             presenter: Some(InteractiveToolPresenter::new(cwd)),
             compaction_open: false,
+            attachment_preview_keys: std::collections::BTreeMap::new(),
+            attachment_call_keys: std::collections::BTreeMap::new(),
         }
     }
 
@@ -120,6 +126,59 @@ impl SdkEventAdapter {
         }
         self.compaction_open = false;
         Some(ViewEvent::Update(compaction_finished(outcome)))
+    }
+
+    /// Stable attachment key for a streaming preview, reusing the index slot when
+    /// a call id arrives later.
+    pub(crate) fn attachment_key_for_preview(
+        &mut self,
+        index: usize,
+        call_id: Option<&rho_sdk::ToolCallId>,
+    ) -> String {
+        if let Some(call_id) = call_id {
+            let id = call_id.to_string();
+            if let Some(key) = self.attachment_call_keys.get(&id).cloned() {
+                self.attachment_preview_keys.insert(index, key.clone());
+                return key;
+            }
+            if let Some(key) = self.attachment_preview_keys.get(&index).cloned() {
+                self.attachment_call_keys.insert(id, key.clone());
+                return key;
+            }
+            self.attachment_preview_keys.insert(index, id.clone());
+            self.attachment_call_keys.insert(id.clone(), id.clone());
+            return id;
+        }
+        self.attachment_preview_keys
+            .entry(index)
+            .or_insert_with(|| format!("preview:{index}"))
+            .clone()
+    }
+
+    /// Attachment key for a call-id-addressed event, preferring any prior preview.
+    pub(crate) fn attachment_key_for_call(&mut self, call_id: &rho_sdk::ToolCallId) -> String {
+        let id = call_id.to_string();
+        self.attachment_call_keys
+            .entry(id.clone())
+            .or_insert(id)
+            .clone()
+    }
+
+    /// Consume the key for a finished call so a later call can reuse the slot.
+    pub(crate) fn take_attachment_key_for_call(&mut self, call_id: &rho_sdk::ToolCallId) -> String {
+        let id = call_id.to_string();
+        let key = self
+            .attachment_call_keys
+            .remove(&id)
+            .unwrap_or_else(|| id.clone());
+        self.attachment_preview_keys
+            .retain(|_, existing| existing != &key);
+        key
+    }
+
+    pub(crate) fn clear_attachment_preview_keys(&mut self) {
+        self.attachment_preview_keys.clear();
+        self.attachment_call_keys.clear();
     }
 
     /// Translates one SDK run event into zero or more view events.
@@ -201,7 +260,6 @@ impl SdkEventAdapter {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]
             }
             RunEvent::WebSearch { detail } => {
-                use rho_tools::tool_card::{ToolFamily, ToolHeader, ToolStatus};
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id: rho_sdk::ToolCallId::new(),
                     card: ToolCard::new(

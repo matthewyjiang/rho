@@ -18,20 +18,13 @@ pub(super) fn shell_card(
     prompt: &str,
     arguments: &serde_json::Value,
     status: ToolStatus,
-    content: Option<&str>,
 ) -> ToolCard {
-    match content {
-        Some(content) => shell_result_card(prompt, arguments, content, status),
-        None => {
-            let command =
-                string_arg(arguments, "command").filter(|command| !command.trim().is_empty());
-            draft_card(
-                status,
-                ToolFamily::FileCommand,
-                ToolHeader::shell(prompt, command),
-            )
-        }
-    }
+    let command = string_arg(arguments, "command").filter(|command| !command.trim().is_empty());
+    draft_card(
+        status,
+        ToolFamily::FileCommand,
+        ToolHeader::shell(prompt, command),
+    )
 }
 
 pub(super) fn shell_result_card(
@@ -78,6 +71,12 @@ pub(super) fn shell_result_card(
             code,
             duration_ms: parsed.duration_ms,
         });
+    } else if let Some(status) = parsed.exit_status {
+        let text = match parsed.duration_ms {
+            Some(ms) => format!("exit {status} · {:.1}s", ms as f64 / 1000.0),
+            None => format!("exit {status}"),
+        };
+        card.push_fact(ToolFact::Meta { text });
     } else if parsed.running {
         card.push_fact(ToolFact::Meta {
             text: "running".into(),
@@ -548,16 +547,7 @@ pub(super) fn push_error_output(card: &mut ToolCard, content: &str) {
 }
 
 pub(super) fn split_body_lines(content: &str) -> Vec<String> {
-    let lines = content.lines().map(str::to_string).collect::<Vec<_>>();
-    if lines.is_empty() {
-        if content.is_empty() {
-            Vec::new()
-        } else {
-            vec![content.to_string()]
-        }
-    } else {
-        lines
-    }
+    content.lines().map(str::to_string).collect()
 }
 
 pub(super) fn count_nonempty_lines(content: &str) -> Option<u64> {

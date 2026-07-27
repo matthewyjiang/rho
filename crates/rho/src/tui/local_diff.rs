@@ -143,7 +143,36 @@ fn section(title: &str, content: &str) -> Vec<String> {
 mod tests {
     use std::fs;
 
+    use rho_tools::tool_card::DiffRowKind;
+
     use super::*;
+
+    #[test]
+    fn rows_classifies_added_removed_and_keeps_headers_as_context() {
+        let diff = WorktreeDiff {
+            lines: vec![
+                "--- a/file.txt".into(),
+                "+++ b/file.txt".into(),
+                " context".into(),
+                "-old".into(),
+                "+new".into(),
+            ],
+            has_changes: true,
+        };
+
+        let rows = diff.rows();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0].kind, DiffRowKind::Context);
+        assert_eq!(rows[0].text, "--- a/file.txt");
+        assert_eq!(rows[1].kind, DiffRowKind::Context);
+        assert_eq!(rows[1].text, "+++ b/file.txt");
+        assert_eq!(rows[2].kind, DiffRowKind::Context);
+        assert_eq!(rows[2].text, " context");
+        assert_eq!(rows[3].kind, DiffRowKind::Removed);
+        assert_eq!(rows[3].text, "old");
+        assert_eq!(rows[4].kind, DiffRowKind::Added);
+        assert_eq!(rows[4].text, "new");
+    }
 
     #[test]
     fn reports_status_and_patch_for_modified_worktree() {

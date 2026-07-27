@@ -350,8 +350,15 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
             spans
         }
         ToolFact::Exit { code, duration_ms } => {
-            let ok = *code == 0;
-            let mut spans = vec![Span::styled(format!("exit {code}"), Theme::tool_exit(ok))];
+            let status = if *code == 0 {
+                ToolStatus::Ok
+            } else {
+                ToolStatus::Error
+            };
+            let mut spans = vec![Span::styled(
+                format!("exit {code}"),
+                Theme::tool_exit(status),
+            )];
             if let Some(ms) = duration_ms {
                 let secs = *ms as f64 / 1000.0;
                 spans.push(Span::styled(format!(" · {secs:.1}s"), Theme::tool_meta()));

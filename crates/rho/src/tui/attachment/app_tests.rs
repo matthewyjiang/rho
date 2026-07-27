@@ -63,7 +63,6 @@ fn parallel_pending_tools_keep_independent_slots() {
     assert!(matches!(
         app.transcript.last(),
         Some(Entry::Tool(tool)) if tool.card.header_text() == "● read_file(b.rs)"
-            || tool.card.header_text().contains("b.rs")
     ));
 }
 

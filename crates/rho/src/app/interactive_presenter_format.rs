@@ -54,17 +54,14 @@ pub(super) fn start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
 pub(super) fn streaming_preview_card(
     kind: ToolKind,
     name: &str,
-    raw_arguments: &str,
+    arguments: Option<&serde_json::Value>,
     cwd: &std::path::Path,
 ) -> ToolCard {
-    let arguments = parse_incomplete_json(raw_arguments);
     match kind {
         ToolKind::Agent => agent_format::agent_streaming_preview_card(
-            arguments
-                .as_ref()
-                .unwrap_or(&serde_json::Value::Object(Default::default())),
+            arguments.unwrap_or(&serde_json::Value::Object(Default::default())),
         ),
-        _ => preview_card(kind, name, arguments.as_ref(), cwd, ToolStatus::Running),
+        _ => preview_card(kind, name, arguments, cwd, ToolStatus::Running),
     }
 }
 
@@ -86,19 +83,12 @@ pub(super) fn preview_card(
     match kind {
         ToolKind::Agent => agent_format::agent_start_card(arguments),
         ToolKind::Agents => agent_format::agents_start_card(arguments),
-        ToolKind::Bash => shell_card("$", arguments, status, None),
-        ToolKind::PowerShell => shell_card("PS", arguments, status, None),
+        ToolKind::Bash => shell_card("$", arguments, status),
+        ToolKind::PowerShell => shell_card("PS", arguments, status),
         ToolKind::Process => {
             let action = string_arg(arguments, "action");
             let primary = action.clone().or_else(|| string_arg(arguments, "command"));
-            let mut card = kind_card(
-                status,
-                kind,
-                ToolHeader::call(
-                    "process",
-                    action.as_deref().map(str::to_string).or(primary.clone()),
-                ),
-            );
+            let mut card = kind_card(status, kind, ToolHeader::call("process", primary));
             if action.as_deref() == Some("start") {
                 if let Some(command) = string_arg(arguments, "command") {
                     card.push_fact(ToolFact::Text { text: command });
@@ -378,7 +368,9 @@ fn family_from_metadata(metadata: &ToolMetadata) -> ToolFamily {
         Some(OperationKind::Write) => ToolFamily::FileDiff,
         Some(OperationKind::Network) => ToolFamily::Web,
         Some(OperationKind::Other(kind)) if kind == "questionnaire" => ToolFamily::Form,
-        Some(OperationKind::Other(_)) | None | Some(_) => ToolFamily::Default,
+        Some(OperationKind::Other(_)) | None => ToolFamily::Default,
+        // OperationKind is non_exhaustive; unknown future variants stay default.
+        Some(_) => ToolFamily::Default,
     }
 }
 

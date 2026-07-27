@@ -1,9 +1,15 @@
 use pretty_assertions::assert_eq;
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
+use rho_tools::tool_card::ToolCard;
 
 use super::stream_test_support::*;
 use super::*;
+
+fn tool_card_has_id(card: &ToolCard, tool_id: &str) -> bool {
+    // Claude tool presentation puts the tool use id in the Call primary.
+    card.header_text().contains(tool_id)
+}
 
 #[test]
 fn mixed_partial_and_complete_envelopes_emit_presentation_once() {
@@ -76,7 +82,7 @@ fn partial_tool_only_plus_complete_only_text_and_reasoning() {
     assert_eq!(
         count_attachments(&effects, |event| {
             matches!(event, AttachmentEvent::ToolStarted { card, .. }
-                if card.header_text().contains("toolu_partial_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_partial_1")) || card.body.plain_lines().iter().any(|line| line.contains("toolu_partial_1")))
+                if tool_card_has_id(card, "toolu_partial_1"))
         }),
         1
     );
@@ -148,7 +154,7 @@ fn indexless_partials_do_not_duplicate_on_complete_envelope() {
     assert_eq!(
         count_attachments(&effects, |event| {
             matches!(event, AttachmentEvent::ToolStarted { card, .. }
-                if card.header_text().contains("toolu_indexless_1") || card.facts.iter().any(|f| f.plain_text().contains("toolu_indexless_1")) || card.body.plain_lines().iter().any(|line| line.contains("toolu_indexless_1")))
+                if tool_card_has_id(card, "toolu_indexless_1"))
         }),
         1
     );

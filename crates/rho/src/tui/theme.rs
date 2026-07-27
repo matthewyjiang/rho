@@ -8,6 +8,7 @@ use ratatui::{
 use super::markdown::HeadingLevel;
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
+const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
 
 static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
 
@@ -157,10 +158,12 @@ impl Palette {
                 USER_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
+            // Same blend recipe as user prompts today; keep a dedicated field so
+            // tool chrome can diverge later without rewriting call sites.
             neutral_tool_background: blended_or_fallback(
                 terminal,
                 AnsiColor::Gray,
-                USER_BACKGROUND_ALPHA,
+                NEUTRAL_TOOL_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
         }
@@ -414,11 +417,11 @@ impl Theme {
         Self::dim()
     }
 
-    pub(super) fn tool_exit(ok: bool) -> Style {
-        if ok {
-            Self::success()
-        } else {
-            Self::error()
+    pub(super) fn tool_exit(status: rho_tools::tool_card::ToolStatus) -> Style {
+        use rho_tools::tool_card::ToolStatus;
+        match status {
+            ToolStatus::Ok | ToolStatus::Running => Self::success(),
+            ToolStatus::Error | ToolStatus::Interrupted => Self::error(),
         }
     }
 

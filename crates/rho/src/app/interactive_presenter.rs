@@ -160,14 +160,14 @@ impl InteractiveToolPresenter {
         }
         let card = match kind {
             // Keep the last successful parse so a mid-stream incomplete fragment
-            // does not wipe a useful agent card back to a bare header.
+            // does not wipe a useful card back to a bare header.
             ToolKind::Agent => agent_format::agent_streaming_preview_card(
                 preview
                     .last_args
                     .as_ref()
                     .unwrap_or(&serde_json::Value::Object(Default::default())),
             ),
-            _ => streaming_preview_card(kind, name, &preview.arguments, &self.cwd),
+            _ => streaming_preview_card(kind, name, preview.last_args.as_ref(), &self.cwd),
         };
         preview.next_parse_length = preview
             .arguments

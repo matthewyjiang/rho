@@ -336,6 +336,8 @@ pub struct ShellContent {
     pub notice: Option<String>,
     pub stdout: String,
     pub exit_code: Option<i64>,
+    /// Non-numeric exit token (for example `signal`) when no exit code is present.
+    pub exit_status: Option<String>,
     pub duration_ms: Option<u64>,
     pub running: bool,
 }
@@ -374,10 +376,18 @@ pub fn parse_shell_content(content: &str) -> ShellContent {
                 .and_then(|token| token.strip_suffix('s'))
                 .and_then(|seconds| seconds.parse::<f64>().ok())
                 .map(|seconds| (seconds * 1000.0).round() as u64);
-            parsed.exit_code = footer
+            if let Some(raw) = footer
                 .split("exit code:")
                 .nth(1)
-                .and_then(|code| code.trim().parse().ok());
+                .map(str::trim)
+                .filter(|code| !code.is_empty())
+            {
+                if let Ok(code) = raw.parse::<i64>() {
+                    parsed.exit_code = Some(code);
+                } else {
+                    parsed.exit_status = Some(raw.to_string());
+                }
+            }
         }
     }
     parsed

@@ -45,7 +45,8 @@ fn attachment_stream_round_trips_view_events() {
 
 #[test]
 fn attachment_stream_ignores_steering_applied() {
-    assert!(attachment_update(ViewModelEvent::SteeringApplied(Vec::new())).is_none());
+    let mut adapter = SdkEventAdapter::default();
+    assert!(attachment_update(&mut adapter, ViewModelEvent::SteeringApplied(Vec::new())).is_none());
 }
 
 #[test]
@@ -80,11 +81,14 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
     };
     let card = completed_card(facts);
     assert_eq!(
-        attachment_update(ViewModelEvent::ToolFinished {
-            call_id: compaction_call_id(),
-            card: card.clone(),
-            image_asset: None,
-        }),
+        attachment_update(
+            &mut adapter,
+            ViewModelEvent::ToolFinished {
+                call_id: compaction_call_id(),
+                card: card.clone(),
+                image_asset: None,
+            }
+        ),
         Some(AttachmentEvent::ToolFinished { key, card })
     );
 }
@@ -122,5 +126,70 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
     assert_eq!(
         events[1],
         AttachmentEvent::Failed("provider unavailable".into())
+    );
+}
+
+#[test]
+fn call_id_less_preview_and_later_update_reuse_the_same_key() {
+    use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+
+    let mut adapter = SdkEventAdapter::default();
+    let preview = ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Default,
+        ToolHeader::call("read_file", None),
+    );
+    let with_id = ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Default,
+        ToolHeader::call("read_file", Some("src/main.rs".into())),
+    );
+    let call_id = rho_sdk::ToolCallId::from_string("call-stable").unwrap();
+
+    let first = attachment_update(
+        &mut adapter,
+        ViewModelEvent::ToolCallUpdated {
+            index: 0,
+            call_id: None,
+            card: preview.clone(),
+        },
+    );
+    let second = attachment_update(
+        &mut adapter,
+        ViewModelEvent::ToolCallUpdated {
+            index: 0,
+            call_id: Some(call_id.clone()),
+            card: with_id.clone(),
+        },
+    );
+    let finished = attachment_update(
+        &mut adapter,
+        ViewModelEvent::ToolFinished {
+            call_id,
+            card: with_id.clone(),
+            image_asset: None,
+        },
+    );
+
+    assert_eq!(
+        first,
+        Some(AttachmentEvent::ToolStarted {
+            key: Some("preview:0".into()),
+            card: preview,
+        })
+    );
+    assert_eq!(
+        second,
+        Some(AttachmentEvent::ToolStarted {
+            key: Some("preview:0".into()),
+            card: with_id.clone(),
+        })
+    );
+    assert_eq!(
+        finished,
+        Some(AttachmentEvent::ToolFinished {
+            key: Some("preview:0".into()),
+            card: with_id,
+        })
     );
 }

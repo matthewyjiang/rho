@@ -5,6 +5,9 @@ use rho_sdk::{
     HostChoice, HostInputRequest, HostQuestion, ProviderStreamResetReason, Revision, RunEvent,
     RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
+use rho_tools::tool_card::{
+    DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+};
 
 use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
 use crate::{
@@ -22,31 +25,6 @@ fn only_event(events: Vec<ViewEvent>) -> ViewEvent {
         "expected exactly one view event: {events:?}"
     );
     events.into_iter().next().expect("one event")
-}
-
-fn card_lines(card: &rho_tools::tool_card::ToolCard) -> Vec<String> {
-    let mut lines = vec![card.header_text()];
-    let fact_count = card.facts.len();
-    for (index, fact) in card.facts.iter().enumerate() {
-        let branch = if index + 1 == fact_count && card.body.is_empty() {
-            "└"
-        } else {
-            "├"
-        };
-        lines.push(format!("  {branch} {}", fact.plain_text()));
-    }
-    let body = card.body.plain_lines();
-    for (index, line) in body.iter().enumerate() {
-        if index == 0 && card.facts.is_empty() && body.len() == 1 && !line.contains('\n') {
-            lines.push(format!("  └ {line}"));
-        } else if index == 0 {
-            lines.push(String::new());
-            lines.push(line.clone());
-        } else {
-            lines.push(line.clone());
-        }
-    }
-    lines
 }
 
 #[test]
@@ -124,15 +102,20 @@ fn physical_provider_retry_maps_to_typed_view_model_event() {
 fn provider_native_web_search_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
-    assert!(matches!(
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
         only_event(adapter.translate(RunEvent::WebSearch {
             detail: "rho docs".into(),
-        })),
-        ViewEvent::Update(ViewModelEvent::ToolFinished {
-            ref card,
-            ..
-        }) if card_lines(card) == ["✓ web_search(rho docs)"]
-    ));
+        }))
+    else {
+        panic!("expected web search tool finished");
+    };
+    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.family, ToolFamily::Web);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("web_search", Some("rho docs".into()))
+    );
+    assert!(card.facts.is_empty());
 }
 
 #[test]
@@ -181,15 +164,25 @@ fn retains_structured_tool_metadata_until_completion() {
     };
 
     assert_eq!(translated_call_id, call_id);
+    assert_eq!(card.status, ToolStatus::Ok);
     assert_eq!(
-        card_lines(&card),
-        vec![
-            "✓ edit_file(src/lib.rs)".to_string(),
-            "  ├ +1 -1 lines | src/lib.rs".to_string(),
-            String::new(),
-            "1 -old".to_string(),
-            "1 +new".to_string(),
-        ]
+        card.header,
+        ToolHeader::call("edit_file", Some("src/lib.rs".into()))
+    );
+    assert_eq!(
+        card.facts,
+        vec![ToolFact::DiffStat {
+            added: 1,
+            removed: 1,
+            path: Some("src/lib.rs".into()),
+        }]
+    );
+    assert_eq!(
+        card.body,
+        ToolBody::Diff(vec![
+            DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
+            DiffRow::new(DiffRowKind::Added, Some(1), "new"),
+        ])
     );
 }
 
@@ -224,12 +217,19 @@ fn forwards_image_asset_on_tool_completion() {
 
     assert_eq!(translated_call_id, call_id);
     assert_eq!(image_asset, Some(asset));
+    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.header, ToolHeader::call("read_file", None));
     assert_eq!(
-        card_lines(&card),
-        [
-            "✓ read_file".to_string(),
-            "  ├ 1 line".to_string(),
-            "  └ image preview unavailable: invalid image".to_string(),
+        card.facts,
+        vec![
+            ToolFact::Count {
+                label: "line".into(),
+                value: 1,
+                detail: None,
+            },
+            ToolFact::Meta {
+                text: "image preview unavailable: invalid image".into(),
+            },
         ]
     );
 }
@@ -259,7 +259,11 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
             card,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && card_lines(card).iter().any(|line| line.contains("failed"))
+            && card.status == ToolStatus::Error
+            && card.facts.iter().any(|fact| matches!(
+                fact,
+                ToolFact::Meta { text } if text == "failed"
+            ))
     ));
     assert!(matches!(
         &events[1],

@@ -301,10 +301,26 @@ impl RunArtifactSink {
             if finished {
                 let _ = join.join();
             } else {
-                // Detach: best-effort direct status write so attach sees terminal.
+                // Detach: best-effort direct status write so attach sees terminal,
+                // then publish again after the worker exits so attachment_error
+                // recorded during Finish still reaches watch subscribers.
                 write_status_best_effort(&self.path, &self.status, &self.status_write_failed);
+                let path = self.path.clone();
+                let mut status = self.status.clone();
+                let status_tx = self.status_tx.clone();
+                let attachment_error = Arc::clone(&self.attachment_error);
+                let status_write_failed = Arc::clone(&self.status_write_failed);
                 std::thread::spawn(move || {
                     let _ = join.join();
+                    if let Some(error) =
+                        attachment_error.lock().ok().and_then(|error| error.clone())
+                    {
+                        status.attachment_error = Some(error);
+                    }
+                    write_status_best_effort(&path, &status, &status_write_failed);
+                    if let Some(tx) = status_tx {
+                        tx.send_replace(status);
+                    }
                 });
             }
         } else {

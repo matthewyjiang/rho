@@ -427,7 +427,7 @@ fn agent_tools_use_status_first_presentations() {
         .find(|line| line.contains("tail marker"))
         .expect("prompt fact");
     assert!(
-        prompt_line.contains('…') || prompt_line.contains("tail marker"),
+        prompt_line.contains('…'),
         "long streaming prompts should mark omitted leading text: {long_preview:?}"
     );
 
@@ -444,7 +444,7 @@ fn agent_tools_use_status_first_presentations() {
         .into_iter()
         .find(|line| line.contains('…') || line.contains("architecture"))
         .expect("task fact");
-    assert!(started_task.ends_with('…') || started_task.contains('…'));
+    assert!(started_task.contains('…'));
     assert!(!started_task.contains("tail marker"));
 }
 

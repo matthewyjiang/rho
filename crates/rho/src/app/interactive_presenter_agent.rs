@@ -22,7 +22,7 @@ pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
 /// Uses the shared incomplete-JSON path so agent previews share one parser and
 /// the same large-buffer stride as other tools.
 pub(super) fn agent_streaming_preview_card(arguments: &serde_json::Value) -> ToolCard {
-    let agent_id = string_value(arguments, "agent_id")
+    let agent_id = agent_identity(arguments)
         .filter(|id| !id.is_empty())
         .unwrap_or("agent");
     let background = bool_value(arguments, "background");

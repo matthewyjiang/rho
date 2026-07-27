@@ -1,4 +1,13 @@
 use super::*;
+use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+
+fn running_card(verb: &str) -> ToolCard {
+    ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Default,
+        ToolHeader::call(verb, None),
+    )
+}
 
 #[test]
 fn stream_preview_continues_committed_assistant_without_gap() {
@@ -1036,28 +1045,16 @@ fn started_tool_display_ignores_late_argument_previews() {
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: Some(call_id.clone()),
-        card: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Running,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("edit_file", None),
-        ),
+        card: running_card("edit_file"),
     });
     app.record_agent_event(ViewModelEvent::ToolStarted {
         call_id,
-        card: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Running,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("edit_file src/main.rs", None),
-        ),
+        card: running_card("edit_file src/main.rs"),
     });
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: None,
-        card: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Running,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("edit_file", None),
-        ),
+        card: running_card("edit_file"),
     });
 
     assert_eq!(

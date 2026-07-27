@@ -91,7 +91,12 @@ pub(in crate::tui) fn render_entry_with_options(
     let spacer_style = match entry {
         crate::tui::Entry::Tool(_) => Theme::tool_card_padding(),
         crate::tui::Entry::User(_) => Style::default(),
-        _ => lines
+        crate::tui::Entry::Assistant(_)
+        | crate::tui::Entry::Reasoning(_)
+        | crate::tui::Entry::Notice(_)
+        | crate::tui::Entry::RuntimeInfo(_)
+        | crate::tui::Entry::UsageLimits(_)
+        | crate::tui::Entry::Error(_) => lines
             .first()
             .and_then(|line| line.spans.first())
             .map(|span| span.style)

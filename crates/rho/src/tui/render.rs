@@ -739,7 +739,7 @@ pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
 pub(super) fn spans_display_width(spans: &[Span<'_>]) -> usize {
     spans
         .iter()
-        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .map(|span| display_width(span.content.as_ref()))
         .sum()
 }
 
@@ -775,6 +775,7 @@ pub(super) fn slice_spans_by_bytes(
 
 /// Hard-wrap multi-span content to `width` display columns, preserving styles.
 pub(super) fn wrap_spans_hard(spans: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>>> {
+    let width = width.max(1);
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut used = 0;
