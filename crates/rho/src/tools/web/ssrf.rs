@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use url::Url;
 
@@ -8,18 +8,45 @@ tokio::task_local! {
     static ALLOW_RANGES_OVERRIDE: Vec<Cidr>;
 }
 
-/// Rejects remote fetch targets that resolve to private, loopback, link-local,
-/// or other non-global addresses. Call this before the HTTP request. Content
-/// fetches must also disable redirects (or re-check every hop); the shared web
-/// clients use `redirect::Policy::none()`.
+#[cfg(test)]
+tokio::task_local! {
+    static RESOLVER_OVERRIDE: std::sync::Arc<dyn Fn(&str) -> Vec<IpAddr> + Send + Sync>;
+}
+
+/// A fetch target whose every address passed the private-range checks.
 ///
-/// Same shape as pi-web-access: resolve the hostname, check every address, no
-/// custom DNS resolver on the client. Optional CIDR allow-ranges cover TUN /
-/// fake-IP proxy pools without opening all private space.
-pub(super) async fn ensure_public_url(
+/// The hostname is kept alongside the addresses because the request must still
+/// carry it in TLS SNI, certificate verification, and the HTTP `Host` header;
+/// only the address the connection dials is pinned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct VettedTarget {
+    hostname: String,
+    socket_addrs: Vec<SocketAddr>,
+}
+
+impl VettedTarget {
+    pub(super) fn hostname(&self) -> &str {
+        &self.hostname
+    }
+
+    pub(super) fn socket_addrs(&self) -> &[SocketAddr] {
+        &self.socket_addrs
+    }
+}
+
+/// Resolves a remote fetch target and rejects private, loopback, link-local, or
+/// other non-global addresses. Call this before the HTTP request and connect
+/// only to the returned addresses, so a DNS answer that changes between the
+/// check and the connection cannot redirect the request to a blocked address.
+/// Content fetches must also disable redirects (or re-check every hop); the
+/// shared web clients use `redirect::Policy::none()`.
+///
+/// Optional CIDR allow-ranges cover TUN / fake-IP proxy pools without opening
+/// all private space.
+pub(super) async fn resolve_public_target(
     raw_url: &str,
     allow_ranges: &[Cidr],
-) -> Result<(), ToolError> {
+) -> Result<VettedTarget, ToolError> {
     let url =
         Url::parse(raw_url).map_err(|error| ToolError::Message(format!("invalid url: {error}")))?;
     if url.scheme() != "http" && url.scheme() != "https" {
@@ -40,25 +67,42 @@ pub(super) async fn ensure_public_url(
             "blocked internal hostname: {hostname}"
         )));
     }
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| ToolError::Message(format!("URL must include a port: {}", url.scheme())))?;
 
-    if let Ok(ip) = hostname.parse::<IpAddr>() {
-        return assert_public_address(ip, &hostname, allow_ranges);
-    }
-
-    let addrs = tokio::net::lookup_host((hostname.as_str(), 0))
-        .await
-        .map_err(|error| ToolError::Message(format!("failed to resolve {hostname}: {error}")))?
-        .map(|addr| addr.ip())
-        .collect::<Vec<_>>();
+    let addrs = match hostname.parse::<IpAddr>() {
+        Ok(ip) => vec![ip],
+        Err(_) => resolve_host(&hostname).await?,
+    };
     if addrs.is_empty() {
         return Err(ToolError::Message(format!(
             "failed to resolve {hostname}: no addresses returned"
         )));
     }
-    for ip in addrs {
-        assert_public_address(ip, &hostname, allow_ranges)?;
+    for ip in &addrs {
+        assert_public_address(*ip, &hostname, allow_ranges)?;
     }
-    Ok(())
+    Ok(VettedTarget {
+        hostname,
+        socket_addrs: addrs
+            .into_iter()
+            .map(|ip| SocketAddr::new(ip, port))
+            .collect(),
+    })
+}
+
+async fn resolve_host(hostname: &str) -> Result<Vec<IpAddr>, ToolError> {
+    #[cfg(test)]
+    if let Ok(addrs) = RESOLVER_OVERRIDE.try_with(|resolve| resolve(hostname)) {
+        return Ok(addrs);
+    }
+
+    Ok(tokio::net::lookup_host((hostname, 0))
+        .await
+        .map_err(|error| ToolError::Message(format!("failed to resolve {hostname}: {error}")))?
+        .map(|addr| addr.ip())
+        .collect())
 }
 
 /// Allow-ranges used by the content-fetch choke point.
@@ -79,6 +123,19 @@ where
     F: std::future::Future,
 {
     ALLOW_RANGES_OVERRIDE.scope(ranges, f).await
+}
+
+/// Run `f` with a deterministic hostname resolver (tests only), so DNS answers
+/// can be controlled without touching the system resolver.
+#[cfg(test)]
+pub(super) async fn with_resolver<R, F>(resolve: R, f: F) -> F::Output
+where
+    R: Fn(&str) -> Vec<IpAddr> + Send + Sync + 'static,
+    F: std::future::Future,
+{
+    RESOLVER_OVERRIDE
+        .scope(std::sync::Arc::new(resolve), f)
+        .await
 }
 
 fn assert_public_address(

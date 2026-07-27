@@ -66,7 +66,7 @@ async fn rejects_private_ip_literals_and_localhost() {
         "http://localhost/",
         "http://app.localhost/health",
     ] {
-        let error = ensure_public_url(url, &[]).await.unwrap_err();
+        let error = resolve_public_target(url, &[]).await.unwrap_err();
         assert!(
             error.to_string().contains("blocked"),
             "{url} should be rejected, got {error}"
@@ -76,7 +76,7 @@ async fn rejects_private_ip_literals_and_localhost() {
 
 #[tokio::test]
 async fn allows_public_ip_literals() {
-    ensure_public_url("https://8.8.8.8/", &[])
+    resolve_public_target("https://8.8.8.8/", &[])
         .await
         .expect("public literal");
 }
@@ -84,10 +84,10 @@ async fn allows_public_ip_literals() {
 #[tokio::test]
 async fn allow_range_exempts_matching_addresses() {
     let range = Cidr::parse("198.18.0.0/15").unwrap();
-    ensure_public_url("http://198.18.0.10/proxy", &[range])
+    resolve_public_target("http://198.18.0.10/proxy", &[range])
         .await
         .expect("fake-IP range should be exempt");
-    let error = ensure_public_url("http://10.0.0.1/", &[range])
+    let error = resolve_public_target("http://10.0.0.1/", &[range])
         .await
         .unwrap_err();
     assert!(error.to_string().contains("blocked"));
@@ -112,5 +112,44 @@ fn cidr_parse_rejects_open_and_malformed() {
             network: "198.18.0.0".parse().unwrap(),
             prefix: 15,
         }
+    );
+}
+
+#[tokio::test]
+async fn vetted_target_keeps_the_hostname_and_default_port() {
+    let target = with_resolver(
+        |_hostname| vec!["93.184.216.34".parse().unwrap()],
+        resolve_public_target("https://example.com/page", &[]),
+    )
+    .await
+    .expect("public host");
+
+    assert_eq!(target.hostname(), "example.com");
+    assert_eq!(
+        target.socket_addrs(),
+        ["93.184.216.34:443".parse::<SocketAddr>().unwrap()]
+    );
+}
+
+#[tokio::test]
+async fn vetted_target_carries_every_resolved_address_and_explicit_port() {
+    let target = with_resolver(
+        |_hostname| {
+            vec![
+                "93.184.216.34".parse().unwrap(),
+                "2606:4700:4700::1111".parse().unwrap(),
+            ]
+        },
+        resolve_public_target("http://example.com:8080/page", &[]),
+    )
+    .await
+    .expect("public host");
+
+    assert_eq!(
+        target.socket_addrs(),
+        [
+            "93.184.216.34:8080".parse::<SocketAddr>().unwrap(),
+            "[2606:4700:4700::1111]:8080".parse().unwrap(),
+        ]
     );
 }
