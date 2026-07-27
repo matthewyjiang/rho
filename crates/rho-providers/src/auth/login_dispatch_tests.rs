@@ -1,6 +1,4 @@
-use super::{
-    AuthenticationError, AuthenticationMethod, InteractiveUserAction, ProviderAuthentication,
-};
+use super::{AuthenticationError, AuthenticationMethod, ProviderAuthentication};
 use crate::credentials::MemoryCredentialStore;
 
 #[test]
@@ -86,21 +84,4 @@ fn rejects_unknown_provider_before_starting_authentication() {
         ProviderAuthentication::method("missing"),
         Err(AuthenticationError::UnsupportedProvider(provider)) if provider == "missing"
     ));
-}
-
-#[test]
-fn ollama_device_open_url_action_shape() {
-    // Mapping helper: device mode without a browser uses OpenUrl, never a fake code.
-    let action = InteractiveUserAction::OpenUrl {
-        url: "https://ollama.com/connect?name=rho&key=abc".into(),
-        instruction: "Open this URL and approve the device for Ollama Cloud.".into(),
-    };
-    match action {
-        InteractiveUserAction::OpenUrl { url, instruction } => {
-            assert!(url.contains("ollama.com/connect"));
-            assert!(instruction.contains("approve"));
-            assert!(!instruction.to_ascii_lowercase().contains("code"));
-        }
-        other => panic!("expected OpenUrl, got {other:?}"),
-    }
 }

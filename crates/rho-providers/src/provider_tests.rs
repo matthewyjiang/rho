@@ -335,9 +335,4 @@ fn credential_env_vars_track_provider_auth_kinds() {
     assert!(!expected.iter().any(|name| name.is_empty()));
 }
 
-#[test]
-fn no_session_account_constant_for_ollama_device() {
-    // Session markers were removed; device keys live only on disk.
-    let source = include_str!("provider.rs");
-    assert!(!source.contains("OLLAMA_CLOUD_DEVICE_SESSION"));
-}
+

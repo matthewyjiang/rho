@@ -243,12 +243,8 @@ impl OpenAiCompatibleProvider {
         auth: RequestAuth<'_>,
     ) -> Result<reqwest::Response, ModelError> {
         let endpoint = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
-        let mut request = self.client.post(endpoint.as_str()).json(body);
-        match auth {
-            RequestAuth::None => {}
-            RequestAuth::Bearer(token) => {
-                request = request.bearer_auth(token);
-            }
+        let (url, authorization) = match &auth {
+            RequestAuth::None | RequestAuth::Bearer(_) => (endpoint, None),
             RequestAuth::OllamaDevice(key) => {
                 let url = url::Url::parse(&endpoint).map_err(|error| {
                     ModelError::InvalidResponse(format!("invalid chat completions URL: {error}"))
@@ -256,11 +252,20 @@ impl OpenAiCompatibleProvider {
                 let (url, authorization) = key
                     .authorize_request("POST", url)
                     .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
-                request = self
-                    .client
-                    .post(url)
-                    .header(reqwest::header::AUTHORIZATION, authorization)
-                    .json(body);
+                (url.to_string(), Some(authorization))
+            }
+        };
+        let mut request = self.client.post(url).json(body);
+        match auth {
+            RequestAuth::None => {}
+            RequestAuth::Bearer(token) => {
+                request = request.bearer_auth(token);
+            }
+            RequestAuth::OllamaDevice(_) => {
+                request = request.header(
+                    reqwest::header::AUTHORIZATION,
+                    authorization.expect("Ollama device auth resolves an Authorization header"),
+                );
             }
         }
         Ok(request.send().await?)

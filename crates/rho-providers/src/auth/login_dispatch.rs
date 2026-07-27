@@ -425,7 +425,7 @@ async fn start_ollama_device(
     mode: InteractiveLoginMode,
 ) -> Result<InteractiveLogin, AuthenticationError> {
     let open_browser = mode == InteractiveLoginMode::Browser;
-    let login = ollama_device::start_ollama_device_login(open_browser)
+    let login = ollama_device::start_ollama_device_login(/* open_browser */ open_browser)
         .await
         .map_err(flow_error)?;
     let user_action = if login.already_registered {

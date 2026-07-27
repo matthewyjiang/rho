@@ -228,7 +228,12 @@ pub fn resolve_model_selection_for_provider(
     provider: &str,
     model: &str,
 ) -> Result<ModelSelection, ModelSelectionError> {
-    resolve_model_selection_for_provider_from(model_catalog(), provider.trim(), model.trim())
+    resolve_model_selection_for_provider_from(
+        model_catalog(),
+        provider.trim(),
+        model.trim(),
+        None,
+    )
 }
 
 pub fn resolve_model_selection_for_auths(
@@ -394,7 +399,12 @@ fn resolve_model_selection_from(
     }
 
     if let Some((provider, model)) = input.split_once('/') {
-        return resolve_model_selection_for_provider_from(catalog, provider.trim(), model.trim());
+        return resolve_model_selection_for_provider_from(
+            catalog,
+            provider.trim(),
+            model.trim(),
+            Some(auth),
+        );
     }
 
     let auths = if available_auths.is_empty() {
@@ -419,6 +429,7 @@ fn resolve_model_selection_for_provider_from(
     catalog: &[ModelCatalogEntry],
     provider: &str,
     model: &str,
+    preferred_auth: Option<&str>,
 ) -> Result<ModelSelection, ModelSelectionError> {
     if provider.is_empty() || model.is_empty() {
         return Err(ModelSelectionError::Empty);
@@ -434,15 +445,24 @@ fn resolve_model_selection_for_provider_from(
             |descriptor| descriptor.canonicalize_model_id(model),
         );
         if let Some(entry) = provider_models::cached_provider_model(provider, &model_id) {
-            return Ok(selection_from_provider_model(provider, &entry, None));
+            return Ok(selection_from_provider_model(
+                provider,
+                &entry,
+                preferred_auth,
+            ));
         }
         if builtin_default_model(provider).as_deref() == Some(model_id.as_str()) {
+            let auth = preferred_auth
+                .and_then(|auth| {
+                    provider::provider_descriptor(provider)
+                        .and_then(|descriptor| descriptor.auth_mode(auth).map(|mode| mode.id))
+                })
+                .or_else(|| provider_default_auth(provider))
+                .unwrap_or("api-key");
             return Ok(ModelSelection {
                 provider: provider.to_string(),
                 model: model_id,
-                auth: provider_default_auth(provider)
-                    .unwrap_or("api-key")
-                    .to_string(),
+                auth: auth.to_string(),
                 from_catalog: true,
             });
         }
@@ -451,7 +471,7 @@ fn resolve_model_selection_for_provider_from(
     catalog
         .iter()
         .find(|entry| entry.provider == provider && entry.model == model)
-        .map(|entry| selection_from_entry(entry, None))
+        .map(|entry| selection_from_entry(entry, preferred_auth))
         .ok_or_else(|| unavailable_model_error(provider, model))
 }
 

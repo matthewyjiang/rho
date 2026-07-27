@@ -467,7 +467,7 @@ pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
     provider::providers()
         .iter()
         .flat_map(|provider| provider.auth_modes())
-        .filter(|mode| auth_mode_has_credentials(store, mode.auth_kind).unwrap_or(false))
+        .filter(|mode| auth_has_credentials(store, mode.id).unwrap_or(false))
         .map(|mode| mode.id.to_string())
         .collect()
 }

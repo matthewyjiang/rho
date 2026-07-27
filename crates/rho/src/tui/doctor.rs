@@ -113,23 +113,27 @@ fn authentication_checks(store: &dyn CredentialStore) -> Vec<DoctorCheck> {
                                 (
                                     true,
                                     "authenticated",
-                                    "Credentials are provided by an environment variable.",
+                                    "Credentials are provided by an environment variable.".into(),
                                 )
                             }
                             Ok(true) => (
                                 true,
                                 "authenticated",
-                                "Credentials are available in the configured credential store.",
+                                "Credentials are available in the configured credential store."
+                                    .into(),
                             ),
                             Ok(false) => (
                                 false,
                                 "missing",
-                                "No credentials found. Run /login to authenticate this provider.",
+                                format!(
+                                    "No credentials found. Run /login {} to authenticate this mode.",
+                                    mode.id
+                                ),
                             ),
                             Err(_) => (
                                 false,
                                 "error",
-                                "The configured credential store could not be read. No secret values were inspected or displayed.",
+                                "The configured credential store could not be read. No secret values were inspected or displayed.".into(),
                             ),
                         };
                     DoctorCheck {
@@ -137,7 +141,7 @@ fn authentication_checks(store: &dyn CredentialStore) -> Vec<DoctorCheck> {
                         label: mode.login_label.to_string(),
                         status: status.into(),
                         healthy,
-                        detail: detail.into(),
+                        detail,
                     }
                 })
                 .collect::<Vec<_>>()

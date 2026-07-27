@@ -429,7 +429,7 @@ impl App {
     ) -> anyhow::Result<()> {
         if self.pending_interactive_login.is_some() {
             self.insert_entry(&Entry::Notice(
-                "OAuth login is already in progress. Press esc to cancel.".into(),
+                "Interactive login is already in progress. Press esc to cancel.".into(),
             ));
             return Ok(());
         }
@@ -542,7 +542,9 @@ impl App {
             }
             Err(err) => {
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Error(format!("OAuth login task failed: {err}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "Interactive login task failed: {err}"
+                )));
                 self.status = "login failed".into();
                 Ok(())
             }
@@ -823,7 +825,7 @@ impl App {
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
     ) -> bool {
-        if self.info.runtime.provider != target.provider {
+        if self.info.runtime.provider != target.provider || self.info.runtime.auth != target.auth {
             self.status = "logout complete".into();
             return false;
         }
@@ -887,11 +889,13 @@ pub(super) fn interactive_pending_lines(
     target: &LoginTarget,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
+    let label = if target.auth == "ollama-cloud-device" {
+        format!("waiting for {} device-key login  esc cancel", target.provider)
+    } else {
+        format!("waiting for {} login  esc cancel", target.label)
+    };
     vec![styled_line(
-        truncate_one_line(
-            &format!("waiting for {} OAuth login  esc cancel", target.provider),
-            width,
-        ),
+        truncate_one_line(&label, width),
         width,
         Theme::dim(),
         LineFill::Natural,

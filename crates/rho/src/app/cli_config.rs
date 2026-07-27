@@ -81,10 +81,16 @@ pub(super) async fn refresh_model_cache(
         ProviderModelEndpoint::ProviderOwned,
         ProviderModelEndpoint::OpenAiCompatible,
     );
-    let auth = cli.auth.as_deref().unwrap_or(&config.auth);
+    let auth = match cli.auth.as_deref() {
+        Some(auth) => auth.to_string(),
+        None if provider != config.provider => provider::provider_descriptor(provider)
+            .map(|descriptor| descriptor.default_auth().id.to_string())
+            .unwrap_or_else(|| config.auth.clone()),
+        None => config.auth.clone(),
+    };
     let attempted = refresh_model_list_for_provider(
         provider,
-        auth,
+        &auth,
         selected_model.as_deref(),
         /*explicit_selection*/
         cli.provider.is_some() || cli.model.is_some() || cli.auth.is_some(),

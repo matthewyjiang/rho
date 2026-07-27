@@ -3292,6 +3292,7 @@ dependencies = [
  "async-trait",
  "base64",
  "futures-util",
+ "gethostname",
  "keyring",
  "libc",
  "pretty_assertions",

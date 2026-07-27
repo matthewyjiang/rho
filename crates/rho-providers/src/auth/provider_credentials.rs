@@ -67,12 +67,12 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
         })?;
         match runtime {
             ProviderRuntime::OpenAi { auth_mode: mode } => {
-                let auth = match mode {
+                let openai_auth = match mode {
                     AuthMode::ApiKey => load_openai_api_key_auth(self.store.as_ref())?,
                     AuthMode::Codex => load_codex_auth(self.store.as_ref())?,
                 };
                 Ok(ProviderCredential::OpenAi {
-                    auth,
+                    auth: openai_auth,
                     refresh_store: self.store.clone(),
                 })
             }
@@ -132,7 +132,11 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     ProviderAuthKind::OllamaDeviceKey { missing_message } => {
                         CompatibleAuth::OllamaDevice(load_ollama_device_key(missing_message)?)
                     }
-                    _ => return Err(ModelError::UnsupportedProvider(provider.into())),
+                    ProviderAuthKind::CodexOAuth { .. }
+                    | ProviderAuthKind::GithubCopilotDevice { .. }
+                    | ProviderAuthKind::XaiOAuth { .. } => {
+                        return Err(ModelError::UnsupportedProvider(provider.into()));
+                    }
                 };
                 Ok(ProviderCredential::OpenAiCompatible(auth))
             }
@@ -180,7 +184,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
     }
 }
 
-fn load_stored_bearer_key(
+pub(crate) fn load_stored_bearer_key(
     env_var: &str,
     account: &str,
     missing_message: &'static str,
@@ -211,7 +215,7 @@ fn env_or_stored<T, S>(
     }
 }
 
-fn load_api_key_for_mode(
+pub(crate) fn load_api_key_for_mode(
     auth_kind: ProviderAuthKind,
     store: &dyn CredentialStore,
 ) -> Result<String, ModelError> {
@@ -326,8 +330,17 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
         .ok_or_else(|| missing_credential_error(missing_message))
 }
 
-fn load_ollama_device_key(missing_message: &'static str) -> Result<OllamaDeviceKey, ModelError> {
-    OllamaDeviceKey::load_default().map_err(|error| match error {
+pub(crate) fn load_ollama_device_key(
+    missing_message: &'static str,
+) -> Result<OllamaDeviceKey, ModelError> {
+    load_ollama_device_key_from(OllamaDeviceKey::load_default, missing_message)
+}
+
+pub(crate) fn load_ollama_device_key_from(
+    load: impl FnOnce() -> Result<OllamaDeviceKey, crate::auth::ollama_device::OllamaDeviceError>,
+    missing_message: &'static str,
+) -> Result<OllamaDeviceKey, ModelError> {
+    load().map_err(|error| match error {
         crate::auth::ollama_device::OllamaDeviceError::MissingKey(_) => {
             missing_credential_error(missing_message)
         }
@@ -411,11 +424,7 @@ mod tests {
     #[test]
     fn ollama_cloud_device_acquisition_reports_missing_without_key_dir() {
         let dir = tempfile::tempdir().unwrap();
-        // Isolate from the developer's real ~/.ollama key.
-        std::env::set_var("OLLAMA_DEVICE_KEY_DIR", dir.path().join("missing"));
-        let source = ApplicationCredentialSource::new(Arc::new(MemoryCredentialStore::default()));
-        let error = source.acquire("ollama-cloud", "ollama-cloud-device");
-        std::env::remove_var("OLLAMA_DEVICE_KEY_DIR");
+        let missing_dir = dir.path().join("missing");
         let expected = provider::provider_descriptor("ollama-cloud")
             .unwrap()
             .auth_mode("ollama-cloud-device")
@@ -423,6 +432,11 @@ mod tests {
             .auth_kind
             .missing_message()
             .unwrap();
-        assert_eq!(error.unwrap_err().to_string(), expected);
+        let error = load_ollama_device_key_from(
+            || OllamaDeviceKey::load_from_dir(&missing_dir),
+            expected,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), expected);
     }
 }

@@ -55,7 +55,7 @@ pub(super) async fn fetch(
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
     let client = provider_models_client()?;
-    let auth = load_model_request_auth(auth.auth_kind, store, &client).await?;
+    let auth = load_model_request_auth(auth, store, &client).await?;
     let models_url = Url::parse(&format!(
         "{}/models",
         api_base.as_str().trim_end_matches('/')
@@ -105,32 +105,31 @@ pub(super) async fn fetch(
 }
 
 async fn load_model_request_auth(
-    auth_kind: ProviderAuthKind,
+    mode: provider::AuthMode,
     store: &dyn CredentialStore,
     client: &reqwest::Client,
 ) -> Result<ModelRequestAuth, ModelError> {
-    match auth_kind {
+    match mode.auth_kind {
         ProviderAuthKind::None => Ok(ModelRequestAuth::None),
-        ProviderAuthKind::ApiKey {
+        ProviderAuthKind::ApiKey { .. } => Ok(ModelRequestAuth::Bearer(
+            crate::auth::provider_credentials::load_api_key_for_mode(mode.auth_kind, store)?,
+        )),
+        ProviderAuthKind::BearerCredential {
             env_var,
             account,
             missing_message,
             ..
-        }
-        | ProviderAuthKind::BearerCredential {
-            env_var,
-            account,
-            missing_message,
-            ..
-        } => Ok(ModelRequestAuth::Bearer(match std::env::var(env_var) {
-            Ok(key) if !key.trim().is_empty() => key,
-            _ => store
-                .get_secret(account)?
-                .filter(|key| !key.trim().is_empty())
-                .ok_or_else(|| crate::model::registry::missing_credential_error(missing_message))?,
-        })),
+        } => Ok(ModelRequestAuth::Bearer(
+            crate::auth::provider_credentials::load_stored_bearer_key(
+                env_var,
+                account,
+                missing_message,
+                store,
+            )?,
+        )),
         ProviderAuthKind::KimiOAuth { .. } => {
-            let env_var = auth_kind
+            let env_var = mode
+                .auth_kind
                 .env_var()
                 .expect("Kimi OAuth must declare an environment variable");
             let missing = || crate::model::registry::missing_credentials_error("kimi-code");
@@ -159,15 +158,15 @@ async fn load_model_request_auth(
         }
         ProviderAuthKind::OllamaDeviceKey { missing_message } => {
             Ok(ModelRequestAuth::OllamaDevice(
-                OllamaDeviceKey::load_default().map_err(|error| match error {
-                    crate::auth::ollama_device::OllamaDeviceError::MissingKey(_) => {
-                        crate::model::registry::missing_credential_error(missing_message)
-                    }
-                    error => ModelError::InvalidResponse(error.to_string()),
-                })?,
+                crate::auth::provider_credentials::load_ollama_device_key(missing_message)?,
             ))
         }
-        _ => Err(ModelError::UnsupportedProvider("auth mode".into())),
+        ProviderAuthKind::CodexOAuth { .. }
+        | ProviderAuthKind::GithubCopilotDevice { .. }
+        | ProviderAuthKind::XaiOAuth { .. } => Err(ModelError::UnsupportedProvider(format!(
+            "auth mode '{}'",
+            mode.id
+        ))),
     }
 }
 
