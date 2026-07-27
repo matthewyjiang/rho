@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.6.2...rho-agent-tools-v0.7.0) (2026-07-27)
+
+
+### Features
+
+* **tui:** unify tool transcript cards as Call + Children ([#586](https://github.com/matthewyjiang/rho/issues/586)) ([ce52cdd](https://github.com/matthewyjiang/rho/commit/ce52cddb6dbf0ac1b2878b6f3bd468a87547f8fa))
+
 ## [0.6.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.6.1...rho-agent-tools-v0.6.2) (2026-07-27)
 
 
