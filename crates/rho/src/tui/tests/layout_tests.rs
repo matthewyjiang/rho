@@ -75,6 +75,26 @@ fn finished_stream_restores_trailing_blank_before_next_entry() {
         open_len + 1,
         "closing the stream should restore the entry trailing blank"
     );
+
+    app.push_transcript_entry(Entry::User("next prompt".into()));
+    let lines = app
+        .history_lines(60, Instant::now())
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let done_idx = lines
+        .iter()
+        .position(|line| line.contains("Done streaming"))
+        .expect("assistant line");
+    let next_idx = lines
+        .iter()
+        .position(|line| line.contains("next prompt"))
+        .expect("user line");
+    assert_eq!(
+        next_idx,
+        done_idx + 2,
+        "expected exactly one blank between closed stream and next entry, got {lines:#?}"
+    );
 }
 
 #[test]

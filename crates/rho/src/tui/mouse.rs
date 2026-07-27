@@ -7,7 +7,7 @@ use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
     render::tool_entry_lines,
     text_selection::{CopyNotice, TextSelection},
-    tool_output_ui::{expandable_tool_entry, is_tool_entry, tool_display_line_count},
+    tool_output_ui::{expandable_tool_entry, tool_display_line_count},
     App, ComposerMode,
 };
 
@@ -266,14 +266,16 @@ impl App {
 
         let static_len = self.history_static_len(width);
         let mut pending_start = static_len;
-        let transcript_ends_with_tool =
-            self.history.last_inserted_was_tool() || self.history.last().is_some_and(is_tool_entry);
-        for (shell_index, shell) in self.running_inline_shell_entries().enumerate() {
-            if shell_index > 0 || transcript_ends_with_tool {
-                pending_start = pending_start.saturating_add(1);
-            }
+        let shells = self.running_inline_shell_entries().collect::<Vec<_>>();
+        let has_pending_tools =
+            !shells.is_empty() || self.turn.tool_calls().live_entries().next().is_some();
+        // Match history_live_lines: open stream tails need one blank before live tools.
+        if has_pending_tools && self.open_stream_tail_active() {
+            pending_start = pending_start.saturating_add(1);
+        }
+        for shell in &shells {
             pending_start = pending_start.saturating_add(
-                tool_entry_lines(&shell, width, self.info.runtime.max_tool_output_lines).len(),
+                tool_entry_lines(shell, width, self.info.runtime.max_tool_output_lines).len(),
             );
         }
         enum PendingToolKey {
@@ -295,9 +297,6 @@ impl App {
                     .map(|(call_id, entry)| (PendingToolKey::Running(call_id.clone()), entry)),
             );
         for (key, pending) in entries {
-            if transcript_ends_with_tool {
-                pending_start = pending_start.saturating_add(1);
-            }
             let pending_end = pending_start.saturating_add(
                 tool_entry_lines(pending, width, self.info.runtime.max_tool_output_lines).len(),
             );

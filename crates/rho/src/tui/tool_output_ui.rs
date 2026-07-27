@@ -4,10 +4,6 @@ use ratatui::DefaultTerminal;
 
 use super::{App, Entry};
 
-pub(super) fn is_tool_entry(entry: &Entry) -> bool {
-    matches!(entry, Entry::Tool(_))
-}
-
 pub(super) fn expandable_tool_entry(entry: &Entry, max_tool_output_lines: usize) -> bool {
     matches!(
         entry,

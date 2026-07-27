@@ -18,7 +18,6 @@ use super::{
     markdown::{update_code_block_state, CodeFenceState},
     render::padded_content_width,
     stream::StreamFragment,
-    tool_output_ui::is_tool_entry,
     usage_cost::{
         add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
     },
@@ -480,7 +479,6 @@ impl App {
                 StreamKind::Reasoning => &mut self.streams.reasoning_stream_code_fence,
             };
             update_code_block_state(render_text, code_fence);
-            self.history.set_last_inserted_was_tool(false);
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
@@ -536,8 +534,6 @@ impl App {
             | Entry::Tool(_)
             | Entry::Error(_) => None,
         });
-        self.history
-            .set_last_inserted_was_tool(is_tool_entry(&entry));
         self.push_transcript_entry(entry);
     }
 

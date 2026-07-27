@@ -199,7 +199,8 @@ pub(super) fn reserve_entry_image_rows(
 ) -> Option<RenderedImagePlacements> {
     match entry {
         super::Entry::Tool(tool) => tool.image.as_ref().map(|image| {
-            RenderedImagePlacements::single(reserve_image_rows(lines, image, width).offset_rows(1))
+            // Content starts at row 0; trailing spacer is after the image rows.
+            RenderedImagePlacements::single(reserve_image_rows(lines, image, width))
         }),
         _ => None,
     }

@@ -8,7 +8,6 @@ use super::{
     markdown_image::MarkdownImageSource,
     message_render::render_assistant_content,
     render::{apply_markdown_images, pad_entry_line, render_entry_with_options, TrailingBlank},
-    tool_output_ui::is_tool_entry,
     Entry,
 };
 
@@ -231,15 +230,8 @@ impl HistoryLineCache {
             .filter_map(|placements| placements.retain_starting_before(line_start))
             .collect();
 
-        let mut previous_was_tool = rebuild_from
-            .checked_sub(1)
-            .and_then(|index| entries.get(index))
-            .is_some_and(is_tool_entry);
         for (entry_index, entry) in entries.iter().enumerate().skip(rebuild_from) {
             let range_start = self.lines.len();
-            if previous_was_tool && is_tool_entry(entry) {
-                self.lines.push(Line::raw(""));
-            }
             let entry_start = self.lines.len();
             let trailing_blank = if self.open_stream_tail && entry_index + 1 == entries.len() {
                 TrailingBlank::Omit
@@ -258,8 +250,8 @@ impl HistoryLineCache {
                         .code_blocks
                         .into_iter()
                         .map(|block| CachedCodeBlock {
-                            // render_entry adds a blank row before the rendered markdown.
-                            line: entry_start.saturating_add(1 + block.top_line),
+                            // Content starts at the first entry row; trailing blank is after.
+                            line: entry_start.saturating_add(block.top_line),
                             // render_entry also pads markdown by one column on each side.
                             copy_columns: block.copy_columns.start.saturating_add(1)
                                 ..block.copy_columns.end.saturating_add(1),
@@ -289,7 +281,6 @@ impl HistoryLineCache {
                 }
                 _ => None,
             });
-            previous_was_tool = is_tool_entry(entry);
         }
     }
 
@@ -328,10 +319,8 @@ impl HistoryLineCache {
         } else {
             range.end
         };
-        let preserve_end = range
-            .start
-            .saturating_add(1)
-            .saturating_add(cache.stable_line_count);
+        // Content starts at range.start; there is no leading spacer.
+        let preserve_end = range.start.saturating_add(cache.stable_line_count);
         if preserve_end >= content_end || preserve_end > self.lines.len() {
             return false;
         }
@@ -352,7 +341,7 @@ impl HistoryLineCache {
         let cache = self.assistant_caches[index]
             .as_mut()
             .expect("assistant cache exists");
-        cache.stable_line_count = self.lines.len().saturating_sub(range.start + 1);
+        cache.stable_line_count = self.lines.len().saturating_sub(range.start);
         cache.stable_source_len = new_tail_start;
         self.append_assistant_segment(&text[new_tail_start..], width);
         if let Some(trailing_blank) = trailing_blank {

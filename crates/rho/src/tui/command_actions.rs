@@ -198,7 +198,6 @@ impl App {
         self.history.images_mut().clear();
         self.history.set_images_dirty_from(None);
         self.history.lines_mut().invalidate_from(0);
-        self.history.set_last_inserted_was_tool(false);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.status = "new session".into();

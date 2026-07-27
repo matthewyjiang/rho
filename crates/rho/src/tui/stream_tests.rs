@@ -55,7 +55,7 @@ fn drains_only_complete_newline_terminated_lines() {
     stream.push_delta("lo\nwor");
     let fragment = stream.drain_renderable(10).unwrap();
     assert_eq!(fragment.text.as_str(), "hello\n");
-    assert!(fragment.include_leading_blank());
+    assert!(!fragment.include_leading_blank());
     assert_eq!(stream.emitted_text(), "hello\n");
 
     stream.push_delta("ld\n");
@@ -348,13 +348,13 @@ fn markdown_drain_uses_display_width_in_code_blocks() {
 fn reset_clears_pending_emitted_and_leading_blank_state() {
     let mut stream = AppendOnlyStream::default();
     stream.push_delta("done\n");
-    assert!(stream.drain_renderable(10).unwrap().include_leading_blank());
+    assert!(!stream.drain_renderable(10).unwrap().include_leading_blank());
 
     stream.reset();
     stream.push_delta("again\n");
     let fragment = stream.drain_renderable(10).unwrap();
     assert_eq!(fragment.text.as_str(), "again\n");
-    assert!(fragment.include_leading_blank());
+    assert!(!fragment.include_leading_blank());
     assert_eq!(stream.emitted_text(), "again\n");
 }
 

@@ -144,10 +144,10 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     let width = 40;
     let line_count = cache.line_count(&entries, width, 20, &no_images);
 
-    // A one-line tool has a leading block row and one text row before its image.
+    // A one-line tool has one text row before its image; the trailing spacer is after.
     let full = cache.visible_image_placements(&entries, width, 20, 0, line_count, &no_images);
     assert_eq!(full.len(), 1);
-    assert_eq!(full[0].row, 2);
+    assert_eq!(full[0].row, 1);
     assert_eq!(full[0].height, IMAGE_HEIGHT as usize);
 
     // Avoid resizing an image into a partial viewport. Reserved rows remain

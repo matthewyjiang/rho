@@ -19,7 +19,6 @@ pub(in crate::tui) struct HistoryUi {
     transcript: Vec<Entry>,
     lines: HistoryLineCache,
     last_status_notice: Option<String>,
-    last_inserted_was_tool: bool,
     images: markdown_image::MarkdownImageCache,
     images_dirty_from: Option<usize>,
     scroll: HistoryScrollChrome,
@@ -186,14 +185,6 @@ impl HistoryUi {
 
     pub(in crate::tui) fn set_last_status_notice(&mut self, notice: Option<String>) {
         self.last_status_notice = notice;
-    }
-
-    pub(in crate::tui) fn last_inserted_was_tool(&self) -> bool {
-        self.last_inserted_was_tool
-    }
-
-    pub(in crate::tui) fn set_last_inserted_was_tool(&mut self, value: bool) {
-        self.last_inserted_was_tool = value;
     }
 
     pub(in crate::tui) fn hovered_code_block_copy(&self) -> Option<usize> {

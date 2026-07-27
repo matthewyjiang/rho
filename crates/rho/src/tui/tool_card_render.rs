@@ -11,7 +11,8 @@ use super::{
     feed_image::reserve_optional_image_rows,
     render::{
         display_width, pad_entry_line, padded_inner_width, push_hard_wrapped_text,
-        push_wrapped_text, styled_blank_line, wrap_line_hard, LineFill,
+        push_wrapped_text, styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard,
+        LineFill,
     },
     theme::Theme,
     tool_diff, ToolEntry, ToolEntryState,
@@ -21,6 +22,8 @@ const TREE_INDENT: &str = "  ";
 const TREE_BRANCH_MID: &str = "├ ";
 const TREE_BRANCH_END: &str = "└ ";
 const TREE_CONTINUE: &str = "  ";
+/// Vertical connector on wrapped header rows, in the same column as ├ / └.
+const HEADER_WRAP_ELBOW: &str = "  | ";
 /// Content column after `  ├ ` / `  └ `.
 const CHILD_CONTENT_INDENT: &str = "    ";
 
@@ -51,9 +54,9 @@ pub(super) fn tool_entry_lines(
         );
     }
     reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
+    // One trailing spacer only. Prior entries own the blank above this card.
     let padding_style = Theme::tool_card_padding();
-    let mut padded = Vec::with_capacity(lines.len() + 2);
-    padded.push(styled_blank_line(width, padding_style));
+    let mut padded = Vec::with_capacity(lines.len() + 1);
     padded.extend(lines.into_iter().map(pad_entry_line));
     padded.push(styled_blank_line(width, padding_style));
     padded
@@ -119,7 +122,13 @@ fn status_for_state(card: &ToolCard, state: ToolEntryState) -> ToolStatus {
     match state {
         ToolEntryState::Running => ToolStatus::Running,
         ToolEntryState::Finished { ok, .. } => {
-            if matches!(card.status, ToolStatus::Interrupted | ToolStatus::Blocked) {
+            // Background agent spawns finish the tool call while the child is
+            // still running. The card keeps Running (or Interrupted/Blocked);
+            // do not rewrite those from the host ok flag.
+            if matches!(
+                card.status,
+                ToolStatus::Running | ToolStatus::Interrupted | ToolStatus::Blocked
+            ) {
                 card.status
             } else {
                 ToolStatus::from_finished(ok)
@@ -134,45 +143,157 @@ fn push_header_line(
     status: ToolStatus,
     width: usize,
 ) {
-    let mut spans = Vec::new();
-    spans.push(Span::styled(
-        format!("{} ", status.marker()),
-        Theme::tool_marker(status),
-    ));
+    // Marker stays on the first row only. Primary/command/detail may wrap with a
+    // hang under the fixed prefix so long streamed args stay visible (main used
+    // to hard-wrap whole tool lines; a single clipped header hides the tail).
+    let marker = Span::styled(format!("{} ", status.marker()), Theme::tool_marker(status));
     match &card.header {
         ToolHeader::Call { verb, primary } => {
-            spans.push(Span::styled(verb.clone(), Theme::tool_verb(card.family)));
-            if let Some(primary) = primary.as_ref().filter(|primary| !primary.is_empty()) {
-                spans.push(Span::styled("(", Theme::tool_primary(card.family)));
-                spans.push(Span::styled(
-                    primary.clone(),
-                    Theme::tool_primary(card.family),
-                ));
-                spans.push(Span::styled(")", Theme::tool_primary(card.family)));
+            let mut prefix = vec![
+                marker,
+                Span::styled(verb.clone(), Theme::tool_verb(card.family)),
+            ];
+            match primary.as_ref().filter(|primary| !primary.is_empty()) {
+                Some(primary) => {
+                    prefix.push(Span::styled("(", Theme::tool_primary(card.family)));
+                    let wrappable = vec![
+                        Span::styled(primary.clone(), Theme::tool_primary(card.family)),
+                        Span::styled(")", Theme::tool_primary(card.family)),
+                    ];
+                    push_wrapped_header(lines, prefix, wrappable, width);
+                }
+                None => lines.push(pad_spans_line(prefix, width)),
             }
         }
         ToolHeader::Shell { prompt, command } => {
-            spans.push(Span::styled(prompt.clone(), Theme::tool_verb(card.family)));
-            if let Some(command) = command.as_ref().filter(|command| !command.is_empty()) {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    command.clone(),
-                    Theme::tool_primary(card.family),
-                ));
+            let mut prefix = vec![
+                marker,
+                Span::styled(prompt.clone(), Theme::tool_verb(card.family)),
+            ];
+            match command.as_ref().filter(|command| !command.is_empty()) {
+                Some(command) => {
+                    prefix.push(Span::raw(" "));
+                    let wrappable = vec![Span::styled(
+                        command.clone(),
+                        Theme::tool_primary(card.family),
+                    )];
+                    push_wrapped_header(lines, prefix, wrappable, width);
+                }
+                None => lines.push(pad_spans_line(prefix, width)),
             }
         }
         ToolHeader::StatusFirst { identity, detail } => {
-            spans.push(Span::styled(
-                identity.clone(),
-                Theme::tool_verb(card.family),
-            ));
-            if !detail.is_empty() {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(detail.clone(), Theme::text()));
+            let mut prefix = vec![
+                marker,
+                Span::styled(identity.clone(), Theme::tool_verb(card.family)),
+            ];
+            if detail.is_empty() {
+                lines.push(pad_spans_line(prefix, width));
+            } else {
+                prefix.push(Span::raw("  "));
+                let wrappable = vec![Span::styled(detail.clone(), Theme::text())];
+                push_wrapped_header(lines, prefix, wrappable, width);
             }
         }
     }
-    lines.push(pad_spans_line(spans, width));
+}
+
+/// Wrap header primary/command under a fixed first-line prefix.
+///
+/// Continuations draw a tree-column `|` elbow, then pad to the primary hang so
+/// children (`├` / `└`) still read as a connected trunk under the call.
+fn push_wrapped_header(
+    lines: &mut Vec<Line<'static>>,
+    prefix: Vec<Span<'static>>,
+    wrappable: Vec<Span<'static>>,
+    width: usize,
+) {
+    let hang = spans_display_width(&prefix);
+    if hang >= width {
+        // Pathological narrow width: fall back to a single padded row.
+        let mut spans = prefix;
+        spans.extend(wrappable);
+        lines.push(pad_spans_line(spans, width));
+        return;
+    }
+    let content_width = (width - hang).max(1);
+    let text: String = wrappable.iter().map(|span| span.content.as_ref()).collect();
+    if text.is_empty() {
+        lines.push(pad_spans_line(prefix, width));
+        return;
+    }
+
+    let ranges = wrap_line_at_whitespace_ranges(&text, content_width);
+    for (index, range) in ranges.into_iter().enumerate() {
+        let mut start = range.start;
+        let end = range.end;
+        if index > 0 {
+            // Keep hang indent stable when a wrap boundary leaves leading spaces.
+            while start < end {
+                let ch = text[start..].chars().next().expect("start < end");
+                if !ch.is_whitespace() {
+                    break;
+                }
+                start += ch.len_utf8();
+            }
+            if start >= end {
+                continue;
+            }
+        }
+        let chunk_spans = slice_spans_by_bytes(&wrappable, start, end);
+        let mut row = if index == 0 {
+            prefix.clone()
+        } else {
+            header_wrap_continuation_prefix(hang)
+        };
+        row.extend(chunk_spans);
+        lines.push(pad_spans_line(row, width));
+    }
+}
+
+/// `  | ` in the child elbow column, then spaces out to the primary hang.
+fn header_wrap_continuation_prefix(hang: usize) -> Vec<Span<'static>> {
+    let elbow_width = display_width(HEADER_WRAP_ELBOW);
+    let mut spans = vec![Span::styled(
+        HEADER_WRAP_ELBOW.to_string(),
+        Theme::tool_tree(),
+    )];
+    if hang > elbow_width {
+        spans.push(Span::styled(" ".repeat(hang - elbow_width), Theme::text()));
+    }
+    spans
+}
+
+fn spans_display_width(spans: &[Span<'static>]) -> usize {
+    spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum()
+}
+
+fn slice_spans_by_bytes(spans: &[Span<'static>], start: usize, end: usize) -> Vec<Span<'static>> {
+    if start >= end {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for span in spans {
+        let content = span.content.as_ref();
+        let span_start = offset;
+        let span_end = offset + content.len();
+        offset = span_end;
+        if span_end <= start || span_start >= end {
+            continue;
+        }
+        let from = start.saturating_sub(span_start);
+        let to = (end - span_start).min(content.len());
+        if from >= to {
+            continue;
+        }
+        // Ranges come from the concatenated UTF-8 text, so byte edges are char edges.
+        out.push(Span::styled(content[from..to].to_string(), span.style));
+    }
+    out
 }
 
 fn push_fact_line(lines: &mut Vec<Line<'static>>, fact: &ToolFact, is_last: bool, width: usize) {
@@ -414,7 +535,7 @@ fn truncate_spans_to_text(spans: &[Span<'static>], text: &str) -> Vec<Span<'stat
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
-    use rho_tools::tool_card::{ToolFamily, ToolHeader, ToolStatus};
+    use rho_tools::tool_card::{ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
     use super::*;
     use crate::tui::ToolEntryState;
@@ -499,5 +620,219 @@ mod tests {
         assert!(rendered.iter().any(|line| line.contains("timeout 30s")));
         assert!(rendered.iter().any(|line| line.contains("exit 0")));
         assert!(rendered.iter().any(|line| line.contains("more lines")));
+    }
+
+    #[test]
+    fn tool_entry_lines_use_trailing_blank_only() {
+        let card = ToolCard::new(
+            ToolStatus::Ok,
+            ToolFamily::FileCommand,
+            ToolHeader::call("read_file", Some("main.rs".into())),
+        );
+        let tool = crate::tui::ToolEntry {
+            state: ToolEntryState::Finished {
+                ok: true,
+                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
+            },
+            display_lines: vec!["read_file".into()],
+            card: Some(card),
+            expanded: false,
+            image: None,
+        };
+        let lines = tool_entry_lines(&tool, 40, 4);
+        assert!(
+            line_text(&lines[0]).contains("✓ read_file(main.rs)"),
+            "unexpected header: {}",
+            line_text(&lines[0])
+        );
+        assert!(
+            line_text(lines.last().expect("card lines")).is_empty(),
+            "expected a single trailing spacer"
+        );
+        assert!(
+            lines.len() >= 2 && !line_text(&lines[lines.len() - 2]).is_empty(),
+            "tool cards should not keep a leading spacer blank"
+        );
+    }
+
+    #[test]
+    fn long_shell_header_wraps_command_under_prompt() {
+        let command = "cargo test -p rho-coding-agent --lib interactive_presenter -- --nocapture";
+        let card = ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::FileCommand,
+            ToolHeader::shell("$", Some(command.into())),
+        )
+        .with_facts(vec![ToolFact::Meta {
+            text: "timeout 30s".into(),
+        }]);
+        let mut lines = Vec::new();
+        push_tool_card(
+            &mut lines,
+            &card,
+            ToolEntryState::Running,
+            40,
+            10,
+            /*expanded*/ false,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert!(
+            rendered.len() >= 3,
+            "long command should wrap before facts: {rendered:?}"
+        );
+        assert!(
+            rendered[0].starts_with("● $ "),
+            "marker+prompt stay on first header row: {rendered:?}"
+        );
+        assert!(
+            !rendered[0].contains('├') && !rendered[0].contains('└'),
+            "header must not use tree glyphs: {rendered:?}"
+        );
+        // Continuation uses a tree-column elbow, then hangs under the primary.
+        let cont = &rendered[1];
+        assert!(
+            cont.contains('|'),
+            "header continuation should draw a | elbow: {rendered:?}"
+        );
+        assert!(
+            !cont.contains('├') && !cont.contains('└'),
+            "header continuation must not use child branch glyphs: {rendered:?}"
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("timeout 30s")
+                    && (line.contains('├') || line.contains('└'))),
+            "facts keep tree structure after wrapped header: {rendered:?}"
+        );
+        let joined: String = rendered.iter().map(|line| line.trim()).collect();
+        assert!(
+            joined.contains("interactive_presenter") && joined.contains("nocapture"),
+            "full command remains visible after wrap: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn long_call_header_wraps_primary_inside_parens() {
+        let card = ToolCard::new(
+            ToolStatus::Ok,
+            ToolFamily::FileCommand,
+            ToolHeader::call(
+                "read_file",
+                Some("crates/rho/src/tui/tool_card_render.rs".into()),
+            ),
+        );
+        let mut lines = Vec::new();
+        push_tool_card(
+            &mut lines,
+            &card,
+            ToolEntryState::Finished {
+                ok: true,
+                display_style: rho_tools::tool::ToolDisplayStyle::file_or_command(),
+            },
+            28,
+            4,
+            /*expanded*/ false,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert!(
+            rendered[0].starts_with("✓ read_file("),
+            "verb and open paren stay on first row: {rendered:?}"
+        );
+        assert!(rendered.len() >= 2, "long path should wrap: {rendered:?}");
+        assert!(
+            rendered.iter().skip(1).all(|line| line.contains('|')),
+            "wrapped call primary should use | elbows: {rendered:?}"
+        );
+        let path_text: String = rendered
+            .iter()
+            .map(|line| line.trim().trim_start_matches('|').trim().to_string())
+            .collect();
+        assert!(
+            path_text.contains("tool_card_render.rs") && path_text.contains(')'),
+            "path and closing paren remain visible: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn running_shell_card_renders_streamed_stdout_body() {
+        let card = ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::FileCommand,
+            ToolHeader::shell("$", Some("cargo test".into())),
+        )
+        .with_facts(vec![
+            ToolFact::Meta {
+                text: "timeout 30s".into(),
+            },
+            ToolFact::Meta {
+                text: "running".into(),
+            },
+        ])
+        .with_body(ToolBody::Lines(vec![
+            "compiling rho".into(),
+            "running 12 tests".into(),
+        ]));
+        let tool = crate::tui::ToolEntry {
+            state: ToolEntryState::Running,
+            display_lines: card.to_display_lines(),
+            card: Some(card),
+            expanded: false,
+            image: None,
+        };
+        let rendered: Vec<String> = tool_entry_lines(&tool, 60, 10)
+            .iter()
+            .map(line_text)
+            .collect();
+        assert!(
+            rendered.iter().any(|line| line.contains("compiling rho")),
+            "streamed stdout missing from rendered card: {rendered:?}"
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("running 12 tests")),
+            "streamed stdout missing from rendered card: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn finished_background_agent_keeps_running_marker() {
+        let card = ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::Agent,
+            ToolHeader::status_first("worker", "running in background"),
+        )
+        .with_facts(vec![ToolFact::Text {
+            text: "fixture stream".into(),
+        }])
+        .with_body(ToolBody::Lines(vec!["abc123 · rho attach abc123".into()]));
+        let mut lines = Vec::new();
+        push_tool_card(
+            &mut lines,
+            &card,
+            ToolEntryState::Finished {
+                ok: true,
+                display_style: rho_tools::tool::ToolDisplayStyle::default_tool(),
+            },
+            80,
+            10,
+            /*expanded*/ false,
+        );
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert!(
+            rendered[0].starts_with("● worker  running in background"),
+            "background spawn must keep the running marker after tool finish: {rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|line| line.contains("fixture stream")),
+            "background task text missing: {rendered:?}"
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("abc123 · rho attach abc123")),
+            "background run meta missing: {rendered:?}"
+        );
     }
 }

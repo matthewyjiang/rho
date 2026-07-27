@@ -231,12 +231,15 @@ fn recovered_history_tail_limits_initial_redraw() {
 
     let (omitted, visible) = recovered_history_tail(&entries, 80, 9, 10);
 
-    assert_eq!(omitted, 7);
+    // Each user entry is one content line + trailing blank (2 rows). A 9-line
+    // budget therefore keeps four tail messages.
+    assert_eq!(omitted, 6);
     assert!(matches!(visible.as_slice(), [
             Entry::User(a),
             Entry::User(b),
             Entry::User(c),
-        ] if a == "message 7" && b == "message 8" && c == "message 9"));
+            Entry::User(d),
+        ] if a == "message 6" && b == "message 7" && c == "message 8" && d == "message 9"));
 }
 
 #[test]
@@ -423,10 +426,10 @@ fn recovered_session_messages_become_transcript_entries() {
     ));
     let lines = entry_lines(&entries[2], 40, 10);
     // Call + Children: failure is a red status marker, not a washed surface.
-    assert_eq!(lines[1].spans[0].style.fg, Some(Color::Red));
-    assert_eq!(lines[1].spans[0].style.bg, None);
-    assert!(line_text(&lines[1]).contains('✗'));
-    assert!(line_text(&lines[1]).contains("read_file"));
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Red));
+    assert_eq!(lines[0].spans[0].style.bg, None);
+    assert!(line_text(&lines[0]).contains('✗'));
+    assert!(line_text(&lines[0]).contains("read_file"));
 }
 
 #[test]
@@ -474,9 +477,9 @@ fn skill_tool_block_shows_single_magenta_status_line() {
     );
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-    assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[0].style.bg, Some(Color::Magenta));
-    assert!(!lines[1].spans[0].style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::White));
+    assert_eq!(lines[0].spans[0].style.bg, Some(Color::Magenta));
+    assert!(!lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
     assert!(rendered.contains("skill caveman"));
     assert_eq!(rendered.matches("skill").count(), 1);
 }
@@ -498,9 +501,9 @@ fn skill_tool_block_uses_subtle_red_failure_background() {
         10,
     );
 
-    assert_eq!(lines[1].spans[0].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[0].style.bg, Some(Color::Red));
-    assert!(!lines[1].spans[0].style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::White));
+    assert_eq!(lines[0].spans[0].style.bg, Some(Color::Red));
+    assert!(!lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]
@@ -1618,7 +1621,7 @@ fn history_lines_include_header_transcript_pending_preview_but_not_activity_row(
     app.streams.live_stream_preview = Some(LiveStreamPreview {
         kind: StreamKind::Assistant,
         text: "partial answer".into(),
-        include_leading_blank: true,
+        include_leading_blank: false,
     });
     app.begin_provider_turn_ui();
     app.turn.start_loading();

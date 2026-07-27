@@ -666,3 +666,117 @@ fn edit_failure_uses_error_fact_not_diff_body() {
         .iter()
         .any(|line| line.contains("no matches found for old_string")));
 }
+
+#[test]
+fn shell_progress_streams_stdout_into_card_body() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    let id = ToolCallId::from_string("call-shell-progress").unwrap();
+    presenter.proposed(call(
+        id.as_str(),
+        "bash",
+        serde_json::json!({"command": "cargo test", "timeout_seconds": 30}),
+    ));
+    presenter.started(id.clone(), "bash".to_string(), ToolMetadata::default());
+
+    let progress = presenter.updated(
+        &id,
+        &ToolProgress::message(
+            "stdout:\ncompiling rho\nrunning 12 tests\n\nstderr:\n\n\ntime: running",
+        ),
+    );
+    assert_eq!(progress.display_lines[0], "● $ cargo test");
+    assert!(
+        progress
+            .display_lines
+            .iter()
+            .any(|line| line.contains("compiling rho")),
+        "stdout should stream into the tool display: {:?}",
+        progress.display_lines
+    );
+    assert!(
+        progress
+            .display_lines
+            .iter()
+            .any(|line| line.contains("running 12 tests")),
+        "multi-line stdout should stream: {:?}",
+        progress.display_lines
+    );
+    match &progress.card.body {
+        rho_tools::tool_card::ToolBody::Lines(lines) => {
+            assert!(lines.iter().any(|line| line.contains("compiling rho")));
+            assert!(lines.iter().any(|line| line.contains("running 12 tests")));
+        }
+        other => panic!("expected body lines, got {other:?}"),
+    }
+}
+
+#[test]
+fn background_agent_finish_keeps_running_card_status() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    let id = ToolCallId::from_string("call-bg").unwrap();
+    presenter.proposed(call(
+        id.as_str(),
+        "agent",
+        serde_json::json!({
+            "agent_id": "worker",
+            "background": true,
+            "prompt": "fixture stream"
+        }),
+    ));
+    presenter.started(id.clone(), "agent".to_string(), ToolMetadata::default());
+    let (ok, finished) = presenter.finished(
+        &id,
+        ToolCompletion::Success(ToolOutput::text(
+            "agent abc123 (worker) started in background\nattach: rho attach abc123",
+        )),
+    );
+    assert!(ok);
+    assert_eq!(
+        finished.card.status,
+        rho_tools::tool_card::ToolStatus::Running
+    );
+    assert!(finished.display_lines[0].starts_with("● worker  running in background"));
+}
+
+#[test]
+fn bash_argument_streaming_updates_command_in_preview() {
+    let mut presenter = InteractiveToolPresenter::new("/workspace".into());
+    assert_eq!(
+        preview_lines(
+            &mut presenter,
+            0,
+            Some("bash".to_string()),
+            r#"{"command":""#
+        ),
+        Some(vec!["● $".to_string()])
+    );
+
+    // Backoff is exponential on parse length; send large enough chunks to cross
+    // the stride so the live command keeps advancing.
+    let mut last_header = String::new();
+    let mut updates = 0usize;
+    for chunk in [
+        r#"cargo test -p rho"#,
+        r#" --features all-features -- --nocapture"#,
+        r#" long_tail_marker"#,
+    ] {
+        if let Some(lines) = preview_lines(&mut presenter, 0, None, chunk) {
+            updates += 1;
+            let header = lines[0].clone();
+            assert!(
+                header.starts_with("● $"),
+                "streamed bash preview should keep shell header: {lines:?}"
+            );
+            assert_ne!(header, last_header, "each emit should advance the command");
+            last_header = header;
+        }
+    }
+    assert!(
+        updates >= 2,
+        "bash command streaming should emit multiple previews, got {updates}; last={last_header}"
+    );
+    assert!(
+        last_header.contains("cargo test -p rho") || last_header.contains("long_tail_marker"),
+        "final streamed command missing expected text: {last_header}"
+    );
+}

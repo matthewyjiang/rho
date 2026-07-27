@@ -32,9 +32,10 @@ pub(in crate::tui) fn render_entry(
     render_entry_with_options(entry, width, max_tool_output_lines, TrailingBlank::Include)
 }
 
-/// Render an entry, optionally omitting the trailing separator blank.
+/// Render an entry with an optional trailing spacer blank and no leading blank.
 ///
-/// Open stream tails omit the trailing blank so a live continuation can abut the
+/// Spacing between transcript blocks comes from each entry's trailing blank.
+/// Open stream tails omit that blank so a live continuation can abut the
 /// committed content without a mid-message gap.
 pub(in crate::tui) fn render_entry_with_options(
     entry: &Entry,
@@ -84,20 +85,22 @@ pub(in crate::tui) fn render_entry_with_options(
     };
 
     let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
-    let block_style = match entry {
+    // Trailing spacer separates transcript blocks. User messages keep their
+    // background on content rows only so the spacer does not grow an empty
+    // highlighted band below the prompt.
+    let spacer_style = match entry {
         crate::tui::Entry::Tool(_) => Theme::tool_card_padding(),
+        crate::tui::Entry::User(_) => Style::default(),
         _ => lines
             .first()
             .and_then(|line| line.spans.first())
             .map(|span| span.style)
             .unwrap_or_default(),
     };
-    let mut padded =
-        Vec::with_capacity(lines.len() + 1 + usize::from(trailing_blank.is_included()));
-    padded.push(styled_blank_line(width, block_style));
+    let mut padded = Vec::with_capacity(lines.len() + usize::from(trailing_blank.is_included()));
     padded.extend(lines.into_iter().map(pad_line));
     if trailing_blank.is_included() {
-        padded.push(styled_blank_line(width, block_style));
+        padded.push(styled_blank_line(width, spacer_style));
     }
     RenderedEntry {
         lines: padded,
@@ -132,13 +135,9 @@ pub(in crate::tui) fn apply_markdown_images(
         block.top_line = block.top_line.saturating_add(preceding_image_rows);
     }
 
-    let padded_image_rows = rendered
-        .image_rows
-        .iter()
-        .map(|row| row.saturating_add(1))
-        .collect::<Vec<_>>();
+    // Content starts at row 0; the trailing spacer sits after content.
     if let Some(placements) =
-        reserve_markdown_image_rows(&mut rendered.lines, &padded_image_rows, images, width)
+        reserve_markdown_image_rows(&mut rendered.lines, &rendered.image_rows, images, width)
     {
         rendered.image_placement = Some(placements);
     }
