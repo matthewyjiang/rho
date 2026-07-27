@@ -209,3 +209,7 @@ pub(super) fn capture_provider_event(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "stream_capture_tests.rs"]
+mod tests;

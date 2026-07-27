@@ -295,53 +295,6 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
 }
 
 #[test]
-fn empty_tool_identity_still_binds_call_id_on_first_argument_preview() {
-    let mut adapter = SdkEventAdapter::default();
-    let call = ToolCall {
-        id: "call-bind".into(),
-        name: "read_file".into(),
-        arguments: serde_json::json!({"path": "src/main.rs"}),
-    };
-
-    // Providers announce identity before any arguments. The presenter holds the
-    // bare card back, but the adapter must remember the call id for this index.
-    assert!(adapter
-        .translate(RunEvent::ToolCallUpdated {
-            index: 0,
-            id: Some(call.id.clone()),
-            name: Some(call.name.clone()),
-            arguments_delta: String::new(),
-        })
-        .is_empty());
-
-    let preview = only_event(adapter.translate(RunEvent::ToolCallUpdated {
-        index: 0,
-        id: None,
-        name: None,
-        arguments_delta: r#"{"path":"src/main.rs"}"#.into(),
-    }));
-    let ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-        call_id: Some(preview_id),
-        ..
-    }) = preview
-    else {
-        panic!("expected preview bound to call id: {preview:?}");
-    };
-    assert_eq!(preview_id.to_string(), call.id);
-
-    let proposed = only_event(adapter.translate(RunEvent::ToolProposed { call }));
-    let ViewEvent::Update(ViewModelEvent::ToolCallProposed {
-        call_id: proposed_id,
-        ..
-    }) = proposed
-    else {
-        panic!("expected proposal: {proposed:?}");
-    };
-    assert_eq!(proposed_id.to_string(), "call-bind");
-    assert_eq!(preview_id, proposed_id);
-}
-
-#[test]
 fn choice_round_trip_renders_label_and_returns_machine_value() {
     let question = HostQuestion::new(
         "language",

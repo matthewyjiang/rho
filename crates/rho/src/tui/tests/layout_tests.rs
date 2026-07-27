@@ -1089,8 +1089,8 @@ fn stream_preview_and_proposal_share_one_live_slot_when_call_id_binds() {
     let mut app = test_app();
     let call_id = rho_sdk::ToolCallId::from_string("call-once").unwrap();
 
-    // First rendered preview carries the call id (adapter/stream fix). Proposal
-    // and start must reuse that slot instead of flashing a second card.
+    // First rendered preview carries the call id (stream_capture re-emit).
+    // Proposal and start must reuse that slot instead of flashing a second card.
     app.record_agent_event(ViewModelEvent::ToolCallUpdated {
         index: 0,
         call_id: Some(call_id.clone()),
@@ -1117,32 +1117,6 @@ fn stream_preview_and_proposal_share_one_live_slot_when_call_id_binds() {
             .map(|tool| tool.card.header_text()),
         Some("● read_file a.rs".to_string())
     );
-}
-
-#[test]
-fn index_only_stream_preview_duplicates_when_proposal_cannot_bind() {
-    let mut app = test_app();
-    let call_id = rho_sdk::ToolCallId::from_string("call-twice").unwrap();
-
-    // Regression guard for the user-visible double-card flash: a stream preview
-    // without call id plus a later proposal creates two live rows until the
-    // next step clears leftovers.
-    app.record_agent_event(ViewModelEvent::ToolCallUpdated {
-        index: 0,
-        call_id: None,
-        card: running_card("read_file a.rs"),
-    });
-    app.record_agent_event(ViewModelEvent::ToolCallProposed {
-        call_id: call_id.clone(),
-        card: running_card("read_file a.rs"),
-    });
-    assert_eq!(app.turn.tool_calls().live_entries().count(), 2);
-
-    app.record_agent_event(ViewModelEvent::ToolStarted {
-        call_id,
-        card: running_card("read_file a.rs"),
-    });
-    assert_eq!(app.turn.tool_calls().live_entries().count(), 2);
 }
 
 #[test]

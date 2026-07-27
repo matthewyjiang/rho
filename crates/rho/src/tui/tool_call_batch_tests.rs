@@ -120,10 +120,9 @@ fn finished_removes_running_and_returns_expanded() {
 }
 
 #[test]
-fn index_only_stream_preview_then_proposal_without_id_binding_duplicates() {
-    // Documents the batch contract: proposal can only reuse a stream slot when
-    // the call id was bound during streaming. Callers must carry identity onto
-    // the first rendered preview (see event_adapter / stream_capture).
+fn unbound_index_preview_is_a_separate_slot_from_call_id_proposal() {
+    // Batch binding is call-id keyed. An index-only preview cannot be claimed by
+    // a later proposal for a different address space.
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-dup");
     batch.preview(0, None, card("streamed without id"));
@@ -133,7 +132,6 @@ fn index_only_stream_preview_then_proposal_without_id_binding_duplicates() {
     assert_eq!(live_labels(&batch), ["● streamed without id", "● proposed"]);
 
     batch.started(call, card("running"));
-    // The unbound stream preview is left behind; only the call-id slot promotes.
     assert_eq!(batch.live_entries().count(), 2);
     assert_eq!(live_labels(&batch), ["● streamed without id", "● running"]);
 }
