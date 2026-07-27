@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.10.1...rho-providers-v0.10.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* **providers:** disable parallel tools on codex responses lite ([#583](https://github.com/matthewyjiang/rho/issues/583)) ([84ca3f5](https://github.com/matthewyjiang/rho/commit/84ca3f5ff0e6d535f40ebf92594e5c60df70a711))
+
 ## [0.10.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.10.0...rho-providers-v0.10.1) (2026-07-26)
 
 

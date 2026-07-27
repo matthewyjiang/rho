@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.17.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.17.0...rho-coding-agent-v1.17.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **tools:** pin fetch connections to SSRF-vetted addresses ([#572](https://github.com/matthewyjiang/rho/issues/572)) ([45cdd40](https://github.com/matthewyjiang/rho/commit/45cdd40b144fb5f5045bf28bce0c712e949750f1)), closes [#525](https://github.com/matthewyjiang/rho/issues/525)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.10.1 to 0.10.2
+
 ## [1.17.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.16.0...rho-coding-agent-v1.17.0) (2026-07-26)
 
 
