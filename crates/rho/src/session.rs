@@ -16,6 +16,7 @@ use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
 mod delete;
 mod index;
+mod layout;
 mod persistence;
 mod snapshot_delta;
 mod snapshot_store;
@@ -31,13 +32,15 @@ mod tree_tests;
 mod version_tests;
 
 #[cfg(test)]
-use persistence::{
-    encode_cwd, read_entries, read_histories, session_dir_in_root, summarize_session_file,
-    SessionEntry, SESSION_VERSION,
-};
+use layout::encode_cwd;
 use persistence::{
     parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, workspace_key,
     AppendCursor, SessionStore,
+};
+#[cfg(test)]
+use persistence::{
+    read_entries, read_histories, session_dir_in_root, summarize_session_file, SessionEntry,
+    SESSION_VERSION,
 };
 
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
