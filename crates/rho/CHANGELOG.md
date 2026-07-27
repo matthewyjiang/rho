@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.18.1...rho-coding-agent-v1.18.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* **tui:** keep stable prose while stream emphasis completes ([#598](https://github.com/matthewyjiang/rho/issues/598)) ([2f61fb0](https://github.com/matthewyjiang/rho/commit/2f61fb044939dcb86ede9db205bfe7e94e957d42))
+
 ## [1.18.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.18.0...rho-coding-agent-v1.18.1) (2026-07-27)
 
 
