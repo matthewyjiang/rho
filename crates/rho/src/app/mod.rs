@@ -19,6 +19,7 @@ mod runtime_builder;
 pub(crate) mod sdk_config;
 mod sessions_cli;
 pub(crate) mod subagent_host_input;
+mod tools_prompt;
 
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;

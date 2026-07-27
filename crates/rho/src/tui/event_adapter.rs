@@ -1,7 +1,6 @@
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
-    HostInputRequest, HostInputResponse, RunEvent, PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY,
-    PROVIDER_ACTIVITY_REQUEST_RETRY, PROVIDER_ACTIVITY_WEB_SEARCH,
+    HostInputRequest, HostInputResponse, RunEvent,
 };
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
@@ -208,24 +207,21 @@ impl SdkEventAdapter {
             RunEvent::UsageUpdated { usage } => {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]
             }
-            RunEvent::ProviderActivity { kind, detail } => {
-                if kind == PROVIDER_ACTIVITY_WEB_SEARCH {
-                    vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
-                        call_id: rho_sdk::ToolCallId::new(),
-                        ok: true,
-                        display_style: ToolDisplayStyle::web(),
-                        display_lines: vec![format!("web search: {detail}")],
-                        image_asset: None,
-                    })]
-                } else if kind == PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY {
-                    // The following typed reset event drives current hosts.
-                    Vec::new()
-                } else if kind == PROVIDER_ACTIVITY_REQUEST_RETRY {
-                    vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
-                } else {
-                    vec![ViewEvent::Notice(format!("{kind}: {detail}"))]
-                }
+            RunEvent::WebSearch { detail } => {
+                vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
+                    call_id: rho_sdk::ToolCallId::new(),
+                    ok: true,
+                    display_style: ToolDisplayStyle::web(),
+                    display_lines: vec![format!("web search: {detail}")],
+                    image_asset: None,
+                })]
             }
+            RunEvent::ProviderRequestRetry => {
+                vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
+            }
+            // Legacy dual-emitted activity; typed variants above drive the TUI.
+            #[allow(deprecated)]
+            RunEvent::ProviderActivity { .. } => Vec::new(),
             RunEvent::ProviderStreamReset { .. } => {
                 self.presenter().step_started();
                 vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset)]

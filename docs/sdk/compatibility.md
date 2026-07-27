@@ -78,6 +78,7 @@ are not SDK exports.
 - Workspace and approvals: `Workspace`, capability and process types, policies,
   approvals, authorization outcomes, and resolved workspace paths
 - Tool results and provider activity kind constants re-exported at the root
+  (`PROVIDER_ACTIVITY_*` are deprecated; prefer typed `RunEvent` variants)
 
 ### `rho_sdk::model`
 

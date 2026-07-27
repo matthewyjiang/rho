@@ -26,6 +26,14 @@ use super::{
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
 
+#[derive(Clone, Copy)]
+struct DrawSurface<'a> {
+    area: Rect,
+    width: usize,
+    now: Instant,
+    layout: &'a super::screen_layout::ScreenLayout,
+}
+
 impl App {
     pub(super) fn draw(&mut self, frame: &mut Frame<'_>) {
         let now = Instant::now();
@@ -43,12 +51,36 @@ impl App {
         );
         let (history_start, history_count) =
             self.visible_history_window(history_len, layout.history_content.height as usize);
-        let history_visible = self.visible_history_lines_with_live(
+        self.draw_history(
+            frame,
             width,
+            &layout,
             history_start,
             history_count,
             &live_history,
         );
+        let surface = DrawSurface {
+            area,
+            width,
+            now,
+            layout: &layout,
+        };
+        self.draw_panels(frame, surface);
+        self.draw_composer(frame, surface, composer_lines, command_lines);
+        self.draw_cursor(frame, surface);
+    }
+
+    fn draw_history(
+        &mut self,
+        frame: &mut Frame<'_>,
+        width: usize,
+        layout: &super::screen_layout::ScreenLayout,
+        history_start: usize,
+        history_count: usize,
+        live_history: &[Line<'static>],
+    ) {
+        let history_visible =
+            self.visible_history_lines_with_live(width, history_start, history_count, live_history);
         let visible_images =
             self.visible_history_image_placements(width, history_start, history_count);
         frame.render_widget(
@@ -88,6 +120,12 @@ impl App {
             }
         }
         self.render_feed_images(frame, layout.history_content, &visible_images);
+    }
+
+    fn draw_panels(&mut self, frame: &mut Frame<'_>, surface: DrawSurface<'_>) {
+        let DrawSurface {
+            width, now, layout, ..
+        } = surface;
         if let Some(activity_gap) = layout.activity_gap {
             frame.render_widget(Clear, activity_gap);
         }
@@ -162,7 +200,21 @@ impl App {
                 layout.top_divider,
             );
         }
+    }
 
+    fn draw_composer(
+        &mut self,
+        frame: &mut Frame<'_>,
+        surface: DrawSurface<'_>,
+        composer_lines: Vec<Line<'static>>,
+        command_lines: Vec<Line<'static>>,
+    ) {
+        let DrawSurface {
+            area,
+            width,
+            now,
+            layout,
+        } = surface;
         let composer_visible = composer_lines
             .into_iter()
             .skip(layout.composer_start)
@@ -207,7 +259,15 @@ impl App {
         if let Some(notice) = &self.history.copy_notice() {
             render_copy_notice(frame, area, notice, now);
         }
+    }
 
+    fn draw_cursor(&self, frame: &mut Frame<'_>, surface: DrawSurface<'_>) {
+        let DrawSurface {
+            area,
+            width,
+            layout,
+            ..
+        } = surface;
         let popup_cursor = if let ComposerMode::Picker(picker) = self.input_ui.composer() {
             picker_overlay_frame(picker, area).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);

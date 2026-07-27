@@ -1,6 +1,8 @@
 use std::{
     io::{self, IsTerminal},
+    num::NonZeroUsize,
     sync::Arc,
+    time::Duration,
 };
 
 use {
@@ -59,17 +61,82 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 
 async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
+    if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
+        return result;
+    }
+
+    let PreparedStartup {
+        cli,
+        mut config,
+        config_repository,
+        cwd,
+        automation_prompt,
+        output_file,
+        output,
+        max_steps,
+        timeout,
+        bound_agent,
+        bound_reasoning_source,
+        provider_refresh,
+        store,
+    } = prepare_startup(cli).await?;
+
+    validate_terminal_mode(&cli)?;
+    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
+    cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
+    let herdr = HerdrReporter::from_env();
+    if let Some(prompt) = automation_prompt {
+        return run_automation_startup(AutomationStartup {
+            prompt,
+            config: &config,
+            config_repository: &config_repository,
+            cwd,
+            cli: &cli,
+            bound_agent,
+            output_file,
+            output,
+            max_steps,
+            timeout,
+            herdr,
+        })
+        .await;
+    }
+    run_interactive_startup(InteractiveStartup {
+        cli: &cli,
+        config,
+        config_repository,
+        cwd,
+        bound_agent,
+        bound_reasoning_source,
+        herdr,
+    })
+    .await
+}
+
+enum EarlyDispatch {
+    Handled(anyhow::Result<()>),
+    Continue,
+}
+
+async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     if let Some(Command::CredentialStore { command }) = &cli.command {
-        return run_credential_store_command(command, cli.config.clone());
+        return Ok(EarlyDispatch::Handled(run_credential_store_command(
+            command,
+            cli.config.clone(),
+        )));
     }
     if let Some(Command::Sessions { command }) = &cli.command {
-        return sessions_cli::run(command);
+        return Ok(EarlyDispatch::Handled(sessions_cli::run(command)));
     }
     if let Some(Command::Attach { id }) = &cli.command {
-        return crate::tui::run_attachment(id, HerdrReporter::from_env()).await;
+        return Ok(EarlyDispatch::Handled(
+            crate::tui::run_attachment(id, HerdrReporter::from_env()).await,
+        ));
     }
     if matches!(cli.command, Some(Command::Update)) {
-        return update::run_update(env!("CARGO_PKG_VERSION")).await;
+        return Ok(EarlyDispatch::Handled(
+            update::run_update(env!("CARGO_PKG_VERSION")).await,
+        ));
     }
     if let Some(Command::Login {
         provider,
@@ -81,9 +148,30 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         let config_path = absolute_config_path(&config_repository)?;
         ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
         crate::credential_store::initialize_from_config(&mut config, &config_path)?;
-        return login::run(provider, *device_auth).await;
+        return Ok(EarlyDispatch::Handled(
+            login::run(provider, *device_auth).await,
+        ));
     }
+    Ok(EarlyDispatch::Continue)
+}
 
+struct PreparedStartup {
+    cli: Cli,
+    config: crate::config::Config,
+    config_repository: ConfigRepository,
+    cwd: std::path::PathBuf,
+    automation_prompt: Option<String>,
+    output_file: Option<std::path::PathBuf>,
+    output: OutputFormat,
+    max_steps: Option<NonZeroUsize>,
+    timeout: Option<Duration>,
+    bound_agent: super::agent_binding::BoundAgent,
+    bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
+    provider_refresh: cli_config::ProviderRefreshStatus,
+    store: AppCredentialStore,
+}
+
+async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let config_path = cli.config.clone();
     let config_repository = ConfigRepository::new(config_path.clone());
     let mut config = config_repository.load()?;
@@ -135,57 +223,89 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         &config,
     )?;
     config = bound_agent.rho_config().cloned().unwrap_or(config);
-
-    validate_terminal_mode(&cli)?;
-    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
     let bound_reasoning_source =
         if cli.reasoning.is_some() && config.reasoning == reasoning_before_binding {
             rho_providers::model::ReasoningRequestSource::Explicit
         } else {
             rho_providers::model::ReasoningRequestSource::PersistedOrDefault
         };
-    cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
-    let herdr = HerdrReporter::from_env();
-    if let Some(prompt) = automation_prompt {
-        let diagnostics = RuntimeDiagnostics::new(&config);
-        diagnostics.update_agent(
-            bound_agent.id().as_str(),
-            &bound_agent.fingerprint().to_string(),
-        );
-        return automation::run(
-            prompt,
-            automation::Startup {
-                config: &config,
-                config_path: absolute_config_path(&config_repository)?,
-                cwd,
-                no_system_prompt: cli.no_system_prompt,
-                no_tools: cli.no_tools,
-                no_subagents: cli.no_subagents,
-                usage_purpose: "agent",
-                parent_session_id: None,
-                agent: bound_agent,
-                output_file,
-                output,
-                max_steps,
-                timeout,
-                diagnostics,
-                herdr,
-                host_input: None,
-            },
-        )
-        .await;
-    }
-    let diagnostics = RuntimeDiagnostics::new(&config);
-    diagnostics.update_agent(
-        bound_agent.id().as_str(),
-        &bound_agent.fingerprint().to_string(),
-    );
 
-    let pending_update_notice = config
+    Ok(PreparedStartup {
+        cli,
+        config,
+        config_repository,
+        cwd,
+        automation_prompt,
+        output_file,
+        output,
+        max_steps,
+        timeout,
+        bound_agent,
+        bound_reasoning_source,
+        provider_refresh,
+        store,
+    })
+}
+
+struct AutomationStartup<'a> {
+    prompt: String,
+    config: &'a crate::config::Config,
+    config_repository: &'a ConfigRepository,
+    cwd: std::path::PathBuf,
+    cli: &'a Cli,
+    bound_agent: super::agent_binding::BoundAgent,
+    output_file: Option<std::path::PathBuf>,
+    output: OutputFormat,
+    max_steps: Option<NonZeroUsize>,
+    timeout: Option<Duration>,
+    herdr: HerdrReporter,
+}
+
+async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Result<()> {
+    let diagnostics = bind_agent_diagnostics(startup.config, &startup.bound_agent);
+    automation::run(
+        startup.prompt,
+        automation::Startup {
+            config: startup.config,
+            config_path: absolute_config_path(startup.config_repository)?,
+            cwd: startup.cwd,
+            no_system_prompt: startup.cli.no_system_prompt,
+            no_tools: startup.cli.no_tools,
+            no_subagents: startup.cli.no_subagents,
+            usage_purpose: "agent",
+            parent_session_id: None,
+            agent: startup.bound_agent,
+            output_file: startup.output_file,
+            output: startup.output,
+            max_steps: startup.max_steps,
+            timeout: startup.timeout,
+            diagnostics,
+            herdr: startup.herdr,
+            host_input: None,
+        },
+    )
+    .await
+}
+
+struct InteractiveStartup<'a> {
+    cli: &'a Cli,
+    config: crate::config::Config,
+    config_repository: ConfigRepository,
+    cwd: std::path::PathBuf,
+    bound_agent: super::agent_binding::BoundAgent,
+    bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
+    herdr: HerdrReporter,
+}
+
+async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Result<()> {
+    let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
+
+    let pending_update_notice = startup
+        .config
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
-    let sdk_options = SdkBootstrapOptions::from_config(&config, &cwd)?;
+    let sdk_options = SdkBootstrapOptions::from_config(&startup.config, &startup.cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),
     );
@@ -200,22 +320,30 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         }
         Err(error) => return Err(error.into()),
     };
-    let result = interactive::run(interactive::Startup {
-        cli: &cli,
-        config,
-        config_path: absolute_config_path(&config_repository)?,
-        config_repository,
-        cwd,
+    interactive::run(interactive::Startup {
+        cli: startup.cli,
+        config: startup.config,
+        config_path: absolute_config_path(&startup.config_repository)?,
+        config_repository: startup.config_repository,
+        cwd: startup.cwd,
         missing_auth_error,
         missing_auth_model_error,
         pending_update_notice,
         diagnostics,
-        herdr,
-        agent: bound_agent,
-        reasoning_source: bound_reasoning_source,
+        herdr: startup.herdr,
+        agent: startup.bound_agent,
+        reasoning_source: startup.bound_reasoning_source,
     })
-    .await;
-    result
+    .await
+}
+
+fn bind_agent_diagnostics(
+    config: &crate::config::Config,
+    agent: &super::agent_binding::BoundAgent,
+) -> RuntimeDiagnostics {
+    let diagnostics = RuntimeDiagnostics::new(config);
+    diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());
+    diagnostics
 }
 
 fn ensure_cli_credential_store_choice(

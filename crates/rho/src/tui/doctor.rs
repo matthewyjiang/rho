@@ -28,261 +28,54 @@ pub(super) struct DoctorContext<'a> {
     pub(super) claude: &'a ClaudeProbeSnapshot,
 }
 
-pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
-    const AUTHENTICATION: &str = "AUTHENTICATION";
-    const CACHE: &str = "CACHE";
-    const EXTERNAL: &str = "EXTERNAL RUNTIMES";
-    const MISC: &str = "MISC";
+#[derive(Clone, Copy)]
+enum DoctorSection {
+    Authentication,
+    Cache,
+    External,
+    Misc,
+}
 
-    let mut authentication_items = Vec::new();
-    let mut cache_items = Vec::new();
-    let mut external_items = Vec::new();
-    let mut misc_items = Vec::new();
-    for descriptor in provider::providers() {
-        let (healthy, status, detail) = if descriptor.auth_kind == ProviderAuthKind::None {
-            (
-                true,
-                "no authentication required",
-                "This provider does not require authentication.",
-            )
-        } else {
-            match ProviderAuthentication::has_credentials(
-                context.credential_store,
-                descriptor.name,
-            ) {
-                Ok(true) if ProviderAuthentication::has_environment_override(descriptor.name) => (
-                    true,
-                    "authenticated",
-                    "Credentials are provided by an environment variable.",
-                ),
-                Ok(true) => (
-                    true,
-                    "authenticated",
-                    "Credentials are available in the configured credential store.",
-                ),
-                Ok(false) => (
-                    false,
-                    "missing",
-                    "No credentials found. Run /login to authenticate this provider.",
-                ),
-                Err(_) => (
-                    false,
-                    "error",
-                    "The configured credential store could not be read. No secret values were inspected or displayed.",
-                ),
-            }
-        };
-        authentication_items.push(item(
-            AUTHENTICATION,
-            if descriptor.auth_kind == ProviderAuthKind::None {
-                format!("{} authentication", descriptor.display_name)
-            } else {
-                descriptor.login_label.to_string()
-            },
-            status,
-            healthy,
-            detail.into(),
-        ));
-    }
-
-    for descriptor in provider::providers().iter().filter(|descriptor| {
-        descriptor.auth_kind == ProviderAuthKind::None
-            && descriptor.model_refresh
-                == Some(provider::ProviderModelRefreshKind::OpenAiCompatible)
-    }) {
-        let health = context
-            .provider_health
-            .iter()
-            .find_map(|(name, health)| (name == descriptor.name).then_some(health));
-        let (healthy, status, detail) = match health {
-            Some(ProviderModelHealth::ReachableWithModels { model_count }) => (
-                true,
-                "reachable",
-                format!(
-                    "The model endpoint returned {model_count} installed model{}.",
-                    if *model_count == 1 { "" } else { "s" }
-                ),
-            ),
-            Some(ProviderModelHealth::ReachableWithoutModels) => (
-                false,
-                "no models",
-                "The model endpoint is reachable but has no installed models.".into(),
-            ),
-            Some(ProviderModelHealth::Unreachable { error }) => (
-                false,
-                "unreachable",
-                format!("The model endpoint could not be reached: {error}"),
-            ),
-            Some(ProviderModelHealth::InvalidResponse { error }) => (
-                false,
-                "invalid response",
-                format!("The model endpoint returned an invalid or unsuccessful response: {error}"),
-            ),
-            None => (
-                false,
-                "not checked",
-                "Run /doctor after the current model turn to check this endpoint.".into(),
-            ),
-        };
-        misc_items.push(item(
-            MISC,
-            format!("{} connection", descriptor.display_name),
-            status,
-            healthy,
-            detail,
-        ));
-    }
-
-    let model_available = catalog::resolve_model_selection_for_auths(
-        &rho_providers::provider::model_reference(context.provider, context.model),
-        context.provider,
-        context.auth,
-        context.available_auths,
-    )
-    .is_ok();
-    misc_items.push(item(
-        MISC,
-        "Selected model",
-        if model_available {
-            "available"
-        } else {
-            "unavailable"
-        },
-        model_available,
-        format!(
-            "{} using {} authentication",
-            rho_providers::provider::model_reference(context.provider, context.model),
-            context.auth
-        ),
-    ));
-
-    let config_writable = probe_writable(context.config_path, PathKind::File);
-    misc_items.push(item(
-        MISC,
-        "Configuration",
-        writable_status(config_writable),
-        config_writable,
-        context.config_path.display().to_string(),
-    ));
-    let sessions_writable = probe_writable(context.session_root, PathKind::Directory);
-    misc_items.push(item(
-        MISC,
-        "Sessions",
-        writable_status(sessions_writable),
-        sessions_writable,
-        context.session_root.display().to_string(),
-    ));
-
-    for descriptor in provider::providers() {
-        if descriptor.model_source == ProviderModelSource::CachedProviderModels {
-            let count =
-                rho_providers::model::provider_models::cached_provider_models(descriptor.name)
-                    .len();
-            cache_items.push(item(
-                CACHE,
-                format!(
-                    "{} model cache",
-                    if descriptor.auth_kind == ProviderAuthKind::None {
-                        descriptor.display_name
-                    } else {
-                        descriptor.login_label
-                    }
-                ),
-                if count > 0 { "populated" } else { "empty" },
-                count > 0,
-                format!("{count} cached model{}", if count == 1 { "" } else { "s" }),
-            ));
+impl DoctorSection {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Authentication => "AUTHENTICATION",
+            Self::Cache => "CACHE",
+            Self::External => "EXTERNAL RUNTIMES",
+            Self::Misc => "MISC",
         }
     }
 
-    let clipboard = clipboard_doctor_report();
-    misc_items.push(item(
-        MISC,
-        "Clipboard text write",
-        clipboard.text_write_status,
-        clipboard.text_write_healthy,
-        format!(
-            "session={}; {}",
-            clipboard.session_label, clipboard.text_write_detail
-        ),
-    ));
-    misc_items.push(item(
-        MISC,
-        "Clipboard image helper",
-        clipboard.image_status(),
-        clipboard.image_healthy(),
-        clipboard.image_detail(),
-    ));
-    let rtk = rho_tools::rtk::is_available();
-    misc_items.push(item(
-        MISC,
-        "rtk",
-        if rtk { "available" } else { "unavailable" },
-        rtk,
-        "Optional shell-command rewriting helper.".into(),
-    ));
-    let claude_auth_healthy = context.claude.auth_healthy();
-    external_items.push(item(
-        EXTERNAL,
-        "Claude Code authentication",
-        if claude_auth_healthy {
-            "ok"
-        } else {
-            "attention"
-        },
-        claude_auth_healthy,
-        context.claude.auth_description(),
-    ));
-    let claude_binary_healthy = context.claude.binary_healthy();
-    external_items.push(item(
-        EXTERNAL,
-        "Claude Code binary",
-        if claude_binary_healthy {
-            "available"
-        } else {
-            "attention"
-        },
-        claude_binary_healthy,
-        context.claude.version_description(),
-    ));
-    let (herdr_healthy, herdr_status, herdr_detail) =
-        match (context.herdr_enabled, context.herdr_socket_reachable) {
-            (false, _) => (true, "not configured", "Rho is not running inside Herdr."),
-            (true, Some(true)) => (
-                true,
-                "connected",
-                "The configured Herdr socket accepted a connection.",
-            ),
-            (true, Some(false)) => (
-                false,
-                "unreachable",
-                "Herdr environment variables are set, but the socket did not accept a connection.",
-            ),
-            (true, None) => (
-                false,
-                "unavailable",
-                "Herdr is configured, but socket reachability could not be determined.",
-            ),
-        };
-    misc_items.push(item(
-        MISC,
-        "Herdr",
-        herdr_status,
-        herdr_healthy,
-        herdr_detail.into(),
-    ));
+    const fn order(self) -> u8 {
+        match self {
+            Self::Authentication => 0,
+            Self::Cache => 1,
+            Self::External => 2,
+            Self::Misc => 3,
+        }
+    }
+}
 
-    let items = authentication_items
-        .into_iter()
-        .chain(cache_items)
-        .chain(external_items)
-        .chain(misc_items)
-        .collect();
+struct DoctorCheck {
+    section: DoctorSection,
+    label: String,
+    status: String,
+    healthy: bool,
+    detail: String,
+}
+
+pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
+    let mut checks = Vec::new();
+    checks.extend(authentication_checks(context.credential_store));
+    checks.extend(cache_checks());
+    checks.extend(external_runtime_checks(context.claude));
+    checks.extend(misc_checks(&context));
+    checks.sort_by_key(|check| check.section.order());
 
     UiPicker::new(
         "Doctor diagnostics",
         "type regex filter, enter or esc closes",
-        items,
+        checks.into_iter().map(PickerItem::from).collect(),
         PickerAction::Dismiss,
     )
     .with_layout(PickerLayout::Overlay)
@@ -295,28 +88,315 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     .with_confirm_verb("close")
 }
 
-fn item(
-    section: &str,
-    label: impl Into<String>,
-    status: impl Into<String>,
-    healthy: bool,
-    detail: String,
-) -> PickerItem {
-    let label = label.into();
-    PickerItem {
-        value: label.clone(),
-        label,
-        section: Some(section.into()),
-        detail: Some(detail),
-        preview: None,
-        badge: Some(PickerBadge {
-            text: status.into(),
-            tone: if healthy {
-                PickerBadgeTone::Healthy
+fn authentication_checks(store: &dyn CredentialStore) -> Vec<DoctorCheck> {
+    provider::providers()
+        .iter()
+        .map(|descriptor| {
+            let (healthy, status, detail) = if descriptor.auth_kind == ProviderAuthKind::None {
+                (
+                    true,
+                    "no authentication required",
+                    "This provider does not require authentication.",
+                )
             } else {
-                PickerBadgeTone::Warning
+                match ProviderAuthentication::has_credentials(store, descriptor.name) {
+                    Ok(true)
+                        if ProviderAuthentication::has_environment_override(descriptor.name) =>
+                    {
+                        (
+                            true,
+                            "authenticated",
+                            "Credentials are provided by an environment variable.",
+                        )
+                    }
+                    Ok(true) => (
+                        true,
+                        "authenticated",
+                        "Credentials are available in the configured credential store.",
+                    ),
+                    Ok(false) => (
+                        false,
+                        "missing",
+                        "No credentials found. Run /login to authenticate this provider.",
+                    ),
+                    Err(_) => (
+                        false,
+                        "error",
+                        "The configured credential store could not be read. No secret values were inspected or displayed.",
+                    ),
+                }
+            };
+            DoctorCheck {
+                section: DoctorSection::Authentication,
+                label: if descriptor.auth_kind == ProviderAuthKind::None {
+                    format!("{} authentication", descriptor.display_name)
+                } else {
+                    descriptor.login_label.to_string()
+                },
+                status: status.into(),
+                healthy,
+                detail: detail.into(),
+            }
+        })
+        .collect()
+}
+
+fn cache_checks() -> Vec<DoctorCheck> {
+    provider::providers()
+        .iter()
+        .filter(|descriptor| descriptor.model_source == ProviderModelSource::CachedProviderModels)
+        .map(|descriptor| {
+            let count =
+                rho_providers::model::provider_models::cached_provider_models(descriptor.name)
+                    .len();
+            DoctorCheck {
+                section: DoctorSection::Cache,
+                label: format!(
+                    "{} model cache",
+                    if descriptor.auth_kind == ProviderAuthKind::None {
+                        descriptor.display_name
+                    } else {
+                        descriptor.login_label
+                    }
+                ),
+                status: if count > 0 {
+                    "populated".into()
+                } else {
+                    "empty".into()
+                },
+                healthy: count > 0,
+                detail: format!("{count} cached model{}", if count == 1 { "" } else { "s" }),
+            }
+        })
+        .collect()
+}
+
+fn external_runtime_checks(claude: &ClaudeProbeSnapshot) -> Vec<DoctorCheck> {
+    let auth_healthy = claude.auth_healthy();
+    let binary_healthy = claude.binary_healthy();
+    vec![
+        DoctorCheck {
+            section: DoctorSection::External,
+            label: "Claude Code authentication".into(),
+            status: if auth_healthy {
+                "ok".into()
+            } else {
+                "attention".into()
             },
-        }),
+            healthy: auth_healthy,
+            detail: claude.auth_description(),
+        },
+        DoctorCheck {
+            section: DoctorSection::External,
+            label: "Claude Code binary".into(),
+            status: if binary_healthy {
+                "available".into()
+            } else {
+                "attention".into()
+            },
+            healthy: binary_healthy,
+            detail: claude.version_description(),
+        },
+    ]
+}
+
+fn misc_checks(context: &DoctorContext<'_>) -> Vec<DoctorCheck> {
+    let mut checks = Vec::new();
+    checks.extend(model_endpoint_checks(context.provider_health));
+    checks.push(selected_model_check(context));
+    checks.push(path_check(
+        "Configuration",
+        context.config_path,
+        PathKind::File,
+    ));
+    checks.push(path_check(
+        "Sessions",
+        context.session_root,
+        PathKind::Directory,
+    ));
+    checks.extend(clipboard_checks());
+    checks.push(rtk_check());
+    checks.push(herdr_check(
+        context.herdr_enabled,
+        context.herdr_socket_reachable,
+    ));
+    checks
+}
+
+fn model_endpoint_checks(provider_health: &[(String, ProviderModelHealth)]) -> Vec<DoctorCheck> {
+    provider::providers()
+        .iter()
+        .filter(|descriptor| {
+            descriptor.auth_kind == ProviderAuthKind::None
+                && descriptor.model_refresh
+                    == Some(provider::ProviderModelRefreshKind::OpenAiCompatible)
+        })
+        .map(|descriptor| {
+            let health = provider_health
+                .iter()
+                .find_map(|(name, health)| (name == descriptor.name).then_some(health));
+            let (healthy, status, detail) = match health {
+                Some(ProviderModelHealth::ReachableWithModels { model_count }) => (
+                    true,
+                    "reachable",
+                    format!(
+                        "The model endpoint returned {model_count} installed model{}.",
+                        if *model_count == 1 { "" } else { "s" }
+                    ),
+                ),
+                Some(ProviderModelHealth::ReachableWithoutModels) => (
+                    false,
+                    "no models",
+                    "The model endpoint is reachable but has no installed models.".into(),
+                ),
+                Some(ProviderModelHealth::Unreachable { error }) => (
+                    false,
+                    "unreachable",
+                    format!("The model endpoint could not be reached: {error}"),
+                ),
+                Some(ProviderModelHealth::InvalidResponse { error }) => (
+                    false,
+                    "invalid response",
+                    format!(
+                        "The model endpoint returned an invalid or unsuccessful response: {error}"
+                    ),
+                ),
+                None => (
+                    false,
+                    "not checked",
+                    "Run /doctor after the current model turn to check this endpoint.".into(),
+                ),
+            };
+            DoctorCheck {
+                section: DoctorSection::Misc,
+                label: format!("{} connection", descriptor.display_name),
+                status: status.into(),
+                healthy,
+                detail,
+            }
+        })
+        .collect()
+}
+
+fn selected_model_check(context: &DoctorContext<'_>) -> DoctorCheck {
+    let model_available = catalog::resolve_model_selection_for_auths(
+        &rho_providers::provider::model_reference(context.provider, context.model),
+        context.provider,
+        context.auth,
+        context.available_auths,
+    )
+    .is_ok();
+    DoctorCheck {
+        section: DoctorSection::Misc,
+        label: "Selected model".into(),
+        status: if model_available {
+            "available".into()
+        } else {
+            "unavailable".into()
+        },
+        healthy: model_available,
+        detail: format!(
+            "{} using {} authentication",
+            rho_providers::provider::model_reference(context.provider, context.model),
+            context.auth
+        ),
+    }
+}
+
+fn path_check(label: &str, path: &Path, kind: PathKind) -> DoctorCheck {
+    let writable = probe_writable(path, kind);
+    DoctorCheck {
+        section: DoctorSection::Misc,
+        label: label.into(),
+        status: writable_status(writable).into(),
+        healthy: writable,
+        detail: path.display().to_string(),
+    }
+}
+
+fn clipboard_checks() -> Vec<DoctorCheck> {
+    let clipboard = clipboard_doctor_report();
+    vec![
+        DoctorCheck {
+            section: DoctorSection::Misc,
+            label: "Clipboard text write".into(),
+            status: clipboard.text_write_status.into(),
+            healthy: clipboard.text_write_healthy,
+            detail: format!(
+                "session={}; {}",
+                clipboard.session_label, clipboard.text_write_detail
+            ),
+        },
+        DoctorCheck {
+            section: DoctorSection::Misc,
+            label: "Clipboard image helper".into(),
+            status: clipboard.image_status().into(),
+            healthy: clipboard.image_healthy(),
+            detail: clipboard.image_detail(),
+        },
+    ]
+}
+
+fn rtk_check() -> DoctorCheck {
+    let available = rho_tools::rtk::is_available();
+    DoctorCheck {
+        section: DoctorSection::Misc,
+        label: "rtk".into(),
+        status: if available {
+            "available".into()
+        } else {
+            "unavailable".into()
+        },
+        healthy: available,
+        detail: "Optional shell-command rewriting helper.".into(),
+    }
+}
+
+fn herdr_check(enabled: bool, socket_reachable: Option<bool>) -> DoctorCheck {
+    let (healthy, status, detail) = match (enabled, socket_reachable) {
+        (false, _) => (true, "not configured", "Rho is not running inside Herdr."),
+        (true, Some(true)) => (
+            true,
+            "connected",
+            "The configured Herdr socket accepted a connection.",
+        ),
+        (true, Some(false)) => (
+            false,
+            "unreachable",
+            "Herdr environment variables are set, but the socket did not accept a connection.",
+        ),
+        (true, None) => (
+            false,
+            "unavailable",
+            "Herdr is configured, but socket reachability could not be determined.",
+        ),
+    };
+    DoctorCheck {
+        section: DoctorSection::Misc,
+        label: "Herdr".into(),
+        status: status.into(),
+        healthy,
+        detail: detail.into(),
+    }
+}
+
+impl From<DoctorCheck> for PickerItem {
+    fn from(check: DoctorCheck) -> Self {
+        PickerItem {
+            value: check.label.clone(),
+            label: check.label,
+            section: Some(check.section.label().into()),
+            detail: Some(check.detail),
+            preview: None,
+            badge: Some(PickerBadge {
+                text: check.status,
+                tone: if check.healthy {
+                    PickerBadgeTone::Healthy
+                } else {
+                    PickerBadgeTone::Warning
+                },
+            }),
+        }
     }
 }
 

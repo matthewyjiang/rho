@@ -280,23 +280,38 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     let mut legacy_retry_events = 0;
     let mut stream_resets = 0;
     let mut terminal_failures = 0;
+    let mut previous_event = None;
 
     while let Some(event) = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
         .await
         .expect("malformed stream stalled")
     {
-        match event {
+        match &event {
             RunEvent::ToolCallUpdated { .. } => fragment_events += 1,
+            #[allow(deprecated)]
             RunEvent::ProviderActivity { kind, .. } if kind == "invalid_response_retry" => {
                 legacy_retry_events += 1;
             }
             RunEvent::ProviderStreamReset {
                 reason: rho_sdk::ProviderStreamResetReason::InvalidResponse,
                 ..
-            } => stream_resets += 1,
+            } => {
+                stream_resets += 1;
+                #[allow(deprecated)]
+                let adjacent_legacy = matches!(
+                    previous_event.as_ref(),
+                    Some(RunEvent::ProviderActivity { kind, .. })
+                        if kind == "invalid_response_retry"
+                );
+                assert!(
+                    adjacent_legacy,
+                    "ProviderStreamReset(InvalidResponse) must be immediately preceded by legacy invalid_response_retry activity, previous={previous_event:?}"
+                );
+            }
             RunEvent::Failed { .. } => terminal_failures += 1,
             _ => {}
         }
+        previous_event = Some(event);
     }
     let error = run.outcome().await.unwrap_err();
     assert!(matches!(error, Error::Provider(_)));

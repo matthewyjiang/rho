@@ -6,12 +6,21 @@ use crate::{
 
 /// Legacy provider activity kind emitted when a malformed response is retried.
 ///
-/// New hosts should use [`RunEvent::ProviderStreamReset`]. This activity is
-/// retained so existing hosts still discard malformed response attempts.
+/// Prefer [`RunEvent::ProviderStreamReset`]. Still emitted before the typed reset
+/// for 1.0 hosts; will be removed in the next major release.
+#[deprecated(since = "1.11.0", note = "use RunEvent::ProviderStreamReset")]
 pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
-/// Provider activity kind emitted when a physical provider request is retried.
+/// Legacy provider activity kind emitted when a physical provider request is retried.
+///
+/// Prefer [`RunEvent::ProviderRequestRetry`]. Still dual-emitted for 1.0 hosts;
+/// will be removed in the next major release.
+#[deprecated(since = "1.11.0", note = "use RunEvent::ProviderRequestRetry")]
 pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
-/// Provider activity kind emitted for provider-native web searches.
+/// Legacy provider activity kind emitted for provider-native web searches.
+///
+/// Prefer [`RunEvent::WebSearch`]. Still dual-emitted for 1.0 hosts; will be
+/// removed in the next major release.
+#[deprecated(since = "1.11.0", note = "use RunEvent::WebSearch")]
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
 
 /// Why the current provider attempt was abandoned before a fresh request.
@@ -163,6 +172,15 @@ pub enum RunEvent {
     UsageUpdated {
         usage: ModelUsage,
     },
+    /// Legacy stringly-typed provider activity.
+    ///
+    /// Prefer [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], or
+    /// [`RunEvent::ProviderStreamReset`]. Still dual-emitted alongside those
+    /// typed events for 1.0 hosts; will be removed in the next major release.
+    #[deprecated(
+        since = "1.11.0",
+        note = "use WebSearch, ProviderRequestRetry, or ProviderStreamReset"
+    )]
     ProviderActivity {
         kind: String,
         detail: String,
@@ -211,4 +229,16 @@ pub enum RunEvent {
         call_id: ToolCallId,
         request: crate::HostInputRequest,
     },
+    /// Provider-native web search activity observed during a model turn.
+    ///
+    /// Appended after existing variants so discriminant values of the 1.0
+    /// surface stay stable under a minor release.
+    WebSearch {
+        detail: String,
+    },
+    /// A physical provider request failed and will be retried.
+    ///
+    /// Appended after existing variants so discriminant values of the 1.0
+    /// surface stay stable under a minor release.
+    ProviderRequestRetry,
 }

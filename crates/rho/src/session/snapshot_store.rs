@@ -114,20 +114,9 @@ impl Session {
             })
             .collect();
 
-        if tree.needs_upgrade_marker() {
-            let active_leaf_id = parent_id.clone().ok_or_else(|| {
-                anyhow::anyhow!("legacy session has no state node to upgrade from")
-            })?;
-            self.append_entry_unlocked(
-                &mut cursor,
-                &SessionEntry::Upgrade {
-                    timestamp: timestamp(),
-                    active_leaf_id,
-                },
-            )?;
-        }
-        self.append_entry_unlocked(
+        self.append_tree_entry(
             &mut cursor,
+            &tree,
             &SessionEntry::Node {
                 node: SessionNode {
                     id: NodeId::new(),
@@ -203,20 +192,9 @@ impl Session {
         if tree.active_leaf_id() == Some(target_id) {
             return Ok(());
         }
-        if tree.needs_upgrade_marker() {
-            let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
-                anyhow::anyhow!("legacy session has no state node to upgrade from")
-            })?;
-            self.append_entry_unlocked(
-                &mut cursor,
-                &SessionEntry::Upgrade {
-                    timestamp: timestamp(),
-                    active_leaf_id,
-                },
-            )?;
-        }
-        self.append_entry_unlocked(
+        self.append_tree_entry(
             &mut cursor,
+            &tree,
             &SessionEntry::SetLeaf {
                 timestamp: timestamp(),
                 target_id: target_id.clone(),

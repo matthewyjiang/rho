@@ -90,24 +90,37 @@ fn physical_provider_retry_maps_to_typed_view_model_event() {
     let mut adapter = SdkEventAdapter::default();
 
     assert!(matches!(
-        only_event(adapter.translate(RunEvent::ProviderActivity {
-            kind: rho_sdk::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
-            detail: "retrying".into(),
-        })),
+        only_event(adapter.translate(RunEvent::ProviderRequestRetry)),
         ViewEvent::Update(ViewModelEvent::ProviderRetry)
     ));
 }
 
 #[test]
-fn legacy_malformed_response_activity_does_not_reset_twice() {
+fn provider_native_web_search_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
-    assert!(adapter
-        .translate(RunEvent::ProviderActivity {
-            kind: rho_sdk::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
-            detail: "retrying".into(),
-        })
-        .is_empty());
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::WebSearch {
+            detail: "rho docs".into(),
+        })),
+        ViewEvent::Update(ViewModelEvent::ToolFinished {
+            ok: true,
+            display_lines,
+            ..
+        }) if display_lines == ["web search: rho docs"]
+    ));
+}
+
+#[test]
+fn legacy_provider_activity_is_ignored_by_tui() {
+    let mut adapter = SdkEventAdapter::default();
+
+    #[allow(deprecated)]
+    let events = adapter.translate(RunEvent::ProviderActivity {
+        kind: rho_sdk::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
+        detail: "rho docs".into(),
+    });
+    assert!(events.is_empty());
 }
 
 #[test]

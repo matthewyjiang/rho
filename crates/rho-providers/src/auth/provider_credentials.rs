@@ -100,24 +100,21 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             .auth_kind
                             .env_var()
                             .expect("Kimi OAuth must declare an environment variable");
-                        let (source, tokens) = match std::env::var(env_var) {
-                            Ok(access_token) if !access_token.trim().is_empty() => (
-                                KimiAuthSource::Env,
-                                KimiTokens {
-                                    access_token,
-                                    refresh_token: None,
-                                    expires_at_unix: None,
-                                    scope: String::new(),
-                                    token_type: "Bearer".into(),
-                                    expires_in: None,
-                                },
-                            ),
-                            _ => (
-                                KimiAuthSource::Store,
-                                load_kimi_tokens(self.store.as_ref())?
-                                    .ok_or(ModelError::MissingKimiAuth)?,
-                            ),
-                        };
+                        let (source, tokens) = env_or_stored(
+                            env_var,
+                            |access_token| KimiTokens {
+                                access_token,
+                                refresh_token: None,
+                                expires_at_unix: None,
+                                scope: String::new(),
+                                token_type: "Bearer".into(),
+                                expires_in: None,
+                            },
+                            || Ok(load_kimi_tokens(self.store.as_ref())?),
+                            ModelError::MissingKimiAuth,
+                            KimiAuthSource::Env,
+                            KimiAuthSource::Store,
+                        )?;
                         CompatibleAuth::KimiOAuth(KimiAuthManager::from_tokens(
                             self.store.clone(),
                             source,
@@ -142,27 +139,23 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     XaiAuthMode::OAuth => {
                         let descriptor = provider::provider_descriptor("xai-oauth")
                             .expect("xAI OAuth provider must be registered");
-                        match std::env::var(
-                            descriptor
-                                .auth_kind
-                                .env_var()
-                                .expect("xAI OAuth must declare an environment variable"),
-                        ) {
-                            Ok(access_token) if !access_token.trim().is_empty() => (
-                                XaiAuthSource::Env,
-                                XaiTokens {
-                                    access_token,
-                                    refresh_token: None,
-                                    expires_at_unix: None,
-                                    id_token: None,
-                                },
-                            ),
-                            _ => (
-                                XaiAuthSource::Store,
-                                load_xai_tokens(self.store.as_ref())?
-                                    .ok_or(ModelError::MissingXaiAuth)?,
-                            ),
-                        }
+                        let env_var = descriptor
+                            .auth_kind
+                            .env_var()
+                            .expect("xAI OAuth must declare an environment variable");
+                        env_or_stored(
+                            env_var,
+                            |access_token| XaiTokens {
+                                access_token,
+                                refresh_token: None,
+                                expires_at_unix: None,
+                                id_token: None,
+                            },
+                            || Ok(load_xai_tokens(self.store.as_ref())?),
+                            ModelError::MissingXaiAuth,
+                            XaiAuthSource::Env,
+                            XaiAuthSource::Store,
+                        )?
                     }
                 };
                 Ok(ProviderCredential::Xai(XaiAuthManager::from_tokens(
@@ -190,6 +183,20 @@ fn load_stored_bearer_key(
         .get_secret(account)?
         .filter(|key| !key.trim().is_empty())
         .ok_or_else(|| missing_credential_error(missing))
+}
+
+fn env_or_stored<T, S>(
+    env_var: &str,
+    from_env: impl FnOnce(String) -> T,
+    load: impl FnOnce() -> Result<Option<T>, ModelError>,
+    missing: ModelError,
+    env_source: S,
+    store_source: S,
+) -> Result<(S, T), ModelError> {
+    match std::env::var(env_var) {
+        Ok(value) if !value.trim().is_empty() => Ok((env_source, from_env(value))),
+        _ => Ok((store_source, load()?.ok_or(missing)?)),
+    }
 }
 
 fn load_provider_api_key_auth(

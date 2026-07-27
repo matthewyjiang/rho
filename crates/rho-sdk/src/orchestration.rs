@@ -450,6 +450,7 @@ async fn request_valid_response(
             "retrying malformed provider response after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}"
         );
         // Preserve the 1.0 activity event while typed reset consumers migrate.
+        #[allow(deprecated)]
         let _ = emit(
             control.events,
             control.cancellation,
@@ -701,6 +702,11 @@ async fn handle_provider_request_event(
 ) -> Result<(), ProviderError> {
     let crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage } = event;
     capture.record_request_attempt_failure(kind, usage);
+    emit(events, cancellation, RunEvent::ProviderRequestRetry)
+        .await
+        .map_err(|error| ProviderError::interrupted(error.to_string()))?;
+    // Preserve the 1.0 activity event while typed consumers migrate.
+    #[allow(deprecated)]
     emit(
         events,
         cancellation,
@@ -722,9 +728,23 @@ async fn handle_provider_event(
     cancellation: &CancellationToken,
 ) -> Result<(), ProviderError> {
     let run_event = capture_provider_event(event, identity, accumulated_usage, capture);
+    #[allow(deprecated)]
+    let legacy_activity = match &run_event {
+        RunEvent::WebSearch { detail } => Some(RunEvent::ProviderActivity {
+            kind: crate::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
+            detail: detail.clone(),
+        }),
+        _ => None,
+    };
     emit(events, cancellation, run_event)
         .await
-        .map_err(|error| ProviderError::interrupted(error.to_string()))
+        .map_err(|error| ProviderError::interrupted(error.to_string()))?;
+    if let Some(legacy) = legacy_activity {
+        emit(events, cancellation, legacy)
+            .await
+            .map_err(|error| ProviderError::interrupted(error.to_string()))?;
+    }
+    Ok(())
 }
 
 async fn drain_cooperative_provider_on_cancellation(
