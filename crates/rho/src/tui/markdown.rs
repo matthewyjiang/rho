@@ -21,7 +21,7 @@ use super::markdown_image::standalone_markdown_image;
 
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
-pub(super) use stream::{markdown_preview_width, markdown_stream_prefix};
+pub(super) use stream::markdown_stream_bounds;
 
 #[cfg(test)]
 #[path = "markdown/table_tests.rs"]
@@ -65,6 +65,7 @@ pub(super) struct RenderedMarkdown {
     pub(super) image_rows: Vec<usize>,
 }
 
+#[cfg(test)]
 pub(super) fn markdown_lines(
     text: &str,
     width: usize,
@@ -615,63 +616,115 @@ fn next_raw_url(line: &str) -> Option<MarkdownSpan> {
     (end > start).then_some(MarkdownSpan::RawUrl { start, end })
 }
 
-fn has_unresolved_inline_markdown(line: &str) -> bool {
-    let Some(code_ranges) = complete_delimiter_ranges(line, "`", &[]) else {
-        return true;
-    };
-    let Some(link_ranges) = complete_link_ranges(line, &code_ranges) else {
-        return true;
-    };
-    let mut ignored_ranges = [code_ranges, link_ranges].concat();
-
-    if has_unclosed_raw_url(line, &ignored_ranges) {
-        return true;
-    }
-
-    // Bold must win over italic. Feed completed `**` spans into the ignored set
-    // before scanning `*`/`_`, or a closed bold run with trailing text is treated
-    // as an open italic delimiter and the live preview vanishes.
-    let Some(bold_ranges) = complete_delimiter_ranges(line, "**", &ignored_ranges) else {
-        return true;
-    };
-    ignored_ranges.extend(bold_ranges);
-
-    complete_delimiter_ranges(line, "*", &ignored_ranges).is_none()
-        || complete_delimiter_ranges(line, "_", &ignored_ranges).is_none()
+/// Byte length of the leading inline-markdown prefix that is safe to draw.
+///
+/// Open emphasis, links, code spans, and raw URLs hold only from their earliest
+/// opener onward. Text before that opener stays visible so the live line does
+/// not blank while markers complete.
+fn inline_markdown_stable_prefix_len(line: &str) -> usize {
+    first_unresolved_inline_markdown_start(line).unwrap_or(line.len())
 }
 
-fn complete_link_ranges(
-    line: &str,
-    ignored_ranges: &[std::ops::Range<usize>],
-) -> Option<Vec<std::ops::Range<usize>>> {
+/// Completed spans of one delimiter kind, plus the first still-open opener.
+///
+/// Ranges and `open_at` coexist so callers can ignore finished spans while still
+/// taking the minimum unresolved cut across marker kinds.
+#[derive(Debug, Default)]
+struct InlineDelimScan {
+    ranges: Vec<std::ops::Range<usize>>,
+    open_at: Option<usize>,
+}
+
+fn first_unresolved_inline_markdown_start(line: &str) -> Option<usize> {
+    let mut earliest: Option<usize> = None;
+    let mut consider = |open_at: Option<usize>| {
+        if let Some(pos) = open_at {
+            earliest = Some(earliest.map_or(pos, |existing| existing.min(pos)));
+        }
+    };
+
+    let code = complete_delimiter_ranges(line, "`", &[]);
+    consider(code.open_at);
+
+    let links = complete_link_ranges(line, &code.ranges);
+    consider(links.open_at);
+
+    let mut ignored_ranges = [code.ranges, links.ranges].concat();
+    consider(first_unclosed_raw_url_start(line, &ignored_ranges));
+
+    // Bold must win over italic for completed spans. Feed closed `**` ranges into
+    // the ignored set before scanning `*`/`_`, or a closed bold run with trailing
+    // text is treated as an open italic delimiter and the live preview vanishes.
+    let bold = complete_delimiter_ranges(line, "**", &ignored_ranges);
+    consider(bold.open_at);
+    ignored_ranges.extend(bold.ranges);
+
+    consider(complete_delimiter_ranges(line, "*", &ignored_ranges).open_at);
+    consider(complete_delimiter_ranges(line, "_", &ignored_ranges).open_at);
+    earliest
+}
+
+fn complete_link_ranges(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -> InlineDelimScan {
     let mut ranges = Vec::new();
     let mut search_from = 0;
     while let Some(start) = find_char_outside_ranges(line, '[', search_from, ignored_ranges) {
-        let close_label =
-            find_char_outside_ranges(line, ']', start + '['.len_utf8(), ignored_ranges)?;
-        let target_start = close_label + "](".len();
-        if !line[close_label + ']'.len_utf8()..].starts_with('(') {
-            search_from = close_label + ']'.len_utf8();
+        let Some(close_label) =
+            find_char_outside_ranges(line, ']', start + '['.len_utf8(), ignored_ranges)
+        else {
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
+        };
+        let after_label = close_label + ']'.len_utf8();
+        // A trailing `]` may still grow into `](url)`. Hold from `[` until more
+        // input arrives; a following non-'(' character means plain brackets.
+        if after_label >= line.len() {
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
+        }
+        if !line[after_label..].starts_with('(') {
+            search_from = after_label;
             continue;
         }
+        let target_start = close_label + "](".len();
         if target_start >= line.len() {
-            return None;
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
         }
-        let target_end = line[target_start..].find(')')? + target_start;
+        let Some(target_end) = line[target_start..]
+            .find(')')
+            .map(|index| index + target_start)
+        else {
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
+        };
         if close_label == start + '['.len_utf8() || target_end == target_start {
-            return None;
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
         }
         ranges.push(start..target_end + ')'.len_utf8());
         search_from = target_end + ')'.len_utf8();
     }
-    Some(ranges)
+    InlineDelimScan {
+        ranges,
+        open_at: None,
+    }
 }
 
 fn complete_delimiter_ranges(
     line: &str,
     marker: &str,
     ignored_ranges: &[std::ops::Range<usize>],
-) -> Option<Vec<std::ops::Range<usize>>> {
+) -> InlineDelimScan {
     let mut ranges = Vec::new();
     let mut search_from = 0;
     while let Some(start) = find_marker_outside_ranges(line, marker, search_from, ignored_ranges) {
@@ -705,11 +758,19 @@ fn complete_delimiter_ranges(
             }
             break;
         }
-        let end = matched_end?;
+        let Some(end) = matched_end else {
+            return InlineDelimScan {
+                ranges,
+                open_at: Some(start),
+            };
+        };
         ranges.push(start..end + marker.len());
         search_from = end + marker.len();
     }
-    Some(ranges)
+    InlineDelimScan {
+        ranges,
+        open_at: None,
+    }
 }
 
 fn is_valid_stream_opener(line: &str, marker: &str, marker_start: usize) -> bool {
@@ -737,17 +798,20 @@ fn is_valid_stream_closer(line: &str, marker: &str, marker_start: usize) -> bool
         || !matches!((before, after), (Some(before), Some(after)) if is_word_char(before) && is_word_char(after))
 }
 
-fn has_unclosed_raw_url(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -> bool {
+fn first_unclosed_raw_url_start(
+    line: &str,
+    ignored_ranges: &[std::ops::Range<usize>],
+) -> Option<usize> {
     let mut search_from = 0;
     while let Some(start) = next_raw_url_start(line, search_from) {
         if !is_inside_ranges(start, ignored_ranges)
             && !line[start..].chars().any(char::is_whitespace)
         {
-            return true;
+            return Some(start);
         }
         search_from = start + "http://".len();
     }
-    false
+    None
 }
 
 fn next_raw_url_start(line: &str, search_from: usize) -> Option<usize> {

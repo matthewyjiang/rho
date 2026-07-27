@@ -444,3 +444,60 @@ fn image_syntax_inside_code_fence_stays_literal() {
         .iter()
         .any(|line| line.contains("![diagram](arch.png)")));
 }
+
+#[test]
+fn stable_prefix_stops_at_earliest_open_marker() {
+    assert_eq!(
+        inline_markdown_stable_prefix_len("before **bold"),
+        "before ".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("before *it **also"),
+        "before ".len(),
+        "earlier italic must win over later bold"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("before **bold `code"),
+        "before ".len(),
+        "earlier bold must win over later code"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("before `code **bold"),
+        "before ".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("a _x **y"),
+        "a ".len(),
+        "earlier underscore italic must win over later bold"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("done **x** tail"),
+        "done **x** tail".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("text *a* **b"),
+        "text *a* ".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("see [x](http"),
+        "see ".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("see [x]"),
+        "see ".len(),
+        "trailing ] may still become a link target"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("see [x] plain"),
+        "see [x] plain".len(),
+        "] followed by non-( stays plain text"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("go https://ex"),
+        "go ".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("before [link](https://x) **b"),
+        "before [link](https://x) ".len()
+    );
+}
