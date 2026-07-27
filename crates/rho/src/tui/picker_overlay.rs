@@ -646,6 +646,8 @@ fn detail_wrapped_lines(detail: &str, width: usize) -> Vec<String> {
 }
 
 fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'static> {
+    // Priority when width is tight: keep nav/page/action/match count, then a
+    // short overflow cue, and only then the full detail line-range.
     let position = if content.match_count == 0 {
         "0/0".to_string()
     } else {
@@ -655,56 +657,117 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             content.match_count
         )
     };
-    // Keep the chrome short: search is already visible in the filter row, and
-    // Enter/Esc collapse happens in action_footer when both close the picker.
-    let text = match layout.panes {
-        OverlayPanes::NavOnly { .. } => format!(
-            " {} · PgUp/PgDn · {} · {position}",
-            content.chrome.nav_keys_hint, content.footer
-        ),
+    let essential = [
+        content.chrome.nav_keys_hint,
+        "PgUp/PgDn",
+        content.footer,
+        position.as_str(),
+    ];
+    let detail = match layout.panes {
+        OverlayPanes::NavOnly { .. } => None,
         OverlayPanes::NavAndDetail {
             detail_viewport_rows,
             ..
-        } => {
-            let detail_lines =
-                detail_content_line_count(content.detail.len(), content.detail_badge.is_some());
-            let scroll =
-                clamp_detail_scroll(content.detail_scroll, detail_lines, detail_viewport_rows);
-            let visible_end = if detail_lines == 0 {
-                0
-            } else {
-                (scroll + detail_viewport_rows).min(detail_lines)
-            };
-            let visible_start = if detail_lines == 0 {
-                0
-            } else {
-                scroll.saturating_add(1)
-            };
-            let overflow = if detail_lines > detail_viewport_rows {
-                if scroll + detail_viewport_rows < detail_lines {
-                    " ↓ more"
-                } else if scroll > 0 {
-                    " ↑ more"
-                } else {
-                    ""
-                }
-            } else {
-                ""
-            };
-            let detail_position =
-                format!("lines {visible_start}-{visible_end} of {detail_lines}{overflow}");
-            format!(
-                " {} · PgUp/PgDn · {} · {position} · {detail_position}",
-                content.chrome.nav_keys_hint, content.footer
-            )
-        }
+        } => Some(detail_footer_status(
+            content.detail.len(),
+            content.detail_badge.is_some(),
+            content.detail_scroll,
+            detail_viewport_rows,
+        )),
     };
-    styled_line(
-        truncate_one_line(&text, layout.inner_width),
-        layout.inner_width,
-        Theme::dim(),
-        LineFill::PadToWidth,
-    )
+    let text = fit_overlay_footer(&essential, detail.as_ref(), layout.inner_width);
+    styled_line(text, layout.inner_width, Theme::dim(), LineFill::PadToWidth)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DetailFooterStatus {
+    range: String,
+    overflow: Option<&'static str>,
+}
+
+impl DetailFooterStatus {
+    fn full(&self) -> String {
+        match self.overflow {
+            Some(overflow) => format!("{} {overflow}", self.range),
+            None => self.range.clone(),
+        }
+    }
+}
+
+fn detail_footer_status(
+    detail_len: usize,
+    has_badge: bool,
+    detail_scroll: usize,
+    detail_viewport_rows: usize,
+) -> DetailFooterStatus {
+    let detail_lines = detail_content_line_count(detail_len, has_badge);
+    let scroll = clamp_detail_scroll(detail_scroll, detail_lines, detail_viewport_rows);
+    let visible_end = if detail_lines == 0 {
+        0
+    } else {
+        (scroll + detail_viewport_rows).min(detail_lines)
+    };
+    let visible_start = if detail_lines == 0 {
+        0
+    } else {
+        scroll.saturating_add(1)
+    };
+    let overflow = if detail_lines > detail_viewport_rows {
+        if scroll + detail_viewport_rows < detail_lines {
+            Some("↓ more")
+        } else if scroll > 0 {
+            Some("↑ more")
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    DetailFooterStatus {
+        range: format!("lines {visible_start}-{visible_end} of {detail_lines}"),
+        overflow,
+    }
+}
+
+fn fit_overlay_footer(
+    essential: &[&str],
+    detail: Option<&DetailFooterStatus>,
+    width: usize,
+) -> String {
+    // Prefer fullest chrome first; drop low-value detail segments before hard truncation.
+    let essential_text = join_footer_segments(essential.iter().copied());
+    if let Some(detail) = detail {
+        let full = detail.full();
+        let with_range = join_footer_segments(
+            essential
+                .iter()
+                .copied()
+                .chain(std::iter::once(full.as_str())),
+        );
+        if display_width(&with_range) <= width {
+            return with_range;
+        }
+        if let Some(overflow) = detail.overflow {
+            let with_overflow =
+                join_footer_segments(essential.iter().copied().chain(std::iter::once(overflow)));
+            if display_width(&with_overflow) <= width {
+                return with_overflow;
+            }
+        }
+    }
+    if display_width(&essential_text) <= width {
+        return essential_text;
+    }
+    truncate_one_line(&essential_text, width)
+}
+
+fn join_footer_segments<'a>(segments: impl IntoIterator<Item = &'a str>) -> String {
+    let body = segments
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    format!(" {body}")
 }
 
 fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Line<'static> {

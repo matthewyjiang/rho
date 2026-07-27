@@ -425,3 +425,90 @@ fn overlay_footer_stays_compact_and_collapses_identical_exits() {
     picker = sample_picker("agent detail", "worker detail");
     assert_eq!(picker.action_footer(), "Enter configure · Esc close");
 }
+
+#[test]
+fn overlay_footer_drops_detail_range_before_hard_truncation() {
+    let essential = [
+        "↑↓ agents",
+        "PgUp/PgDn",
+        "Enter configure · Esc close",
+        "1/5",
+    ];
+    let detail = DetailFooterStatus {
+        range: "lines 1-12 of 40".into(),
+        overflow: Some("↓ more"),
+    };
+
+    let full = fit_overlay_footer(&essential, Some(&detail), 120);
+    assert!(full.contains("lines 1-12 of 40"), "{full}");
+    assert!(full.contains("↓ more"), "{full}");
+    assert!(!full.contains('…'), "{full}");
+
+    // Wide enough for overflow cue, too narrow for the line-range segment.
+    let elided = fit_overlay_footer(&essential, Some(&detail), 70);
+    assert!(elided.contains("Enter configure · Esc close"), "{elided}");
+    assert!(elided.contains("1/5"), "{elided}");
+    assert!(elided.contains("↓ more"), "{elided}");
+    assert!(!elided.contains("lines "), "{elided}");
+    assert!(!elided.contains('…'), "{elided}");
+
+    // Narrower still: keep essential chrome only.
+    let essential_only = fit_overlay_footer(&essential, Some(&detail), 58);
+    assert!(
+        essential_only.contains("Enter configure · Esc close"),
+        "{essential_only}"
+    );
+    assert!(essential_only.contains("1/5"), "{essential_only}");
+    assert!(!essential_only.contains("↓ more"), "{essential_only}");
+    assert!(!essential_only.contains("lines "), "{essential_only}");
+    assert!(!essential_only.contains('…'), "{essential_only}");
+}
+
+#[test]
+fn overlay_footer_elides_on_narrow_rendered_frames() {
+    let mut picker = sample_picker(&long_detail(), "other").with_confirm_verb("configure");
+    // 80-col terminals leave ~70 inner columns after overlay margins/borders.
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 80, 24));
+    let footer = frame
+        .lines
+        .iter()
+        .rev()
+        .map(line_text)
+        .find(|line| line.contains("PgUp/PgDn"))
+        .expect("footer");
+
+    assert!(footer.contains("Enter configure"), "{footer}");
+    assert!(footer.contains("Esc close"), "{footer}");
+    assert!(
+        !footer.contains('…'),
+        "priority elision should beat hard truncation at common widths: {footer}"
+    );
+    // Long detail ranges are optional chrome; overflow cue may remain.
+    if footer.contains("lines ") {
+        assert!(
+            display_width(footer.trim_end())
+                <= picker_overlay_layout(Rect::new(0, 0, 80, 24), true).inner_width,
+            "{footer}"
+        );
+    }
+
+    picker.scroll_detail_by(
+        20,
+        DetailViewport {
+            width: 40,
+            rows: 10,
+        },
+    );
+    let scrolled = render_picker_overlay(&picker, Rect::new(0, 0, 80, 24));
+    let scrolled_footer = scrolled
+        .lines
+        .iter()
+        .rev()
+        .map(line_text)
+        .find(|line| line.contains("PgUp/PgDn"))
+        .expect("footer");
+    assert!(
+        !scrolled_footer.contains('…'),
+        "scrolled detail footer should also avoid hard truncation: {scrolled_footer}"
+    );
+}
