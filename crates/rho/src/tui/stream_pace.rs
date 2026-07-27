@@ -39,6 +39,9 @@ const MIN_RATE_SAMPLE: Duration = Duration::from_millis(250);
 /// a replayed transcript, must appear at once rather than type itself out.
 const MAX_RESERVE_CHARS: usize = 2048;
 
+/// Interval between opportunities to release reserved text.
+pub(super) const STREAM_PACE_INTERVAL: Duration = Duration::from_millis(24);
+
 /// Releases streamed text at the model's measured speed.
 #[derive(Debug)]
 pub(super) struct StreamPacer {
@@ -67,9 +70,19 @@ impl StreamPacer {
     }
 
     /// Records text arriving from the provider, for the rate estimate.
-    pub(super) fn record_arrival(&mut self, now: Instant, chars: usize) {
-        self.first_arrival.get_or_insert(now);
-        self.chars_arrived = self.chars_arrived.saturating_add(chars as u64);
+    ///
+    /// `reserve_was_empty` starts a fresh playback interval. Time spent with no
+    /// text available must not be charged against a later burst.
+    pub(super) fn record_arrival(&mut self, now: Instant, chars: usize, reserve_was_empty: bool) {
+        if reserve_was_empty {
+            self.first_arrival = Some(now);
+            self.chars_arrived = chars as u64;
+            self.last_release = Some(now);
+            self.carry = 0.0;
+        } else {
+            self.first_arrival.get_or_insert(now);
+            self.chars_arrived = self.chars_arrived.saturating_add(chars as u64);
+        }
     }
 
     /// Characters the screen may take now, given how many are held back.

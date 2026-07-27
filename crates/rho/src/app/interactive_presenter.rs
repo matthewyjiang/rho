@@ -150,6 +150,12 @@ impl InteractiveToolPresenter {
             preview.last_card = None;
         }
         preview.arguments.push_str(arguments_delta);
+        // A provider commonly announces a call's identity before sending any
+        // arguments. Keep accumulating that canonical stream state, but do not
+        // render a bare card while there is nothing useful to preview.
+        if preview.arguments.is_empty() {
+            return None;
+        }
         let name = preview.name.as_deref()?;
         let kind = ToolKind::from_name(name);
         if !name_changed && preview.arguments.len() < preview.next_parse_length {

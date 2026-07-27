@@ -18,7 +18,7 @@ fn play(burst: usize, flush: Duration, bursts: usize) -> Vec<usize> {
     let ticks = (flush.as_secs_f64() / TICK.as_secs_f64()).round() as usize;
     for index in 0..bursts {
         reserve += burst;
-        pacer.record_arrival(now, burst);
+        pacer.record_arrival(now, burst, reserve == burst);
         for _ in 0..ticks.max(1) {
             now += TICK;
             let allowance = pacer.release_allowance(now, reserve);
@@ -77,7 +77,7 @@ fn keeps_playing_while_the_provider_stalls() {
     let mut reserve = 0usize;
     for _ in 0..20 {
         reserve += 13;
-        pacer.record_arrival(now, 13);
+        pacer.record_arrival(now, 13, reserve == 13);
         for _ in 0..2 {
             now += TICK;
             reserve -= pacer.release_allowance(now, reserve);
@@ -106,12 +106,33 @@ fn releases_a_whole_response_without_pacing_it() {
     let mut pacer = StreamPacer::default();
     let now = Instant::now();
     let reserve = MAX_RESERVE_CHARS + 1;
-    pacer.record_arrival(now, reserve);
+    pacer.record_arrival(now, reserve, true);
 
     assert_eq!(
         pacer.release_allowance(now + TICK, reserve),
         reserve,
         "text that arrived whole must not type itself out"
+    );
+}
+
+#[test]
+fn a_new_burst_cannot_spend_time_when_the_reserve_was_empty() {
+    let mut pacer = StreamPacer::default();
+    let start = Instant::now();
+
+    pacer.record_arrival(start, 5, true);
+    assert_eq!(pacer.release_allowance(start, 5), 0);
+
+    let next_arrival = start + Duration::from_secs(1);
+    pacer.record_arrival(next_arrival, 5, true);
+    assert_eq!(
+        pacer.release_allowance(next_arrival, 5),
+        0,
+        "idle time must not release text that only just arrived"
+    );
+    assert!(
+        pacer.release_allowance(next_arrival + TICK, 5) > 0,
+        "the new reserve should move on the following pacing tick"
     );
 }
 

@@ -61,6 +61,7 @@ pub(super) struct StreamUi {
     pub(in crate::tui) reasoning_stream: AppendOnlyStream,
     pub(in crate::tui) reasoning_stream_code_fence: CodeFenceState,
     pub(in crate::tui) current_stream_kind: Option<StreamKind>,
+    pub(in crate::tui) stream_pace_deadline: Option<Instant>,
     pub(in crate::tui) stream_preview_deadline: Option<Instant>,
     pub(in crate::tui) live_stream_preview: Option<LiveStreamPreview>,
     pub(in crate::tui) pacer: StreamPacer,
@@ -73,6 +74,7 @@ impl StreamUi {
         self.reasoning_stream.reset();
         self.reasoning_stream_code_fence = CodeFenceState::default();
         self.current_stream_kind = None;
+        self.stream_pace_deadline = None;
         self.stream_preview_deadline = None;
         self.live_stream_preview = None;
         self.pacer.reset();

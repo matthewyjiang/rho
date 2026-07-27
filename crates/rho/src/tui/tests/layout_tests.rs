@@ -10,6 +10,20 @@ fn running_card(verb: &str) -> ToolCard {
 }
 
 #[test]
+fn a_single_character_reserve_schedules_pacing_without_a_preview() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    app.begin_provider_turn_ui();
+
+    app.handle_agent_event(ViewModelEvent::OutputDelta("x".into()), &mut terminal)
+        .unwrap();
+
+    assert_eq!(app.streams.assistant_stream.reserved_chars(), 1);
+    assert!(app.streams.stream_pace_deadline.is_some());
+    assert!(app.streams.stream_preview_deadline.is_none());
+}
+
+#[test]
 fn stream_preview_continues_committed_assistant_without_gap() {
     let mut app = test_app();
     app.push_transcript_entry(Entry::Assistant("Hello committed line\n".into()));

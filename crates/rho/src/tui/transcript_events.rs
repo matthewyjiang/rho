@@ -18,6 +18,7 @@ use super::{
     markdown::{update_code_block_state, CodeFenceState},
     render::padded_content_width,
     stream::StreamFragment,
+    stream_pace::STREAM_PACE_INTERVAL,
     usage_cost::{
         add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
     },
@@ -75,11 +76,7 @@ impl App {
             }
             ViewModelEvent::OutputDelta(text) => {
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
-                self.streams.assistant_stream.push_delta(&text);
-                self.streams
-                    .pacer
-                    .record_arrival(Instant::now(), text.chars().count());
-                let drained = self.advance_stream_release(terminal, StreamKind::Assistant)?;
+                let drained = self.receive_stream_delta(terminal, StreamKind::Assistant, &text)?;
                 self.update_stream_preview_deadline(StreamKind::Assistant);
                 Ok(switched || drained)
             }
@@ -92,11 +89,7 @@ impl App {
                     return Ok(true);
                 }
                 let switched = self.switch_stream_kind(StreamKind::Reasoning);
-                self.streams.reasoning_stream.push_delta(&text);
-                self.streams
-                    .pacer
-                    .record_arrival(Instant::now(), text.chars().count());
-                let drained = self.advance_stream_release(terminal, StreamKind::Reasoning)?;
+                let drained = self.receive_stream_delta(terminal, StreamKind::Reasoning, &text)?;
                 self.update_stream_preview_deadline(StreamKind::Reasoning);
                 Ok(switched || drained)
             }
@@ -146,29 +139,77 @@ impl App {
         Ok(reasoning_drained || assistant_drained)
     }
 
-    /// Hands the pacer's allowance to `kind` and commits whatever that made
-    /// renderable.
-    ///
-    /// Called both when text arrives and on every frame tick, so a burst keeps
-    /// playing out after the network has gone quiet.
-    pub(super) fn advance_stream_release<B: Backend>(
+    /// Appends one provider delta and advances its paced release atomically.
+    fn receive_stream_delta<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
         kind: StreamKind,
+        text: &str,
     ) -> Result<bool, B::Error> {
-        let reserved = match kind {
+        let now = Instant::now();
+        let reserve_was_empty = self.reserved_stream_chars(kind) == 0;
+        match kind {
+            StreamKind::Assistant => self.streams.assistant_stream.push_delta(text),
+            StreamKind::Reasoning => self.streams.reasoning_stream.push_delta(text),
+        }
+        self.streams
+            .pacer
+            .record_arrival(now, text.chars().count(), reserve_was_empty);
+        self.advance_stream_release_at(terminal, kind, now)
+    }
+
+    fn reserved_stream_chars(&self, kind: StreamKind) -> usize {
+        match kind {
             StreamKind::Assistant => self.streams.assistant_stream.reserved_chars(),
             StreamKind::Reasoning => self.streams.reasoning_stream.reserved_chars(),
-        };
-        let allowance = self
-            .streams
-            .pacer
-            .release_allowance(Instant::now(), reserved);
+        }
+    }
+
+    /// Hands the pacer's allowance to `kind` and commits whatever that made
+    /// renderable.
+    fn advance_stream_release_at<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        kind: StreamKind,
+        now: Instant,
+    ) -> Result<bool, B::Error> {
+        let reserved = self.reserved_stream_chars(kind);
+        let allowance = self.streams.pacer.release_allowance(now, reserved);
         match kind {
             StreamKind::Assistant => self.streams.assistant_stream.release(allowance),
             StreamKind::Reasoning => self.streams.reasoning_stream.release(allowance),
         }
+        self.update_stream_pace_deadline(kind, now);
         self.drain_stream(terminal, kind)
+    }
+
+    /// Advances a due pacing tick independently of Markdown preview updates.
+    pub(super) fn drain_stream_pacing<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error> {
+        let now = Instant::now();
+        if self
+            .streams
+            .stream_pace_deadline
+            .is_none_or(|deadline| now < deadline)
+        {
+            return Ok(false);
+        }
+        let Some(kind) = self.streams.current_stream_kind else {
+            self.streams.stream_pace_deadline = None;
+            return Ok(false);
+        };
+        self.streams.stream_pace_deadline = None;
+        self.advance_stream_release_at(terminal, kind, now)
+    }
+
+    fn update_stream_pace_deadline(&mut self, kind: StreamKind, now: Instant) {
+        if self.reserved_stream_chars(kind) == 0 {
+            self.streams.stream_pace_deadline = None;
+        } else if self.streams.stream_pace_deadline.is_none() {
+            self.streams.stream_pace_deadline = Some(now + STREAM_PACE_INTERVAL);
+        }
     }
 
     /// Plays out everything the pacer is holding.
@@ -234,9 +275,6 @@ impl App {
             self.streams.stream_preview_deadline = None;
             return Ok(false);
         };
-        // The tick is the pacer's clock. Without it a burst that arrived while
-        // the socket was busy would sit in reserve until the next one landed.
-        let committed = self.advance_stream_release(terminal, kind)?;
         let width = terminal.size()?.width as usize;
         let inner_width = padded_content_width(width);
         let preview = match kind {
@@ -259,7 +297,7 @@ impl App {
             });
             Ok(true)
         } else {
-            Ok(committed)
+            Ok(false)
         }
     }
 
@@ -437,6 +475,7 @@ impl App {
         let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
         let assistant_finished = self.finish_stream(StreamKind::Assistant);
         self.streams.current_stream_kind = None;
+        self.streams.stream_pace_deadline = None;
         self.streams.stream_preview_deadline = None;
         self.streams.live_stream_preview = None;
         let thought = self.close_reasoning_phase();
@@ -467,6 +506,7 @@ impl App {
             StreamKind::Assistant => self.streams.assistant_stream.finish(),
             StreamKind::Reasoning => self.streams.reasoning_stream.finish(),
         };
+        self.update_stream_pace_deadline(kind, Instant::now());
         self.update_stream_preview_deadline(kind);
         if let Some(fragment) = fragment {
             self.streams.live_stream_preview = None;
@@ -617,6 +657,7 @@ impl App {
             self.streams.reasoning_stream_code_fence = CodeFenceState::default();
             self.streams.current_stream_kind = None;
         }
+        self.streams.stream_pace_deadline = None;
         self.streams.stream_preview_deadline = None;
         self.streams.live_stream_preview = None;
     }
