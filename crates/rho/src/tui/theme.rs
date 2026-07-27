@@ -364,7 +364,6 @@ impl Theme {
             ToolStatus::Ok => Self::success(),
             ToolStatus::Error => Self::error(),
             ToolStatus::Interrupted => Self::warning(),
-            ToolStatus::Blocked => Self::warning().add_modifier(Modifier::BOLD),
         }
     }
 
@@ -373,7 +372,7 @@ impl Theme {
         use rho_tools::tool_card::ToolFamily;
         let palette = Palette::current();
         match family {
-            ToolFamily::FileCommand => Style::default().fg(palette.success),
+            ToolFamily::FileCommand | ToolFamily::FileDiff => Style::default().fg(palette.success),
             ToolFamily::Web => Style::default().fg(AnsiColor::Blue.color()),
             ToolFamily::Skill => Style::default().fg(palette.skill),
             ToolFamily::Form => Style::default().fg(palette.warning),

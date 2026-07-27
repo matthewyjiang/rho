@@ -4,9 +4,9 @@ use rho_sdk::{
     tool::{OperationKind, ToolMetadata, ToolOutput, ToolProgress},
     ToolCallId, ToolCompletion,
 };
+use rho_tools::tool_card::{ToolBody, ToolFamily};
 
 use super::InteractiveToolPresenter;
-use rho_tools::tool::ToolDisplayStyle;
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
@@ -138,7 +138,7 @@ fn command_preview_and_result_preserve_command_summary() {
     ));
     let started = presenter.started(id.clone(), "bash".to_string(), ToolMetadata::default());
     assert_eq!(started.command.as_deref(), Some("cargo test"));
-    assert_eq!(started.display_style, ToolDisplayStyle::file_or_command());
+    assert_eq!(started.card.family, ToolFamily::FileCommand);
 
     let (ok, finished) = presenter.finished(
         &id,
@@ -212,7 +212,7 @@ fn file_results_use_structured_paths_and_compact_diff() {
     );
 
     assert!(ok);
-    assert_eq!(finished.display_style, ToolDisplayStyle::file_diff());
+    assert_eq!(finished.card.family, ToolFamily::FileDiff);
     assert_eq!(finished.card.to_display_lines()[0], "✓ edit_file(2 files)");
     assert!(finished
         .card
@@ -248,7 +248,7 @@ fn web_skill_progress_and_unknown_tools_have_explicit_presentations() {
             serde_json::json!({"answer": "first\nsecond"}).to_string(),
         )),
     );
-    assert_eq!(web.display_style, ToolDisplayStyle::web());
+    assert_eq!(web.card.family, ToolFamily::Web);
     assert_eq!(
         web.card.to_display_lines(),
         vec![
@@ -264,7 +264,7 @@ fn web_skill_progress_and_unknown_tools_have_explicit_presentations() {
         serde_json::json!({"name": "rho-tui-herdr-testing"}),
     ));
     let skill = presenter.started(skill_id, "skill".to_string(), ToolMetadata::default());
-    assert_eq!(skill.display_style, ToolDisplayStyle::skill());
+    assert_eq!(skill.card.family, ToolFamily::Skill);
     assert_eq!(
         skill.card.to_display_lines(),
         vec!["● skill(rho-tui-herdr-testing)".to_string()]
@@ -323,7 +323,7 @@ fn agent_tools_use_status_first_presentations() {
 
     presenter.proposed(call(id.as_str(), "agent", arguments));
     let started = presenter.started(id.clone(), "agent".to_string(), ToolMetadata::default());
-    assert_eq!(started.display_style, ToolDisplayStyle::default_tool());
+    assert_eq!(started.card.family, ToolFamily::Agent);
     assert_eq!(
         started.card.to_display_lines(),
         vec![
@@ -714,7 +714,7 @@ fn exact_tool_names_do_not_use_suffix_inference() {
     ));
     let started = presenter.started(id, "custom_read_file".to_string(), ToolMetadata::default());
 
-    assert_eq!(started.display_style, ToolDisplayStyle::default_tool());
+    assert_eq!(started.card.family, ToolFamily::Default);
     assert_eq!(
         started.card.to_display_lines(),
         vec!["● custom_read_file".to_string()]
@@ -722,7 +722,20 @@ fn exact_tool_names_do_not_use_suffix_inference() {
 }
 
 #[test]
-fn edit_failure_uses_error_fact_not_diff_body() {
+fn interrupted_file_card_compacts_paths_from_the_presenter_cwd() {
+    let presenter = InteractiveToolPresenter::new("/workspace".into());
+
+    let interrupted =
+        presenter.interrupted(Some("read_file"), r#"{"path":"/workspace/src/main.rs"}"#);
+
+    assert_eq!(
+        interrupted.card.to_display_lines()[0],
+        "■ read_file(src/main.rs)"
+    );
+}
+
+#[test]
+fn edit_failure_splits_error_summary_and_detail() {
     let presenter = InteractiveToolPresenter::new("/workspace".into());
     let finished = presenter.historical(
         &call(
@@ -733,14 +746,16 @@ fn edit_failure_uses_error_fact_not_diff_body() {
             ]}),
         ),
         /*ok*/ false,
-        "no matches found for old_string",
+        "no matches found for old_string\nsearched 20 files\ntry a broader match",
     );
     assert_eq!(finished.card.to_display_lines()[0], "✗ edit_file(theme.rs)");
-    assert!(finished
-        .card
-        .to_display_lines()
-        .iter()
-        .any(|line| line.contains("no matches found for old_string")));
+    assert_eq!(
+        finished.card.body,
+        ToolBody::Lines(vec![
+            "searched 20 files".into(),
+            "try a broader match".into()
+        ])
+    );
 }
 
 #[test]

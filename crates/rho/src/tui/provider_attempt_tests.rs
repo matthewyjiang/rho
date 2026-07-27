@@ -1,5 +1,5 @@
 use super::*;
-use crate::tui::{ReasoningEntry, ToolEntry, ToolEntryState};
+use crate::tui::{ReasoningEntry, ToolEntry};
 use std::time::Duration;
 
 #[test]
@@ -11,7 +11,6 @@ fn retry_removes_only_replaceable_provider_output() {
         Entry::Assistant("discard assistant".into()),
         Entry::Notice("keep notice".into()),
         Entry::Tool(ToolEntry {
-            state: ToolEntryState::Running,
             card: rho_tools::tool_card::ToolCard::new(
                 rho_tools::tool_card::ToolStatus::Running,
                 rho_tools::tool_card::ToolFamily::Default,

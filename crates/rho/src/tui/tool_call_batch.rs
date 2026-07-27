@@ -4,7 +4,7 @@ use rho_sdk::ToolCallId;
 
 use rho_tools::tool_card::ToolCard;
 
-use super::{ToolEntry, ToolEntryState};
+use super::ToolEntry;
 
 #[derive(Clone)]
 enum LiveToolKey {
@@ -177,7 +177,6 @@ impl ToolCallBatch {
 
 fn running_entry(card: ToolCard, expanded: bool) -> ToolEntry {
     ToolEntry {
-        state: ToolEntryState::Running,
         card,
         expanded,
         image: None,

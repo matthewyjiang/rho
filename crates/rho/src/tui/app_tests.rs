@@ -109,7 +109,6 @@ fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
         rho_tools::tool_card::ToolStatus::Error
     };
     Entry::Tool(ToolEntry {
-        state: ToolEntryState::Finished { ok },
         card: rho_tools::tool_card::ToolCard::from_plain_lines(
             status,
             rho_tools::tool_card::ToolFamily::Default,
@@ -425,7 +424,6 @@ fn recovered_session_messages_become_transcript_entries() {
     assert!(matches!(
         entries[2],
         Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished { ok: false },
             ref card,
             ..
         }) if card
@@ -472,7 +470,6 @@ fn read_file_tool_block_shows_file_name_only() {
 fn skill_tool_block_shows_single_magenta_status_line() {
     let lines = entry_lines(
         &Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished { ok: true },
             card: rho_tools::tool_card::ToolCard::new(
                 rho_tools::tool_card::ToolStatus::Ok,
                 rho_tools::tool_card::ToolFamily::Skill,
@@ -519,7 +516,6 @@ fn skill_tool_block_shows_single_magenta_status_line() {
 fn skill_tool_block_uses_error_marker_without_wash() {
     let lines = entry_lines(
         &Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished { ok: false },
             card: rho_tools::tool_card::ToolCard::new(
                 rho_tools::tool_card::ToolStatus::Error,
                 rho_tools::tool_card::ToolFamily::Skill,
@@ -790,7 +786,7 @@ fn spinner_is_anchored_immediately_above_composer_divider() {
         rho_tools::tool_card::ToolCard::from_plain_lines(
             rho_tools::tool_card::ToolStatus::Running,
             rho_tools::tool_card::ToolFamily::Default,
-            &vec!["bash".into(), "cargo test".into()],
+            &["bash".into(), "cargo test".into()],
         ),
     );
     let width = 40;
@@ -1659,7 +1655,7 @@ fn history_lines_include_header_transcript_pending_preview_but_not_activity_row(
         rho_tools::tool_card::ToolCard::from_plain_lines(
             rho_tools::tool_card::ToolStatus::Running,
             rho_tools::tool_card::ToolFamily::Default,
-            &vec!["bash".into(), "cargo test".into()],
+            &["bash".into(), "cargo test".into()],
         ),
     );
     app.streams.live_stream_preview = Some(LiveStreamPreview {

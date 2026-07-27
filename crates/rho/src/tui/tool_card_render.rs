@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
     feed_image::reserve_optional_image_rows,
@@ -14,7 +14,7 @@ use super::{
         wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
     theme::Theme,
-    tool_diff, ToolEntry, ToolEntryState,
+    tool_diff, ToolEntry,
 };
 
 const TREE_INDENT: &str = "  ";
@@ -36,7 +36,6 @@ pub(super) fn tool_entry_lines(
     push_tool_card(
         &mut lines,
         &tool.card,
-        tool.state,
         inner_width,
         max_tool_output_lines,
         tool.expanded,
@@ -53,13 +52,11 @@ pub(super) fn tool_entry_lines(
 pub(super) fn push_tool_card(
     lines: &mut Vec<Line<'static>>,
     card: &ToolCard,
-    state: ToolEntryState,
     width: usize,
     max_tool_output_lines: usize,
     expanded: bool,
 ) {
-    let status = status_for_state(card, state);
-    push_header_line(lines, card, status, width);
+    push_header_line(lines, card, card.status, width);
 
     let fact_count = card.facts.len();
     let body_lines = body_logical_lines(&card.body);
@@ -103,25 +100,6 @@ pub(super) fn push_tool_card(
             )
         };
         push_wrapped_text(lines, &prompt, width, Theme::dim(), LineFill::PadToWidth);
-    }
-}
-
-fn status_for_state(card: &ToolCard, state: ToolEntryState) -> ToolStatus {
-    match state {
-        ToolEntryState::Running => ToolStatus::Running,
-        ToolEntryState::Finished { ok, .. } => {
-            // Background agent spawns finish the tool call while the child is
-            // still running. The card keeps Running (or Interrupted/Blocked);
-            // do not rewrite those from the host ok flag.
-            if matches!(
-                card.status,
-                ToolStatus::Running | ToolStatus::Interrupted | ToolStatus::Blocked
-            ) {
-                card.status
-            } else {
-                ToolStatus::from_finished(ok)
-            }
-        }
     }
 }
 
@@ -293,43 +271,62 @@ fn push_fact_line(lines: &mut Vec<Line<'static>>, fact: &ToolFact, is_last: bool
     let prefix = format!("{TREE_INDENT}{branch}");
     let prefix_width = display_width(&prefix);
     let content_width = width.saturating_sub(prefix_width).max(1);
-    let content_spans = fact_spans(fact);
-    let content_text: String = content_spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect();
-    let wrapped = wrap_line_hard(&content_text, content_width);
-    if wrapped.is_empty() {
-        lines.push(pad_spans_line(
-            vec![
-                Span::styled(prefix, Theme::tool_tree()),
-                Span::styled(String::new(), Theme::text()),
-            ],
-            width,
-        ));
-        return;
-    }
+    let wrapped = wrap_spans_hard(&fact_spans(fact), content_width);
 
     // First line uses tree branch; continuations align to the content column.
-    let first = &wrapped[0];
-    let first_spans = truncate_spans_to_text(&content_spans, first);
     let mut first_line = vec![Span::styled(prefix, Theme::tool_tree())];
-    first_line.extend(first_spans);
+    first_line.extend(wrapped[0].clone());
     lines.push(pad_spans_line(first_line, width));
 
-    for chunk in wrapped.iter().skip(1) {
-        let cont_spans = truncate_spans_to_text(&content_spans, chunk);
-        // Re-slice spans relative to chunk is hard; restyle plain chunk with meta.
-        let mut cont = vec![Span::styled(
+    for row in wrapped.iter().skip(1) {
+        let mut continuation = vec![Span::styled(
             format!("{TREE_INDENT}{TREE_CONTINUE}"),
             Theme::tool_tree(),
         )];
-        if cont_spans.is_empty() {
-            cont.push(Span::styled(chunk.clone(), Theme::tool_meta()));
-        } else {
-            cont.extend(cont_spans);
+        continuation.extend(row.clone());
+        lines.push(pad_spans_line(continuation, width));
+    }
+}
+
+fn wrap_spans_hard(spans: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut used = 0;
+
+    for span in spans {
+        let mut chunk = String::new();
+        for character in span.content.chars() {
+            if character == '\n' {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+                continue;
+            }
+            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
+            if used > 0 && used + character_width > width {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+            }
+            chunk.push(character);
+            used += character_width;
+            if used >= width {
+                push_span_chunk(&mut row, &mut chunk, span.style);
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+            }
         }
-        lines.push(pad_spans_line(cont, width));
+        push_span_chunk(&mut row, &mut chunk, span.style);
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+fn push_span_chunk(row: &mut Vec<Span<'static>>, chunk: &mut String, style: Style) {
+    if !chunk.is_empty() {
+        row.push(Span::styled(std::mem::take(chunk), style));
     }
 }
 
@@ -431,43 +428,12 @@ fn pad_spans_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> 
     Line::from(spans)
 }
 
-/// Best-effort: when wrapping loses multi-span alignment, fall back to plain text.
-fn truncate_spans_to_text(spans: &[Span<'static>], text: &str) -> Vec<Span<'static>> {
-    let full: String = spans.iter().map(|span| span.content.as_ref()).collect();
-    if full == text {
-        return spans.to_vec();
-    }
-    if full.starts_with(text) {
-        // Prefix of the original span stream.
-        let mut remaining = text.chars().count();
-        let mut out = Vec::new();
-        for span in spans {
-            if remaining == 0 {
-                break;
-            }
-            let content = span.content.as_ref();
-            let chars = content.chars().count();
-            if chars <= remaining {
-                out.push(span.clone());
-                remaining -= chars;
-            } else {
-                let clipped: String = content.chars().take(remaining).collect();
-                out.push(Span::styled(clipped, span.style));
-                remaining = 0;
-            }
-        }
-        return out;
-    }
-    Vec::new()
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
     use rho_tools::tool_card::{ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
     use super::*;
-    use crate::tui::ToolEntryState;
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -492,14 +458,7 @@ mod tests {
         }])
         .with_body(ToolBody::DiffLines(vec!["-old".into(), "+new".into()]));
         let mut lines = Vec::new();
-        push_tool_card(
-            &mut lines,
-            &card,
-            ToolEntryState::Finished { ok: true },
-            80,
-            4,
-            /*expanded*/ false,
-        );
+        push_tool_card(&mut lines, &card, 80, 4, /*expanded*/ false);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
         assert_eq!(rendered[0], "✓ edit_file(theme.rs)");
         assert!(rendered[1].contains("└"));
@@ -530,14 +489,7 @@ mod tests {
             "line3".into(),
         ]));
         let mut lines = Vec::new();
-        push_tool_card(
-            &mut lines,
-            &card,
-            ToolEntryState::Finished { ok: true },
-            80,
-            1,
-            /*expanded*/ false,
-        );
+        push_tool_card(&mut lines, &card, 80, 1, /*expanded*/ false);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
         assert!(rendered[0].starts_with("✓ $ cargo test"));
         assert!(rendered.iter().any(|line| line.contains("timeout 30s")));
@@ -553,8 +505,7 @@ mod tests {
             ToolHeader::call("read_file", Some("main.rs".into())),
         );
         let tool = crate::tui::ToolEntry {
-            state: ToolEntryState::Finished { ok: true },
-            card: card,
+            card,
             expanded: false,
             image: None,
         };
@@ -586,14 +537,7 @@ mod tests {
             text: "timeout 30s".into(),
         }]);
         let mut lines = Vec::new();
-        push_tool_card(
-            &mut lines,
-            &card,
-            ToolEntryState::Running,
-            40,
-            10,
-            /*expanded*/ false,
-        );
+        push_tool_card(&mut lines, &card, 40, 10, /*expanded*/ false);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
         assert!(
             rendered.len() >= 3,
@@ -642,14 +586,7 @@ mod tests {
             ),
         );
         let mut lines = Vec::new();
-        push_tool_card(
-            &mut lines,
-            &card,
-            ToolEntryState::Finished { ok: true },
-            28,
-            4,
-            /*expanded*/ false,
-        );
+        push_tool_card(&mut lines, &card, 28, 4, /*expanded*/ false);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
         assert!(
             rendered[0].starts_with("✓ read_file("),
@@ -690,8 +627,7 @@ mod tests {
             "running 12 tests".into(),
         ]));
         let tool = crate::tui::ToolEntry {
-            state: ToolEntryState::Running,
-            card: card,
+            card,
             expanded: false,
             image: None,
         };
@@ -723,14 +659,7 @@ mod tests {
         }])
         .with_body(ToolBody::Lines(vec!["abc123 · rho attach abc123".into()]));
         let mut lines = Vec::new();
-        push_tool_card(
-            &mut lines,
-            &card,
-            ToolEntryState::Finished { ok: true },
-            80,
-            10,
-            /*expanded*/ false,
-        );
+        push_tool_card(&mut lines, &card, 80, 10, /*expanded*/ false);
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
         assert!(
             rendered[0].starts_with("● worker  running in background"),

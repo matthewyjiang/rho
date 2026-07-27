@@ -7,7 +7,7 @@ use rho_sdk::tool::ToolAsset;
 use super::{kitty_graphics_environment, picker_for_environment, FeedImage, IMAGE_HEIGHT};
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice},
-    Entry, ToolEntry, ToolEntryState,
+    Entry, ToolEntry,
 };
 
 fn no_images(
@@ -36,7 +36,6 @@ fn kitty_picker() -> Picker {
 
 fn image_tool() -> Entry {
     Entry::Tool(ToolEntry {
-        state: ToolEntryState::Finished { ok: true },
         card: rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Ok,
             rho_tools::tool_card::ToolFamily::Default,

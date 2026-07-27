@@ -6,7 +6,7 @@ use rho_sdk::{
     ToolCallId, ToolCompletion,
 };
 
-use rho_tools::{tool::ToolDisplayStyle, tool_card::ToolCard};
+use rho_tools::tool_card::ToolCard;
 
 #[path = "interactive_presenter_agent.rs"]
 mod agent_format;
@@ -17,8 +17,6 @@ use format::*;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
     pub(crate) command: Option<String>,
-    /// Legacy attach wire style; derived from kind/metadata, not used for render.
-    pub(crate) display_style: ToolDisplayStyle,
     pub(crate) card: ToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }
@@ -72,25 +70,6 @@ impl ToolKind {
             "get_search_content" => Self::GetSearchContent,
             "questionnaire" => Self::Questionnaire,
             _ => Self::Other,
-        }
-    }
-
-    fn display_style(self, metadata: &ToolMetadata) -> ToolDisplayStyle {
-        match self {
-            Self::Agent | Self::Agents => ToolDisplayStyle::default_tool(),
-            Self::Bash
-            | Self::PowerShell
-            | Self::ListDir
-            | Self::Grep
-            | Self::Glob
-            | Self::ReadFile => ToolDisplayStyle::file_or_command(),
-            Self::WriteFile | Self::EditFile => ToolDisplayStyle::file_diff(),
-            Self::Skill => ToolDisplayStyle::skill(),
-            Self::WebSearch | Self::FetchContent | Self::GetSearchContent => {
-                ToolDisplayStyle::web()
-            }
-            Self::Questionnaire => ToolDisplayStyle::questionnaire(),
-            Self::Process | Self::Other => style_from_metadata(metadata),
         }
     }
 
@@ -229,7 +208,7 @@ impl InteractiveToolPresenter {
             arguments,
             metadata: ToolMetadata::default(),
         };
-        presentation(&view, interrupted_card(&view, partial_arguments))
+        presentation(&view, interrupted_card(&view, partial_arguments, &self.cwd))
     }
 
     pub(crate) fn historical(&self, call: &ToolCall, ok: bool, content: &str) -> ToolPresentation {

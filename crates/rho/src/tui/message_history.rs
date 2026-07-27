@@ -5,7 +5,7 @@ use {
     rho_providers::model::{image_summary, ContentBlock, ImageContent, Message, ToolCall},
 };
 
-use super::{render::entry_lines, Entry, ToolEntry, ToolEntryState};
+use super::{render::entry_lines, Entry, ToolEntry};
 
 pub(super) fn recovered_history_tail(
     entries: &[Entry],
@@ -111,7 +111,6 @@ pub(super) fn transcript_entries_from_messages(
                     let presented =
                         presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
                     entries.push(Entry::Tool(ToolEntry {
-                        state: ToolEntryState::Finished { ok: false },
                         card: presented.card,
                         expanded: false,
                         image: None,
@@ -127,7 +126,6 @@ pub(super) fn transcript_entries_from_messages(
                 });
                 let presented = presenter.historical(&call, result.ok, &result.content);
                 entries.push(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished { ok: result.ok },
                     card: presented.card,
                     expanded: false,
                     image: None,

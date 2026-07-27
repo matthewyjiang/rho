@@ -22,7 +22,7 @@ use super::{
         add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
     },
     App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
-    ToolEntryState, STREAM_PREVIEW_DELAY, STREAM_PREVIEW_MIN_CHARS,
+    STREAM_PREVIEW_DELAY, STREAM_PREVIEW_MIN_CHARS,
 };
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
@@ -305,7 +305,7 @@ impl App {
             }
             ViewModelEvent::ToolFinished {
                 call_id,
-                ok,
+                ok: _,
                 display_style: _,
                 mut card,
                 image_asset,
@@ -331,7 +331,6 @@ impl App {
                             }
                         });
                 Some(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished { ok },
                     card,
                     expanded,
                     image,

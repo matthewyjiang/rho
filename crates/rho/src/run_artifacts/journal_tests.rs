@@ -1,6 +1,8 @@
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
+use rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus};
+
 use super::*;
 
 #[test]
@@ -14,6 +16,18 @@ fn attachment_stream_writes_and_reads_events() {
     writer
         .write_event(&AttachmentEvent::AssistantTextDelta("found it".into()))
         .unwrap();
+    let card = ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Default,
+        ToolHeader::call("bash", None),
+    )
+    .with_body(ToolBody::Lines(vec!["cargo test".into()]));
+    writer
+        .write_event(&AttachmentEvent::ToolStarted {
+            display_lines: card.to_display_lines(),
+            card: Some(card.clone()),
+        })
+        .unwrap();
     drop(writer);
 
     let mut reader = AttachmentReader::new(directory.path().join(subagent::ATTACHMENT_FILE_NAME));
@@ -24,6 +38,10 @@ fn attachment_stream_writes_and_reads_events() {
         vec![
             AttachmentEvent::Prompt("inspect the code".into()),
             AttachmentEvent::AssistantTextDelta("found it".into()),
+            AttachmentEvent::ToolStarted {
+                display_lines: card.to_display_lines(),
+                card: Some(card),
+            },
         ]
     );
     assert!(reader.read_new().unwrap().is_empty());

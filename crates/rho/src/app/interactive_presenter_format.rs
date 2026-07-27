@@ -2,7 +2,7 @@
 
 use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::{
-    tool::{compact_display_path, ToolDisplayStyle},
+    tool::compact_display_path,
     tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
 };
 
@@ -10,22 +10,17 @@ use rho_tools::{
 mod results;
 use results::{
     count_nonempty_lines, fetch_content_card, file_diff_card, generic_card,
-    get_search_content_card, process_result_card, search_result_card, shell_card,
-    shell_result_card, split_body_lines, web_search_card,
+    get_search_content_card, process_result_card, push_error_output, search_result_card,
+    shell_card, shell_result_card, split_body_lines, web_search_card,
 };
 
 use super::{agent_format, ToolKind, ToolPresentation, ToolView};
 
 pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
     card.push_notice_facts(view.metadata.presentation_notices());
-    let display_style = view.kind.display_style(&view.metadata);
-    // Keep family aligned with the legacy style enum used by attach wire.
-    if card.family == ToolFamily::Default {
-        card.family = ToolFamily::from_display_style(display_style);
-    }
+    card.family = family_for_kind(view.kind, Some(&view.metadata));
     ToolPresentation {
         command: command(view),
-        display_style,
         card,
         image_asset: view
             .metadata
@@ -84,7 +79,7 @@ pub(super) fn preview_card(
     cwd: &std::path::Path,
     status: ToolStatus,
 ) -> ToolCard {
-    let family = family_for_kind(kind);
+    let family = family_for_kind(kind, None);
     let Some(arguments) = arguments else {
         let header = match kind {
             ToolKind::Bash => ToolHeader::shell("$", None),
@@ -164,12 +159,13 @@ pub(super) fn preview_card(
         ),
         ToolKind::Questionnaire => match crate::questionnaire::parse_request(arguments.clone()) {
             Ok(request) => {
-                let lines = crate::questionnaire::start_display_lines(&request);
                 let primary = request.title.clone().or_else(|| Some(name.to_string()));
                 let mut card =
                     ToolCard::new(status, family, ToolHeader::call("questionnaire", primary));
-                for line in lines.into_iter().skip(1) {
-                    card.push_fact(ToolFact::Text { text: line });
+                for (index, question) in request.questions.iter().enumerate() {
+                    card.push_fact(ToolFact::Text {
+                        text: format!("{}. {}", index + 1, question.question),
+                    });
                 }
                 card
             }
@@ -217,7 +213,7 @@ fn edit_start_card(
     };
     ToolCard::new(
         status,
-        ToolFamily::FileCommand,
+        ToolFamily::FileDiff,
         ToolHeader::call("edit_file", primary),
     )
 }
@@ -245,9 +241,7 @@ pub(super) fn finished_card(
                 ),
             );
             if !ok && !content.trim().is_empty() {
-                card.push_fact(ToolFact::Error {
-                    text: content.trim().to_string(),
-                });
+                push_error_output(&mut card, content);
             } else if let Some(count) = count_nonempty_lines(content) {
                 card.push_fact(ToolFact::Count {
                     label: if count == 1 {
@@ -272,9 +266,7 @@ pub(super) fn finished_card(
                 ),
             );
             if !ok && !content.trim().is_empty() {
-                card.push_fact(ToolFact::Error {
-                    text: content.trim().to_string(),
-                });
+                push_error_output(&mut card, content);
             } else if let Some(count) = count_nonempty_lines(content) {
                 card.push_fact(ToolFact::Count {
                     label: if count == 1 {
@@ -341,7 +333,11 @@ pub(super) fn progress_card(
     card
 }
 
-pub(super) fn interrupted_card(view: &ToolView, partial_arguments: &str) -> ToolCard {
+pub(super) fn interrupted_card(
+    view: &ToolView,
+    partial_arguments: &str,
+    cwd: &std::path::Path,
+) -> ToolCard {
     match view.kind {
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
@@ -350,11 +346,9 @@ pub(super) fn interrupted_card(view: &ToolView, partial_arguments: &str) -> Tool
                 view.kind,
                 &view.name,
                 Some(&view.arguments),
-                std::path::Path::new(""),
+                cwd,
                 ToolStatus::Interrupted,
             );
-            // preview_card with empty cwd may lose path compaction; rebuild status only.
-            card.status = ToolStatus::Interrupted;
             if !partial_arguments.is_empty() && card.body.is_empty() && card.facts.is_empty() {
                 card.body = ToolBody::Lines(vec![partial_arguments.to_string()]);
             }
@@ -363,19 +357,7 @@ pub(super) fn interrupted_card(view: &ToolView, partial_arguments: &str) -> Tool
     }
 }
 
-pub(super) fn style_from_metadata(metadata: &ToolMetadata) -> ToolDisplayStyle {
-    match metadata.operation_kind() {
-        Some(OperationKind::Read | OperationKind::Execute) => ToolDisplayStyle::file_or_command(),
-        Some(OperationKind::Write) => ToolDisplayStyle::file_diff(),
-        Some(OperationKind::Network) => ToolDisplayStyle::web(),
-        Some(OperationKind::Other(kind)) if kind == "questionnaire" => {
-            ToolDisplayStyle::questionnaire()
-        }
-        Some(OperationKind::Other(_)) | None | Some(_) => ToolDisplayStyle::default_tool(),
-    }
-}
-
-pub(super) fn family_for_kind(kind: ToolKind) -> ToolFamily {
+pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -> ToolFamily {
     match kind {
         ToolKind::Agent | ToolKind::Agents => ToolFamily::Agent,
         ToolKind::Bash
@@ -383,15 +365,26 @@ pub(super) fn family_for_kind(kind: ToolKind) -> ToolFamily {
         | ToolKind::ListDir
         | ToolKind::Grep
         | ToolKind::Glob
-        | ToolKind::ReadFile
-        | ToolKind::WriteFile
-        | ToolKind::EditFile => ToolFamily::FileCommand,
+        | ToolKind::ReadFile => ToolFamily::FileCommand,
+        ToolKind::WriteFile | ToolKind::EditFile => ToolFamily::FileDiff,
         ToolKind::Skill => ToolFamily::Skill,
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
         }
         ToolKind::Questionnaire => ToolFamily::Form,
-        ToolKind::Process | ToolKind::Other => ToolFamily::Default,
+        ToolKind::Process | ToolKind::Other => metadata
+            .map(family_from_metadata)
+            .unwrap_or(ToolFamily::Default),
+    }
+}
+
+fn family_from_metadata(metadata: &ToolMetadata) -> ToolFamily {
+    match metadata.operation_kind() {
+        Some(OperationKind::Read | OperationKind::Execute) => ToolFamily::FileCommand,
+        Some(OperationKind::Write) => ToolFamily::FileDiff,
+        Some(OperationKind::Network) => ToolFamily::Web,
+        Some(OperationKind::Other(kind)) if kind == "questionnaire" => ToolFamily::Form,
+        Some(OperationKind::Other(_)) | None | Some(_) => ToolFamily::Default,
     }
 }
 

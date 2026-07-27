@@ -13,6 +13,7 @@ use crate::tool::ToolDisplayStyle;
 #[serde(rename_all = "snake_case")]
 pub enum ToolFamily {
     FileCommand,
+    FileDiff,
     Web,
     Skill,
     Form,
@@ -23,7 +24,8 @@ pub enum ToolFamily {
 impl ToolFamily {
     pub fn from_display_style(style: ToolDisplayStyle) -> Self {
         match style {
-            ToolDisplayStyle::FileOrCommand | ToolDisplayStyle::FileDiff => Self::FileCommand,
+            ToolDisplayStyle::FileOrCommand => Self::FileCommand,
+            ToolDisplayStyle::FileDiff => Self::FileDiff,
             ToolDisplayStyle::Web => Self::Web,
             ToolDisplayStyle::Skill => Self::Skill,
             ToolDisplayStyle::Questionnaire => Self::Form,
@@ -34,6 +36,7 @@ impl ToolFamily {
     pub fn display_style(self) -> ToolDisplayStyle {
         match self {
             Self::FileCommand => ToolDisplayStyle::FileOrCommand,
+            Self::FileDiff => ToolDisplayStyle::FileDiff,
             Self::Web => ToolDisplayStyle::Web,
             Self::Skill => ToolDisplayStyle::Skill,
             Self::Form => ToolDisplayStyle::Questionnaire,
@@ -50,7 +53,6 @@ pub enum ToolStatus {
     Ok,
     Error,
     Interrupted,
-    Blocked,
 }
 
 impl ToolStatus {
@@ -60,7 +62,6 @@ impl ToolStatus {
             Self::Ok => "✓",
             Self::Error => "✗",
             Self::Interrupted => "■",
-            Self::Blocked => "!",
         }
     }
 
@@ -155,7 +156,7 @@ pub enum ToolFact {
 
 /// Optional expandable body content.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "lines", rename_all = "snake_case")]
 pub enum ToolBody {
     #[default]
     None,
@@ -233,13 +234,15 @@ impl ToolCard {
     }
 
     pub fn push_notice_facts(&mut self, notices: &[String]) {
-        for notice in notices {
-            let text = notice.trim();
-            if !text.is_empty() {
-                self.facts.push(ToolFact::Meta {
-                    text: text.to_string(),
-                });
-            }
+        for text in notices
+            .iter()
+            .flat_map(|notice| notice.lines())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            self.facts.push(ToolFact::Meta {
+                text: text.to_string(),
+            });
         }
     }
 
@@ -442,65 +445,6 @@ pub fn diff_file_stats(diff: &str) -> Vec<DiffFileStat> {
     stats
 }
 
-/// Parsed shell tool content used for command facts and body preview.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct ShellContent {
-    pub notice: Option<String>,
-    pub stdout: String,
-    pub exit_code: Option<i64>,
-    pub duration_ms: Option<u64>,
-    pub running: bool,
-}
-
-/// Parse the shell tool content envelope into structured pieces.
-pub fn parse_shell_content(content: &str) -> ShellContent {
-    let mut parsed = ShellContent::default();
-    let (notice, rest) = if let Some(stdout) = content.strip_prefix("stdout:\n") {
-        (None, stdout)
-    } else if let Some((notice, stdout)) = content.split_once("\n\nstdout:\n") {
-        (Some(notice.to_string()), stdout)
-    } else if content.trim().is_empty() {
-        return parsed;
-    } else {
-        // Unstructured failure/progress text.
-        parsed.notice = Some(content.trim().to_string());
-        return parsed;
-    };
-    parsed.notice = notice;
-
-    let (stdout_and_maybe_more, footer) = rest
-        .rsplit_once("\n\ntime:")
-        .map_or((rest, None), |(body, footer)| (body, Some(footer.trim())));
-
-    let stdout = stdout_and_maybe_more
-        .rsplit_once("\n\nstderr:")
-        .map_or(stdout_and_maybe_more, |(stdout, _)| stdout);
-    parsed.stdout = stdout.trim_end().to_string();
-
-    if let Some(footer) = footer {
-        if footer == "running" || footer.starts_with("running") {
-            parsed.running = true;
-        } else {
-            // Formats: "0.1s  exit code: 0" or "1.2s  exit code: signal"
-            if let Some(secs) = footer
-                .split_whitespace()
-                .next()
-                .and_then(|token| token.strip_suffix('s'))
-                .and_then(|secs| secs.parse::<f64>().ok())
-            {
-                parsed.duration_ms = Some((secs * 1000.0).round() as u64);
-            }
-            if let Some(code_text) = footer.split("exit code:").nth(1) {
-                let code_text = code_text.trim();
-                if let Ok(code) = code_text.parse::<i64>() {
-                    parsed.exit_code = Some(code);
-                }
-            }
-        }
-    }
-    parsed
-}
-
 /// Collapse a unified diff to compact add/remove/context lines for expand body.
 pub fn compact_diff_lines(diff: &str, include_file_headers: bool) -> Vec<String> {
     let mut in_hunk = false;
@@ -579,26 +523,6 @@ mod tests {
     }
 
     #[test]
-    fn shell_content_parses_exit_and_stdout() {
-        let parsed = parse_shell_content(
-            "stdout:\ntests passed\n\nstderr:\nwarning\n\ntime: 0.1s  exit code: 0",
-        );
-        assert_eq!(parsed.stdout, "tests passed");
-        assert_eq!(parsed.exit_code, Some(0));
-        assert_eq!(parsed.duration_ms, Some(100));
-        assert!(!parsed.running);
-    }
-
-    #[test]
-    fn shell_content_parses_timeout_notice() {
-        let parsed = parse_shell_content(
-            "command timed out after 5s\n\nstdout:\na\n\nstderr:\nb\n\nstderr:\nwarning",
-        );
-        assert_eq!(parsed.notice.as_deref(), Some("command timed out after 5s"));
-        assert_eq!(parsed.stdout, "a\n\nstderr:\nb");
-    }
-
-    #[test]
     fn card_display_lines_include_marker_and_tree() {
         let card = ToolCard::new(
             ToolStatus::Ok,
@@ -620,6 +544,18 @@ mod tests {
     }
 
     #[test]
+    fn tool_body_variants_round_trip() {
+        for body in [
+            ToolBody::None,
+            ToolBody::Lines(vec!["line".into()]),
+            ToolBody::DiffLines(vec!["+line".into()]),
+        ] {
+            let encoded = serde_json::to_string(&body).unwrap();
+            assert_eq!(serde_json::from_str::<ToolBody>(&encoded).unwrap(), body);
+        }
+    }
+
+    #[test]
     fn card_round_trips_through_json() {
         let card = ToolCard::new(
             ToolStatus::Running,
@@ -630,7 +566,8 @@ mod tests {
             label: "results".into(),
             value: 8,
             detail: Some("stored".into()),
-        }]);
+        }])
+        .with_body(ToolBody::Lines(vec!["body".into()]));
         let encoded = serde_json::to_string(&card).unwrap();
         let decoded: ToolCard = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, card);

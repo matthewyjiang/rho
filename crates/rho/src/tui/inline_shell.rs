@@ -315,7 +315,6 @@ impl super::App {
                 ok: false,
             };
             self.insert_entry(&super::Entry::Tool(super::ToolEntry {
-                state: super::ToolEntryState::Finished { ok: false },
                 card: display_card(&output, task.mode.included_in_context()),
                 expanded: true,
                 image: None,
@@ -449,7 +448,6 @@ impl super::App {
         }
         self.finish_streams();
         self.insert_entry(&super::Entry::Tool(super::ToolEntry {
-            state: super::ToolEntryState::Finished { ok: output.ok },
             card: display_card(&output, task.mode.included_in_context()),
             expanded: true,
             image: None,
@@ -526,7 +524,6 @@ impl PendingShellTask {
             ok: true,
         };
         super::ToolEntry {
-            state: super::ToolEntryState::Running,
             card: display_card(&output, self.mode.included_in_context()),
             expanded: true,
             image: None,

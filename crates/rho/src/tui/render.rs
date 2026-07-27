@@ -554,7 +554,6 @@ fn render_non_assistant_entry(
             super::tool_card_render::push_tool_card(
                 lines,
                 &tool.card,
-                tool.state,
                 width,
                 max_tool_output_lines,
                 tool.expanded,

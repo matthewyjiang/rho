@@ -166,27 +166,6 @@ pub(super) fn unchanged_card(detail: impl Into<String>) -> ToolCard {
     }])
 }
 
-// Keep line helpers for unit tests that assert summary wording.
-pub(super) fn running_display_lines() -> Vec<String> {
-    running_card().to_display_lines()
-}
-
-pub(super) fn completed_display_lines(facts: CompactionDisplayFacts) -> Vec<String> {
-    completed_card(facts).to_display_lines()
-}
-
-pub(super) fn failed_display_lines(detail: impl Into<String>) -> Vec<String> {
-    failed_card(detail).to_display_lines()
-}
-
-pub(super) fn cancelled_display_lines() -> Vec<String> {
-    cancelled_card().to_display_lines()
-}
-
-pub(super) fn unchanged_display_lines(detail: impl Into<String>) -> Vec<String> {
-    unchanged_card(detail).to_display_lines()
-}
-
 fn token_summary_line(facts: CompactionDisplayFacts) -> String {
     let mut line = format!(
         "{} → {} tokens",

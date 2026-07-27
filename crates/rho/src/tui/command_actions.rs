@@ -4,7 +4,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     ActivityPhase, App, CommandId, CommandInvocation, ComposerMode, Entry, InteractiveRuntime,
-    LoadingSpinner, RunningInputMode, StreamControl, ToolEntry, ToolEntryState, ViewModelEvent,
+    LoadingSpinner, RunningInputMode, StreamControl, ToolEntry, ViewModelEvent,
 };
 
 impl App {
@@ -145,7 +145,6 @@ impl App {
             ),
         };
         self.insert_entry(&Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished { ok: outcome.ok() },
             card: outcome.card(),
             expanded,
             image: None,

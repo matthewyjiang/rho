@@ -9,7 +9,7 @@ use {
     rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
-use super::{doctor, local_diff, App, Entry, ToolEntry, ToolEntryState};
+use super::{doctor, local_diff, App, Entry, ToolEntry};
 use crate::claude_runtime::auth::ClaudeProbeSnapshot;
 
 impl App {
@@ -28,7 +28,6 @@ impl App {
             ToolBody::Lines(diff.lines)
         };
         self.insert_entry(&Entry::Tool(ToolEntry {
-            state: ToolEntryState::Finished { ok: true },
             card: ToolCard::new(
                 ToolStatus::Ok,
                 ToolFamily::FileCommand,

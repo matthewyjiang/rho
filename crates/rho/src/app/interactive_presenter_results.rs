@@ -1,8 +1,11 @@
 //! Result-side ToolCard builders for interactive tool presentation.
 
-use rho_tools::tool_card::{
-    compact_diff_lines, diff_file_stats, parse_shell_content, ToolBody, ToolCard, ToolFact,
-    ToolFamily, ToolHeader, ToolStatus,
+use rho_tools::{
+    parse_shell_content,
+    tool_card::{
+        compact_diff_lines, diff_file_stats, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
+        ToolStatus,
+    },
 };
 
 use super::super::{ToolKind, ToolView};
@@ -65,7 +68,7 @@ pub(super) fn shell_result_card(
         .map(str::to_string);
     if let Some(notice) = notice.clone() {
         if status == ToolStatus::Error || notice.contains("timed out") {
-            card.push_fact(ToolFact::Error { text: notice });
+            push_error_output(&mut card, &notice);
         } else {
             card.push_fact(ToolFact::Meta { text: notice });
         }
@@ -118,7 +121,7 @@ pub(super) fn file_diff_card(
     };
     let mut card = ToolCard::new(
         status,
-        ToolFamily::FileCommand,
+        ToolFamily::FileDiff,
         ToolHeader::call(view.name.as_str(), primary),
     );
     if ok {
@@ -144,9 +147,7 @@ pub(super) fn file_diff_card(
             card.body = ToolBody::DiffLines(compact);
         }
     } else if !content.trim().is_empty() {
-        card.push_fact(ToolFact::Error {
-            text: content.trim().to_string(),
-        });
+        push_error_output(&mut card, content);
     }
     card
 }
@@ -162,9 +163,7 @@ pub(super) fn search_result_card(
     card.status = status;
     if !ok {
         if !content.trim().is_empty() {
-            card.push_fact(ToolFact::Error {
-                text: content.trim().to_string(),
-            });
+            push_error_output(&mut card, content);
         }
         return card;
     }
@@ -216,7 +215,26 @@ pub(super) fn search_result_card(
 }
 
 pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+    #[derive(serde::Deserialize)]
+    struct StopReceipt {
+        stop_requested: bool,
+        process_id: String,
+    }
+
+    if let Ok(receipt) = serde_json::from_str::<StopReceipt>(content) {
+        if receipt.stop_requested {
+            let mut card = ToolCard::new(
+                status,
+                ToolFamily::Default,
+                ToolHeader::call("process", Some("stop".into())),
+            );
+            card.push_fact(ToolFact::Meta {
+                text: format!("stop requested: {}", receipt.process_id),
+            });
+            return card;
+        }
+    }
+    let Ok(snapshot) = serde_json::from_str::<crate::tools::process::Snapshot>(content) else {
         let mut card = ToolCard::new(
             status,
             ToolFamily::Default,
@@ -227,93 +245,43 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
         }
         return card;
     };
-    if value
-        .get("stop_requested")
-        .and_then(|value| value.as_bool())
-        == Some(true)
-    {
-        let mut card = ToolCard::new(
-            status,
-            ToolFamily::Default,
-            ToolHeader::call("process", Some("stop".into())),
-        );
-        if let Some(id) = value.get("process_id").and_then(|value| value.as_str()) {
-            card.push_fact(ToolFact::Meta {
-                text: format!("stop requested: {id}"),
-            });
-        }
-        return card;
-    }
-    let action = value
-        .get("state")
-        .and_then(|value| value.as_str())
-        .map(|state| state.replace('_', " "));
+
     let mut card = ToolCard::new(
         status,
         ToolFamily::Default,
-        ToolHeader::call("process", action),
+        ToolHeader::call("process", Some(process_state(snapshot.state).into())),
     );
-    if let Some(command) = value.get("command").and_then(|value| value.as_str()) {
-        card.push_fact(ToolFact::Text {
-            text: command.to_string(),
-        });
-    }
-    let id = value
-        .get("process_id")
-        .and_then(|value| value.as_str())
-        .unwrap_or("unknown");
-    let runtime = value
-        .get("runtime_seconds")
-        .and_then(|value| value.as_f64())
-        .unwrap_or_default();
-    let mut meta = format!("{id} · {runtime:.1}s");
-    if let Some(code) = value.get("exit_code").and_then(|value| value.as_i64()) {
+    card.push_fact(ToolFact::Text {
+        text: snapshot.command,
+    });
+    let mut meta = format!("{} · {:.1}s", snapshot.process_id, snapshot.runtime_seconds);
+    if let Some(code) = snapshot.exit_code {
         meta.push_str(&format!(" · exit {code}"));
     }
     card.push_fact(ToolFact::Meta { text: meta });
-    if value.get("truncated").and_then(|value| value.as_bool()) == Some(true) {
-        let cursor = value
-            .get("first_cursor")
-            .and_then(|value| value.as_u64())
-            .unwrap_or_default();
+    if snapshot.truncated {
         card.push_fact(ToolFact::Meta {
-            text: format!("output before cursor {cursor} is no longer available"),
+            text: format!(
+                "output before cursor {} is no longer available",
+                snapshot.first_cursor
+            ),
         });
     }
     let mut body = Vec::new();
-    if let Some(chunks) = value.get("chunks").and_then(|value| value.as_array()) {
-        for chunk in chunks {
-            let stream = chunk
-                .get("stream")
-                .and_then(|value| value.as_str())
-                .unwrap_or("stdout");
-            body.push(format!("{stream}:"));
-            body.push(
-                chunk
-                    .get("text")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-            );
-        }
+    for chunk in snapshot.chunks {
+        let stream = match chunk.stream {
+            crate::tools::process::Stream::Stdout => "stdout",
+            crate::tools::process::Stream::Stderr => "stderr",
+        };
+        body.push(format!("{stream}:"));
+        body.push(chunk.text);
     }
-    if value
-        .get("output_pending")
-        .and_then(|value| value.as_bool())
-        == Some(true)
-    {
-        let cursor = value
-            .get("next_cursor")
-            .and_then(|value| value.as_u64())
-            .unwrap_or_default();
+    if snapshot.output_pending {
         card.push_fact(ToolFact::Meta {
-            text: format!("more output available at cursor {cursor}"),
+            text: format!("more output available at cursor {}", snapshot.next_cursor),
         });
     }
-    if let Some(detail) = value
-        .get("terminal_detail")
-        .and_then(|value| value.as_str())
-    {
+    if let Some(detail) = snapshot.terminal_detail {
         card.push_fact(ToolFact::Meta {
             text: format!("detail: {detail}"),
         });
@@ -322,6 +290,18 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
         card.body = ToolBody::Lines(body);
     }
     card
+}
+
+fn process_state(state: crate::tools::process::State) -> &'static str {
+    use crate::tools::process::State;
+    match state {
+        State::Starting => "starting",
+        State::Running => "running",
+        State::Exited => "exited",
+        State::Terminated => "terminated",
+        State::TimedOut => "timed out",
+        State::FailedToStart => "failed to start",
+    }
 }
 
 pub(super) fn web_search_card(
@@ -337,9 +317,7 @@ pub(super) fn web_search_card(
     );
     if status == ToolStatus::Error {
         if !content.trim().is_empty() {
-            card.push_fact(ToolFact::Error {
-                text: content.trim().to_string(),
-            });
+            push_error_output(&mut card, content);
         }
         return card;
     }
@@ -392,9 +370,7 @@ pub(super) fn fetch_content_card(
     );
     if status == ToolStatus::Error {
         if !content.trim().is_empty() {
-            card.push_fact(ToolFact::Error {
-                text: content.trim().to_string(),
-            });
+            push_error_output(&mut card, content);
         }
         return card;
     }
@@ -463,9 +439,7 @@ pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> Tool
     );
     if status == ToolStatus::Error {
         if !content.trim().is_empty() {
-            card.push_fact(ToolFact::Error {
-                text: content.trim().to_string(),
-            });
+            push_error_output(&mut card, content);
         }
         return card;
     }
@@ -498,7 +472,7 @@ pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> Tool
 pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -> ToolCard {
     let mut card = ToolCard::new(
         status,
-        family_for_kind(view.kind),
+        family_for_kind(view.kind, Some(&view.metadata)),
         ToolHeader::call(view.name.as_str(), None),
     );
     if let Some(command) = view.metadata.command_summary_text() {
@@ -530,14 +504,31 @@ pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -
     }
     if !content.trim().is_empty() {
         if status == ToolStatus::Error {
-            card.push_fact(ToolFact::Error {
-                text: content.trim().to_string(),
-            });
+            push_error_output(&mut card, content);
         } else if card.body.is_empty() {
             card.body = ToolBody::Lines(split_body_lines(content));
         }
     }
     card
+}
+
+pub(super) fn push_error_output(card: &mut ToolCard, content: &str) {
+    let lines = split_body_lines(content.trim());
+    let Some(first) = lines.first() else {
+        return;
+    };
+    let summary = truncate(first.trim(), 160);
+    card.push_fact(ToolFact::Error {
+        text: summary.clone(),
+    });
+    let detail = if summary == first.trim() {
+        &lines[1..]
+    } else {
+        lines.as_slice()
+    };
+    if !detail.is_empty() {
+        card.body = ToolBody::Lines(detail.to_vec());
+    }
 }
 
 pub(super) fn split_body_lines(content: &str) -> Vec<String> {

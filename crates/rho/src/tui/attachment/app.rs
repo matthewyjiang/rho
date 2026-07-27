@@ -31,7 +31,7 @@ use super::super::{
         format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
         AttemptAwareRunUsage,
     },
-    Entry, HistoryScroll, ReasoningEntry, ToolEntry, ToolEntryState, HISTORY_MOUSE_SCROLL_LINES,
+    Entry, HistoryScroll, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
@@ -208,7 +208,6 @@ impl AttachmentApp {
                     )
                 });
                 self.pending_tool = Some(ToolEntry {
-                    state: ToolEntryState::Running,
                     card,
                     expanded: false,
                     image: None,
@@ -234,7 +233,6 @@ impl AttachmentApp {
                 });
                 self.pending_tool = None;
                 self.transcript.push(Entry::Tool(ToolEntry {
-                    state: ToolEntryState::Finished { ok },
                     card,
                     expanded: false,
                     image: None,

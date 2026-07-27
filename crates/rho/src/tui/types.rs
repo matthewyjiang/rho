@@ -240,17 +240,10 @@ pub(super) enum CommandChoiceKind {
 
 #[derive(Clone, Debug)]
 pub(super) struct ToolEntry {
-    pub(in crate::tui) state: ToolEntryState,
     /// Structured Call + Children card. Sole render input for tool rows.
     pub(in crate::tui) card: rho_tools::tool_card::ToolCard,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum ToolEntryState {
-    Running,
-    Finished { ok: bool },
 }
 
 #[derive(Clone, Debug)]

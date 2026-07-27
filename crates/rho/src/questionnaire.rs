@@ -335,18 +335,6 @@ pub fn response_content(response: &QuestionnaireResponse) -> String {
     serde_json::to_string(response).unwrap_or_else(|_| format!("answers: {:?}", response.answers))
 }
 
-pub fn start_display_lines(request: &QuestionnaireRequest) -> Vec<String> {
-    let heading = request.title.as_ref().map_or_else(
-        || TOOL_NAME.to_string(),
-        |title| format!("{TOOL_NAME}: {title}"),
-    );
-    let mut lines = vec![heading];
-    for (index, question) in request.questions.iter().enumerate() {
-        lines.push(format!("{}. {}", index + 1, question.question));
-    }
-    lines
-}
-
 fn parse_question(
     index: usize,
     raw: RawQuestionnaireQuestion,

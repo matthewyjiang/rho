@@ -18,8 +18,8 @@ mod paths;
 mod process_env;
 mod process_stream;
 mod search;
-#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod shell_process;
+pub use shell_process::{parse_shell_content, ShellContent};
 pub mod tool;
 pub mod tool_card;
 pub mod workspace_walk;

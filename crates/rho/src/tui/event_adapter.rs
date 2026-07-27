@@ -197,7 +197,7 @@ impl SdkEventAdapter {
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id,
                     ok,
-                    display_style: presented.display_style,
+                    display_style: presented.card.family.display_style(),
                     card: presented.card,
                     image_asset: presented.image_asset,
                 })]
