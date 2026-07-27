@@ -493,6 +493,7 @@ pub(super) fn next_revision(revision: Revision) -> anyhow::Result<Revision> {
         .ok_or_else(|| anyhow::anyhow!("session revision is exhausted"))
 }
 
+#[cfg(test)]
 fn visit_entries(
     path: &Path,
     mut visit: impl FnMut(SessionEntry) -> anyhow::Result<()>,
@@ -564,15 +565,15 @@ fn summarize_session_file_with_tree(
     let mut messages = Vec::new();
     let mut has_tree_records = false;
 
-    visit_entries(path, |entry| {
+    let tree = super::tree::SessionTree::load_with_entry_visitor(path, |entry| {
         match entry {
             SessionEntry::Session {
                 timestamp,
                 cwd: session_cwd,
                 ..
             } => {
-                cwd = session_cwd;
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                cwd.clone_from(session_cwd);
+                if let Some(timestamp) = parse_timestamp(timestamp) {
                     created_at = timestamp;
                     updated_at = updated_at.max(timestamp);
                 }
@@ -582,19 +583,19 @@ fn summarize_session_file_with_tree(
                 message,
                 display_message,
             } => {
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                if let Some(timestamp) = parse_timestamp(timestamp) {
                     updated_at = updated_at.max(timestamp);
                 }
-                messages.push(display_message.map_or(message, |message| *message));
+                messages.push(display_message.as_deref().unwrap_or(message).clone());
             }
             SessionEntry::ReplaceHistory {
                 timestamp,
                 messages: replacement,
             } => {
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                if let Some(timestamp) = parse_timestamp(timestamp) {
                     updated_at = updated_at.max(timestamp);
                 }
-                messages = replacement;
+                messages.clone_from(replacement);
             }
             SessionEntry::Snapshot {
                 timestamp,
@@ -606,21 +607,20 @@ fn summarize_session_file_with_tree(
                 display_messages,
                 ..
             } => {
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                if let Some(timestamp) = parse_timestamp(timestamp) {
                     updated_at = updated_at.max(timestamp);
                 }
-                messages.extend(display_messages.into_iter().map(|entry| entry.message));
+                messages.extend(display_messages.iter().map(|entry| entry.message.clone()));
             }
             SessionEntry::Node { node } => {
                 has_tree_records = true;
                 if let Some(timestamp) = parse_timestamp(&node.timestamp) {
                     updated_at = updated_at.max(timestamp);
                 }
-                messages.extend(node.display_messages.into_iter().map(|entry| entry.message));
             }
             SessionEntry::SetLeaf { timestamp, .. } | SessionEntry::Upgrade { timestamp, .. } => {
                 has_tree_records = true;
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
+                if let Some(timestamp) = parse_timestamp(timestamp) {
                     updated_at = updated_at.max(timestamp);
                 }
             }
@@ -628,7 +628,6 @@ fn summarize_session_file_with_tree(
         Ok(())
     })?;
 
-    let tree = super::tree::SessionTree::load(path)?;
     if has_tree_records {
         messages = tree
             .active_state()
