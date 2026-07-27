@@ -1,14 +1,20 @@
 use pretty_assertions::assert_eq;
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
-use rho_tools::tool_card::ToolCard;
+use rho_tools::tool_card::{ToolCard, ToolHeader};
 
 use super::stream_test_support::*;
 use super::*;
 
 fn tool_card_has_id(card: &ToolCard, tool_id: &str) -> bool {
     // Claude tool presentation puts the tool use id in the Call primary.
-    card.header_text().contains(tool_id)
+    matches!(
+        &card.header,
+        ToolHeader::Call {
+            primary: Some(primary),
+            ..
+        } if primary == tool_id
+    )
 }
 
 #[test]

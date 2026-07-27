@@ -137,12 +137,12 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
     let preview = ToolCard::new(
         ToolStatus::Running,
         ToolFamily::Default,
-        ToolHeader::call("read_file", None),
+        ToolHeader::call("read_file", /*primary*/ None),
     );
     let with_id = ToolCard::new(
         ToolStatus::Running,
         ToolFamily::Default,
-        ToolHeader::call("read_file", Some("src/main.rs".into())),
+        ToolHeader::call("read_file", /*primary*/ Some("src/main.rs".into())),
     );
     let call_id = rho_sdk::ToolCallId::from_string("call-stable").unwrap();
 

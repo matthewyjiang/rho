@@ -286,8 +286,10 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
+            card,
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
+            && card.status == ToolStatus::Interrupted
     ));
     assert!(matches!(&events[1], ViewEvent::Cancelled));
 }
