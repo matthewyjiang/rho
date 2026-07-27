@@ -4,6 +4,7 @@ use crate::{
     auth::{
         kimi_oauth::{refresh_kimi_tokens, KimiOAuthError},
         kimi_token::token_is_expiring,
+        ollama_device::OllamaDeviceKey,
     },
     credentials::{load_kimi_tokens, save_kimi_tokens, CredentialStore, KimiTokens},
     model::{ModelError, ReasoningCapabilities},
@@ -53,15 +54,17 @@ pub(super) async fn fetch(
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
     let client = provider_models_client()?;
-    let token = match descriptor.auth_kind {
-        ProviderAuthKind::None => None,
-        ProviderAuthKind::ApiKey { .. } => Some(load_api_key_auth(descriptor.name, store)?),
+    let auth = match descriptor.auth_kind {
+        ProviderAuthKind::None => ModelRequestAuth::None,
+        ProviderAuthKind::ApiKey { .. } => {
+            ModelRequestAuth::Bearer(load_api_key_auth(descriptor.name, store)?)
+        }
         ProviderAuthKind::BearerCredential {
             env_var,
             account,
             missing_message,
             ..
-        } => Some(match std::env::var(env_var) {
+        } => ModelRequestAuth::Bearer(match std::env::var(env_var) {
             Ok(key) if !key.trim().is_empty() => key,
             _ => store
                 .get_secret(account)?
@@ -95,8 +98,18 @@ pub(super) async fn fetch(
                     })?;
                 save_kimi_tokens(store, &tokens)?;
             }
-            Some(tokens.access_token)
+            ModelRequestAuth::Bearer(tokens.access_token)
         }
+        ProviderAuthKind::OllamaDeviceKey {
+            missing_message, ..
+        } => ModelRequestAuth::OllamaDevice(OllamaDeviceKey::load_default().map_err(|error| {
+            match error {
+                crate::auth::ollama_device::OllamaDeviceError::MissingKey(_) => {
+                    crate::model::registry::missing_credential_error(missing_message)
+                }
+                error => ModelError::InvalidResponse(error.to_string()),
+            }
+        })?),
         _ => return Err(ModelError::UnsupportedProvider(descriptor.name.into())),
     };
     let models_url = Url::parse(&format!(
@@ -104,10 +117,17 @@ pub(super) async fn fetch(
         api_base.as_str().trim_end_matches('/')
     ))
     .map_err(|error| ModelError::InvalidResponse(format!("invalid models URL: {error}")))?;
-    let request = client.get(models_url);
-    let request = match token {
-        Some(token) => request.bearer_auth(token),
-        None => request,
+    let request = match auth {
+        ModelRequestAuth::None => client.get(models_url),
+        ModelRequestAuth::Bearer(token) => client.get(models_url).bearer_auth(token),
+        ModelRequestAuth::OllamaDevice(key) => {
+            let (url, authorization) = key
+                .authorize_request("GET", models_url)
+                .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
+            client
+                .get(url)
+                .header(reqwest::header::AUTHORIZATION, authorization)
+        }
     };
     let response = http_error::error_for_status(request.send().await?).await?;
     let response: OpenAiModelsResponse = response.json().await.map_err(|error| {
@@ -138,4 +158,10 @@ pub(super) async fn fetch(
     models.sort_by(|left, right| left.model.cmp(&right.model));
     models.dedup_by(|left, right| left.model == right.model);
     Ok(models)
+}
+
+enum ModelRequestAuth {
+    None,
+    Bearer(String),
+    OllamaDevice(OllamaDeviceKey),
 }

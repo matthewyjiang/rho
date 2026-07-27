@@ -373,6 +373,9 @@ pub fn provider_has_credentials(
             .get_secret(account)?
             .is_some_and(|key| !key.trim().is_empty())),
         Some(ProviderAuthKind::KimiOAuth { .. }) => Ok(load_kimi_tokens(store)?.is_some()),
+        Some(ProviderAuthKind::OllamaDeviceKey { .. }) => {
+            crate::auth::ollama_device::ollama_device_credentials_available(store)
+        }
         None => Ok(false),
     }
 }

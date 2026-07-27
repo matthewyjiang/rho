@@ -29,6 +29,8 @@ sha2 = "0.10"
 base64 = "0.22"
 url = "2"
 webbrowser = "1"
+ssh-key = { version = "0.6", features = ["ed25519", "std", "alloc"] }
+signature = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

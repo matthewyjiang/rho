@@ -55,7 +55,8 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
                 | ProviderAuthKind::GithubCopilotDevice { .. }
                 | ProviderAuthKind::XaiOAuth { .. }
                 | ProviderAuthKind::BearerCredential { .. }
-                | ProviderAuthKind::KimiOAuth { .. } => return None,
+                | ProviderAuthKind::KimiOAuth { .. }
+                | ProviderAuthKind::OllamaDeviceKey { .. } => return None,
             },
         },
         RuntimeProviderId::Anthropic => ProviderRuntime::Anthropic,
@@ -85,7 +86,8 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
                 | ProviderAuthKind::CodexOAuth { .. }
                 | ProviderAuthKind::GithubCopilotDevice { .. }
                 | ProviderAuthKind::BearerCredential { .. }
-                | ProviderAuthKind::KimiOAuth { .. } => return None,
+                | ProviderAuthKind::KimiOAuth { .. }
+                | ProviderAuthKind::OllamaDeviceKey { .. } => return None,
             },
         },
     })

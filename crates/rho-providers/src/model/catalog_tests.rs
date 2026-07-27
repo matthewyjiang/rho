@@ -227,6 +227,7 @@ fn login_targets_use_provider_names() {
     assert!(providers.contains(&("openrouter", "openrouter-api-key")));
     assert!(providers.contains(&("openrouter-oauth", "openrouter-oauth")));
     assert!(providers.contains(&("ollama-cloud", "ollama-cloud-api-key")));
+    assert!(providers.contains(&("ollama-cloud-device", "ollama-cloud-device")));
     assert!(providers.contains(&("kimi-code", "kimi-oauth")));
     assert!(providers.contains(&("xai", "xai-api-key")));
     assert!(providers.contains(&("xai-oauth", "xai-oauth")));
@@ -235,6 +236,7 @@ fn login_targets_use_provider_names() {
     assert_eq!(google.methods[0].target.provider, "google");
     assert!(login_target_for_provider("ollama").is_none());
     assert!(login_target_for_provider("ollama-cloud").is_some());
+    assert!(login_target_for_provider("ollama-cloud-device").is_some());
     assert!(login_target_for_provider("api-key").is_none());
     assert!(login_target_for_provider("codex").is_none());
     assert!(login_target_for_provider("anthropic-api-key").is_none());

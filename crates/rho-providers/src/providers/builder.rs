@@ -268,6 +268,10 @@ fn compatible_auth_matches_kind(auth: &CompatibleAuth, kind: ProviderAuthKind) -
                 CompatibleAuth::KimiOAuth(_),
                 ProviderAuthKind::KimiOAuth { .. }
             )
+            | (
+                CompatibleAuth::OllamaDevice(_),
+                ProviderAuthKind::OllamaDeviceKey { .. }
+            )
     )
 }
 

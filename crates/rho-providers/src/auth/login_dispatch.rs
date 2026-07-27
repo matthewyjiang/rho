@@ -1,7 +1,9 @@
 use std::{future::Future, pin::Pin};
 
 use crate::{
-    auth::{codex_oauth, github_copilot_device, kimi_oauth, openrouter_oauth, xai_oauth},
+    auth::{
+        codex_oauth, github_copilot_device, kimi_oauth, ollama_device, openrouter_oauth, xai_oauth,
+    },
     credentials::{
         self, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens, KimiTokens,
         XaiTokens,
@@ -79,6 +81,9 @@ impl CompletedAuthentication {
                 credentials::save_openrouter_oauth_key(store, &key)
             }
             OAuthCredentials::Xai(tokens) => credentials::save_xai_tokens(store, &tokens),
+            OAuthCredentials::OllamaDevice(session) => {
+                ollama_device::save_ollama_device_session(store, &session)
+            }
         }
     }
 }
@@ -95,6 +100,7 @@ enum OAuthCredentials {
     Kimi(KimiTokens),
     OpenRouter(String),
     Xai(XaiTokens),
+    OllamaDevice(ollama_device::OllamaDeviceSession),
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -121,6 +127,9 @@ impl ProviderAuthentication {
             ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::OAuth {
                 provider_label: "xAI",
             },
+            ProviderAuthKind::OllamaDeviceKey { .. } => AuthenticationMethod::OAuth {
+                provider_label: "Ollama Cloud",
+            },
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
                 BearerCredentialAcquisition::BrowserOAuth(flow) => AuthenticationMethod::OAuth {
                     provider_label: flow.provider_label(),
@@ -137,6 +146,7 @@ impl ProviderAuthentication {
                     | ProviderAuthKind::GithubCopilotDevice { .. }
                     | ProviderAuthKind::KimiOAuth { .. }
                     | ProviderAuthKind::XaiOAuth { .. }
+                    | ProviderAuthKind::OllamaDeviceKey { .. }
             )
         })
     }
@@ -155,6 +165,7 @@ impl ProviderAuthentication {
             ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await,
             ProviderAuthKind::KimiOAuth { .. } => start_kimi().await,
             ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await,
+            ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device(mode).await,
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
                 BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter) => {
                     start_openrouter(mode).await
@@ -333,6 +344,34 @@ async fn start_xai(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: OAuthCredentials::Xai(tokens),
+                })
+                .map_err(flow_error)
+        }),
+    })
+}
+
+async fn start_ollama_device(mode: OAuthMode) -> Result<OAuthLogin, AuthenticationError> {
+    let open_browser = mode == OAuthMode::Browser;
+    let login = ollama_device::start_ollama_device_login(open_browser)
+        .await
+        .map_err(flow_error)?;
+    let user_action = if open_browser {
+        OAuthUserAction::BrowserOpened
+    } else {
+        OAuthUserAction::DeviceCode {
+            verification_uri: login.connect_url.clone(),
+            user_code: "approve this device".into(),
+            verification_uri_complete: Some(login.connect_url.clone()),
+        }
+    };
+    Ok(OAuthLogin {
+        provider_label: "Ollama Cloud",
+        user_action,
+        completion: Box::pin(async move {
+            ollama_device::complete_ollama_device_login(login)
+                .await
+                .map(|session| CompletedAuthentication {
+                    credentials: OAuthCredentials::OllamaDevice(session),
                 })
                 .map_err(flow_error)
         }),

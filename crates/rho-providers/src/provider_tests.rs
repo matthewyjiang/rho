@@ -264,6 +264,7 @@ fn auth_profiles_are_derived_from_provider_table() {
         .collect();
     assert_eq!(super::auth_profiles(), expected.as_slice());
     assert!(expected.contains(&"ollama-cloud-api-key"));
+    assert!(expected.contains(&"ollama-cloud-device"));
     assert!(!expected.contains(&"none"));
 }
 
@@ -279,6 +280,20 @@ fn ollama_cloud_missing_credentials_come_from_descriptor_message() {
     assert_eq!(error.to_string(), message);
     assert!(message.contains("/login ollama-cloud"));
     assert!(message.contains("OLLAMA_API_KEY"));
+}
+
+#[test]
+fn ollama_cloud_device_missing_credentials_come_from_descriptor_message() {
+    use super::ProviderId;
+
+    let message = super::provider_descriptor_by_id(ProviderId::OllamaCloudDevice)
+        .auth_kind
+        .missing_message()
+        .expect("ollama-cloud-device requires credentials");
+    let error = crate::model::registry::missing_credentials_error("ollama-cloud-device");
+    assert_eq!(error.to_string(), message);
+    assert!(message.contains("/login ollama-cloud-device"));
+    assert!(message.contains("ollama signin"));
 }
 
 #[test]

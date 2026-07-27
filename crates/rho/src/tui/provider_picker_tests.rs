@@ -28,6 +28,16 @@ fn login_picker_lists_ollama_cloud() {
         .expect("Ollama Cloud should be available for login");
 
     assert_eq!(ollama_cloud.label, "Ollama Cloud");
+
+    let methods = login_method_picker(
+        catalog::login_group("ollama-cloud").expect("Ollama Cloud login group"),
+    );
+    let values = methods
+        .items
+        .iter()
+        .map(|item| item.value.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(values, vec!["ollama-cloud", "ollama-cloud-device"]);
 }
 
 #[test]

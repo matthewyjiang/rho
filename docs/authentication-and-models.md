@@ -22,6 +22,7 @@ Rho's implemented providers are:
 | `openrouter-oauth` | `openrouter-oauth` | [OpenRouter](/providers/openrouter) |
 | `ollama` | None | [Ollama](/providers/ollama) |
 | `ollama-cloud` | `ollama-cloud-api-key` | [Ollama Cloud](/providers/ollama-cloud) |
+| `ollama-cloud-device` | `ollama-cloud-device` | [Ollama Cloud](/providers/ollama-cloud) |
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 

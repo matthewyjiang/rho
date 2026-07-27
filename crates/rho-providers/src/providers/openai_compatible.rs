@@ -11,6 +11,7 @@ pub(crate) use dialect::OpenAiCompatibleDialect;
 
 use crate::{
     auth::kimi_token::KimiAuthManager,
+    auth::ollama_device::OllamaDeviceKey,
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{
         convert_openai_response, convert_streamed_response, handle_openai_stream_line,
@@ -24,6 +25,7 @@ pub enum CompatibleAuth {
     None,
     ApiKey(String),
     KimiOAuth(KimiAuthManager),
+    OllamaDevice(OllamaDeviceKey),
 }
 
 pub(crate) struct OpenAiCompatibleProvider {
@@ -205,58 +207,70 @@ impl OpenAiCompatibleProvider {
                       + Send),
         >,
     ) -> Result<reqwest::Response, ModelError> {
-        let token = match &self.auth {
-            CompatibleAuth::None => return self.send_request(body, None).await,
-            CompatibleAuth::ApiKey(key) => key.clone(),
-            CompatibleAuth::KimiOAuth(auth) => auth.access_token().await?,
-        };
-        let response = self.send_with_token(body, &token).await?;
-        if response.status() != StatusCode::UNAUTHORIZED {
-            return Ok(response);
+        match &self.auth {
+            CompatibleAuth::None => self.send_request(body, RequestAuth::None).await,
+            CompatibleAuth::ApiKey(key) => self.send_request(body, RequestAuth::Bearer(key)).await,
+            CompatibleAuth::KimiOAuth(auth) => {
+                let token = auth.access_token().await?;
+                let response = self.send_request(body, RequestAuth::Bearer(&token)).await?;
+                if response.status() != StatusCode::UNAUTHORIZED {
+                    return Ok(response);
+                }
+                let Some(refreshed) = auth.force_refresh(&token).await? else {
+                    return Ok(response);
+                };
+                if let Some(on_request_event) = on_request_event {
+                    on_request_event(
+                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                            kind: rho_sdk::ProviderErrorKind::Authentication,
+                            usage: ModelUsage::default(),
+                        },
+                    )?;
+                }
+                self.send_request(body, RequestAuth::Bearer(&refreshed))
+                    .await
+            }
+            CompatibleAuth::OllamaDevice(key) => {
+                self.send_request(body, RequestAuth::OllamaDevice(key))
+                    .await
+            }
         }
-        let CompatibleAuth::KimiOAuth(auth) = &self.auth else {
-            return Ok(response);
-        };
-        let Some(refreshed) = auth.force_refresh(&token).await? else {
-            return Ok(response);
-        };
-        if let Some(on_request_event) = on_request_event {
-            on_request_event(
-                rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                    kind: rho_sdk::ProviderErrorKind::Authentication,
-                    usage: ModelUsage::default(),
-                },
-            )?;
-        }
-        self.send_with_token(body, &refreshed).await
-    }
-
-    async fn send_with_token(
-        &self,
-        body: &ChatRequest,
-        token: &str,
-    ) -> Result<reqwest::Response, ModelError> {
-        self.send_request(body, Some(token)).await
     }
 
     async fn send_request(
         &self,
         body: &ChatRequest,
-        bearer_token: Option<&str>,
+        auth: RequestAuth<'_>,
     ) -> Result<reqwest::Response, ModelError> {
-        let request = self
-            .client
-            .post(format!(
-                "{}/chat/completions",
-                self.api_base.trim_end_matches('/')
-            ))
-            .json(body);
-        let request = match bearer_token {
-            Some(token) => request.bearer_auth(token),
-            None => request,
-        };
+        let endpoint = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));
+        let mut request = self.client.post(endpoint.as_str()).json(body);
+        match auth {
+            RequestAuth::None => {}
+            RequestAuth::Bearer(token) => {
+                request = request.bearer_auth(token);
+            }
+            RequestAuth::OllamaDevice(key) => {
+                let url = url::Url::parse(&endpoint).map_err(|error| {
+                    ModelError::InvalidResponse(format!("invalid chat completions URL: {error}"))
+                })?;
+                let (url, authorization) = key
+                    .authorize_request("POST", url)
+                    .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
+                request = self
+                    .client
+                    .post(url)
+                    .header(reqwest::header::AUTHORIZATION, authorization)
+                    .json(body);
+            }
+        }
         Ok(request.send().await?)
     }
+}
+
+enum RequestAuth<'a> {
+    None,
+    Bearer(&'a str),
+    OllamaDevice(&'a OllamaDeviceKey),
 }
 
 crate::impl_sdk_model_provider!(OpenAiCompatibleProvider);

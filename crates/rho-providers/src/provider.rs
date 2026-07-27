@@ -12,6 +12,7 @@ pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
 pub const OLLAMA_CLOUD_API_KEY_ACCOUNT: &str = "provider:ollama-cloud:api-key";
+pub const OLLAMA_CLOUD_DEVICE_SESSION_ACCOUNT: &str = "provider:ollama-cloud-device:session";
 pub const POOLSIDE_API_KEY_ACCOUNT: &str = "provider:poolside:api-key";
 pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
 pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
@@ -21,6 +22,7 @@ pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 pub enum ProviderId {
     Ollama,
     OllamaCloud,
+    OllamaCloudDevice,
     OpenAi,
     OpenAiCodex,
     Anthropic,
@@ -149,6 +151,10 @@ pub enum ProviderAuthKind {
         account: &'static str,
         missing_message: &'static str,
     },
+    OllamaDeviceKey {
+        account: &'static str,
+        missing_message: &'static str,
+    },
 }
 
 impl ProviderDescriptor {
@@ -222,7 +228,7 @@ impl ProviderDescriptor {
 impl ProviderAuthKind {
     pub fn env_var(self) -> Option<&'static str> {
         match self {
-            Self::None => None,
+            Self::None | Self::OllamaDeviceKey { .. } => None,
             Self::ApiKey { env_var, .. }
             | Self::CodexOAuth { env_var, .. }
             | Self::GithubCopilotDevice { env_var, .. }
@@ -240,7 +246,8 @@ impl ProviderAuthKind {
             | Self::GithubCopilotDevice { account, .. }
             | Self::XaiOAuth { account, .. }
             | Self::BearerCredential { account, .. }
-            | Self::KimiOAuth { account, .. } => Some(account),
+            | Self::KimiOAuth { account, .. }
+            | Self::OllamaDeviceKey { account, .. } => Some(account),
         }
     }
 
@@ -264,6 +271,9 @@ impl ProviderAuthKind {
                 missing_message, ..
             }
             | Self::KimiOAuth {
+                missing_message, ..
+            }
+            | Self::OllamaDeviceKey {
                 missing_message, ..
             } => Some(missing_message),
         }
@@ -313,6 +323,23 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             account: OLLAMA_CLOUD_API_KEY_ACCOUNT,
             entry_label: "Ollama Cloud API key",
             missing_message: "missing Ollama Cloud API key; run /login ollama-cloud in the TUI or set OLLAMA_API_KEY as a CI/dev override",
+        },
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
+        metadata_upstream: "ollama",
+        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+    },
+    ProviderDescriptor {
+        id: ProviderId::OllamaCloudDevice,
+        runtime_id: RuntimeProviderId::OllamaCloud,
+        name: "ollama-cloud-device",
+        display_name: "Ollama Cloud",
+        auth: "ollama-cloud-device",
+        login_label: "Ollama Cloud device key",
+        auth_kind: ProviderAuthKind::OllamaDeviceKey {
+            account: OLLAMA_CLOUD_DEVICE_SESSION_ACCOUNT,
+            missing_message: "missing Ollama Cloud device key; run /login ollama-cloud-device in the TUI, or sign in with `ollama signin` so ~/.ollama/id_ed25519 is registered",
         },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),

@@ -101,7 +101,10 @@ pub fn login_groups() -> Vec<LoginGroup> {
         (
             "ollama-cloud",
             "Ollama Cloud",
-            &[("API Key", "ollama-cloud")][..],
+            &[
+                ("API Key", "ollama-cloud"),
+                ("Device Key", "ollama-cloud-device"),
+            ][..],
         ),
         (
             "openai",
