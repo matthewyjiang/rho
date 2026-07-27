@@ -18,7 +18,7 @@ use super::{
 use super::{
     highlight_selection,
     message_history::{recovered_history_tail, transcript_entries_from_messages},
-    picker_overlay::{apply_overlay_panel_background, picker_overlay_frame},
+    picker_overlay::picker_overlay_frame,
     render::{pad_display_line, padded_content_width},
     render_copy_notice, session_header_lines, styled_line, tool_entry_lines,
     tool_output_ui::is_tool_entry,
@@ -272,10 +272,9 @@ impl App {
             picker_overlay_frame(picker, area).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
                 frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Theme::overlay_panel()),
+                    Paragraph::new(overlay.lines).style(Style::default()),
                     overlay.outer,
                 );
-                apply_overlay_panel_background(frame.buffer_mut(), overlay.outer);
                 overlay.cursor
             })
         } else {

@@ -9,8 +9,6 @@ use super::markdown::HeadingLevel;
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const TOOL_BACKGROUND_ALPHA: f32 = 0.16;
-/// Slightly stronger than user/tool chips so popup panels read as elevated surfaces.
-const OVERLAY_BACKGROUND_ALPHA: f32 = 0.18;
 
 static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
 
@@ -127,7 +125,6 @@ struct Palette {
     skill_tool_background: BlockColor,
     web_tool_background: BlockColor,
     questionnaire_tool_background: BlockColor,
-    overlay_background: BlockColor,
 }
 
 impl Palette {
@@ -182,12 +179,6 @@ impl Palette {
                 TOOL_BACKGROUND_ALPHA,
                 BlockColor::from_rgb(Rgb::new(128, 128, 0)),
             ),
-            overlay_background: blended_or_fallback(
-                terminal,
-                AnsiColor::Gray,
-                OVERLAY_BACKGROUND_ALPHA,
-                BlockColor::from_color(Color::DarkGray),
-            ),
         }
     }
 }
@@ -227,15 +218,6 @@ impl Theme {
 
     pub(super) fn activity_rail() -> Style {
         let background = Palette::current().neutral_tool_background;
-        Style::reset()
-            .fg(block_foreground(background.rgb))
-            .bg(background.color)
-    }
-
-    /// Solid surface for centered picker popups. Separation comes from the
-    /// filled background rather than box-drawing borders.
-    pub(super) fn overlay_panel() -> Style {
-        let background = Palette::current().overlay_background;
         Style::reset()
             .fg(block_foreground(background.rgb))
             .bg(background.color)
