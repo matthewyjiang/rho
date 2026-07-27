@@ -273,10 +273,14 @@ fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
             nav_viewport_rows: body_rows,
         }
     } else if inner_width < TWO_COLUMN_MIN_INNER_WIDTH {
-        let detail_viewport_rows = (body_rows.saturating_mul(3) / 5)
-            .max(2)
-            .min(body_rows.saturating_sub(1));
-        let nav_viewport_rows = body_rows.saturating_sub(detail_viewport_rows);
+        // One body row is the horizontal rule between detail and nav when there
+        // is room for both panes plus the separator.
+        let separator_rows = usize::from(body_rows > 2);
+        let usable_rows = body_rows.saturating_sub(separator_rows).max(1);
+        let detail_viewport_rows = (usable_rows.saturating_mul(3) / 5)
+            .max(2.min(usable_rows.saturating_sub(1)))
+            .min(usable_rows.saturating_sub(1));
+        let nav_viewport_rows = usable_rows.saturating_sub(detail_viewport_rows);
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::Stacked,
             nav_width: inner_width,
@@ -350,19 +354,50 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
         pane_header_line(layout, &content.chrome),
     ));
 
-    let body = match layout.panes {
-        OverlayPanes::NavOnly { .. } => nav_only_body(layout, &content),
+    let body_sections = match layout.panes {
+        OverlayPanes::NavOnly { .. } => vec![nav_only_body(layout, &content)],
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::SideBySide,
             ..
-        } => side_by_side_body(layout, &content),
+        } => vec![side_by_side_body(layout, &content)],
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::Stacked,
+            detail_viewport_rows: detail_rows_budget,
+            nav_viewport_rows: nav_rows_budget,
             ..
-        } => stacked_body(layout, &content),
+        } => {
+            let detail_rows = detail_viewport_rows(
+                content.detail,
+                content.detail_badge,
+                content.detail_scroll,
+                layout.inner_width,
+                detail_rows_budget,
+            );
+            let nav_rows = nav_item_rows(
+                content.items,
+                content.matching,
+                content.selected,
+                layout.nav_width(),
+                nav_rows_budget,
+                content.show_nav_badges,
+            );
+            if detail_rows_budget > 0 && nav_rows_budget > 0 {
+                vec![detail_rows, nav_rows]
+            } else if detail_rows_budget > 0 {
+                vec![detail_rows]
+            } else {
+                vec![nav_rows]
+            }
+        }
     };
-    for row in body {
-        lines.push(content_row(layout.inner_width, row));
+    for (index, section) in body_sections.into_iter().enumerate() {
+        if index > 0 {
+            // Stacked detail/nav split: join the side borders with ├─┤.
+            lines.push(horizontal_rule(layout.outer.width as usize, None, '─'));
+        }
+        for row in section {
+            lines.push(content_row(layout.inner_width, row));
+        }
     }
 
     while lines.len() + 3 < layout.outer.height as usize {
@@ -425,40 +460,6 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
         spans.push(Span::styled(SEPARATOR, Theme::dim()));
         spans.extend(right.spans);
         rows.push(Line::from(spans));
-    }
-    rows
-}
-
-fn stacked_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
-    let OverlayPanes::NavAndDetail {
-        nav_width,
-        detail_width,
-        detail_viewport_rows: detail_rows_budget,
-        nav_viewport_rows,
-        ..
-    } = layout.panes
-    else {
-        return Vec::new();
-    };
-    let mut rows = Vec::with_capacity(layout.body_rows);
-    rows.extend(detail_viewport_rows(
-        content.detail,
-        content.detail_badge,
-        content.detail_scroll,
-        detail_width,
-        detail_rows_budget,
-    ));
-    rows.extend(nav_item_rows(
-        content.items,
-        content.matching,
-        content.selected,
-        nav_width,
-        nav_viewport_rows,
-        content.show_nav_badges,
-    ));
-    rows.truncate(layout.body_rows);
-    while rows.len() < layout.body_rows {
-        rows.push(Line::raw(""));
     }
     rows
 }

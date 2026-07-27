@@ -179,7 +179,8 @@ fn tiny_stacked_layout_keeps_viewports_within_the_body() {
     };
 
     assert_eq!(orientation, OverlayOrientation::Stacked);
-    assert!(detail_viewport_rows + nav_viewport_rows <= layout.body_rows);
+    let separator_rows = usize::from(layout.body_rows > 2);
+    assert!(detail_viewport_rows + nav_viewport_rows + separator_rows <= layout.body_rows);
     assert_eq!(nav_viewport_rows, 1);
 }
 
@@ -328,6 +329,16 @@ fn stacked_layout_places_detail_above_navigation() {
     assert_eq!(orientation, OverlayOrientation::Stacked);
     assert!(!text_lines.iter().any(|line| line.contains(" │ ")));
     assert!(detail_row < selected_row, "{text_lines:#?}");
+    let has_stacked_separator = text_lines.iter().enumerate().any(|(index, line)| {
+        index > detail_row
+            && index < selected_row
+            && line.starts_with('├')
+            && line.chars().all(|ch| matches!(ch, '├' | '─' | '┤'))
+    });
+    assert!(
+        has_stacked_separator,
+        "stacked layout should draw a rule between detail and nav: {text_lines:#?}"
+    );
 }
 
 #[test]
