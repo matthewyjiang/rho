@@ -145,6 +145,39 @@ fn narrow_picker_rows_do_not_exceed_width() {
 }
 
 #[test]
+fn list_picker_value_badges_use_available_width() {
+    let badge = "bash shell · search disabled";
+    let picker = UiPicker::new(
+        "Config · saves automatically",
+        "type to search settings",
+        vec![PickerItem {
+            section: None,
+            label: "Tools".into(),
+            detail: Some("Inline shell and web search.".into()),
+            preview: None,
+            badge: Some(crate::tui::PickerBadge {
+                text: badge.into(),
+                tone: PickerBadgeTone::Selected,
+            }),
+            value: "config_category:tools".into(),
+        }],
+        crate::tui::PickerAction::Config,
+    );
+
+    let row = picker_lines(&picker, 100)
+        .into_iter()
+        .map(|line| line_text(&line))
+        .find(|line| line.contains("Tools"))
+        .expect("tools row");
+
+    assert!(
+        row.contains(badge),
+        "badge should not truncate while free columns remain: {row}"
+    );
+    assert!(!row.contains('…'), "{row}");
+}
+
+#[test]
 fn list_picker_height_stays_stable_when_selected_detail_is_missing() {
     let mut picker = UiPicker::new(
         "models",

@@ -383,7 +383,13 @@ impl UiPicker {
 
     pub(super) fn action_footer(&self) -> String {
         let escape = if self.has_parent() { "back" } else { "close" };
-        format!("Enter {} · Esc {escape}", self.confirm_action_label())
+        let confirm = self.confirm_action_label();
+        // Help and other dismiss overlays use Enter and Esc for the same exit.
+        if confirm == escape {
+            format!("Enter/Esc {confirm}")
+        } else {
+            format!("Enter {confirm} · Esc {escape}")
+        }
     }
 
     pub(super) fn with_confirm_verb(mut self, verb: impl Into<String>) -> Self {
