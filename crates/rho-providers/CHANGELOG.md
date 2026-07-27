@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.10.1...rho-providers-v0.10.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* **providers:** disable parallel tools on codex responses lite ([#583](https://github.com/matthewyjiang/rho/issues/583)) ([84ca3f5](https://github.com/matthewyjiang/rho/commit/84ca3f5ff0e6d535f40ebf92594e5c60df70a711))
+* **sdk:** recover failed 1.17.1 release packaging ([#587](https://github.com/matthewyjiang/rho/issues/587)) ([224189e](https://github.com/matthewyjiang/rho/commit/224189e2d4fc2ec5f23cb88d80065d82c91ef40b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.10.1 to 1.10.2
+
 ## [0.10.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.10.0...rho-providers-v0.10.1) (2026-07-26)
 
 
