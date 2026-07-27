@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.10.2...rho-providers-v0.11.0) (2026-07-27)
+
+
+### Features
+
+* **tui:** unify tool transcript cards as Call + Children ([#586](https://github.com/matthewyjiang/rho/issues/586)) ([ce52cdd](https://github.com/matthewyjiang/rho/commit/ce52cddb6dbf0ac1b2878b6f3bd468a87547f8fa))
+
 ## [0.10.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.10.1...rho-providers-v0.10.2) (2026-07-27)
 
 

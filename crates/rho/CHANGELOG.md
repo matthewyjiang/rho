@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.18.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.17.1...rho-coding-agent-v1.18.0) (2026-07-27)
+
+
+### Features
+
+* **tui:** unify tool transcript cards as Call + Children ([#586](https://github.com/matthewyjiang/rho/issues/586)) ([ce52cdd](https://github.com/matthewyjiang/rho/commit/ce52cddb6dbf0ac1b2878b6f3bd468a87547f8fa))
+
+
+### Bug Fixes
+
+* **tui:** smooth streamed text and hold bare tool previews ([#590](https://github.com/matthewyjiang/rho/issues/590)) ([591d271](https://github.com/matthewyjiang/rho/commit/591d2715b04a4e836648b2e7a4db1dc41cf5119b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.10.2 to 0.11.0
+
 ## [1.17.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.17.0...rho-coding-agent-v1.17.1) (2026-07-27)
 
 
