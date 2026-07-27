@@ -6,6 +6,7 @@
 ### Bug Fixes
 
 * **tools:** pin fetch connections to SSRF-vetted addresses ([#572](https://github.com/matthewyjiang/rho/issues/572)) ([45cdd40](https://github.com/matthewyjiang/rho/commit/45cdd40b144fb5f5045bf28bce0c712e949750f1)), closes [#525](https://github.com/matthewyjiang/rho/issues/525)
+* **tui:** lighten overlay chrome and fix picker polish ([#581](https://github.com/matthewyjiang/rho/issues/581)) ([1ee1cdf](https://github.com/matthewyjiang/rho/commit/1ee1cdfcfbe72c6d74436d4a4ee356af2c6cf151))
 
 
 ### Dependencies
