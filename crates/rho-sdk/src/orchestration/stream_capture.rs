@@ -169,6 +169,10 @@ pub(super) fn capture_provider_event(
                 partial.name.clone_from(&name);
             }
             partial.arguments.push_str(&arguments);
+            // Later argument deltas often omit identity. Keep emitting the known
+            // id/name so live previews can bind one slot before ToolProposed.
+            let id = id.or_else(|| partial.id.clone());
+            let name = name.or_else(|| partial.name.clone());
             upsert_captured_tool_call(capture, index);
             RunEvent::ToolCallUpdated {
                 index,

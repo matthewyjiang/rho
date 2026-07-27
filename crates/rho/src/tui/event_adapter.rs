@@ -103,6 +103,12 @@ pub(crate) struct SdkEventAdapter {
     attachment_preview_keys: std::collections::BTreeMap<usize, String>,
     /// call_id -> attachment journal key so later events reuse the preview slot.
     attachment_call_keys: std::collections::BTreeMap<String, String>,
+    /// Provider output_index -> call id seen on any stream update.
+    ///
+    /// Identity can arrive on an empty announcement that the presenter holds
+    /// back. Later argument deltas omit the id; keep the mapping so the first
+    /// rendered preview still binds the call-id slot ToolProposed will reuse.
+    stream_call_ids: std::collections::BTreeMap<usize, rho_sdk::ToolCallId>,
 }
 
 impl SdkEventAdapter {
@@ -112,6 +118,7 @@ impl SdkEventAdapter {
             compaction_open: false,
             attachment_preview_keys: std::collections::BTreeMap::new(),
             attachment_call_keys: std::collections::BTreeMap::new(),
+            stream_call_ids: std::collections::BTreeMap::new(),
         }
     }
 
@@ -192,6 +199,7 @@ impl SdkEventAdapter {
             }
             RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
+                self.stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
             }
             RunEvent::SteeringApplied { ids } => {
@@ -210,6 +218,12 @@ impl SdkEventAdapter {
                 arguments_delta,
             } => {
                 let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
+                if let Some(call_id) = call_id.clone() {
+                    self.stream_call_ids.insert(index, call_id);
+                }
+                // Prefer the id on this event; fall back to any earlier binding
+                // for the same provider index (empty identity announcements).
+                let call_id = call_id.or_else(|| self.stream_call_ids.get(&index).cloned());
                 self.presenter()
                     .preview(index, name, &arguments_delta)
                     .map_or_else(Vec::new, |presented| {
@@ -278,6 +292,7 @@ impl SdkEventAdapter {
             RunEvent::ProviderActivity { .. } => Vec::new(),
             RunEvent::ProviderStreamReset { .. } => {
                 self.presenter().step_started();
+                self.stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset)]
             }
             RunEvent::ProviderContextUpdated { .. } => Vec::new(),
