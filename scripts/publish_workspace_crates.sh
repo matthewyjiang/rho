@@ -160,17 +160,28 @@ publish_crate() {
   shift 2
   local validation_flags=("$@")
 
+  # Exact crate versions are immutable on crates.io. Skip packaging work when
+  # the version is already public so a later app/providers release cannot fail
+  # by re-verifying drifted workspace sources under an already-shipped version.
+  if crate_already_published "$name" "$version"; then
+    if [[ "$dry_run" == true ]]; then
+      echo "${name}@${version} already published; dry-run reuses existing crate"
+    else
+      echo "${name}@${version} already published; reusing existing crate"
+    fi
+    return 0
+  fi
+
   echo "Validating ${name} ${version} at ${sha}"
   cargo publish --dry-run --locked -p "$name" "${validation_flags[@]}"
   if [[ "$dry_run" == true ]]; then
     echo "Dry-run complete for ${name}"
-  elif crate_already_published "$name" "$version"; then
-    echo "${name}@${version} already published; reusing existing crate"
-  else
-    echo "Publishing ${name} ${version}"
-    cargo publish "${publish_flags[@]}" -p "$name"
-    wait_for_crate "$name" "$version"
+    return 0
   fi
+
+  echo "Publishing ${name} ${version}"
+  cargo publish "${publish_flags[@]}" -p "$name"
+  wait_for_crate "$name" "$version"
 }
 
 if [[ "$publish_tools" == true ]]; then
