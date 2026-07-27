@@ -331,23 +331,20 @@ fn streams_partial_codex_tool_call_arguments() {
     )
     .unwrap();
 
-    assert!(matches!(
-        events.as_slice(),
-        [
-            ModelEvent::ToolCallDelta {
+    // The empty announcement publishes nothing on its own; its identity travels
+    // with the first argument text so consumers never show an empty call.
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ModelEvent::ToolCallDelta {
                 index: 0,
                 id: Some(id),
                 name: Some(name),
                 arguments,
-            },
-            ModelEvent::ToolCallDelta {
-                index: 0,
-                id: None,
-                name: None,
-                arguments: delta,
-            }
-        ] if id == "call_1" && name == "read_file" && arguments.is_empty() && delta == "{\"path\":"
-    ));
+            }] if id == "call_1" && name == "read_file" && arguments == "{\"path\":"
+        ),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -375,16 +372,12 @@ fn completed_tool_call_item_publishes_arguments_that_never_streamed() {
     assert!(
         matches!(
             events.as_slice(),
-            [
-                ModelEvent::ToolCallDelta { arguments, .. },
-                ModelEvent::ToolCallDelta {
-                    index: 0,
-                    id: Some(id),
-                    name: Some(name),
-                    arguments: completed,
-                }
-            ] if arguments.is_empty()
-                && id == "call_1"
+            [ModelEvent::ToolCallDelta {
+                index: 0,
+                id: Some(id),
+                name: Some(name),
+                arguments: completed,
+            }] if id == "call_1"
                 && name == "read_file"
                 && completed == r#"{"path":"src/main.rs"}"#
         ),
@@ -423,6 +416,36 @@ fn completed_tool_call_arguments_are_published_exactly_once() {
         })
         .collect::<String>();
     assert_eq!(streamed, r#"{"path":"src/main.rs"}"#);
+}
+
+#[test]
+fn tool_call_without_any_arguments_still_reaches_consumers() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut on_event = |event| {
+        events.push(event);
+        Ok(())
+    };
+
+    for line in [
+        r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"list_dir","arguments":""}}"#,
+        r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"list_dir"}}"#,
+    ] {
+        handle_codex_sse_line(line, &mut state, &mut Some(&mut on_event)).unwrap();
+    }
+
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ModelEvent::ToolCallDelta {
+                index: 0,
+                id: Some(id),
+                name: Some(name),
+                arguments,
+            }] if id == "call_1" && name == "list_dir" && arguments.is_empty()
+        ),
+        "{events:?}"
+    );
 }
 
 #[test]

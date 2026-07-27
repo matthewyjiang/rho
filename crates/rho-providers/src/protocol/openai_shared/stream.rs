@@ -247,9 +247,29 @@ pub(crate) struct CodexSseState {
     /// responses that carry arguments without incremental deltas, while never
     /// re-appending text consumers already hold.
     published_tool_arguments: BTreeMap<usize, String>,
+    /// Tool-call identity announced without argument text, keyed by provider
+    /// output index.
+    ///
+    /// A function call is announced before any of its arguments exist. Sending
+    /// that identity on its own would show an argument-less call for as long as
+    /// it takes the next event to arrive, so it waits here and travels with the
+    /// first argument text instead.
+    announced_tool_calls: BTreeMap<usize, AnnouncedToolCall>,
+}
+
+/// Identity of a function call that has been announced but not yet published.
+#[derive(Default)]
+struct AnnouncedToolCall {
+    id: Option<String>,
+    name: Option<String>,
 }
 
 impl CodexSseState {
+    /// Takes the identity waiting to travel with `index`'s first argument text.
+    fn take_announced_identity(&mut self, index: usize) -> AnnouncedToolCall {
+        self.announced_tool_calls.remove(&index).unwrap_or_default()
+    }
+
     pub(crate) fn into_response(self) -> Result<CodexSseResponse, ModelError> {
         let response_id = self.response_id;
         let mut blocks = Vec::new();
@@ -450,21 +470,29 @@ pub(crate) fn handle_codex_sse_value(
                 .and_then(|arguments| arguments.as_str())
                 .unwrap_or_default()
                 .to_string();
+            let identity = AnnouncedToolCall {
+                id: item
+                    .get("call_id")
+                    .or_else(|| item.get("id"))
+                    .and_then(|id| id.as_str())
+                    .map(str::to_string),
+                name: item
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .map(str::to_string),
+            };
             state
                 .published_tool_arguments
                 .insert(index, arguments.clone());
-            if let Some(on_event) = on_event.as_mut() {
+            // Announcements that carry no arguments hold their identity back so
+            // consumers never render a call before it has anything to show.
+            if arguments.is_empty() {
+                state.announced_tool_calls.insert(index, identity);
+            } else if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::ToolCallDelta {
                     index,
-                    id: item
-                        .get("call_id")
-                        .or_else(|| item.get("id"))
-                        .and_then(|id| id.as_str())
-                        .map(str::to_string),
-                    name: item
-                        .get("name")
-                        .and_then(|name| name.as_str())
-                        .map(str::to_string),
+                    id: identity.id,
+                    name: identity.name,
                     arguments,
                 })?;
             }
@@ -481,11 +509,12 @@ pub(crate) fn handle_codex_sse_value(
             .entry(index)
             .or_default()
             .push_str(&delta);
+        let identity = state.take_announced_identity(index);
         if let Some(on_event) = on_event.as_mut() {
             on_event(ModelEvent::ToolCallDelta {
                 index,
-                id: None,
-                name: None,
+                id: identity.id,
+                name: identity.name,
                 arguments: delta,
             })?;
         }
@@ -499,11 +528,12 @@ pub(crate) fn handle_codex_sse_value(
             .and_then(|arguments| arguments.as_str())
             .unwrap_or_default();
         if let Some(arguments) = unpublished_tool_arguments(state, index, arguments) {
+            let identity = state.take_announced_identity(index);
             if let Some(on_event) = on_event.as_mut() {
                 on_event(ModelEvent::ToolCallDelta {
                     index,
-                    id: None,
-                    name: None,
+                    id: identity.id,
+                    name: identity.name,
                     arguments,
                 })?;
             }
@@ -537,13 +567,18 @@ pub(crate) fn handle_codex_sse_value(
                 .get("arguments")
                 .and_then(|arguments| arguments.as_str())
                 .unwrap_or_default();
-            if let Some(arguments) = unpublished_tool_arguments(state, index, arguments) {
+            let unpublished = unpublished_tool_arguments(state, index, arguments);
+            // A call announced with empty arguments and finished without any
+            // argument text still has to reach consumers, so an unpublished
+            // announcement forces this event even when nothing was added.
+            let announced = state.announced_tool_calls.remove(&index).is_some();
+            if unpublished.is_some() || announced {
                 if let Some(on_event) = on_event.as_mut() {
                     on_event(ModelEvent::ToolCallDelta {
                         index,
                         id: Some(call.id.clone()),
                         name: Some(call.name.clone()),
-                        arguments,
+                        arguments: unpublished.unwrap_or_default(),
                     })?;
                 }
             }
