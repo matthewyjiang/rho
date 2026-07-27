@@ -162,6 +162,31 @@ fn ollama_runtime_uses_standard_dialect_and_local_v1_default() {
     );
 }
 
+#[test]
+fn ollama_cloud_runtime_uses_standard_dialect_and_hosted_v1_default() {
+    assert_eq!(
+        crate::model::registry::provider_runtime("ollama-cloud"),
+        Some(ProviderRuntime::OpenAiCompatible {
+            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Standard,
+            default_api_base: "https://ollama.com/v1",
+        })
+    );
+}
+
+#[test]
+fn explicit_builder_constructs_ollama_cloud_provider() {
+    let options =
+        ProviderBuildOptions::new("ollama-cloud", "kimi-k2.6", ReasoningLevel::Off).unwrap();
+    let credential =
+        ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("explicit-secret".into()));
+
+    let provider = ProviderBuilder::new(options, credential).build().unwrap();
+
+    assert_eq!(provider.identity().provider, "ollama-cloud");
+    assert_eq!(provider.identity().api, "openai-chat-completions");
+    assert_eq!(provider.identity().model, "kimi-k2.6");
+}
+
 #[tokio::test]
 async fn ollama_builder_uses_typed_endpoint_override() {
     use tokio::{

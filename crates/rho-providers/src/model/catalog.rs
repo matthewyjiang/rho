@@ -99,6 +99,11 @@ pub fn login_groups() -> Vec<LoginGroup> {
             &[("API Key", "moonshot"), ("OAuth", "kimi-code")][..],
         ),
         (
+            "ollama-cloud",
+            "Ollama Cloud",
+            &[("API Key", "ollama-cloud")][..],
+        ),
+        (
             "openai",
             "OpenAI",
             &[("API Key", "openai"), ("OAuth", "openai-codex")][..],

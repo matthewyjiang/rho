@@ -401,6 +401,7 @@ fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
                 | ModelError::MissingGoogleApiKey
                 | ModelError::MissingGithubCopilotAuth
                 | ModelError::MissingMoonshotApiKey
+                | ModelError::MissingOllamaCloudApiKey
                 | ModelError::MissingPoolsideApiKey
                 | ModelError::MissingOpenRouterApiKey
                 | ModelError::MissingCredentialProfile(_)

@@ -31,6 +31,8 @@ The runtime registry includes:
 - `github-copilot`
 - `xai` and `xai-oauth`
 - `moonshot`
+- `ollama`
+- `ollama-cloud`
 - `poolside`
 - `openrouter`
 - `kimi-code`

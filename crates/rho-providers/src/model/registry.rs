@@ -5,6 +5,7 @@ use crate::{
 };
 
 pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
+pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthMode {
@@ -41,6 +42,10 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
         RuntimeProviderId::Ollama => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OLLAMA_API_BASE,
+        },
+        RuntimeProviderId::OllamaCloud => ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Standard,
+            default_api_base: OLLAMA_CLOUD_API_BASE,
         },
         RuntimeProviderId::OpenAi => ProviderRuntime::OpenAi {
             auth_mode: match descriptor.auth_kind {
@@ -92,6 +97,7 @@ pub fn missing_credential_error(missing: MissingCredential) -> ModelError {
         MissingCredential::Anthropic => ModelError::MissingAnthropicApiKey,
         MissingCredential::Google => ModelError::MissingGoogleApiKey,
         MissingCredential::Moonshot => ModelError::MissingMoonshotApiKey,
+        MissingCredential::OllamaCloud => ModelError::MissingOllamaCloudApiKey,
         MissingCredential::Poolside => ModelError::MissingPoolsideApiKey,
         MissingCredential::OpenRouter => ModelError::MissingOpenRouterApiKey,
         MissingCredential::Profile(message) => ModelError::MissingCredentialProfile(message),

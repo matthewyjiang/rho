@@ -2,6 +2,8 @@
 
 Rho can use models served by Ollama through its OpenAI-compatible API. Ollama runs locally by default and needs no API key.
 
+For direct hosted access with an API key and no local server, see [Ollama Cloud](/providers/ollama-cloud). If a local Ollama install is signed in with `ollama signin`, cloud models pulled as `*-cloud` still work through this local provider.
+
 ## At a glance
 
 | Setting | Value |

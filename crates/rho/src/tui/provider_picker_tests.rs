@@ -19,6 +19,18 @@ fn login_picker_lists_poolside() {
 }
 
 #[test]
+fn login_picker_lists_ollama_cloud() {
+    let picker = login_group_picker();
+    let ollama_cloud = picker
+        .items
+        .iter()
+        .find(|item| item.value == "ollama-cloud")
+        .expect("Ollama Cloud should be available for login");
+
+    assert_eq!(ollama_cloud.label, "Ollama Cloud");
+}
+
+#[test]
 fn refresh_picker_lists_all_and_available_refreshable_providers() {
     let picker = refresh_model_list_picker(&[
         "api-key".into(),

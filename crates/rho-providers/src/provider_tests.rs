@@ -256,6 +256,45 @@ fn ollama_descriptor_is_keyless_and_refreshes_compatible_models() {
 }
 
 #[test]
+fn ollama_cloud_descriptor_uses_api_key_and_refreshes_compatible_models() {
+    use super::{
+        CatalogReasoningPolicy, ProviderAuthKind, ProviderId, ProviderModelRefreshKind,
+        ProviderModelSource, RuntimeProviderId,
+    };
+
+    let ollama_cloud = super::provider_descriptor_by_id(ProviderId::OllamaCloud);
+    assert_eq!(ollama_cloud.name, "ollama-cloud");
+    assert_eq!(ollama_cloud.display_name, "Ollama Cloud");
+    assert_eq!(ollama_cloud.runtime_id, RuntimeProviderId::OllamaCloud);
+    assert_eq!(ollama_cloud.auth, "ollama-cloud-api-key");
+    assert_eq!(ollama_cloud.auth_kind.env_var(), Some("OLLAMA_API_KEY"));
+    assert_eq!(
+        ollama_cloud.auth_kind.account(),
+        Some(super::OLLAMA_CLOUD_API_KEY_ACCOUNT)
+    );
+    assert!(matches!(
+        ollama_cloud.auth_kind,
+        ProviderAuthKind::ApiKey {
+            account: super::OLLAMA_CLOUD_API_KEY_ACCOUNT,
+            missing: super::MissingCredential::OllamaCloud,
+            ..
+        }
+    ));
+    assert_eq!(
+        ollama_cloud.model_source,
+        ProviderModelSource::CachedProviderModels
+    );
+    assert_eq!(
+        ollama_cloud.model_refresh,
+        Some(ProviderModelRefreshKind::OpenAiCompatible)
+    );
+    assert_eq!(
+        ollama_cloud.catalog_reasoning,
+        CatalogReasoningPolicy::NotConfigurable
+    );
+}
+
+#[test]
 fn credential_env_vars_track_provider_auth_kinds() {
     let mut expected: Vec<&str> = super::providers()
         .iter()
@@ -269,6 +308,7 @@ fn credential_env_vars_track_provider_auth_kinds() {
     assert!(expected.contains(&"ANTHROPIC_API_KEY"));
     assert!(expected.contains(&"GEMINI_API_KEY"));
     assert!(expected.contains(&"POOLSIDE_API_KEY"));
+    assert!(expected.contains(&"OLLAMA_API_KEY"));
     assert!(expected.contains(&"XAI_ACCESS_TOKEN"));
     // Keyless providers must not invent env vars.
     assert!(!expected.iter().any(|name| name.is_empty()));

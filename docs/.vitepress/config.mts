@@ -82,6 +82,7 @@ export default defineConfig({
               { text: 'Google Gemini', link: '/providers/google-gemini' },
               { text: 'GitHub Copilot', link: '/providers/github-copilot' },
               { text: 'Ollama', link: '/providers/ollama' },
+              { text: 'Ollama Cloud', link: '/providers/ollama-cloud' },
               { text: 'OpenRouter', link: '/providers/openrouter' },
               { text: 'Poolside', link: '/providers/poolside' },
               { text: 'Moonshot and Kimi Code', link: '/providers/moonshot-kimi' },

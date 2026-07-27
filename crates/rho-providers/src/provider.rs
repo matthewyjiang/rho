@@ -11,6 +11,7 @@ pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens"
 pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
+pub const OLLAMA_CLOUD_API_KEY_ACCOUNT: &str = "provider:ollama-cloud:api-key";
 pub const POOLSIDE_API_KEY_ACCOUNT: &str = "provider:poolside:api-key";
 pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
 pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
@@ -19,6 +20,7 @@ pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
     Ollama,
+    OllamaCloud,
     OpenAi,
     OpenAiCodex,
     Anthropic,
@@ -36,6 +38,7 @@ pub enum ProviderId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RuntimeProviderId {
     Ollama,
+    OllamaCloud,
     OpenAi,
     Anthropic,
     Google,
@@ -244,6 +247,7 @@ pub enum MissingCredential {
     Anthropic,
     Google,
     Moonshot,
+    OllamaCloud,
     Poolside,
     OpenRouter,
     Profile(&'static str),
@@ -275,6 +279,25 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         auth: "none",
         login_label: "No authentication required",
         auth_kind: ProviderAuthKind::None,
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
+        metadata_upstream: "ollama",
+        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+    },
+    ProviderDescriptor {
+        id: ProviderId::OllamaCloud,
+        runtime_id: RuntimeProviderId::OllamaCloud,
+        name: "ollama-cloud",
+        display_name: "Ollama Cloud",
+        auth: "ollama-cloud-api-key",
+        login_label: "Ollama Cloud API key",
+        auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "OLLAMA_API_KEY",
+            account: OLLAMA_CLOUD_API_KEY_ACCOUNT,
+            entry_label: "Ollama Cloud API key",
+            missing: MissingCredential::OllamaCloud,
+        },
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
