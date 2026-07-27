@@ -432,11 +432,9 @@ mod tests {
             .auth_kind
             .missing_message()
             .unwrap();
-        let error = load_ollama_device_key_from(
-            || OllamaDeviceKey::load_from_dir(&missing_dir),
-            expected,
-        )
-        .unwrap_err();
+        let error =
+            load_ollama_device_key_from(|| OllamaDeviceKey::load_from_dir(&missing_dir), expected)
+                .unwrap_err();
         assert_eq!(error.to_string(), expected);
     }
 }

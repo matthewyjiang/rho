@@ -890,7 +890,10 @@ pub(super) fn interactive_pending_lines(
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
     let label = if target.auth == "ollama-cloud-device" {
-        format!("waiting for {} device-key login  esc cancel", target.provider)
+        format!(
+            "waiting for {} device-key login  esc cancel",
+            target.provider
+        )
     } else {
         format!("waiting for {} login  esc cancel", target.label)
     };

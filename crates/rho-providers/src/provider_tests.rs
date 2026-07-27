@@ -334,5 +334,3 @@ fn credential_env_vars_track_provider_auth_kinds() {
     // Keyless providers must not invent env vars.
     assert!(!expected.iter().any(|name| name.is_empty()));
 }
-
-

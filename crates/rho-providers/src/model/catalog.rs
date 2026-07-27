@@ -228,12 +228,7 @@ pub fn resolve_model_selection_for_provider(
     provider: &str,
     model: &str,
 ) -> Result<ModelSelection, ModelSelectionError> {
-    resolve_model_selection_for_provider_from(
-        model_catalog(),
-        provider.trim(),
-        model.trim(),
-        None,
-    )
+    resolve_model_selection_for_provider_from(model_catalog(), provider.trim(), model.trim(), None)
 }
 
 pub fn resolve_model_selection_for_auths(
