@@ -114,21 +114,23 @@ impl AgentExecutor {
         &self.host_input
     }
 
-    /// Updates the parent session's provider/model snapshot used by **Rho**
-    /// runtime delegated agents that inherit model policy.
+    /// Atomically updates the parent session's provider selection inherited by
+    /// future **Rho** runtime delegated agents.
     ///
     /// Claude-cli agents never read this snapshot for spawn: binding copies
     /// Claude model/tools/inherit from the definition only, byte-for-byte.
-    pub(crate) fn update_model(
+    pub(crate) fn update_selection(
         &self,
         provider: &str,
         model: &str,
         reasoning: rho_sdk::ReasoningLevel,
+        auth: &str,
     ) {
         let mut config = self.config.write().expect("delegated config lock");
         config.provider = provider.to_string();
         config.model = model.to_string();
         config.reasoning = reasoning;
+        config.auth = auth.to_string();
     }
 
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {

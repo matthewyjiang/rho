@@ -4,7 +4,7 @@ use super::*;
 use crate::app::subagent_host_input::SubagentHostInputBridge;
 
 #[test]
-fn model_updates_are_shared_with_executor_clones() {
+fn provider_selection_updates_are_shared_with_executor_clones() {
     let executor = AgentExecutor::new(
         Config::default(),
         PathBuf::new(),
@@ -13,11 +13,17 @@ fn model_updates_are_shared_with_executor_clones() {
     );
     let cloned = executor.clone();
 
-    executor.update_model("openai-codex", "gpt-5.6-luna", rho_sdk::ReasoningLevel::Low);
+    executor.update_selection(
+        "openai-codex",
+        "gpt-5.6-luna",
+        rho_sdk::ReasoningLevel::Low,
+        "codex",
+    );
 
     let config = cloned.config.read().expect("delegated config lock");
     assert_eq!(config.provider, "openai-codex");
     assert_eq!(config.model, "gpt-5.6-luna");
+    assert_eq!(config.auth, "codex");
     assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Low);
 }
 
@@ -489,7 +495,7 @@ async fn rho_skips_claude_pool_entirely() {
 }
 
 #[test]
-fn update_model_does_not_alter_bound_claude_runtime() {
+fn update_selection_does_not_alter_bound_claude_runtime() {
     use crate::agent::{AgentDefinition, AgentId, AgentRuntimeSpec, PromptPolicy};
     use crate::app::agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime};
 
@@ -533,10 +539,11 @@ fn update_model_does_not_alter_bound_claude_runtime() {
     )
     .unwrap();
 
-    executor.update_model(
+    executor.update_selection(
         "moonshot-kimi",
         "kimi-parent-after",
         rho_sdk::ReasoningLevel::High,
+        "kimi-oauth",
     );
 
     let host_after = executor

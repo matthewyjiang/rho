@@ -186,6 +186,7 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         | super::PickerAction::LoginGroup
         | super::PickerAction::LoginProvider
         | super::PickerAction::LogoutProvider
+        | super::PickerAction::SwitchAuthMode
         | super::PickerAction::RefreshModelList
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ViewAgent => 30,

@@ -1,4 +1,3 @@
-use crate::credential_store::build_provider;
 use ratatui::DefaultTerminal;
 
 use rho_providers::{
@@ -312,6 +311,7 @@ impl App {
                     }
                 }
             }
+            PickerAction::SwitchAuthMode => self.switch_active_auth_mode(&value, agent),
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input_ui.set_shell_mode(None);
@@ -440,6 +440,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
@@ -499,6 +500,7 @@ impl App {
             PickerAction::SelectModel => config_picker::CONVERSATION_MODEL_VALUE,
             PickerAction::SelectInternalAgentModel => return None,
             PickerAction::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
+            PickerAction::SwitchAuthMode => config_picker::SWITCH_AUTH_MODE_VALUE,
             PickerAction::RefreshModelList => config_picker::REFRESH_MODEL_LIST_VALUE,
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
@@ -561,7 +563,12 @@ impl App {
                 return Ok(None);
             }
         };
-        let new_provider = match build_provider(&provider, &model, reasoning.effective, &auth) {
+        let new_provider = match self.build_provider_for_selection(
+            &provider,
+            &model,
+            reasoning.effective,
+            &auth,
+        ) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -572,7 +579,7 @@ impl App {
             }
         };
 
-        let handoff = agent.replace_provider(new_provider, reasoning.effective)?;
+        let handoff = agent.replace_provider(new_provider, reasoning.effective, &auth)?;
         self.info.runtime.provider = provider.clone();
         self.info.runtime.model = model.clone();
         self.info

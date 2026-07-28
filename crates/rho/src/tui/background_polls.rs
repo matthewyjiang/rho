@@ -4,8 +4,6 @@ use futures_util::FutureExt;
 use rho_providers::model::models_dev::fetch_model_metadata;
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
-use crate::credential_store::build_provider;
-
 use super::{reasoning_metadata, App, Entry, InteractiveRuntime};
 
 impl App {
@@ -96,21 +94,23 @@ impl App {
                         self.info.runtime.provider, self.info.runtime.model
                     )));
                 }
-                let provider_updated = match build_provider(
+                let provider_updated = match self.build_provider_for_selection(
                     &self.info.runtime.provider,
                     &self.info.runtime.model,
                     reasoning,
                     &self.info.runtime.auth,
                 ) {
-                    Ok(provider) => match agent.replace_provider(provider, reasoning) {
-                        Ok(_) => true,
-                        Err(err) => {
-                            self.insert_entry(&Entry::Error(format!(
-                                "could not apply model reasoning metadata: {err}"
-                            )));
-                            false
+                    Ok(provider) => {
+                        match agent.replace_provider(provider, reasoning, &self.info.runtime.auth) {
+                            Ok(_) => true,
+                            Err(err) => {
+                                self.insert_entry(&Entry::Error(format!(
+                                    "could not apply model reasoning metadata: {err}"
+                                )));
+                                false
+                            }
                         }
-                    },
+                    }
                     Err(err) => {
                         self.insert_entry(&Entry::Error(format!(
                             "could not apply model reasoning metadata: {err}"

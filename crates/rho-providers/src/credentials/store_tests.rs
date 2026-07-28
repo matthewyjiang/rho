@@ -97,6 +97,31 @@ fn malformed_oauth_tokens_are_not_available_auth() {
 }
 
 #[test]
+fn empty_oauth_tokens_are_not_available_auth() {
+    let store = MemoryCredentialStore::default();
+    save_xai_tokens(
+        &store,
+        &XaiTokens {
+            access_token: "  ".into(),
+            refresh_token: Some(String::new()),
+            expires_at_unix: None,
+            id_token: None,
+        },
+    )
+    .unwrap();
+
+    let (_, mode) = crate::provider::resolve_auth_mode("xai-oauth").unwrap();
+    assert!(!auth_mode_has_credentials(&store, mode.auth_kind).unwrap());
+    let available_stored_auth_modes = crate::provider::providers()
+        .iter()
+        .flat_map(|provider| provider.auth_modes())
+        .filter(|mode| auth_mode_has_credentials(&store, mode.auth_kind).unwrap_or(false))
+        .map(|mode| mode.id.to_string())
+        .collect::<Vec<_>>();
+    assert!(!available_stored_auth_modes.contains(&"xai-oauth".into()));
+}
+
+#[test]
 fn codex_tokens_round_trip_with_optional_fields() {
     let store = MemoryCredentialStore::default();
     let tokens = CodexTokens {

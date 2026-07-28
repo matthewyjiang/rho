@@ -57,15 +57,7 @@ impl SdkBootstrapOptions {
         endpoint: Option<Url>,
         request_timeout: Option<Duration>,
     ) -> Result<Self, ModelError> {
-        let mut provider =
-            ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?
-                .with_auth(&config.auth)?;
-        if let Some(endpoint) = endpoint {
-            provider = provider.endpoint(endpoint)?;
-        }
-        if let Some(request_timeout) = request_timeout {
-            provider = provider.request_timeout(request_timeout)?;
-        }
+        let provider = provider_options_with_transport(config, endpoint, request_timeout)?;
         Ok(Self {
             provider,
             runtime: RuntimeOptions {
@@ -83,6 +75,37 @@ impl SdkBootstrapOptions {
             },
         })
     }
+}
+
+/// Canonical conversion of application config into provider construction options.
+///
+/// Runtime provider rebuilds must use this path so transport settings such as a
+/// custom endpoint are preserved across model, reasoning, and auth changes.
+pub(crate) fn provider_options_from_config(
+    config: &Config,
+) -> Result<ProviderBuildOptions, ModelError> {
+    provider_options_with_transport(
+        config,
+        config.resolved_provider_endpoint(&config.provider),
+        None,
+    )
+}
+
+fn provider_options_with_transport(
+    config: &Config,
+    endpoint: Option<Url>,
+    request_timeout: Option<Duration>,
+) -> Result<ProviderBuildOptions, ModelError> {
+    let mut provider =
+        ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?
+            .with_auth(&config.auth)?;
+    if let Some(endpoint) = endpoint {
+        provider = provider.endpoint(endpoint)?;
+    }
+    if let Some(request_timeout) = request_timeout {
+        provider = provider.request_timeout(request_timeout)?;
+    }
+    Ok(provider)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

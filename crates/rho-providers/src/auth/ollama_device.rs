@@ -20,6 +20,8 @@ use tokio::time::sleep;
 
 const DEFAULT_PRIVATE_KEY_NAME: &str = "id_ed25519";
 const DEFAULT_PUBLIC_KEY_NAME: &str = "id_ed25519.pub";
+const OPENSSH_PEM_BEGIN: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
+const OPENSSH_PEM_END: &str = "-----END OPENSSH PRIVATE KEY-----";
 const CONNECT_BASE: &str = "https://ollama.com/connect";
 const WHOAMI_URL: &str = "https://ollama.com/api/me";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -82,8 +84,7 @@ impl OllamaDeviceKey {
     }
 
     pub fn from_openssh_private_key(pem: &str) -> Result<Self, OllamaDeviceError> {
-        let private_key = PrivateKey::from_openssh(pem)
-            .map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))?;
+        let private_key = parse_openssh_private_key(pem)?;
         if private_key.is_encrypted() {
             return Err(OllamaDeviceError::InvalidKey(
                 "encrypted Ollama device keys are not supported".into(),
@@ -101,8 +102,13 @@ impl OllamaDeviceKey {
             .map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))?
             .trim()
             .to_string();
+        let private_key_openssh = private_key
+            .to_openssh(LineEnding::LF)
+            .map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))?
+            .trim()
+            .to_string();
         Ok(Self {
-            private_key_openssh: pem.trim().to_string(),
+            private_key_openssh,
             public_key_openssh,
         })
     }
@@ -269,6 +275,7 @@ async fn whoami(
         .post(url)
         .header(reqwest::header::AUTHORIZATION, authorization)
         .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::CONTENT_LENGTH, 0)
         .header(reqwest::header::USER_AGENT, crate::rho_user_agent())
         .send()
         .await?;
@@ -293,6 +300,24 @@ async fn whoami(
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty());
     Ok(name)
+}
+
+fn parse_openssh_private_key(pem: &str) -> Result<PrivateKey, OllamaDeviceError> {
+    let mut lines = pem.trim().lines();
+    if lines.next() != Some(OPENSSH_PEM_BEGIN) || lines.next_back() != Some(OPENSSH_PEM_END) {
+        return Err(OllamaDeviceError::InvalidKey(
+            "expected an OpenSSH private key PEM".into(),
+        ));
+    }
+
+    // Ollama's Go PEM encoder wraps at 64 columns, while `ssh-key`'s strict
+    // PEM decoder expects its own 70-column wrapping. Decode the valid PEM
+    // payload without tying device-key support to either wrapping choice.
+    let payload = lines.collect::<String>();
+    let bytes = general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))?;
+    PrivateKey::from_bytes(&bytes).map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))
 }
 
 fn http_client() -> Result<reqwest::Client, OllamaDeviceError> {

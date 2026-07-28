@@ -1,9 +1,15 @@
 use pretty_assertions::assert_eq;
-use rho_providers::model::catalog;
+use rho_providers::{
+    credentials::{
+        save_openrouter_oauth_key, save_provider_api_key, CredentialStore, MemoryCredentialStore,
+    },
+    model::catalog,
+    provider::XAI_TOKENS_ACCOUNT,
+};
 
 use super::{
-    login_group_next, login_group_picker, login_method_picker, refresh_model_list_picker,
-    LoginGroupNext, ALL_REFRESHABLE_PROVIDERS,
+    auth_mode_picker, login_group_next, login_group_picker, login_method_picker,
+    refresh_model_list_picker, LoginGroupNext, ALL_REFRESHABLE_PROVIDERS,
 };
 
 #[test]
@@ -38,6 +44,60 @@ fn login_picker_lists_ollama_cloud() {
         .map(|item| item.value.as_str())
         .collect::<Vec<_>>();
     assert_eq!(values, vec!["ollama-cloud-api-key", "ollama-cloud-device"]);
+}
+
+#[test]
+fn auth_mode_picker_lists_only_usable_modes_and_marks_active_mode() {
+    let store = MemoryCredentialStore::default();
+    save_provider_api_key(&store, "openrouter-api-key", "api-secret").unwrap();
+
+    let picker = auth_mode_picker(&store, "openrouter", "openrouter-api-key").unwrap();
+    assert_eq!(picker.items.len(), 1);
+    assert_eq!(picker.items[0].value, "openrouter-api-key");
+    assert_eq!(
+        picker.items[0]
+            .badge
+            .as_ref()
+            .map(|badge| badge.text.as_str()),
+        Some("active")
+    );
+
+    save_openrouter_oauth_key(&store, "oauth-secret").unwrap();
+    let picker = auth_mode_picker(&store, "openrouter", "openrouter-api-key").unwrap();
+    let modes = picker
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.value.as_str(),
+                item.badge.as_ref().map(|badge| badge.text.as_str()),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        modes,
+        vec![
+            ("openrouter-api-key", Some("active")),
+            ("openrouter-oauth", None),
+        ]
+    );
+}
+
+#[test]
+fn auth_mode_picker_keeps_valid_mode_when_sibling_credentials_are_invalid() {
+    let store = MemoryCredentialStore::default();
+    save_provider_api_key(&store, "xai-api-key", "api-secret").unwrap();
+    store.set_secret(XAI_TOKENS_ACCOUNT, "not-json").unwrap();
+
+    let picker = auth_mode_picker(&store, "xai", "xai-oauth").unwrap();
+    let modes = picker
+        .items
+        .iter()
+        .map(|item| item.value.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(modes, vec!["xai-api-key"]);
 }
 
 #[test]

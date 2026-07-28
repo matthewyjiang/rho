@@ -19,6 +19,7 @@ pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
 pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
 pub(super) const PROVIDER_LOGIN_VALUE: &str = "provider_login";
 pub(super) const PROVIDER_LOGOUT_VALUE: &str = "provider_logout";
+pub(super) const SWITCH_AUTH_MODE_VALUE: &str = "switch_auth_mode";
 pub(super) const PERMISSION_MODE_VALUE: &str = "permission_mode";
 pub(super) const PERMISSION_MODE_PREFIX: &str = "permission_mode:";
 pub(super) const REASONING_VALUE: &str = "reasoning";
@@ -250,9 +251,8 @@ pub(super) fn category_picker(
                 ),
             ],
         ),
-        PROVIDERS_CATEGORY_VALUE => (
-            "Config / Providers",
-            vec![
+        PROVIDERS_CATEGORY_VALUE => {
+            let mut items = vec![
                 item(
                     "Log in to provider",
                     "Add or replace provider credentials.",
@@ -265,14 +265,26 @@ pub(super) fn category_picker(
                     None,
                     PROVIDER_LOGOUT_VALUE,
                 ),
-                item(
-                    "Refresh model lists",
-                    "Refresh cached models from configured API providers.",
-                    Some("run now".into()),
-                    REFRESH_MODEL_LIST_VALUE,
-                ),
-            ],
-        ),
+            ];
+            if rho_providers::provider::provider_descriptor(&info.provider)
+                .is_some_and(|descriptor| descriptor.auth_modes().count() > 1)
+            {
+                items.push(item(
+                    "Switch active auth mode",
+                    "Use another available credential for the active provider.",
+                    Some(info.auth.clone()),
+                    SWITCH_AUTH_MODE_VALUE,
+                ));
+            }
+            items.push(item(
+                "Refresh model lists",
+                "Refresh cached models from configured API providers.",
+                Some("run now".into()),
+                REFRESH_MODEL_LIST_VALUE,
+            ));
+            ("Config / Providers", items)
+        }
+
         UPDATES_CATEGORY_VALUE => (
             "Config / Updates",
             vec![item(
@@ -316,9 +328,10 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | MAX_OUTPUT_BYTES_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(CONTEXT_CATEGORY_VALUE),
         INLINE_SHELL_VALUE | WEB_SEARCH_VALUE => Some(TOOLS_CATEGORY_VALUE),
-        PROVIDER_LOGIN_VALUE | PROVIDER_LOGOUT_VALUE | REFRESH_MODEL_LIST_VALUE => {
-            Some(PROVIDERS_CATEGORY_VALUE)
-        }
+        PROVIDER_LOGIN_VALUE
+        | PROVIDER_LOGOUT_VALUE
+        | SWITCH_AUTH_MODE_VALUE
+        | REFRESH_MODEL_LIST_VALUE => Some(PROVIDERS_CATEGORY_VALUE),
         CHECK_FOR_UPDATES_VALUE => Some(UPDATES_CATEGORY_VALUE),
         _ => None,
     }
@@ -520,6 +533,38 @@ impl App {
     pub(super) fn open_config_login_picker(&mut self) {
         self.open_child_picker(provider_picker::login_group_picker());
         self.status = "select provider to login".into();
+    }
+
+    pub(super) fn open_config_auth_mode_picker(&mut self) -> anyhow::Result<()> {
+        match provider_picker::auth_mode_picker(
+            self.credential_store.as_ref(),
+            &self.info.runtime.provider,
+            &self.info.runtime.auth,
+        ) {
+            Ok(picker)
+                if !picker
+                    .items
+                    .iter()
+                    .any(|item| item.value != self.info.runtime.auth) =>
+            {
+                self.insert_entry(&Entry::Notice(format!(
+                    "{} does not have another available auth mode. Log in to another mode first.",
+                    self.info.runtime.provider
+                )));
+                self.status = "config".into();
+            }
+            Ok(picker) => {
+                self.open_child_picker(picker);
+                self.status = "select active auth mode".into();
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not check provider credentials: {err}"
+                )));
+                self.status = "provider credentials unavailable".into();
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn open_config_logout_picker(&mut self) -> anyhow::Result<()> {

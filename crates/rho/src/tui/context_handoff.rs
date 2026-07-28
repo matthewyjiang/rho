@@ -3,7 +3,7 @@
 //! Compaction can salvage portable text. It does not make native blocks sendable
 //! to an incompatible model.
 
-use crate::{credential_store::build_provider, session::Session};
+use crate::session::Session;
 use ratatui::DefaultTerminal;
 use rho_providers::model::{catalog::ModelSelection, Message};
 use rho_sdk::model::handoff::HandoffReport;
@@ -251,14 +251,21 @@ impl App {
             &self.info.runtime.provider,
             &self.info.runtime.model,
         );
-        let target_identity =
-            match model_identity_for_selection(target, self.info.runtime.reasoning) {
-                Ok(identity) => identity,
-                Err(_) => {
-                    self.select_model_with_omission_notice(selection, agent)?;
-                    return self.finish_after_handoff_sync(after);
-                }
-            };
+        let target_identity = match self
+            .build_provider_for_selection(
+                &target.provider,
+                &target.model,
+                self.info.runtime.reasoning,
+                &target.auth,
+            )
+            .map(|provider| provider.identity())
+        {
+            Ok(identity) => identity,
+            Err(_) => {
+                self.select_model_with_omission_notice(selection, agent)?;
+                return self.finish_after_handoff_sync(after);
+            }
+        };
         let omissions = agent.provider_context_omissions(&target_identity);
         let impact = ContextHandoffImpact {
             source_label,
@@ -684,19 +691,6 @@ fn decision_from_value(value: &str) -> Option<ContextHandoffDecision> {
         ACTION_CONTINUE => Some(ContextHandoffDecision::ContinueDirect),
         _ => None,
     }
-}
-
-fn model_identity_for_selection(
-    selection: &ModelSelection,
-    reasoning: rho_providers::reasoning::ReasoningLevel,
-) -> Result<ModelIdentity, rho_providers::model::ModelError> {
-    Ok(build_provider(
-        &selection.provider,
-        &selection.model,
-        reasoning,
-        &selection.auth,
-    )?
-    .identity())
 }
 
 fn current_runtime_selection(app: &App) -> InteractiveModelSelection {

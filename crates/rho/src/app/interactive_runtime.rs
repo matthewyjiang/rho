@@ -607,6 +607,7 @@ impl InteractiveRuntime {
         &mut self,
         provider: Arc<dyn ModelProvider>,
         reasoning: rho_sdk::ReasoningLevel,
+        auth: &str,
     ) -> Result<rho_sdk::model::handoff::HandoffReport, Error> {
         if self.runs.is_active() {
             debug_assert_eq!(
@@ -648,7 +649,7 @@ impl InteractiveRuntime {
         }
         let identity = self.provider.provider().identity();
         if let Some(manager) = self.tools.subagents() {
-            manager.update_model(&identity.provider, &identity.model, reasoning);
+            manager.update_selection(&identity.provider, &identity.model, reasoning, auth);
         }
         self.invalidate_live_context();
         self.runs.finish_transition();

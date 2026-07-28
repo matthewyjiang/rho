@@ -1,6 +1,10 @@
-use super::{sort_items_by_ascii_label, PickerAction, PickerItem, UiPicker};
+use super::{
+    sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker,
+};
 use rho_providers::{
-    auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore, model::catalog,
+    auth::login_dispatch::ProviderAuthentication,
+    credentials::{CredentialError, CredentialStore},
+    model::catalog,
     provider,
 };
 
@@ -83,6 +87,53 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
         items,
         PickerAction::LoginProvider,
     )
+}
+
+pub(super) fn auth_mode_picker(
+    store: &dyn CredentialStore,
+    provider_name: &str,
+    active_auth: &str,
+) -> rho_providers::credentials::CredentialResult<UiPicker> {
+    let Some(descriptor) = provider::provider_descriptor(provider_name) else {
+        return Ok(UiPicker::new(
+            "Switch active auth mode",
+            "esc back",
+            Vec::new(),
+            PickerAction::SwitchAuthMode,
+        ));
+    };
+
+    let mut items = Vec::new();
+    for mode in descriptor.auth_modes() {
+        match ProviderAuthentication::has_credentials(store, mode.id) {
+            Ok(true) => {}
+            Ok(false) | Err(CredentialError::InvalidData(_)) => continue,
+            Err(error @ CredentialError::StoreUnavailable(_)) => return Err(error),
+        }
+        items.push(PickerItem {
+            section: None,
+            label: mode.login_label.into(),
+            detail: Some(format!(
+                "Use {} for {}.",
+                mode.login_label, descriptor.display_name
+            )),
+            preview: None,
+            badge: (mode.id == active_auth).then(|| PickerBadge {
+                text: "active".into(),
+                tone: PickerBadgeTone::Selected,
+            }),
+            value: mode.id.into(),
+        });
+    }
+    sort_items_by_ascii_label(&mut items);
+
+    Ok(UiPicker::new(
+        format!("Switch {} auth mode", descriptor.display_name),
+        "type regex filter, up/down select, enter switch, esc back",
+        items,
+        PickerAction::SwitchAuthMode,
+    )
+    .with_confirm_verb("switch"))
 }
 
 pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker {

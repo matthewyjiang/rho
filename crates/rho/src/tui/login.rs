@@ -1,6 +1,8 @@
-use super::{InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *};
+use super::{
+    provider_actions::{ProviderActivation, ProviderActivationOutcome},
+    InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *,
+};
 use {
-    crate::credential_store::build_provider,
     rho_providers::auth::login_dispatch::{
         AuthenticationMethod, CompletedAuthentication, InteractiveLoginMode, InteractiveUserAction,
         ProviderAuthentication,
@@ -669,28 +671,33 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&provider, &model) else {
             return Ok(false);
         };
-        let new_provider =
-            match build_provider(&provider, &model, reasoning.effective, &target.auth) {
-                Ok(provider) => provider,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "stored credentials, but could not refresh {}: {err}",
-                        target.provider
-                    )));
-                    self.status = "login saved".into();
-                    return Ok(false);
-                }
-            };
-
-        agent.replace_provider(new_provider, reasoning.effective)?;
-        self.info
-            .set_reasoning(reasoning.effective, reasoning.source);
-        self.info.runtime.auth = target.auth.clone();
-        self.info.services.auth_unavailable = None;
-        self.start_model_metadata_fetch(agent);
-        match self.save_current_config() {
-            Ok(()) => self.status = "login saved".into(),
+        let new_provider = match self.build_provider_for_selection(
+            &provider,
+            &model,
+            reasoning.effective,
+            &target.auth,
+        ) {
+            Ok(provider) => provider,
             Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but could not refresh {}: {err}",
+                    target.provider
+                )));
+                self.status = "login saved".into();
+                return Ok(false);
+            }
+        };
+
+        let activation = ProviderActivation {
+            provider,
+            model,
+            reasoning,
+            auth: target.auth.clone(),
+            replacement: new_provider,
+        };
+        match self.activate_provider(activation, agent)? {
+            ProviderActivationOutcome::Saved => self.status = "login saved".into(),
+            ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "login applied, but saving config failed: {err}"
                 )));
@@ -717,30 +724,32 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
             return Ok(false);
         };
-        let new_provider =
-            match build_provider(&target.provider, &model, reasoning.effective, &target.auth) {
-                Ok(provider) => provider,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "stored credentials, but could not activate {}: {err}",
-                        target.provider
-                    )));
-                    self.status = "login saved".into();
-                    return Ok(false);
-                }
-            };
+        let new_provider = match self.build_provider_for_selection(
+            &target.provider,
+            &model,
+            reasoning.effective,
+            &target.auth,
+        ) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but could not activate {}: {err}",
+                    target.provider
+                )));
+                self.status = "login saved".into();
+                return Ok(false);
+            }
+        };
 
-        agent.replace_provider(new_provider, reasoning.effective)?;
-        self.info.runtime.provider = target.provider.clone();
-        self.info.runtime.auth = target.auth.clone();
-        self.info.runtime.model = model;
-        self.info
-            .set_reasoning(reasoning.effective, reasoning.source);
-        self.info.services.auth_unavailable = None;
-        self.using_unavailable_provider = false;
-        self.start_model_metadata_fetch(agent);
-        match self.save_current_config() {
-            Ok(()) => {
+        let activation = ProviderActivation {
+            provider: target.provider.clone(),
+            model,
+            reasoning,
+            auth: target.auth.clone(),
+            replacement: new_provider,
+        };
+        match self.activate_provider(activation, agent)? {
+            ProviderActivationOutcome::Saved => {
                 self.status = format!(
                     "model: {}",
                     rho_providers::provider::model_reference(
@@ -749,7 +758,7 @@ impl App {
                     )
                 );
             }
-            Err(err) => {
+            ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "selected {}, but saving config failed: {err}",
                     rho_providers::provider::model_reference(
@@ -843,6 +852,7 @@ impl App {
         match agent.replace_provider(
             std::sync::Arc::new(UnavailableProvider::new(error)),
             self.info.runtime.reasoning,
+            &self.info.runtime.auth,
         ) {
             Ok(_) => {
                 self.using_unavailable_provider = true;

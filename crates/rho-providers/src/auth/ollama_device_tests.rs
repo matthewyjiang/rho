@@ -2,6 +2,30 @@ use super::*;
 use tempfile::tempdir;
 
 #[test]
+fn loads_ollama_generated_pem_wrapped_at_64_columns() {
+    let private_key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
+    let pem = private_key.to_openssh(LineEnding::LF).unwrap();
+    let payload = pem
+        .lines()
+        .filter(|line| !line.starts_with("-----"))
+        .collect::<String>();
+    let mut ollama_pem = format!("{OPENSSH_PEM_BEGIN}\n");
+    for chunk in payload.as_bytes().chunks(64) {
+        ollama_pem.push_str(std::str::from_utf8(chunk).unwrap());
+        ollama_pem.push('\n');
+    }
+    ollama_pem.push_str(OPENSSH_PEM_END);
+
+    let key = OllamaDeviceKey::from_openssh_private_key(&ollama_pem).unwrap();
+    assert_eq!(
+        private_key.public_key().to_openssh().unwrap(),
+        key.public_key_openssh()
+    );
+    key.sign_authorization("POST,/api/me?ts=1700000000")
+        .unwrap();
+}
+
+#[test]
 fn generates_and_reloads_device_key() {
     let dir = tempdir().unwrap();
     let created = OllamaDeviceKey::load_or_create(dir.path()).unwrap();
