@@ -327,6 +327,84 @@ fn long_shell_header_wraps_command_under_prompt() {
 }
 
 #[test]
+fn multiline_shell_header_preserves_command_line_breaks() {
+    // Multi-line bash used to collapse: `\n` is zero-width and ratatui drops it,
+    // so `check\ngit` rendered as `checkgit`. Hard-break then soft-wrap fixes that.
+    let command = "\
+cargo fmt --all -- --check
+git add crates/rho-tools/src/bash.rs
+git commit -m \"$(cat <<'EOF'
+fix(tools): harden escaped-process bash timeout test
+
+Flush and fsync the pid file.
+EOF
+)\"
+git push
+git status -sb
+";
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileCommand,
+        ToolHeader::shell("$", Some(command.into())),
+    )
+    .with_facts(vec![
+        ToolFact::Meta {
+            text: "timeout 60s".into(),
+        },
+        ToolFact::Exit {
+            code: 0,
+            duration_ms: Some(2600),
+        },
+    ]);
+    let mut lines = Vec::new();
+    // Wide enough that only hard newlines create header rows.
+    push_tool_card(&mut lines, &card, 120, 20, /*expanded*/ false);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert_eq!(
+        rendered,
+        vec![
+            "✓ $ cargo fmt --all -- --check",
+            "  │ git add crates/rho-tools/src/bash.rs",
+            "  │ git commit -m \"$(cat <<'EOF'",
+            "  │ fix(tools): harden escaped-process bash timeout test",
+            "  │",
+            "  │ Flush and fsync the pid file.",
+            "  │ EOF",
+            "  │ )\"",
+            "  │ git push",
+            "  │ git status -sb",
+            "  ├ timeout 60s",
+            "  └ exit 0 · 2.6s",
+        ]
+    );
+}
+
+#[test]
+fn multiline_shell_header_keeps_soft_wrap_inside_long_line() {
+    let command = "echo one\ncargo test -p rho-coding-agent --lib interactive_presenter -- --nocapture\necho two";
+    let card = ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::FileCommand,
+        ToolHeader::shell("$", Some(command.into())),
+    );
+    let mut lines = Vec::new();
+    push_tool_card(&mut lines, &card, 40, 10, /*expanded*/ false);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert_eq!(
+        rendered,
+        vec![
+            "● $ echo one",
+            "  │ cargo test -p rho-coding-agent --lib",
+            "  │ interactive_presenter --",
+            "  │ --nocapture",
+            "  │ echo two",
+        ]
+    );
+}
+
+#[test]
 fn long_call_header_wraps_primary_inside_parens() {
     let card = ToolCard::new(
         ToolStatus::Ok,

@@ -242,6 +242,11 @@ fn push_header_line(
 ///
 /// Continuations draw a tree-column `|` elbow, then pad to the primary hang so
 /// children (`├` / `└`) still read as a connected trunk under the call.
+///
+/// Intentional newlines in the wrappable text (multi-line bash, heredocs) are
+/// hard breaks. Soft width-wrap still applies within each logical line. Without
+/// this, `\n` has zero display width and ratatui drops the control char, so
+/// `check\ngit` renders as `checkgit`.
 fn push_wrapped_header(
     lines: &mut Vec<Line<'static>>,
     prefix: Vec<Span<'static>>,
@@ -263,32 +268,50 @@ fn push_wrapped_header(
         return;
     }
 
-    let ranges = wrap_line_at_whitespace_ranges(&text, content_width);
-    for (index, range) in ranges.into_iter().enumerate() {
-        let mut start = range.start;
-        let end = range.end;
-        if index > 0 {
-            // Keep hang indent stable when a wrap boundary leaves leading spaces.
-            while start < end {
-                let ch = text[start..].chars().next().expect("start < end");
-                if !ch.is_whitespace() {
-                    break;
+    // Same hard-then-soft pattern as push_wrapped_text_with: str::lines() first.
+    let mut row_index = 0usize;
+    for logical_line in text.lines() {
+        let line_start = subslice_start(&text, logical_line);
+        for (wrap_index, range) in wrap_line_at_whitespace_ranges(logical_line, content_width)
+            .into_iter()
+            .enumerate()
+        {
+            let mut start = range.start;
+            let end = range.end;
+            if wrap_index > 0 {
+                // Soft-wrap only: keep hang indent when a break leaves spaces.
+                // Hard newline rows keep their own leading indentation.
+                while start < end {
+                    let ch = logical_line[start..].chars().next().expect("start < end");
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    start += ch.len_utf8();
                 }
-                start += ch.len_utf8();
+                if start >= end {
+                    continue;
+                }
             }
-            if start >= end {
-                continue;
-            }
+            let chunk_spans =
+                slice_spans_by_bytes(&wrappable, line_start + start, line_start + end);
+            let mut row = if row_index == 0 {
+                prefix.clone()
+            } else {
+                header_wrap_continuation_prefix(hang)
+            };
+            row.extend(chunk_spans);
+            lines.push(pad_spans_line(row, width));
+            row_index += 1;
         }
-        let chunk_spans = slice_spans_by_bytes(&wrappable, start, end);
-        let mut row = if index == 0 {
-            prefix.clone()
-        } else {
-            header_wrap_continuation_prefix(hang)
-        };
-        row.extend(chunk_spans);
-        lines.push(pad_spans_line(row, width));
     }
+}
+
+/// Byte offset of `child` inside `parent`. `child` must be a subslice of `parent`
+/// (as yielded by `str::lines()`).
+fn subslice_start(parent: &str, child: &str) -> usize {
+    let start = child.as_ptr() as usize - parent.as_ptr() as usize;
+    debug_assert!(parent.get(start..start + child.len()) == Some(child));
+    start
 }
 
 /// `  │ ` in the child elbow column, then spaces out to the primary hang.
