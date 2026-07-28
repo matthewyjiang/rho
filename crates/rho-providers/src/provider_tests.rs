@@ -102,6 +102,11 @@ fn openrouter_auth_modes_share_one_provider_and_legacy_aliases_normalize() {
     assert!(openrouter.auth_mode("openrouter-api-key").is_some());
     assert!(openrouter.auth_mode("openrouter-oauth").is_some());
 
+    assert!(super::provider_descriptor("openrouter-oauth").is_none());
+    let resolved = super::resolve_provider_reference("openrouter-oauth").unwrap();
+    assert_eq!(resolved.provider, openrouter);
+    assert_eq!(resolved.auth_id(), "openrouter-oauth");
+
     let resolved = super::resolve_profile("openrouter", "openrouter-oauth").unwrap();
     assert_eq!(resolved.provider, openrouter);
     assert_eq!(resolved.auth_id(), "openrouter-oauth");

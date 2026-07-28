@@ -262,11 +262,8 @@ pub(super) fn apply_provider_override(
     provider: &str,
     has_model_override: bool,
 ) -> anyhow::Result<()> {
-    let profile = provider::provider_descriptor(provider)
-        .and_then(|descriptor| {
-            provider::resolve_profile(provider, descriptor.default_auth().id).ok()
-        })
-        .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
+    let profile = provider::resolve_provider_reference(provider)
+        .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
     let provider = profile.provider_name();
     let auth = Some(profile.auth_id());
     let model = if has_model_override {

@@ -188,11 +188,19 @@ pub fn delete_web_search_api_key(
     store.delete_secret(credential.account())
 }
 
+fn provider_descriptor_from_reference(
+    provider: &str,
+) -> Option<&'static provider::ProviderDescriptor> {
+    provider::resolve_provider_reference(provider)
+        .ok()
+        .map(|profile| profile.provider)
+}
+
 pub fn load_provider_api_key(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<Option<String>> {
-    let Some(descriptor) = provider::provider_descriptor(provider) else {
+    let Some(descriptor) = provider_descriptor_from_reference(provider) else {
         return Ok(None);
     };
     let Some(ProviderAuthKind::ApiKey { account, .. }) = descriptor
@@ -214,7 +222,7 @@ pub fn save_provider_api_key(
     let auth_kind = provider::resolve_auth_mode(provider)
         .map(|(_, mode)| mode.auth_kind)
         .or_else(|| {
-            provider::provider_descriptor(provider).and_then(|descriptor| {
+            provider_descriptor_from_reference(provider).and_then(|descriptor| {
                 descriptor
                     .auth_modes()
                     .find(|mode| matches!(mode.auth_kind, ProviderAuthKind::ApiKey { .. }))
@@ -242,7 +250,7 @@ pub fn delete_provider_credentials(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<bool> {
-    let Some(descriptor) = provider::provider_descriptor(provider) else {
+    let Some(descriptor) = provider_descriptor_from_reference(provider) else {
         return Ok(false);
     };
     let mut deleted = false;
@@ -349,7 +357,7 @@ fn provider_has_env_override_from(
     provider: &str,
     env_value: impl Fn(&str) -> Option<String>,
 ) -> bool {
-    let Some(descriptor) = provider::provider_descriptor(provider) else {
+    let Some(descriptor) = provider_descriptor_from_reference(provider) else {
         return false;
     };
     descriptor.auth_modes().any(|mode| {
@@ -372,7 +380,7 @@ pub fn provider_has_stored_credentials(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<bool> {
-    let Some(descriptor) = provider::provider_descriptor(provider) else {
+    let Some(descriptor) = provider_descriptor_from_reference(provider) else {
         return Ok(false);
     };
     for mode in descriptor.auth_modes() {
@@ -420,7 +428,7 @@ pub fn provider_has_credentials(
     if provider_has_env_override(provider) {
         return Ok(true);
     }
-    let Some(descriptor) = provider::provider_descriptor(provider) else {
+    let Some(descriptor) = provider_descriptor_from_reference(provider) else {
         return Ok(false);
     };
     for mode in descriptor.auth_modes() {

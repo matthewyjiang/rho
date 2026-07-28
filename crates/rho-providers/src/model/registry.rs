@@ -29,7 +29,9 @@ pub enum ProviderRuntime {
 }
 
 pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
-    let descriptor = provider::provider_descriptor(provider)?;
+    let descriptor = provider::resolve_provider_reference(provider)
+        .ok()?
+        .provider;
     Some(match descriptor.runtime_id {
         RuntimeProviderId::Ollama => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,

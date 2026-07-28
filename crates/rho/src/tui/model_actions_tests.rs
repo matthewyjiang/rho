@@ -6,6 +6,28 @@ use rho_providers::model::catalog::ModelSelection;
 use super::super::InteractiveModelSelection;
 use crate::{model_aliases::ModelAliases, tui::tests::test_app};
 
+#[test]
+fn model_refresh_prefers_the_active_available_auth_mode() {
+    let descriptor = rho_providers::provider::provider_descriptor("openrouter").unwrap();
+    let available = vec!["openrouter-api-key".into(), "openrouter-oauth".into()];
+
+    assert_eq!(
+        super::refresh_auth_for_provider(descriptor, "openrouter-oauth", &available),
+        "openrouter-oauth"
+    );
+}
+
+#[test]
+fn model_refresh_falls_back_to_an_available_auth_mode() {
+    let descriptor = rho_providers::provider::provider_descriptor("openrouter").unwrap();
+    let available = vec!["openrouter-oauth".into()];
+
+    assert_eq!(
+        super::refresh_auth_for_provider(descriptor, "openrouter-api-key", &available),
+        "openrouter-oauth"
+    );
+}
+
 fn aliases(entries: &[(&str, &str)]) -> ModelAliases {
     ModelAliases::from_entries(
         entries

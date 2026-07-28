@@ -693,10 +693,12 @@ pub fn legacy_provider_alias(provider: &str) -> Option<(&'static str, &'static s
     }
 }
 
+/// Looks up a canonical provider name.
+///
+/// Legacy provider references carry an auth-mode choice, so callers handling
+/// external input must use [`resolve_provider_reference`] or [`resolve_profile`]
+/// rather than discarding that choice here.
 pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {
-    let provider = legacy_provider_alias(provider)
-        .map(|(provider, _)| provider)
-        .unwrap_or(provider);
     providers()
         .iter()
         .find(|descriptor| descriptor.name == provider)
@@ -720,6 +722,33 @@ pub fn resolve_auth_mode(auth: &str) -> Option<(&'static ProviderDescriptor, Aut
     Some((descriptor, mode))
 }
 
+fn legacy_provider_profile(provider_name: &str) -> Option<ResolvedProviderProfile> {
+    let (provider, auth) = legacy_provider_alias(provider_name)?;
+    let provider = provider_descriptor(provider).expect("alias provider must be registered");
+    let auth = provider
+        .auth_mode(auth)
+        .expect("alias auth mode must be registered on its provider");
+    Some(ResolvedProviderProfile { provider, auth })
+}
+
+/// Resolves a provider reference without a separately supplied auth mode.
+///
+/// Canonical names select their default auth mode. Retired provider names keep
+/// selecting the auth mode that was implicit in the old provider identity.
+pub fn resolve_provider_reference(
+    provider_name: &str,
+) -> Result<ResolvedProviderProfile, ProfileResolutionError> {
+    if let Some(profile) = legacy_provider_profile(provider_name) {
+        return Ok(profile);
+    }
+    let provider = provider_descriptor(provider_name)
+        .ok_or_else(|| ProfileResolutionError::UnknownProvider(provider_name.into()))?;
+    Ok(ResolvedProviderProfile {
+        provider,
+        auth: provider.default_auth(),
+    })
+}
+
 /// Resolves a provider/auth pair to one registered provider identity and auth mode.
 ///
 /// - Legacy provider aliases select their matching auth mode, regardless of the
@@ -731,12 +760,8 @@ pub fn resolve_profile(
     provider_name: &str,
     auth: &str,
 ) -> Result<ResolvedProviderProfile, ProfileResolutionError> {
-    if let Some((provider, auth)) = legacy_provider_alias(provider_name) {
-        let provider = provider_descriptor(provider).expect("alias provider must be registered");
-        let auth = provider
-            .auth_mode(auth)
-            .expect("alias auth mode must be registered on its provider");
-        return Ok(ResolvedProviderProfile { provider, auth });
+    if let Some(profile) = legacy_provider_profile(provider_name) {
+        return Ok(profile);
     }
     let provider = provider_descriptor(provider_name)
         .ok_or_else(|| ProfileResolutionError::UnknownProvider(provider_name.into()))?;

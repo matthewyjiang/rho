@@ -56,15 +56,12 @@ impl ApplicationCredentialSource {
 
 impl ProviderCredentialSource for ApplicationCredentialSource {
     fn acquire(&self, provider: &str, auth: &str) -> Result<ProviderCredential, ModelError> {
-        let runtime = provider_runtime(provider)
+        let profile = provider::resolve_profile(provider, auth)
+            .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
+        let descriptor = profile.provider;
+        let selected = profile.auth;
+        let runtime = provider_runtime(descriptor.name)
             .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
-        let descriptor = provider::provider_descriptor(provider)
-            .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
-        let selected = descriptor.auth_mode(auth).ok_or_else(|| {
-            ModelError::InvalidResponse(format!(
-                "auth profile '{auth}' is not valid for provider '{provider}'"
-            ))
-        })?;
         match runtime {
             ProviderRuntime::OpenAi { auth_mode: mode } => {
                 let openai_auth = match mode {

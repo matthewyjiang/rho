@@ -62,9 +62,7 @@ impl ProviderBuildOptions {
                 "model name must not be empty".into(),
             ));
         }
-        let descriptor = provider::provider_descriptor(&provider)
-            .ok_or_else(|| ModelError::UnsupportedProvider(provider.clone()))?;
-        let profile = provider::resolve_profile(&provider, descriptor.default_auth().id)
+        let profile = provider::resolve_provider_reference(&provider)
             .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
         Ok(Self {
             provider: profile.provider_name().into(),
