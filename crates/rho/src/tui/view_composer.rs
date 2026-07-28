@@ -1,12 +1,16 @@
 //! Composer chrome rendering: input lines, cursor, divider, and palette suggestions.
 
-use ratatui::{layout::Position, text::Line};
+use ratatui::{
+    layout::Position,
+    text::{Line, Span},
+};
 
 use super::{
-    approval_lines, char_prefix_display_width, config_number_input_lines, config_text_input_lines,
-    display_width, file_picker,
+    approval_lines, char_prefix_display_width,
+    composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
+    config_number_input_lines, config_text_input_lines, display_width, file_picker,
     inline_choice::inline_choice_lines,
-    inline_shell, input_cursor_position, input_lines_with_images, labeled_divider_line,
+    inline_shell, input_cursor_position, input_image_lines, input_lines, labeled_divider_line,
     login::{interactive_pending_lines, secret_input_lines},
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
     truncate_one_line, App, ComposerMode, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
@@ -50,12 +54,26 @@ impl App {
                 let focused_paste = self
                     .focused_paste_segment()
                     .map(|segment| segment.start..segment.end());
-                input_lines_with_images(
-                    self.input_ui.text(),
-                    self.input_ui.pending_images(),
-                    width,
-                    focused_paste,
-                )
+                let mut lines = input_image_lines(self.input_ui.pending_images(), width);
+                let mut text_lines =
+                    input_lines(self.input_ui.text(), content_width(width), focused_paste);
+                for (index, line) in text_lines.iter_mut().enumerate() {
+                    line.spans.insert(
+                        0,
+                        if index == 0 {
+                            Span::styled(PROMPT_PREFIX, Theme::dim())
+                        } else {
+                            Span::raw(" ".repeat(prompt_width()))
+                        },
+                    );
+                }
+                if self.input_ui.text().is_empty() && self.input_ui.shell_mode().is_none() {
+                    text_lines[0]
+                        .spans
+                        .push(Span::styled("Type a message", Theme::dim()));
+                }
+                lines.extend(text_lines);
+                lines
             }
             ComposerMode::Picker(picker) if picker.is_overlay() => Vec::new(),
             ComposerMode::Picker(picker) => picker_lines(picker, width),
@@ -72,8 +90,15 @@ impl App {
     pub(super) fn composer_cursor_position(&self, width: usize) -> Position {
         match self.input_ui.composer() {
             ComposerMode::Input => {
-                let mut position =
-                    input_cursor_position(self.input_ui.text(), self.input_ui.cursor(), width);
+                let mut position = input_cursor_position(
+                    self.input_ui.text(),
+                    self.input_ui.cursor(),
+                    content_width(width),
+                );
+                position.x = position
+                    .x
+                    .saturating_add(prompt_width() as u16)
+                    .min(width.saturating_sub(1) as u16);
                 position.y = position
                     .y
                     .saturating_add(self.input_ui.pending_images().len() as u16);

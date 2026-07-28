@@ -1,6 +1,89 @@
 use super::*;
 
 #[test]
+fn idle_composer_shows_prompt_marker_and_placeholder() {
+    let app = test_app();
+
+    let lines = app.composer_lines(80);
+    let text = lines[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(text.starts_with("> "));
+    assert_ne!(text, "> ");
+    assert!(lines[0].spans.iter().all(|span| span.style == Theme::dim()));
+    assert_eq!(
+        app.composer_cursor_position(80),
+        ratatui::layout::Position { x: 2, y: 0 }
+    );
+}
+
+#[test]
+fn composer_placeholder_disappears_when_text_is_entered() {
+    let mut app = test_app();
+    app.insert_input_text("hello");
+
+    let lines = app.composer_lines(80);
+    let text = lines[0]
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert_eq!(text, "> hello");
+    assert_eq!(lines[0].spans[0].style, Theme::dim());
+    assert_eq!(lines[0].spans[1].style, ratatui::style::Style::default());
+}
+
+#[test]
+fn composer_wraps_and_moves_cursor_with_prompt_indent() {
+    let mut app = test_app();
+    app.insert_input_text("123456789");
+
+    let rendered = app
+        .composer_lines(10)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(rendered, ["> 12345678", "  9"]);
+    assert_eq!(
+        app.composer_cursor_position(10),
+        ratatui::layout::Position { x: 3, y: 1 }
+    );
+}
+
+#[test]
+fn composer_moves_cursor_to_continuation_at_exact_wrap_boundary() {
+    let mut app = test_app();
+    app.insert_input_text("12345678");
+
+    let rendered = app
+        .composer_lines(10)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(rendered, ["> 12345678", "  "]);
+    assert_eq!(
+        app.composer_cursor_position(10),
+        ratatui::layout::Position { x: 2, y: 1 }
+    );
+}
+
+#[test]
 fn valid_slash_commands_are_added_to_input_history() {
     let mut app = test_app();
     app.input_ui.set_text("/info  ".to_string());

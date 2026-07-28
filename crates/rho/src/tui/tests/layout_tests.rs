@@ -268,7 +268,7 @@ fn jump_button_renders_above_composer_only_when_scrolled_up() {
         .unwrap();
     let input_index = scrolled_lines
         .iter()
-        .position(|line| line.trim_end() == "draft")
+        .position(|line| line.trim_end() == "> draft")
         .unwrap();
 
     assert!(button_index < input_index, "{scrolled_lines:#?}");

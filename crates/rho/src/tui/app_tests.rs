@@ -726,7 +726,7 @@ fn input_divider_style_tracks_reasoning_level() {
         .collect::<Vec<_>>();
     let input_index = high_lines
         .iter()
-        .position(|line| line_text(line) == "hello")
+        .position(|line| line_text(line) == "> hello")
         .unwrap();
     let composer_top_divider = divider_indices
         .iter()
@@ -739,7 +739,7 @@ fn input_divider_style_tracks_reasoning_level() {
         line_text(&high_lines[composer_top_divider]),
         "────────────────────"
     );
-    assert_eq!(line_text(&high_lines[input_index]), "hello");
+    assert_eq!(line_text(&high_lines[input_index]), "> hello");
     assert_eq!(
         line_text(&high_lines[input_index + 1]),
         "────────────────────"
@@ -894,7 +894,10 @@ fn command_palette_renders_above_composer_and_preserves_statusline() {
         .iter()
         .position(|row| row.contains("> /model [model]"))
         .unwrap();
-    let input_index = rows.iter().position(|row| row.trim_end() == "/m").unwrap();
+    let input_index = rows
+        .iter()
+        .position(|row| row.trim_end() == "> /m")
+        .unwrap();
 
     assert_eq!(suggestion_index + 1, input_index, "{rows:#?}");
     assert!(rows.last().unwrap().contains("low"), "{rows:#?}");
@@ -996,7 +999,7 @@ fn file_palette_stays_inline_with_input_and_inserts_selected_path() {
         .unwrap();
     let input_index = lines
         .iter()
-        .position(|line| line.trim_end() == "review @slr")
+        .position(|line| line.trim_end() == "> review @slr")
         .unwrap();
     assert_eq!(suggestion_index + 1, input_index, "{lines:#?}");
 

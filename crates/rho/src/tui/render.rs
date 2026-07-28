@@ -431,7 +431,7 @@ fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> V
 
 pub(super) fn input_cursor_position(input: &str, cursor: usize, width: usize) -> Position {
     let prefix: String = input.chars().take(cursor).collect();
-    let lines = input_visual_lines(&prefix, width);
+    let lines = editable_input_visual_lines(&prefix, width);
     Position {
         x: lines
             .last()
@@ -478,13 +478,8 @@ pub(super) fn input_cursor_index_on_visual_line(
     cursor
 }
 
-pub(super) fn input_lines_with_images(
-    input: &str,
-    images: &[ImageContent],
-    width: usize,
-    highlighted_range: Option<std::ops::Range<usize>>,
-) -> Vec<Line<'static>> {
-    let mut lines = images
+pub(super) fn input_image_lines(images: &[ImageContent], width: usize) -> Vec<Line<'static>> {
+    images
         .iter()
         .enumerate()
         .map(|(index, image)| {
@@ -495,8 +490,16 @@ pub(super) fn input_lines_with_images(
                 LineFill::Natural,
             )
         })
-        .collect::<Vec<_>>();
-    let input_lines = input_visual_lines(input, width);
+        .collect()
+}
+
+pub(super) fn input_lines(
+    input: &str,
+    width: usize,
+    highlighted_range: Option<std::ops::Range<usize>>,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let input_lines = editable_input_visual_lines(input, width);
     let input_chars = input.chars().collect::<Vec<_>>();
     let mut input_cursor = 0;
     for (line_index, visual_line) in input_lines.into_iter().enumerate() {
@@ -531,6 +534,19 @@ pub(super) fn input_lines_with_images(
             spans.push(Span::styled(span_text, style));
         }
         lines.push(Line::from(spans));
+    }
+    lines
+}
+
+pub(super) fn editable_input_visual_lines(input: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = input_visual_lines(input, width);
+    if !input.is_empty()
+        && lines
+            .last()
+            .is_some_and(|line| display_width(line) >= width)
+    {
+        lines.push(String::new());
     }
     lines
 }
