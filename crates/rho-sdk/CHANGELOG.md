@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.12.0...rho-sdk-v1.12.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **metrics:** include reasoning latency in output rate ([#632](https://github.com/matthewyjiang/rho/issues/632)) ([7f7fa39](https://github.com/matthewyjiang/rho/commit/7f7fa39d88e3032a4433a105e07a785989406944))
+
 ## [1.12.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.11.0...rho-sdk-v1.12.0) (2026-07-28)
 
 
