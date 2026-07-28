@@ -333,8 +333,9 @@ mod tests {
         assert!(enabled.contains("Work directly by default"));
         assert!(enabled.contains("adds latency, token use, and coordination overhead"));
         assert!(enabled.contains("background=true"));
-        assert!(enabled
-            .contains("Batching a foreground agent with other tools does not background it"));
+        assert!(
+            enabled.contains("Batching a foreground agent with other tools does not background it")
+        );
         assert!(enabled.contains("can delay the rest of that batch until the run finishes"));
         assert!(enabled.contains("Independent agents in the same batch run together"));
         assert!(enabled.contains("issue multiple agent calls in one turn"));
