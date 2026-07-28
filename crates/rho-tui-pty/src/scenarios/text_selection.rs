@@ -3,70 +3,82 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use unicode_width::UnicodeWidthChar;
 
 use super::{STARTUP, STREAM};
 use crate::{harness::WaitTimeout, keys::MouseButton, scenario::Step, PtyHarness};
 
 const DRAG_WIDTH: u16 = 8;
 
-/// Finds the assistant response row and the 0-based screen column where its
-/// text starts.
-fn response_cell(harness: &PtyHarness) -> Result<(u16, u16)> {
-    let needle = "fixture response: drag select target";
-    for (row, line) in harness.screen().rows_text().iter().enumerate() {
-        if let Some(column) = line.find(needle) {
-            return Ok((row as u16, column as u16));
-        }
-    }
-    anyhow::bail!(
-        "assistant response row not found:\n{}",
-        harness.screen().debug_dump()
-    );
+/// Display columns occupied by the UTF-8 prefix `line[..byte_offset]`.
+fn display_column_at_byte(line: &str, byte_offset: usize) -> u16 {
+    line.get(..byte_offset)
+        .unwrap_or("")
+        .chars()
+        .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+        .sum::<usize>() as u16
 }
 
-// Covers: dragging over history text must update the selection highlight
-// before the button is released, not only on mouse up.
-// Owner: interactive UX (PTY).
-fn assert_drag_updates_highlight_before_release(harness: &mut PtyHarness) -> Result<()> {
-    let (row, column) = response_cell(harness)?;
-    // SGR mouse coordinates are 1-based.
-    let press = (column + 1, row + 1);
-    harness.mouse(MouseButton::Left, press.0, press.1, true)?;
-    harness.mouse_drag(press.0 + DRAG_WIDTH, press.1)?;
+/// Finds the row and 0-based display column where `needle` is rendered on screen.
+fn screen_cell(harness: &PtyHarness, needle: &str) -> Result<(u16, u16)> {
+    for (row, line) in harness.screen().rows_text().iter().enumerate() {
+        if let Some(byte_offset) = line.find(needle) {
+            return Ok((row as u16, display_column_at_byte(line, byte_offset)));
+        }
+    }
+    anyhow::bail!("'{needle}' not found:\n{}", harness.screen().debug_dump());
+}
 
+/// Polls until every column in `column..column + cells` of `row` renders with
+/// the inverse attribute, failing with `what` and a screen dump on timeout.
+fn wait_for_row_highlight(
+    harness: &mut PtyHarness,
+    row: u16,
+    column: u16,
+    cells: u16,
+    what: &str,
+) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         harness.poll(Duration::from_millis(20));
         let inverse = harness.screen().inverse_columns(row);
         let highlighted = inverse
             .iter()
-            .filter(|&&cell| (column..column + DRAG_WIDTH).contains(&cell))
+            .filter(|&&cell| (column..column + cells).contains(&cell))
             .count();
-        if highlighted >= DRAG_WIDTH as usize {
-            break;
+        if highlighted >= cells as usize {
+            return Ok(());
         }
         if Instant::now() >= deadline {
             anyhow::bail!(
-                "selection highlight did not follow the drag before release; \
-                 inverse columns in row {row}: {inverse:?}\n{}",
+                "{what}; inverse columns in row {row}: {inverse:?}\n{}",
                 harness.screen().debug_dump()
             );
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+// Covers: dragging over history text must update the selection highlight
+// before the button is released, not only on mouse up.
+// Owner: interactive UX (PTY).
+fn assert_drag_updates_highlight_before_release(harness: &mut PtyHarness) -> Result<()> {
+    let (row, column) = screen_cell(harness, "fixture response: drag select target")?;
+    // SGR mouse coordinates are 1-based.
+    let press = (column + 1, row + 1);
+    harness.mouse(MouseButton::Left, press.0, press.1, true)?;
+    harness.mouse_drag(press.0 + DRAG_WIDTH, press.1)?;
+
+    wait_for_row_highlight(
+        harness,
+        row,
+        column,
+        DRAG_WIDTH,
+        "selection highlight did not follow the drag before release",
+    )?;
 
     harness.mouse(MouseButton::Left, press.0 + DRAG_WIDTH, press.1, false)?;
     Ok(())
-}
-
-/// Finds the composer row and 0-based column where `needle` is rendered.
-fn screen_cell(harness: &PtyHarness, needle: &str) -> Result<(u16, u16)> {
-    for (row, line) in harness.screen().rows_text().iter().enumerate() {
-        if let Some(column) = line.find(needle) {
-            return Ok((row as u16, column as u16));
-        }
-    }
-    anyhow::bail!("'{needle}' not found:\n{}", harness.screen().debug_dump());
 }
 
 // Covers: drag selection outside the history area (composer, statusline) must
@@ -79,26 +91,13 @@ fn assert_screen_drag_copies_composer_text(harness: &mut PtyHarness) -> Result<(
     harness.mouse(MouseButton::Left, press.0, press.1, true)?;
     harness.mouse_drag(press.0 + selected_cells - 1, press.1)?;
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        harness.poll(Duration::from_millis(20));
-        let inverse = harness.screen().inverse_columns(row);
-        let highlighted = inverse
-            .iter()
-            .filter(|&&cell| (column..column + selected_cells).contains(&cell))
-            .count();
-        if highlighted >= selected_cells as usize {
-            break;
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!(
-                "screen selection highlight did not appear during drag; \
-                 inverse columns in row {row}: {inverse:?}\n{}",
-                harness.screen().debug_dump()
-            );
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_for_row_highlight(
+        harness,
+        row,
+        column,
+        selected_cells,
+        "screen selection highlight did not appear during drag",
+    )?;
 
     harness.mouse(
         MouseButton::Left,
@@ -146,3 +145,19 @@ pub(super) const TEXT_SELECTION_DRAG_STEPS: &[Step] = &[
     Step::Custom(assert_drag_updates_highlight_before_release),
     Step::ExitCommand,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::display_column_at_byte;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn display_column_counts_multibyte_and_wide_prefix() {
+        // "α" is 2 UTF-8 bytes and 1 display column; "宽" is 3 bytes and 2 columns.
+        let line = "α宽target";
+        let byte_offset = line.find("target").expect("needle present");
+        assert_eq!(byte_offset, 5);
+        assert_eq!(display_column_at_byte(line, byte_offset), 3);
+        assert_eq!(display_column_at_byte("ascii target", 6), 6);
+    }
+}

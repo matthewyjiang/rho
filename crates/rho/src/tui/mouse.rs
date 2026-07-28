@@ -32,6 +32,7 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<(), B::Error> {
         let size = terminal.size()?;
+        let screen = Rect::new(0, 0, size.width, size.height);
         let width = size.width as usize;
         let height = size.height as usize;
         let now = Instant::now();
@@ -64,7 +65,7 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.screen_selection = None;
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
+                let layout = self.screen_layout(screen, now);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let targets = self.code_block_copy_targets(width);
@@ -117,13 +118,12 @@ impl App {
                 } else {
                     self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
-                    let screen = Rect::new(0, 0, size.width, size.height);
                     self.screen_selection =
                         selection_position_clamped(screen, 0, column, row).map(TextSelection::new);
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
+                let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 self.subagent_panel.clear_pointer_state();
                 if self.history.scrollbar_drag().is_some() {
@@ -133,7 +133,6 @@ impl App {
                         self.history.scroll_chrome_mut().drag_to(scrollbar, row);
                     }
                 } else if self.screen_selection.is_some() {
-                    let screen = Rect::new(0, 0, size.width, size.height);
                     if let (Some(selection), Some(position)) = (
                         self.screen_selection.as_mut(),
                         selection_position_clamped(screen, 0, column, row),
@@ -160,7 +159,7 @@ impl App {
                 let pressed_subagent = self.subagent_panel.pressed_run_id().map(str::to_owned);
                 let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
                 self.history.set_scrollbar_drag(None);
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
+                let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let released_subagent = matches!(self.input_ui.composer(), ComposerMode::Input)
                     .then(|| {
@@ -212,7 +211,6 @@ impl App {
                         self.toggle_tool_output_at_history_line(line, width, terminal)?;
                     }
                 } else if let Some(mut selection) = self.screen_selection.take() {
-                    let screen = Rect::new(0, 0, size.width, size.height);
                     if let Some(position) = selection_position_clamped(screen, 0, column, row) {
                         selection.update(position);
                     }
@@ -220,6 +218,9 @@ impl App {
                         // Redraw so the completed frame holds the text the
                         // selection was made over; the terminal's current
                         // buffer is the cleared back buffer after a draw.
+                        // The selection is still taken here, so this frame
+                        // renders without the REVERSED highlight; the put-back
+                        // below restores the highlight for the next frame.
                         let completed = terminal.draw(|frame| self.draw(frame))?;
                         let lines = screen_lines(completed.buffer, screen);
                         if let Some(text) = selection.selected_text(&lines, 0) {
@@ -232,7 +233,7 @@ impl App {
             MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
                 self.last_mouse_position = Some((column, row));
-                let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
+                let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
