@@ -56,6 +56,8 @@ pub struct Config {
     pub max_tool_output_lines: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
+    /// Use the low-latency priority tier for supported Codex models.
+    pub fast_mode: bool,
     pub show_reasoning_output: bool,
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
@@ -101,6 +103,7 @@ impl Default for Config {
             max_tool_output_lines: 10,
             auth: "api-key".into(),
             reasoning: ReasoningLevel::Medium,
+            fast_mode: false,
             show_reasoning_output: true,
             auto_compact: false,
             compact_threshold_percent: 85,
@@ -321,6 +324,9 @@ impl Config {
         if let Some(v) = file.reasoning {
             cfg.reasoning = v;
         }
+        if let Some(v) = file.fast_mode {
+            cfg.fast_mode = v;
+        }
         if let Some(v) = file.favorite_models {
             cfg.favorite_models = favorite_model_values(&normalized_favorite_models(&v));
         }
@@ -338,6 +344,9 @@ impl Config {
                 }
                 if let Some(reasoning) = group.reasoning {
                     cfg.reasoning = reasoning;
+                }
+                if let Some(fast_mode) = group.fast_mode {
+                    cfg.fast_mode = fast_mode;
                 }
                 if let Some(models) = group.favorite_models {
                     cfg.favorite_models =
@@ -672,6 +681,7 @@ struct PartialConfig {
     max_tool_output_lines: Option<usize>,
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
+    fast_mode: Option<bool>,
     reasoning_effort: Option<String>,
     show_reasoning_output: Option<bool>,
     auto_compact: Option<bool>,
@@ -857,6 +867,7 @@ impl PartialConfig {
                 group.provider = group.provider.or(self.provider.take());
                 group.auth = group.auth.or(self.auth.take());
                 group.reasoning = group.reasoning.or(self.reasoning.take());
+                group.fast_mode = group.fast_mode.or(self.fast_mode.take());
                 group.favorite_models = group.favorite_models.or(self.favorite_models.take());
                 Some(ModelSetting::Group(group))
             }
@@ -880,6 +891,7 @@ struct PartialModelConfig {
     model: Option<String>,
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
+    fast_mode: Option<bool>,
     favorite_models: Option<Vec<String>>,
     aliases: Option<ModelAliases>,
 }

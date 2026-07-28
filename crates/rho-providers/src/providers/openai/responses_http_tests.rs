@@ -575,6 +575,7 @@ fn create_and_compact_body_builders_diverge_on_tools() {
         &profile,
         &OpenAiReasoningProfile::unknown(),
         request.clone(),
+        None,
     )
     .unwrap();
     let compact =

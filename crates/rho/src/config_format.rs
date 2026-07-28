@@ -79,6 +79,7 @@ struct ModelConfig<'a> {
     model: Cow<'a, str>,
     auth: &'a str,
     reasoning: ReasoningLevel,
+    fast_mode: bool,
     favorite_models: &'a [String],
     #[serde(skip_serializing_if = "ModelAliases::is_empty")]
     aliases: &'a ModelAliases,
@@ -139,6 +140,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 model: persisted_model_reference(config.current_model_alias(), &config.model),
                 auth: &config.auth,
                 reasoning: config.reasoning,
+                fast_mode: config.fast_mode,
                 favorite_models: &config.favorite_models,
                 aliases: &config.model_aliases,
             },

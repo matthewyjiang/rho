@@ -408,6 +408,24 @@ impl Session {
         Ok(())
     }
 
+    pub fn service_tier(&self) -> Option<crate::model::ServiceTier> {
+        self.core.runtime().service_tier
+    }
+
+    /// Changes the provider service class for future turns while the session is idle.
+    pub fn set_service_tier(
+        &self,
+        service_tier: Option<crate::model::ServiceTier>,
+    ) -> Result<(), Error> {
+        let _inactive = self.core.lock_inactive()?;
+        self.core
+            .runtime
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .service_tier = service_tier;
+        Ok(())
+    }
+
     /// Replaces the host-supplied compactor and automatic compaction policy while idle.
     pub fn set_compaction(
         &self,

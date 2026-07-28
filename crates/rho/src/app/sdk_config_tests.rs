@@ -31,6 +31,7 @@ fn converts_application_config_without_credentials_or_side_effects() {
                 .unwrap(),
             runtime: RuntimeOptions {
                 reasoning: config.reasoning,
+                service_tier: None,
                 compaction: CompactionConfig {
                     auto_compact: true,
                     threshold_percent: 75,

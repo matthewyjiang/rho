@@ -13,6 +13,15 @@ mod responses_http;
 
 pub use cache::prompt_cache_key_from_session_id;
 
+/// Returns whether a Codex model offers OpenAI's faster priority tier.
+pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
+    provider == "openai-codex"
+        && (matches!(model, "gpt-5.4" | "gpt-5.5" | "gpt-5.6")
+            || model
+                .strip_prefix("gpt-5.6-")
+                .is_some_and(|suffix| !suffix.is_empty()))
+}
+
 use crate::protocol::openai_responses::collect_codex_sse_response;
 use auth::Auth;
 #[cfg(test)]
@@ -21,6 +30,8 @@ use codex_request::{build_responses_create_body, ResponsesProfile};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
 use reasoning::OpenAiReasoningProfile;
 use responses_http::{ResponsesEndpoint, ResponsesHttpTransport};
+
+use rho_sdk::provider::ModelRequestOptions;
 
 use crate::{
     credentials::{CodexTokens, CredentialStore},
@@ -86,13 +97,22 @@ impl OpenAiProvider {
         )
     }
 
-    fn create_body(&self, request: ModelRequest<'_>) -> Result<Value, ModelError> {
-        build_responses_create_body(&self.profile, &self.reasoning, request)
+    fn create_body(
+        &self,
+        request: ModelRequest<'_>,
+        options: ModelRequestOptions,
+    ) -> Result<Value, ModelError> {
+        build_responses_create_body(
+            &self.profile,
+            &self.reasoning,
+            request,
+            options.service_tier(),
+        )
     }
 
     #[cfg(test)]
     fn openai_api_responses_body(&self, request: ModelRequest<'_>) -> Result<Value, ModelError> {
-        self.create_body(request)
+        self.create_body(request, ModelRequestOptions::default())
     }
 }
 
@@ -120,27 +140,44 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
+        self.stream_turn_with_options(
+            request,
+            ModelRequestOptions::default(),
+            on_event,
+            on_request_event,
+        )
+        .await
+    }
+
+    pub(crate) async fn stream_turn_with_options(
+        &self,
+        request: ModelRequest<'_>,
+        options: ModelRequestOptions,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
         match &self.auth {
             Auth::ApiKey(_) => {
-                self.send_openai_api_responses_stream(request, on_event)
+                self.send_openai_api_responses_stream(request, options, on_event)
                     .await
             }
             Auth::Codex { .. } => {
-                self.send_codex_responses_stream(request, on_event, on_request_event)
+                self.send_codex_responses_stream(request, options, on_event, on_request_event)
                     .await
             }
         }
     }
 }
 
-crate::impl_sdk_model_provider!(OpenAiProvider, native_compact);
+crate::impl_sdk_model_provider!(OpenAiProvider, native_compact, request_options);
 
 impl OpenAiProvider {
     async fn send_codex_responses_complete(
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.create_body(request)?;
+        let body = self.create_body(request, ModelRequestOptions::default())?;
         let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
         match self
             .codex_ws
@@ -178,22 +215,24 @@ impl OpenAiProvider {
     async fn send_codex_responses_stream(
         &self,
         request: ModelRequest<'_>,
+        options: ModelRequestOptions,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        self.send_codex_responses_inner(request, Some(on_event), on_request_event)
+        self.send_codex_responses_inner(request, options, Some(on_event), on_request_event)
             .await
     }
 
     async fn send_codex_responses_inner(
         &self,
         request: ModelRequest<'_>,
+        options: ModelRequestOptions,
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.create_body(request.clone())?;
+        let body = self.create_body(request.clone(), options)?;
         let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
         match self
             .codex_ws
@@ -217,7 +256,7 @@ impl OpenAiProvider {
 
         // Rebuilt only on this rare fallback path so the common WebSocket
         // turn does not clone the full-history request body.
-        let body = self.create_body(request)?;
+        let body = self.create_body(request, options)?;
         let http_result = self
             .http()
             .post_json(
@@ -314,7 +353,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self.create_body(request)?;
+        let body = self.create_body(request, ModelRequestOptions::default())?;
         let http_result = self
             .http()
             .post_json(
@@ -334,10 +373,11 @@ impl OpenAiProvider {
     async fn send_openai_api_responses_stream(
         &self,
         request: ModelRequest<'_>,
+        options: ModelRequestOptions,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self.create_body(request)?;
+        let body = self.create_body(request, options)?;
         let http_result = self
             .http()
             .post_json(

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::model::{ModelError, ModelIdentity, ModelRequest};
-use rho_sdk::model::ToolSpec;
+use rho_sdk::model::{ServiceTier, ToolSpec};
 
 use crate::protocol::openai_responses::{
     codex_input_items_for_target, codex_reasoning_param, to_responses_lite_tool, to_responses_tool,
@@ -165,6 +165,7 @@ pub(super) fn build_responses_create_body(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
+    service_tier: Option<ServiceTier>,
 ) -> Result<Value, ModelError> {
     let tools = request
         .tools
@@ -180,6 +181,11 @@ pub(super) fn build_responses_create_body(
 
     let mut body = base_responses_body(profile);
     body["stream"] = json!(true);
+    if service_tier == Some(ServiceTier::Priority)
+        && super::supports_fast_mode(profile.provider(), profile.model())
+    {
+        body["service_tier"] = json!("priority");
+    }
 
     match profile.mode() {
         ResponsesRequestMode::Standard => {
@@ -286,6 +292,15 @@ pub(super) fn build_codex_responses_body(
     model: &str,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
+    build_codex_responses_body_with_tier(model, request, None)
+}
+
+#[cfg(test)]
+fn build_codex_responses_body_with_tier(
+    model: &str,
+    request: ModelRequest<'_>,
+    service_tier: Option<ServiceTier>,
+) -> Result<Value, ModelError> {
     let profile = ResponsesProfile::from_auth(
         &Auth::Codex {
             tokens: crate::credentials::CodexTokens {
@@ -298,7 +313,12 @@ pub(super) fn build_codex_responses_body(
         },
         model,
     );
-    build_responses_create_body(&profile, &OpenAiReasoningProfile::unknown(), request)
+    build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        request,
+        service_tier,
+    )
 }
 
 #[cfg(test)]
@@ -337,6 +357,64 @@ mod tests {
                 "{model}"
             );
         }
+    }
+
+    #[test]
+    fn priority_service_tier_is_sent_as_fast_mode() {
+        let body = build_codex_responses_body_with_tier(
+            "gpt-5.5",
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            Some(ServiceTier::Priority),
+        )
+        .unwrap();
+
+        assert_eq!(body["service_tier"], "priority");
+    }
+
+    #[test]
+    fn priority_service_tier_is_omitted_for_unsupported_codex_models() {
+        let body = build_codex_responses_body_with_tier(
+            "gpt-5.3-codex-spark",
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            Some(ServiceTier::Priority),
+        )
+        .unwrap();
+
+        assert!(body.get("service_tier").is_none());
+    }
+
+    #[test]
+    fn priority_service_tier_is_limited_to_codex_auth() {
+        let request = ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: Default::default(),
+            prompt_cache_key: None,
+        };
+        let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.5");
+
+        let body = build_responses_create_body(
+            &profile,
+            &OpenAiReasoningProfile::unknown(),
+            request,
+            Some(ServiceTier::Priority),
+        )
+        .unwrap();
+
+        assert!(body.get("service_tier").is_none());
     }
 
     #[test]

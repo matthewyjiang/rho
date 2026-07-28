@@ -77,6 +77,8 @@ rho --provider openai-codex --auth codex --model gpt-5.6-sol run "hello"
 
 Run `rho login openai-codex` first or provide `CODEX_ACCESS_TOKEN` in the automation environment.
 
+Supported GPT-5.4, GPT-5.5, and GPT-5.6 Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on`, `/fast off`, or `/fast status`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode` and sends `service_tier: "priority"` on later supported Codex turns.
+
 ## Notes
 
 - As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.

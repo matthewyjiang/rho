@@ -70,6 +70,9 @@ impl SdkBootstrapOptions {
             provider,
             runtime: RuntimeOptions {
                 reasoning: config.reasoning,
+                service_tier: config
+                    .fast_mode
+                    .then_some(rho_sdk::model::ServiceTier::Priority),
                 compaction: CompactionConfig::from(config),
             },
             workspace: WorkspaceOptions {
@@ -88,6 +91,7 @@ impl SdkBootstrapOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RuntimeOptions {
     pub(crate) reasoning: ReasoningLevel,
+    pub(crate) service_tier: Option<rho_sdk::model::ServiceTier>,
     pub(crate) compaction: CompactionConfig,
 }
 

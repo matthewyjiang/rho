@@ -39,6 +39,7 @@ mod copy_interaction;
 mod doctor;
 pub(crate) mod event_adapter;
 mod external_editor;
+mod fast_command;
 mod feed_image;
 mod file_palette;
 mod file_picker;

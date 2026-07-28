@@ -8,6 +8,7 @@ provider = "openai"
 model = "gpt-5.6-sol"
 auth = "api-key" # or "none", "codex", "anthropic-api-key", "google-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "ollama-cloud-api-key", "ollama-cloud-device", "poolside-api-key", "openrouter-api-key", "openrouter-oauth", or "kimi-oauth"
 reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
+fast_mode = false # priority service for supported Codex models; uses credits at a higher rate
 favorite_models = []
 
 [model.aliases]

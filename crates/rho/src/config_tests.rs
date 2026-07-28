@@ -87,6 +87,7 @@ fn loads_grouped_config_and_custom_keybinding() {
 provider = "anthropic"
 model = "claude-sonnet-4-5"
 reasoning = "high"
+fast_mode = true
 
 [display]
 max_tool_output_lines = 24
@@ -105,10 +106,26 @@ jump_to_bottom = "alt+g"
         config.reasoning,
         rho_providers::reasoning::ReasoningLevel::High
     );
+    assert!(config.fast_mode);
     assert_eq!(config.max_tool_output_lines, 24);
     assert_eq!(config.keybindings.jump_to_bottom.to_string(), "alt+g");
     assert_eq!(config.keybindings.open_editor.to_string(), "ctrl+g");
     assert_eq!(config.keybindings.reset_conversation.to_string(), "ctrl+r");
+}
+
+#[test]
+fn fast_mode_round_trips_through_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let config = Config {
+        fast_mode: true,
+        ..Config::default()
+    };
+
+    config.write_settings(path.clone()).unwrap();
+    let loaded = Config::load(Some(path)).unwrap();
+
+    assert!(loaded.fast_mode);
 }
 
 #[test]

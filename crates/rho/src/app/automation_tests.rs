@@ -166,6 +166,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
+        service_tier: None,
         compaction: CompactionConfig {
             auto_compact: true,
             threshold_percent: 5,

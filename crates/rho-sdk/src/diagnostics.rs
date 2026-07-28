@@ -93,6 +93,7 @@ pub struct DiagnosticsSnapshot {
     compaction_trigger_messages: Option<usize>,
     compaction_trigger_tokens: Option<u64>,
     reasoning_level: crate::ReasoningLevel,
+    service_tier: Option<crate::model::ServiceTier>,
     default_features: Vec<String>,
     usage_recorder_diagnostics: Vec<crate::UsageRecorderDiagnostic>,
 }
@@ -114,6 +115,7 @@ pub(crate) struct ExecutionSettings {
     pub(crate) compaction_trigger_messages: Option<usize>,
     pub(crate) compaction_trigger_tokens: Option<u64>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
+    pub(crate) service_tier: Option<crate::model::ServiceTier>,
     pub(crate) usage_recorder_diagnostics: Vec<crate::UsageRecorderDiagnostic>,
 }
 
@@ -143,6 +145,7 @@ impl DiagnosticsSnapshot {
             compaction_trigger_messages: execution.compaction_trigger_messages,
             compaction_trigger_tokens: execution.compaction_trigger_tokens,
             reasoning_level: execution.reasoning_level,
+            service_tier: execution.service_tier,
             default_features: Vec::new(),
             usage_recorder_diagnostics: execution.usage_recorder_diagnostics,
         }
@@ -202,6 +205,10 @@ impl DiagnosticsSnapshot {
 
     pub fn reasoning_level(&self) -> crate::ReasoningLevel {
         self.reasoning_level
+    }
+
+    pub fn service_tier(&self) -> Option<crate::model::ServiceTier> {
+        self.service_tier
     }
 
     pub fn usage_recorder_diagnostics(&self) -> &[crate::UsageRecorderDiagnostic] {

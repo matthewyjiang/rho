@@ -142,6 +142,7 @@ impl InteractiveRuntime {
             approval_handler: approval_handler.clone(),
             system_prompt: system_prompt.clone(),
             reasoning: sdk_options.runtime.reasoning,
+            service_tier: sdk_options.runtime.service_tier,
             compaction: compaction.clone(),
             context_window,
             usage_purpose: "agent",
@@ -183,6 +184,17 @@ impl InteractiveRuntime {
         self.permission_mode
     }
 
+    pub(crate) fn fast_mode(&self) -> bool {
+        self.sessions.session().service_tier() == Some(rho_sdk::model::ServiceTier::Priority)
+    }
+
+    pub(crate) fn set_fast_mode(&self, enabled: bool) -> anyhow::Result<()> {
+        self.sessions
+            .session()
+            .set_service_tier(enabled.then_some(rho_sdk::model::ServiceTier::Priority))?;
+        Ok(())
+    }
+
     /// Returns whether a model run is active on the interactive run controller.
     ///
     /// Prefer this for provider-lifecycle decisions. TUI busy UI uses
@@ -211,6 +223,7 @@ impl InteractiveRuntime {
             approval_handler: approval_handler.clone(),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
+            service_tier: self.sessions.session().service_tier(),
             compaction: self.compaction.clone(),
             context_window: self.context_window,
             usage_purpose: "agent",
@@ -578,6 +591,7 @@ impl InteractiveRuntime {
             approval_handler: self.approval_handler.clone(),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
+            service_tier: self.sessions.session().service_tier(),
             compaction: self.compaction.clone(),
             context_window: self.context_window,
             usage_purpose: "agent",
@@ -788,6 +802,7 @@ impl InteractiveRuntime {
             approval_handler: self.approval_handler.clone(),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
+            service_tier: self.sessions.session().service_tier(),
             compaction: self.compaction.clone(),
             context_window: self.context_window,
             usage_purpose: "agent",

@@ -54,6 +54,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
+        service_tier: None,
         compaction: CompactionConfig {
             auto_compact: true,
             threshold_percent: 1,
@@ -190,6 +191,7 @@ async fn new_sessions_seed_prompt_cache_keys() {
         approval_handler: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
+        service_tier: None,
         compaction: CompactionConfig::default(),
         context_window: None,
         usage_purpose: "agent",

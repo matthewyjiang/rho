@@ -9,7 +9,7 @@ use crate::{
         AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse,
         ModelUsage,
     },
-    provider::{provider_event_channel, ModelProvider, ProviderCancellationMode},
+    provider::{provider_event_channel, ModelRequestOptions, ProviderCancellationMode},
     run::RunCommand,
     session::{HistoryMetrics, RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
@@ -357,7 +357,7 @@ async fn request_valid_response(
     loop {
         provider_turn_attempts += 1;
         let result = provider_turn(
-            scope.runtime.provider.as_ref(),
+            scope.runtime,
             history,
             tools,
             accumulated_usage,
@@ -534,7 +534,7 @@ fn valid_response(response: &ModelResponse) -> bool {
 }
 
 async fn provider_turn(
-    provider: &dyn ModelProvider,
+    runtime: &Rho,
     history: &[Message],
     tools: &[crate::model::ToolSpec],
     accumulated_usage: &ModelUsage,
@@ -542,6 +542,7 @@ async fn provider_turn(
     prompt_cache_key: Option<&str>,
     control: &mut RunControl<'_>,
 ) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
+    let provider = runtime.provider.as_ref();
     let (provider_events, mut receiver) =
         provider_event_channel(NonZeroUsize::new(PROVIDER_EVENT_CAPACITY).unwrap());
     let request = ModelRequest {
@@ -551,8 +552,13 @@ async fn provider_turn(
         reasoning_level,
         prompt_cache_key,
     };
+    let request_options = runtime
+        .service_tier
+        .map(|tier| ModelRequestOptions::default().with_service_tier(tier))
+        .unwrap_or_default();
     let cancellation_mode = provider.cancellation_mode();
-    let mut future = provider.send_turn_stream(request, provider_events);
+    let mut future =
+        provider.send_turn_stream_with_options(request, request_options, provider_events);
     let identity = provider.identity();
     let mut capture = StreamCapture::default();
     let mut stream_open = true;
