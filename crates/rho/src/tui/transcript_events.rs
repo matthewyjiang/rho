@@ -146,19 +146,6 @@ impl App {
         self.drain_stream(terminal, kind)
     }
 
-    /// Plays out everything the pacer is holding.
-    ///
-    /// Stands in for the frame ticks a live terminal supplies, so tests can
-    /// assert on streamed text without depending on wall-clock timing.
-    #[cfg(test)]
-    pub(super) fn play_out_streams<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> Result<bool, B::Error> {
-        self.streams.play_out();
-        self.drain_streams(terminal)
-    }
-
     pub(super) fn drain_stream<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,

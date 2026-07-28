@@ -25,8 +25,6 @@ use serde::{Deserialize, Serialize};
 
 use rho_providers::file_lock::FileLock;
 
-#[cfg(test)]
-use super::stream::describe_rate_limit;
 use super::stream::RateLimitInfo;
 
 const STATE_FILE_NAME: &str = "rate-limits.json";
@@ -105,20 +103,6 @@ impl RateLimitObservation {
 
     pub(crate) fn age_seconds(&self, now_unix: i64) -> i64 {
         now_unix.saturating_sub(self.observed_at_unix).max(0)
-    }
-
-    /// One-line body for a single window: label, optional %, notable status, reset.
-    #[cfg(test)]
-    pub(crate) fn window_summary(&self, now_unix: i64) -> String {
-        let body = describe_rate_limit(&self.info);
-        let age = format_age(self.age_seconds(now_unix));
-        format!("{body} (observed {age})")
-    }
-
-    /// One-line display with a `claude code:` prefix (single-window fallback).
-    #[cfg(test)]
-    pub(crate) fn describe(&self, now_unix: i64) -> String {
-        format!("claude code: {}", self.window_summary(now_unix))
     }
 
     /// Stamp `info` at an explicit unix-epoch nanosecond instant.

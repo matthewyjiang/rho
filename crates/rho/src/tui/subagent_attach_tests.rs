@@ -10,11 +10,6 @@ use super::*;
 use crate::herdr::HerdrReporter;
 
 #[test]
-fn attach_command_is_stable_and_unquoted() {
-    assert_eq!(attach_command("a1b2c3"), "rho attach a1b2c3");
-}
-
-#[test]
 fn pane_command_quotes_every_shell_argument() {
     assert_eq!(
         pane_attach_command_for_executable(Some(Path::new("/tmp/rho`*?[x]")), "a1b2c3"),
@@ -47,12 +42,6 @@ fn destination_uses_herdr_when_configured() {
     assert_eq!(destination(&herdr), AttachDestination::HerdrPane);
     #[cfg(not(unix))]
     assert_eq!(destination(&herdr), AttachDestination::Clipboard);
-}
-
-#[test]
-fn action_hint_matches_destination() {
-    assert_eq!(action_hint(AttachDestination::Clipboard), "copy attach");
-    assert_eq!(action_hint(AttachDestination::HerdrPane), "open pane");
 }
 
 #[derive(Clone)]

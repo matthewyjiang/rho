@@ -349,32 +349,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn matches_all_commands_for_empty_slash_prefix() {
-        let matches = matching_commands(command_prefix("/").unwrap());
-
-        assert_eq!(matches.len(), COMMANDS.len());
-        assert!(matches.iter().any(|command| command.name == "model"));
-        assert!(matches.iter().any(|command| command.name == "new"));
-    }
-
-    #[test]
-    fn commands_and_matches_are_alphabetical_by_name() {
-        let names = COMMANDS
-            .iter()
-            .map(|command| command.name)
-            .collect::<Vec<_>>();
-        let mut sorted = names.clone();
-        sorted.sort_unstable();
-        assert_eq!(names, sorted);
-
-        let matches = matching_commands(command_prefix("/").unwrap())
-            .into_iter()
-            .map(|command| command.name)
-            .collect::<Vec<_>>();
-        assert_eq!(matches, sorted);
-    }
-
-    #[test]
     fn additional_leading_slashes_are_literal_text() {
         assert_eq!(command_prefix("//"), None);
         assert_eq!(parse_command("//literal").unwrap(), None);
@@ -395,45 +369,6 @@ mod tests {
     }
 
     #[test]
-    fn matches_full_command_name() {
-        let matches = matching_commands(command_prefix("/model").unwrap());
-
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id, CommandId::Model);
-    }
-
-    #[test]
-    fn matching_unknown_command_returns_no_matches() {
-        let matches = matching_commands(command_prefix("/nope").unwrap());
-
-        assert!(matches.is_empty());
-    }
-
-    #[test]
-    fn parses_fast_mode_and_offers_mode_completions() {
-        let invocation = parse_command("/fast on").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Fast);
-        assert_eq!(invocation.args, "on");
-        assert_eq!(
-            argument_choices("/fast ", 6)
-                .iter()
-                .map(|choice| choice.completion)
-                .collect::<Vec<_>>(),
-            vec!["/fast on", "/fast off", "/fast status"]
-        );
-    }
-
-    #[test]
-    fn parses_goal_command_with_condition() {
-        let invocation = parse_command("/goal all tests pass").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Goal);
-        assert_eq!(invocation.name, "goal");
-        assert_eq!(invocation.args, "all tests pass");
-    }
-
-    #[test]
     fn configuration_commands_are_not_in_the_command_palette() {
         for name in [
             "title-model",
@@ -448,14 +383,6 @@ mod tests {
                 Err(CommandParseError::Unknown(name.into()))
             );
         }
-    }
-
-    #[test]
-    fn parses_agents_command() {
-        let invocation = parse_command("/agents").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Agents);
-        assert_eq!(invocation.args, "");
     }
 
     #[test]

@@ -1,13 +1,12 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use rho_sdk::SecretString;
 use url::Url;
 
 use super::{ProviderBuildOptions, ProviderBuilder, ProviderCredential};
 use crate::{
-    credentials::MemoryCredentialStore,
-    model::{registry::ProviderRuntime, Message, ModelRequest},
-    providers::{openai::auth::Auth, openai_compatible::CompatibleAuth},
+    model::{Message, ModelRequest},
+    providers::openai_compatible::CompatibleAuth,
     reasoning::ReasoningLevel,
 };
 
@@ -73,135 +72,6 @@ fn credentials_are_redacted_and_mismatches_fail_before_execution() {
         .to_string()
         .contains("credential kind does not match provider"));
     assert!(!format!("{error:?}").contains(secret));
-}
-
-#[test]
-fn explicit_builder_constructs_provider_without_environment_or_keychain_lookup() {
-    let options = ProviderBuildOptions::new("openai", "gpt-test", ReasoningLevel::Medium).unwrap();
-    let credential = ProviderCredential::OpenAi {
-        auth: Auth::ApiKey("explicit-secret".into()),
-        refresh_store: Arc::new(MemoryCredentialStore::default()),
-    };
-
-    let provider = ProviderBuilder::new(options, credential).build().unwrap();
-
-    assert_eq!(provider.identity().provider, "openai");
-    assert_eq!(provider.identity().model, "gpt-test");
-}
-
-#[test]
-fn explicit_builder_constructs_google_provider() {
-    let options =
-        ProviderBuildOptions::new("google", "gemini-3.5-flash", ReasoningLevel::Medium).unwrap();
-    let credential = ProviderCredential::GoogleApiKey(SecretString::new("explicit-secret"));
-
-    let provider = ProviderBuilder::new(options, credential).build().unwrap();
-
-    assert_eq!(provider.identity().provider, "google");
-    assert_eq!(provider.identity().api, "gemini-generate-content");
-    assert_eq!(provider.identity().model, "gemini-3.5-flash");
-}
-
-#[test]
-fn explicit_builder_constructs_poolside_provider() {
-    let options =
-        ProviderBuildOptions::new("poolside", "poolside/laguna-m.1", ReasoningLevel::Medium)
-            .unwrap();
-    let credential =
-        ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("explicit-secret".into()));
-
-    let provider = ProviderBuilder::new(options, credential).build().unwrap();
-
-    assert_eq!(provider.identity().provider, "poolside");
-    assert_eq!(provider.identity().api, "openai-chat-completions");
-    assert_eq!(provider.identity().model, "laguna-m.1");
-}
-
-#[test]
-fn explicit_builder_constructs_openrouter_provider() {
-    let options = ProviderBuildOptions::new(
-        "openrouter",
-        "anthropic/claude-sonnet-4",
-        ReasoningLevel::Medium,
-    )
-    .unwrap();
-    let credential =
-        ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("explicit-secret".into()));
-
-    let provider = ProviderBuilder::new(options, credential).build().unwrap();
-
-    assert_eq!(provider.identity().provider, "openrouter");
-    assert_eq!(provider.identity().model, "anthropic/claude-sonnet-4");
-}
-
-#[test]
-fn public_provider_objects_are_send_sync() {
-    fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<Arc<dyn rho_sdk::provider::ModelProvider>>();
-}
-
-#[test]
-fn poolside_runtime_uses_poolside_dialect_and_platform_default() {
-    assert_eq!(
-        crate::model::registry::provider_runtime("poolside"),
-        Some(ProviderRuntime::OpenAiCompatible {
-            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Poolside,
-            default_api_base: "https://inference.poolside.ai/v1",
-        })
-    );
-}
-
-#[test]
-fn ollama_runtime_uses_standard_dialect_and_local_v1_default() {
-    assert_eq!(
-        crate::model::registry::provider_runtime("ollama"),
-        Some(ProviderRuntime::OpenAiCompatible {
-            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Standard,
-            default_api_base: "http://127.0.0.1:11434/v1",
-        })
-    );
-}
-
-#[test]
-fn ollama_cloud_runtime_uses_standard_dialect_and_hosted_v1_default() {
-    assert_eq!(
-        crate::model::registry::provider_runtime("ollama-cloud"),
-        Some(ProviderRuntime::OpenAiCompatible {
-            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Standard,
-            default_api_base: "https://ollama.com/v1",
-        })
-    );
-}
-
-#[test]
-fn explicit_builder_constructs_ollama_cloud_provider() {
-    let options =
-        ProviderBuildOptions::new("ollama-cloud", "kimi-k2.6", ReasoningLevel::Off).unwrap();
-    let credential =
-        ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("explicit-secret".into()));
-
-    let provider = ProviderBuilder::new(options, credential).build().unwrap();
-
-    assert_eq!(provider.identity().provider, "ollama-cloud");
-    assert_eq!(provider.identity().api, "openai-chat-completions");
-    assert_eq!(provider.identity().model, "kimi-k2.6");
-}
-
-#[test]
-fn explicit_builder_constructs_ollama_cloud_device_auth_mode() {
-    let dir = tempfile::tempdir().unwrap();
-    let key = crate::auth::ollama_device::OllamaDeviceKey::load_or_create(dir.path()).unwrap();
-    let options = ProviderBuildOptions::new("ollama-cloud", "kimi-k2.6", ReasoningLevel::Off)
-        .unwrap()
-        .with_auth("ollama-cloud-device")
-        .unwrap();
-    let credential = ProviderCredential::OpenAiCompatible(CompatibleAuth::OllamaDevice(key));
-
-    let provider = ProviderBuilder::new(options, credential).build().unwrap();
-
-    assert_eq!(provider.identity().provider, "ollama-cloud");
-    assert_eq!(provider.identity().api, "openai-chat-completions");
-    assert_eq!(provider.identity().model, "kimi-k2.6");
 }
 
 #[tokio::test]

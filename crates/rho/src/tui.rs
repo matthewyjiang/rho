@@ -12,10 +12,6 @@ use std::{
 use history_cache::CachedCodeBlock;
 use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
-#[cfg(test)]
-use ratatui::{layout::Rect, style::Modifier, text::Line};
-#[cfg(test)]
-use std::sync::Mutex;
 use tokio::sync::oneshot;
 mod activity;
 mod agent_picker;
@@ -166,8 +162,6 @@ use render::{
     tool_entry_lines, truncate_one_line, LineFill,
 };
 use scrollbar::HistoryScrollbar;
-#[cfg(test)]
-use scrollbar::HistoryScrollbarDrag;
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
 use subagent_attach::PendingSubagentAttach;
@@ -340,10 +334,6 @@ struct App {
     clipboard: Box<dyn ClipboardWriter + Send>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
-    /// Test-only Claude probe override so `/info` and `/doctor` never spawn
-    /// host `claude` or read personal auth from unit tests.
-    #[cfg(test)]
-    test_claude_probe_snapshot: Option<crate::claude_runtime::auth::ClaudeProbeSnapshot>,
 }
 
 struct PendingSubagentQuestionnaire {

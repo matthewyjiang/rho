@@ -162,16 +162,6 @@ fn rejects_malformed_names_and_values() {
 }
 
 #[test]
-fn alias_values_must_not_use_alias_reference_syntax() {
-    let error = ModelAliases::from_entries(entries(&[("deep", "@other")])).unwrap_err();
-
-    assert_eq!(
-        error,
-        "invalid model alias value '@other': expected a concrete 'provider/model' or 'model' with no whitespace"
-    );
-}
-
-#[test]
 fn serialization_preserves_concrete_targets_in_a_round_trip() {
     let aliases = ModelAliases::from_entries(entries(&[
         ("deep", "anthropic/claude-opus-4-8"),

@@ -199,11 +199,6 @@ impl CopyNotice {
     pub(super) fn is_visible(&self, now: Instant) -> bool {
         now < self.visible_until
     }
-
-    #[cfg(test)]
-    pub(super) fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 pub(super) fn render_copy_notice(

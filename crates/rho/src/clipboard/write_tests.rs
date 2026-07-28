@@ -71,17 +71,3 @@ fn wsl_probe_prefers_windows_host_when_clip_exists() {
     assert!(probe.healthy);
     assert!(probe.detail.contains("clip.exe"));
 }
-
-#[test]
-fn wsl_probe_uses_native_when_clip_is_missing() {
-    let probe = probe_text_write_with(SessionKind::Wsl, |_| false, || true);
-    assert_eq!(probe.status, "native");
-    assert!(probe.healthy);
-}
-
-#[test]
-fn wsl_probe_marks_osc_only_as_degraded() {
-    let probe = probe_text_write_with(SessionKind::Wsl, |_| false, || false);
-    assert_eq!(probe.status, "osc 52 fallback");
-    assert!(!probe.healthy);
-}

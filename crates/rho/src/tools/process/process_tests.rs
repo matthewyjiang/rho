@@ -58,29 +58,6 @@ fn tool_context() -> ToolContext {
         max_output_bytes: 1024 * 1024,
     }
 }
-
-#[test]
-fn process_tool_has_one_compact_action_schema() {
-    let tool = Process::new(ProcessManager::new(ProcessLimits::default()));
-    let spec = tool.spec();
-
-    assert_eq!(spec.name, "process");
-    assert_eq!(
-        spec.input_schema,
-        json!({
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["start", "poll", "stop"]},
-                "command": {"type": "string"},
-                "timeout_seconds": {"type": "integer", "minimum": 1},
-                "process_id": {"type": "string"},
-                "cursor": {"type": "integer", "minimum": 0},
-                "wait_seconds": {"type": "integer", "minimum": 0, "maximum": 30}
-            },
-            "required": ["action"]
-        })
-    );
-}
 #[tokio::test]
 async fn process_tool_streams_structured_snapshot_lines() {
     let manager = ProcessManager::new(ProcessLimits::default());

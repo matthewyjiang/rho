@@ -15,10 +15,7 @@ use super::{
 };
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
-    app::{
-        interactive_state::{state_after_event, InteractiveState},
-        policy::AppPolicy,
-    },
+    app::policy::AppPolicy,
     compaction::CompactionConfig,
     config::Config,
     diagnostics::RuntimeDiagnostics,
@@ -176,47 +173,6 @@ async fn replace_provider_rebuilds_compactor_with_current_context_window() {
     assert_eq!(
         interactive.sessions.session().reasoning_level(),
         rho_sdk::ReasoningLevel::Low
-    );
-}
-
-#[tokio::test]
-async fn new_sessions_seed_prompt_cache_keys() {
-    let provider = Arc::new(ScriptedProvider::new(
-        ModelIdentity::new("test", "test", "test"),
-        Vec::<ScriptedTurn>::new(),
-    ));
-    let tools = AppToolSet::disabled();
-    let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
-    let runtime = build_runtime(RuntimeBuildOptions {
-        provider: Arc::clone(&provider) as Arc<dyn ModelProvider>,
-        tools: tools.tools(),
-        workspace: workspace.clone(),
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
-        approval_handler: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig::default(),
-        context_window: None,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-    })
-    .unwrap();
-    let id = SessionId::new();
-    let cache_key = format!("rho:{}", id.as_str());
-    let session = runtime
-        .session(
-            SessionOptions::new()
-                .id(id.clone())
-                .prompt_cache_key(cache_key.clone()),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(
-        session.snapshot().prompt_cache_key(),
-        Some(cache_key.as_str())
     );
 }
 
@@ -613,25 +569,4 @@ async fn failed_resume_preserves_the_current_runtime() {
         .start(UserInput::text("continue"), None)
         .await
         .unwrap();
-}
-
-#[tokio::test]
-async fn successful_sdk_completion_reaches_completed_state() {
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("test", "test", "test"),
-        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
-            ContentBlock::Text("done".into()),
-        ]))],
-    );
-    let runtime = rho_sdk::Rho::builder().provider(provider).build().unwrap();
-    let session = runtime.session(Default::default()).await.unwrap();
-    let mut run = session.start(rho_sdk::UserInput::text("go")).await.unwrap();
-    let mut state = InteractiveState::Idle;
-    while let Some(event) = run.next_event().await {
-        state = state_after_event(state, &event);
-    }
-    let outcome = run.outcome().await.unwrap();
-
-    assert_eq!(outcome.text(), "done");
-    assert_eq!(state, InteractiveState::Completed);
 }

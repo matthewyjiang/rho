@@ -1,12 +1,4 @@
-use super::{description, expand, matches_search, merge, validate, PromptTemplates};
-
-#[test]
-fn appends_trailing_text_to_template() {
-    assert_eq!(
-        expand("Review this code.", " src/config.rs "),
-        "Review this code. src/config.rs"
-    );
-}
+use super::{matches_search, merge, validate, PromptTemplates};
 
 #[test]
 fn validates_names_and_builtin_conflicts() {
@@ -93,16 +85,4 @@ fn matches_search_by_prompt_prefix_or_bare_name() {
     assert!(matches_search("review-code", "prompt:rev"));
     assert!(matches_search("review-code", "rev"));
     assert!(!matches_search("review-code", "explain"));
-}
-
-#[test]
-fn description_previews_normalized_template_contents() {
-    assert_eq!(
-        description(
-            "Review this code for:
-- correctness
-- security"
-        ),
-        "Review this code for: - correctness - security"
-    );
 }

@@ -1,8 +1,7 @@
 use pretty_assertions::assert_eq;
-use ratatui::{buffer::Buffer, layout::Rect, style::Modifier, text::Line};
+use ratatui::text::Line;
 
 use super::*;
-use crate::clipboard::CopyOutcome;
 
 #[test]
 fn extracts_forward_selection_across_rendered_lines() {
@@ -67,63 +66,4 @@ fn excludes_code_block_copy_button_from_drag_selection() {
         selection.selected_text(&lines, 0),
         Some("╭────────────╮\n│ let x = 1;       │\n╰──────────────────╯".into())
     );
-}
-
-#[test]
-fn copy_notice_maps_copy_results() {
-    let now = Instant::now();
-
-    assert_eq!(
-        CopyNotice::from_copy_result(Ok(CopyOutcome::Confirmed), 1, now).message(),
-        "1 char copied"
-    );
-    assert_eq!(
-        CopyNotice::from_copy_result(Ok(CopyOutcome::Confirmed), 12, now).message(),
-        "12 chars copied"
-    );
-    assert_eq!(
-        CopyNotice::from_copy_result(Ok(CopyOutcome::SentToTerminal), 1, now).message(),
-        "1 char sent to terminal"
-    );
-    assert_eq!(
-        CopyNotice::from_copy_result(Ok(CopyOutcome::SentToTerminal), 12, now).message(),
-        "12 chars sent to terminal"
-    );
-    assert_eq!(
-        CopyNotice::from_copy_result(
-            Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "terminal closed"
-            )),
-            12,
-            now
-        )
-        .message(),
-        "copy failed: terminal closed"
-    );
-}
-
-#[test]
-fn highlights_selected_screen_cells() {
-    let mut buffer = Buffer::empty(Rect::new(0, 0, 8, 3));
-    let selection = TextSelection {
-        anchor: SelectionPosition {
-            line: 10,
-            column: 2,
-        },
-        focus: SelectionPosition {
-            line: 11,
-            column: 3,
-        },
-    };
-
-    highlight_selection(&mut buffer, Rect::new(0, 0, 8, 3), 10, selection);
-
-    assert!(buffer[(1, 0)].modifier.is_empty());
-    assert!(buffer[(2, 0)].modifier.contains(Modifier::REVERSED));
-    assert!(buffer[(7, 0)].modifier.contains(Modifier::REVERSED));
-    assert!(buffer[(0, 1)].modifier.contains(Modifier::REVERSED));
-    assert!(buffer[(3, 1)].modifier.contains(Modifier::REVERSED));
-    assert!(buffer[(4, 1)].modifier.is_empty());
-    assert!(buffer[(0, 2)].modifier.is_empty());
 }

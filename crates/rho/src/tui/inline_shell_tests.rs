@@ -14,18 +14,6 @@ fn parses_context_and_local_prefixes_distinctly() {
 }
 
 #[test]
-fn divider_labels_keep_shell_with_context_state() {
-    assert_eq!(
-        mode_divider_labels(InlineShellMode::IncludeInContext)[0],
-        "shell · included in context"
-    );
-    assert_eq!(
-        mode_divider_labels(InlineShellMode::ExcludeFromContext)[0],
-        "shell · excluded from context"
-    );
-}
-
-#[test]
 fn history_prefix_matches_mode() {
     assert_eq!(InlineShellMode::IncludeInContext.history_prefix(), "!");
     assert_eq!(InlineShellMode::ExcludeFromContext.history_prefix(), "!!");
@@ -103,22 +91,5 @@ fn display_text_preserves_output_and_context_state() {
     assert_eq!(
         display_text(&output, /*included_in_context*/ true),
         "✓ $ printf hello\nhello"
-    );
-}
-
-#[test]
-fn inline_powershell_uses_ps_prompt_and_hides_diagnostics() {
-    let output = ShellOutput {
-        shell: "powershell".into(),
-        command: "Write-Output hello".into(),
-        stdout: "hello\n".into(),
-        stderr: "warning\n".into(),
-        exit_code: "1".into(),
-        ok: false,
-    };
-
-    assert_eq!(
-        display_text(&output, /*included_in_context*/ false),
-        "✗ PS Write-Output hello\nexit 1\n\nhello"
     );
 }

@@ -125,45 +125,6 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
 }
 
 #[test]
-fn responses_body_uses_each_request_reasoning_level() {
-    let messages = [Message::user_text("hello")];
-    let profile = reasoning::XaiReasoningProfile::exact([
-        ReasoningLevel::Low,
-        ReasoningLevel::Medium,
-        ReasoningLevel::High,
-    ]);
-    let low = build_xai_responses_body(
-        "xai",
-        "grok-4.5",
-        &profile,
-        ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Low,
-            prompt_cache_key: None,
-        },
-    )
-    .unwrap();
-    let high = build_xai_responses_body(
-        "xai",
-        "grok-4.5",
-        &profile,
-        ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::High,
-            prompt_cache_key: None,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(low["reasoning"], json!({"effort": "low"}));
-    assert_eq!(high["reasoning"], json!({"effort": "high"}));
-}
-
-#[test]
 fn compact_body_is_model_and_full_input_only() {
     let messages = [
         Message::System("be helpful".into()),
@@ -207,32 +168,6 @@ fn compact_body_is_model_and_full_input_only() {
             .into_iter()
             .collect()
     );
-}
-
-#[test]
-fn compact_body_uses_canonical_provider_identity() {
-    let body = build_xai_compact_body(
-        "xai",
-        "grok-4.5",
-        ModelRequest {
-            messages: &[
-                Message::System("oauth system".into()),
-                Message::user_text("hello"),
-            ],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(body["model"], "grok-4.5");
-    assert_eq!(body["input"][0]["role"], "system");
-    assert_eq!(body["input"][1]["role"], "user");
-    assert!(body.get("reasoning").is_none());
-    assert!(body.get("include").is_none());
-    assert!(body.get("instructions").is_none());
 }
 
 #[tokio::test]

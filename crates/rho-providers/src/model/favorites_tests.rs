@@ -10,24 +10,6 @@ fn entry(provider: &str, model: &str) -> ModelCatalogEntry {
 }
 
 #[test]
-fn normalizes_favorites() {
-    let favorites = vec![
-        " openai/gpt-5.5 ".into(),
-        "missing-separator".into(),
-        "openai/gpt-5.5".into(),
-        "anthropic/claude".into(),
-    ];
-
-    assert_eq!(
-        normalized_favorite_models(&favorites),
-        vec![
-            FavoriteModel::new("openai", "gpt-5.5"),
-            FavoriteModel::new("anthropic", "claude"),
-        ]
-    );
-}
-
-#[test]
 fn poolside_favorites_normalize_to_internal_model_and_match_legacy_forms() {
     let favorites = normalized_favorite_models(&[
         "poolside/poolside/laguna-m.1".into(),

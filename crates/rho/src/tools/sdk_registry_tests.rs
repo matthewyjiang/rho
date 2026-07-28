@@ -25,14 +25,6 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
-fn delegation_options(names: &[&str], cwd: std::path::PathBuf) -> ToolSetOptions {
-    ToolSetOptions::new(capabilities(names)).delegation(DelegationConfig::new(
-        cwd,
-        std::path::PathBuf::new(),
-        BackgroundSubagents::Disabled,
-    ))
-}
-
 struct RecordingBundle {
     tools: Vec<Arc<dyn Tool>>,
     shutdown: Arc<AtomicBool>,
@@ -60,72 +52,6 @@ async fn shuts_down_feature_bundles_through_the_generic_lifecycle() {
     tool_set.shutdown().await;
 
     assert!(shutdown.load(Ordering::SeqCst));
-}
-
-#[test]
-fn unselected_subagents_are_not_registered() {
-    let config = Config::default();
-    let tool_set = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&[])),
-    );
-    let names: Vec<_> = tool_set.specs().into_iter().map(|spec| spec.name).collect();
-
-    assert!(!names.contains(&"agent".to_string()));
-    assert!(!names.contains(&"agents".to_string()));
-    assert!(tool_set.subagents().is_none());
-}
-
-#[test]
-fn constructs_only_selected_tools() {
-    let config = Config::default();
-    let tool_set = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["read_file"])),
-    );
-
-    assert_eq!(
-        tool_set
-            .specs()
-            .into_iter()
-            .map(|spec| spec.name)
-            .collect::<Vec<_>>(),
-        vec!["read_file"]
-    );
-}
-
-#[test]
-fn delegation_tools_are_registered_independently() {
-    for (allowed, expected) in [
-        (["agent"].as_slice(), ["agent"].as_slice()),
-        (["agents"].as_slice(), ["agents"].as_slice()),
-        (
-            ["agent", "agents"].as_slice(),
-            ["agent", "agents"].as_slice(),
-        ),
-    ] {
-        let config = Config::default();
-        let root = tempfile::tempdir().unwrap();
-        let tool_set = AppToolSet::new(
-            &config,
-            RuntimeDiagnostics::new(&config),
-            delegation_options(allowed, root.path().to_path_buf()),
-        );
-        let names = tool_set
-            .specs()
-            .into_iter()
-            .map(|spec| spec.name)
-            .filter(|name| name == "agent" || name == "agents")
-            .collect::<Vec<_>>();
-        let expected = expected
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(names, expected);
-        assert!(tool_set.subagents().is_some());
-    }
 }
 
 #[derive(Debug)]

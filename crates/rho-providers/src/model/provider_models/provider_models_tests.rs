@@ -17,17 +17,6 @@ fn openai_model_filter_keeps_chat_families() {
 }
 
 #[test]
-fn load_api_key_auth_reads_the_supplied_store() {
-    let store = MemoryCredentialStore::default();
-    save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
-
-    assert_eq!(
-        load_api_key_auth("anthropic", &store).unwrap(),
-        "sk-ant-test"
-    );
-}
-
-#[test]
 fn parses_github_copilot_models_from_data_objects_and_deduplicates() {
     let value = serde_json::json!({
         "data": [

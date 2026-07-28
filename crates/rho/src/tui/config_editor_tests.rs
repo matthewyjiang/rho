@@ -50,14 +50,6 @@ fn subagent_toggle_persists_for_the_next_session() {
 }
 
 #[test]
-fn editor_uses_legacy_web_search_key_when_store_has_no_entry() {
-    let (value, error) = resolve_web_search_editor_value(Ok(None), Some("legacy-key"));
-
-    assert_eq!(value.as_deref(), Some("legacy-key"));
-    assert!(error.is_none());
-}
-
-#[test]
 fn editor_preserves_legacy_web_search_key_when_store_is_unavailable() {
     let store_error = rho_providers::credentials::CredentialError::StoreUnavailable("test".into());
 

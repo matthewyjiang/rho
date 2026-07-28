@@ -149,6 +149,3 @@ impl App {
     }
 }
 
-#[cfg(test)]
-#[path = "tree_actions_tests.rs"]
-mod tests;

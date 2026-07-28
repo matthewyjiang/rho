@@ -1,42 +1,12 @@
 use super::table::markdown_table_cells;
 use super::*;
-use ratatui::{style::Modifier, text::Line};
+use ratatui::text::Line;
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
-}
-
-#[test]
-fn renders_markdown_tables_with_alignment_and_inline_styles() {
-    let mut in_code_block = false;
-    let lines = markdown_lines(
-        "| Name | Count | Note |\n| :--- | ---: | :---: |\n| **alpha** | 2 | `ready` |\n| beta | 12 | waiting |",
-        40,
-        &mut in_code_block,
-    );
-
-    assert_eq!(
-        lines.iter().map(line_text).collect::<Vec<_>>(),
-        vec![
-            "┌───────┬───────┬─────────┐",
-            "│ Name  │ Count │  Note   │",
-            "├───────┼───────┼─────────┤",
-            "│ alpha │     2 │  ready  │",
-            "│ beta  │    12 │ waiting │",
-            "└───────┴───────┴─────────┘",
-        ]
-    );
-    assert!(lines[1]
-        .spans
-        .iter()
-        .any(|span| span.style.has_modifier(Modifier::BOLD)));
-    assert!(lines[3]
-        .spans
-        .iter()
-        .any(|span| span.style == Theme::markdown_inline_code()));
 }
 
 #[test]

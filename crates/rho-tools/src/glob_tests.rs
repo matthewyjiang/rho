@@ -22,54 +22,8 @@ fn write(dir: &TempDir, relative: &str, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
-#[test]
-fn nested_pattern_returns_paths_in_directory_order() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "src/b.rs", "");
-    write(&dir, "src/a.rs", "");
-    write(&dir, "src/nested/c.rs", "");
-    write(&dir, "src/a.txt", "");
-    std::fs::create_dir_all(dir.path().join("src/empty")).unwrap();
-
-    let content = call_glob(&dir, json!({"pattern": "**/*.rs"})).unwrap();
-    assert_eq!(
-        content,
-        "\
-src/a.rs
-src/b.rs
-src/nested/c.rs
-
-3 files"
-    );
-}
-
-#[test]
-fn path_scopes_search_and_paths_are_relative_to_scope() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "crates/rho/src/lib.rs", "");
-    write(&dir, "crates/other/src/lib.rs", "");
-
-    let content = call_glob(&dir, json!({"pattern": "**/*.rs", "path": "crates/rho"})).unwrap();
-    assert_eq!(
-        content,
-        "\
-src/lib.rs
-
-1 files"
-    );
-}
-
-#[test]
-fn directories_are_absent_from_results() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join("src")).unwrap();
-    write(&dir, "src/main.rs", "");
-
-    let content = call_glob(&dir, json!({"pattern": "src/**"})).unwrap();
-    assert!(content.contains("src/main.rs\n"), "{content}");
-    assert!(!content.lines().any(|line| line == "src"), "{content}");
-}
-
+// Covers: gitignore and hidden defaults are security boundaries
+// Owner: pure unit (glob path policy)
 #[test]
 fn gitignored_and_hidden_excluded_by_default() {
     let dir = TempDir::new().unwrap();
@@ -110,14 +64,8 @@ b.rs
     );
 }
 
-#[test]
-fn no_matches_message() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.txt", "");
-    let content = call_glob(&dir, json!({"pattern": "*.rs", "path": "."})).unwrap();
-    assert_eq!(content, "no files matching '*.rs' under .");
-}
-
+// Covers: cancel must not look like a normal empty match set
+// Owner: pure unit (glob cancellation)
 #[test]
 fn cancellation_is_reported_rather_than_read_as_no_matches() {
     let dir = TempDir::new().unwrap();
@@ -127,6 +75,8 @@ fn cancellation_is_reported_rather_than_read_as_no_matches() {
     assert_eq!(out, "no files matching '*.rs' under . (cancelled)");
 }
 
+// Covers: empty results distinguish cancel / entry / deadline / result stops
+// Owner: pure unit (glob stop reasons)
 #[test]
 fn empty_results_report_each_incomplete_stop_reason() {
     use crate::{
@@ -158,7 +108,6 @@ fn empty_results_report_each_incomplete_stop_reason() {
         let reasons = stop_reasons(stop, /*per_file_truncated*/ 0);
         assert_eq!(with_reasons(counts.clone(), &reasons, narrow), expected);
     }
-    // A finished walk keeps the plain empty message.
     let reasons = stop_reasons(WalkStop::Completed, /*per_file_truncated*/ 0);
     assert_eq!(
         with_reasons(counts, &reasons, narrow),

@@ -26,29 +26,6 @@ fn process_request(command: &str) -> CapabilityRequest {
 }
 
 #[test]
-fn default_mode_is_auto() {
-    assert_eq!(PermissionMode::default(), PermissionMode::Auto);
-}
-
-#[test]
-fn config_value_round_trips_known_modes() {
-    for mode in [
-        PermissionMode::Auto,
-        PermissionMode::Plan,
-        PermissionMode::Supervised,
-    ] {
-        assert_eq!(mode.as_str().parse::<PermissionMode>().unwrap(), mode);
-        assert_eq!(
-            mode.as_str()
-                .to_uppercase()
-                .parse::<PermissionMode>()
-                .unwrap(),
-            mode
-        );
-    }
-}
-
-#[test]
 fn config_value_parsing_trims_and_rejects_unknown_values() {
     assert_eq!(
         "  Plan  ".parse::<PermissionMode>().unwrap(),

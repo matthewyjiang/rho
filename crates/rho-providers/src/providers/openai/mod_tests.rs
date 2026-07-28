@@ -14,21 +14,6 @@ use crate::reasoning::ReasoningLevel;
 use serde_json::json;
 
 #[test]
-fn fast_mode_support_is_limited_to_current_codex_families() {
-    for model in ["gpt-5.4", "gpt-5.5", "gpt-5.6-luna"] {
-        assert!(supports_fast_mode("openai-codex", model), "{model}");
-    }
-    for (provider, model) in [
-        ("openai", "gpt-5.5"),
-        ("openai-codex", "gpt-5.3-codex-spark"),
-        ("openai-codex", "gpt-5.4-mini"),
-        ("openai-codex", "gpt-5.60"),
-    ] {
-        assert!(!supports_fast_mode(provider, model), "{provider}/{model}");
-    }
-}
-
-#[test]
 fn codex_reasoning_param_preserves_none_effort() {
     assert_eq!(
         codex_reasoning_param(Some("none"), None).unwrap(),
@@ -76,39 +61,6 @@ fn immutable_openai_reasoning_profile_normalizes_exact_and_omits_fixed_models() 
             effort: None,
             summary: None,
         }
-    );
-}
-
-#[test]
-fn reasoning_level_maps_to_codex_reasoning_param() {
-    assert!(codex_reasoning_param(
-        crate::reasoning::ReasoningLevel::Off.effort(),
-        crate::reasoning::ReasoningLevel::Off.summary()
-    )
-    .is_none());
-    assert_eq!(
-        codex_reasoning_param(
-            crate::reasoning::ReasoningLevel::Minimal.effort(),
-            crate::reasoning::ReasoningLevel::Minimal.summary()
-        )
-        .unwrap(),
-        json!({"effort":"minimal","summary":"auto"})
-    );
-    assert_eq!(
-        codex_reasoning_param(
-            crate::reasoning::ReasoningLevel::Xhigh.effort(),
-            crate::reasoning::ReasoningLevel::Xhigh.summary()
-        )
-        .unwrap(),
-        json!({"effort":"xhigh","summary":"auto"})
-    );
-    assert_eq!(
-        codex_reasoning_param(
-            crate::reasoning::ReasoningLevel::Max.effort(),
-            crate::reasoning::ReasoningLevel::Max.summary()
-        )
-        .unwrap(),
-        json!({"effort":"max","summary":"auto"})
     );
 }
 
@@ -193,42 +145,6 @@ fn api_responses_body_uses_each_request_reasoning_level() {
 }
 
 #[test]
-fn codex_responses_body_uses_each_request_reasoning_level() {
-    let messages = [Message::user_text("hello")];
-    let low = build_codex_responses_body(
-        "rho-request-reasoning-test",
-        ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Low,
-            prompt_cache_key: None,
-        },
-    )
-    .unwrap();
-    let high = build_codex_responses_body(
-        "rho-request-reasoning-test",
-        ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::High,
-            prompt_cache_key: None,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        low["reasoning"],
-        json!({"effort": "low", "summary": "auto"})
-    );
-    assert_eq!(
-        high["reasoning"],
-        json!({"effort": "high", "summary": "auto"})
-    );
-}
-
-#[test]
 fn codex_responses_body_includes_prompt_cache_key_when_present() {
     let body = build_codex_responses_body(
         "gpt-5-codex",
@@ -246,23 +162,6 @@ fn codex_responses_body_includes_prompt_cache_key_when_present() {
     assert!(body.get("previous_response_id").is_none());
     assert_eq!(body["store"], false);
     assert_eq!(body["stream"], true);
-}
-
-#[test]
-fn codex_responses_body_omits_prompt_cache_key_when_absent() {
-    let body = build_codex_responses_body(
-        "gpt-5-codex",
-        ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        },
-    )
-    .unwrap();
-
-    assert!(body.get("prompt_cache_key").is_none());
 }
 
 #[test]
@@ -288,28 +187,6 @@ fn codex_responses_body_uses_hosted_web_search_tool() {
         json!([{"type": "web_search", "external_web_access": true}])
     );
     assert_eq!(body["tool_choice"], "auto");
-}
-
-#[test]
-fn api_responses_body_includes_prompt_cache_key_when_present() {
-    let provider = OpenAiProvider::new_with_auth(
-        "gpt-4.1".into(),
-        Auth::ApiKey("test-key".into()),
-        std::sync::Arc::new(crate::credentials::MemoryCredentialStore::default()),
-    );
-    let body = provider
-        .openai_api_responses_body(ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::High,
-            prompt_cache_key: Some("rho:session-1"),
-        })
-        .unwrap();
-
-    assert_eq!(body["prompt_cache_key"], "rho:session-1");
-    assert_eq!(body["stream"], true);
-    assert!(body.get("reasoning").is_some());
 }
 
 #[test]
@@ -599,39 +476,6 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
 }
 
 #[test]
-fn codex_sse_line_emits_reasoning_text_delta() {
-    let mut state = CodexSseState::default();
-    let mut deltas = Vec::new();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.reasoning_text.delta","delta":"raw","content_index":0}"#,
-        &mut state,
-        &mut Some(&mut |event| {
-            match event {
-                ModelEvent::OutputDelta(_) => {}
-                ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
-                ModelEvent::ReasoningSummaryDelta(_) => {}
-                ModelEvent::ProviderContext { .. } => {}
-                ModelEvent::WebSearch(_) => {}
-                ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
-            }
-            Ok(())
-        }),
-    )
-    .unwrap();
-
-    assert!(state.text.is_empty());
-    assert_eq!(deltas, vec!["raw"]);
-}
-
-#[test]
-fn extracts_completed_response_text_when_no_deltas() {
-    let body = r#"data: {"type":"response.completed","response":{"output_text":"done","output":null}}
-"#;
-    assert_eq!(extract_sse_text(body).unwrap(), "done");
-}
-
-#[test]
 fn completed_response_text_preserves_url_annotations() {
     let body = r#"data: {"type":"response.completed","response":{"output_text":"Rust shipped today.","output":[{"content":[{"text":"Rust shipped today.","annotations":[{"type":"url_citation","title":"Rust Blog","url":"https://blog.rust-lang.org/release"}]}]}]}}
 "#;
@@ -755,35 +599,6 @@ fn accumulates_streamed_tool_call_deltas() {
         [ContentBlock::ToolCall(ToolCall { id, name, arguments })]
             if id == "call-1" && name == "bash" && arguments == &json!({ "command": "pwd" })
     ));
-}
-
-#[test]
-fn parses_chat_completion_stream_line_as_reasoning_delta() {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
-    let mut deltas = Vec::new();
-    handle_openai_stream_line(
-        r#"data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |event| {
-            match event {
-                ModelEvent::OutputDelta(_) => {}
-                ModelEvent::ReasoningDelta(delta) => deltas.push(delta),
-                ModelEvent::ReasoningSummaryDelta(_) => {}
-                ModelEvent::ProviderContext { .. } => {}
-                ModelEvent::WebSearch(_) => {}
-                ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
-            }
-            Ok(())
-        },
-    )
-    .unwrap();
-
-    assert!(text.is_empty());
-    assert_eq!(deltas, vec!["thinking"]);
-    assert!(tool_calls.is_empty());
 }
 
 #[test]

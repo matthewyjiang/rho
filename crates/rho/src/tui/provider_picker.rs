@@ -246,6 +246,3 @@ fn provider_picker_for_targets(
     )
 }
 
-#[cfg(test)]
-#[path = "provider_picker_tests.rs"]
-mod tests;

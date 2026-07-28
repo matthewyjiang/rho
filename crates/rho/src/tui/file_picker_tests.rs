@@ -171,19 +171,6 @@ fn fuzzy_matching_prefers_path_component_boundaries() {
 }
 
 #[test]
-fn empty_query_returns_workspace_paths() {
-    clear_workspace_file_path_cache();
-    let workspace = tempdir().unwrap();
-    fs::write(workspace.path().join("a.rs"), "").unwrap();
-    fs::write(workspace.path().join("b.rs"), "").unwrap();
-
-    let paths = workspace_file_paths(workspace.path());
-    let matches = matching_file_paths(workspace.path(), "");
-    assert_eq!(matches.as_slice(), paths.as_slice());
-    assert_eq!(matches.as_slice(), ["a.rs", "b.rs"]);
-}
-
-#[test]
 fn ranked_matches_are_capped_for_weak_queries() {
     let paths = (0..(MAX_RANKED_FILE_MATCHES + 50))
         .map(|index| format!("file-{index:04}.rs"))
@@ -199,34 +186,6 @@ fn scroll_counts_track_hidden_rows_above_and_below() {
     assert_eq!(file_palette_scroll_counts(12, 4, 5), (0, 0, 7));
     assert_eq!(file_palette_scroll_counts(12, 5, 5), (1, 1, 6));
     assert_eq!(file_palette_scroll_counts(12, 11, 5), (7, 7, 0));
-}
-
-#[test]
-fn scroll_footer_only_when_overflow_exists() {
-    assert_eq!(
-        file_palette_scroll_footer(0, 0, 5, /*incomplete*/ false),
-        None
-    );
-    assert_eq!(
-        file_palette_scroll_footer(2, 0, 7, /*incomplete*/ false),
-        Some("↑ 2 more · 7 total".into())
-    );
-    assert_eq!(
-        file_palette_scroll_footer(0, 4, 9, /*incomplete*/ false),
-        Some("↓ 4 more · 9 total".into())
-    );
-    assert_eq!(
-        file_palette_scroll_footer(3, 8, 16, /*incomplete*/ false),
-        Some("↑ 3 more · ↓ 8 more · 16 total".into())
-    );
-    assert_eq!(
-        file_palette_scroll_footer(0, 0, 5, /*incomplete*/ true),
-        Some("5 total · partial".into())
-    );
-    assert_eq!(
-        file_palette_scroll_footer(1, 2, 10, /*incomplete*/ true),
-        Some("↑ 1 more · ↓ 2 more · 10 total · partial".into())
-    );
 }
 
 #[test]

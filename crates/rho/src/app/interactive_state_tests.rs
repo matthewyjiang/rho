@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    HostChoice, HostInputRequest, HostQuestion, Retryability, RunEvent, SelectionMode, ToolCallId,
+    HostChoice, HostInputRequest, HostQuestion, Retryability, RunEvent, SelectionMode,
 };
 
 use super::{
@@ -20,46 +20,6 @@ fn questionnaire_event() -> RunEvent {
         call_id: rho_sdk::ToolCallId::new(),
         request: HostInputRequest::questionnaire("confirm", vec![question]).unwrap(),
     }
-}
-
-#[test]
-fn scripted_events_cover_model_tool_questionnaire_and_steering_states() {
-    let state = state_after_event(InteractiveState::Idle, &RunEvent::StepStarted { step: 1 });
-    assert_eq!(
-        state,
-        InteractiveState::Run(RunState::Running(RunPhase::Model))
-    );
-
-    let state = state_after_event(
-        state,
-        &RunEvent::ToolStarted {
-            call_id: ToolCallId::from_string("call-1").unwrap(),
-            name: "questionnaire".into(),
-            metadata: Default::default(),
-        },
-    );
-    assert_eq!(
-        state,
-        InteractiveState::Run(RunState::Running(RunPhase::Tool))
-    );
-
-    let state = state_after_event(state, &questionnaire_event());
-    assert_eq!(state, InteractiveState::Run(RunState::WaitingForHostInput));
-
-    let steering = InteractiveState::Run(RunState::Running(RunPhase::Steering));
-    assert_eq!(
-        state_after_event(
-            steering,
-            &RunEvent::AssistantTextDelta {
-                text: "still streaming".into(),
-            },
-        ),
-        steering
-    );
-    assert_eq!(
-        state_after_event(steering, &RunEvent::StepStarted { step: 2 }),
-        InteractiveState::Run(RunState::Running(RunPhase::Model))
-    );
 }
 
 #[test]

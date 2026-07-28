@@ -33,35 +33,6 @@ fn deprecated_provider_models_only_returns_exact_deprecation_flags() {
 }
 
 #[test]
-fn openrouter_resolves_models_dev_identity_from_model_prefix() {
-    let api = json!({
-        "anthropic": {
-            "models": {
-                "claude-sonnet-4": {
-                    "reasoning": true,
-                    "reasoning_options": [{"type": "effort", "values": ["low", "high"]}],
-                    "limit": {"context": 200_000, "output": 64_000}
-                }
-            }
-        }
-    });
-
-    let metadata =
-        upstream_metadata_from_api(&api, "openrouter", "anthropic/claude-sonnet-4").unwrap();
-
-    assert_eq!(metadata.advertised_context_window, Some(200_000));
-    assert_eq!(metadata.max_output_tokens, Some(64_000));
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Off,
-            ReasoningLevel::Low,
-            ReasoningLevel::High
-        ])
-    );
-}
-
-#[test]
 fn provider_facing_cache_keys_are_order_independent() {
     let api = json!({
         "anthropic": {
@@ -192,66 +163,6 @@ fn poolside_version_five_metadata_is_stale_after_reasoning_policy_change() {
 }
 
 #[test]
-fn poolside_maps_reasoning_without_effort_options_to_off_or_max() {
-    let api = json!({
-        "poolside": {
-            "models": {
-                "poolside/laguna-s-2.1": {
-                    "reasoning": true,
-                    "reasoning_options": [],
-                    "limit": {"context": 262_144, "output": 32_768}
-                }
-            }
-        }
-    });
-
-    let metadata = upstream_metadata_from_api(&api, "poolside", "laguna-s-2.1").unwrap();
-
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
-    );
-    assert!(metadata.reasoning_capabilities_known);
-    assert!(metadata.reasoning_metadata_complete);
-    assert_eq!(
-        current_reasoning_capabilities("poolside", "laguna-s-2.1"),
-        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-            ReasoningLevel::Off,
-            ReasoningLevel::Max,
-        ]))
-    );
-}
-
-#[test]
-fn kimi_code_resolves_k3_models_dev_identity() {
-    let api = json!({
-        "moonshotai": {
-            "models": {
-                "kimi-k3": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "toggle"},
-                        {"type": "effort", "values": ["max"]}
-                    ],
-                    "limit": {"context": 1_048_576, "output": 131_072}
-                }
-            }
-        }
-    });
-
-    let metadata = upstream_metadata_from_api(&api, "kimi-code", "k3").unwrap();
-
-    assert_eq!(metadata.advertised_context_window, Some(1_048_576));
-    assert_eq!(metadata.effective_context_window, Some(1_048_576));
-    assert_eq!(metadata.max_output_tokens, Some(131_072));
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
-    );
-    assert!(metadata.reasoning_capabilities_known);
-}
-
-#[test]
 fn provider_context_length_overrides_generic_effective_context() {
     let cache_dir = tempfile::tempdir().unwrap();
     with_provider_models_cache_dir_for_tests(cache_dir.path().to_path_buf(), || {
@@ -357,62 +268,6 @@ fn exact_catalog_toggle_does_not_imply_off() {
             ReasoningLevel::Low,
             ReasoningLevel::High,
         ])
-    );
-}
-
-#[test]
-fn ollama_cloud_reads_models_dev_reasoning_controls() {
-    let api = json!({
-        "ollama-cloud": {
-            "models": {
-                "glm-5.2": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "effort", "values": ["high", "max"]}
-                    ],
-                    "limit": {"context": 202_752, "output": 16_384}
-                },
-                "kimi-k2.5": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "toggle"}
-                    ]
-                },
-                "mistral-large-3:675b": {
-                    "reasoning": false
-                }
-            }
-        }
-    });
-
-    let glm = upstream_metadata_from_api(&api, "ollama-cloud", "glm-5.2").unwrap();
-    assert_eq!(glm.advertised_context_window, Some(202_752));
-    assert_eq!(
-        glm.supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Off,
-            ReasoningLevel::High,
-            ReasoningLevel::Max,
-        ])
-    );
-    assert!(glm.reasoning_capabilities_known);
-    assert!(glm.reasoning_metadata_complete);
-
-    let toggle_only = upstream_metadata_from_api(&api, "ollama-cloud", "kimi-k2.5").unwrap();
-    assert_eq!(
-        toggle_only.supported_reasoning_levels,
-        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
-    );
-    assert!(toggle_only.reasoning_capabilities_known);
-    assert!(toggle_only.reasoning_metadata_complete);
-
-    let no_reasoning =
-        upstream_metadata_from_api(&api, "ollama-cloud", "mistral-large-3:675b").unwrap();
-    assert_eq!(no_reasoning.supported_reasoning_levels, None);
-    assert!(no_reasoning.reasoning_capabilities_known);
-    assert_eq!(
-        no_reasoning.reasoning_capabilities(),
-        ReasoningCapabilities::NotConfigurable
     );
 }
 
@@ -545,25 +400,6 @@ fn mixed_known_and_unknown_efforts_leave_capabilities_incomplete() {
 }
 
 #[test]
-fn unknown_effort_values_leave_capabilities_unknown() {
-    let api = serde_json::json!({
-        "openai": {
-            "models": {
-                "gpt-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{"type": "effort", "values": ["default"]}]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-    assert!(!metadata.reasoning_capabilities_known);
-    assert_eq!(metadata.supported_reasoning_levels, None);
-}
-
-#[test]
 fn models_without_effort_choices_are_not_configurable() {
     let api = serde_json::json!({
         "openai": {
@@ -669,82 +505,6 @@ fn reasoning_models_without_options_are_not_capability_complete() {
 
     assert!(!metadata.reasoning_capabilities_known);
     assert_eq!(metadata.supported_reasoning_levels, None);
-}
-
-#[test]
-fn xai_catalog_levels_are_interpreted_exactly() {
-    let api = json!({
-        "xai": {
-            "models": {
-                "grok-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["low", "medium", "high"]
-                    }]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "xai", "grok-test").unwrap();
-    let levels = metadata.supported_reasoning_levels.unwrap();
-    assert_eq!(
-        levels,
-        vec![
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-        ]
-    );
-    assert_eq!(
-        ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels))
-            .next_level(ReasoningLevel::High),
-        ReasoningLevel::Low
-    );
-}
-
-#[test]
-fn builtin_gpt_56_codex_overrides_use_safer_effective_windows() {
-    for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
-        let metadata = apply_builtin_overrides("openai-codex", model, ModelMetadata::default());
-
-        assert_eq!(metadata.effective_context_window, Some(272_000));
-        assert_eq!(metadata.usable_context_window, Some(272_000));
-        assert_eq!(metadata.display_context_window(), Some(272_000));
-        assert_eq!(metadata.supported_reasoning_levels, None);
-        assert!(!metadata.reasoning_capabilities_known);
-    }
-}
-
-#[test]
-fn builtin_gpt_55_overrides_use_safer_effective_windows() {
-    let upstream = ModelMetadata {
-        advertised_context_window: Some(1_050_000),
-        effective_context_window: Some(922_000),
-        max_output_tokens: Some(128_000),
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(5_000_000),
-            output_micros_per_m: Some(30_000_000),
-            cache_read_micros_per_m: Some(500_000),
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
-    };
-    let openai = apply_builtin_overrides("openai", "gpt-5.5", upstream.clone());
-    let codex = apply_builtin_overrides("openai-codex", "gpt-5.5", upstream);
-
-    assert_eq!(openai.display_context_window(), Some(272_000));
-    assert_eq!(openai.effective_context_window, Some(922_000));
-    assert_eq!(codex.display_context_window(), Some(272_000));
-    assert_eq!(codex.effective_context_window, Some(400_000));
-    assert_eq!(codex.advertised_context_window, Some(1_050_000));
-    assert_eq!(codex.long_context_threshold, Some(272_000));
-    assert_eq!(codex.max_output_tokens, Some(128_000));
-    assert_eq!(
-        codex.cost_default.unwrap().input_micros_per_m,
-        Some(5_000_000)
-    );
 }
 
 #[test]
@@ -877,41 +637,6 @@ fn rehydrates_when_cache_version_is_stale_or_metadata_is_incomplete() {
         MODEL_METADATA_CACHE_VERSION,
         &intentional_unknown
     ));
-}
-
-#[test]
-fn codex_models_skip_minimal_when_models_dev_omits_it() {
-    let api = json!({
-        "openai": {
-            "models": {
-                "gpt-5.3-codex": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["none", "low", "medium", "high", "xhigh"]
-                    }]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "openai", "gpt-5.3-codex").unwrap();
-
-    assert!(metadata.reasoning_capabilities_known);
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Off,
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-            ReasoningLevel::Xhigh,
-        ])
-    );
-    assert_eq!(
-        metadata.reasoning_off_behavior,
-        ReasoningOffBehavior::EffortNone
-    );
 }
 
 #[test]

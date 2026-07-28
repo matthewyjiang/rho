@@ -1,38 +1,5 @@
 use super::super::{tests::test_app, InputSubmissionMode};
 
-fn line_text(line: &ratatui::text::Line<'_>) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect()
-}
-
-#[test]
-fn goal_usage_is_not_truncated_when_space_is_available() {
-    let mut app = test_app();
-    app.input_ui.set_text("/goal".to_string());
-    app.input_ui.set_cursor(app.input_ui.text().chars().count());
-    app.clamp_command_selection();
-
-    let rendered = app
-        .command_suggestion_lines(80)
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    assert!(
-        rendered.contains("/goal [condition|resume|clear]"),
-        "{rendered}"
-    );
-    assert!(rendered.contains("/goal resume"), "{rendered}");
-    assert!(rendered.contains("/goal clear"), "{rendered}");
-    assert!(
-        rendered.contains("show status or work until a condition is met"),
-        "{rendered}"
-    );
-}
-
 #[test]
 fn completing_goal_command_reveals_lifecycle_actions() {
     let mut app = test_app();

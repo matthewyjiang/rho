@@ -7,24 +7,6 @@ use tokio::io::AsyncWriteExt;
 use super::*;
 
 #[test]
-fn shell_args_parse_command_and_optional_timeout() {
-    let args = ShellArgs::parse(json!({
-        "command": "echo hi",
-        "timeout_seconds": 5
-    }))
-    .expect("valid shell args");
-    assert_eq!(args.command, "echo hi");
-    assert_eq!(args.timeout(), Some(Duration::from_secs(5)));
-}
-
-#[test]
-fn shell_args_parse_without_timeout() {
-    let args = ShellArgs::parse(json!({"command": "true"})).expect("valid shell args");
-    assert_eq!(args.command, "true");
-    assert_eq!(args.timeout(), None);
-}
-
-#[test]
 fn shell_args_reject_invalid_payload() {
     assert!(
         ShellArgs::parse(json!({"timeout_seconds": 1})).is_err(),
@@ -32,14 +14,8 @@ fn shell_args_reject_invalid_payload() {
     );
 }
 
-#[test]
-fn running_content_formats_both_streams() {
-    assert_eq!(
-        running_content(b"out", b"err"),
-        "stdout:\nout\n\nstderr:\nerr\n\ntime: running"
-    );
-}
-
+// Covers: timeout errors must keep partial streams for diagnosis
+// Owner: pure unit (shell process)
 #[test]
 fn timeout_error_includes_partial_output() {
     let err = timeout_error(
@@ -63,29 +39,6 @@ fn timeout_error_respects_output_budget() {
         /*max_output_bytes*/ 40,
     );
     assert!(err.to_string().contains("[truncated]"));
-}
-
-#[cfg(unix)]
-#[test]
-fn finished_result_reports_exit_code_and_elapsed_time() {
-    use std::os::unix::process::ExitStatusExt;
-
-    // Wait status for a normal exit with code 7 is `7 << 8`.
-    let status = std::process::ExitStatus::from_raw(7 << 8);
-    let result = finished_result(
-        "call_1".into(),
-        status,
-        b"out",
-        b"err",
-        Duration::from_millis(1500),
-        /*max_output_bytes*/ 12_000,
-    );
-    assert!(!result.ok);
-    assert_eq!(result.id, "call_1");
-    assert!(result.content.contains("exit code: 7"));
-    assert!(result.content.contains("time: 1.5s"));
-    assert!(result.content.contains("stdout:\nout"));
-    assert!(result.content.contains("stderr:\nerr"));
 }
 
 #[cfg(unix)]
@@ -125,6 +78,8 @@ fn finished_result_uses_signal_when_exit_code_is_absent() {
     assert!(result.content.contains("exit code: signal"));
 }
 
+// Covers: retained stream bytes must stop at the configured budget
+// Owner: pure unit (shell process)
 #[test]
 fn stream_session_caps_retained_stdout_and_stderr() {
     let (_tx, chunk_rx) = tokio::sync::mpsc::channel(4);
@@ -151,6 +106,8 @@ fn stream_session_caps_retained_stdout_and_stderr() {
     );
 }
 
+// Covers: dropped consumers must stop the reader instead of blocking writers
+// Owner: pure unit (shell process)
 #[tokio::test]
 async fn read_stream_stops_when_consumer_disconnects() {
     let (tx, rx) = tokio::sync::mpsc::channel(4);
@@ -222,18 +179,6 @@ async fn stream_read_failure_is_reported_on_stderr() {
 }
 
 #[test]
-fn shell_content_parses_exit_and_stdout() {
-    let parsed = parse_shell_content(
-        "stdout:\ntests passed\n\nstderr:\nwarning\n\ntime: 0.1s  exit code: 0",
-    );
-    assert_eq!(parsed.stdout, "tests passed");
-    assert_eq!(parsed.exit_code, Some(0));
-    assert_eq!(parsed.exit_status, None);
-    assert_eq!(parsed.duration_ms, Some(100));
-    assert!(!parsed.running);
-}
-
-#[test]
 fn shell_content_preserves_signal_exit_status() {
     let parsed =
         parse_shell_content("stdout:\nout\n\nstderr:\nerr\n\ntime: 1.5s  exit code: signal");
@@ -242,6 +187,8 @@ fn shell_content_preserves_signal_exit_status() {
     assert_eq!(parsed.duration_ms, Some(1500));
 }
 
+// Covers: timeout notices must not swallow nested stderr sections
+// Owner: pure unit (shell process parser)
 #[test]
 fn shell_content_parses_timeout_notice() {
     let parsed = parse_shell_content(

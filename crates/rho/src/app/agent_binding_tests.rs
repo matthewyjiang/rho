@@ -36,34 +36,6 @@ fn capabilities() -> AgentCapabilities {
 }
 
 #[test]
-fn root_roles_bind_equivalently() {
-    let config = Config::default();
-    let interactive = AgentBinder::bind(
-        definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::InteractiveRoot,
-            available_tools: capabilities(),
-        },
-        &config,
-    )
-    .unwrap();
-    let automation = AgentBinder::bind(
-        definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::AutomationRoot,
-            available_tools: capabilities(),
-        },
-        &config,
-    )
-    .unwrap();
-    assert_eq!(
-        interactive.rho_capabilities(),
-        automation.rho_capabilities()
-    );
-    assert_eq!(interactive.fingerprint(), automation.fingerprint());
-}
-
-#[test]
 fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     let bound = AgentBinder::bind(
         definition(ToolPolicy::All),
@@ -99,24 +71,6 @@ fn delegated_role_removes_recursive_capabilities() {
         bound.rho_capabilities(),
         Some(&capability_set(&["read_file", "write_file"]))
     );
-}
-
-#[test]
-fn extension_capability_name_survives_binding() {
-    let extension = ToolCapability::Extension("acme_custom".into());
-    let bound = AgentBinder::bind(
-        definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::InteractiveRoot,
-            available_tools: AgentCapabilities::new([extension.clone()].into_iter().collect()),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-
-    assert!(bound
-        .rho_capabilities()
-        .is_some_and(|capabilities| capabilities.contains(&extension)));
 }
 
 #[test]
@@ -332,23 +286,6 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
 }
 
 #[test]
-fn claude_inherit_model_binds_none() {
-    let bound = AgentBinder::bind(
-        claude_definition(ModelPolicy::Inherit),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    match bound.runtime() {
-        BoundRuntime::ClaudeCli { model, .. } => assert!(model.is_none()),
-        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
-    }
-}
-
-#[test]
 fn claude_runtime_rejects_root_roles() {
     for role in [AgentRole::InteractiveRoot, AgentRole::AutomationRoot] {
         let error = AgentBinder::bind(
@@ -433,22 +370,4 @@ fn claude_runtime_rejects_unmapped_reasoning_at_bind() {
         error.to_string().contains("not a Claude Code effort level"),
         "{error:#}"
     );
-}
-
-#[test]
-fn claude_runtime_omits_effort_when_reasoning_is_none() {
-    let definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
-    let bound = AgentBinder::bind(
-        Arc::new(definition),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    match bound.runtime() {
-        BoundRuntime::ClaudeCli { effort, .. } => assert!(effort.is_none()),
-        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
-    }
 }

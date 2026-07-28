@@ -30,8 +30,6 @@ pub use format::{EffectiveModelConfig, EffectiveModelSource};
 
 use provider_config::PartialProviderConfigs;
 pub(crate) use provider_config::ProviderConfigs;
-#[cfg(test)]
-use provider_config::DEFAULT_OLLAMA_BASE_URL;
 
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
 

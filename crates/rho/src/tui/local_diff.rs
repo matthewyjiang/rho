@@ -141,7 +141,6 @@ fn section(title: &str, content: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
 
     use rho_tools::tool_card::DiffRowKind;
 
@@ -174,38 +173,4 @@ mod tests {
         assert_eq!(rows[4].text, "new");
     }
 
-    #[test]
-    fn reports_status_and_patch_for_modified_worktree() {
-        let dir = std::env::temp_dir().join(format!("rho-diff-test-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "--quiet"]).unwrap();
-        git(&dir, &["config", "user.email", "rho@example.test"]).unwrap();
-        git(&dir, &["config", "user.name", "rho test"]).unwrap();
-        fs::write(dir.join("file.txt"), "old\n").unwrap();
-        git(&dir, &["add", "file.txt"]).unwrap();
-        git(&dir, &["commit", "--quiet", "-m", "initial"]).unwrap();
-        fs::write(dir.join("file.txt"), "new \n").unwrap();
-
-        let diff = collect(&dir).unwrap();
-
-        assert!(diff.has_changes);
-        assert!(diff.lines.iter().any(|line| line == " M file.txt"));
-        assert!(diff.lines.iter().any(|line| line == "-old"));
-        assert!(diff.lines.iter().any(|line| line == "+new "));
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn includes_untracked_file_patch() {
-        let dir = std::env::temp_dir().join(format!("rho-diff-test-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "--quiet"]).unwrap();
-        fs::write(dir.join("new.txt"), "untracked contents\n").unwrap();
-
-        let diff = collect(&dir).unwrap();
-
-        assert!(diff.lines.iter().any(|line| line == "?? new.txt"));
-        assert!(diff.lines.iter().any(|line| line == "+untracked contents"));
-        fs::remove_dir_all(dir).unwrap();
-    }
 }

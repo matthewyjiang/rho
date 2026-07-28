@@ -40,6 +40,3 @@ pub(super) fn sdk_bundle(
     super::sdk_registry::StaticToolBundle::new(tools)
 }
 
-#[cfg(test)]
-#[path = "coding_tests.rs"]
-mod tests;

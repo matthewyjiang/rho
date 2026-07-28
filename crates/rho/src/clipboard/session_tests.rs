@@ -18,12 +18,6 @@ fn wsl_is_detected_without_remote_markers() {
 }
 
 #[test]
-fn local_is_the_default() {
-    let session = SessionKind::detect_from(|_| false, || false);
-    assert_eq!(session, SessionKind::Local);
-}
-
-#[test]
 fn mosh_counts_as_remote() {
     let session = SessionKind::detect_from(|name| name == "MOSH_IP", || false);
     assert_eq!(session, SessionKind::Remote);

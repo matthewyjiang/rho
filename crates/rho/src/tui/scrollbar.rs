@@ -22,11 +22,6 @@ impl HistoryScrollChrome {
         self.scroll
     }
 
-    #[cfg(test)]
-    pub(super) fn set_scroll(&mut self, scroll: HistoryScroll) {
-        self.scroll = scroll;
-    }
-
     pub(super) fn drag(&self) -> Option<HistoryScrollbarDrag> {
         self.drag
     }

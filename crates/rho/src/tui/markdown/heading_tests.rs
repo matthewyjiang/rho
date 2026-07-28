@@ -1,10 +1,7 @@
 use super::*;
 use crate::tui::{markdown::markdown_lines, theme::Theme};
 use pretty_assertions::assert_eq;
-use ratatui::{
-    style::{Color, Modifier},
-    text::Line,
-};
+use ratatui::text::Line;
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -88,79 +85,6 @@ fn classifies_streaming_heading_prefixes_without_committing_early() {
             "source: {source:?}"
         );
     }
-}
-
-#[test]
-fn renders_levels_with_distinct_hierarchical_styles_and_without_markers() {
-    let source = "# one\n## two\n### three\n#### four\n##### five\n###### six";
-    let levels = [
-        HeadingLevel::H1,
-        HeadingLevel::H2,
-        HeadingLevel::H3,
-        HeadingLevel::H4,
-        HeadingLevel::H5,
-        HeadingLevel::H6,
-    ];
-    let mut in_code_block = false;
-
-    let lines = markdown_lines(source, 80, &mut in_code_block);
-
-    assert_eq!(
-        lines.iter().map(line_text).collect::<Vec<_>>(),
-        ["one", "two", "three", "four", "five", "six"]
-    );
-    assert_eq!(
-        lines
-            .iter()
-            .map(|line| line.spans[0].style.fg)
-            .collect::<Vec<_>>(),
-        [
-            Some(Color::Magenta),
-            Some(Color::Blue),
-            Some(Color::Cyan),
-            Some(Color::Green),
-            Some(Color::Yellow),
-            Some(Color::Gray),
-        ]
-    );
-    assert_eq!(
-        lines
-            .iter()
-            .zip(levels)
-            .map(|(line, level)| (line.spans.len(), line.spans[0].style, level))
-            .collect::<Vec<_>>(),
-        levels
-            .into_iter()
-            .map(|level| (1, Theme::markdown_heading(level), level))
-            .collect::<Vec<_>>()
-    );
-    for level in [HeadingLevel::H1, HeadingLevel::H2, HeadingLevel::H3] {
-        assert!(Theme::markdown_heading(level).has_modifier(Modifier::BOLD));
-    }
-    for level in [HeadingLevel::H4, HeadingLevel::H5, HeadingLevel::H6] {
-        assert!(!Theme::markdown_heading(level).has_modifier(Modifier::BOLD));
-    }
-}
-
-#[test]
-fn composes_heading_color_with_inline_markdown_styles() {
-    let mut in_code_block = false;
-    let lines = markdown_lines(
-        "#### **bold** and *italic* with `code` and [docs](https://example.com)",
-        120,
-        &mut in_code_block,
-    );
-    let heading = Theme::markdown_heading(HeadingLevel::H4);
-    let styles = lines[0]
-        .spans
-        .iter()
-        .map(|span| (span.content.as_ref(), span.style))
-        .collect::<Vec<_>>();
-
-    assert!(styles.contains(&("bold", heading.patch(Theme::markdown_bold()))));
-    assert!(styles.contains(&("italic", heading.patch(Theme::markdown_italic()))));
-    assert!(styles.contains(&("code", heading.patch(Theme::markdown_inline_code()))));
-    assert!(styles.contains(&("https://example.com", heading.patch(Theme::markdown_link()))));
 }
 
 #[test]

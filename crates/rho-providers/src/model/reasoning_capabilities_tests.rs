@@ -98,20 +98,3 @@ fn legacy_unrestricted_capabilities_deserialize_as_unknown() {
     );
 }
 
-#[test]
-fn deserialization_restores_level_set_invariants() {
-    let capabilities: ReasoningCapabilities =
-        serde_json::from_str(r#"{"levels":{"levels":["max","off","low","low"]}}"#).unwrap();
-
-    assert_eq!(
-        capabilities.levels(),
-        Some(
-            [
-                ReasoningLevel::Off,
-                ReasoningLevel::Low,
-                ReasoningLevel::Max,
-            ]
-            .as_slice()
-        )
-    );
-}

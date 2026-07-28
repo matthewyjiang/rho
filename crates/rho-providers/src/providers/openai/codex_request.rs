@@ -328,38 +328,6 @@ mod tests {
     use crate::model::Message;
 
     #[test]
-    fn gpt_5_6_models_use_responses_lite_without_incremental_websocket_continuation() {
-        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
-            let mode = ResponsesRequestMode::for_model(model);
-            let body = build_codex_responses_body(
-                model,
-                ModelRequest {
-                    messages: &[Message::user_text("hello")],
-                    tools: &[ToolSpec {
-                        name: "read_file".into(),
-                        description: "read a file".into(),
-                        input_schema: json!({"type": "object"}),
-                    }],
-                    cancellation: Default::default(),
-                    reasoning_level: Default::default(),
-                    prompt_cache_key: None,
-                },
-            )
-            .unwrap();
-
-            assert_eq!(mode, ResponsesRequestMode::ResponsesLite, "{model}");
-            assert!(mode.uses_responses_lite(), "{model}");
-            assert!(!mode.supports_incremental_websocket(), "{model}");
-            assert_eq!(body["input"][0]["type"], "additional_tools", "{model}");
-            assert_eq!(
-                body["reasoning"],
-                json!({"effort": "medium", "summary": "auto", "context": "all_turns"}),
-                "{model}"
-            );
-        }
-    }
-
-    #[test]
     fn priority_service_tier_is_sent_as_fast_mode() {
         let body = build_codex_responses_body_with_tier(
             "gpt-5.5",

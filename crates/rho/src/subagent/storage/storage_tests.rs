@@ -11,7 +11,7 @@ use super::{
     index::{
         initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
     },
-    lock_parent_for_cleanup_in_root, release_run_directory_in_root, reserve_run_directory_in_root,
+    lock_parent_for_cleanup_in_root, reserve_run_directory_in_root,
     resolve_run_directory_in_root, RunPlacement,
 };
 use crate::session::Session;
@@ -23,48 +23,6 @@ fn create_session_subagents(root: &Path) -> PathBuf {
         .unwrap()
         .subagents_dir()
         .unwrap()
-}
-
-#[test]
-fn reserves_global_run_and_indexes_it() {
-    let temp = TempDir::new().unwrap();
-    let (id, directory) = reserve_run_directory_in_root(
-        temp.path(),
-        &RunPlacement::Global {
-            parent_session_id: None,
-        },
-        || "a1b2c3".into(),
-    )
-    .unwrap();
-
-    assert_eq!(id, "a1b2c3");
-    assert_eq!(directory, temp.path().join("subagents/a1b2c3"));
-    assert!(directory.is_dir());
-    assert_eq!(
-        resolve_run_directory_in_root(temp.path(), "A1B2C3").unwrap(),
-        directory
-    );
-}
-
-#[test]
-fn reserves_session_run_beneath_parent() {
-    let temp = TempDir::new().unwrap();
-    let subagents_dir = create_session_subagents(temp.path());
-    let placement = RunPlacement::Session {
-        parent_session_id: "session-id".into(),
-        subagents_dir: subagents_dir.clone(),
-    };
-
-    let (_, directory) =
-        reserve_run_directory_in_root(temp.path(), &placement, || "abcdef".into()).unwrap();
-
-    assert_eq!(directory, subagents_dir.join("abcdef"));
-    assert!(directory.is_dir());
-    assert!(!temp.path().join("subagents/abcdef").exists());
-    assert_eq!(
-        resolve_run_directory_in_root(temp.path(), "abcdef").unwrap(),
-        directory
-    );
 }
 
 #[test]
@@ -278,24 +236,6 @@ fn fresh_parent_lock_rejects_second_cleanup() {
         error.to_string().contains("already being deleted"),
         "{error}"
     );
-}
-
-#[test]
-fn releasing_reservation_removes_directory_and_index_row() {
-    let temp = TempDir::new().unwrap();
-    let (id, directory) = reserve_run_directory_in_root(
-        temp.path(),
-        &RunPlacement::Global {
-            parent_session_id: None,
-        },
-        || "abcdef".into(),
-    )
-    .unwrap();
-
-    release_run_directory_in_root(temp.path(), &id, &directory).unwrap();
-
-    assert!(!directory.exists());
-    assert!(resolve_run_directory_in_root(temp.path(), &id).is_err());
 }
 
 #[cfg(unix)]

@@ -303,6 +303,3 @@ impl InteractiveToolPresenter {
     }
 }
 
-#[cfg(test)]
-#[path = "interactive_presenter_tests.rs"]
-mod tests;

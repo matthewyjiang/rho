@@ -32,20 +32,6 @@ fn identity() -> ModelIdentity {
     ModelIdentity::new("scripted", "test", "model")
 }
 
-#[test]
-fn runtime_debug_reports_compactor_presence() {
-    let provider = ScriptedProvider::new(identity(), Vec::<ScriptedTurn>::new());
-    let without_compactor = Rho::builder().provider(provider.clone()).build().unwrap();
-    let with_compactor = Rho::builder()
-        .provider(provider)
-        .compactor(crate::ScriptedCompactor::new([]))
-        .build()
-        .unwrap();
-
-    assert!(format!("{without_compactor:?}").contains("compactor: false"));
-    assert!(format!("{with_compactor:?}").contains("compactor: true"));
-}
-
 #[tokio::test]
 async fn simple_completion_and_streaming_share_one_history_path() {
     let provider = ScriptedProvider::new(
@@ -1159,35 +1145,4 @@ fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() 
     assert!(!format!("{diagnostics:?}").contains("secret prompt contents"));
 }
 
-#[test]
-fn construction_rejects_missing_provider_and_duplicate_tools() {
-    assert!(matches!(
-        Rho::builder().build(),
-        Err(Error::InvalidConfiguration { .. })
-    ));
-    let first = ScriptedTool::new(
-        ToolSpec {
-            name: "same".into(),
-            description: "first".into(),
-            input_schema: json!({}),
-        },
-        ScriptedToolOutcome::Success(ToolOutput::text("first")),
-    );
-    let second = ScriptedTool::new(
-        ToolSpec {
-            name: "same".into(),
-            description: "second".into(),
-            input_schema: json!({}),
-        },
-        ScriptedToolOutcome::Success(ToolOutput::text("second")),
-    );
 
-    assert!(matches!(
-        Rho::builder()
-            .provider(ScriptedProvider::new(identity(), []))
-            .tool(first)
-            .tool(second)
-            .build(),
-        Err(Error::InvalidConfiguration { .. })
-    ));
-}

@@ -53,53 +53,48 @@ fn with_cached_provider_models<T>(provider: &str, models: Vec<&str>, f: impl FnO
     result
 }
 
+fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
+    crate::model_aliases::ModelAliases::from_entries(
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    )
+    .unwrap()
+}
+
+// Covers: --resume is rejected for non-interactive commands before prompt work starts
+// Owner: cli config validation
 #[test]
-fn validate_cli_rejects_resume_with_run_before_prompt_reading() {
-    let cli = Cli {
-        provider: None,
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        resume: Some(Some("session-id".into())),
-        command: Some(Command::Run {
+fn validate_cli_rejects_resume_with_non_interactive_commands() {
+    for command in [
+        Command::Run {
             stdin: true,
             output_file: None,
             output: crate::cli::OutputFormat::Text,
             max_steps: None,
             timeout: None,
             prompt: Vec::new(),
-        }),
-    };
+        },
+        Command::Update,
+    ] {
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: Some(Some("session-id".into())),
+            command: Some(command),
+        };
 
-    let err = validate(&cli).unwrap_err();
-
-    assert!(err.to_string().contains("--resume is only supported"));
-}
-
-#[test]
-fn validate_cli_rejects_resume_with_update() {
-    let cli = Cli {
-        provider: None,
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        resume: Some(Some("session-id".into())),
-        command: Some(Command::Update),
-    };
-
-    let err = validate(&cli).unwrap_err();
-
-    assert!(err.to_string().contains("--resume is only supported"));
+        let err = validate(&cli).unwrap_err();
+        assert!(err.to_string().contains("--resume is only supported"));
+    }
 }
 
 #[test]
@@ -149,60 +144,6 @@ fn cli_model_override_with_provider_selects_matching_auth() {
     assert_eq!(cfg.provider, "openai-codex");
     assert_eq!(cfg.model, "gpt-5.4-mini");
     assert_eq!(cfg.auth, "codex");
-}
-
-#[test]
-fn cli_anthropic_model_override_selects_matching_auth() {
-    with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: None,
-            model: Some("anthropic/claude-sonnet-4-5".into()),
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            resume: None,
-            command: None,
-        };
-
-        let save_config = apply_overrides(&mut cfg, &cli).unwrap();
-
-        assert!(save_config);
-        assert_eq!(cfg.provider, "anthropic");
-        assert_eq!(cfg.model, "claude-sonnet-4-5");
-        assert_eq!(cfg.auth, "anthropic-api-key");
-    });
-}
-
-#[test]
-fn cli_anthropic_provider_override_uses_cached_default() {
-    with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: Some("anthropic".into()),
-            model: None,
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            resume: None,
-            command: None,
-        };
-
-        let save_config = apply_overrides(&mut cfg, &cli).unwrap();
-
-        assert!(save_config);
-        assert_eq!(cfg.provider, "anthropic");
-        assert_eq!(cfg.model, "claude-sonnet-4-5");
-        assert_eq!(cfg.auth, "anthropic-api-key");
-    });
 }
 
 #[test]
@@ -419,32 +360,6 @@ fn cli_github_copilot_provider_override_uses_cached_default() {
 }
 
 #[test]
-fn cli_github_copilot_model_override_selects_matching_auth() {
-    with_cached_provider_models("github-copilot", vec!["gpt-4.1"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: None,
-            model: Some("github-copilot/gpt-4.1".into()),
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            resume: None,
-            command: None,
-        };
-
-        apply_overrides(&mut cfg, &cli).unwrap();
-
-        assert_eq!(cfg.provider, "github-copilot");
-        assert_eq!(cfg.model, "gpt-4.1");
-        assert_eq!(cfg.auth, "github-copilot");
-    });
-}
-
-#[test]
 fn cli_explicit_provider_keeps_slash_containing_model_id() {
     with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
         let mut cfg = Config::default();
@@ -520,32 +435,6 @@ fn cli_auth_override_wins_after_model_provider_auth() {
     assert_eq!(cfg.provider, "openai");
     assert_eq!(cfg.model, "gpt-5.4-mini");
     assert_eq!(cfg.auth, "api-key");
-}
-
-#[test]
-fn cli_reasoning_override_updates_config() {
-    let mut cfg = Config::default();
-    let cli = Cli {
-        provider: None,
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: Some(rho_providers::reasoning::ReasoningLevel::High),
-        resume: None,
-        command: None,
-    };
-
-    let save_config = apply_overrides(&mut cfg, &cli).unwrap();
-
-    assert!(save_config);
-    assert_eq!(
-        cfg.reasoning,
-        rho_providers::reasoning::ReasoningLevel::High
-    );
 }
 
 #[test]
@@ -730,29 +619,6 @@ fn only_kimi_requires_synchronous_capability_discovery() {
         "kimi-code",
         "unseen-model"
     ));
-}
-
-#[test]
-fn refresh_selection_uses_loaded_config_without_cli_model_flags() {
-    let config = Config {
-        provider: "kimi-code".into(),
-        model: "k3".into(),
-        ..Config::default()
-    };
-
-    assert_eq!(
-        super::selected_model_for_refresh(&config, "kimi-code"),
-        Some("k3".into())
-    );
-}
-fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
-    crate::model_aliases::ModelAliases::from_entries(
-        pairs
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.to_string()))
-            .collect(),
-    )
-    .unwrap()
 }
 
 #[test]

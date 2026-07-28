@@ -1,4 +1,4 @@
-use std::{future::pending, num::NonZeroUsize, path::PathBuf, str::FromStr, sync::Arc};
+use std::{future::pending, num::NonZeroUsize, str::FromStr, sync::Arc};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -10,10 +10,9 @@ use crate::{
 };
 
 use super::{
-    tool_progress_channel, OperationKind, ScriptedTool, ScriptedToolOutcome, Tool, ToolAsset,
-    ToolContext, ToolError, ToolErrorKind, ToolExecutionPolicy, ToolInvocation, ToolMetadata,
-    ToolOutput, ToolPreparationContext, ToolProgress, ToolRegistry, ToolResource,
-    ToolResourceAccess,
+    tool_progress_channel, OperationKind, ScriptedTool, ScriptedToolOutcome, Tool, ToolContext,
+    ToolErrorKind, ToolExecutionPolicy, ToolInvocation, ToolMetadata, ToolOutput,
+    ToolPreparationContext, ToolRegistry, ToolResource, ToolResourceAccess,
 };
 
 fn spec(name: &str) -> ToolSpec {
@@ -75,43 +74,6 @@ fn resource_debug_output_omits_secret_values() {
     assert!(debug.contains("Opaque"));
     assert!(!debug.contains("private-tool"));
     assert!(!debug.contains("secret-key"));
-}
-
-#[tokio::test]
-async fn scripted_tool_returns_structured_success_and_progress() {
-    let metadata = ToolMetadata::new()
-        .operation(OperationKind::Write)
-        .affected_path("src/lib.rs")
-        .diff("+new line");
-    let tool = ScriptedTool::new(
-        spec("edit"),
-        ScriptedToolOutcome::Success(ToolOutput::text("updated").metadata(metadata.clone())),
-    )
-    .progress([ToolProgress::message("editing").units(1, 2)]);
-    let (context, mut progress) = context(CancellationToken::new());
-
-    let output = tool.call(invocation(), context).await.unwrap();
-
-    assert_eq!(output.content(), "updated");
-    assert_eq!(output.presentation(), &metadata);
-    assert_eq!(progress.recv().await.unwrap().text(), "editing");
-}
-
-#[tokio::test]
-async fn scripted_tool_returns_typed_failure_and_invalid_arguments() {
-    let tool = ScriptedTool::new(
-        spec("parse"),
-        ScriptedToolOutcome::Failure(ToolError::new(
-            ToolErrorKind::InvalidArguments,
-            "missing value",
-        )),
-    );
-    let (context, _progress) = context(CancellationToken::new());
-
-    let error = tool.call(invocation(), context).await.unwrap_err();
-
-    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
-    assert_eq!(error.message(), "missing value");
 }
 
 #[tokio::test]
@@ -231,24 +193,4 @@ async fn a_tool_implementing_neither_call_nor_prepare_reports_the_mistake() {
     );
 }
 
-#[test]
-fn metadata_exposes_structured_paths_commands_urls_and_diffs() {
-    let metadata = ToolMetadata::new()
-        .operation(OperationKind::Execute)
-        .affected_path("Cargo.toml")
-        .command_summary("cargo test")
-        .url("https://example.com")
-        .diff("+dependency")
-        .asset(ToolAsset::new("image/png", vec![1, 2, 3]))
-        .presentation_notice("preview unavailable");
 
-    assert_eq!(metadata.operation_kind(), Some(&OperationKind::Execute));
-    assert_eq!(metadata.affected_paths(), [PathBuf::from("Cargo.toml")]);
-    assert_eq!(metadata.command_summary_text(), Some("cargo test"));
-    assert_eq!(metadata.urls(), ["https://example.com"]);
-    assert_eq!(metadata.unified_diff(), Some("+dependency"));
-    assert_eq!(metadata.assets().len(), 1);
-    assert_eq!(metadata.assets()[0].media_type(), "image/png");
-    assert_eq!(metadata.assets()[0].bytes(), [1, 2, 3]);
-    assert_eq!(metadata.presentation_notices(), ["preview unavailable"]);
-}

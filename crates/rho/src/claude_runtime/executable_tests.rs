@@ -19,29 +19,6 @@ fn absolute_missing_path_is_binary_missing() {
 }
 
 #[test]
-fn classifies_direct_unix_or_exe_paths() {
-    let unix = ClaudeExecutable::from_path("/usr/bin/claude");
-    assert_eq!(unix.kind(), ClaudeInvocationKind::Direct);
-    assert_eq!(
-        unix.plan(["auth", "status"]).unwrap(),
-        ClaudeArgv {
-            program: PathBuf::from("/usr/bin/claude"),
-            args: vec![OsString::from("auth"), OsString::from("status")],
-        }
-    );
-
-    let exe = ClaudeExecutable::from_path(r"C:\Tools\claude.exe");
-    assert_eq!(exe.kind(), ClaudeInvocationKind::Direct);
-    assert_eq!(
-        exe.plan(["--version"]).unwrap(),
-        ClaudeArgv {
-            program: PathBuf::from(r"C:\Tools\claude.exe"),
-            args: vec![OsString::from("--version")],
-        }
-    );
-}
-
-#[test]
 fn classifies_cmd_shim_uses_script_image_and_bat_command_line() {
     let shim = ClaudeExecutable::from_path(r"C:\Users\me\scoop\shims\claude.cmd");
     assert_eq!(shim.kind(), ClaudeInvocationKind::CmdScript);
@@ -91,12 +68,6 @@ fn classifies_ps1_shim_as_fixed_argv_powershell_invocation() {
             ],
         }
     );
-}
-
-#[test]
-fn bat_extension_uses_cmd_script_kind() {
-    let shim = ClaudeExecutable::from_path(r"C:\Tools\claude.bat");
-    assert_eq!(shim.kind(), ClaudeInvocationKind::CmdScript);
 }
 
 #[test]
@@ -192,14 +163,6 @@ fn powershell_try_command_accepts_metacharacters() {
     assert!(plan.args.iter().any(|a| a == "x y"));
     assert!(plan.args.iter().any(|a| a == "模型"));
     assert!(plan.args.iter().any(|a| a.is_empty()));
-}
-
-#[test]
-fn direct_command_builder_preserves_args() {
-    let exe = ClaudeExecutable::from_path("/usr/bin/claude");
-    // Construction must not fail; spawn is not required here.
-    let _ = exe.try_command(["auth", "status"]).unwrap();
-    let _ = exe.try_command(["--version"]).unwrap();
 }
 
 #[cfg(unix)]

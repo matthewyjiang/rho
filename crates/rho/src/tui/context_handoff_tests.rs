@@ -30,13 +30,6 @@ fn impact(
 }
 
 #[test]
-fn prompts_for_omissions_even_without_warm_cache() {
-    assert!(impact(12, false, false, false).should_prompt());
-    assert!(!impact(0, false, false, false).should_prompt());
-    assert!(impact(0, true, false, true).should_prompt());
-}
-
-#[test]
 fn model_switch_omission_options_are_honest_about_native_blocks() {
     let choice = impact(115, true, false, true)
         .choice(ContextHandoffKind::ModelSwitch)

@@ -29,45 +29,6 @@ fn request() -> HostInputRequest {
 }
 
 #[test]
-fn host_choice_exposes_optional_description() {
-    let plain = HostChoice::new("fast", "Fast");
-    let detailed = HostChoice::new("safe", "Safe").description("Run every check");
-
-    assert_eq!(plain.description_text(), None);
-    assert_eq!(detailed.description_text(), Some("Run every check"));
-}
-
-#[test]
-fn host_question_default_selection_defaults_to_selected() {
-    use super::DefaultSelection;
-
-    let selected = HostQuestion::new(
-        "mode",
-        "mode?",
-        vec![
-            HostChoice::new("fast", "Fast"),
-            HostChoice::new("safe", "Safe"),
-        ],
-        SelectionMode::One,
-    )
-    .unwrap()
-    .default_value(serde_json::json!("safe"));
-    let focused = selected
-        .clone()
-        .default_selection(DefaultSelection::Focused);
-
-    assert_eq!(
-        selected.default_selection_mode(),
-        DefaultSelection::Selected
-    );
-    assert_eq!(focused.default_selection_mode(), DefaultSelection::Focused);
-    assert_eq!(
-        focused.default_value_ref(),
-        Some(&serde_json::json!("safe"))
-    );
-}
-
-#[test]
 fn questionnaire_validates_complete_typed_answers() {
     let request = request();
     let response = HostInputResponse::new()

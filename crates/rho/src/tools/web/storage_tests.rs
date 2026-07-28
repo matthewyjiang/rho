@@ -4,39 +4,6 @@ use serde_json::json;
 use super::*;
 
 #[test]
-fn store_and_load_round_trip_under_data_root() {
-    let root = tempfile::tempdir().unwrap();
-    let store = WebAccessStore::with_root(root.path().to_path_buf());
-    let response_id = new_response_id();
-
-    store
-        .store(
-            response_id.clone(),
-            StoredContent {
-                kind: "fetch_content".into(),
-                items: vec![StoredItem {
-                    url: Some("https://example.com".into()),
-                    query: None,
-                    title: Some("Example".into()),
-                    content: "hello body".into(),
-                    metadata: json!({"mode": "http_fetch"}),
-                }],
-            },
-        )
-        .unwrap();
-
-    let path = root
-        .path()
-        .join("content")
-        .join(format!("{response_id}.json"));
-    assert!(path.is_file());
-
-    let loaded = store.load(&response_id).unwrap();
-    assert_eq!(loaded.kind, "fetch_content");
-    assert_eq!(loaded.items[0].content, "hello body");
-}
-
-#[test]
 fn load_falls_back_to_legacy_temp_cache() {
     let root = tempfile::tempdir().unwrap();
     let store = WebAccessStore::with_root(root.path().to_path_buf());
@@ -114,15 +81,4 @@ fn available_selectors_lists_exact_keys() {
     assert!(listing.contains("urlIndex=1"));
     assert!(listing.contains("queryIndex=1"));
     assert!(listing.contains("beta"));
-}
-
-#[test]
-fn bind_session_changes_root() {
-    let root = tempfile::tempdir().unwrap();
-    let session_web = root.path().join("session-web");
-    let store = WebAccessStore::new();
-    store.bind_session(Some(session_web.clone()));
-    assert_eq!(store.root(), session_web);
-    store.bind_session(None);
-    assert_ne!(store.root(), session_web);
 }

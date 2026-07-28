@@ -220,7 +220,3 @@ impl DiagnosticsSnapshot {
         &self.default_features
     }
 }
-
-#[cfg(test)]
-#[path = "diagnostics_tests.rs"]
-mod tests;

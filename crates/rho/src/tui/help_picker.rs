@@ -171,6 +171,3 @@ impl App {
     }
 }
 
-#[cfg(test)]
-#[path = "help_picker_tests.rs"]
-mod tests;

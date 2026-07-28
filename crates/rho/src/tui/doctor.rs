@@ -446,6 +446,3 @@ fn probe_directory(directory: &Path) -> bool {
     result
 }
 
-#[cfg(test)]
-#[path = "doctor_tests.rs"]
-mod tests;

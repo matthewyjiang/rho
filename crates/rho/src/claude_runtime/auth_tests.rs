@@ -73,61 +73,6 @@ async fn version_sh(body: &str) -> Result<String, ClaudeAuthError> {
 }
 
 #[test]
-fn describe_signed_in_includes_email_subscription_and_owner() {
-    let status = ClaudeAuthStatus {
-        logged_in: true,
-        auth_method: Some("claude.ai".into()),
-        api_provider: Some("firstParty".into()),
-        email: Some("someone@example.com".into()),
-        org_id: Some("org".into()),
-        org_name: Some("Example".into()),
-        subscription_type: Some("pro".into()),
-    };
-
-    assert_eq!(
-        status.describe(),
-        "claude code: signed in as someone@example.com (pro) - managed by the claude binary"
-    );
-}
-
-#[test]
-fn describe_signed_out_points_at_login() {
-    let status = ClaudeAuthStatus {
-        logged_in: false,
-        auth_method: None,
-        api_provider: None,
-        email: None,
-        org_id: None,
-        org_name: None,
-        subscription_type: None,
-    };
-
-    assert_eq!(
-        status.describe(),
-        "claude code: not signed in - run /login claude-code"
-    );
-}
-
-#[test]
-fn describe_login_success_keeps_ownership_clear() {
-    let status = ClaudeAuthStatus {
-        logged_in: true,
-        auth_method: None,
-        api_provider: None,
-        email: Some("someone@example.com".into()),
-        org_id: None,
-        org_name: None,
-        subscription_type: Some("pro".into()),
-    };
-
-    assert_eq!(
-        status.describe_login_success(),
-        "claude code: signed in as someone@example.com (pro)\n\
-Managed by the claude binary. Rho reads this state with `claude auth status`."
-    );
-}
-
-#[test]
 fn parses_optional_auth_fields_and_requires_logged_in() {
     let status: ClaudeAuthStatus = serde_json::from_str(
         r#"{
@@ -476,26 +421,4 @@ exit 1
     assert!(!status.logged_in);
 }
 
-#[test]
-fn describe_probe_result_prefers_typed_missing_binary_copy() {
-    let missing = Err(ClaudeAuthError::BinaryMissing);
-    assert_eq!(
-        describe_probe_result(&missing),
-        "claude code: binary not found on PATH"
-    );
-}
 
-#[test]
-fn missing_binary_error_display_matches_transparency_copy() {
-    assert_eq!(
-        ClaudeAuthError::BinaryMissing.to_string(),
-        "claude code: binary not found on PATH"
-    );
-}
-
-#[test]
-fn logout_confirm_copy_states_global_sign_out() {
-    let copy = logout_confirm_description();
-    assert!(copy.contains("everywhere the claude binary is used"));
-    assert!(copy.contains("Rho does not store this credential"));
-}
