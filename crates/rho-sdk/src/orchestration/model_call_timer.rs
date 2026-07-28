@@ -2,24 +2,31 @@ use std::time::Instant;
 
 use crate::{model::ModelEvent, ModelCallMetrics};
 
+/// Times one model call. Every reported duration is scoped to the attempt that
+/// produced the returned output: a discarded attempt and the backoff before the
+/// retry belong to the retry policy, not to the model's speed.
 pub(super) struct ModelCallTimer {
-    request_started: Instant,
+    attempt_started: Instant,
     first_generated: Option<Instant>,
     last_observed: Option<Instant>,
 }
 
 impl ModelCallTimer {
-    pub(super) fn start(request_started: Instant) -> Self {
+    pub(super) fn start(attempt_started: Instant) -> Self {
         Self {
-            request_started,
+            attempt_started,
             first_generated: None,
             last_observed: None,
         }
     }
 
-    pub(super) fn discard_attempt_output(&mut self) {
+    /// Disowns a failed attempt and starts the clock over for the retry.
+    pub(super) fn discard_attempt_output(&mut self, observed_at: Option<Instant>) {
         self.first_generated = None;
         self.last_observed = None;
+        if let Some(observed_at) = observed_at {
+            self.attempt_started = observed_at;
+        }
     }
 
     pub(super) fn observe(&mut self, event: &ModelEvent, observed_at: Option<Instant>) {
@@ -55,11 +62,11 @@ impl ModelCallTimer {
             output_tokens,
             time_to_first_token: self
                 .first_generated
-                .map(|first| first.duration_since(self.request_started)),
+                .map(|first| first.duration_since(self.attempt_started)),
             generation_time: self
                 .first_generated
                 .map(|first| stream_completed.duration_since(first)),
-            total_latency: stream_completed.duration_since(self.request_started),
+            total_latency: stream_completed.duration_since(self.attempt_started),
         }
     }
 }

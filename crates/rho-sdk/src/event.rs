@@ -147,19 +147,29 @@ pub struct ModelCallProfile {
 pub struct ModelCallMetrics {
     /// Provider-reported output tokens for this call.
     pub output_tokens: Option<u64>,
-    /// Time from starting the request to receiving its first generated event.
+    /// Time from the start of the attempt to its first generated event.
+    /// Reasoning deltas count as generated output, so a provider that hides
+    /// reasoning until the visible answer begins reports that whole wait here.
     pub time_to_first_token: Option<Duration>,
     /// Time from the first generated event until stream completion.
     pub generation_time: Option<Duration>,
-    /// Time from starting the request until stream completion.
+    /// Time from the start of the attempt until stream completion.
+    ///
+    /// Every duration here is scoped to the attempt that produced the returned
+    /// output. Discarded attempts and the retry backoff before them are not
+    /// counted, so these numbers describe the model rather than retry policy.
     pub total_latency: Duration,
 }
 
 impl ModelCallMetrics {
-    /// Provider-reported output tokens divided by local generation time.
+    /// Provider-reported output tokens divided by total attempt latency.
+    ///
+    /// Total latency rather than generation time keeps the time boundary
+    /// aligned with providers that count hidden reasoning in `output_tokens`
+    /// before emitting their first event.
     pub fn output_tokens_per_second(self) -> Option<f64> {
         let tokens = self.output_tokens?;
-        let seconds = self.generation_time?.as_secs_f64();
+        let seconds = self.total_latency.as_secs_f64();
         (seconds > 0.0).then(|| tokens as f64 / seconds)
     }
 }
@@ -287,3 +297,7 @@ pub enum RunEvent {
         metrics: ModelCallMetrics,
     },
 }
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

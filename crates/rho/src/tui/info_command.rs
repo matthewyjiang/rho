@@ -155,7 +155,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     if let Some(metrics) = info.model_performance.latest_call {
         block.push_section("Last model call");
         if let Some(duration) = metrics.time_to_first_token {
-            block.push_field("First token", &format_duration(duration));
+            block.push_field("First event", &format_duration(duration));
         }
         if let Some(duration) = metrics.generation_time {
             block.push_field("Generation", &format_duration(duration));

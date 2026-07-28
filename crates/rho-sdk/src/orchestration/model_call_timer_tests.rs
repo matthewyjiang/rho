@@ -23,8 +23,11 @@ fn records_first_generated_and_final_provider_observations() {
     assert_eq!(metrics.total_latency, Duration::from_secs(3));
 }
 
+// Covers: a discarded attempt and the backoff before the retry must not be
+// charged to the attempt that produced the returned output.
+// Owner: sdk orchestration
 #[test]
-fn failed_attempt_discards_output_without_moving_request_start() {
+fn failed_attempt_restarts_every_duration_at_the_retry() {
     let started = Instant::now();
     let mut timer = ModelCallTimer::start(started);
     timer.observe(
@@ -32,7 +35,8 @@ fn failed_attempt_discards_output_without_moving_request_start() {
         Some(started + Duration::from_secs(1)),
     );
 
-    timer.discard_attempt_output();
+    let retry_started = started + Duration::from_secs(3);
+    timer.discard_attempt_output(Some(retry_started));
     let final_first_output = started + Duration::from_secs(4);
     timer.observe(
         &ModelEvent::OutputDelta("done".into()),
@@ -40,8 +44,10 @@ fn failed_attempt_discards_output_without_moving_request_start() {
     );
 
     let metrics = timer.finish(started + Duration::from_secs(5), Some(4));
-    assert_eq!(metrics.time_to_first_token, Some(Duration::from_secs(4)));
-    assert_eq!(metrics.total_latency, Duration::from_secs(4));
+    // The first attempt ran for 1s and the backoff lasted 2s. Neither is
+    // charged to the retry, which produced its first event 1s after starting.
+    assert_eq!(metrics.time_to_first_token, Some(Duration::from_secs(1)));
+    assert_eq!(metrics.total_latency, Duration::from_secs(1));
 }
 
 #[test]

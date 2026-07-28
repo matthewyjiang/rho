@@ -8,8 +8,8 @@ fn model_call_metrics() -> rho_sdk::ModelCallMetrics {
     rho_sdk::ModelCallMetrics {
         output_tokens: Some(100),
         time_to_first_token: Some(Duration::from_millis(100)),
-        generation_time: Some(Duration::from_secs(2)),
-        total_latency: Duration::from_millis(2_100),
+        generation_time: Some(Duration::from_millis(1_900)),
+        total_latency: Duration::from_secs(2),
     }
 }
 
