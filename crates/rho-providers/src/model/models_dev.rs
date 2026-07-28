@@ -498,8 +498,18 @@ fn reasoning_capabilities_known(model: &Value, policy: CatalogReasoningPolicy) -
     if options.is_empty() {
         return true;
     }
-    effort_values(model)
+    if effort_values(model)
         .is_some_and(|values| !values.is_empty() && values.iter().all(is_recognized_effort_value))
+    {
+        return true;
+    }
+    toggle_is_complete_binary_control(model, policy)
+}
+
+/// A toggle-only catalog row is a complete binary on/off control, but only for
+/// protocols that already treat Off as an explicit wire value (`none`).
+fn toggle_is_complete_binary_control(model: &Value, policy: CatalogReasoningPolicy) -> bool {
+    policy == CatalogReasoningPolicy::OffAsNone && advertised_toggle(model)
 }
 
 fn is_recognized_effort_value(value: &Value) -> bool {
@@ -556,7 +566,10 @@ fn supported_reasoning_levels(
     if reasoning_options.is_some_and(Vec::is_empty) {
         return None;
     }
-    let effort_values = effort_values(model)?;
+    let Some(effort_values) = effort_values(model) else {
+        return toggle_is_complete_binary_control(model, policy)
+            .then_some(vec![ReasoningLevel::Off, ReasoningLevel::Max]);
+    };
     if effort_values.is_empty() || !effort_values.iter().all(is_recognized_effort_value) {
         return None;
     }

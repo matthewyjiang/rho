@@ -216,7 +216,27 @@ fn parse_openssh_private_key(pem: &str) -> Result<PrivateKey, OllamaDeviceError>
     PrivateKey::from_bytes(&bytes).map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))
 }
 
+thread_local! {
+    static TEST_KEY_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with the device key directory overridden, so tests do not read the
+/// developer's real `~/.ollama` key.
+#[doc(hidden)]
+pub fn with_ollama_device_key_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
+    TEST_KEY_DIR.with(|key_dir| {
+        let previous = key_dir.replace(Some(path));
+        let result = f();
+        key_dir.replace(previous);
+        result
+    })
+}
+
 fn default_key_dir() -> Result<PathBuf, OllamaDeviceError> {
+    if let Some(path) = TEST_KEY_DIR.with(|key_dir| key_dir.borrow().clone()) {
+        return Ok(path);
+    }
     if let Ok(path) = std::env::var("OLLAMA_DEVICE_KEY_DIR") {
         let path = path.trim();
         if !path.is_empty() {

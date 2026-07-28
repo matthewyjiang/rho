@@ -361,6 +361,62 @@ fn exact_catalog_toggle_does_not_imply_off() {
 }
 
 #[test]
+fn ollama_cloud_reads_models_dev_reasoning_controls() {
+    let api = json!({
+        "ollama-cloud": {
+            "models": {
+                "glm-5.2": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "effort", "values": ["high", "max"]}
+                    ],
+                    "limit": {"context": 202_752, "output": 16_384}
+                },
+                "kimi-k2.5": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "toggle"}
+                    ]
+                },
+                "mistral-large-3:675b": {
+                    "reasoning": false
+                }
+            }
+        }
+    });
+
+    let glm = upstream_metadata_from_api(&api, "ollama-cloud", "glm-5.2").unwrap();
+    assert_eq!(glm.advertised_context_window, Some(202_752));
+    assert_eq!(
+        glm.supported_reasoning_levels,
+        Some(vec![
+            ReasoningLevel::Off,
+            ReasoningLevel::High,
+            ReasoningLevel::Max,
+        ])
+    );
+    assert!(glm.reasoning_capabilities_known);
+    assert!(glm.reasoning_metadata_complete);
+
+    let toggle_only = upstream_metadata_from_api(&api, "ollama-cloud", "kimi-k2.5").unwrap();
+    assert_eq!(
+        toggle_only.supported_reasoning_levels,
+        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+    );
+    assert!(toggle_only.reasoning_capabilities_known);
+    assert!(toggle_only.reasoning_metadata_complete);
+
+    let no_reasoning =
+        upstream_metadata_from_api(&api, "ollama-cloud", "mistral-large-3:675b").unwrap();
+    assert_eq!(no_reasoning.supported_reasoning_levels, None);
+    assert!(no_reasoning.reasoning_capabilities_known);
+    assert_eq!(
+        no_reasoning.reasoning_capabilities(),
+        ReasoningCapabilities::NotConfigurable
+    );
+}
+
+#[test]
 fn non_configurable_provider_path_is_known_without_model_metadata() {
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {

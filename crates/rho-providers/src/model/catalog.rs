@@ -224,11 +224,57 @@ fn builtin_default_model(provider: &str) -> Option<String> {
     }
 }
 
+/// Auth context a caller resolves model selections against.
+///
+/// Selection prefers `current` when the target provider offers it, then the
+/// first offered mode in `available`, then the provider default.
+#[derive(Clone, Copy)]
+pub struct SelectionAuthContext<'a> {
+    /// The auth mode active before the selection, if any.
+    pub current: Option<&'a str>,
+    /// Auth modes with stored credentials.
+    pub available: &'a [String],
+}
+
+impl SelectionAuthContext<'_> {
+    /// No credential store in scope; selection keeps the provider default auth.
+    pub fn none() -> SelectionAuthContext<'static> {
+        SelectionAuthContext {
+            current: None,
+            available: &[],
+        }
+    }
+
+    /// Selects the auth mode for a model selection from the given candidate
+    /// modes: current auth first, then the first credential-backed candidate,
+    /// then the first candidate so callers without credential context keep the
+    /// provider default.
+    fn select(&self, auth_modes: &[String]) -> String {
+        self.current
+            .filter(|auth| auth_modes.iter().any(|mode| mode == auth))
+            .map(str::to_string)
+            .or_else(|| {
+                auth_modes
+                    .iter()
+                    .find(|mode| self.available.contains(mode))
+                    .cloned()
+            })
+            .or_else(|| auth_modes.first().cloned())
+            .unwrap_or_else(|| "api-key".into())
+    }
+}
+
 pub fn resolve_model_selection_for_provider(
     provider: &str,
     model: &str,
+    auth_context: SelectionAuthContext<'_>,
 ) -> Result<ModelSelection, ModelSelectionError> {
-    resolve_model_selection_for_provider_from(model_catalog(), provider.trim(), model.trim(), None)
+    resolve_model_selection_for_provider_from(
+        model_catalog(),
+        provider.trim(),
+        model.trim(),
+        auth_context,
+    )
 }
 
 pub fn resolve_model_selection_for_auths(
@@ -320,10 +366,6 @@ fn cached_provider_entries(provider: &str, auth_modes: &[String]) -> Vec<ModelCa
         .collect()
 }
 
-fn provider_default_auth(provider: &str) -> Option<&'static str> {
-    provider::provider_descriptor(provider).map(|descriptor| descriptor.default_auth().id)
-}
-
 fn provider_uses_cached_models(provider: &str) -> bool {
     provider::provider_descriptor(provider)
         .map(|descriptor| descriptor.model_source == ProviderModelSource::CachedProviderModels)
@@ -349,38 +391,27 @@ fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
     }
 }
 
-fn selection_from_provider_model(
-    provider: &str,
-    model: &provider_models::ProviderModel,
-    preferred_auth: Option<&str>,
+fn selection_from_entry(
+    entry: &ModelCatalogEntry,
+    auth_context: SelectionAuthContext<'_>,
 ) -> ModelSelection {
-    let auth = preferred_auth
-        .and_then(|auth| {
-            provider::provider_descriptor(provider)
-                .and_then(|descriptor| descriptor.auth_mode(auth).map(|mode| mode.id))
-        })
-        .or_else(|| provider_default_auth(provider))
-        .unwrap_or("api-key");
     ModelSelection {
-        provider: provider.to_string(),
-        model: model.model.clone(),
-        auth: auth.to_string(),
+        provider: entry.provider.clone(),
+        model: entry.model.clone(),
+        auth: auth_context.select(&entry.auth_modes),
         from_catalog: true,
     }
 }
 
-fn selection_from_entry(entry: &ModelCatalogEntry, preferred_auth: Option<&str>) -> ModelSelection {
-    let auth = preferred_auth
-        .filter(|auth| entry.auth_modes.iter().any(|mode| mode == auth))
-        .map(str::to_string)
-        .or_else(|| entry.auth_modes.first().cloned())
-        .unwrap_or_else(|| "api-key".into());
-    ModelSelection {
-        provider: entry.provider.clone(),
-        model: entry.model.clone(),
-        auth,
-        from_catalog: true,
-    }
+fn provider_auth_mode_ids(provider: &str) -> Vec<String> {
+    provider::provider_descriptor(provider)
+        .map(|descriptor| {
+            descriptor
+                .auth_modes()
+                .map(|mode| mode.id.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn resolve_model_selection_from(
@@ -395,12 +426,16 @@ fn resolve_model_selection_from(
         return Err(ModelSelectionError::Empty);
     }
 
+    let auth_context = SelectionAuthContext {
+        current: Some(auth),
+        available: available_auths,
+    };
     if let Some((provider, model)) = input.split_once('/') {
         return resolve_model_selection_for_provider_from(
             catalog,
             provider.trim(),
             model.trim(),
-            Some(auth),
+            auth_context,
         );
     }
 
@@ -414,7 +449,7 @@ fn resolve_model_selection_from(
         .filter(|entry| entry.model == input)
         .collect::<Vec<_>>();
     match matches.as_slice() {
-        [entry] => Ok(selection_from_entry(entry, Some(auth))),
+        [entry] => Ok(selection_from_entry(entry, auth_context)),
         [] => Err(unavailable_model_error(current_provider, input)),
         _ => Err(ModelSelectionError::AmbiguousModel {
             model: input.to_string(),
@@ -426,7 +461,7 @@ fn resolve_model_selection_for_provider_from(
     catalog: &[ModelCatalogEntry],
     provider: &str,
     model: &str,
-    preferred_auth: Option<&str>,
+    auth_context: SelectionAuthContext<'_>,
 ) -> Result<ModelSelection, ModelSelectionError> {
     if provider.is_empty() || model.is_empty() {
         return Err(ModelSelectionError::Empty);
@@ -434,7 +469,12 @@ fn resolve_model_selection_for_provider_from(
     let (provider, alias_auth) = provider::legacy_provider_alias(provider)
         .map(|(provider, auth)| (provider, Some(auth)))
         .unwrap_or((provider, None));
-    let preferred_auth = alias_auth.or(preferred_auth);
+    // A legacy provider alias names its auth mode explicitly, so it overrides
+    // the caller's current auth.
+    let auth_context = SelectionAuthContext {
+        current: alias_auth.or(auth_context.current),
+        ..auth_context
+    };
     if !implemented_providers().contains(&provider) {
         return Err(ModelSelectionError::UnknownProvider {
             provider: provider.to_string(),
@@ -445,34 +485,26 @@ fn resolve_model_selection_for_provider_from(
             || model.to_string(),
             |descriptor| descriptor.canonicalize_model_id(model),
         );
-        if let Some(entry) = provider_models::cached_provider_model(provider, &model_id) {
-            return Ok(selection_from_provider_model(
-                provider,
-                &entry,
-                preferred_auth,
-            ));
-        }
-        if builtin_default_model(provider).as_deref() == Some(model_id.as_str()) {
-            let auth = preferred_auth
-                .and_then(|auth| {
-                    provider::provider_descriptor(provider)
-                        .and_then(|descriptor| descriptor.auth_mode(auth).map(|mode| mode.id))
-                })
-                .or_else(|| provider_default_auth(provider))
-                .unwrap_or("api-key");
-            return Ok(ModelSelection {
-                provider: provider.to_string(),
-                model: model_id,
-                auth: auth.to_string(),
-                from_catalog: true,
+        let selected_model = provider_models::cached_provider_model(provider, &model_id)
+            .map(|entry| entry.model)
+            .or_else(|| {
+                (builtin_default_model(provider).as_deref() == Some(model_id.as_str()))
+                    .then_some(model_id)
             });
-        }
-        return Err(unavailable_model_error(provider, model));
+        let Some(selected_model) = selected_model else {
+            return Err(unavailable_model_error(provider, model));
+        };
+        return Ok(ModelSelection {
+            provider: provider.to_string(),
+            model: selected_model,
+            auth: auth_context.select(&provider_auth_mode_ids(provider)),
+            from_catalog: true,
+        });
     }
     catalog
         .iter()
         .find(|entry| entry.provider == provider && entry.model == model)
-        .map(|entry| selection_from_entry(entry, preferred_auth))
+        .map(|entry| selection_from_entry(entry, auth_context))
         .ok_or_else(|| unavailable_model_error(provider, model))
 }
 

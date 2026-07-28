@@ -293,7 +293,14 @@ fn apply_model_override(
     let model_override = effective_model_override(config, reference, cli_provider)?;
     let selection = match model_override.provider.as_deref() {
         Some(provider) => {
-            catalog::resolve_model_selection_for_provider(provider, &model_override.model)?
+            // No credential store is available during CLI override resolution.
+            // An explicit `--auth` is applied afterward and still takes
+            // precedence.
+            catalog::resolve_model_selection_for_provider(
+                provider,
+                &model_override.model,
+                catalog::SelectionAuthContext::none(),
+            )?
         }
         None => catalog::resolve_model_selection_for_auths(
             &model_override.model,

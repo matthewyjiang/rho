@@ -434,9 +434,15 @@ impl App {
         identity: &ModelIdentity,
     ) -> Option<InteractiveModelSelection> {
         self.refresh_available_auths();
-        let selection =
-            catalog::resolve_model_selection_for_provider(&identity.provider, &identity.model)
-                .ok()?;
+        let selection = catalog::resolve_model_selection_for_provider(
+            &identity.provider,
+            &identity.model,
+            catalog::SelectionAuthContext {
+                current: Some(&self.info.runtime.auth),
+                available: &self.available_auths,
+            },
+        )
+        .ok()?;
         if !self
             .available_auths
             .iter()

@@ -1208,14 +1208,22 @@ fn login_method_picker_uses_readable_auth_prompts() {
     assert_eq!(labels, vec!["API Key", "OAuth"]);
 }
 
+/// Points device-key discovery at an empty directory so the developer's real
+/// `~/.ollama` key cannot leak into credential-availability assertions.
+fn without_local_ollama_device_key<T>(f: impl FnOnce() -> T) -> T {
+    let empty = std::env::temp_dir().join(format!("rho-no-device-key-{}", std::process::id()));
+    rho_providers::auth::ollama_device::with_ollama_device_key_dir_for_tests(empty, f)
+}
+
 #[tokio::test]
 async fn logout_provider_picker_uses_only_providers_with_stored_credentials() {
     let store = MemoryCredentialStore::default();
     save_provider_api_key(&store, "openai", "sk-test").unwrap();
     save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
 
-    let picker =
-        provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ false).unwrap();
+    let picker = without_local_ollama_device_key(|| {
+        provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ false).unwrap()
+    });
     let values = picker
         .items
         .iter()
@@ -1230,8 +1238,9 @@ async fn logout_provider_picker_can_include_claude_code_when_signed_in() {
     let store = MemoryCredentialStore::default();
     save_provider_api_key(&store, "openai", "sk-test").unwrap();
 
-    let picker =
-        provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ true).unwrap();
+    let picker = without_local_ollama_device_key(|| {
+        provider_picker::logout_provider_picker(&store, /*claude_signed_in*/ true).unwrap()
+    });
     let values = picker
         .items
         .iter()
