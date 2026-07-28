@@ -40,7 +40,7 @@ pub(super) struct StatusLineState {
     permission_mode: PermissionMode,
     model_metadata: Option<ModelMetadata>,
     subagent_total_cost_usd_micros: u64,
-    average_end_to_end_output_rate: Option<u64>,
+    average_output_rate: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -79,7 +79,7 @@ impl Default for StatusLineState {
             permission_mode: PermissionMode::default(),
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
-            average_end_to_end_output_rate: None,
+            average_output_rate: None,
         }
     }
 }
@@ -98,7 +98,7 @@ impl StatusLineState {
             permission_mode: info.permission_mode,
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
-            average_end_to_end_output_rate: None,
+            average_output_rate: None,
         }
     }
 }
@@ -153,12 +153,9 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn update_average_end_to_end_output_rate(
-        &mut self,
-        average_end_to_end_output_rate: Option<u64>,
-    ) {
-        if self.state.average_end_to_end_output_rate != average_end_to_end_output_rate {
-            self.state.average_end_to_end_output_rate = average_end_to_end_output_rate;
+    pub(super) fn update_average_output_rate(&mut self, average_output_rate: Option<u64>) {
+        if self.state.average_output_rate != average_output_rate {
+            self.state.average_output_rate = average_output_rate;
             self.invalidate();
         }
     }
@@ -266,8 +263,8 @@ fn bottom_status(state: &StatusLineState, width: usize) -> (String, String) {
     if let Some(cost) = status_cost(state) {
         append_left_if_fits(&mut left, &right, width, cost);
     }
-    if let Some(rate) = state.average_end_to_end_output_rate {
-        append_left_if_fits(&mut left, &right, width, format!("{rate} tok/s e2e avg"));
+    if let Some(rate) = state.average_output_rate {
+        append_left_if_fits(&mut left, &right, width, format!("{rate} tok/s avg"));
     }
     (left, right)
 }

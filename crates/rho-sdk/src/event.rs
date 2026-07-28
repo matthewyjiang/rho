@@ -147,28 +147,31 @@ pub struct ModelCallProfile {
 pub struct ModelCallMetrics {
     /// Provider-reported output tokens for this call.
     pub output_tokens: Option<u64>,
-    /// Time from starting the request to receiving its first generated event.
+    /// Time from starting the request to its first generated event. Reasoning
+    /// deltas count as generated output, so a provider that hides reasoning
+    /// until the visible answer begins reports that whole wait here.
     pub time_to_first_token: Option<Duration>,
     /// Time from the first generated event until stream completion.
     pub generation_time: Option<Duration>,
-    /// Time from starting the request until stream completion.
+    /// Time from the attempt that produced this output until stream completion.
+    /// Excludes earlier failed attempts and the backoff waits between them.
+    pub attempt_latency: Duration,
+    /// Time from starting the request until stream completion, including any
+    /// failed attempts and retry backoff.
     pub total_latency: Duration,
 }
 
 impl ModelCallMetrics {
-    /// Provider-reported output tokens divided by total model-call latency.
+    /// Provider-reported output tokens divided by the latency of the attempt
+    /// that produced them.
     ///
-    /// Total latency keeps the time boundary aligned with providers that count
-    /// hidden reasoning in `output_tokens` before emitting their first event.
-    pub fn end_to_end_output_tokens_per_second(self) -> Option<f64> {
-        let tokens = self.output_tokens?;
-        let seconds = self.total_latency.as_secs_f64();
-        (seconds > 0.0).then(|| tokens as f64 / seconds)
-    }
-
-    /// Provider-reported output tokens divided by total model-call latency.
+    /// Attempt latency rather than generation time keeps the time boundary
+    /// aligned with providers that count hidden reasoning in `output_tokens`
+    /// before emitting their first event.
     pub fn output_tokens_per_second(self) -> Option<f64> {
-        self.end_to_end_output_tokens_per_second()
+        let tokens = self.output_tokens?;
+        let seconds = self.attempt_latency.as_secs_f64();
+        (seconds > 0.0).then(|| tokens as f64 / seconds)
     }
 }
 

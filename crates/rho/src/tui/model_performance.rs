@@ -3,12 +3,12 @@ use std::{collections::BTreeMap, time::Duration};
 use rho_sdk::{ModelCallMetrics, ModelCallProfile};
 
 const MIN_OUTPUT_TOKENS: u64 = 32;
-const MIN_TOTAL_LATENCY: Duration = Duration::from_millis(500);
+const MIN_ATTEMPT_LATENCY: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct ModelPerformanceSummary {
     pub(super) latest_call: Option<ModelCallMetrics>,
-    pub(super) average_end_to_end_output_rate: Option<f64>,
+    pub(super) average_output_tokens_per_second: Option<f64>,
     pub(super) eligible_calls: u64,
 }
 
@@ -38,7 +38,7 @@ impl ModelPerformanceTracker {
 struct ModelPerformanceAggregate {
     latest_call: Option<ModelCallMetrics>,
     output_tokens: u64,
-    total_latency: Duration,
+    attempt_latency: Duration,
     eligible_calls: u64,
 }
 
@@ -48,20 +48,20 @@ impl ModelPerformanceAggregate {
         let Some(output_tokens) = metrics.output_tokens else {
             return;
         };
-        if output_tokens < MIN_OUTPUT_TOKENS || metrics.total_latency < MIN_TOTAL_LATENCY {
+        if output_tokens < MIN_OUTPUT_TOKENS || metrics.attempt_latency < MIN_ATTEMPT_LATENCY {
             return;
         }
 
         self.output_tokens = self.output_tokens.saturating_add(output_tokens);
-        self.total_latency = self.total_latency.saturating_add(metrics.total_latency);
+        self.attempt_latency = self.attempt_latency.saturating_add(metrics.attempt_latency);
         self.eligible_calls = self.eligible_calls.saturating_add(1);
     }
 
     fn summary(&self) -> ModelPerformanceSummary {
         ModelPerformanceSummary {
             latest_call: self.latest_call,
-            average_end_to_end_output_rate: (self.eligible_calls > 0)
-                .then(|| self.output_tokens as f64 / self.total_latency.as_secs_f64()),
+            average_output_tokens_per_second: (self.eligible_calls > 0)
+                .then(|| self.output_tokens as f64 / self.attempt_latency.as_secs_f64()),
             eligible_calls: self.eligible_calls,
         }
     }

@@ -4,6 +4,7 @@ use crate::{model::ModelEvent, ModelCallMetrics};
 
 pub(super) struct ModelCallTimer {
     request_started: Instant,
+    attempt_started: Instant,
     first_generated: Option<Instant>,
     last_observed: Option<Instant>,
 }
@@ -12,14 +13,21 @@ impl ModelCallTimer {
     pub(super) fn start(request_started: Instant) -> Self {
         Self {
             request_started,
+            attempt_started: request_started,
             first_generated: None,
             last_observed: None,
         }
     }
 
-    pub(super) fn discard_attempt_output(&mut self) {
+    /// Disowns a failed attempt so only the attempt that produced the returned
+    /// output is charged for generating it. Retry backoff still shows up in
+    /// total latency, but must not deflate the reported output rate.
+    pub(super) fn discard_attempt_output(&mut self, observed_at: Option<Instant>) {
         self.first_generated = None;
         self.last_observed = None;
+        if let Some(observed_at) = observed_at {
+            self.attempt_started = observed_at;
+        }
     }
 
     pub(super) fn observe(&mut self, event: &ModelEvent, observed_at: Option<Instant>) {
@@ -59,6 +67,7 @@ impl ModelCallTimer {
             generation_time: self
                 .first_generated
                 .map(|first| stream_completed.duration_since(first)),
+            attempt_latency: stream_completed.duration_since(self.attempt_started),
             total_latency: stream_completed.duration_since(self.request_started),
         }
     }

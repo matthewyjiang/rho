@@ -690,7 +690,7 @@ async fn handle_timed_provider_stream_event(
             .await
         }
         crate::provider::ProviderStreamEvent::Request(event) => {
-            timer.discard_attempt_output();
+            timer.discard_attempt_output(observed_at);
             handle_provider_request_event(event, capture, events, cancellation).await
         }
     }

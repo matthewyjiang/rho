@@ -19,12 +19,15 @@ fn profile(
     }
 }
 
-fn metrics(output_tokens: u64, generation_time: Duration) -> ModelCallMetrics {
+/// Builds metrics for a call that succeeded on its first attempt, where the
+/// attempt spans the whole request and drives the reported rate.
+fn metrics(output_tokens: u64, attempt_latency: Duration) -> ModelCallMetrics {
     ModelCallMetrics {
         output_tokens: Some(output_tokens),
         time_to_first_token: Some(Duration::from_millis(200)),
-        generation_time: Some(generation_time),
-        total_latency: generation_time + Duration::from_millis(200),
+        generation_time: attempt_latency.checked_sub(Duration::from_millis(200)),
+        attempt_latency,
+        total_latency: attempt_latency,
     }
 }
 
@@ -39,7 +42,7 @@ fn computes_a_token_weighted_average_from_completed_calls() {
         tracker.summary(&profile),
         ModelPerformanceSummary {
             latest_call: Some(metrics(300, Duration::from_secs(3))),
-            average_end_to_end_output_rate: Some(400.0 / 5.4),
+            average_output_tokens_per_second: Some(80.0),
             eligible_calls: 2,
         }
     );
@@ -57,8 +60,35 @@ fn keeps_short_calls_as_latest_without_adding_them_to_the_average() {
         tracker.summary(&profile),
         ModelPerformanceSummary {
             latest_call: Some(short_call),
-            average_end_to_end_output_rate: None,
+            average_output_tokens_per_second: None,
             eligible_calls: 0,
+        }
+    );
+}
+
+// Covers: eligibility no longer depends on stream timing, so a call whose output
+// was all hidden reasoning still contributes to the average.
+// Owner: tui model-performance aggregation
+#[test]
+fn counts_calls_that_reported_tokens_without_streaming_any_output() {
+    let mut tracker = ModelPerformanceTracker::default();
+    let profile = profile("openai", "model", ReasoningLevel::High, None);
+    let reasoning_only = ModelCallMetrics {
+        output_tokens: Some(100),
+        time_to_first_token: None,
+        generation_time: None,
+        attempt_latency: Duration::from_secs(2),
+        total_latency: Duration::from_secs(2),
+    };
+
+    tracker.record(profile.clone(), reasoning_only);
+
+    assert_eq!(
+        tracker.summary(&profile),
+        ModelPerformanceSummary {
+            latest_call: Some(reasoning_only),
+            average_output_tokens_per_second: Some(50.0),
+            eligible_calls: 1,
         }
     );
 }
@@ -77,12 +107,12 @@ fn separates_model_profiles_including_service_tier() {
     tracker.record(priority.clone(), metrics(200, Duration::from_secs(2)));
 
     assert_eq!(
-        tracker.summary(&standard).average_end_to_end_output_rate,
-        Some(100.0 / 2.2)
+        tracker.summary(&standard).average_output_tokens_per_second,
+        Some(50.0)
     );
     assert_eq!(
-        tracker.summary(&priority).average_end_to_end_output_rate,
-        Some(200.0 / 2.2)
+        tracker.summary(&priority).average_output_tokens_per_second,
+        Some(100.0)
     );
     assert_eq!(
         tracker.summary(&profile("openai", "model-a", ReasoningLevel::High, None,)),

@@ -68,6 +68,7 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
                 output_tokens: Some(3),
                 time_to_first_token: Some(Duration::from_millis(200)),
                 generation_time: Some(Duration::from_secs(1)),
+                attempt_latency: Duration::from_millis(1_200),
                 total_latency: Duration::from_millis(1_200),
             },
         })),

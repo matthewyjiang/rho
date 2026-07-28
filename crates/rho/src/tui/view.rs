@@ -780,9 +780,9 @@ impl App {
             .usage
             .model_performance
             .summary(&self.info.runtime.model_call_profile());
-        self.statusline.update_average_end_to_end_output_rate(
+        self.statusline.update_average_output_rate(
             performance
-                .average_end_to_end_output_rate
+                .average_output_tokens_per_second
                 .map(|rate| rate.round() as u64),
         );
         self.statusline

@@ -161,15 +161,15 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
             block.push_field("Generation", &format_duration(duration));
         }
         push_optional_number(&mut block, "Output tokens", metrics.output_tokens);
-        if let Some(rate) = metrics.end_to_end_output_tokens_per_second() {
-            block.push_field("End-to-end rate", &format!("{rate:.1} tok/s"));
+        if let Some(rate) = metrics.output_tokens_per_second() {
+            block.push_field("Output rate", &format!("{rate:.1} tok/s"));
         }
         block.push_field("Total latency", &format_duration(metrics.total_latency));
     }
 
-    if let Some(rate) = info.model_performance.average_end_to_end_output_rate {
+    if let Some(rate) = info.model_performance.average_output_tokens_per_second {
         block.push_section("Model performance");
-        block.push_field("End-to-end average", &format!("{rate:.1} tok/s"));
+        block.push_field("Average", &format!("{rate:.1} tok/s"));
         block.push_field(
             "Samples",
             &info.model_performance.eligible_calls.to_string(),
