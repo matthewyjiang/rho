@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.12.2...rho-providers-v0.13.0) (2026-07-28)
+
+
+### Features
+
+* **tui:** show model output token rate ([#623](https://github.com/matthewyjiang/rho/issues/623)) ([a5aa688](https://github.com/matthewyjiang/rho/commit/a5aa688686d9f4f08d064462ccfa4fd542aa979d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.11.0 to 1.12.0
+
 ## [0.12.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.12.1...rho-providers-v0.12.2) (2026-07-28)
 
 
