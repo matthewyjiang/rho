@@ -12,9 +12,9 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     feed_image::reserve_optional_image_rows,
     render::{
-        display_width, pad_entry_line, padded_inner_width, push_wrapped_text, slice_spans_by_bytes,
-        spans_display_width, styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard,
-        wrap_spans_hard, LineFill,
+        display_width, pad_display_line, padded_content_width, push_wrapped_text,
+        slice_spans_by_bytes, spans_display_width, styled_blank_line,
+        wrap_line_at_whitespace_ranges, wrap_line_hard, wrap_spans_hard, LineFill,
     },
     theme::Theme,
     tool_diff, ToolEntry,
@@ -34,7 +34,7 @@ pub(super) fn tool_entry_lines(
     width: usize,
     max_tool_output_lines: usize,
 ) -> Vec<Line<'static>> {
-    let inner_width = padded_inner_width(width);
+    let inner_width = padded_content_width(width);
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines,
@@ -47,7 +47,7 @@ pub(super) fn tool_entry_lines(
     // One trailing spacer only. Prior entries own the blank above this card.
     let padding_style = Theme::tool_card_padding();
     let mut padded = Vec::with_capacity(lines.len() + 1);
-    padded.extend(lines.into_iter().map(pad_entry_line));
+    padded.extend(lines.into_iter().map(pad_display_line));
     padded.push(styled_blank_line(width, padding_style));
     padded
 }

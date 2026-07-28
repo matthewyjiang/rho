@@ -43,7 +43,7 @@ pub(in crate::tui) fn render_entry_with_options(
     max_tool_output_lines: usize,
     trailing_blank: TrailingBlank,
 ) -> RenderedEntry {
-    let inner_width = padded_inner_width(width);
+    let inner_width = padded_content_width(width);
     let (mut lines, code_blocks, image_sources, image_rows) = match entry {
         Entry::Assistant(text) => {
             let rendered = render_assistant_content(text, width);
@@ -103,7 +103,7 @@ pub(in crate::tui) fn render_entry_with_options(
             .unwrap_or_default(),
     };
     let mut padded = Vec::with_capacity(lines.len() + usize::from(trailing_blank.is_included()));
-    padded.extend(lines.into_iter().map(pad_line));
+    padded.extend(lines.into_iter().map(pad_display_line));
     if trailing_blank.is_included() {
         padded.push(styled_blank_line(width, spacer_style));
     }

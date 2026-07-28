@@ -45,7 +45,7 @@ impl App {
     pub(super) fn screen_layout(&mut self, area: Rect, now: Instant) -> ScreenLayout {
         let width = area.width as usize;
         let history_len = self.history_len(width, now);
-        let composer_lines = self.composer_lines(width);
+        let composer_lines = self.composer_lines(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);
         self.screen_layout_for_history_len(area, history_len, &composer_lines, command_lines.len())
     }
@@ -210,7 +210,7 @@ impl App {
     ) -> usize {
         self.history_height_from_line_counts(
             height,
-            self.composer_lines(width).len(),
+            self.composer_lines(width, height).len(),
             self.command_suggestion_lines(width).len(),
         )
     }

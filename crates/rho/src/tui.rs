@@ -195,6 +195,8 @@ use {
     rho_providers::provider,
     rho_providers::reasoning::ReasoningLevel,
 };
+/// Viewport height used by line-level tests that render without a real terminal.
+#[cfg(test)]
 const DEFAULT_TUI_HEIGHT: u16 = 18;
 const PASTE_COLLAPSE_MIN_LINES: usize = 2;
 const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;

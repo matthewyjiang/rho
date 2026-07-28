@@ -115,7 +115,14 @@ pub(super) async fn execute(
     command: &str,
     cwd: &Path,
 ) -> std::io::Result<ShellOutput> {
-    execute_streaming(shell, command, cwd, None).await
+    execute_streaming(
+        shell,
+        command,
+        cwd,
+        None,
+        crate::config::DEFAULT_MAX_OUTPUT_BYTES,
+    )
+    .await
 }
 
 async fn execute_streaming(
@@ -123,6 +130,7 @@ async fn execute_streaming(
     command: &str,
     cwd: &Path,
     updates: Option<mpsc::UnboundedSender<ShellStreamUpdate>>,
+    max_output_bytes: usize,
 ) -> std::io::Result<ShellOutput> {
     let mut process = Command::new(shell);
     match executable_name(shell).to_ascii_lowercase().as_str() {
@@ -148,11 +156,27 @@ async fn execute_streaming(
         .spawn()?;
     let stdout = child.stdout.take().expect("stdout configured as piped");
     let stderr = child.stderr.take().expect("stderr configured as piped");
+    // One shared deadline for the readers and the wait. A command that leaves a
+    // background process holding the pipe never reaches EOF, so readers that only
+    // waited on EOF would outlive the killed child and hang the task forever.
+    let deadline = tokio::time::Instant::now() + INLINE_SHELL_TIMEOUT;
     let stdout_updates = updates.clone();
-    let stdout_reader = read_stream(stdout, ShellStreamKind::Stdout, stdout_updates);
-    let stderr_reader = read_stream(stderr, ShellStreamKind::Stderr, updates);
+    let stdout_reader = read_stream(
+        stdout,
+        ShellStreamKind::Stdout,
+        stdout_updates,
+        deadline,
+        max_output_bytes,
+    );
+    let stderr_reader = read_stream(
+        stderr,
+        ShellStreamKind::Stderr,
+        updates,
+        deadline,
+        max_output_bytes,
+    );
     let wait = async {
-        match tokio::time::timeout(INLINE_SHELL_TIMEOUT, child.wait()).await {
+        match tokio::time::timeout_at(deadline, child.wait()).await {
             Ok(status) => status,
             Err(_) => {
                 child.kill().await?;
@@ -181,27 +205,93 @@ async fn execute_streaming(
     })
 }
 
+/// Marker appended when output is cut short, matching `rho_tools::tool::truncate`.
+const TRUNCATION_NOTICE: &str = "\n[truncated]";
+
+/// Length of the trailing bytes that begin a UTF-8 sequence the read did not finish.
+///
+/// Decoding a raw read chunk would replace a character split across the chunk
+/// boundary with U+FFFD, so those bytes stay buffered until the next read
+/// completes them. A sequence is at most four bytes, so at most three can be
+/// pending.
+fn incomplete_utf8_suffix_len(bytes: &[u8]) -> usize {
+    for back in 1..=3.min(bytes.len()) {
+        let byte = bytes[bytes.len() - back];
+        if byte < 0x80 {
+            // ASCII never continues a sequence.
+            return 0;
+        }
+        if byte >= 0xC0 {
+            let needed = if byte >= 0xF0 {
+                4
+            } else if byte >= 0xE0 {
+                3
+            } else {
+                2
+            };
+            return if back < needed { back } else { 0 };
+        }
+    }
+    0
+}
+
+/// Reads a child pipe until EOF or `deadline`, keeping at most `max_output_bytes`.
+///
+/// Reading continues after the cap so the child never blocks on a full pipe; the
+/// extra bytes are dropped instead of buffered.
 async fn read_stream(
     mut stream: impl AsyncRead + Unpin,
     kind: ShellStreamKind,
     updates: Option<mpsc::UnboundedSender<ShellStreamUpdate>>,
+    deadline: tokio::time::Instant,
+    max_output_bytes: usize,
 ) -> std::io::Result<String> {
     let mut output = Vec::new();
+    let mut undecoded = Vec::new();
+    let mut truncated = false;
     let mut buffer = [0; 4096];
     loop {
-        let read = stream.read(&mut buffer).await?;
+        let read = match tokio::time::timeout_at(deadline, stream.read(&mut buffer)).await {
+            Ok(read) => read?,
+            // The deadline kills the child; return what arrived before it.
+            Err(_) => break,
+        };
         if read == 0 {
             break;
         }
-        output.extend_from_slice(&buffer[..read]);
+        let chunk = &buffer[..read];
+        let free = max_output_bytes.saturating_sub(output.len());
+        if free == 0 {
+            truncated = true;
+            continue;
+        }
+        let kept = free.min(chunk.len());
+        truncated |= kept < chunk.len();
+        output.extend_from_slice(&chunk[..kept]);
         if let Some(updates) = &updates {
-            let _ = updates.send(ShellStreamUpdate {
-                kind,
-                text: String::from_utf8_lossy(&buffer[..read]).into_owned(),
-            });
+            undecoded.extend_from_slice(&chunk[..kept]);
+            let complete = undecoded.len() - incomplete_utf8_suffix_len(&undecoded);
+            if complete > 0 {
+                let text = String::from_utf8_lossy(&undecoded[..complete]).into_owned();
+                undecoded.drain(..complete);
+                let _ = updates.send(ShellStreamUpdate { kind, text });
+            }
         }
     }
-    Ok(String::from_utf8_lossy(&output).into_owned())
+    if let Some(updates) = &updates {
+        let mut tail = String::from_utf8_lossy(&undecoded).into_owned();
+        if truncated {
+            tail.push_str(TRUNCATION_NOTICE);
+        }
+        if !tail.is_empty() {
+            let _ = updates.send(ShellStreamUpdate { kind, text: tail });
+        }
+    }
+    let mut text = String::from_utf8_lossy(&output).into_owned();
+    if truncated {
+        text.push_str(TRUNCATION_NOTICE);
+    }
+    Ok(text)
 }
 
 pub(super) fn context_text(output: &ShellOutput) -> String {
@@ -292,17 +382,25 @@ impl super::App {
         let cwd = self.info.runtime.cwd.clone();
         let task_shell = shell.clone();
         let task_command = command.clone();
+        let max_output_bytes = config.max_output_bytes;
         let (updates_tx, updates_rx) = mpsc::unbounded_channel();
         self.pending_inline_shells.push(PendingShellTask {
             mode,
-            max_output_bytes: config.max_output_bytes,
+            max_output_bytes,
             shell: shell.clone(),
             command: command.clone(),
             stdout: String::new(),
             stderr: String::new(),
             updates: updates_rx,
             handle: tokio::spawn(async move {
-                execute_streaming(&task_shell, &task_command, &cwd, Some(updates_tx)).await
+                execute_streaming(
+                    &task_shell,
+                    &task_command,
+                    &cwd,
+                    Some(updates_tx),
+                    max_output_bytes,
+                )
+                .await
             }),
         });
         self.status = format!("running {shell}");

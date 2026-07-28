@@ -40,7 +40,7 @@ impl App {
         let width = area.width as usize;
         let live_history = self.history_live_lines(width, now);
         let history_len = self.history_len_with_live(width, &live_history);
-        let composer_lines = self.composer_lines(width);
+        let composer_lines = self.composer_lines(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);
         let layout = self.screen_layout_for_history_len(
             area,
@@ -326,7 +326,7 @@ impl App {
     ) -> ActiveFrame {
         let area = Rect::new(0, 0, width as u16, viewport_height as u16);
         let history_len = self.history_len(width, now);
-        let composer_lines = self.composer_lines(width);
+        let composer_lines = self.composer_lines(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);
         let layout = self.screen_layout_for_history_len(
             area,
@@ -640,7 +640,7 @@ impl App {
         delta: isize,
     ) {
         let history_len = self.history_len(width, now);
-        let composer_line_count = self.composer_lines(width).len();
+        let composer_line_count = self.composer_lines(width, height).len();
         let command_line_count = self.command_suggestion_lines(width).len();
         let content_height = self.history_content_height(self.history_height_from_line_counts(
             height,
@@ -678,7 +678,7 @@ impl App {
 
     pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
         let history_len = self.history_len(width, now);
-        let composer_line_count = self.composer_lines(width).len();
+        let composer_line_count = self.composer_lines(width, height).len();
         let command_line_count = self.command_suggestion_lines(width).len();
         let content_height = self.history_content_height(self.history_height_from_line_counts(
             height,

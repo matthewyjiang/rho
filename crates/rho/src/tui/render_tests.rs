@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::{PickerAction, PickerItem, UiPicker};
 use pretty_assertions::assert_eq;
 use ratatui::style::Style;
 
@@ -243,27 +244,66 @@ fn stream_fragment_rendering_preserves_blank_lines() {
     assert_eq!(rendered, vec!["a".to_string(), String::new()]);
 }
 
+// Covers: up/down arrow must land on the character under the target column,
+// including on rows past the first, where hard newlines are skipped but soft
+// wraps are not.
+// Owner: pure unit (composer layout math)
 #[test]
-fn visual_cursor_movement_clamps_to_shorter_explicit_line() {
-    let input = "ab\ncdef";
-    let lines = input_visual_lines(input, 80);
+fn visual_cursor_index_maps_row_and_column_to_char_index() {
+    let cases = [
+        // (input, width, row, column, expected char index)
+        ("ab\ncdef", 80, 0, 4, 2),
+        ("界a界b", 3, 0, 2, 1),
+        ("abcdef", 4, 0, 2, 2),
+        // Row 1 after a hard newline: the '\n' itself is not addressable.
+        ("ab\ncdef", 80, 1, 2, 5),
+        ("ab\ncdef", 80, 1, 9, 7),
+        // Row 1 after a soft wrap: every character stays addressable.
+        ("abcdef", 4, 1, 1, 5),
+        ("界a界b", 3, 1, 2, 3),
+        // Two hard newlines put row 2 past both of them.
+        ("a\nb\ncd", 80, 2, 1, 5),
+    ];
 
-    assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 4), 2);
+    for (input, width, row, column, expected) in cases {
+        let lines = input_visual_lines(input, width);
+        assert_eq!(
+            input_cursor_index_on_visual_line(input, &lines, row, column),
+            expected,
+            "input {input:?} width {width} row {row} column {column}"
+        );
+    }
 }
 
+// Covers: a picker must list more entries on a tall terminal instead of staying
+// at the count that fits the default-height fallback.
+// Owner: pure unit (picker line generation); a PTY scenario would re-assert this
+// same line math through a slower path.
 #[test]
-fn visual_cursor_movement_uses_wide_character_columns() {
-    let input = "界a界b";
-    let lines = input_visual_lines(input, 3);
+fn picker_lists_more_items_on_a_taller_viewport() {
+    let items = (0..40)
+        .map(|index| PickerItem {
+            section: None,
+            label: format!("model-{index}"),
+            detail: None,
+            preview: None,
+            badge: None,
+            value: format!("model-{index}"),
+            selection_verb: None,
+        })
+        .collect();
+    let picker = UiPicker::new("models", "help", items, PickerAction::SelectModel);
 
-    assert_eq!(lines, vec!["界a", "界b"]);
-    assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 2), 1);
-}
+    let item_rows = |height: usize| {
+        picker_lines(&picker, 80, height)
+            .iter()
+            // Item rows carry a selection marker before the label.
+            .filter(|line| line_text(line).contains("model-"))
+            .count()
+    };
 
-#[test]
-fn visual_cursor_movement_preserves_ascii_wrapped_column() {
-    let input = "abcdef";
-    let lines = input_visual_lines(input, 4);
-
-    assert_eq!(input_cursor_index_on_visual_line(input, &lines, 0, 2), 2);
+    assert_eq!(item_rows(18), 6);
+    assert_eq!(item_rows(40), 28);
+    // A viewport with no room left still shows the selected item.
+    assert_eq!(item_rows(4), 1);
 }
