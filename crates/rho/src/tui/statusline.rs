@@ -40,7 +40,7 @@ pub(super) struct StatusLineState {
     permission_mode: PermissionMode,
     model_metadata: Option<ModelMetadata>,
     subagent_total_cost_usd_micros: u64,
-    latest_model_call: Option<rho_sdk::ModelCallMetrics>,
+    average_output_rate: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -79,7 +79,7 @@ impl Default for StatusLineState {
             permission_mode: PermissionMode::default(),
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
-            latest_model_call: None,
+            average_output_rate: None,
         }
     }
 }
@@ -98,7 +98,7 @@ impl StatusLineState {
             permission_mode: info.permission_mode,
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
-            latest_model_call: None,
+            average_output_rate: None,
         }
     }
 }
@@ -153,12 +153,9 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn update_model_call(
-        &mut self,
-        latest_model_call: Option<rho_sdk::ModelCallMetrics>,
-    ) {
-        if self.state.latest_model_call != latest_model_call {
-            self.state.latest_model_call = latest_model_call;
+    pub(super) fn update_average_output_rate(&mut self, average_output_rate: Option<u64>) {
+        if self.state.average_output_rate != average_output_rate {
+            self.state.average_output_rate = average_output_rate;
             self.invalidate();
         }
     }
@@ -264,31 +261,23 @@ fn bottom_status(state: &StatusLineState, width: usize) -> (String, String) {
     }
 
     if let Some(cost) = status_cost(state) {
-        let with_cost = if left.is_empty() {
-            cost
-        } else {
-            format!("{left} · {cost}")
-        };
-        if row_fits(&with_cost, &right, width) {
-            left = with_cost;
-        }
+        append_left_if_fits(&mut left, &right, width, cost);
     }
-
-    if let Some(rate) = state
-        .latest_model_call
-        .and_then(rho_sdk::ModelCallMetrics::output_tokens_per_second)
-    {
-        let rate = format!("{rate:.0} tok/s");
-        let with_rate = if left.is_empty() {
-            rate
-        } else {
-            format!("{left} · {rate}")
-        };
-        if row_fits(&with_rate, &right, width) {
-            left = with_rate;
-        }
+    if let Some(rate) = state.average_output_rate {
+        append_left_if_fits(&mut left, &right, width, format!("{rate} tok/s avg"));
     }
     (left, right)
+}
+
+fn append_left_if_fits(left: &mut String, right: &str, width: usize, segment: String) {
+    let appended = if left.is_empty() {
+        segment
+    } else {
+        format!("{left} · {segment}")
+    };
+    if row_fits(&appended, right, width) {
+        *left = appended;
+    }
 }
 
 fn row_fits(left: &str, right: &str, width: usize) -> bool {

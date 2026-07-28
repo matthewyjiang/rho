@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Instant};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -134,6 +134,36 @@ async fn semantic_and_request_event_receivers_remain_compatible() {
         })
     );
     assert_eq!(receiver.recv_request_event().await, None);
+}
+
+#[tokio::test]
+async fn observed_event_timestamp_survives_channel_delivery() {
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let observed_at = Instant::now();
+    let event = ModelEvent::OutputDelta("hello".into());
+
+    events
+        .send_observed(event.clone(), observed_at)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        receiver.recv_timed_stream_event().await,
+        Some((super::ProviderStreamEvent::Model(event), Some(observed_at),))
+    );
+}
+
+#[tokio::test]
+async fn synthesized_event_has_no_provider_observation_timestamp() {
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let event = ModelEvent::OutputDelta("hello".into());
+
+    events.send_unobserved(event.clone()).await.unwrap();
+
+    assert_eq!(
+        receiver.recv_timed_stream_event().await,
+        Some((super::ProviderStreamEvent::Model(event), None))
+    );
 }
 
 #[tokio::test]

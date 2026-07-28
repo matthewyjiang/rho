@@ -124,7 +124,7 @@ fn attachment_update(
         ViewModelEvent::ProviderRetry => None,
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
-        ViewModelEvent::ModelCallCompleted(_) => None,
+        ViewModelEvent::ModelCallCompleted { .. } => None,
     }
 }
 

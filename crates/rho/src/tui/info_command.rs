@@ -5,6 +5,7 @@ use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, Mode
 
 use super::{
     command_block::CommandBlock,
+    model_performance::ModelPerformanceSummary,
     usage_cost::{
         format_usd, resolved_usage_cost_usd_micros, session_total_cost_usd_micros, CostSource,
     },
@@ -49,7 +50,7 @@ pub(super) struct RuntimeInfo {
     branch: Option<String>,
     usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
-    latest_model_call: Option<rho_sdk::ModelCallMetrics>,
+    model_performance: ModelPerformanceSummary,
     context_usage: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
@@ -96,7 +97,10 @@ impl App {
             branch: git_branch(&self.info.runtime.cwd),
             usage: self.usage.cumulative_usage.clone(),
             latest_usage: self.usage.latest_usage.clone(),
-            latest_model_call: self.usage.latest_model_call,
+            model_performance: self
+                .usage
+                .model_performance
+                .summary(&self.info.runtime.model_call_profile()),
             context_usage: self.usage.current_context.clone(),
             model_metadata: self.model_metadata.clone(),
             tree,
@@ -153,19 +157,28 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     block.push_section("Session usage");
     push_usage_fields(&mut block, info);
 
-    if let Some(metrics) = info.latest_model_call {
+    if let Some(metrics) = info.model_performance.latest_call {
         block.push_section("Last model call");
-        if let Some(duration) = metrics.time_to_first_token() {
+        if let Some(duration) = metrics.time_to_first_token {
             block.push_field("First token", &format_duration(duration));
         }
-        if let Some(duration) = metrics.generation_time() {
+        if let Some(duration) = metrics.generation_time {
             block.push_field("Generation", &format_duration(duration));
         }
-        push_optional_number(&mut block, "Output tokens", metrics.output_tokens());
+        push_optional_number(&mut block, "Output tokens", metrics.output_tokens);
         if let Some(rate) = metrics.output_tokens_per_second() {
             block.push_field("Output rate", &format!("{rate:.1} tok/s"));
         }
-        block.push_field("Total latency", &format_duration(metrics.total_latency()));
+        block.push_field("Total latency", &format_duration(metrics.total_latency));
+    }
+
+    if let Some(rate) = info.model_performance.average_output_tokens_per_second {
+        block.push_section("Model performance");
+        block.push_field("Average", &format!("{rate:.1} tok/s"));
+        block.push_field(
+            "Samples",
+            &info.model_performance.eligible_calls.to_string(),
+        );
     }
 
     block.push_section("Workspace");

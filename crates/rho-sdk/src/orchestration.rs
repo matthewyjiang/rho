@@ -13,7 +13,8 @@ use crate::{
     run::RunCommand,
     session::{HistoryMetrics, RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
-    CancellationToken, Error, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
+    CancellationToken, Error, ModelCallProfile, ProviderError, ProviderErrorKind, Retryability,
+    RunEvent, RunId,
 };
 
 const PROVIDER_EVENT_CAPACITY: usize = 16;
@@ -24,10 +25,12 @@ const PROVIDER_TURN_ATTEMPTS: usize = 4;
 /// Backoff before the first retryable-failure retry; doubles per retry.
 const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
+mod model_call_timer;
 mod stream_capture;
 mod tool_batch;
 mod tool_turn;
 
+use model_call_timer::ModelCallTimer;
 use stream_capture::{capture_provider_event, StreamCapture};
 use tool_turn::{execute_staged_tool_turn, StagedToolTurn, ToolTurnStatus};
 
@@ -326,52 +329,6 @@ struct RequestFailure {
     capture: StreamCapture,
 }
 
-struct ModelCallTimer {
-    request_started: Instant,
-    first_generated: Option<Instant>,
-}
-
-impl ModelCallTimer {
-    fn start() -> Self {
-        Self {
-            request_started: Instant::now(),
-            first_generated: None,
-        }
-    }
-
-    fn restart(&mut self, request_started: Instant) {
-        self.request_started = request_started;
-        self.first_generated = None;
-    }
-
-    fn observe(&mut self, event: &ModelEvent, observed_at: Instant) {
-        if self.first_generated.is_none()
-            && matches!(
-                event,
-                ModelEvent::OutputDelta(_)
-                    | ModelEvent::ReasoningDelta(_)
-                    | ModelEvent::ReasoningSummaryDelta(_)
-                    | ModelEvent::ToolCallDelta { .. }
-            )
-        {
-            self.first_generated = Some(observed_at);
-        }
-    }
-
-    fn finish(&self, completed: Instant, output_tokens: Option<u64>) -> crate::ModelCallMetrics {
-        crate::ModelCallMetrics::new(
-            /*output_tokens*/ output_tokens,
-            /*time_to_first_token*/
-            self.first_generated
-                .map(|first| first.duration_since(self.request_started)),
-            /*generation_time*/
-            self.first_generated
-                .map(|first| completed.duration_since(first)),
-            /*total_latency*/ completed.duration_since(self.request_started),
-        )
-    }
-}
-
 struct RunControl<'a> {
     cancellation: &'a CancellationToken,
     events: &'a mpsc::Sender<RunEvent>,
@@ -603,11 +560,17 @@ async fn provider_turn(
         .map(|tier| ModelRequestOptions::default().with_service_tier(tier))
         .unwrap_or_default();
     let cancellation_mode = provider.cancellation_mode();
+    let identity = provider.identity();
+    let profile = ModelCallProfile {
+        provider: identity.provider.clone(),
+        model: identity.model.clone(),
+        reasoning: reasoning_level,
+        service_tier: request_options.service_tier(),
+    };
     let mut future =
         provider.send_turn_stream_with_options(request, request_options, provider_events);
-    let identity = provider.identity();
     let mut capture = StreamCapture::default();
-    let mut timer = ModelCallTimer::start();
+    let mut timer = ModelCallTimer::start(Instant::now());
     let mut stream_open = true;
     let mut commands_open = true;
     let result = loop {
@@ -615,10 +578,10 @@ async fn provider_turn(
             result = &mut future => break (result, Instant::now()),
             event = receiver.recv_timed_stream_event(), if stream_open => {
                 match event {
-                    Some((crate::provider::ProviderStreamEvent::Model(event), observed_at)) => {
-                        timer.observe(&event, observed_at);
-                        if let Err(error) = handle_provider_event(
+                    Some(event) => {
+                        if let Err(error) = handle_timed_provider_stream_event(
                             event,
+                            &mut timer,
                             &identity,
                             accumulated_usage,
                             &mut capture,
@@ -633,17 +596,6 @@ async fn provider_turn(
                                     &mut capture,
                                 );
                             }
-                            return Err(RequestFailure { error, capture });
-                        }
-                    }
-                    Some((crate::provider::ProviderStreamEvent::Request(event), observed_at)) => {
-                        timer.restart(observed_at);
-                        if let Err(error) = handle_provider_request_event(
-                            event,
-                            &mut capture,
-                            control.events,
-                            control.cancellation,
-                        ).await {
                             return Err(RequestFailure { error, capture });
                         }
                     }
@@ -676,32 +628,18 @@ async fn provider_turn(
         }
     };
     let (result, completed_at) = result;
-    while let Some((event, observed_at)) = receiver.try_recv_timed_stream_event() {
-        let result = match event {
-            crate::provider::ProviderStreamEvent::Model(event) => {
-                timer.observe(&event, observed_at);
-                handle_provider_event(
-                    event,
-                    &identity,
-                    accumulated_usage,
-                    &mut capture,
-                    control.events,
-                    control.cancellation,
-                )
-                .await
-            }
-            crate::provider::ProviderStreamEvent::Request(event) => {
-                timer.restart(observed_at);
-                handle_provider_request_event(
-                    event,
-                    &mut capture,
-                    control.events,
-                    control.cancellation,
-                )
-                .await
-            }
-        };
-        if let Err(error) = result {
+    while let Some(event) = receiver.try_recv_timed_stream_event() {
+        if let Err(error) = handle_timed_provider_stream_event(
+            event,
+            &mut timer,
+            &identity,
+            accumulated_usage,
+            &mut capture,
+            control.events,
+            control.cancellation,
+        )
+        .await
+        {
             if control.cancellation.is_cancelled() {
                 drain_cancelled_provider_events(&mut receiver, &identity, &mut capture);
             }
@@ -714,7 +652,7 @@ async fn provider_turn(
             if let Err(error) = emit(
                 control.events,
                 control.cancellation,
-                RunEvent::ModelCallCompleted { metrics },
+                RunEvent::ModelCallCompleted { profile, metrics },
             )
             .await
             {
@@ -726,6 +664,35 @@ async fn provider_turn(
             Ok((response, capture))
         }
         Err(error) => Err(RequestFailure { error, capture }),
+    }
+}
+
+async fn handle_timed_provider_stream_event(
+    (event, observed_at): (crate::provider::ProviderStreamEvent, Option<Instant>),
+    timer: &mut ModelCallTimer,
+    identity: &crate::model::ModelIdentity,
+    accumulated_usage: &ModelUsage,
+    capture: &mut StreamCapture,
+    events: &mpsc::Sender<RunEvent>,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    match event {
+        crate::provider::ProviderStreamEvent::Model(event) => {
+            timer.observe(&event, observed_at);
+            handle_provider_event(
+                event,
+                identity,
+                accumulated_usage,
+                capture,
+                events,
+                cancellation,
+            )
+            .await
+        }
+        crate::provider::ProviderStreamEvent::Request(event) => {
+            timer.discard_attempt_output();
+            handle_provider_request_event(event, capture, events, cancellation).await
+        }
     }
 }
 

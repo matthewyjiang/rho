@@ -129,51 +129,33 @@ pub enum ToolCompletion {
     Unavailable,
 }
 
+/// Provider and request settings that affect model-call performance.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ModelCallProfile {
+    /// Provider identifier used for this call.
+    pub provider: String,
+    /// Model identifier used for this call.
+    pub model: String,
+    /// Reasoning level used for this call.
+    pub reasoning: crate::ReasoningLevel,
+    /// Requested provider service class, if any.
+    pub service_tier: Option<crate::model::ServiceTier>,
+}
+
 /// Timing and provider-reported output usage for one model call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModelCallMetrics {
-    output_tokens: Option<u64>,
-    time_to_first_token: Option<Duration>,
-    generation_time: Option<Duration>,
-    total_latency: Duration,
+    /// Provider-reported output tokens for this call.
+    pub output_tokens: Option<u64>,
+    /// Time from starting the request to receiving its first generated event.
+    pub time_to_first_token: Option<Duration>,
+    /// Time from the first generated event until stream completion.
+    pub generation_time: Option<Duration>,
+    /// Time from starting the request until stream completion.
+    pub total_latency: Duration,
 }
 
 impl ModelCallMetrics {
-    /// Creates metrics from provider output usage and local timing.
-    pub fn new(
-        output_tokens: Option<u64>,
-        time_to_first_token: Option<Duration>,
-        generation_time: Option<Duration>,
-        total_latency: Duration,
-    ) -> Self {
-        Self {
-            output_tokens,
-            time_to_first_token,
-            generation_time,
-            total_latency,
-        }
-    }
-
-    /// Provider-reported output tokens for this call.
-    pub fn output_tokens(self) -> Option<u64> {
-        self.output_tokens
-    }
-
-    /// Time from starting the request to receiving its first generated event.
-    pub fn time_to_first_token(self) -> Option<Duration> {
-        self.time_to_first_token
-    }
-
-    /// Time from the first generated event until stream completion.
-    pub fn generation_time(self) -> Option<Duration> {
-        self.generation_time
-    }
-
-    /// Time from starting the request until stream completion.
-    pub fn total_latency(self) -> Duration {
-        self.total_latency
-    }
-
     /// Provider-reported output tokens divided by local generation time.
     pub fn output_tokens_per_second(self) -> Option<f64> {
         let tokens = self.output_tokens?;
@@ -301,6 +283,7 @@ pub enum RunEvent {
     /// Appended after existing variants so discriminant values of the 1.0
     /// surface stay stable under a minor release.
     ModelCallCompleted {
+        profile: ModelCallProfile,
         metrics: ModelCallMetrics,
     },
 }

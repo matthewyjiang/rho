@@ -47,7 +47,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ReasoningDelta(_)
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
-        | ViewModelEvent::ModelCallCompleted(_)
+        | ViewModelEvent::ModelCallCompleted { .. }
         | ViewModelEvent::ToolUpdated { .. } => false,
     }
 }
@@ -69,10 +69,6 @@ impl App {
             self.turn.set_activity_phase(phase);
         }
         match event {
-            ViewModelEvent::ProviderStreamReset => {
-                self.reset_provider_attempt_stream();
-                Ok(true)
-            }
             ViewModelEvent::OutputDelta(text) => {
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
                 let drained = self.receive_stream_delta(terminal, StreamKind::Assistant, &text)?;
@@ -244,14 +240,12 @@ impl App {
     pub(super) fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         match event {
             ViewModelEvent::RunStarted => {
-                self.usage.latest_model_call = None;
                 self.usage.usage_cost_tracker.run_started();
                 self.usage.usage_before_current_run = self.usage.cumulative_usage.clone();
                 self.usage.run_usage.clear();
                 None
             }
             ViewModelEvent::StepStarted(step) => {
-                self.usage.latest_model_call = None;
                 self.usage.usage_cost_tracker.step_started();
                 self.usage.run_usage.step_started();
                 self.reset_streams();
@@ -289,12 +283,13 @@ impl App {
                 self.turn.tool_call_proposed(call_id, card);
                 None
             }
-            // The live handler resets streamed output before this recorder.
-            ViewModelEvent::ProviderStreamReset => None,
+            ViewModelEvent::ProviderStreamReset => {
+                self.reset_provider_attempt_stream();
+                self.reset_attempt_accounting();
+                None
+            }
             ViewModelEvent::ProviderRetry => {
-                self.usage.latest_model_call = None;
-                self.usage.usage_cost_tracker.attempt_restarted();
-                self.usage.run_usage.attempt_reset();
+                self.reset_attempt_accounting();
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
@@ -303,8 +298,8 @@ impl App {
                 self.usage.current_context = Some(usage);
                 None
             }
-            ViewModelEvent::ModelCallCompleted(metrics) => {
-                self.usage.latest_model_call = Some(metrics);
+            ViewModelEvent::ModelCallCompleted { profile, metrics } => {
+                self.usage.model_performance.record(profile, metrics);
                 None
             }
             ViewModelEvent::Usage(usage) => {
@@ -593,10 +588,12 @@ impl App {
         self.streams.live_stream_preview = None;
     }
 
-    pub(super) fn reset_provider_attempt_stream(&mut self) {
-        self.usage.latest_model_call = None;
+    fn reset_attempt_accounting(&mut self) {
         self.usage.usage_cost_tracker.attempt_restarted();
         self.usage.run_usage.attempt_reset();
+    }
+
+    fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
         self.turn.clear_tool_calls();
         if let Some(start) = self

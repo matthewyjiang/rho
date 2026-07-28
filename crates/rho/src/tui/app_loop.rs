@@ -309,7 +309,7 @@ impl App {
         self.usage.run_usage.clear();
         self.usage.subagent_total_cost_usd_micros = 0;
         self.usage.latest_usage = None;
-        self.usage.latest_model_call = None;
+        self.usage.model_performance.clear();
     }
 
     pub(super) fn exit_summary(&self) -> Option<String> {

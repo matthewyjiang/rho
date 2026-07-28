@@ -154,8 +154,8 @@ pub use compaction::{
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
 pub use event::{
-    ModelCallMetrics, ProviderStreamResetReason, RunEvent, RunOutcome, StopReason, ToolCompletion,
-    ToolFailure,
+    ModelCallMetrics, ModelCallProfile, ProviderStreamResetReason, RunEvent, RunOutcome,
+    StopReason, ToolCompletion, ToolFailure,
 };
 #[allow(deprecated)]
 pub use event::{

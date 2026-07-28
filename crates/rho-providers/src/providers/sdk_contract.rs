@@ -9,6 +9,7 @@ use std::{
     collections::VecDeque,
     future::Future,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use rho_sdk::{
@@ -169,9 +170,31 @@ fn sanitize_diagnostic(value: &str) -> String {
 /// Event buffered by the application callback adapter.
 #[doc(hidden)]
 #[derive(Debug)]
-pub enum CallbackEvent {
+pub struct CallbackEvent {
+    kind: CallbackEventKind,
+    observed_at: Instant,
+}
+
+#[derive(Debug)]
+enum CallbackEventKind {
     Model(ModelEvent),
     Request(ProviderRequestEvent),
+}
+
+impl CallbackEvent {
+    fn model(event: ModelEvent) -> Self {
+        Self {
+            kind: CallbackEventKind::Model(event),
+            observed_at: Instant::now(),
+        }
+    }
+
+    fn request(event: ProviderRequestEvent) -> Self {
+        Self {
+            kind: CallbackEventKind::Request(event),
+            observed_at: Instant::now(),
+        }
+    }
 }
 
 /// Shared queue used by the callback sinks and [`drive_callback_stream`].
@@ -194,7 +217,7 @@ pub fn callback_event_sink(
         pending
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push_back(CallbackEvent::Model(event));
+            .push_back(CallbackEvent::model(event));
         notify.notify_one();
         Ok(())
     }
@@ -213,7 +236,7 @@ pub fn callback_request_event_sink(
         pending
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push_back(CallbackEvent::Request(event));
+            .push_back(CallbackEvent::request(event));
         notify.notify_one();
         Ok(())
     }
@@ -264,13 +287,16 @@ where
             let Some(event) = next else {
                 break;
             };
-            match event {
-                CallbackEvent::Model(event) => events.send(event).await?,
-                CallbackEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
+            let CallbackEvent { kind, observed_at } = event;
+            match kind {
+                CallbackEventKind::Model(event) => events.send_observed(event, observed_at).await?,
+                CallbackEventKind::Request(ProviderRequestEvent::RequestAttemptFailed {
                     kind,
                     usage,
                 }) => {
-                    events.send_request_attempt_failed(kind, usage).await?;
+                    events
+                        .send_request_attempt_failed_observed(kind, usage, observed_at)
+                        .await?;
                 }
             }
         }

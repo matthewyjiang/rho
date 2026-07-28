@@ -58,15 +58,21 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
     ));
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ModelCallCompleted {
-            metrics: rho_sdk::ModelCallMetrics::new(
-                /*output_tokens*/ Some(3),
-                /*time_to_first_token*/ Some(Duration::from_millis(200)),
-                /*generation_time*/ Some(Duration::from_secs(1)),
-                /*total_latency*/ Duration::from_millis(1_200),
-            ),
+            profile: rho_sdk::ModelCallProfile {
+                provider: "openai".into(),
+                model: "gpt".into(),
+                reasoning: rho_sdk::ReasoningLevel::Medium,
+                service_tier: None,
+            },
+            metrics: rho_sdk::ModelCallMetrics {
+                output_tokens: Some(3),
+                time_to_first_token: Some(Duration::from_millis(200)),
+                generation_time: Some(Duration::from_secs(1)),
+                total_latency: Duration::from_millis(1_200),
+            },
         })),
-        ViewEvent::Update(ViewModelEvent::ModelCallCompleted(metrics))
-            if metrics.output_tokens() == Some(3)
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted { profile, metrics })
+            if profile.model == "gpt" && metrics.output_tokens == Some(3)
     ));
 }
 
