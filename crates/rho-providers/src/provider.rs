@@ -383,8 +383,10 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "ollama",
-        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+        // models.dev catalogs cloud models under `ollama-cloud`, not `ollama`.
+        metadata_upstream: "ollama-cloud",
+        // Ollama's OpenAI-compatible API accepts reasoning_effort including "none".
+        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
     },
     ProviderDescriptor {
         id: ProviderId::OpenAi,

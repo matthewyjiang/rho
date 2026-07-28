@@ -311,6 +311,7 @@ fn moonshot_exact_metadata_drives_top_level_reasoning_effort() {
 fn openrouter_omits_reasoning_for_non_configurable_models() {
     let profile = reasoning::OpenRouterReasoningProfile::not_configurable();
     let fields = OpenAiCompatibleDialect::OpenRouter.reasoning_fields(
+        None,
         Some(&profile),
         None,
         None,
@@ -347,6 +348,87 @@ fn openrouter_and_kimi_k2_request_bodies_remain_unchanged() {
         ),
         json!({
             "model": "kimi-k2.5",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}]
+            }],
+            "stream": false
+        })
+    );
+}
+
+#[test]
+fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
+    let mut provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "ollama-cloud",
+        "glm-5.2".into(),
+        OpenAiCompatibleDialect::Standard,
+        CompatibleAuth::ApiKey("secret".into()),
+        "https://ollama.com/v1".into(),
+    );
+    provider.standard_reasoning = Some(reasoning::StandardReasoningProfile::levels([
+        crate::reasoning::ReasoningLevel::Off,
+        crate::reasoning::ReasoningLevel::High,
+        crate::reasoning::ReasoningLevel::Max,
+    ]));
+    let messages = [Message::user_text("hello")];
+    let high = serde_json::to_value(
+        provider
+            .request_body(
+                ModelRequest {
+                    messages: &messages,
+                    tools: &[],
+                    cancellation: Default::default(),
+                    reasoning_level: crate::reasoning::ReasoningLevel::High,
+                    prompt_cache_key: None,
+                },
+                /*stream*/ false,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        high,
+        json!({
+            "model": "glm-5.2",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}]
+            }],
+            "stream": false,
+            "reasoning_effort": "high"
+        })
+    );
+
+    let off = serde_json::to_value(
+        provider
+            .request_body(
+                ModelRequest {
+                    messages: &messages,
+                    tools: &[],
+                    cancellation: Default::default(),
+                    reasoning_level: crate::reasoning::ReasoningLevel::Off,
+                    prompt_cache_key: None,
+                },
+                /*stream*/ false,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(off["reasoning_effort"], "none");
+}
+
+#[test]
+fn standard_dialect_omits_reasoning_without_catalog_levels() {
+    assert_eq!(
+        request_body(
+            OpenAiCompatibleDialect::Standard,
+            "local-model",
+            crate::reasoning::ReasoningLevel::High,
+        ),
+        json!({
+            "model": "local-model",
             "messages": [{
                 "role": "user",
                 "content": [{"type": "text", "text": "hello"}]

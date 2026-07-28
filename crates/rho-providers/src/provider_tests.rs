@@ -34,6 +34,18 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
         CatalogReasoningPolicy::OffAsNone
     );
     assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::OllamaCloud).catalog_reasoning,
+        CatalogReasoningPolicy::OffAsNone
+    );
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::OllamaCloud).metadata_upstream,
+        "ollama-cloud"
+    );
+    assert_eq!(
+        super::provider_descriptor_by_id(ProviderId::Ollama).catalog_reasoning,
+        CatalogReasoningPolicy::NotConfigurable
+    );
+    assert_eq!(
         super::provider_descriptor_by_id(ProviderId::Poolside).catalog_reasoning,
         CatalogReasoningPolicy::OffOrMax
     );

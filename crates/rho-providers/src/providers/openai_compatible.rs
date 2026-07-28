@@ -35,6 +35,7 @@ pub(crate) struct OpenAiCompatibleProvider {
     dialect: OpenAiCompatibleDialect,
     auth: CompatibleAuth,
     api_base: String,
+    standard_reasoning: Option<reasoning::StandardReasoningProfile>,
     openrouter_reasoning: Option<reasoning::OpenRouterReasoningProfile>,
     moonshot_reasoning: Option<reasoning::MoonshotReasoningProfile>,
     kimi_reasoning: Option<reasoning::KimiReasoningProfile>,
@@ -49,6 +50,11 @@ impl OpenAiCompatibleProvider {
         auth: CompatibleAuth,
         api_base: String,
     ) -> Self {
+        let standard_reasoning = (dialect == OpenAiCompatibleDialect::Standard).then(|| {
+            reasoning::StandardReasoningProfile::from_metadata(
+                crate::model::models_dev::current_model_metadata(provider, &model),
+            )
+        });
         let openrouter_reasoning = (dialect == OpenAiCompatibleDialect::OpenRouter).then(|| {
             reasoning::OpenRouterReasoningProfile::from_metadata(
                 crate::model::models_dev::current_model_metadata(provider, &model),
@@ -72,6 +78,7 @@ impl OpenAiCompatibleProvider {
             dialect,
             auth,
             api_base,
+            standard_reasoning,
             openrouter_reasoning,
             moonshot_reasoning,
             kimi_reasoning,
@@ -174,6 +181,7 @@ impl OpenAiCompatibleProvider {
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
         let reasoning_fields = self.dialect.reasoning_fields(
+            self.standard_reasoning.as_ref(),
             self.openrouter_reasoning.as_ref(),
             self.moonshot_reasoning.as_ref(),
             self.kimi_reasoning.as_ref(),

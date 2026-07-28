@@ -14,6 +14,45 @@ pub(super) struct ReasoningFields {
     pub(super) chat_template_kwargs: Option<ChatTemplateKwargs>,
 }
 
+/// Metadata-driven `reasoning_effort` for Ollama Cloud and other Standard dialect hosts.
+///
+/// Ollama auto-enables thinking when the field is omitted, so Off must serialize as `"none"`.
+pub(super) struct StandardReasoningProfile {
+    capabilities: ReasoningCapabilities,
+}
+
+impl StandardReasoningProfile {
+    pub(super) fn from_metadata(metadata: Option<ModelMetadata>) -> Self {
+        Self {
+            capabilities: metadata
+                .map(|metadata| metadata.reasoning_capabilities())
+                .unwrap_or_default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn levels(levels: impl IntoIterator<Item = ReasoningLevel>) -> Self {
+        use crate::model::ReasoningLevelSet;
+
+        Self {
+            capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                levels.into_iter().collect(),
+            )),
+        }
+    }
+
+    fn effort(&self, requested: ReasoningLevel) -> Option<&'static str> {
+        match &self.capabilities {
+            ReasoningCapabilities::NotConfigurable | ReasoningCapabilities::Unknown => None,
+            ReasoningCapabilities::Levels(_) => self
+                .capabilities
+                .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
+                .effective()
+                .map(effort_or_none),
+        }
+    }
+}
+
 pub(super) struct OpenRouterReasoningProfile {
     capabilities: ReasoningCapabilities,
 }
@@ -116,6 +155,7 @@ impl KimiReasoningProfile {
 impl OpenAiCompatibleDialect {
     pub(super) fn reasoning_fields(
         self,
+        standard: Option<&StandardReasoningProfile>,
         openrouter: Option<&OpenRouterReasoningProfile>,
         moonshot: Option<&MoonshotReasoningProfile>,
         kimi: Option<&KimiReasoningProfile>,
@@ -123,7 +163,12 @@ impl OpenAiCompatibleDialect {
         reasoning: ReasoningLevel,
     ) -> ReasoningFields {
         match self {
-            Self::Standard => ReasoningFields::default(),
+            Self::Standard => ReasoningFields {
+                reasoning_effort: standard
+                    .and_then(|profile| profile.effort(reasoning))
+                    .map(str::to_string),
+                ..Default::default()
+            },
             Self::Poolside => ReasoningFields {
                 chat_template_kwargs: (reasoning == ReasoningLevel::Off).then_some(
                     ChatTemplateKwargs {
