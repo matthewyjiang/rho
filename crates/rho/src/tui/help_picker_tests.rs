@@ -66,7 +66,7 @@ fn help_picker_lists_core_and_configurable_shortcuts() {
         .find(|item| item.label == "ctrl+shift+r")
         .unwrap();
     let badge = reset.badge.as_ref().unwrap();
-    assert_eq!(badge.text, "Reset conversation");
+    assert_eq!(badge.text, "Reset chat");
     assert_eq!(badge.tone, PickerBadgeTone::Selected);
     assert_eq!(
         reset.detail.as_deref(),
@@ -80,12 +80,20 @@ fn help_picker_lists_core_and_configurable_shortcuts() {
 fn help_picker_shows_descriptions_on_unselected_rows() {
     let picker = help_picker(&Keybindings::default());
     let frame = render_picker_overlay(&picker, Rect::new(0, 0, 100, 28));
-    let newline_row = frame
-        .lines
+    let rendered = frame.lines.iter().map(line_text).collect::<Vec<_>>();
+    let newline_row = rendered
         .iter()
-        .map(line_text)
         .find(|line| line.contains("ctrl+j"))
         .unwrap();
+    let truncated_rows = rendered
+        .iter()
+        .filter_map(|line| line.split_once(" │ ").map(|(nav, _)| nav))
+        .filter(|nav| nav.contains('…'))
+        .collect::<Vec<_>>();
 
-    assert!(newline_row.contains("Insert a newline"), "{newline_row}");
+    assert!(newline_row.contains("New line"), "{newline_row}");
+    assert!(
+        truncated_rows.is_empty(),
+        "truncated help rows: {truncated_rows:?}"
+    );
 }
