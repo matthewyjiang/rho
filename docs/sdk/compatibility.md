@@ -28,9 +28,10 @@ rho-sdk = { version = "1.0", default-features = false }
 
 The crate currently has no optional Cargo features. Default,
 `--no-default-features`, and `--all-features` therefore select the same minimal
-headless surface, and CI tests all three modes. Built-in provider transports,
-SQLite persistence, operating-system keychain access, web access, and coding
-tools remain application-owned adapters. If any moves into `rho-sdk`, it must
+headless surface. CI deduplicates equivalent feature graphs and tests each
+distinct mode once. Built-in provider transports, SQLite persistence,
+operating-system keychain access, web access, and coding tools remain
+application-owned adapters. If any moves into `rho-sdk`, it must
 use a named opt-in feature and must not grant workspace capabilities without
 explicit runtime configuration.
 

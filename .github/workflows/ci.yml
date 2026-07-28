@@ -31,20 +31,20 @@ jobs:
         run: python3 scripts/audit_sdk_redaction_tests.py
       - name: Test shell installer release parsing
         run: sh scripts/install_tests.sh
+      - name: Test validation scripts
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      - name: Check workspace
-        run: cargo check --workspace --all-targets --locked
-      - name: Run workspace tests
-        run: cargo test --workspace --all-targets --locked
-      - name: Run documentation tests
-        run: cargo test --workspace --doc --all-features --locked
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+      - name: Run documentation tests
+        run: cargo test --workspace --doc --all-features --locked
 
   sdk-benchmarks:
     name: SDK release benchmarks
@@ -80,7 +80,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           shared-key: sdk-features
-      - name: Test default, no-default, and all SDK features
+      - name: Test SDK feature modes
         run: python3 scripts/check_sdk_compatibility.py --test-features
       - name: Compile downstream-only fixtures
         run: python3 scripts/check_sdk_compatibility.py --test-downstream

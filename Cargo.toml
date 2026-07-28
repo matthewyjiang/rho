@@ -3,6 +3,12 @@ members = ["crates/rho", "crates/rho-providers", "crates/rho-sdk", "crates/rho-t
 exclude = ["fixtures/downstream"]
 resolver = "2"
 
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1
+
 # Use unreleased Windows VT input support so bracketed paste produces Event::Paste.
 # Remove this override after crossterm-rs/crossterm#1030 is released.
 [patch.crates-io]
