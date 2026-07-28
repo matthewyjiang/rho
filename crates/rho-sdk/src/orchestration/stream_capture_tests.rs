@@ -141,3 +141,46 @@ fn incomplete_and_non_object_arguments_remain_partial_only() {
         );
     }
 }
+
+#[test]
+fn multi_chunk_object_arguments_materialize_on_aborted_capture() {
+    // Awkward chunk width keeps the completion detector crossing token boundaries.
+    const CHUNK_BYTES: usize = 17;
+    let prefix = r#"{"data":""#;
+    let suffix = r#""}"#;
+    let payload_len = 2 * 1024;
+    let mut arguments = String::with_capacity(prefix.len() + payload_len + suffix.len());
+    arguments.push_str(prefix);
+    arguments.extend(std::iter::repeat_n('x', payload_len));
+    arguments.push_str(suffix);
+
+    let mut capture = StreamCapture::default();
+    let mut offset = 0usize;
+    let mut first = true;
+    while offset < arguments.len() {
+        let end = (offset + CHUNK_BYTES).min(arguments.len());
+        let id = first.then_some("call-large");
+        let name = first.then_some("write_file");
+        capture_tool_delta(&mut capture, 0, id, name, &arguments[offset..end]);
+        first = false;
+        offset = end;
+    }
+
+    let aborted = capture.into_aborted_assistant().unwrap();
+    assert_eq!(
+        aborted.content,
+        vec![ContentBlock::ToolCall(ToolCall {
+            id: "call-large".into(),
+            name: "write_file".into(),
+            arguments: serde_json::from_str(&arguments).unwrap(),
+        })]
+    );
+    assert_eq!(
+        aborted.tool_calls,
+        vec![PartialToolCall {
+            id: Some("call-large".into()),
+            name: Some("write_file".into()),
+            arguments,
+        }]
+    );
+}

@@ -23,6 +23,9 @@ mod persistence;
 mod snapshot_delta;
 mod snapshot_store;
 #[cfg(test)]
+#[path = "session_summary_tests.rs"]
+mod summary_tests;
+#[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
 pub(crate) mod tree;

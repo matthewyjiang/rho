@@ -21,12 +21,17 @@ use rho_sdk::{
         PreparedToolInvocation, Tool, ToolContext, ToolFuture, ToolInvocation, ToolMetadata,
         ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource, ToolResourceAccess,
     },
-    Rho, RunEvent, SessionOptions, UserInput,
+    Error, Rho, RunEvent, SessionOptions, UserInput,
 };
 use serde_json::json;
 
-pub(super) const LARGE_TOOL_CALL_ARGUMENT_BYTES: usize = 768 * 1024;
-pub(super) const LARGE_TOOL_CALL_DELTA_CHUNK_BYTES: usize = 64;
+/// Geometric argument sizes used for near-linear growth checks (4x steps).
+pub(super) const LARGE_TOOL_CALL_ARGUMENT_SIZES: &[usize] = &[16 * 1024, 64 * 1024, 256 * 1024];
+pub(super) const LARGE_TOOL_CALL_DELTA_CHUNK_BYTES: usize = 256;
+/// ns/byte at the largest size must stay within this factor of the smallest.
+/// Linear capture stays near 1.0 (often below as fixed costs amortize); quadratic
+/// capture grows with size and exceeds this budget across the 16x span.
+pub(super) const LARGE_TOOL_CALL_NS_PER_BYTE_GROWTH_LIMIT: f64 = 2.0;
 pub(super) const OVERLAPPING_PREPARE_COUNT: usize = 64;
 pub(super) const OVERLAPPING_PREPARE_PARALLEL: usize = 4;
 
@@ -47,6 +52,10 @@ pub(super) fn large_tool_call_delta_count(total_bytes: usize, chunk_bytes: usize
     total_bytes.div_ceil(chunk_bytes.max(1))
 }
 
+/// Streams tool-call argument deltas only, then waits for cancellation.
+///
+/// Intentionally omits a final tool-call [`ModelResponse`] so aborted history
+/// must come from stream capture rather than the provider terminal response.
 #[derive(Clone)]
 struct LargeToolCallDeltaProvider {
     arguments: Arc<String>,
@@ -60,23 +69,13 @@ impl ModelProvider for LargeToolCallDeltaProvider {
 
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
         Box::pin(async move {
-            if request
-                .messages
-                .iter()
-                .any(|message| matches!(message, Message::ToolResult(_)))
-            {
-                return Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )]));
+            if request.cancellation.is_cancelled() {
+                return Err(rho_sdk::ProviderError::interrupted("benchmark cancelled"));
             }
-            let arguments = serde_json::from_str(self.arguments.as_str()).unwrap();
-            Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "large-call".into(),
-                    name: "benchmark_large".into(),
-                    arguments,
-                },
-            )]))
+            // Non-stream fallback is unused by the cancelled-capture fixture.
+            Err(rho_sdk::ProviderError::interrupted(
+                "large tool-call fixture requires streaming",
+            ))
         })
     }
 
@@ -86,16 +85,6 @@ impl ModelProvider for LargeToolCallDeltaProvider {
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
         Box::pin(async move {
-            if request
-                .messages
-                .iter()
-                .any(|message| matches!(message, Message::ToolResult(_)))
-            {
-                return Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )]));
-            }
-
             let arguments = self.arguments.as_str();
             let mut offset = 0usize;
             let mut first = true;
@@ -116,51 +105,29 @@ impl ModelProvider for LargeToolCallDeltaProvider {
                 offset = end;
             }
 
-            let parsed = serde_json::from_str(arguments).unwrap();
-            Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "large-call".into(),
-                    name: "benchmark_large".into(),
-                    arguments: parsed,
-                },
-            )]))
+            // Hold the turn open until the consumer cancels so history is committed
+            // through aborted stream capture, not a terminal ModelResponse.
+            request.cancellation.cancelled().await;
+            Err(rho_sdk::ProviderError::interrupted("benchmark cancelled"))
         })
     }
 }
 
-#[derive(Clone)]
-struct LargeArgsTool;
-
-impl Tool for LargeArgsTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "benchmark_large".into(),
-            description: "accepts a large streamed argument object".into(),
-            input_schema: json!({"type":"object","required":["data"]}),
-        }
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
-        Box::pin(async move {
-            let bytes = invocation.arguments().to_string().len();
-            Ok(ToolOutput::text(format!("accepted-{bytes}")))
-        })
-    }
-}
-
-/// Streams one large tool-call argument payload and validates the observed delta count.
-pub(super) fn run_large_tool_call_delta_stream(
+/// Streams one large tool-call argument payload, cancels after the final delta,
+/// and validates that aborted history retained the captured tool call.
+pub(super) fn run_cancelled_large_tool_call_capture(
     tokio: &tokio::runtime::Runtime,
     arguments: Arc<String>,
     chunk_bytes: usize,
-) -> (usize, usize) {
-    let delta_count = large_tool_call_delta_count(arguments.len(), chunk_bytes);
+) -> usize {
+    let expected_deltas = large_tool_call_delta_count(arguments.len(), chunk_bytes);
+    let expected_arguments = arguments.as_str();
+    let expected_value: serde_json::Value = serde_json::from_str(expected_arguments).unwrap();
     let runtime = Rho::builder()
         .provider(LargeToolCallDeltaProvider {
             arguments: Arc::clone(&arguments),
             chunk_bytes,
         })
-        .tool(LargeArgsTool)
         .event_capacity(NonZeroUsize::new(256).unwrap())
         .build()
         .unwrap();
@@ -175,12 +142,43 @@ pub(super) fn run_large_tool_call_delta_stream(
         while let Some(event) = run.next_event().await {
             if matches!(event, RunEvent::ToolCallUpdated { .. }) {
                 observed_deltas += 1;
+                if observed_deltas == expected_deltas {
+                    run.cancel();
+                }
             }
         }
-        black_box(run.outcome().await.unwrap());
+        assert!(
+            matches!(run.outcome().await, Err(Error::Cancelled)),
+            "expected cancelled outcome after streamed tool-call capture"
+        );
     });
-    assert_eq!(observed_deltas, delta_count);
-    black_box((arguments.len(), delta_count))
+    assert_eq!(observed_deltas, expected_deltas);
+
+    let history = session.history();
+    let aborted = history
+        .iter()
+        .rev()
+        .find_map(|message| match message {
+            Message::AbortedAssistant(message) => Some(message.as_ref()),
+            _ => None,
+        })
+        .expect("cancelled stream must commit an aborted assistant");
+    assert_eq!(
+        aborted.content,
+        vec![ContentBlock::ToolCall(ToolCall {
+            id: "large-call".into(),
+            name: "benchmark_large".into(),
+            arguments: expected_value.clone(),
+        })]
+    );
+    assert_eq!(aborted.tool_calls.len(), 1);
+    assert_eq!(aborted.tool_calls[0].id.as_deref(), Some("large-call"));
+    assert_eq!(
+        aborted.tool_calls[0].name.as_deref(),
+        Some("benchmark_large")
+    );
+    assert_eq!(aborted.tool_calls[0].arguments, expected_arguments);
+    black_box(observed_deltas)
 }
 
 #[derive(Clone)]
@@ -216,8 +214,7 @@ impl Tool for OverlappingPrepareTool {
             // Yield so concurrently polled prepare futures can enter and raise the
             // peak before any finish. A barrier of the full batch size would
             // deadlock once preparation is bounded below OVERLAPPING_PREPARE_COUNT;
-            // yields still reach peak 64 when unbounded and complete at peak 4 when
-            // preparation is limited to OVERLAPPING_PREPARE_PARALLEL.
+            // yields reach peak COUNT while preparation remains unbounded.
             for _ in 0..OVERLAPPING_PREPARE_COUNT {
                 tokio::task::yield_now().await;
             }
@@ -237,8 +234,12 @@ impl Tool for OverlappingPrepareTool {
     }
 }
 
-/// Runs a prepare batch, checks ordered tool results, and returns observed peak concurrency.
-pub(super) fn run_overlapping_prepare_batch(tokio: &tokio::runtime::Runtime) -> usize {
+/// Runs a prepare batch at the given execution limit, checks ordered tool results,
+/// and returns observed peak preparation concurrency.
+pub(super) fn run_overlapping_prepare_batch(
+    tokio: &tokio::runtime::Runtime,
+    max_parallel_tools: usize,
+) -> usize {
     let active = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
     let tool = OverlappingPrepareTool {
@@ -266,7 +267,7 @@ pub(super) fn run_overlapping_prepare_batch(tokio: &tokio::runtime::Runtime) -> 
     let runtime = Rho::builder()
         .provider(provider)
         .tool(tool)
-        .max_parallel_tools(NonZeroUsize::new(OVERLAPPING_PREPARE_PARALLEL).unwrap())
+        .max_parallel_tools(NonZeroUsize::new(max_parallel_tools).unwrap())
         .build()
         .unwrap();
     let session = tokio
@@ -292,9 +293,9 @@ pub(super) fn run_overlapping_prepare_batch(tokio: &tokio::runtime::Runtime) -> 
         .collect::<Vec<_>>();
     assert_eq!(results, expected);
     let observed_peak = peak.load(Ordering::Acquire);
-    assert!(
-        observed_peak >= OVERLAPPING_PREPARE_PARALLEL,
-        "expected overlapping prepare futures, peak={observed_peak}"
+    assert_eq!(
+        observed_peak, OVERLAPPING_PREPARE_COUNT,
+        "preparation remains unbounded by max_parallel_tools={max_parallel_tools}, peak={observed_peak}"
     );
     assert_eq!(active.load(Ordering::Acquire), 0);
     black_box(observed_peak)
