@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.11.0...rho-sdk-v1.12.0) (2026-07-28)
+
+
+### Features
+
+* **tui:** show model output token rate ([#623](https://github.com/matthewyjiang/rho/issues/623)) ([a5aa688](https://github.com/matthewyjiang/rho/commit/a5aa688686d9f4f08d064462ccfa4fd542aa979d))
+
 ## [1.11.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.10.3...rho-sdk-v1.11.0) (2026-07-28)
 
 

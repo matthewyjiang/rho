@@ -16,7 +16,7 @@ use rho_sdk::{
     CancellationToken, ProviderErrorKind, ReasoningLevel,
 };
 
-use super::provider_error_from_model_error;
+use super::{callback_event_sink, provider_error_from_model_error, CallbackEventKind};
 use crate::model::{ModelError, ProviderReportedErrorKind};
 
 #[derive(Clone)]
@@ -276,6 +276,30 @@ fn request<'a>(
         reasoning_level,
         prompt_cache_key: Some("session-1"),
     }
+}
+
+#[test]
+fn callback_sink_timestamps_events_at_the_callback_boundary() {
+    let cancellation = CancellationToken::new();
+    let pending = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let mut sink = callback_event_sink(cancellation, Arc::clone(&pending), notify);
+    let before = std::time::Instant::now();
+
+    sink(ModelEvent::OutputDelta("hello".into())).unwrap();
+
+    let after = std::time::Instant::now();
+    let captured = pending
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .pop_front()
+        .expect("captured callback event");
+    assert!(captured.observed_at >= before);
+    assert!(captured.observed_at <= after);
+    assert!(matches!(
+        captured.kind,
+        CallbackEventKind::Model(ModelEvent::OutputDelta(text)) if text == "hello"
+    ));
 }
 
 #[tokio::test]

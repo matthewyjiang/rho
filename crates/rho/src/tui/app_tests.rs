@@ -51,6 +51,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             model: "gpt-5.5".into(),
             model_aliases: Default::default(),
             reasoning: ReasoningLevel::Low,
+            service_tier: None,
             reasoning_source: ReasoningRequestSource::PersistedOrDefault,
             permission_mode: PermissionMode::Auto,
             show_reasoning_output: true,

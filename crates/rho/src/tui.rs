@@ -64,6 +64,7 @@ mod markdown_image;
 mod message_history;
 mod message_render;
 mod model_actions;
+mod model_performance;
 mod model_picker;
 mod mouse;
 mod mouse_capture;
@@ -215,6 +216,7 @@ pub struct RuntimeModelView {
     pub model: String,
     pub(crate) model_aliases: crate::model_aliases::ModelAliases,
     pub reasoning: ReasoningLevel,
+    pub service_tier: Option<rho_sdk::model::ServiceTier>,
     pub reasoning_source: ReasoningRequestSource,
     pub permission_mode: PermissionMode,
     pub show_reasoning_output: bool,
@@ -225,6 +227,17 @@ pub struct RuntimeModelView {
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
+}
+
+impl RuntimeModelView {
+    fn model_call_profile(&self) -> rho_sdk::ModelCallProfile {
+        rho_sdk::ModelCallProfile {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            reasoning: self.reasoning,
+            service_tier: self.service_tier,
+        }
+    }
 }
 
 pub struct SessionBootstrap {

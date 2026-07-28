@@ -94,6 +94,9 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 model: config.model,
                 model_aliases: config.model_aliases,
                 reasoning: config.reasoning,
+                service_tier: config
+                    .fast_mode
+                    .then_some(rho_sdk::model::ServiceTier::Priority),
                 reasoning_source,
                 permission_mode: config.permission_mode,
                 show_reasoning_output: config.show_reasoning_output,

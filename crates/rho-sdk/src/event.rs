@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::{
     model::{ContentBlock, ModelUsage, ToolCall},
     tool::{ToolErrorKind, ToolMetadata, ToolOutput, ToolProgress},
@@ -127,6 +129,41 @@ pub enum ToolCompletion {
     Unavailable,
 }
 
+/// Provider and request settings that affect model-call performance.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ModelCallProfile {
+    /// Provider identifier used for this call.
+    pub provider: String,
+    /// Model identifier used for this call.
+    pub model: String,
+    /// Reasoning level used for this call.
+    pub reasoning: crate::ReasoningLevel,
+    /// Requested provider service class, if any.
+    pub service_tier: Option<crate::model::ServiceTier>,
+}
+
+/// Timing and provider-reported output usage for one model call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelCallMetrics {
+    /// Provider-reported output tokens for this call.
+    pub output_tokens: Option<u64>,
+    /// Time from starting the request to receiving its first generated event.
+    pub time_to_first_token: Option<Duration>,
+    /// Time from the first generated event until stream completion.
+    pub generation_time: Option<Duration>,
+    /// Time from starting the request until stream completion.
+    pub total_latency: Duration,
+}
+
+impl ModelCallMetrics {
+    /// Provider-reported output tokens divided by local generation time.
+    pub fn output_tokens_per_second(self) -> Option<f64> {
+        let tokens = self.output_tokens?;
+        let seconds = self.generation_time?.as_secs_f64();
+        (seconds > 0.0).then(|| tokens as f64 / seconds)
+    }
+}
+
 /// Ordered semantic event emitted during a run.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -241,4 +278,12 @@ pub enum RunEvent {
     /// Appended after existing variants so discriminant values of the 1.0
     /// surface stay stable under a minor release.
     ProviderRequestRetry,
+    /// A model call completed with local timing and provider-reported usage.
+    ///
+    /// Appended after existing variants so discriminant values of the 1.0
+    /// surface stay stable under a minor release.
+    ModelCallCompleted {
+        profile: ModelCallProfile,
+        metrics: ModelCallMetrics,
+    },
 }
