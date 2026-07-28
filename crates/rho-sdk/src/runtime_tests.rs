@@ -1103,6 +1103,40 @@ async fn reasoning_level_is_explicit_and_can_change_between_runs() {
     );
 }
 
+#[tokio::test]
+async fn service_tier_is_explicit_and_can_change_between_runs() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "standard".into(),
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "fast".into(),
+            )])),
+        ],
+    );
+    let runtime = Rho::builder().provider(provider.clone()).build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    session.complete("standard").await.unwrap();
+    session
+        .set_service_tier(Some(crate::model::ServiceTier::Priority))
+        .unwrap();
+    assert_eq!(
+        session.diagnostics().service_tier(),
+        Some(crate::model::ServiceTier::Priority)
+    );
+    session.complete("fast").await.unwrap();
+
+    let requests = provider.recorded_requests();
+    assert_eq!(requests[0].service_tier, None);
+    assert_eq!(
+        requests[1].service_tier,
+        Some(crate::model::ServiceTier::Priority)
+    );
+}
+
 #[test]
 fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() {
     let runtime = Rho::builder()

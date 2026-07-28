@@ -172,6 +172,7 @@ pub struct RhoBuilder {
     compactor: Option<Arc<dyn crate::Compactor>>,
     compaction_policy: Option<crate::CompactionPolicy>,
     reasoning_level: crate::ReasoningLevel,
+    service_tier: Option<crate::model::ServiceTier>,
     usage_recording: Option<crate::ProviderRequestUsageRecording>,
     usage_purpose: Option<String>,
     usage_parent_session_id: Option<crate::SessionId>,
@@ -274,6 +275,12 @@ impl RhoBuilder {
         self
     }
 
+    /// Sets the service class used by sessions created from this runtime.
+    pub fn service_tier(mut self, service_tier: crate::model::ServiceTier) -> Self {
+        self.service_tier = Some(service_tier);
+        self
+    }
+
     pub fn usage_recorder<R>(mut self, recorder: R) -> Self
     where
         R: crate::ProviderRequestUsageRecorder + 'static,
@@ -353,6 +360,7 @@ impl RhoBuilder {
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
             reasoning_level: self.reasoning_level,
+            service_tier: self.service_tier,
             usage_recording: self.usage_recording.unwrap_or_default(),
             usage_purpose,
             usage_parent_session_id: self.usage_parent_session_id,
@@ -377,6 +385,7 @@ pub struct Rho {
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
     pub(crate) reasoning_level: crate::ReasoningLevel,
+    pub(crate) service_tier: Option<crate::model::ServiceTier>,
     pub(crate) usage_recording: crate::ProviderRequestUsageRecording,
     pub(crate) usage_purpose: String,
     pub(crate) usage_parent_session_id: Option<crate::SessionId>,
@@ -441,6 +450,7 @@ impl Rho {
                     }
                 }),
                 reasoning_level: self.reasoning_level,
+                service_tier: self.service_tier,
                 usage_recorder_diagnostics: self.usage_recording.diagnostics(),
             },
         )
@@ -487,6 +497,7 @@ impl std::fmt::Debug for Rho {
             .field("compactor", &self.compactor.is_some())
             .field("compaction_policy", &self.compaction_policy)
             .field("reasoning_level", &self.reasoning_level)
+            .field("service_tier", &self.service_tier)
             .field("usage_recorder", &self.usage_recording.is_enabled())
             .field("usage_purpose", &self.usage_purpose)
             .finish()

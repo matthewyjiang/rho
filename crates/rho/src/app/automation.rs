@@ -458,6 +458,7 @@ async fn run_session_with_output(
             approval_handler: None,
             system_prompt,
             reasoning: sdk_options.runtime.reasoning,
+            service_tier: sdk_options.runtime.service_tier,
             compaction,
             context_window,
             usage_purpose: startup.usage_purpose,

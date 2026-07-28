@@ -19,6 +19,7 @@ pub enum CommandId {
     Doctor,
     Limits,
     Export,
+    Fast,
     Exit,
 }
 
@@ -62,6 +63,24 @@ const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
         completion: "/goal clear",
         usage: "/goal clear",
         description: "stop and clear the current goal",
+    },
+];
+
+const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
+    CommandArgumentChoice {
+        completion: "/fast on",
+        usage: "/fast on",
+        description: "enable faster Codex responses at higher credit cost",
+    },
+    CommandArgumentChoice {
+        completion: "/fast off",
+        usage: "/fast off",
+        description: "use standard Codex response speed",
+    },
+    CommandArgumentChoice {
+        completion: "/fast status",
+        usage: "/fast status",
+        description: "show the current Codex speed mode",
     },
 ];
 
@@ -115,6 +134,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/export [path]",
         description: "export the session transcript to an HTML file",
         argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Fast,
+        name: "fast",
+        usage: "/fast [on|off|status]",
+        description: "toggle faster Codex responses at higher credit cost",
+        argument_choices: FAST_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Goal,
@@ -381,6 +407,21 @@ mod tests {
         let matches = matching_commands(command_prefix("/nope").unwrap());
 
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn parses_fast_mode_and_offers_mode_completions() {
+        let invocation = parse_command("/fast on").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Fast);
+        assert_eq!(invocation.args, "on");
+        assert_eq!(
+            argument_choices("/fast ", 6)
+                .iter()
+                .map(|choice| choice.completion)
+                .collect::<Vec<_>>(),
+            vec!["/fast on", "/fast off", "/fast status"]
+        );
     }
 
     #[test]

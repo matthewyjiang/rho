@@ -25,6 +25,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) approval_handler: Option<Arc<dyn rho_sdk::ApprovalHandler>>,
     pub(crate) system_prompt: SystemPrompt,
     pub(crate) reasoning: rho_sdk::ReasoningLevel,
+    pub(crate) service_tier: Option<rho_sdk::model::ServiceTier>,
     pub(crate) compaction: CompactionConfig,
     pub(crate) context_window: Option<u64>,
     pub(crate) usage_purpose: &'static str,
@@ -58,6 +59,7 @@ where
         approval_handler,
         system_prompt,
         reasoning,
+        service_tier,
         compaction,
         context_window,
         usage_purpose,
@@ -83,6 +85,9 @@ where
         .usage_purpose(usage_purpose)
         .usage_recording(usage_recording)
         .compactor(compactor);
+    if let Some(service_tier) = service_tier {
+        builder = builder.service_tier(service_tier);
+    }
     if let Some(parent_session_id) = usage_parent_session_id {
         builder = builder.usage_parent_session_id(parent_session_id);
     }

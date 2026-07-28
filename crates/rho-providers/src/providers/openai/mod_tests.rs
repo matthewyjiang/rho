@@ -14,6 +14,21 @@ use crate::reasoning::ReasoningLevel;
 use serde_json::json;
 
 #[test]
+fn fast_mode_support_is_limited_to_current_codex_families() {
+    for model in ["gpt-5.4", "gpt-5.5", "gpt-5.6-luna"] {
+        assert!(supports_fast_mode("openai-codex", model), "{model}");
+    }
+    for (provider, model) in [
+        ("openai", "gpt-5.5"),
+        ("openai-codex", "gpt-5.3-codex-spark"),
+        ("openai-codex", "gpt-5.4-mini"),
+        ("openai-codex", "gpt-5.60"),
+    ] {
+        assert!(!supports_fast_mode(provider, model), "{provider}/{model}");
+    }
+}
+
+#[test]
 fn codex_reasoning_param_preserves_none_effort() {
     assert_eq!(
         codex_reasoning_param(Some("none"), None).unwrap(),

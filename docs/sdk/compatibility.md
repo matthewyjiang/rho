@@ -91,8 +91,8 @@ opaque JSON scoped by exact `ModelIdentity`; it must not contain credentials.
 
 ### `rho_sdk::provider` and `rho_sdk::tool`
 
-The provider extension surface includes `ModelProvider`, its explicit future
-and event-channel types, and scripted downstream test support. The tool
+The provider extension surface includes `ModelProvider`, `ModelRequestOptions`,
+its explicit future and event-channel types, and scripted downstream test support. The tool
 extension surface includes `Tool`, `ToolRegistry`, `ToolInvocation`,
 `ToolContext`, output/error/metadata/progress types, security declarations, and
 scripted downstream test support. Both extension traits are object-safe, require

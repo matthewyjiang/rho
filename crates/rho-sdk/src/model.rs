@@ -255,6 +255,14 @@ pub struct ImageContent {
     pub mime_type: String,
 }
 
+/// Provider service class requested for one model turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ServiceTier {
+    /// Prefer the provider's low-latency priority service.
+    Priority,
+}
+
 /// Borrowed input for one provider turn.
 #[derive(Clone, Debug)]
 pub struct ModelRequest<'a> {

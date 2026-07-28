@@ -384,6 +384,7 @@ impl App {
                 Ok(())
             }
             CommandId::New
+            | CommandId::Fast
             | CommandId::Compact
             | CommandId::Login
             | CommandId::Logout

@@ -10,7 +10,7 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    model::{ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
+    model::{ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ServiceTier},
     CompactionOutput, ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -235,6 +235,28 @@ pub enum ProviderCancellationMode {
     Cooperative,
 }
 
+/// Optional settings for one provider request.
+///
+/// The private fields keep this stable request boundary open to additive settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ModelRequestOptions {
+    service_tier: Option<ServiceTier>,
+}
+
+impl ModelRequestOptions {
+    /// Requests a provider service class for this turn.
+    pub fn with_service_tier(mut self, service_tier: ServiceTier) -> Self {
+        self.service_tier = Some(service_tier);
+        self
+    }
+
+    /// Returns the requested provider service class, if any.
+    pub fn service_tier(&self) -> Option<ServiceTier> {
+        self.service_tier
+    }
+}
+
 /// Extension point for provider-neutral model backends.
 ///
 /// Implementors must not mutate session history. They receive an immutable
@@ -288,6 +310,19 @@ pub trait ModelProvider: Send + Sync {
             Ok(response)
         })
     }
+
+    /// Completes one streaming turn with additive request settings.
+    ///
+    /// The default preserves existing provider behavior. Providers that support
+    /// any option should override this method.
+    fn send_turn_stream_with_options<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        _options: ModelRequestOptions,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        self.send_turn_stream(request, events)
+    }
 }
 
 /// Owned request snapshot captured by [`ScriptedProvider`].
@@ -301,6 +336,7 @@ pub struct RecordedModelRequest {
     pub messages: Vec<crate::model::Message>,
     pub tools: Vec<crate::model::ToolSpec>,
     pub reasoning_level: crate::ReasoningLevel,
+    pub service_tier: Option<crate::model::ServiceTier>,
     pub prompt_cache_key: Option<String>,
 }
 
@@ -391,7 +427,11 @@ impl ScriptedProvider {
             .clone()
     }
 
-    fn take_turn(&self, request: &ModelRequest<'_>) -> Result<ScriptedTurn, ProviderError> {
+    fn take_turn(
+        &self,
+        request: &ModelRequest<'_>,
+        service_tier: Option<ServiceTier>,
+    ) -> Result<ScriptedTurn, ProviderError> {
         self.requests
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -399,6 +439,7 @@ impl ScriptedProvider {
                 messages: request.messages.to_vec(),
                 tools: request.tools.to_vec(),
                 reasoning_level: request.reasoning_level,
+                service_tier,
                 prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             });
         self.turns
@@ -432,9 +473,41 @@ impl ScriptedProvider {
                 messages: request.messages.to_vec(),
                 tools: request.tools.to_vec(),
                 reasoning_level: request.reasoning_level,
+                service_tier: None,
                 prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             });
         queue.pop_front()
+    }
+
+    fn stream_turn<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        service_tier: Option<ServiceTier>,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            if request.cancellation.is_cancelled() {
+                return Err(ProviderError::interrupted("provider request cancelled"));
+            }
+            let cancellation = request.cancellation.clone();
+            let turn = self.take_turn(&request, service_tier)?;
+            for event in turn.events {
+                tokio::select! {
+                    result = async {
+                        match event {
+                            ProviderStreamEvent::Model(event) => events.send(event).await,
+                            ProviderStreamEvent::Request(
+                                ProviderRequestEvent::RequestAttemptFailed { kind, usage },
+                            ) => events.send_request_attempt_failed(kind, usage).await,
+                        }
+                    } => result?,
+                    () = cancellation.cancelled() => {
+                        return Err(ProviderError::interrupted("provider request cancelled"));
+                    }
+                }
+            }
+            turn.result
+        })
     }
 }
 
@@ -457,7 +530,7 @@ impl ModelProvider for ScriptedProvider {
             if request.cancellation.is_cancelled() {
                 return Err(ProviderError::interrupted("provider request cancelled"));
             }
-            self.take_turn(&request)?.result
+            self.take_turn(&request, None)?.result
         })
     }
 
@@ -490,29 +563,16 @@ impl ModelProvider for ScriptedProvider {
         request: ModelRequest<'a>,
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
-        Box::pin(async move {
-            if request.cancellation.is_cancelled() {
-                return Err(ProviderError::interrupted("provider request cancelled"));
-            }
-            let cancellation = request.cancellation.clone();
-            let turn = self.take_turn(&request)?;
-            for event in turn.events {
-                tokio::select! {
-                    result = async {
-                        match event {
-                            ProviderStreamEvent::Model(event) => events.send(event).await,
-                            ProviderStreamEvent::Request(
-                                ProviderRequestEvent::RequestAttemptFailed { kind, usage },
-                            ) => events.send_request_attempt_failed(kind, usage).await,
-                        }
-                    } => result?,
-                    () = cancellation.cancelled() => {
-                        return Err(ProviderError::interrupted("provider request cancelled"));
-                    }
-                }
-            }
-            turn.result
-        })
+        self.stream_turn(request, None, events)
+    }
+
+    fn send_turn_stream_with_options<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        options: ModelRequestOptions,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        self.stream_turn(request, options.service_tier(), events)
     }
 }
 

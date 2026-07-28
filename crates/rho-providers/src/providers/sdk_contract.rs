@@ -319,15 +319,25 @@ where
 /// an inherent `native_compact_turn` method returning
 /// `Result<NativeCompactionResponse, ModelError>` or
 /// `Result<CompactionOutput, ModelError>` converted by the adapter.
+///
+/// Pass `request_options` when the transport also exposes an inherent
+/// `stream_turn_with_options` method with [`rho_sdk::provider::ModelRequestOptions`]
+/// before the event callbacks.
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
-        $crate::impl_sdk_model_provider!($provider,);
+        $crate::impl_sdk_model_provider!(@impl $provider, [], []);
     };
     ($provider:ty, native_compact) => {
-        $crate::impl_sdk_model_provider!($provider, @native_compact);
+        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], []);
     };
-    ($provider:ty, $($native:tt)*) => {
+    ($provider:ty, request_options) => {
+        $crate::impl_sdk_model_provider!(@impl $provider, [], [@request_options]);
+    };
+    ($provider:ty, native_compact, request_options) => {
+        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options]);
+    };
+    (@impl $provider:ty, [$($native:tt)*], [$($options:tt)*]) => {
         impl ::rho_sdk::provider::ModelProvider for $provider {
             fn cancellation_mode(&self) -> ::rho_sdk::provider::ProviderCancellationMode {
                 ::rho_sdk::provider::ProviderCancellationMode::Cooperative
@@ -351,6 +361,8 @@ macro_rules! impl_sdk_model_provider {
                 })
             }
 
+            $crate::impl_sdk_model_provider!(@request_options_methods $($options)*);
+
             $crate::impl_sdk_model_provider!(@native_compact_method $($native)*);
 
             fn send_turn_stream<'a>(
@@ -358,35 +370,66 @@ macro_rules! impl_sdk_model_provider {
                 request: ::rho_sdk::model::ModelRequest<'a>,
                 events: ::rho_sdk::provider::ProviderEventSender,
             ) -> ::rho_sdk::provider::ProviderFuture<'a> {
-                ::std::boxed::Box::pin(async move {
-                    let cancellation = request.cancellation.clone();
-                    let pending = ::std::sync::Arc::new(::std::sync::Mutex::new(
-                        ::std::collections::VecDeque::new(),
-                    ));
-                    let notify = ::std::sync::Arc::new(::tokio::sync::Notify::new());
-                    let mut on_event = $crate::providers::sdk_contract::callback_event_sink(
-                        cancellation.clone(),
-                        ::std::sync::Arc::clone(&pending),
-                        ::std::sync::Arc::clone(&notify),
-                    );
-                    let mut on_request_event =
-                        $crate::providers::sdk_contract::callback_request_event_sink(
-                            cancellation.clone(),
-                            ::std::sync::Arc::clone(&pending),
-                            ::std::sync::Arc::clone(&notify),
-                        );
-                    let provider = self.stream_turn(request, &mut on_event, &mut on_request_event);
-                    $crate::providers::sdk_contract::drive_callback_stream(
-                        cancellation,
-                        events,
-                        pending,
-                        notify,
-                        provider,
-                    )
-                    .await
-                })
+                $crate::impl_sdk_model_provider!(
+                    @stream_turn self,
+                    request,
+                    events,
+                    stream_turn,
+                    []
+                )
             }
         }
+    };
+    (@request_options_methods) => {};
+    (@request_options_methods @request_options) => {
+        fn send_turn_stream_with_options<'a>(
+            &'a self,
+            request: ::rho_sdk::model::ModelRequest<'a>,
+            options: ::rho_sdk::provider::ModelRequestOptions,
+            events: ::rho_sdk::provider::ProviderEventSender,
+        ) -> ::rho_sdk::provider::ProviderFuture<'a> {
+            $crate::impl_sdk_model_provider!(
+                @stream_turn self,
+                request,
+                events,
+                stream_turn_with_options,
+                [options]
+            )
+        }
+    };
+    (@stream_turn $self:ident, $request:ident, $events:ident, $method:ident, [$($arg:ident),*]) => {
+        ::std::boxed::Box::pin(async move {
+            let cancellation = $request.cancellation.clone();
+            let pending = ::std::sync::Arc::new(::std::sync::Mutex::new(
+                ::std::collections::VecDeque::new(),
+            ));
+            let notify = ::std::sync::Arc::new(::tokio::sync::Notify::new());
+            let mut on_event = $crate::providers::sdk_contract::callback_event_sink(
+                cancellation.clone(),
+                ::std::sync::Arc::clone(&pending),
+                ::std::sync::Arc::clone(&notify),
+            );
+            let mut on_request_event =
+                $crate::providers::sdk_contract::callback_request_event_sink(
+                    cancellation.clone(),
+                    ::std::sync::Arc::clone(&pending),
+                    ::std::sync::Arc::clone(&notify),
+                );
+            let provider = $self.$method(
+                $request,
+                $($arg,)*
+                &mut on_event,
+                &mut on_request_event,
+            );
+            $crate::providers::sdk_contract::drive_callback_stream(
+                cancellation,
+                $events,
+                pending,
+                notify,
+                provider,
+            )
+            .await
+        })
     };
     (@native_compact_method) => {};
     (@native_compact_method @native_compact) => {
