@@ -946,7 +946,3 @@ pub(super) fn pad_display_line(line: Line<'static>) -> Line<'static> {
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "render_benchmarks.rs"]
-mod render_benchmarks;

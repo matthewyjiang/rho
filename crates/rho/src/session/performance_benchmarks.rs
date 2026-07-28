@@ -399,17 +399,15 @@ fn tree_facts_benchmark() {
     const BRANCH_WIDTH: usize = 40;
     for child in 0..BRANCH_WIDTH {
         session.set_leaf(&root_id).expect("set leaf to root");
-        let snapshot = SessionSnapshot::new(
-            SessionId::from_string(session.id().to_owned()).unwrap(),
-            Revision::from_u64(2),
+        let snapshot = snapshot(
+            &session,
+            2,
             vec![
                 Message::user_text("root"),
                 Message::assistant_text(format!("branch {child}")),
             ],
-            ModelIdentity::new("provider", "api", "model"),
             CompactionState::default(),
-        )
-        .with_prompt_cache_key(format!("rho:{}", session.id()));
+        );
         session
             .save_snapshot(&snapshot, &snapshot.history()[1..])
             .expect("save branch snapshot");
@@ -418,17 +416,15 @@ fn tree_facts_benchmark() {
     // Add a deep chain so the tree has many nodes, making the old scan cost
     // proportional to node count rather than negligible.
     for depth in 0..200 {
-        let snapshot = SessionSnapshot::new(
-            SessionId::from_string(session.id().to_owned()).unwrap(),
-            Revision::from_u64(3 + depth as u64),
+        let snapshot = snapshot(
+            &session,
+            3 + depth as u64,
             vec![
                 Message::user_text("root"),
                 Message::assistant_text(format!("deep {depth}")),
             ],
-            ModelIdentity::new("provider", "api", "model"),
             CompactionState::default(),
-        )
-        .with_prompt_cache_key(format!("rho:{}", session.id()));
+        );
         session
             .save_snapshot(&snapshot, &snapshot.history()[1..])
             .expect("save deep snapshot");

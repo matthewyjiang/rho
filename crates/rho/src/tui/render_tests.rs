@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 use ratatui::style::Style;
 
 fn line_text(line: &Line<'_>) -> String {
@@ -13,6 +14,56 @@ fn display_width_ignores_control_characters_filtered_by_ratatui() {
     assert_eq!(display_width("left\tright"), 9);
     assert_eq!(display_width("left\rright"), 9);
     assert_eq!(display_width("left\u{1b}right"), 9);
+}
+
+// Covers: end truncation must keep its display-width and one-line output contract.
+// Owner: pure TUI layout policy.
+#[test]
+fn truncate_one_line_matches_expected_outputs() {
+    let cases = [
+        ("zero width", "abc", 0, ""),
+        ("width one", "abc", 1, "…"),
+        ("empty", "", 4, ""),
+        ("ASCII exact fit", "abc", 3, "abc"),
+        ("ASCII truncation", "abcdef", 4, "abc…"),
+        ("wide exact fit", "界a", 3, "界a"),
+        ("wide truncation", "界ab", 3, "界…"),
+        ("combining exact fit", "e\u{301}x", 2, "e\u{301}x"),
+        ("combining truncation", "e\u{301}xy", 2, "e\u{301}…"),
+        ("one newline", "ab\ncd", 5, "ab cd"),
+        ("multiple newlines", "a\n\nbc", 4, "a  …"),
+        ("control exact fit", "a\tb", 2, "a\tb"),
+        ("control truncation", "a\tbc", 2, "a\t…"),
+    ];
+
+    for (name, text, width, expected) in cases {
+        assert_eq!(truncate_one_line(text, width), expected, "{name}");
+    }
+}
+
+// Covers: front truncation must keep its display-width and one-line output contract.
+// Owner: pure TUI layout policy.
+#[test]
+fn truncate_keep_end_matches_expected_outputs() {
+    let cases = [
+        ("zero width", "abc", 0, ""),
+        ("width one", "abc", 1, "…"),
+        ("empty", "", 4, ""),
+        ("ASCII exact fit", "abc", 3, "abc"),
+        ("ASCII truncation", "abcdef", 4, "…def"),
+        ("wide exact fit", "a界", 3, "a界"),
+        ("wide truncation", "ab界", 3, "…界"),
+        ("combining exact fit", "be\u{301}", 2, "be\u{301}"),
+        ("combining truncation", "xabe\u{301}", 3, "…be\u{301}"),
+        ("one newline", "ab\ncd", 5, "ab cd"),
+        ("multiple newlines", "a\n\nbc", 4, "… bc"),
+        ("control exact fit", "a\tb", 2, "a\tb"),
+        ("control truncation", "ab\tcd", 3, "…\tcd"),
+    ];
+
+    for (name, text, width, expected) in cases {
+        assert_eq!(truncate_keep_end(text, width), expected, "{name}");
+    }
 }
 
 #[test]

@@ -186,6 +186,29 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
     let mut connection = connection
         .lock()
         .expect("session index connection poisoned");
+
+    // Directory traversal and parsing happened without the lock. Revalidate
+    // both the files and index rows so a concurrent sync cannot be overwritten.
+    let current_indexed = indexed_workspace_files(&connection, &workspace_key)?;
+    records.retain(|record| {
+        let path = &record.summary.path;
+        let (file_size, file_mtime) = session_file_stats(path);
+        record.file_size == file_size
+            && record.file_mtime == file_mtime
+            && !current_indexed
+                .get(record.summary.id.as_str())
+                .is_some_and(|indexed| indexed.is_current(path, file_size, file_mtime))
+    });
+    let stale_ids = stale_ids
+        .into_iter()
+        .filter(|id| {
+            current_indexed.get(id) == indexed_files.get(id)
+                && current_indexed
+                    .get(id)
+                    .is_some_and(|indexed| !Path::new(&indexed.path).exists())
+        })
+        .collect::<Vec<_>>();
+
     apply_workspace_updates(&mut connection, &workspace_key, &records, &stale_ids)
 }
 
@@ -478,7 +501,7 @@ fn set_private_file_permissions(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct IndexedFile {
     path: String,
     file_size: Option<i64>,
