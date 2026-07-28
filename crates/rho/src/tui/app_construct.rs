@@ -89,6 +89,7 @@ impl App {
             clipboard: Box::new(SystemClipboard::default()),
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
+            screen_selection: None,
         }
     }
 }

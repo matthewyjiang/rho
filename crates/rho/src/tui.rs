@@ -170,7 +170,7 @@ use statusline::{GoalStatus, StatusLine};
 use subagent_attach::PendingSubagentAttach;
 use subagent_panel::SubagentPanel;
 use terminal_session::TerminalSession;
-use text_selection::{highlight_selection, render_copy_notice};
+use text_selection::{highlight_selection, render_copy_notice, TextSelection};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
 
@@ -352,6 +352,8 @@ struct App {
     clipboard: Box<dyn ClipboardWriter + Send>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
+    /// Screen-space drag selection for text outside the history area.
+    screen_selection: Option<TextSelection>,
 }
 
 struct PendingSubagentQuestionnaire {

@@ -67,6 +67,9 @@ impl App {
         self.draw_panels(frame, surface);
         self.draw_composer(frame, surface, composer_lines, command_lines);
         self.draw_cursor(frame, surface);
+        if let Some(selection) = self.screen_selection {
+            highlight_selection(frame.buffer_mut(), area, 0, selection);
+        }
     }
 
     fn draw_history(

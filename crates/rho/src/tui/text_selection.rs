@@ -136,6 +136,27 @@ pub(super) fn highlight_selection(
     }
 }
 
+/// Rebuilds the visible rows of a rendered buffer as plain lines so a
+/// screen-space selection can extract text from any part of the frame.
+pub(super) fn screen_lines(buffer: &Buffer, area: Rect) -> Vec<Line<'static>> {
+    let mut lines = Vec::with_capacity(area.height as usize);
+    for row in area.top()..area.bottom() {
+        let mut text = String::new();
+        let mut covered_by_wide_symbol = 0usize;
+        for column in area.left()..area.right() {
+            if covered_by_wide_symbol > 0 {
+                covered_by_wide_symbol -= 1;
+                continue;
+            }
+            let symbol = buffer[(column, row)].symbol();
+            covered_by_wide_symbol = UnicodeWidthStr::width(symbol).saturating_sub(1);
+            text.push_str(symbol);
+        }
+        lines.push(Line::raw(text));
+    }
+    lines
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CopyNoticeTone {
     Success,
