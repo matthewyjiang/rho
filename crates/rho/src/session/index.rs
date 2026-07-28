@@ -132,13 +132,18 @@ fn query_existing_paths(
 
 pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<()> {
     let connection = open_index(session_root)?;
-    let mut connection = connection
-        .lock()
-        .expect("session index connection poisoned");
     let workspace_key = workspace_key(cwd);
     let dir = session_dir_in_root(session_root, cwd);
-    // One map load drives staleness checks and deletes; no per-file index queries.
-    let indexed_files = indexed_workspace_files(&connection, &workspace_key)?;
+
+    // Load indexed files under the lock, then release it so directory
+    // traversal and transcript parsing do not block other index operations.
+    let indexed_files = {
+        let connection = connection
+            .lock()
+            .expect("session index connection poisoned");
+        indexed_workspace_files(&connection, &workspace_key)?
+    };
+
     let mut seen = HashSet::new();
     let mut changed_paths = Vec::new();
 
@@ -164,8 +169,7 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
         }
     }
 
-    // Parse transcripts before opening the write transaction so the transaction
-    // contains only the batched mutations. Unreadable or malformed files remain
+    // Parse transcripts outside the lock. Unreadable or malformed files remain
     // skipped (no upsert).
     let mut records = Vec::new();
     for transcript in &changed_paths {
@@ -178,6 +182,33 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
         .map(|record| record.summary.id.as_str())
         .collect::<HashSet<_>>();
     let stale_ids = stale_index_ids(&indexed_files, &seen, &refreshed_ids);
+
+    let mut connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+
+    // Directory traversal and parsing happened without the lock. Revalidate
+    // both the files and index rows so a concurrent sync cannot be overwritten.
+    let current_indexed = indexed_workspace_files(&connection, &workspace_key)?;
+    records.retain(|record| {
+        let path = &record.summary.path;
+        let (file_size, file_mtime) = session_file_stats(path);
+        record.file_size == file_size
+            && record.file_mtime == file_mtime
+            && !current_indexed
+                .get(record.summary.id.as_str())
+                .is_some_and(|indexed| indexed.is_current(path, file_size, file_mtime))
+    });
+    let stale_ids = stale_ids
+        .into_iter()
+        .filter(|id| {
+            current_indexed.get(id) == indexed_files.get(id)
+                && current_indexed
+                    .get(id)
+                    .is_some_and(|indexed| !Path::new(&indexed.path).exists())
+        })
+        .collect::<Vec<_>>();
+
     apply_workspace_updates(&mut connection, &workspace_key, &records, &stale_ids)
 }
 
@@ -187,23 +218,46 @@ pub(super) fn sync_session_file(
     path: &Path,
 ) -> anyhow::Result<()> {
     let connection = open_index(session_root)?;
-    let connection = connection
-        .lock()
-        .expect("session index connection poisoned");
     let id = session_id_from_path(path)
         .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
     let workspace_key = workspace_key(cwd);
+
+    // Check staleness under the lock, then release it before the expensive
+    // transcript parse so other index operations are not blocked during I/O.
     let (file_size, file_mtime) = session_file_stats(path);
-    if !indexed_file_is_current(
-        &connection,
-        &workspace_key,
-        &id,
-        path,
-        file_size,
-        file_mtime,
-    )? {
+    let needs_sync = {
+        let connection = connection
+            .lock()
+            .expect("session index connection poisoned");
+        !indexed_file_is_current(
+            &connection,
+            &workspace_key,
+            &id,
+            path,
+            file_size,
+            file_mtime,
+        )?
+    };
+
+    if needs_sync {
         let record = summarize_session_file(path, cwd)?;
-        upsert_record(&connection, &workspace_key, &record)?;
+        // Re-check metadata under the lock to handle a concurrent writer that
+        // changed the file between the staleness check and the parse.
+        let (file_size, file_mtime) = session_file_stats(path);
+        let connection = connection
+            .lock()
+            .expect("session index connection poisoned");
+        let stale = !indexed_file_is_current(
+            &connection,
+            &workspace_key,
+            &id,
+            path,
+            file_size,
+            file_mtime,
+        )?;
+        if stale {
+            upsert_record(&connection, &workspace_key, &record)?;
+        }
     }
     Ok(())
 }
@@ -447,7 +501,7 @@ fn set_private_file_permissions(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct IndexedFile {
     path: String,
     file_size: Option<i64>,

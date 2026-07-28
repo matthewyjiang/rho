@@ -358,3 +358,141 @@ fn command_output(program: &str, arguments: &[&str]) -> String {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .unwrap_or_else(|| "unavailable".into())
 }
+
+/// Benchmark for `SessionTree::facts()`, which previously scanned every child
+/// list on each call. With the cached `branch_count` field it is now O(1).
+///
+/// Run with:
+///   cargo test -p rho-coding-agent --release --lib session::performance_benchmarks::tree_facts_benchmark -- --ignored --nocapture
+#[test]
+#[ignore = "tree facts benchmark; run with --release --ignored --nocapture"]
+fn tree_facts_benchmark() {
+    let samples = std::env::var("RHO_BENCH_SAMPLES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1000)
+        .max(10);
+
+    // Build a session with a wide branching tree: one root with many children
+    // and each child having one leaf. This makes the old `children.values()
+    // .filter(...).count()` scan proportional to node count.
+    let root = tempfile::tempdir().expect("session root");
+    let cwd = tempfile::tempdir().expect("workspace cwd");
+    let session = Session::create_in_root(root.path(), cwd.path()).expect("create session");
+
+    let base = snapshot(
+        &session,
+        1,
+        vec![Message::user_text("root")],
+        CompactionState::default(),
+    );
+    session
+        .save_snapshot(&base, base.history())
+        .expect("save root snapshot");
+    let root_id = session
+        .session_tree()
+        .expect("tree")
+        .active_leaf_id()
+        .expect("root leaf")
+        .clone();
+
+    const BRANCH_WIDTH: usize = 40;
+    for child in 0..BRANCH_WIDTH {
+        session.set_leaf(&root_id).expect("set leaf to root");
+        let snapshot = snapshot(
+            &session,
+            2,
+            vec![
+                Message::user_text("root"),
+                Message::assistant_text(format!("branch {child}")),
+            ],
+            CompactionState::default(),
+        );
+        session
+            .save_snapshot(&snapshot, &snapshot.history()[1..])
+            .expect("save branch snapshot");
+    }
+
+    // Add a deep chain so the tree has many nodes, making the old scan cost
+    // proportional to node count rather than negligible.
+    for depth in 0..200 {
+        let snapshot = snapshot(
+            &session,
+            3 + depth as u64,
+            vec![
+                Message::user_text("root"),
+                Message::assistant_text(format!("deep {depth}")),
+            ],
+            CompactionState::default(),
+        );
+        session
+            .save_snapshot(&snapshot, &snapshot.history()[1..])
+            .expect("save deep snapshot");
+    }
+
+    let tree = session.session_tree().expect("tree");
+    let facts = tree.facts();
+    // One root with BRANCH_WIDTH children plus a 200-deep chain from one branch.
+    assert_eq!(facts.branch_count, 1);
+    eprintln!(
+        "tree has {} nodes, {} branches",
+        facts.node_count, facts.branch_count,
+    );
+
+    // Warmup.
+    for _ in 0..WARMUP_ITERS {
+        black_box(tree.facts());
+    }
+
+    let timing = measure(samples, || tree.facts());
+    eprintln!(
+        "tree.facts() with {} nodes, {} branches: median {} ns, p95 {} ns",
+        facts.node_count,
+        facts.branch_count,
+        timing.median(),
+        timing.percentile(95),
+    );
+
+    // Compare against the old scan-everything approach to quantify the win.
+    let old_timing = measure(samples, || {
+        // Reproduce the old branch_count computation that scanned all child lists.
+        let branch_count = tree
+            .children_map()
+            .values()
+            .filter(|children| children.len() > 1)
+            .count();
+        black_box(branch_count);
+    });
+    eprintln!(
+        "tree.facts() OLD scan: median {} ns, p95 {} ns | NEW cached: median {} ns | \
+         speedup {:.1}x",
+        old_timing.median(),
+        old_timing.percentile(95),
+        timing.median(),
+        old_timing.median() as f64 / timing.median().max(1) as f64,
+    );
+
+    // The cached field makes this O(1). With 41 nodes the old scan was
+    // ~hundreds of ns; the cached version should be well under 100 ns.
+    assert!(
+        timing.median() < 500,
+        "tree.facts() regressed: median {} ns exceeds 500 ns budget",
+        timing.median(),
+    );
+}
+
+fn snapshot(
+    session: &Session,
+    revision: u64,
+    history: Vec<Message>,
+    compaction: CompactionState,
+) -> SessionSnapshot {
+    SessionSnapshot::new(
+        SessionId::from_string(session.id().to_owned()).unwrap(),
+        Revision::from_u64(revision),
+        history,
+        ModelIdentity::new("provider", "api", "model"),
+        compaction,
+    )
+    .with_prompt_cache_key(format!("rho:{}", session.id()))
+}
