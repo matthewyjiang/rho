@@ -1,6 +1,6 @@
 use super::{InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *};
 use {
-    crate::credential_store::build_provider,
+    crate::credential_store::{build_provider, build_provider_from_config},
     rho_providers::auth::login_dispatch::{
         AuthenticationMethod, CompletedAuthentication, InteractiveLoginMode, InteractiveUserAction,
         ProviderAuthentication,
@@ -686,6 +686,7 @@ impl App {
         self.info
             .set_reasoning(reasoning.effective, reasoning.source);
         self.info.runtime.auth = target.auth.clone();
+        agent.update_inherited_auth(&target.auth);
         self.info.services.auth_unavailable = None;
         self.start_model_metadata_fetch(agent);
         match self.save_current_config() {
@@ -733,6 +734,7 @@ impl App {
         agent.replace_provider(new_provider, reasoning.effective)?;
         self.info.runtime.provider = target.provider.clone();
         self.info.runtime.auth = target.auth.clone();
+        agent.update_inherited_auth(&target.auth);
         self.info.runtime.model = model;
         self.info
             .set_reasoning(reasoning.effective, reasoning.source);
@@ -761,6 +763,88 @@ impl App {
             }
         }
         Ok(true)
+    }
+
+    pub(super) fn switch_active_auth_mode(
+        &mut self,
+        auth: &str,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let provider_name = self.info.runtime.provider.clone();
+        let Some(descriptor) = rho_providers::provider::provider_descriptor(&provider_name) else {
+            self.insert_entry(&Entry::Error(format!(
+                "unsupported provider '{provider_name}'"
+            )));
+            self.status = "auth switch failed".into();
+            return Ok(());
+        };
+        let Some(mode) = descriptor.auth_mode(auth) else {
+            self.insert_entry(&Entry::Error(format!(
+                "auth mode '{auth}' does not belong to {provider_name}"
+            )));
+            self.status = "auth switch failed".into();
+            return Ok(());
+        };
+        if !ProviderAuthentication::has_credentials(self.credential_store.as_ref(), mode.id)
+            .unwrap_or(false)
+        {
+            self.insert_entry(&Entry::Error(format!(
+                "credentials for {} are unavailable. Run /login {} to sign in again.",
+                mode.login_label, mode.id
+            )));
+            self.status = "auth switch failed".into();
+            return Ok(());
+        }
+        if self.info.runtime.auth == mode.id {
+            self.status = format!("active auth: {}", mode.login_label);
+            return Ok(());
+        }
+
+        let model = self.info.runtime.model.clone();
+        let reasoning = self.info.runtime.reasoning;
+        let mut switched_config = self.info.services.config_repository.load()?;
+        switched_config.provider.clone_from(&provider_name);
+        switched_config.model.clone_from(&model);
+        switched_config.reasoning = reasoning;
+        switched_config.auth = mode.id.into();
+        let new_provider = match build_provider_from_config(
+            &switched_config,
+            std::sync::Arc::clone(&self.credential_store),
+        ) {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not switch to {}: {err}. Run /login {} to sign in again.",
+                    mode.login_label, mode.id
+                )));
+                self.status = "auth switch failed".into();
+                return Ok(());
+            }
+        };
+
+        agent.replace_provider(new_provider, reasoning)?;
+        self.info.runtime.auth = mode.id.into();
+        agent.update_inherited_auth(mode.id);
+        self.info.services.auth_unavailable = None;
+        self.using_unavailable_provider = false;
+        self.refresh_available_auths();
+        self.start_model_metadata_fetch(agent);
+        match self.save_current_config() {
+            Ok(()) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "switched {} to {}",
+                    descriptor.display_name, mode.login_label
+                )));
+                self.status = format!("active auth: {}", mode.login_label);
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "auth mode switched, but saving config failed: {err}"
+                )));
+                self.status = "config save failed".into();
+            }
+        }
+        Ok(())
     }
 
     /// Delete a Rho provider credential. See [`Self::start_login_for_provider`]

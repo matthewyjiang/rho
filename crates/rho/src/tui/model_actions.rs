@@ -312,6 +312,7 @@ impl App {
                     }
                 }
             }
+            PickerAction::SwitchAuthMode => self.switch_active_auth_mode(&value, agent),
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input_ui.set_shell_mode(None);
@@ -440,6 +441,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
@@ -499,6 +501,7 @@ impl App {
             PickerAction::SelectModel => config_picker::CONVERSATION_MODEL_VALUE,
             PickerAction::SelectInternalAgentModel => return None,
             PickerAction::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
+            PickerAction::SwitchAuthMode => config_picker::SWITCH_AUTH_MODE_VALUE,
             PickerAction::RefreshModelList => config_picker::REFRESH_MODEL_LIST_VALUE,
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
@@ -578,6 +581,7 @@ impl App {
         self.info
             .set_reasoning(reasoning.effective, reasoning.source);
         self.info.runtime.auth = auth.clone();
+        agent.update_inherited_auth(&auth);
         self.info.services.auth_unavailable = None;
         self.using_unavailable_provider = false;
         self.start_model_metadata_fetch(agent);

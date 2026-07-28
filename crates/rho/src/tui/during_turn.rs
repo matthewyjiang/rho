@@ -508,6 +508,7 @@ impl App {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList => {
                 self.insert_entry(&Entry::Notice(
                     "that picker action is unavailable while a model turn is running".into(),
@@ -534,7 +535,8 @@ impl App {
             }
             config_picker::REFRESH_MODEL_LIST_VALUE
             | config_picker::PROVIDER_LOGIN_VALUE
-            | config_picker::PROVIDER_LOGOUT_VALUE => {
+            | config_picker::PROVIDER_LOGOUT_VALUE
+            | config_picker::SWITCH_AUTH_MODE_VALUE => {
                 self.insert_entry(&Entry::Notice(
                     "provider configuration is unavailable while a model turn is running".into(),
                 ));

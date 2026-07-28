@@ -1,6 +1,7 @@
 use std::fs;
 
 use pretty_assertions::assert_eq;
+use rho_providers::credentials::{save_openrouter_oauth_key, MemoryCredentialStore};
 
 use super::*;
 
@@ -126,6 +127,23 @@ auth = "api-key"
         None => std::env::remove_var("RHO_HOME"),
     }
     result.unwrap();
+}
+
+#[test]
+fn configured_provider_rebuild_uses_selected_auth_mode() {
+    let store = Arc::new(MemoryCredentialStore::default());
+    save_openrouter_oauth_key(store.as_ref(), "oauth-secret").unwrap();
+    let config = Config {
+        provider: "openrouter".into(),
+        model: "openai/gpt-4o".into(),
+        auth: "openrouter-oauth".into(),
+        ..Config::default()
+    };
+
+    let provider = build_provider_from_config(&config, store).unwrap();
+
+    assert_eq!(provider.identity().provider, "openrouter");
+    assert_eq!(provider.identity().model, "openai/gpt-4o");
 }
 
 #[test]

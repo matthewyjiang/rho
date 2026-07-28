@@ -97,6 +97,24 @@ fn malformed_oauth_tokens_are_not_available_auth() {
 }
 
 #[test]
+fn empty_oauth_tokens_are_not_available_auth() {
+    let store = MemoryCredentialStore::default();
+    save_xai_tokens(
+        &store,
+        &XaiTokens {
+            access_token: "  ".into(),
+            refresh_token: Some(String::new()),
+            expires_at_unix: None,
+            id_token: None,
+        },
+    )
+    .unwrap();
+
+    assert!(!provider_has_credentials(&store, "xai-oauth").unwrap());
+    assert!(!available_auth_modes(&store).contains(&"xai-oauth".into()));
+}
+
+#[test]
 fn codex_tokens_round_trip_with_optional_fields() {
     let store = MemoryCredentialStore::default();
     let tokens = CodexTokens {

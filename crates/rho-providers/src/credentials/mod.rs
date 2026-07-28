@@ -449,6 +449,10 @@ pub fn auth_has_credentials(store: &dyn CredentialStore, auth: &str) -> Credenti
     auth_mode_has_credentials(store, mode.auth_kind)
 }
 
+fn credential_value_is_usable(value: &str) -> bool {
+    !value.trim().is_empty()
+}
+
 fn auth_mode_has_credentials(
     store: &dyn CredentialStore,
     auth_kind: ProviderAuthKind,
@@ -459,12 +463,41 @@ fn auth_mode_has_credentials(
         | ProviderAuthKind::BearerCredential { account, .. } => Ok(store
             .get_secret(account)?
             .is_some_and(|key| !key.trim().is_empty())),
-        ProviderAuthKind::CodexOAuth { .. } => Ok(load_codex_tokens(store)?.is_some()),
-        ProviderAuthKind::GithubCopilotDevice { .. } => {
-            Ok(load_github_copilot_tokens(store)?.is_some())
+        ProviderAuthKind::CodexOAuth { .. } => {
+            Ok(load_codex_tokens(store)?.is_some_and(|tokens| {
+                credential_value_is_usable(&tokens.access_token)
+                    || tokens
+                        .refresh_token
+                        .as_deref()
+                        .is_some_and(credential_value_is_usable)
+            }))
         }
-        ProviderAuthKind::XaiOAuth { .. } => Ok(load_xai_tokens(store)?.is_some()),
-        ProviderAuthKind::KimiOAuth { .. } => Ok(load_kimi_tokens(store)?.is_some()),
+        ProviderAuthKind::GithubCopilotDevice { .. } => Ok(load_github_copilot_tokens(store)?
+            .is_some_and(|tokens| {
+                credential_value_is_usable(&tokens.github_access_token)
+                    || tokens
+                        .github_refresh_token
+                        .as_deref()
+                        .is_some_and(credential_value_is_usable)
+                    || tokens
+                        .copilot_token
+                        .as_deref()
+                        .is_some_and(credential_value_is_usable)
+            })),
+        ProviderAuthKind::XaiOAuth { .. } => Ok(load_xai_tokens(store)?.is_some_and(|tokens| {
+            credential_value_is_usable(&tokens.access_token)
+                || tokens
+                    .refresh_token
+                    .as_deref()
+                    .is_some_and(credential_value_is_usable)
+        })),
+        ProviderAuthKind::KimiOAuth { .. } => Ok(load_kimi_tokens(store)?.is_some_and(|tokens| {
+            credential_value_is_usable(&tokens.access_token)
+                || tokens
+                    .refresh_token
+                    .as_deref()
+                    .is_some_and(credential_value_is_usable)
+        })),
         ProviderAuthKind::OllamaDeviceKey { .. } => {
             Ok(crate::auth::ollama_device::ollama_device_credentials_available())
         }

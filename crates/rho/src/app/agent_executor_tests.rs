@@ -14,10 +14,12 @@ fn model_updates_are_shared_with_executor_clones() {
     let cloned = executor.clone();
 
     executor.update_model("openai-codex", "gpt-5.6-luna", rho_sdk::ReasoningLevel::Low);
+    executor.update_auth("codex");
 
     let config = cloned.config.read().expect("delegated config lock");
     assert_eq!(config.provider, "openai-codex");
     assert_eq!(config.model, "gpt-5.6-luna");
+    assert_eq!(config.auth, "codex");
     assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Low);
 }
 

@@ -111,6 +111,10 @@ impl SubagentManager {
         self.executor.update_model(provider, model, reasoning);
     }
 
+    pub(crate) fn update_auth(&self, auth: &str) {
+        self.executor.update_auth(auth);
+    }
+
     /// Updates the policy snapshot used by future launches. Already-spawned
     /// agents retain the mode captured when they were launched.
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {

@@ -655,6 +655,12 @@ impl InteractiveRuntime {
         Ok(report)
     }
 
+    pub(crate) fn update_inherited_auth(&self, auth: &str) {
+        if let Some(manager) = self.tools.subagents() {
+            manager.update_auth(auth);
+        }
+    }
+
     fn refresh_compaction(&mut self) -> Result<(), Error> {
         let (compactor, policy) = build_compaction(
             Arc::clone(self.provider.provider()),

@@ -131,6 +131,10 @@ impl AgentExecutor {
         config.reasoning = reasoning;
     }
 
+    pub(crate) fn update_auth(&self, auth: &str) {
+        self.config.write().expect("delegated config lock").auth = auth.to_string();
+    }
+
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {
         self.config
             .write()

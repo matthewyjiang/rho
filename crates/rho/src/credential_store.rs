@@ -180,6 +180,25 @@ pub(crate) fn configured_backend() -> CredentialResult<CredentialStoreBackend> {
     resolve_backend(read_config_backend().ok().flatten())
 }
 
+pub(crate) fn build_provider_from_config(
+    config: &Config,
+    credential_store: Arc<dyn CredentialStore>,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
+    let mut options = rho_providers::providers::ProviderBuildOptions::new(
+        &config.provider,
+        &config.model,
+        config.reasoning,
+    )?
+    .with_auth(&config.auth)?;
+    if let Some(endpoint) = config.resolved_provider_endpoint(&config.provider) {
+        options = options.endpoint(endpoint)?;
+    }
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+        credential_store,
+    );
+    rho_providers::providers::build_sdk_provider_with_source(options, &credentials)
+}
+
 pub(crate) fn build_provider(
     provider: &str,
     model: &str,

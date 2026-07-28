@@ -110,6 +110,7 @@ pub(super) enum PickerAction {
     LoginGroup,
     LoginProvider,
     LogoutProvider,
+    SwitchAuthMode,
     RefreshModelList,
     InsertSkillCommand,
     ViewAgent,
@@ -130,6 +131,7 @@ impl PickerAction {
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
@@ -150,6 +152,7 @@ impl PickerAction {
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList => true,
             PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => false,
         }
@@ -374,6 +377,7 @@ impl UiPicker {
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
+            | PickerAction::SwitchAuthMode
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode => "select",
