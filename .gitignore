@@ -3,5 +3,6 @@
 /docs/.vitepress/dist
 /docs/.vitepress/cache
 /plans
+__pycache__/
 .env
 .claude/

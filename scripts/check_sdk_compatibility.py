@@ -25,12 +25,55 @@ def run(*arguments: str, cwd: Path = ROOT) -> None:
     subprocess.run(arguments, cwd=cwd, check=True)
 
 
+def manifest_dependency_tables(manifest: dict) -> list[dict]:
+    """Return dependency tables from a package manifest."""
+    tables = [
+        manifest.get("dependencies", {}),
+        manifest.get("dev-dependencies", {}),
+        manifest.get("build-dependencies", {}),
+    ]
+    for target in manifest.get("target", {}).values():
+        tables.extend(
+            (
+                target.get("dependencies", {}),
+                target.get("dev-dependencies", {}),
+                target.get("build-dependencies", {}),
+            )
+        )
+    return tables
+
+
+def implicit_optional_dependencies(manifest: dict) -> set[str]:
+    """Find optional dependencies that Cargo would expose as implicit features."""
+    optional_dependencies = {
+        name
+        for table in manifest_dependency_tables(manifest)
+        for name, dependency in table.items()
+        if isinstance(dependency, dict) and dependency.get("optional") is True
+    }
+    explicit_dependency_features = {
+        feature.removeprefix("dep:")
+        for members in manifest.get("features", {}).values()
+        for feature in members
+        if feature.startswith("dep:")
+    }
+    return optional_dependencies - explicit_dependency_features
+
+
 def check_metadata() -> None:
     sdk = load_toml(SDK_MANIFEST)
     application = load_toml(ROOT / "crates" / "rho" / "Cargo.toml")
 
     if sdk["features"].get("default") != []:
         raise RuntimeError("rho-sdk default features must remain empty")
+
+    implicit_features = implicit_optional_dependencies(sdk)
+    if implicit_features:
+        names = ", ".join(sorted(implicit_features))
+        raise RuntimeError(
+            "rho-sdk optional dependencies must be exposed through explicit "
+            f"named features using dep:<dependency>: {names}"
+        )
 
     sdk_msrv = sdk["package"].get("rust-version")
     application_msrv = application["package"].get("rust-version")
@@ -52,19 +95,7 @@ def check_metadata() -> None:
     fixture_workspace = load_toml(DOWNSTREAM_ROOT / "Cargo.toml")
     for member in fixture_workspace["workspace"]["members"]:
         manifest = load_toml(DOWNSTREAM_ROOT / member / "Cargo.toml")
-        dependency_tables = [
-            manifest.get("dependencies", {}),
-            manifest.get("dev-dependencies", {}),
-            manifest.get("build-dependencies", {}),
-        ]
-        for target in manifest.get("target", {}).values():
-            dependency_tables.extend(
-                (
-                    target.get("dependencies", {}),
-                    target.get("dev-dependencies", {}),
-                    target.get("build-dependencies", {}),
-                )
-            )
+        dependency_tables = manifest_dependency_tables(manifest)
         dependency_names = {
             name for table in dependency_tables for name in table.keys()
         }
@@ -95,20 +126,28 @@ def check_metadata() -> None:
     print("rho-sdk compatibility metadata is valid")
 
 
+def feature_modes(features: dict[str, object]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return distinct feature modes while preserving future feature coverage."""
+    if set(features) - {"default"}:
+        return (
+            ("default and no-default features", ()),
+            ("all features", ("--all-features",)),
+        )
+    return (("default features (no named features)", ()),)
+
+
 def test_features() -> None:
-    modes = (
-        ("default features", []),
-        ("no default features", ["--no-default-features"]),
-        ("all features", ["--all-features"]),
-    )
-    for label, flags in modes:
+    sdk = load_toml(SDK_MANIFEST)
+    for label, flags in feature_modes(sdk.get("features", {})):
         print(f"Testing rho-sdk with {label}", flush=True)
         run(
             "cargo",
             "test",
             "-p",
             "rho-sdk",
-            "--all-targets",
+            "--lib",
+            "--tests",
+            "--examples",
             "--locked",
             *flags,
         )

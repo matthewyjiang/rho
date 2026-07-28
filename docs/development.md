@@ -16,6 +16,32 @@ cargo run -- run "summarize this repository"
 
 Use the local binary to test the [interactive TUI](/interactive-tui), [automation mode](/automation-cli), [configuration](/configuration), and [tools](/tools-workspace) behavior while developing.
 
+## Local validation
+
+Use the fast workflow while editing. It always checks formatting and architecture, then checks one package without compiling every target:
+
+```bash
+python3 scripts/validate.py fast --package rho-sdk
+```
+
+You can add a library test, an integration test, or a test-name filter:
+
+```bash
+python3 scripts/validate.py fast --package rho-sdk --lib
+python3 scripts/validate.py fast --package rho-coding-agent --test automation_cli
+python3 scripts/validate.py fast --package rho-coding-agent --test automation_cli --filter streams_json_events
+```
+
+Run the full workflow before opening or updating a pull request:
+
+```bash
+python3 scripts/validate.py full
+```
+
+The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, and the SDK feature and downstream checks. It stops at the first failure. Both modes cap Cargo at 12 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect.
+
+Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
+
 ## Interactive TUI PTY harness
 
 Rho includes a deterministic PTY harness in `crates/rho-tui-pty` for automated interactive TUI tests. Prefer it over manual Herdr smoke tests for regressions that can be expressed as scripted scenarios.

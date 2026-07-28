@@ -9,8 +9,6 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-echo "Verifying rho-sdk package"
-cargo package --locked -p rho-sdk
 echo "Verifying rho-sdk publish preparation"
 cargo publish --dry-run --locked -p rho-sdk
 
