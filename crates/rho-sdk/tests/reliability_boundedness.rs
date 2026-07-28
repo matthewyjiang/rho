@@ -18,12 +18,14 @@ use rho_sdk::{
     CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error, Rho,
     RunEvent, SessionOptions, SessionState, StopReason, UserInput,
 };
+use tokio::sync::Notify;
 
 use support::{identity, text_response, tool_call_response, LargeOutputTool, TEST_TIMEOUT};
 
 #[derive(Clone)]
 struct DropsContextTool {
     polls: Arc<AtomicUsize>,
+    release: Arc<Notify>,
 }
 
 impl Tool for DropsContextTool {
@@ -41,12 +43,15 @@ impl Tool for DropsContextTool {
 
     fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
         let polls = Arc::clone(&self.polls);
+        let release = Arc::clone(&self.release);
         Box::pin(async move {
-            let sleep = tokio::time::sleep(std::time::Duration::from_millis(100));
-            tokio::pin!(sleep);
+            // Drop context immediately, then wait on an explicit signal so poll
+            // pressure is measurable without wall-clock sleep synchronization.
+            let wait = release.notified();
+            tokio::pin!(wait);
             std::future::poll_fn(|context| {
                 polls.fetch_add(1, Ordering::Relaxed);
-                sleep.as_mut().poll(context)
+                wait.as_mut().poll(context)
             })
             .await;
             Ok(ToolOutput::text("finished"))
@@ -87,10 +92,12 @@ async fn closed_tool_context_channels_do_not_busy_poll_the_tool_future() {
         ],
     );
     let polls = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(Notify::new());
     let runtime = Rho::builder()
         .provider(provider)
         .tool(DropsContextTool {
             polls: Arc::clone(&polls),
+            release: Arc::clone(&release),
         })
         .build()
         .unwrap();
@@ -100,24 +107,33 @@ async fn closed_tool_context_channels_do_not_busy_poll_the_tool_future() {
         .await
         .unwrap();
     let mut metadata_seen = false;
-    while let Some(event) = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
-        .await
-        .expect("tool with dropped context stalled")
-    {
-        if let RunEvent::ToolStarted { metadata, .. } = event {
-            metadata_seen = matches!(
-                metadata.operation_kind(),
-                Some(OperationKind::Other(kind)) if kind == "reliability_test"
-            );
+    loop {
+        let event = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
+            .await
+            .expect("tool with dropped context stalled");
+        match event {
+            Some(RunEvent::ToolStarted { metadata, .. }) => {
+                metadata_seen = matches!(
+                    metadata.operation_kind(),
+                    Some(OperationKind::Other(kind)) if kind == "reliability_test"
+                );
+                // Give a busy-polling runtime many chances to spin before release.
+                for _ in 0..64 {
+                    tokio::task::yield_now().await;
+                }
+                assert!(
+                    polls.load(Ordering::Relaxed) < 100,
+                    "closed context channels caused excessive tool polling"
+                );
+                release.notify_one();
+            }
+            Some(_) => {}
+            None => break,
         }
     }
 
     assert_eq!(run.outcome().await.unwrap().text(), "done");
     assert!(metadata_seen, "tool start metadata was not propagated");
-    assert!(
-        polls.load(Ordering::Relaxed) < 100,
-        "closed context channels caused excessive tool polling"
-    );
     assert_eq!(session.state(), SessionState::Completed);
     assert!(!session.is_running());
 }

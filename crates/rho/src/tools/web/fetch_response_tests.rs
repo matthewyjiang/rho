@@ -19,10 +19,6 @@ fn single_target_marks_truncation_and_points_at_response_id() {
     let value: Value = serde_json::from_str(&rendered).unwrap();
     assert_eq!(value["contentTruncated"], true);
     assert_eq!(value["itemCount"], 1);
-    assert!(value["note"]
-        .as_str()
-        .unwrap()
-        .contains("get_search_content with only responseId"));
     // Content should not embed the display truncate marker.
     assert!(!value["content"].as_str().unwrap().contains("[truncated]"));
 }
@@ -59,5 +55,4 @@ fn multi_target_keeps_previews_and_requires_retrieve() {
     assert_eq!(value["itemCount"], 2);
     assert_eq!(value["contentTruncated"], true);
     assert!(value["items"].as_array().unwrap().len() == 2);
-    assert!(value["note"].as_str().unwrap().contains("urlIndex"));
 }

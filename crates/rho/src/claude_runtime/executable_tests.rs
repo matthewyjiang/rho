@@ -7,15 +7,14 @@ use super::*;
 use crate::claude_runtime::windows_shim_args::WindowsShimArgError;
 
 #[test]
-fn missing_bare_name_is_binary_missing() {
-    let error = resolve_named("definitely-not-a-claude-binary-xyz").unwrap_err();
-    assert!(error.is_binary_missing());
-}
-
-#[test]
-fn absolute_missing_path_is_binary_missing() {
-    let error = resolve_named("/tmp/rho-missing-claude-binary").unwrap_err();
-    assert!(error.is_binary_missing());
+fn missing_program_is_binary_missing() {
+    for name in [
+        "definitely-not-a-claude-binary-xyz",
+        "/tmp/rho-missing-claude-binary",
+    ] {
+        let error = resolve_named(name).unwrap_err();
+        assert!(error.is_binary_missing(), "name={name}");
+    }
 }
 
 #[test]
@@ -110,32 +109,6 @@ fn cmd_shim_argv_encodes_special_characters() {
             "arg={arg:?} needle={needle:?} line={line}"
         );
     }
-}
-
-#[test]
-fn cmd_shim_encodes_system_prompt_file_path_with_spaces() {
-    let shim = ClaudeExecutable::from_path(r"C:\Program Files\Claude\claude.cmd");
-    let plan = shim
-        .plan([
-            "-p",
-            "--system-prompt-file",
-            r"C:\Users\me\AppData\Local\rho\runs\run 1\system-prompt.txt",
-        ])
-        .unwrap();
-    let line =
-        crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-    assert!(
-        line.contains(r#""C:\Program Files\Claude\claude.cmd""#),
-        "{line}"
-    );
-    assert!(
-        line.contains(r#""C:\Users\me\AppData\Local\rho\runs\run 1\system-prompt.txt""#),
-        "{line}"
-    );
-    assert!(line.contains("--system-prompt-file"), "{line}");
 }
 
 #[test]

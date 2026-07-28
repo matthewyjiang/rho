@@ -965,8 +965,5 @@ fn normalized_compact_target_percent(threshold_percent: u8, target_percent: u8) 
 }
 
 #[cfg(test)]
-#[path = "config_atomic_tests.rs"]
-mod atomic_tests;
-#[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;

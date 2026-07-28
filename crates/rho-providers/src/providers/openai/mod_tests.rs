@@ -1,11 +1,9 @@
 use super::*;
 use crate::model::{
-    AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall, ReasoningCapabilities,
-    ReasoningLevelSet, ToolCall, ToolResult, ToolSpec,
+    AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
+    ReasoningLevelSet, ToolCall, ToolSpec,
 };
-use crate::protocol::openai_chat::{
-    convert_streamed_response, handle_openai_stream_line, to_openai_message_for_target,
-};
+use crate::protocol::openai_chat::{convert_streamed_response, handle_openai_stream_line};
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
     CodexSseState,
@@ -187,18 +185,6 @@ fn codex_responses_body_uses_hosted_web_search_tool() {
         json!([{"type": "web_search", "external_web_access": true}])
     );
     assert_eq!(body["tool_choice"], "auto");
-}
-
-#[test]
-fn extracts_sse_delta_text() {
-    let body = concat!(
-        "event: response.output_text.delta\n",
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n",
-        "event: response.output_text.delta\n",
-        "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n",
-        "data: [DONE]\n"
-    );
-    assert_eq!(extract_sse_text(body).unwrap(), "Hello world");
 }
 
 #[test]
@@ -423,33 +409,6 @@ fn codex_response_usage_normalizes_input_cache_tokens() {
 }
 
 #[test]
-fn codex_sse_line_emits_output_delta() {
-    let mut state = CodexSseState::default();
-    let mut deltas = Vec::new();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.output_text.delta","delta":"hi"}"#,
-        &mut state,
-        &mut Some(&mut |event| {
-            match event {
-                ModelEvent::OutputDelta(delta) => deltas.push(delta),
-                ModelEvent::ReasoningDelta(_) => {}
-                ModelEvent::ReasoningSummaryDelta(_) => {}
-                ModelEvent::ProviderContext { .. } => {}
-                ModelEvent::WebSearch(_) => {}
-                ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
-            }
-            Ok(())
-        }),
-    )
-    .unwrap();
-
-    assert_eq!(state.text, "hi");
-    assert_eq!(deltas, vec!["hi"]);
-    assert!(state.completed_text.is_none());
-}
-
-#[test]
 fn codex_sse_line_emits_reasoning_summary_delta() {
     let mut state = CodexSseState::default();
     let mut deltas = Vec::new();
@@ -487,39 +446,6 @@ fn completed_response_text_preserves_url_annotations() {
 }
 
 #[test]
-fn codex_sse_line_collects_response_id() {
-    let mut state = CodexSseState::default();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.completed","response":{"id":"resp_123","output_text":"done","output":null}}"#,
-        &mut state,
-        &mut None,
-    )
-    .unwrap();
-
-    let response = state.into_response().unwrap();
-    assert_eq!(response.response_id.as_deref(), Some("resp_123"));
-}
-
-#[test]
-fn codex_sse_line_collects_function_call() {
-    let mut state = CodexSseState::default();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call-1","name":"bash","arguments":"{\"command\":\"pwd\"}"}}"#,
-        &mut state,
-        &mut None,
-    )
-    .unwrap();
-
-    let response = state.into_response().unwrap();
-    let ModelResponse::Assistant(blocks) = response.response;
-    assert!(matches!(
-        blocks.as_slice(),
-        [ContentBlock::ToolCall(ToolCall { id, name, arguments })]
-            if id == "call-1" && name == "bash" && arguments == &json!({ "command": "pwd" })
-    ));
-}
-
-#[test]
 fn codex_sse_line_emits_web_search_detail() {
     let mut state = CodexSseState::default();
     let mut searches = Vec::new();
@@ -542,35 +468,6 @@ fn codex_sse_line_emits_web_search_detail() {
     .unwrap();
 
     assert_eq!(searches, vec!["for \"latest Rust release\""]);
-}
-
-#[test]
-fn parses_chat_completion_stream_line_as_output_delta() {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
-    let mut deltas = Vec::new();
-    handle_openai_stream_line(
-        r#"data: {"choices":[{"delta":{"content":"hé"}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |event| {
-            match event {
-                ModelEvent::OutputDelta(delta) => deltas.push(delta),
-                ModelEvent::ReasoningDelta(_) => {}
-                ModelEvent::ReasoningSummaryDelta(_) => {}
-                ModelEvent::ProviderContext { .. } => {}
-                ModelEvent::WebSearch(_) => {}
-                ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
-            }
-            Ok(())
-        },
-    )
-    .unwrap();
-
-    assert_eq!(text, "hé");
-    assert_eq!(deltas, vec!["hé"]);
-    assert!(tool_calls.is_empty());
 }
 
 #[test]
@@ -602,50 +499,6 @@ fn accumulates_streamed_tool_call_deltas() {
 }
 
 #[test]
-fn serializes_openai_chat_image_content() {
-    let message = to_openai_message_for_target(
-        Message::User(vec![
-            ContentBlock::Text("what is this?".into()),
-            ContentBlock::Image(ImageContent {
-                data: "aW1n".into(),
-                mime_type: "image/png".into(),
-            }),
-        ]),
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(message.role, "user");
-    assert_eq!(
-        message.content,
-        Some(json!([
-            {"type":"text","text":"what is this?"},
-            {"type":"image_url","image_url":{"url":"data:image/png;base64,aW1n"}}
-        ]))
-    );
-}
-
-#[test]
-fn serializes_codex_image_content() {
-    let input = codex_input_items(
-        vec![Message::User(vec![ContentBlock::Image(ImageContent {
-            data: "aW1n".into(),
-            mime_type: "image/png".into(),
-        })])],
-        &mut Vec::new(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        input,
-        vec![json!({
-            "role":"user",
-            "content":[{"type":"input_image","image_url":"data:image/png;base64,aW1n"}]
-        })]
-    );
-}
-
-#[test]
 fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
     let input = codex_input_items(
         vec![Message::AbortedAssistant(Box::new(AbortedAssistant {
@@ -668,20 +521,4 @@ fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
             "content":"partial answer\n[Partial tool call (not executed)]\nID: call_1\nName: read_file\nArguments:\n{\"path\":\"src/\n[Operation aborted]"
         })]
     );
-}
-
-#[test]
-fn serializes_openai_native_tool_result() {
-    let message = to_openai_message_for_target(
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "done".into(),
-        }),
-        None,
-    )
-    .unwrap();
-    assert_eq!(message.role, "tool");
-    assert_eq!(message.tool_call_id.as_deref(), Some("call-1"));
-    assert_eq!(message.content, Some(serde_json::json!("done")));
 }

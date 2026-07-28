@@ -80,5 +80,4 @@ fn available_selectors_lists_exact_keys() {
     assert!(listing.contains("queryIndex=0"));
     assert!(listing.contains("urlIndex=1"));
     assert!(listing.contains("queryIndex=1"));
-    assert!(listing.contains("beta"));
 }

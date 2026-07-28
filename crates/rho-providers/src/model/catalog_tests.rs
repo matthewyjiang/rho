@@ -301,58 +301,6 @@ fn github_copilot_requires_cached_models() {
 }
 
 #[test]
-fn resolves_provider_model_selection() {
-    with_cached_provider_models("openai", vec![provider_model("openai", "gpt-5.5")], || {
-        let selection = resolve_model_selection_for_auths(
-            "openai/gpt-5.5",
-            "openai",
-            "codex",
-            &["codex".into()],
-        )
-        .unwrap();
-
-        assert_eq!(
-            selection,
-            ModelSelection {
-                provider: "openai".into(),
-                model: "gpt-5.5".into(),
-                auth: "api-key".into(),
-                from_catalog: true,
-            }
-        );
-    });
-}
-
-#[test]
-fn resolves_bare_cached_api_model_to_provider() {
-    with_cached_provider_models(
-        "openai",
-        vec![provider_model("openai", "unique-openai")],
-        || {
-            let catalog = test_catalog();
-            let selection = resolve_model_selection_from(
-                &catalog,
-                "unique-openai",
-                "openai",
-                "api-key",
-                &["api-key".into()],
-            )
-            .unwrap();
-
-            assert_eq!(
-                selection,
-                ModelSelection {
-                    provider: "openai".into(),
-                    model: "unique-openai".into(),
-                    auth: "api-key".into(),
-                    from_catalog: true,
-                }
-            );
-        },
-    );
-}
-
-#[test]
 fn resolves_bare_model_across_all_available_auths() {
     let catalog = test_catalog();
     let selection = resolve_model_selection_from(

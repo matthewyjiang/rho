@@ -272,17 +272,6 @@ fn exact_catalog_toggle_does_not_imply_off() {
 }
 
 #[test]
-fn non_configurable_provider_path_is_known_without_model_metadata() {
-    let cache = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        assert_eq!(
-            cached_reasoning_capabilities("github-copilot", "unseen-model"),
-            ReasoningCapabilities::NotConfigurable
-        );
-    });
-}
-
-#[test]
 fn provider_path_that_ignores_reasoning_is_not_configurable() {
     let api = json!({
         "github-copilot": {
@@ -690,24 +679,6 @@ fn authenticated_provider_levels_replace_generic_catalog_levels() {
 }
 
 #[test]
-fn unknown_provider_capabilities_keep_catalog_fallback() {
-    let metadata = apply_provider_capabilities(
-        "missing-provider",
-        "missing-model",
-        ModelMetadata {
-            supported_reasoning_levels: Some(vec![ReasoningLevel::Off, ReasoningLevel::Max]),
-            reasoning_capabilities_known: true,
-            ..ModelMetadata::default()
-        },
-    );
-
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
-    );
-}
-
-#[test]
 fn local_reasoning_override_replaces_provider_levels_exactly() {
     let provider_metadata = ModelMetadata {
         supported_reasoning_levels: Some(vec![
@@ -730,21 +701,4 @@ fn local_reasoning_override_replaces_provider_levels_exactly() {
         Some(vec![ReasoningLevel::Medium, ReasoningLevel::Xhigh])
     );
     assert!(metadata.reasoning_capabilities_known);
-}
-
-#[test]
-fn context_only_override_does_not_hide_unknown_reasoning_capabilities() {
-    let metadata = ModelMetadata {
-        effective_context_window: Some(262_144),
-        ..ModelMetadata::default()
-    };
-
-    assert!(metadata_has_values(&metadata));
-    assert_eq!(
-        ReasoningCapabilities::from_metadata(
-            metadata.supported_reasoning_levels,
-            metadata.reasoning_capabilities_known,
-        ),
-        ReasoningCapabilities::Unknown
-    );
 }

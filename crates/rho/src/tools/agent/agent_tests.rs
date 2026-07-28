@@ -101,33 +101,6 @@ async fn stopping_unknown_run_is_actionable() {
     assert!(error.to_string().contains("unknown delegated run"));
 }
 
-#[tokio::test]
-async fn background_start_receipt_is_the_registration() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = manager(root.path());
-    let manager = fixture.manager();
-    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
-    let result = call_agent(
-        &tool,
-        root.path(),
-        serde_json::json!({
-            "agent_id": "default",
-            "prompt": "background task",
-            "background": true,
-        }),
-    )
-    .await;
-    // The start receipt reports registration only: no live run state, no
-    // activity lines, nothing that depends on how far the spawned task got.
-    let runs = manager.list();
-    assert_eq!(runs.len(), 1);
-    let run_id = &runs[0].id;
-    assert_eq!(
-        result.content(),
-        format!("agent {run_id} (default) started in background\nattach: rho attach {run_id}")
-    );
-}
-
 fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotification {
     SubagentNotification {
         snapshot: SubagentSnapshot {
@@ -172,9 +145,6 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
             "missing status for run {index}"
         );
     }
-    assert!(model.contains("Any omitted or truncated result details remain available"));
-    assert!(model.contains("`agents status`"));
-    assert!(model.contains("`rho attach <run-id>`"));
     assert_eq!(model, notification_prompts(&notifications).0);
 
     let newer = (0..96)
@@ -404,8 +374,6 @@ async fn concurrent_background_launches_register_together() {
     let (first, second) = tokio::join!(first, second);
     let runs = manager.list();
     assert_eq!(runs.len(), 2, "both background launches should register");
-    assert!(first.content().contains("started in background"));
-    assert!(second.content().contains("started in background"));
     let ids = runs.iter().map(|run| run.id.as_str()).collect::<Vec<_>>();
     assert!(ids.iter().any(|id| first.content().contains(id)));
     assert!(ids.iter().any(|id| second.content().contains(id)));

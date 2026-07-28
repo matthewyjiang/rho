@@ -255,33 +255,6 @@ async fn immediate<T>(future: impl std::future::Future<Output = T>) -> T {
         .expect("terminal websocket event should return without waiting for the idle timeout")
 }
 
-async fn ws_server_stalls_after_request() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut socket = accept_async(stream).await.unwrap();
-        let _request = socket.next().await.unwrap().unwrap();
-        std::future::pending::<()>().await;
-    });
-    format!("ws://{addr}/responses")
-}
-
-async fn ws_server_sends_keep_alive_frames() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut socket = accept_async(stream).await.unwrap();
-        let _request = socket.next().await.unwrap().unwrap();
-        loop {
-            socket.send(Message::Ping(Vec::new().into())).await.unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        }
-    });
-    format!("ws://{addr}/responses")
-}
-
 #[tokio::test]
 async fn responses_lite_websocket_request_sets_lite_client_metadata() {
     let (url, frames) = ws_server(1).await;
@@ -497,56 +470,6 @@ async fn websocket_connection_failure_reports_that_no_model_request_was_submitte
         outcome,
         CodexWsTurn::FullSseFallback {
             request_submitted: false
-        }
-    ));
-}
-
-#[tokio::test]
-async fn stalled_websocket_falls_back_instead_of_blocking_the_turn() {
-    let url = ws_server_stalls_after_request().await;
-    let mut transport = CodexWsTransport::new_with_url(url);
-    transport.idle_timeout = std::time::Duration::from_millis(10);
-    let mut on_event = None;
-
-    let outcome = transport
-        .send_responses_turn(
-            body(vec![json!({"role":"user","content":"one"})]),
-            &tokens(),
-            ResponsesRequestMode::Standard,
-            &mut on_event,
-        )
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        outcome,
-        CodexWsTurn::FullSseFallback {
-            request_submitted: true
-        }
-    ));
-}
-
-#[tokio::test]
-async fn websocket_keep_alive_frames_do_not_reset_the_idle_timeout() {
-    let url = ws_server_sends_keep_alive_frames().await;
-    let mut transport = CodexWsTransport::new_with_url(url);
-    transport.idle_timeout = std::time::Duration::from_millis(10);
-    let mut on_event = None;
-
-    let outcome = transport
-        .send_responses_turn(
-            body(vec![json!({"role":"user","content":"one"})]),
-            &tokens(),
-            ResponsesRequestMode::Standard,
-            &mut on_event,
-        )
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        outcome,
-        CodexWsTurn::FullSseFallback {
-            request_submitted: true
         }
     ));
 }

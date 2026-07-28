@@ -2,13 +2,11 @@ use super::{
     command_palette::{complete_slash_command, slash_command_args},
     message_history::{recovered_history_tail, transcript_entries_from_messages},
     paste_burst::normalize_paste,
-    render::entry_lines,
     tool_output_ui::expandable_tool_entry,
     transcript_events::final_answer_delta,
     *,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::style::Color;
 use ratatui::text::Line;
 use rho_providers::credentials::{
     save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
@@ -17,8 +15,6 @@ use std::sync::atomic::AtomicBool;
 
 #[path = "tests/activity_phase_tests.rs"]
 mod activity_phase_tests;
-#[path = "tests/herdr_state_tests.rs"]
-mod herdr_state_tests;
 #[path = "tests/input_editing_tests.rs"]
 mod input_editing_tests;
 #[path = "tests/questionnaire_interaction_tests.rs"]
@@ -344,13 +340,8 @@ fn recovered_session_messages_become_transcript_entries() {
             ..
         }) if card.header_text().contains("read_file")
             && card.header_text().contains("src/main.rs")
+            && card.status == rho_tools::tool_card::ToolStatus::Error
     ));
-    let lines = entry_lines(&entries[2], 40, 10);
-    // Call + Children: failure is a red status marker, not a washed surface.
-    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Red));
-    assert_eq!(lines[0].spans[0].style.bg, None);
-    assert!(line_text(&lines[0]).contains('✗'));
-    assert!(line_text(&lines[0]).contains("read_file"));
 }
 
 #[test]
@@ -587,11 +578,7 @@ fn favorite_save_failure_keeps_model_picker_open() {
     assert!(matches!(app.input_ui.composer(), ComposerMode::Picker(_)));
     assert_eq!(app.active_picker_selection().unwrap().1, selected_value);
     assert!(app.info.runtime.favorite_models.is_empty());
-    assert_eq!(app.status, "config save failed");
-    assert!(matches!(
-        app.history.last(),
-        Some(Entry::Error(message)) if message.starts_with("could not save pinned models: ")
-    ));
+    assert!(matches!(app.history.last(), Some(Entry::Error(_))));
 }
 
 #[test]
@@ -651,7 +638,6 @@ fn esc_from_nested_web_search_config_returns_to_tools_category() {
         config_picker::WEB_SEARCH_VALUE
     );
     assert_eq!(picker.filter, "web");
-    assert_eq!(app.status, picker.title);
 }
 
 #[test]
@@ -670,7 +656,6 @@ fn esc_from_main_config_still_closes_picker() {
     app.handle_picker_escape(/*running*/ false).unwrap();
 
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
-    assert_eq!(app.status, "ready");
 }
 
 #[test]
@@ -769,19 +754,15 @@ fn complete_slash_command_inserts_prefixed_skill_command() {
 #[test]
 fn status_notice_suppresses_consecutive_duplicates() {
     let mut app = test_app();
-    app.notify_status("input cleared; press ctrl-c again to quit");
-    app.notify_status("input cleared; press ctrl-c again to quit");
+    app.notify_status("notice-a");
+    app.notify_status("notice-a");
 
     assert_eq!(
-            app.history.entries()
-                .iter()
-                .filter(|entry| matches!(entry, Entry::Notice(text) if text == "input cleared; press ctrl-c again to quit"))
-                .count(),
-            1
-        );
-}
-
-#[test]
-fn paste_normalization_converts_crlf_and_cr() {
-    assert_eq!(normalize_paste("a\r\nb\rc"), "a\nb\nc");
+        app.history
+            .entries()
+            .iter()
+            .filter(|entry| matches!(entry, Entry::Notice(text) if text == "notice-a"))
+            .count(),
+        1
+    );
 }

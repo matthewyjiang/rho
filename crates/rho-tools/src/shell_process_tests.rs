@@ -116,12 +116,11 @@ async fn read_stream_stops_when_consumer_disconnects() {
     let (mut writer, reader) = tokio::io::duplex(1024);
     let reader_task = tokio::spawn(read_stream(StreamKind::Stdout, reader, tx));
     // Keep the write side open so the reader only exits because send fails,
-    // not because the duplex peer closed.
+    // not because the duplex peer closed. One write is enough to surface the
+    // failed channel send; abort if the writer blocks on a full duplex buffer.
     let writer_task = tokio::spawn(async move {
-        for _ in 0..32 {
-            let _ = writer.write_all(&[b'x'; 256]).await;
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        let _ = writer.write_all(&[b'x'; 256]).await;
+        std::future::pending::<()>().await;
     });
 
     tokio::time::timeout(Duration::from_secs(2), reader_task)

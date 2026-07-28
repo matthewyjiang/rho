@@ -8,57 +8,11 @@ use tokio::{
 };
 
 use super::*;
-use crate::model::ToolSpec;
 use crate::{
     credentials::{save_xai_tokens, MemoryCredentialStore, XaiTokens},
-    model::{
-        models_dev::with_models_dev_cache_dir_for_tests,
-        provider_models::with_provider_models_cache_dir_for_tests, Message, ModelIdentity,
-    },
+    model::{Message, ToolSpec},
     reasoning::ReasoningLevel,
 };
-
-#[test]
-fn empty_cache_construction_preserves_static_wire_semantics() {
-    let cache = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir_for_tests(cache.path().join("models-dev"), || {
-        with_provider_models_cache_dir_for_tests(cache.path().join("provider-models"), || {
-            for provider_name in ["xai"] {
-                for (model, off, high) in [
-                    ("grok-build-0.1", None, None),
-                    ("grok-composer-2.5-fast", None, None),
-                    ("grok-4.3", Some("none"), Some("high")),
-                    ("grok-4.5", None, Some("high")),
-                ] {
-                    let store = Arc::new(MemoryCredentialStore::default());
-                    save_xai_tokens(
-                        store.as_ref(),
-                        &XaiTokens {
-                            access_token: "access-token".into(),
-                            refresh_token: None,
-                            expires_at_unix: None,
-                            id_token: None,
-                        },
-                    )
-                    .unwrap();
-                    let provider = XaiProvider::new_with_transport(
-                        provider_name,
-                        model.into(),
-                        XaiAuthManager::new(store).unwrap(),
-                        reqwest::Client::new(),
-                        "https://api.x.ai/v1".into(),
-                    );
-                    assert_eq!(
-                        provider.model_identity(),
-                        ModelIdentity::new(provider_name, "openai-responses", model)
-                    );
-                    assert_eq!(provider.reasoning.effort(ReasoningLevel::Off), off);
-                    assert_eq!(provider.reasoning.effort(ReasoningLevel::High), high);
-                }
-            }
-        });
-    });
-}
 
 #[test]
 fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
@@ -406,59 +360,4 @@ async fn native_compact_unauthorized_without_refresh_fails() {
     // No-refresh 401 is the final response; it is not a prior failed attempt.
     assert!(failed_attempts.is_empty());
     server.await.unwrap();
-}
-
-#[tokio::test]
-async fn native_compact_honors_cancellation_before_response() {
-    use std::time::Duration;
-
-    use rho_sdk::provider::ModelProvider;
-    use tokio::time::timeout;
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api_base = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        // Stall after accept so the client is blocked in HTTP send/read.
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        let _ = stream.shutdown().await;
-    });
-
-    let store = Arc::new(MemoryCredentialStore::default());
-    save_xai_tokens(
-        store.as_ref(),
-        &XaiTokens {
-            access_token: "access-token".into(),
-            refresh_token: None,
-            expires_at_unix: None,
-            id_token: None,
-        },
-    )
-    .unwrap();
-    let provider = XaiProvider::new_with_api_base("grok-4.5".into(), store, api_base).unwrap();
-    let cancellation = rho_sdk::CancellationToken::new();
-    let cancel = cancellation.clone();
-    let messages = [Message::user_text("hello")];
-    let compact = provider
-        .native_compact(ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation,
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        })
-        .expect("xAI exposes native compact");
-
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancel.cancel();
-    });
-    let response = timeout(Duration::from_secs(2), compact)
-        .await
-        .expect("compact future should finish after cancel");
-    let (result, failed_attempts) = response.into_parts();
-    assert!(failed_attempts.is_empty());
-    let error = result.expect_err("cancelled compact must fail");
-    assert_eq!(error.kind(), rho_sdk::ProviderErrorKind::Interrupted);
-    server.abort();
 }

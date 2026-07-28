@@ -332,10 +332,8 @@ async fn cancellation_during_send_returns_interrupted() {
         let (mut stream, _) = listener.accept().await.unwrap();
         let _ = read_http_request(&mut stream).await;
         server_accepted.notify_one();
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        let _ = stream
-            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
-            .await;
+        // Hold the accepted connection open until the client cancels.
+        std::future::pending::<()>().await;
     });
 
     let client = reqwest::Client::new();

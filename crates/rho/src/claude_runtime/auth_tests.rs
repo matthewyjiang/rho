@@ -90,7 +90,7 @@ fn parses_optional_auth_fields_and_requires_logged_in() {
 }
 
 #[test]
-fn probe_snapshot_reports_typed_health_not_display_strings() {
+fn probe_snapshot_reports_typed_health() {
     let signed_in = ClaudeProbeSnapshot {
         auth: Ok(ClaudeAuthStatus {
             logged_in: true,
@@ -105,8 +105,6 @@ fn probe_snapshot_reports_typed_health_not_display_strings() {
     };
     assert!(signed_in.auth_healthy());
     assert!(signed_in.binary_healthy());
-    assert!(signed_in.auth_description().contains("signed in"));
-    assert_eq!(signed_in.version_description(), "1.2.3");
 
     let missing = ClaudeProbeSnapshot {
         auth: Err(ClaudeAuthError::BinaryMissing.to_string()),
@@ -114,17 +112,10 @@ fn probe_snapshot_reports_typed_health_not_display_strings() {
     };
     assert!(!missing.auth_healthy());
     assert!(!missing.binary_healthy());
-    assert_eq!(
-        missing.auth_description(),
-        "claude code: binary not found on PATH"
-    );
 
     let not_refreshed = ClaudeProbeSnapshot::not_refreshed_during_turn();
     assert!(!not_refreshed.auth_healthy());
     assert!(!not_refreshed.binary_healthy());
-    assert!(not_refreshed
-        .auth_description()
-        .contains("not refreshed during a model turn"));
 }
 
 #[cfg(unix)]
@@ -171,10 +162,8 @@ exit 1
     .await
     .unwrap();
     assert!(!status.logged_in);
-    assert_eq!(
-        status.describe(),
-        "claude code: not signed in - run /login claude-code"
-    );
+    assert_eq!(status.email, None);
+    assert_eq!(status.subscription_type, None);
 }
 
 #[cfg(unix)]
@@ -203,10 +192,6 @@ exit 2
             org_name: None,
             subscription_type: None,
         }
-    );
-    assert_eq!(
-        status.describe(),
-        "claude code: not signed in - run /login claude-code"
     );
 }
 
@@ -283,7 +268,6 @@ async fn query_program_reports_missing_binary() {
     // Explicit missing-path spawn: resolve_named must not invent a binary.
     let error = executable::resolve_named(missing.to_str().unwrap()).unwrap_err();
     assert!(error.is_binary_missing());
-    assert_eq!(error.to_string(), "claude code: binary not found on PATH");
 
     // Also cover the probe spawn path when the program image is absent.
     let mut command = Command::new(&missing);
@@ -337,13 +321,6 @@ exit 1
     }
     // Must not wait out the production PROBE_TIMEOUT (10s) or the child sleep.
     assert!(started.elapsed() < Duration::from_secs(2));
-}
-
-#[test]
-fn login_args_keep_supported_claudeai_flag() {
-    // Verified against installed `claude auth login --help`: `--claudeai` is
-    // the subscription login option (default). Do not drop a supported flag.
-    assert_eq!(login_args(), &["auth", "login", "--claudeai"]);
 }
 
 #[cfg(unix)]

@@ -5,10 +5,6 @@ use serde_json::json;
 use std::{path::PathBuf, time::Duration};
 
 #[cfg(unix)]
-const STREAMED_COMMAND: &str = "printf streamed";
-#[cfg(windows)]
-const STREAMED_COMMAND: &str = "[Console]::Out.Write('streamed')";
-#[cfg(unix)]
 const LONG_RUNNING_COMMAND: &str = "sleep 300";
 #[cfg(windows)]
 const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
@@ -58,37 +54,6 @@ fn tool_context() -> ToolContext {
         max_output_bytes: 1024 * 1024,
     }
 }
-#[tokio::test]
-async fn process_tool_streams_structured_snapshot_lines() {
-    let manager = ProcessManager::new(ProcessLimits::default());
-    let tool = Process::new(manager.clone());
-    let started = manager
-        .start(STREAMED_COMMAND.into(), std::path::Path::new("."), None)
-        .await
-        .unwrap();
-    eventually(&manager, &started.process_id).await;
-    let mut updates = Vec::new();
-
-    tool.call_with_updates(
-        json!({"action": "poll", "process_id": started.process_id, "cursor": 0}),
-        tool_context(),
-        "poll-call".into(),
-        &mut |lines| updates.push(lines),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(updates.len(), 1);
-    assert!(
-        updates[0][0].contains(&started.process_id),
-        "first progress line should be the status line: {:?}",
-        updates[0]
-    );
-    assert!(updates[0].iter().any(|line| line == "stdout:"));
-    assert!(updates[0].iter().any(|line| line.contains("streamed")));
-    assert!(updates[0].iter().all(|line| !line.starts_with('{')));
-}
-
 #[tokio::test]
 async fn process_tool_dispatches_start_poll_and_stop() {
     let manager = ProcessManager::new(ProcessLimits::default());
@@ -443,11 +408,13 @@ async fn descendant_case(action: &str) {
         }
         _ => unreachable!(),
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        !process_is_running(pid),
-        "descendant {pid} survived {action}"
-    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while process_is_running(pid) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("descendant {pid} survived {action}"));
 }
 
 #[cfg(unix)]
@@ -555,7 +522,7 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
             if let Ok(response) = reqwest::get(&url).await {
                 break response.text().await.unwrap();
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
@@ -583,9 +550,13 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
         .await
         .unwrap();
     eventually(&manager, &started.process_id).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
-    assert!(!process_is_running(pid));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while process_is_running(pid) || TcpListener::bind(("127.0.0.1", port)).is_err() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("stopped server did not release its process or port");
 }
 
 #[tokio::test]

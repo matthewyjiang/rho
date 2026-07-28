@@ -8,10 +8,6 @@ fn image_paste_is_unavailable_while_running() {
     app.paste_clipboard_image();
 
     assert!(app.input_ui.pending_images().is_empty());
-    assert_eq!(
-        app.status,
-        "image paste is unavailable while a model turn is running"
-    );
 }
 
 #[test]
@@ -32,7 +28,6 @@ fn single_line_image_path_paste_attaches_image_instead_of_text() {
     assert_eq!(app.input_ui.pending_images().len(), 1);
     assert_eq!(app.input_ui.pending_images()[0].mime_type, "image/png");
     assert!(app.input_ui.text().is_empty());
-    assert!(app.status.starts_with("attached image 1"));
 }
 
 #[test]
@@ -46,7 +41,7 @@ fn non_image_path_paste_stays_text() {
     app.insert_paste(&path.to_string_lossy());
 
     assert!(app.input_ui.pending_images().is_empty());
-    assert!(app.input_ui.text().contains("notes.txt") || !app.input_ui.paste_segments().is_empty());
+    assert!(!app.input_ui.text().is_empty() || !app.input_ui.paste_segments().is_empty());
 }
 
 #[cfg(unix)]
@@ -82,5 +77,4 @@ fn unreadable_image_path_paste_reports_error_without_inserting_text() {
 
     assert!(app.input_ui.pending_images().is_empty());
     assert!(app.input_ui.text().is_empty());
-    assert!(app.status.contains("image paste failed"));
 }

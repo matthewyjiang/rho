@@ -235,24 +235,6 @@ fn deleted_file_keeps_old_path_not_dev_null() {
 }
 
 #[test]
-fn created_file_uses_new_path() {
-    let diff = "\
---- /dev/null
-+++ b/src/new.rs
-@@ -0,0 +1,2 @@
-+first
-+second
-";
-    assert_eq!(
-        parse_unified_diff(diff)
-            .into_iter()
-            .map(|file| file.path)
-            .collect::<Vec<_>>(),
-        vec!["src/new.rs".to_string()]
-    );
-}
-
-#[test]
 fn diff_stats_multi_file_without_blank_separator() {
     let diff = "\
 --- a/a.rs

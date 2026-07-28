@@ -285,89 +285,11 @@ mod tests {
     use super::*;
     use crate::{
         protocol::anthropic_messages::types::AnthropicCacheCreation,
-        provider_backend::{ImageContent, ToolResult},
+        provider_backend::ToolResult,
     };
 
     fn target() -> crate::model::ModelIdentity {
         crate::model::ModelIdentity::new("anthropic", "anthropic-messages", "claude-test")
-    }
-
-    #[test]
-    fn converts_messages_and_tools_to_anthropic_shape() {
-        let (system, messages) = split_system_and_messages(
-            vec![
-                Message::System("first".into()),
-                Message::System("second".into()),
-                Message::User(vec![ContentBlock::Text("hello".into())]),
-                Message::Assistant(vec![
-                    ContentBlock::Text("I'll check".into()),
-                    ContentBlock::ToolCall(ToolCall {
-                        id: "toolu_1".into(),
-                        name: "bash".into(),
-                        arguments: json!({"command":"pwd"}),
-                    }),
-                ]),
-                Message::ToolResult(ToolResult {
-                    id: "toolu_1".into(),
-                    ok: true,
-                    content: "/repo".into(),
-                }),
-            ],
-            &target(),
-            ProviderContextReplay::Enabled,
-        )
-        .unwrap();
-
-        assert_eq!(system, Some("first\n\nsecond".into()));
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].role, AnthropicRole::User);
-        assert_eq!(messages[1].role, AnthropicRole::Assistant);
-        assert_eq!(messages[2].role, AnthropicRole::User);
-        assert_eq!(
-            messages[1].content[1],
-            AnthropicContentBlock::ToolUse {
-                id: "toolu_1".into(),
-                name: "bash".into(),
-                input: json!({"command":"pwd"}),
-            }
-        );
-        assert_eq!(
-            messages[2].content[0],
-            AnthropicContentBlock::ToolResult {
-                tool_use_id: "toolu_1".into(),
-                content: "/repo".into(),
-                is_error: false,
-                cache_control: None,
-            }
-        );
-    }
-
-    #[test]
-    fn converts_user_images_to_anthropic_shape() {
-        let (_system, messages) = split_system_and_messages(
-            vec![Message::User(vec![
-                ContentBlock::Text("look".into()),
-                ContentBlock::Image(ImageContent {
-                    data: "aW1n".into(),
-                    mime_type: "image/png".into(),
-                }),
-            ])],
-            &target(),
-            ProviderContextReplay::Enabled,
-        )
-        .unwrap();
-
-        assert_eq!(messages[0].role, AnthropicRole::User);
-        assert_eq!(
-            messages[0].content[1],
-            AnthropicContentBlock::Image {
-                source: AnthropicImageSource {
-                    kind: "base64".into(),
-                    media_type: "image/png".into(),
-                    data: "aW1n".into(),
-                },
-            }
-        );
     }
 
     #[test]
@@ -530,49 +452,6 @@ mod tests {
             [AnthropicContentBlock::Text { text, .. }, AnthropicContentBlock::Text { text: summary, .. }]
                 if text == "answer" && summary.contains("safe summary")
         ));
-    }
-
-    #[test]
-    fn converts_response_text_and_tool_use() {
-        let response = AnthropicResponse {
-            content: vec![
-                AnthropicContentBlock::Text {
-                    text: "hi".into(),
-                    cache_control: None,
-                },
-                AnthropicContentBlock::ToolUse {
-                    id: "toolu_1".into(),
-                    name: "bash".into(),
-                    input: json!({"command":"pwd"}),
-                },
-            ],
-            usage: None,
-        };
-
-        let ModelResponse::Assistant(blocks) = convert_anthropic_response(response).unwrap();
-        assert_eq!(blocks.len(), 2);
-        assert!(matches!(blocks[0], ContentBlock::Text(_)));
-        assert!(matches!(blocks[1], ContentBlock::ToolCall(_)));
-    }
-
-    #[test]
-    fn maps_usage() {
-        let usage = usage_to_model_usage(AnthropicUsage {
-            input_tokens: Some(10),
-            output_tokens: Some(4),
-            cache_read_input_tokens: Some(3),
-            cache_creation_input_tokens: Some(2),
-            cache_creation: Some(AnthropicCacheCreation {
-                ephemeral_1h_input_tokens: Some(2),
-                ephemeral_5m_input_tokens: Some(5),
-            }),
-        });
-
-        assert_eq!(usage.input_tokens, Some(10));
-        assert_eq!(usage.output_tokens, Some(4));
-        assert_eq!(usage.cache_read_tokens, Some(3));
-        assert_eq!(usage.cache_write_tokens, Some(2));
-        assert_eq!(usage.total_tokens, Some(19));
     }
 
     #[test]

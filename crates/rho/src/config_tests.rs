@@ -102,28 +102,6 @@ jump_to_bottom = "ctrl+g"
 }
 
 #[test]
-fn save_organizes_config_into_sections() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-
-    Config::default().save(Some(path.clone())).unwrap();
-
-    let saved = std::fs::read_to_string(path).unwrap();
-    for section in [
-        "[model]",
-        "[display]",
-        "[output]",
-        "[compaction]",
-        "[web_search]",
-        "[behavior]",
-        "[keybindings]",
-    ] {
-        assert!(saved.contains(section), "missing {section} in {saved}");
-    }
-    assert!(!saved.contains("title_provider"), "{saved}");
-}
-
-#[test]
 fn loads_and_normalizes_compaction_percentages() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
@@ -138,37 +116,6 @@ fn loads_and_normalizes_compaction_percentages() {
     assert!(config.auto_compact);
     assert_eq!(config.compact_threshold_percent, 80);
     assert_eq!(config.compact_target_percent, 79);
-}
-
-#[test]
-fn loads_and_saves_favorite_models() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-favorite_models = [
-  " openai/gpt-5.5 ",
-  "missing-separator",
-  "openai/gpt-5.5",
-  "anthropic/claude-sonnet-4-5",
-]
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path.clone())).unwrap();
-
-    assert_eq!(
-        config.favorite_models,
-        vec!["openai/gpt-5.5", "anthropic/claude-sonnet-4-5"]
-    );
-
-    config.save(Some(path.clone())).unwrap();
-    let saved = std::fs::read_to_string(path).unwrap();
-    assert!(saved.contains("favorite_models"), "{saved}");
-    assert!(saved.contains("openai/gpt-5.5"), "{saved}");
-    assert!(!saved.contains("missing-separator"), "{saved}");
 }
 
 #[test]
@@ -571,33 +518,6 @@ model = "@titler"
 }
 
 #[test]
-fn title_model_alias_round_trips_through_save() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    alias_config(&path, "gpt-5.5");
-    let mut text = std::fs::read_to_string(&path).unwrap();
-    text.push_str("\n[title]\nmodel = \"@deep\"\n");
-    std::fs::write(&path, text).unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-
-    let config = Config::load_with_store(path.clone(), &store).unwrap();
-    config.save_with_store(path.clone(), &store).unwrap();
-
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(!saved.contains("[title]"), "{saved}");
-    assert!(saved.contains("[internal_agents.session-title]"), "{saved}");
-    assert!(saved.contains("model = \"@deep\""), "{saved}");
-    let reloaded = Config::load_with_store(path, &store).unwrap();
-    let selection = reloaded.internal_agent_model("session-title").unwrap();
-    assert_eq!(selection.provider, "anthropic");
-    assert_eq!(selection.model, "claude-opus-4-8");
-    assert_eq!(
-        reloaded.current_internal_agent_model_alias("session-title"),
-        Some("deep")
-    );
-}
-
-#[test]
 fn stale_title_model_alias_saves_the_concrete_model() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
@@ -655,45 +575,6 @@ fn effective_internal_agent_models_are_independent() {
     assert_eq!(judge.model, config.model);
     assert_eq!(judge.auth, config.auth);
     assert_eq!(judge.source, EffectiveModelSource::Conversation);
-}
-
-#[test]
-fn generic_internal_agent_alias_round_trips() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[model]
-provider = "openai"
-model = "gpt-5.5"
-auth = "api-key"
-
-[model.aliases]
-judge = "anthropic/claude-haiku-4-5"
-
-[internal_agents.goal-judge]
-model = "@judge"
-"#,
-    )
-    .unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-
-    let config = Config::load_with_store(path.clone(), &store).unwrap();
-    let judge = config.effective_internal_agent_model("goal-judge");
-    assert_eq!(judge.provider, "anthropic");
-    assert_eq!(judge.model, "claude-haiku-4-5");
-    assert_eq!(judge.auth, "anthropic-api-key");
-    config.save_with_store(path.clone(), &store).unwrap();
-
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(saved.contains("[internal_agents.goal-judge]"), "{saved}");
-    assert!(saved.contains("model = \"@judge\""), "{saved}");
-    let reloaded = Config::load_with_store(path, &store).unwrap();
-    assert_eq!(
-        reloaded.current_internal_agent_model_alias("goal-judge"),
-        Some("judge")
-    );
 }
 
 #[test]

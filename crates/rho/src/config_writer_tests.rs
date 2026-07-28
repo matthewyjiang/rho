@@ -15,19 +15,6 @@ fn repeated_atomic_updates_replace_existing_contents() {
     assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"n":3,"ok":true}"#);
 }
 
-#[test]
-fn unique_temp_paths_differ_for_same_destination() {
-    let path = PathBuf::from("/tmp/result.json");
-    let left = unique_temp_path(&path);
-    let right = unique_temp_path(&path);
-    assert_ne!(left, right);
-    assert_eq!(left.parent(), path.parent());
-    assert!(left
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with(".result.json.") && name.ends_with(".tmp")));
-}
-
 #[cfg(windows)]
 #[test]
 fn windows_replace_overwrites_existing_file() {

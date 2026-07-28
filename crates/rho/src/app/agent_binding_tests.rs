@@ -114,52 +114,36 @@ fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
 }
 
 #[test]
-fn agent_model_alias_resolves_to_concrete_provider_and_model() {
+fn agent_model_aliases_resolve_qualified_and_bare_targets() {
     let config = Config {
-        model_aliases: aliases(&[("deep", "anthropic/claude-opus-4-8")]),
+        model_aliases: aliases(&[
+            ("deep", "anthropic/claude-opus-4-8"),
+            ("fast", "gpt-5.5-mini"),
+        ]),
         ..Config::default()
     };
-    let bound = AgentBinder::bind(
-        definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
-            provider: None,
-            model: "@deep".into(),
-        })),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &config,
-    )
-    .unwrap();
 
-    let config = bound.rho_config().expect("rho config");
-    assert_eq!(config.provider, "anthropic");
-    assert_eq!(config.model, "claude-opus-4-8");
-    assert_eq!(config.current_model_alias(), Some("deep"));
-}
+    for (alias, provider, model) in [
+        ("@deep", "anthropic", "claude-opus-4-8"),
+        ("@fast", "openai", "gpt-5.5-mini"),
+    ] {
+        let bound = AgentBinder::bind(
+            definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
+                provider: None,
+                model: alias.into(),
+            })),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &config,
+        )
+        .unwrap();
 
-#[test]
-fn agent_bare_model_alias_keeps_inherited_provider() {
-    let config = Config {
-        model_aliases: aliases(&[("fast", "gpt-5.5-mini")]),
-        ..Config::default()
-    };
-    let bound = AgentBinder::bind(
-        definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
-            provider: None,
-            model: "@fast".into(),
-        })),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &config,
-    )
-    .unwrap();
-
-    let config = bound.rho_config().expect("rho config");
-    assert_eq!(config.provider, "openai");
-    assert_eq!(config.model, "gpt-5.5-mini");
+        let bound_config = bound.rho_config().expect("rho config");
+        assert_eq!(bound_config.provider, provider, "{alias}");
+        assert_eq!(bound_config.model, model, "{alias}");
+    }
 }
 
 #[test]
@@ -331,13 +315,13 @@ fn claude_runtime_rejects_alias_models_at_bind() {
 }
 
 #[test]
-fn claude_runtime_maps_reasoning_to_effort() {
-    let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
-    if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
+fn claude_runtime_maps_supported_reasoning_and_rejects_unmapped() {
+    let mut mapped = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut mapped.runtime {
         config.reasoning = Some(rho_sdk::ReasoningLevel::High);
     }
     let bound = AgentBinder::bind(
-        Arc::new(definition),
+        Arc::new(mapped),
         AgentInvocation {
             role: AgentRole::Delegated,
             available_tools: capabilities(),
@@ -349,16 +333,13 @@ fn claude_runtime_maps_reasoning_to_effort() {
         BoundRuntime::ClaudeCli { effort, .. } => assert_eq!(*effort, Some("high")),
         BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
     }
-}
 
-#[test]
-fn claude_runtime_rejects_unmapped_reasoning_at_bind() {
-    let mut definition = claude_definition(ModelPolicy::Inherit).as_ref().clone();
-    if let AgentRuntimeSpec::ClaudeCli(config) = &mut definition.runtime {
+    let mut unmapped = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut unmapped.runtime {
         config.reasoning = Some(rho_sdk::ReasoningLevel::Minimal);
     }
     let error = AgentBinder::bind(
-        Arc::new(definition),
+        Arc::new(unmapped),
         AgentInvocation {
             role: AgentRole::Delegated,
             available_tools: capabilities(),

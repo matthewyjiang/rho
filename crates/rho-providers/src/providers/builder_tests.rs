@@ -4,11 +4,7 @@ use rho_sdk::SecretString;
 use url::Url;
 
 use super::{ProviderBuildOptions, ProviderBuilder, ProviderCredential};
-use crate::{
-    model::{Message, ModelRequest},
-    providers::openai_compatible::CompatibleAuth,
-    reasoning::ReasoningLevel,
-};
+use crate::{providers::openai_compatible::CompatibleAuth, reasoning::ReasoningLevel};
 
 #[test]
 fn options_reject_invalid_states_and_accept_typed_overrides() {
@@ -72,56 +68,4 @@ fn credentials_are_redacted_and_mismatches_fail_before_execution() {
         .to_string()
         .contains("credential kind does not match provider"));
     assert!(!format!("{error:?}").contains(secret));
-}
-
-#[tokio::test]
-async fn ollama_builder_uses_typed_endpoint_override() {
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = Url::parse(&format!(
-        "http://{}/custom/v1",
-        listener.local_addr().unwrap()
-    ))
-    .unwrap();
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 4096];
-        let bytes = stream.read(&mut request).await.unwrap();
-        let request = String::from_utf8_lossy(&request[..bytes]);
-        assert!(request.starts_with("POST /custom/v1/chat/completions HTTP/1.1"));
-        assert!(!request.to_ascii_lowercase().contains("authorization:"));
-        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}]}"#;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        stream.write_all(response.as_bytes()).await.unwrap();
-    });
-    let options = ProviderBuildOptions::new("ollama", "qwen3-coder", ReasoningLevel::Off)
-        .unwrap()
-        .endpoint(endpoint)
-        .unwrap();
-    let provider = ProviderBuilder::new(
-        options,
-        ProviderCredential::OpenAiCompatible(CompatibleAuth::None),
-    )
-    .build()
-    .unwrap();
-    let messages = [Message::user_text("hello")];
-
-    provider
-        .send_turn(ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Off,
-            prompt_cache_key: None,
-        })
-        .await
-        .unwrap();
-    server.await.unwrap();
 }

@@ -399,11 +399,6 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(crate) fn with_models_dev_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
-    with_models_dev_cache_dir(path, f)
-}
-
-#[cfg(test)]
 fn with_models_dev_cache_dir<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
     TEST_CACHE_DIR.with(|cache_dir| {
         let previous = cache_dir.replace(Some(path));

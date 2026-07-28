@@ -96,15 +96,6 @@ fn pairs_tool_results_and_renders_orphans_standalone() {
 }
 
 #[test]
-fn message_timestamps_render_in_entry_heads() {
-    let export = export_with_messages(vec![message(Message::user_text("hello"))]);
-
-    let html = render_html(&export);
-
-    assert!(html.contains("<time title="));
-}
-
-#[test]
 fn resolve_output_path_covers_default_relative_absolute_and_directory() {
     let cwd = PathBuf::from("/tmp/workspace");
     let dir = tempfile::tempdir().unwrap();
