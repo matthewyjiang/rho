@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.19.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.19.1...rho-coding-agent-v1.19.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **auth:** prefer credential-backed auth and fix Ollama Cloud reasoning ([#619](https://github.com/matthewyjiang/rho/issues/619)) ([1a57f6f](https://github.com/matthewyjiang/rho/commit/1a57f6f24292b63a6ba4ba314843c2fb308792cf))
+* **auth:** restore ollama device test key dir on unwind and isolate temp dir ([#621](https://github.com/matthewyjiang/rho/issues/621)) ([d2a345d](https://github.com/matthewyjiang/rho/commit/d2a345df56b1ae815007829a04cc21172500530d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.12.1 to 0.12.2
+
 ## [1.19.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.19.0...rho-coding-agent-v1.19.1) (2026-07-28)
 
 
