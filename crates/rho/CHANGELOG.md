@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.21.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.20.0...rho-coding-agent-v1.21.0) (2026-07-28)
+
+
+### Features
+
+* **tui:** add in-app editor for user-defined agents ([#630](https://github.com/matthewyjiang/rho/issues/630)) ([7243fcc](https://github.com/matthewyjiang/rho/commit/7243fcce4c7261d38547a9e3c9e5a51aea7e9db0))
+
+
+### Bug Fixes
+
+* **metrics:** include reasoning latency in output rate ([#632](https://github.com/matthewyjiang/rho/issues/632)) ([7f7fa39](https://github.com/matthewyjiang/rho/commit/7f7fa39d88e3032a4433a105e07a785989406944))
+* **tui:** bound inline shell output and size pickers to the terminal ([#634](https://github.com/matthewyjiang/rho/issues/634)) ([3535df4](https://github.com/matthewyjiang/rho/commit/3535df45f9168a75b75bee60c0c16165fb923b2b))
+* **tui:** live drag selection highlight and screen-wide text copy ([#633](https://github.com/matthewyjiang/rho/issues/633)) ([71e6a35](https://github.com/matthewyjiang/rho/commit/71e6a35279ea63885be460124b262c4ce4339a86))
+
+
+### Performance Improvements
+
+* **tui,session:** cut truncation allocations and cache tree branch count ([#629](https://github.com/matthewyjiang/rho/issues/629)) ([a1c53f0](https://github.com/matthewyjiang/rho/commit/a1c53f0894b20268a96f17a770291ba2a2c31eaa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.12.0 to 1.12.1
+    * rho-providers bumped from 0.13.0 to 0.13.1
+
 ## [1.20.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.19.2...rho-coding-agent-v1.20.0) (2026-07-28)
 
 
