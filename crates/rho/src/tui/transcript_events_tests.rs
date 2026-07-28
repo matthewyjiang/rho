@@ -55,7 +55,7 @@ fn completed_model_call_updates_the_active_model_average() {
 
     let summary = app.usage.model_performance.summary(&profile);
     assert_eq!(summary.latest_call, Some(metrics));
-    assert_eq!(summary.average_output_tokens_per_second, Some(50.0));
+    assert_eq!(summary.average_end_to_end_output_rate, Some(100.0 / 2.1));
     assert_eq!(summary.eligible_calls, 1);
 }
 
@@ -71,7 +71,7 @@ fn provider_stream_reset_preserves_completed_model_performance() {
     app.record_agent_event(ViewModelEvent::ProviderStreamReset);
 
     let summary = app.usage.model_performance.summary(&profile);
-    assert_eq!(summary.average_output_tokens_per_second, Some(50.0));
+    assert_eq!(summary.average_end_to_end_output_rate, Some(100.0 / 2.1));
     assert_eq!(summary.eligible_calls, 1);
 }
 
@@ -93,7 +93,7 @@ fn step_started_clears_stream_state_without_clearing_model_performance() {
     assert!(app.streams.assistant_stream.is_empty());
     assert!(app.streams.reasoning_stream.is_empty());
     let summary = app.usage.model_performance.summary(&profile);
-    assert_eq!(summary.average_output_tokens_per_second, Some(50.0));
+    assert_eq!(summary.average_end_to_end_output_rate, Some(100.0 / 2.1));
     assert_eq!(app.turn.session_ui(), SessionUiPhase::ProviderTurn);
     assert_eq!(app.status, "running step 2");
 }

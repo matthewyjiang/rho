@@ -39,7 +39,7 @@ fn computes_a_token_weighted_average_from_completed_calls() {
         tracker.summary(&profile),
         ModelPerformanceSummary {
             latest_call: Some(metrics(300, Duration::from_secs(3))),
-            average_output_tokens_per_second: Some(80.0),
+            average_end_to_end_output_rate: Some(400.0 / 5.4),
             eligible_calls: 2,
         }
     );
@@ -57,7 +57,7 @@ fn keeps_short_calls_as_latest_without_adding_them_to_the_average() {
         tracker.summary(&profile),
         ModelPerformanceSummary {
             latest_call: Some(short_call),
-            average_output_tokens_per_second: None,
+            average_end_to_end_output_rate: None,
             eligible_calls: 0,
         }
     );
@@ -77,12 +77,12 @@ fn separates_model_profiles_including_service_tier() {
     tracker.record(priority.clone(), metrics(200, Duration::from_secs(2)));
 
     assert_eq!(
-        tracker.summary(&standard).average_output_tokens_per_second,
-        Some(50.0)
+        tracker.summary(&standard).average_end_to_end_output_rate,
+        Some(100.0 / 2.2)
     );
     assert_eq!(
-        tracker.summary(&priority).average_output_tokens_per_second,
-        Some(100.0)
+        tracker.summary(&priority).average_end_to_end_output_rate,
+        Some(200.0 / 2.2)
     );
     assert_eq!(
         tracker.summary(&profile("openai", "model-a", ReasoningLevel::High, None,)),

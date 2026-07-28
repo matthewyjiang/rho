@@ -156,11 +156,19 @@ pub struct ModelCallMetrics {
 }
 
 impl ModelCallMetrics {
-    /// Provider-reported output tokens divided by local generation time.
-    pub fn output_tokens_per_second(self) -> Option<f64> {
+    /// Provider-reported output tokens divided by total model-call latency.
+    ///
+    /// Total latency keeps the time boundary aligned with providers that count
+    /// hidden reasoning in `output_tokens` before emitting their first event.
+    pub fn end_to_end_output_tokens_per_second(self) -> Option<f64> {
         let tokens = self.output_tokens?;
-        let seconds = self.generation_time?.as_secs_f64();
+        let seconds = self.total_latency.as_secs_f64();
         (seconds > 0.0).then(|| tokens as f64 / seconds)
+    }
+
+    /// Provider-reported output tokens divided by total model-call latency.
+    pub fn output_tokens_per_second(self) -> Option<f64> {
+        self.end_to_end_output_tokens_per_second()
     }
 }
 
@@ -287,3 +295,7 @@ pub enum RunEvent {
         metrics: ModelCallMetrics,
     },
 }
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;
