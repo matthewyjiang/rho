@@ -183,4 +183,3 @@ fn applied_event_removes_only_matching_steering() {
     assert_eq!(app.pending.accepted_steering().len(), 1);
     assert_eq!(app.pending.accepted_steering()[0].id, pending);
 }
-

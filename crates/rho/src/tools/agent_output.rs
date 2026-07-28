@@ -267,4 +267,3 @@ fn format_elapsed(seconds: u64) -> String {
 fn format_token_count(tokens: Option<u64>) -> String {
     tokens.map_or_else(|| "?".into(), |tokens| tokens.to_string())
 }
-

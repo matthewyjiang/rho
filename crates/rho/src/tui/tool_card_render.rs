@@ -493,4 +493,3 @@ fn pad_spans_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> 
     }
     Line::from(spans)
 }
-

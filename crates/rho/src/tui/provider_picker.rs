@@ -245,4 +245,3 @@ fn provider_picker_for_targets(
         action,
     )
 }
-

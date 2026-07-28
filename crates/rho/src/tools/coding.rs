@@ -39,4 +39,3 @@ pub(super) fn sdk_bundle(
     }
     super::sdk_registry::StaticToolBundle::new(tools)
 }
-

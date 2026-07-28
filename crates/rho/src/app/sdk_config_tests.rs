@@ -2,9 +2,7 @@ use std::path::Path;
 
 use super::SdkBootstrapOptions;
 use pretty_assertions::assert_eq;
-use {
-    crate::config::Config, rho_providers::providers::ProviderBuildOptions,
-};
+use {crate::config::Config, rho_providers::providers::ProviderBuildOptions};
 
 // Covers: configured Ollama base URL must reach provider build options
 // Owner: sdk config bootstrap

@@ -50,4 +50,3 @@ pub(crate) fn is_internal_agent_id(id: &AgentId) -> bool {
         .iter()
         .any(|definition| definition.id == *id)
 }
-

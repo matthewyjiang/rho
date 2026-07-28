@@ -159,4 +159,3 @@ fn model_picker_for_current(
     }
     picker
 }
-

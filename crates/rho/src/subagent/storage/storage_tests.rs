@@ -11,8 +11,8 @@ use super::{
     index::{
         initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
     },
-    lock_parent_for_cleanup_in_root, reserve_run_directory_in_root,
-    resolve_run_directory_in_root, RunPlacement,
+    lock_parent_for_cleanup_in_root, reserve_run_directory_in_root, resolve_run_directory_in_root,
+    RunPlacement,
 };
 use crate::session::Session;
 use std::path::{Path, PathBuf};

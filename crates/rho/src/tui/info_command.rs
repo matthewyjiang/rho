@@ -326,4 +326,3 @@ fn format_number(value: u64) -> String {
     }
     formatted
 }
-

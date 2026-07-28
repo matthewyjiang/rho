@@ -1206,5 +1206,3 @@ fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() 
     assert!(diagnostics.enabled_features().is_empty());
     assert!(!format!("{diagnostics:?}").contains("secret prompt contents"));
 }
-
-

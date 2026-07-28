@@ -9,4 +9,3 @@ fn text_chat_filter_hides_specialty_models() {
     assert!(!is_text_chat_model("lyria-3-clip-preview"));
     assert!(!is_text_chat_model("nano-banana-pro-preview"));
 }
-

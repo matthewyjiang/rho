@@ -83,4 +83,3 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
     }
     Ok(())
 }
-

@@ -283,4 +283,3 @@ fn format_elapsed(seconds: u64) -> String {
     let minutes = minutes % 60;
     format!("{hours}h {minutes:02}m")
 }
-

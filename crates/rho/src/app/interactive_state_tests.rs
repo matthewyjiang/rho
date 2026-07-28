@@ -1,7 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_sdk::{
-    HostChoice, HostInputRequest, HostQuestion, Retryability, RunEvent, SelectionMode,
-};
+use rho_sdk::{HostChoice, HostInputRequest, HostQuestion, Retryability, RunEvent, SelectionMode};
 
 use super::{
     active_run_disposition, begin_provider_switch, state_after_event, ActiveRunCommand,

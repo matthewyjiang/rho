@@ -809,4 +809,3 @@ fn ansi_color_from_index(index: u8) -> Option<AnsiColor> {
         _ => None,
     }
 }
-

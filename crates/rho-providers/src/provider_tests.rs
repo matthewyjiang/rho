@@ -75,4 +75,3 @@ fn xai_legacy_provider_alias_selects_oauth_mode() {
     assert_eq!(resolved.provider_name(), "xai");
     assert_eq!(resolved.auth_id(), "xai-oauth");
 }
-

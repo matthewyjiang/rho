@@ -302,4 +302,3 @@ impl InteractiveToolPresenter {
         (ok, presentation(&view, card))
     }
 }
-

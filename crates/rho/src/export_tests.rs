@@ -113,11 +113,7 @@ fn resolve_output_path_covers_default_relative_absolute_and_directory() {
         PathBuf::from("/tmp/out.html")
     );
     assert_eq!(
-        resolve_output_path(
-            &cwd,
-            &dir.path().display().to_string(),
-            SESSION_ID,
-        ),
+        resolve_output_path(&cwd, &dir.path().display().to_string(), SESSION_ID,),
         dir.path().join("rho-session-aaaaaaaa.html")
     );
 }

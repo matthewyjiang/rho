@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    ApprovalDecision, CapabilityRequest, CapabilitySource, PathScope,
-    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ApprovalDecision, CapabilityRequest, CapabilitySource, PathScope, ProcessEnvironment,
+    ProcessExecution, ProcessInvocation, ProcessOutputLimits,
 };
 
 use super::{

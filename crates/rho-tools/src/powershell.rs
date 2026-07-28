@@ -163,5 +163,3 @@ pub fn wrapped_command(command: &str) -> String {
          exit 0"
     )
 }
-
-

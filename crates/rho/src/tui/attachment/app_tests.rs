@@ -1,4 +1,3 @@
-
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;

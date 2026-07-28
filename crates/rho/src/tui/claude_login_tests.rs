@@ -198,4 +198,3 @@ async fn successful_resume_queries_auth_after_child_success() {
         }
     }
 }
-

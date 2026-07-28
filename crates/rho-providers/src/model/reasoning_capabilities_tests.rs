@@ -97,4 +97,3 @@ fn legacy_unrestricted_capabilities_deserialize_as_unknown() {
         ReasoningCapabilities::Unknown
     );
 }
-

@@ -397,5 +397,3 @@ exit 1
     let status = query_sh(body).await.unwrap();
     assert!(!status.logged_in);
 }
-
-

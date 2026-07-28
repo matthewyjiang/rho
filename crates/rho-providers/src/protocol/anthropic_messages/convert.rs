@@ -284,8 +284,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        protocol::anthropic_messages::types::AnthropicCacheCreation,
-        provider_backend::ToolResult,
+        protocol::anthropic_messages::types::AnthropicCacheCreation, provider_backend::ToolResult,
     };
 
     fn target() -> crate::model::ModelIdentity {

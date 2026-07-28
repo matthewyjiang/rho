@@ -5,9 +5,7 @@ use tempfile::TempDir;
 use super::tree::{SessionNodeKind, StoredStateTransition};
 use super::*;
 use {
-    rho_providers::model::{
-        AssistantMessage, ContentBlock, ModelIdentity, ProviderContextBlock,
-    },
+    rho_providers::model::{AssistantMessage, ContentBlock, ModelIdentity, ProviderContextBlock},
     rho_tools::tool::ToolCall,
 };
 

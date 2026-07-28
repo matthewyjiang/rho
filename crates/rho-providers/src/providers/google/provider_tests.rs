@@ -168,4 +168,3 @@ async fn stream_turn_parses_sse_and_uses_stream_endpoint() {
         .to_ascii_lowercase()
         .contains("accept: text/event-stream"));
 }
-

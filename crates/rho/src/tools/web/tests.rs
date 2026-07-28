@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use {
-    crate::config::{Config},
+    crate::config::Config,
     rho_tools::tool::{Tool, ToolContext},
 };
 

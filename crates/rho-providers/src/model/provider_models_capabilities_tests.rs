@@ -73,4 +73,3 @@ fn provider_snapshot_expiration_applies_to_every_model_in_the_snapshot() {
     });
     let _ = fs::remove_dir_all(cache_dir);
 }
-

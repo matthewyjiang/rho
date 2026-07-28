@@ -3,9 +3,7 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 
 use super::parse_definition;
-use crate::agent::{
-    AgentRuntimeSpec, ModelPolicy, ModelSelection, ToolPolicy,
-};
+use crate::agent::{AgentRuntimeSpec, ModelPolicy, ModelSelection, ToolPolicy};
 
 fn parse(contents: &str) -> Result<crate::agent::AgentDefinition, crate::agent::AgentCatalogError> {
     parse_definition(Path::new("agent.md"), "agent", contents)

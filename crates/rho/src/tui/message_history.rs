@@ -135,4 +135,3 @@ pub(super) fn transcript_entries_from_messages(
     }
     entries
 }
-

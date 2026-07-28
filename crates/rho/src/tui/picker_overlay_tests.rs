@@ -66,7 +66,10 @@ fn section_headers_follow_filtered_items_without_becoming_selectable() {
 
     assert_eq!(picker.matching_indices(), vec![1]);
     assert_eq!(picker.selected_item().unwrap().label, "worker");
-    assert_eq!(picker.selected_item().unwrap().section.as_deref(), Some("CUSTOM"));
+    assert_eq!(
+        picker.selected_item().unwrap().section.as_deref(),
+        Some("CUSTOM")
+    );
 }
 
 #[test]

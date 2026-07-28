@@ -192,5 +192,3 @@ async fn a_tool_implementing_neither_call_nor_prepare_reports_the_mistake() {
         error.message()
     );
 }
-
-

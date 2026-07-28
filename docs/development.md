@@ -45,9 +45,9 @@ Development and test profiles use reduced debug information to keep artifacts an
 ## Test selection
 
 Before adding, expanding, reviewing, or deleting tests, follow the project skill
-[`.agents/skills/rho-test-selection/SKILL.md`](../.agents/skills/rho-test-selection/SKILL.md)
-(`rho-test-selection`). It defines the failure-mode / owner-layer gate, Tier A/B/C
-rules, determinism requirements, and PTY-as-product-gate defaults.
+`rho-test-selection` at `.agents/skills/rho-test-selection/SKILL.md`. It defines the
+failure-mode / owner-layer gate, Tier A/B/C rules, determinism requirements, and
+PTY-as-product-gate defaults.
 
 Pull requests that add tests should fill the test-gate section in the pull request template.
 

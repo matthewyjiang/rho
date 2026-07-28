@@ -172,5 +172,4 @@ mod tests {
         assert_eq!(rows[4].kind, DiffRowKind::Added);
         assert_eq!(rows[4].text, "new");
     }
-
 }

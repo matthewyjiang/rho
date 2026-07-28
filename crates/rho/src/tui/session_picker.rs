@@ -64,4 +64,3 @@ fn preview_text(text: &str) -> String {
     preview.push('…');
     preview
 }
-
