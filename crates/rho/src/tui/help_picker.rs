@@ -1,8 +1,8 @@
 use crate::keybindings::Keybindings;
 
 use super::{
-    picker_overlay::OverlayChrome, App, ComposerMode, PickerAction, PickerItem, PickerLayout,
-    UiPicker,
+    picker_overlay::OverlayChrome, App, ComposerMode, PickerAction, PickerBadge, PickerBadgeTone,
+    PickerItem, PickerLayout, UiPicker,
 };
 
 pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
@@ -35,27 +35,27 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     vec![
         entry(
             "/",
-            "Show available commands",
+            "Show commands",
             "Type / at the start of the composer to open the command palette. Keep typing to filter, tab to complete, and enter to run.",
         ),
         entry(
             "@",
-            "Reference a workspace file",
+            "Reference file",
             "Type @ to open workspace file path autocomplete. Keep typing to fuzzy-search, then tab or enter to insert an @path reference.",
         ),
         entry(
             "!",
-            "Run a shell command",
+            "Run shell",
             "Prefix a command with ! to run it in the configured inline shell. Output is shown in the transcript and included in model context.",
         ),
         entry(
             "!!",
-            "Run a local shell command",
+            "Run local shell",
             "Prefix a command with !! to run it locally without adding the output to model context. The composer uses a distinct label for this mode.",
         ),
         entry(
             "enter",
-            "Send, run, or steer",
+            "Send, run, steer",
             "Send the composer contents. While a model turn is running, enter queues a steering message for after the current assistant turn. In pickers, enter confirms the selection.",
         ),
         entry(
@@ -65,42 +65,42 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
         ),
         entry(
             "shift+tab",
-            "Cycle reasoning level",
+            "Cycle reasoning",
             "Move through the configured reasoning levels for the active model and save the selection.",
         ),
         entry(
             "ctrl+c",
-            "Clear the composer",
+            "Clear composer",
             "Clear the message box on the first press. While idle, press again to quit Rho.",
         ),
         entry(
             newline,
-            "Insert a newline",
+            "New line",
             "Insert a newline in the composer without sending. shift+enter also inserts a newline. While idle, alt+enter inserts a newline too.",
         ),
         entry(
             "shift+enter",
-            "Insert a newline",
+            "New line",
             "Insert a newline in the composer without sending.",
         ),
         entry(
             "alt+enter",
-            "Newline or queue prompt",
+            "Queue/newline",
             "While idle, insert a newline. While a model turn is running, queue the current composer contents to run after the turn finishes.",
         ),
         entry(
             paste_image,
-            "Paste an image",
+            "Paste image",
             "Paste a clipboard image as an attachment when a supported host helper is available. alt+v is also accepted as a fallback.",
         ),
         entry(
             reset,
-            "Reset conversation",
+            "Reset chat",
             "Clear conversation history so the next message starts a new session. Unavailable while a model turn is running.",
         ),
         entry(
             editor,
-            "Edit composer in external editor",
+            "External editor",
             "Open the composer contents in VISUAL, falling back to EDITOR when VISUAL is unset or empty. Warns with EDITOR is not set when neither is configured. Rho restores its screen when the editor exits.",
         ),
         entry(
@@ -110,37 +110,37 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
         ),
         entry(
             toggle_tools,
-            "Toggle tool output",
+            "Toggle tools",
             "Expand or collapse the latest tool output block when output is truncated.",
         ),
         entry(
             edit_pending,
-            "Edit queued prompt",
+            "Edit queued",
             "Pull the most recent queued or steering prompt back into the composer for editing.",
         ),
         entry(
             manage_pending,
-            "Manage queued prompts",
+            "Manage queue",
             "Open the pending-input panel to inspect, reorder, or remove queued prompts.",
         ),
         entry(
             "up / down",
-            "Prompt history or picker nav",
+            "History or nav",
             "In the composer, re-enter previous prompts. In pickers and palettes, move the selection.",
         ),
         entry(
-            "pageup / pagedown",
-            "Scroll transcript or picker",
+            "pgup / pgdn",
+            "Scroll view",
             "Scroll the transcript viewport. In overlay pickers, page through the focused nav or detail pane.",
         ),
         entry(
             "mouse wheel",
-            "Scroll transcript",
+            "Scroll view",
             "Scroll the transcript viewport with the mouse wheel.",
         ),
         entry(
             "click + drag",
-            "Copy transcript text",
+            "Copy text",
             "Left-click and drag across transcript text to select it. Releasing copies the selection to the clipboard.",
         ),
     ]
@@ -151,9 +151,12 @@ fn entry(keys: impl Into<String>, summary: &str, detail: &str) -> PickerItem {
     PickerItem {
         section: None,
         label: keys.clone(),
-        detail: Some(format!("{summary}\n\n{detail}")),
+        detail: Some(detail.into()),
         preview: None,
-        badge: None,
+        badge: Some(PickerBadge {
+            text: summary.into(),
+            tone: PickerBadgeTone::Selected,
+        }),
         value: keys,
     }
 }
