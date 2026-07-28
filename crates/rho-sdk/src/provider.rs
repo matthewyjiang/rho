@@ -5,6 +5,7 @@ use std::{
     num::NonZeroUsize,
     pin::Pin,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use tokio::sync::mpsc;
@@ -107,7 +108,13 @@ pub type NativeCompactionFuture<'a> =
 /// Sending side of a bounded provider-event channel.
 #[derive(Clone, Debug)]
 pub struct ProviderEventSender {
-    sender: mpsc::Sender<ProviderStreamEvent>,
+    sender: mpsc::Sender<ProviderEventEnvelope>,
+}
+
+#[derive(Debug)]
+struct ProviderEventEnvelope {
+    event: ProviderStreamEvent,
+    observed_at: Option<Instant>,
 }
 
 /// Internal lifecycle event for a physical provider request.
@@ -140,8 +147,34 @@ impl ProviderEventSender {
 
     /// Sends an event, waiting for bounded channel capacity when necessary.
     pub async fn send(&self, event: ModelEvent) -> Result<(), ProviderError> {
+        self.send_observed(event, Instant::now()).await
+    }
+
+    async fn send_unobserved(&self, event: ModelEvent) -> Result<(), ProviderError> {
         self.sender
-            .send(ProviderStreamEvent::Model(event))
+            .send(ProviderEventEnvelope {
+                event: ProviderStreamEvent::Model(event),
+                observed_at: None,
+            })
+            .await
+            .map_err(|_| ProviderError::interrupted("provider event consumer was dropped"))
+    }
+
+    /// Sends an event with the time it was observed at the provider boundary.
+    ///
+    /// Callback adapters must use this method so queueing and host backpressure
+    /// do not change model-call timing.
+    #[doc(hidden)]
+    pub async fn send_observed(
+        &self,
+        event: ModelEvent,
+        observed_at: Instant,
+    ) -> Result<(), ProviderError> {
+        self.sender
+            .send(ProviderEventEnvelope {
+                event: ProviderStreamEvent::Model(event),
+                observed_at: Some(observed_at),
+            })
             .await
             .map_err(|_| ProviderError::interrupted("provider event consumer was dropped"))
     }
@@ -153,10 +186,26 @@ impl ProviderEventSender {
         kind: ProviderErrorKind,
         usage: crate::model::ModelUsage,
     ) -> Result<(), ProviderError> {
+        self.send_request_attempt_failed_observed(kind, usage, Instant::now())
+            .await
+    }
+
+    /// Reports an observed failed physical request without replacing its timestamp.
+    #[doc(hidden)]
+    pub async fn send_request_attempt_failed_observed(
+        &self,
+        kind: ProviderErrorKind,
+        usage: crate::model::ModelUsage,
+        observed_at: Instant,
+    ) -> Result<(), ProviderError> {
         self.sender
-            .send(ProviderStreamEvent::Request(
-                ProviderRequestEvent::RequestAttemptFailed { kind, usage },
-            ))
+            .send(ProviderEventEnvelope {
+                event: ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
+                    kind,
+                    usage,
+                }),
+                observed_at: Some(observed_at),
+            })
             .await
             .map_err(|_| ProviderError::interrupted("provider request event consumer was dropped"))
     }
@@ -165,7 +214,7 @@ impl ProviderEventSender {
 /// Receiving side of a bounded provider-event channel.
 #[derive(Debug)]
 pub struct ProviderEventReceiver {
-    receiver: mpsc::Receiver<ProviderStreamEvent>,
+    receiver: mpsc::Receiver<ProviderEventEnvelope>,
     pending_model_events: VecDeque<ModelEvent>,
     pending_request_events: VecDeque<ProviderRequestEvent>,
 }
@@ -176,7 +225,7 @@ impl ProviderEventReceiver {
         if let Some(event) = self.pending_model_events.pop_front() {
             return Some(event);
         }
-        while let Some(event) = self.receiver.recv().await {
+        while let Some(event) = self.receiver.recv().await.map(|envelope| envelope.event) {
             match event {
                 ProviderStreamEvent::Model(event) => return Some(event),
                 ProviderStreamEvent::Request(event) => self.pending_request_events.push_back(event),
@@ -191,7 +240,7 @@ impl ProviderEventReceiver {
         if let Some(event) = self.pending_request_events.pop_front() {
             return Some(event);
         }
-        while let Some(event) = self.receiver.recv().await {
+        while let Some(event) = self.receiver.recv().await.map(|envelope| envelope.event) {
             match event {
                 ProviderStreamEvent::Request(event) => return Some(event),
                 ProviderStreamEvent::Model(event) => self.pending_model_events.push_back(event),
@@ -203,11 +252,25 @@ impl ProviderEventReceiver {
     /// Receives the next semantic or physical request event.
     #[doc(hidden)]
     pub async fn recv_stream_event(&mut self) -> Option<ProviderStreamEvent> {
-        self.receiver.recv().await
+        self.receiver.recv().await.map(|envelope| envelope.event)
     }
 
-    pub(crate) fn try_recv_stream_event(&mut self) -> Option<ProviderStreamEvent> {
-        self.receiver.try_recv().ok()
+    pub(crate) async fn recv_timed_stream_event(
+        &mut self,
+    ) -> Option<(ProviderStreamEvent, Option<Instant>)> {
+        self.receiver
+            .recv()
+            .await
+            .map(|envelope| (envelope.event, envelope.observed_at))
+    }
+
+    pub(crate) fn try_recv_timed_stream_event(
+        &mut self,
+    ) -> Option<(ProviderStreamEvent, Option<Instant>)> {
+        self.receiver
+            .try_recv()
+            .ok()
+            .map(|envelope| (envelope.event, envelope.observed_at))
     }
 }
 
@@ -304,7 +367,9 @@ pub trait ModelProvider: Send + Sync {
             let ModelResponse::Assistant(blocks) = &response;
             for block in blocks {
                 if let crate::model::ContentBlock::Text(text) = block {
-                    events.send(ModelEvent::OutputDelta(text.clone())).await?;
+                    events
+                        .send_unobserved(ModelEvent::OutputDelta(text.clone()))
+                        .await?;
                 }
             }
             Ok(response)

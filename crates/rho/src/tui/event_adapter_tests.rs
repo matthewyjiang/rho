@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
@@ -53,6 +55,24 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
             usage: usage.clone()
         })),
         ViewEvent::Update(ViewModelEvent::Usage(translated)) if translated == usage
+    ));
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ModelCallCompleted {
+            profile: rho_sdk::ModelCallProfile {
+                provider: "openai".into(),
+                model: "gpt".into(),
+                reasoning: rho_sdk::ReasoningLevel::Medium,
+                service_tier: None,
+            },
+            metrics: rho_sdk::ModelCallMetrics {
+                output_tokens: Some(3),
+                time_to_first_token: Some(Duration::from_millis(200)),
+                generation_time: Some(Duration::from_secs(1)),
+                total_latency: Duration::from_millis(1_200),
+            },
+        })),
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted { profile, metrics })
+            if profile.model == "gpt" && metrics.output_tokens == Some(3)
     ));
 }
 

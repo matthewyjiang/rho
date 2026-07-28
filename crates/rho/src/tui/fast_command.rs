@@ -69,6 +69,8 @@ impl App {
                 self.status = "config save failed".into();
                 return Ok(());
             }
+            self.info.runtime.service_tier =
+                requested.then_some(rho_sdk::model::ServiceTier::Priority);
         }
 
         self.report_fast_mode(requested, supported);

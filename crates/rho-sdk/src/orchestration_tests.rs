@@ -347,6 +347,10 @@ async fn cancellation_before_the_first_tool_interrupts_every_unresolved_call() {
         next_event(&mut run).await,
         RunEvent::StepStarted { .. }
     ));
+    assert!(matches!(
+        next_event(&mut run).await,
+        RunEvent::ModelCallCompleted { .. }
+    ));
     wait_for_flag(&metadata_reached).await;
     assert!(!called.load(Ordering::Acquire));
 
@@ -839,6 +843,10 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     assert!(matches!(
         event_receiver.recv().await,
         Some(RunEvent::StepStarted { .. })
+    ));
+    assert!(matches!(
+        event_receiver.recv().await,
+        Some(RunEvent::ModelCallCompleted { .. })
     ));
     drop(event_receiver);
 

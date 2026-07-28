@@ -256,7 +256,7 @@ pub struct ImageContent {
 }
 
 /// Provider service class requested for one model turn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum ServiceTier {
     /// Prefer the provider's low-latency priority service.

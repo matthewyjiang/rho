@@ -30,6 +30,7 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
         permission_mode: crate::permission::PermissionMode::Auto,
         model_metadata: Some(priced_metadata()),
         subagent_total_cost_usd_micros: 0,
+        average_output_rate: None,
     }
 }
 
@@ -66,6 +67,18 @@ fn wide_statusline_keeps_only_summary_fields() {
     assert!(!bottom.contains("300.0k"), "{bottom}");
     assert!(!bottom.contains("CH"), "{bottom}");
     assert!(!bottom.contains("openai"), "{bottom}");
+}
+
+#[test]
+fn statusline_shows_average_output_rate_when_space_allows() {
+    let mut state = test_state(ModelUsage::default());
+    state.average_output_rate = Some(57);
+
+    let wide = line_text(&statusline_lines(&state, 80, None)[1]);
+    let narrow = line_text(&statusline_lines(&state, 40, None)[1]);
+
+    assert!(wide.contains("57 tok/s avg"), "{wide}");
+    assert!(!narrow.contains("tok/s"), "{narrow}");
 }
 
 #[test]

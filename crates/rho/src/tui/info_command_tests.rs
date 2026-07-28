@@ -24,6 +24,7 @@ fn test_info() -> RuntimeInfo {
             cache_read_tokens: Some(900_000),
             ..ModelUsage::default()
         }),
+        model_performance: ModelPerformanceSummary::default(),
         context_usage: Some(ContextUsage::estimated(25_000, Some(100_000))),
         model_metadata: None,
         tree: None,
@@ -78,6 +79,33 @@ fn runtime_info_groups_model_usage_and_workspace_details() {
     assert!(text.contains("Cost          $1.250"), "{text}");
     assert!(text.contains("Workspace\n"), "{text}");
     assert!(text.contains("Git branch    main"), "{text}");
+}
+
+#[test]
+fn runtime_info_shows_model_performance_metrics() {
+    let mut info = test_info();
+    info.model_performance = ModelPerformanceSummary {
+        latest_call: Some(rho_sdk::ModelCallMetrics {
+            output_tokens: Some(1_248),
+            time_to_first_token: Some(Duration::from_millis(620)),
+            generation_time: Some(Duration::from_millis(21_800)),
+            total_latency: Duration::from_millis(22_420),
+        }),
+        average_output_tokens_per_second: Some(54.8),
+        eligible_calls: 8,
+    };
+
+    let text = rendered_text(&info, 80);
+
+    assert!(text.contains("Last model call"), "{text}");
+    assert!(text.contains("First token   620 ms"), "{text}");
+    assert!(text.contains("Generation    21.8 s"), "{text}");
+    assert!(text.contains("Output tokens 1,248"), "{text}");
+    assert!(text.contains("Output rate   57.2 tok/s"), "{text}");
+    assert!(text.contains("Total latency 22.4 s"), "{text}");
+    assert!(text.contains("Model performance"), "{text}");
+    assert!(text.contains("Average       54.8 tok/s"), "{text}");
+    assert!(text.contains("Samples       8"), "{text}");
 }
 
 #[test]

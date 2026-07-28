@@ -47,6 +47,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ReasoningDelta(_)
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
+        | ViewModelEvent::ModelCallCompleted { .. }
         | ViewModelEvent::ToolUpdated { .. } => false,
     }
 }
@@ -68,10 +69,6 @@ impl App {
             self.turn.set_activity_phase(phase);
         }
         match event {
-            ViewModelEvent::ProviderStreamReset => {
-                self.reset_provider_attempt_stream();
-                Ok(true)
-            }
             ViewModelEvent::OutputDelta(text) => {
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
                 let drained = self.receive_stream_delta(terminal, StreamKind::Assistant, &text)?;
@@ -286,15 +283,23 @@ impl App {
                 self.turn.tool_call_proposed(call_id, card);
                 None
             }
-            ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
-                self.usage.usage_cost_tracker.attempt_restarted();
-                self.usage.run_usage.attempt_reset();
+            ViewModelEvent::ProviderStreamReset => {
+                self.reset_provider_attempt_stream();
+                self.reset_attempt_accounting();
+                None
+            }
+            ViewModelEvent::ProviderRetry => {
+                self.reset_attempt_accounting();
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
                 self.usage.current_context = Some(usage);
+                None
+            }
+            ViewModelEvent::ModelCallCompleted { profile, metrics } => {
+                self.usage.model_performance.record(profile, metrics);
                 None
             }
             ViewModelEvent::Usage(usage) => {
@@ -583,7 +588,12 @@ impl App {
         self.streams.live_stream_preview = None;
     }
 
-    pub(super) fn reset_provider_attempt_stream(&mut self) {
+    fn reset_attempt_accounting(&mut self) {
+        self.usage.usage_cost_tracker.attempt_restarted();
+        self.usage.run_usage.attempt_reset();
+    }
+
+    fn reset_provider_attempt_stream(&mut self) {
         self.reset_streams();
         self.turn.clear_tool_calls();
         if let Some(start) = self

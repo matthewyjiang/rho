@@ -805,6 +805,15 @@ impl App {
             self.usage.current_context.as_ref(),
             self.usage.subagent_total_cost_usd_micros,
         );
+        let performance = self
+            .usage
+            .model_performance
+            .summary(&self.info.runtime.model_call_profile());
+        self.statusline.update_average_output_rate(
+            performance
+                .average_output_tokens_per_second
+                .map(|rate| rate.round() as u64),
+        );
         self.statusline
             .update_model_metadata(self.model_metadata.as_ref());
     }

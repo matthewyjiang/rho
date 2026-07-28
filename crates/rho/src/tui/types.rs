@@ -99,6 +99,7 @@ pub(super) struct UsageUi {
     pub(in crate::tui) usage_before_current_run: Option<ModelUsage>,
     pub(in crate::tui) run_usage: AttemptAwareRunUsage,
     pub(in crate::tui) latest_usage: Option<ModelUsage>,
+    pub(in crate::tui) model_performance: super::model_performance::ModelPerformanceTracker,
     pub(in crate::tui) current_context: Option<ContextUsage>,
     // Cumulative cost from completed subagents (bg + fg), claimed once per run via
     // SubagentManager::claim_terminal_costs_usd_micros during panel refresh.

@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
 use tokio::sync::mpsc;
 
@@ -13,7 +13,8 @@ use crate::{
     run::RunCommand,
     session::{HistoryMetrics, RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
-    CancellationToken, Error, ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId,
+    CancellationToken, Error, ModelCallProfile, ProviderError, ProviderErrorKind, Retryability,
+    RunEvent, RunId,
 };
 
 const PROVIDER_EVENT_CAPACITY: usize = 16;
@@ -24,10 +25,12 @@ const PROVIDER_TURN_ATTEMPTS: usize = 4;
 /// Backoff before the first retryable-failure retry; doubles per retry.
 const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
+mod model_call_timer;
 mod stream_capture;
 mod tool_batch;
 mod tool_turn;
 
+use model_call_timer::ModelCallTimer;
 use stream_capture::{capture_provider_event, StreamCapture};
 use tool_turn::{execute_staged_tool_turn, StagedToolTurn, ToolTurnStatus};
 
@@ -557,20 +560,28 @@ async fn provider_turn(
         .map(|tier| ModelRequestOptions::default().with_service_tier(tier))
         .unwrap_or_default();
     let cancellation_mode = provider.cancellation_mode();
+    let identity = provider.identity();
+    let profile = ModelCallProfile {
+        provider: identity.provider.clone(),
+        model: identity.model.clone(),
+        reasoning: reasoning_level,
+        service_tier: request_options.service_tier(),
+    };
     let mut future =
         provider.send_turn_stream_with_options(request, request_options, provider_events);
-    let identity = provider.identity();
     let mut capture = StreamCapture::default();
+    let mut timer = ModelCallTimer::start(Instant::now());
     let mut stream_open = true;
     let mut commands_open = true;
     let result = loop {
         tokio::select! {
-            result = &mut future => break result,
-            event = receiver.recv_stream_event(), if stream_open => {
+            result = &mut future => break (result, Instant::now()),
+            event = receiver.recv_timed_stream_event(), if stream_open => {
                 match event {
-                    Some(crate::provider::ProviderStreamEvent::Model(event)) => {
-                        if let Err(error) = handle_provider_event(
+                    Some(event) => {
+                        if let Err(error) = handle_timed_provider_stream_event(
                             event,
+                            &mut timer,
                             &identity,
                             accumulated_usage,
                             &mut capture,
@@ -585,16 +596,6 @@ async fn provider_turn(
                                     &mut capture,
                                 );
                             }
-                            return Err(RequestFailure { error, capture });
-                        }
-                    }
-                    Some(crate::provider::ProviderStreamEvent::Request(event)) => {
-                        if let Err(error) = handle_provider_request_event(
-                            event,
-                            &mut capture,
-                            control.events,
-                            control.cancellation,
-                        ).await {
                             return Err(RequestFailure { error, capture });
                         }
                     }
@@ -626,30 +627,19 @@ async fn provider_turn(
             }
         }
     };
-    while let Some(event) = receiver.try_recv_stream_event() {
-        let result = match event {
-            crate::provider::ProviderStreamEvent::Model(event) => {
-                handle_provider_event(
-                    event,
-                    &identity,
-                    accumulated_usage,
-                    &mut capture,
-                    control.events,
-                    control.cancellation,
-                )
-                .await
-            }
-            crate::provider::ProviderStreamEvent::Request(event) => {
-                handle_provider_request_event(
-                    event,
-                    &mut capture,
-                    control.events,
-                    control.cancellation,
-                )
-                .await
-            }
-        };
-        if let Err(error) = result {
+    let (result, completed_at) = result;
+    while let Some(event) = receiver.try_recv_timed_stream_event() {
+        if let Err(error) = handle_timed_provider_stream_event(
+            event,
+            &mut timer,
+            &identity,
+            accumulated_usage,
+            &mut capture,
+            control.events,
+            control.cancellation,
+        )
+        .await
+        {
             if control.cancellation.is_cancelled() {
                 drain_cancelled_provider_events(&mut receiver, &identity, &mut capture);
             }
@@ -657,8 +647,52 @@ async fn provider_turn(
         }
     }
     match result {
-        Ok(response) => Ok((response, capture)),
+        Ok(response) => {
+            let metrics = timer.finish(completed_at, capture.usage().output_tokens);
+            if let Err(error) = emit(
+                control.events,
+                control.cancellation,
+                RunEvent::ModelCallCompleted { profile, metrics },
+            )
+            .await
+            {
+                return Err(RequestFailure {
+                    error: ProviderError::interrupted(error.to_string()),
+                    capture,
+                });
+            }
+            Ok((response, capture))
+        }
         Err(error) => Err(RequestFailure { error, capture }),
+    }
+}
+
+async fn handle_timed_provider_stream_event(
+    (event, observed_at): (crate::provider::ProviderStreamEvent, Option<Instant>),
+    timer: &mut ModelCallTimer,
+    identity: &crate::model::ModelIdentity,
+    accumulated_usage: &ModelUsage,
+    capture: &mut StreamCapture,
+    events: &mpsc::Sender<RunEvent>,
+    cancellation: &CancellationToken,
+) -> Result<(), ProviderError> {
+    match event {
+        crate::provider::ProviderStreamEvent::Model(event) => {
+            timer.observe(&event, observed_at);
+            handle_provider_event(
+                event,
+                identity,
+                accumulated_usage,
+                capture,
+                events,
+                cancellation,
+            )
+            .await
+        }
+        crate::provider::ProviderStreamEvent::Request(event) => {
+            timer.discard_attempt_output();
+            handle_provider_request_event(event, capture, events, cancellation).await
+        }
     }
 }
 
@@ -763,9 +797,9 @@ async fn drain_cooperative_provider_on_cancellation(
     loop {
         tokio::select! {
             biased;
-            event = receiver.recv_stream_event(), if stream_open => {
+            event = receiver.recv_timed_stream_event(), if stream_open => {
                 match event {
-                    Some(crate::provider::ProviderStreamEvent::Model(event)) => {
+                    Some((crate::provider::ProviderStreamEvent::Model(event), _)) => {
                         let _ = capture_provider_event(
                             event,
                             identity,
@@ -773,9 +807,9 @@ async fn drain_cooperative_provider_on_cancellation(
                             capture,
                         );
                     }
-                    Some(crate::provider::ProviderStreamEvent::Request(
+                    Some((crate::provider::ProviderStreamEvent::Request(
                         crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage }
-                    )) => {
+                    ), _)) => {
                         capture.record_request_attempt_failure(kind, usage);
                     }
                     None => stream_open = false,
@@ -791,7 +825,7 @@ fn drain_cancelled_provider_events(
     identity: &crate::model::ModelIdentity,
     capture: &mut StreamCapture,
 ) {
-    while let Some(event) = receiver.try_recv_stream_event() {
+    while let Some((event, _)) = receiver.try_recv_timed_stream_event() {
         match event {
             crate::provider::ProviderStreamEvent::Model(event) => {
                 // Cancellation-sensitive host publication must not prevent capture of
