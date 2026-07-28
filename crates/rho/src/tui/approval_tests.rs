@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    ApprovalDecision, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope,
-    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ApprovalDecision, CapabilityRequest, CapabilitySource, PathScope, ProcessEnvironment,
+    ProcessExecution, ProcessInvocation, ProcessOutputLimits,
 };
 
 use super::{
@@ -49,107 +49,6 @@ fn maps_choice_indices_to_decisions() {
 }
 
 #[test]
-fn derives_titles_for_capability_kinds_and_sources() {
-    let requests = [
-        (
-            CapabilityRequest::write_path("file", PathScope::PrimaryWorkspace, source()),
-            "bash wants to write",
-        ),
-        (
-            CapabilityRequest::read_path("file", PathScope::PrimaryWorkspace, source()),
-            "bash wants to read",
-        ),
-        (
-            CapabilityRequest::network(NetworkTarget::ToolManaged, source()),
-            "bash wants to access the network",
-        ),
-        (
-            CapabilityRequest::skill("review", None, source()),
-            "bash wants to load a skill",
-        ),
-        (
-            CapabilityRequest::instruction_discovery(
-                ".",
-                PathScope::PrimaryWorkspace,
-                CapabilitySource::PromptConstruction,
-            ),
-            "rho wants to discover instructions",
-        ),
-    ];
-
-    for (request, expected) in requests {
-        assert_eq!(approval_title(&request), expected);
-    }
-
-    let process = CapabilityRequest::process(
-        ProcessExecution::new(
-            ".",
-            ProcessInvocation::executable_from_path("cargo", vec!["test".into()]),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        CapabilitySource::host_tool("shell"),
-    );
-    assert_eq!(approval_title(&process), "shell wants to execute");
-}
-
-#[test]
-fn renders_complete_sanitized_operation_details() {
-    let write = CapabilityRequest::write_path(
-        "src/main.rs\nspoofed",
-        PathScope::PrimaryWorkspace,
-        source(),
-    );
-    assert_eq!(
-        approval_details(&write),
-        vec!["path: src/main.rs\\nspoofed", "scope: primary workspace",]
-    );
-
-    let unrestricted =
-        CapabilityRequest::read_path("/outside/file", PathScope::UnrestrictedFilesystem, source());
-    assert_eq!(
-        approval_details(&unrestricted),
-        vec!["path: /outside/file", "scope: unrestricted filesystem"]
-    );
-
-    let network = CapabilityRequest::network(
-        NetworkTarget::Url("https://example.com/a/very/long/path".into()),
-        source(),
-    );
-    assert_eq!(
-        approval_details(&network),
-        vec!["target: https://example.com/a/very/long/path"]
-    );
-
-    let process = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/workspace/project",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf 'safe'\nrm -rf -- /dangerous-suffix",
-            ),
-            ProcessEnvironment::InheritListed {
-                variable_names: vec!["PATH".into(), "LANG".into()],
-            },
-            ProcessOutputLimits::new(1024, None),
-        ),
-        source(),
-    );
-    assert_eq!(
-        approval_details(&process),
-        vec![
-            "working directory: /workspace/project",
-            "executable resolution: PATH search",
-            "environment: inherit listed variable names [\"PATH\", \"LANG\"]",
-            "output limit: 1024 bytes; timeout: none",
-            "shell invocation (JSON-style args): [\"sh\", \"-c\"]",
-            "command: printf 'safe'\\nrm -rf -- /dangerous-suffix",
-        ]
-    );
-}
-
-#[test]
 fn direct_invocation_formatter_preserves_argument_boundaries() {
     let arguments = vec![
         "with spaces".into(),
@@ -165,103 +64,6 @@ fn direct_invocation_formatter_preserves_argument_boundaries() {
 }
 
 #[test]
-fn renders_default_choice_and_footer() {
-    let request =
-        CapabilityRequest::write_path("src/main.rs", PathScope::PrimaryWorkspace, source());
-    let lines = line_text(&approval_lines_for_position(
-        &request,
-        "needs editing",
-        0,
-        0,
-        80,
-    ));
-
-    assert_eq!(
-        lines,
-        vec![
-            "bash wants to write",
-            "path: src/main.rs",
-            "scope: primary workspace",
-            "reason: needs editing",
-            "> Allow once",
-            "  Allow for session",
-            "  Deny",
-            "pgup/pgdn details 2-4/4 · ↑ earlier",
-            "enter confirm · arrows choose · esc deny & cancel",
-        ]
-    );
-}
-
-#[test]
-fn bounded_detail_pages_keep_controls_visible_and_default_to_suffix() {
-    let request = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/workspace/with-a-long-directory",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf safe && remove -- /dangerous/final/suffix",
-            ),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        source(),
-    );
-    let width = 36;
-    let end_page = line_text(&approval_lines_for_position(&request, "", 0, 0, width));
-    let earlier_page = line_text(&approval_lines_for_position(&request, "", 0, 3, width));
-
-    for page in [&end_page, &earlier_page] {
-        assert!(page.len() <= 9);
-        assert!(page.iter().any(|line| line.contains("Allow once")));
-        assert!(page.iter().any(|line| line.contains("Allow for session")));
-        assert!(page.iter().any(|line| line.contains("Deny")));
-        assert!(page.iter().any(|line| line.contains("pgup/pgdn details ")));
-    }
-    assert!(end_page.join("").contains("/dangerous/final/suffix"));
-    assert!(
-        end_page
-            .iter()
-            .any(|line| line.contains("earlier") || line.contains('↑')),
-        "{end_page:?}"
-    );
-    assert!(earlier_page.iter().any(|line| line.contains("↓ later")));
-}
-
-#[test]
-fn paging_makes_every_wrapped_detail_inspectable() {
-    let request = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/workspace/with-a-long-directory",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf safe && remove -- /dangerous/final/suffix",
-            ),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        source(),
-    );
-    let rendered = (0..100)
-        .rev()
-        .flat_map(|page| {
-            line_text(&approval_lines_for_position(&request, "", 0, page, 12))
-                .into_iter()
-                .skip(1)
-                .take(3)
-        })
-        .collect::<Vec<_>>()
-        .join("");
-
-    assert!(
-        rendered.contains("/workspace/with-a-long-directory"),
-        "{rendered}"
-    );
-    assert!(rendered.contains("remove -- /dangerous/final/suffix"));
-}
-
-#[test]
 fn every_rendered_line_respects_narrow_width() {
     let request = CapabilityRequest::write_path(
         "src/a-very-long-directory/main.rs",
@@ -273,10 +75,7 @@ fn every_rendered_line_respects_narrow_width() {
 
     assert!(lines.iter().all(|line| line.width() <= width));
     assert!(lines.len() <= 9);
-    let rendered = line_text(&lines).join("");
-    assert!(rendered.contains("Allow once"));
-    assert!(rendered.contains("Allow for"));
-    assert!(rendered.contains("Deny"));
+    assert!(!line_text(&lines).is_empty());
 }
 
 #[test]

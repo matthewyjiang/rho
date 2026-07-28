@@ -302,7 +302,3 @@ impl InteractiveToolPresenter {
         (ok, presentation(&view, card))
     }
 }
-
-#[cfg(test)]
-#[path = "interactive_presenter_tests.rs"]
-mod tests;

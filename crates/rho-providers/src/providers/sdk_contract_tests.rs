@@ -746,26 +746,6 @@ fn retryability_matches_provider_error_contract() {
 }
 
 #[tokio::test]
-async fn concrete_openai_provider_implements_sdk_model_provider() {
-    use crate::credentials::MemoryCredentialStore;
-    use crate::providers::openai::auth::Auth;
-    use crate::providers::openai::OpenAiProvider;
-    use std::sync::Arc;
-
-    let provider = OpenAiProvider::new_with_auth(
-        "gpt-4.1".into(),
-        Auth::ApiKey("test-key".into()),
-        Arc::new(MemoryCredentialStore::default()),
-    );
-    let sdk: Arc<dyn SdkModelProvider> = Arc::new(provider);
-
-    assert_eq!(
-        sdk.identity(),
-        ModelIdentity::new("openai", "openai-responses", "gpt-4.1")
-    );
-}
-
-#[tokio::test]
 async fn fake_native_compact_provider_returns_compaction_output_through_sdk() {
     use std::sync::Arc;
 

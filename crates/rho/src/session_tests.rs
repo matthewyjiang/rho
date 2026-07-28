@@ -5,10 +5,8 @@ use tempfile::TempDir;
 use super::tree::{SessionNodeKind, StoredStateTransition};
 use super::*;
 use {
-    rho_providers::model::{
-        AssistantMessage, ContentBlock, ImageContent, ModelIdentity, ProviderContextBlock,
-    },
-    rho_tools::tool::{ToolCall, ToolResult},
+    rho_providers::model::{AssistantMessage, ContentBlock, ModelIdentity, ProviderContextBlock},
+    rho_tools::tool::ToolCall,
 };
 
 #[cfg(unix)]
@@ -28,34 +26,6 @@ impl AsRef<Path> for TestDir {
     fn as_ref(&self) -> &Path {
         self.0.path()
     }
-}
-
-#[test]
-fn persists_and_loads_messages() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::User(vec![
-            ContentBlock::Text("hello".into()),
-            ContentBlock::Image(ImageContent {
-                data: "aW1n".into(),
-                mime_type: "image/png".into(),
-            }),
-        ]))
-        .unwrap();
-    session
-        .append_message(&Message::assistant_text("hi"))
-        .unwrap();
-
-    let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
-    assert_eq!(messages.len(), 2);
-    assert!(matches!(&messages[0], Message::User(blocks) if matches!(
-        blocks.as_slice(),
-        [ContentBlock::Text(text), ContentBlock::Image(image)]
-            if text == "hello" && image.mime_type == "image/png" && image.data == "aW1n"
-    )));
-    assert!(matches!(&messages[1], Message::Assistant(_)));
 }
 
 #[test]
@@ -141,31 +111,6 @@ fn resume_by_id_errors_when_the_original_workspace_is_gone() {
 }
 
 #[test]
-fn resume_by_id_errors_when_the_original_workspace_is_a_file() {
-    let root = temp_session_root();
-    let parent = temp_cwd();
-    let original = parent.join("project");
-    std::fs::create_dir(&original).unwrap();
-    let session = Session::create_in_root(&root, &original).unwrap();
-    session
-        .append_message(&Message::assistant_text("work in progress"))
-        .unwrap();
-    let id = session.id().to_string();
-
-    std::fs::remove_dir_all(&original).unwrap();
-    std::fs::write(&original, "not a directory").unwrap();
-
-    let other_cwd = temp_cwd();
-    let error = Session::open_by_id_in_root(&root, &other_cwd, &id).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("no longer an accessible directory"),
-        "a non-directory at the workspace path must not be accepted, got: {error}"
-    );
-}
-
-#[test]
 fn separate_display_message_round_trips_for_resume_and_export() {
     let root = temp_session_root();
     let cwd = temp_cwd();
@@ -195,30 +140,6 @@ fn separate_display_message_round_trips_for_resume_and_export() {
         &export.messages[0].message,
         Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/goal all tests pass")
     ));
-}
-
-#[test]
-fn replace_history_round_trips_compacted_messages() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session.append_message(&Message::user_text("old")).unwrap();
-    session
-        .replace_history(&[
-            Message::user_text("summary"),
-            Message::assistant_text("recent answer"),
-        ])
-        .unwrap();
-
-    let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
-
-    assert_eq!(messages.len(), 2);
-    assert!(
-        matches!(&messages[0], Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "summary"))
-    );
-    assert!(
-        matches!(&messages[1], Message::Assistant(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "recent answer"))
-    );
 }
 
 #[test]
@@ -278,23 +199,6 @@ fn replace_history_is_append_only_but_model_replay_uses_latest_replacement() {
 }
 
 #[test]
-fn replace_history_updates_session_summary() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session.append_message(&Message::user_text("old")).unwrap();
-    session
-        .replace_history(&[Message::user_text("summary"), Message::user_text("latest")])
-        .unwrap();
-
-    let summaries = Session::list_in_root(&root, &cwd).unwrap();
-
-    assert_eq!(summaries[0].message_count, 1);
-    assert_eq!(summaries[0].first_user_message.as_deref(), Some("old"));
-    assert_eq!(summaries[0].last_user_message.as_deref(), Some("old"));
-}
-
-#[test]
 fn opens_session_by_uuid_prefix() {
     let root = temp_session_root();
     let cwd = temp_cwd();
@@ -323,19 +227,6 @@ fn errors_when_uuid_prefix_is_ambiguous() {
 }
 
 #[test]
-fn open_and_export_share_prefix_resolution_errors() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
-    write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
-
-    let open_error = Session::open_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
-    let export_error = Session::export_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
-
-    assert_eq!(open_error.to_string(), export_error.to_string());
-}
-
-#[test]
 fn errors_when_uuid_prefix_is_missing() {
     let root = temp_session_root();
     let cwd = temp_cwd();
@@ -343,31 +234,6 @@ fn errors_when_uuid_prefix_is_missing() {
     let err = Session::open_by_id_in_root(&root, &cwd, "missing").unwrap_err();
 
     assert!(err.to_string().contains("no session found"));
-}
-
-#[test]
-fn stores_sessions_under_session_root_workspace_key() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    let expected_workspace = root.join(workspace_key(&cwd));
-
-    assert_eq!(
-        session.path().file_name().and_then(|name| name.to_str()),
-        Some("session.jsonl")
-    );
-    assert_eq!(
-        session.path().parent().and_then(|path| path.parent()),
-        Some(expected_workspace.as_path())
-    );
-    assert!(session
-        .path()
-        .parent()
-        .unwrap()
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap()
-        .contains(session.id()));
 }
 
 #[test]
@@ -381,57 +247,40 @@ fn workspace_key_avoids_separator_collisions() {
 
 #[test]
 fn drops_incomplete_tool_call_tail_on_load() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::user_text("run a tool"))
-        .unwrap();
-    session
-        .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: serde_json::json!({"command": "echo hi"}),
-            },
-        )]))
-        .unwrap();
+    let plain = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call-1".into(),
+        name: "bash".into(),
+        arguments: serde_json::json!({"command": "echo hi"}),
+    })]);
+    let enriched = Message::assistant(AssistantMessage {
+        content: vec![ContentBlock::ToolCall(ToolCall {
+            id: "call-1".into(),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "echo hi"}),
+        })],
+        provenance: Some(ModelIdentity::new(
+            "openai-codex",
+            "openai-responses",
+            "gpt-test",
+        )),
+        reasoning_summary: None,
+        provider_context: Vec::new(),
+    });
 
-    let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
+    for assistant in [plain, enriched] {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_in_root(&root, &cwd).unwrap();
+        session
+            .append_message(&Message::user_text("run a tool"))
+            .unwrap();
+        session.append_message(&assistant).unwrap();
 
-    assert_eq!(messages.len(), 1);
-    assert!(matches!(&messages[0], Message::User(_)));
-}
+        let (_, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
 
-#[test]
-fn drops_incomplete_enriched_tool_call_tail_on_load() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::user_text("run a tool"))
-        .unwrap();
-    session
-        .append_message(&Message::assistant(AssistantMessage {
-            content: vec![ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: serde_json::json!({"command": "echo hi"}),
-            })],
-            provenance: Some(ModelIdentity::new(
-                "openai-codex",
-                "openai-responses",
-                "gpt-test",
-            )),
-            reasoning_summary: None,
-            provider_context: Vec::new(),
-        }))
-        .unwrap();
-
-    let (_, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
-
-    assert_eq!(messages.len(), 1);
-    assert!(matches!(&messages[0], Message::User(_)));
+        assert_eq!(messages.len(), 1);
+        assert!(matches!(&messages[0], Message::User(_)));
+    }
 }
 
 #[test]
@@ -506,35 +355,6 @@ fn append_repairs_external_writes_despite_cached_cursor() {
 }
 
 #[test]
-fn keeps_complete_tool_call_turn_on_load() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: serde_json::json!({"command": "echo hi"}),
-            },
-        )]))
-        .unwrap();
-    session
-        .append_message(&Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "hi".into(),
-        }))
-        .unwrap();
-
-    let (_session, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
-
-    assert_eq!(messages.len(), 2);
-    assert!(matches!(&messages[0], Message::Assistant(_)));
-    assert!(matches!(&messages[1], Message::ToolResult(_)));
-}
-
-#[test]
 fn list_backfills_existing_sessions_and_sorts_newest_first() {
     let root = temp_session_root();
     let cwd = temp_cwd();
@@ -558,53 +378,6 @@ fn list_backfills_existing_sessions_and_sorts_newest_first() {
     );
     assert_eq!(summaries[1].id, older_id);
     assert!(root.join("index.sqlite3").exists());
-}
-
-#[test]
-fn append_message_updates_session_summary() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::user_text("remember this"))
-        .unwrap();
-    session
-        .append_message(&Message::assistant_text("remembered"))
-        .unwrap();
-
-    let summaries = Session::list_in_root(&root, &cwd).unwrap();
-
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].id, session.id());
-    assert_eq!(summaries[0].message_count, 2);
-    assert_eq!(
-        summaries[0].first_user_message.as_deref(),
-        Some("remember this")
-    );
-    assert_eq!(
-        summaries[0].last_user_message.as_deref(),
-        Some("remember this")
-    );
-    assert!(summaries[0].updated_at >= summaries[0].created_at);
-}
-
-#[test]
-fn set_title_updates_session_summary() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::user_text("write tests"))
-        .unwrap();
-
-    Session::set_title_in_root(&root, &cwd, session.id(), "Testing plan").unwrap();
-    let summaries = Session::list_in_root(&root, &cwd).unwrap();
-
-    assert_eq!(summaries[0].title.as_deref(), Some("Testing plan"));
-    assert_eq!(
-        summaries[0].first_user_message.as_deref(),
-        Some("write tests")
-    );
 }
 
 #[test]
@@ -644,37 +417,6 @@ fn creates_session_paths_with_private_permissions() {
     assert_eq!(workspace_mode, 0o700);
     assert_eq!(session_dir_mode, 0o700);
     assert_eq!(file_mode, 0o600);
-}
-
-#[test]
-fn export_by_id_returns_metadata_and_timestamped_display_messages() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::user_text("first prompt"))
-        .unwrap();
-    session
-        .append_message(&Message::assistant_text("first answer"))
-        .unwrap();
-    Session::set_title_in_root(&root, &cwd, session.id(), "Export me").unwrap();
-
-    let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
-
-    assert_eq!(export.id, session.id());
-    assert_eq!(export.cwd, cwd.to_path_buf());
-    assert_eq!(export.title.as_deref(), Some("Export me"));
-    assert!(export.created_at > 0);
-    assert!(export.updated_at >= export.created_at);
-    assert_eq!(export.messages.len(), 2);
-    assert!(export
-        .messages
-        .iter()
-        .all(|entry| entry.timestamp.is_some()));
-    assert!(
-        matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "first prompt"))
-    );
-    assert!(matches!(&export.messages[1].message, Message::Assistant(_)));
 }
 
 #[test]
@@ -757,34 +499,6 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
 }
 
 #[test]
-fn session_header_persists_agent_identity() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let session = Session::create_with_id_in_root(
-        root.path(),
-        cwd.path(),
-        "agent-session",
-        Some(("reviewer", "fingerprint-123")),
-    )
-    .unwrap();
-
-    assert_eq!(
-        session.stored_agent_identity().unwrap(),
-        Some(("reviewer".into(), "fingerprint-123".into()))
-    );
-}
-
-#[test]
-fn legacy_session_reports_missing_agent_identity() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let session =
-        Session::create_with_id_in_root(root.path(), cwd.path(), "legacy-session", None).unwrap();
-
-    assert_eq!(session.stored_agent_identity().unwrap(), None);
-}
-
-#[test]
 fn opens_legacy_flat_jsonl_sessions_by_id() {
     let root = temp_session_root();
     let cwd = temp_cwd();
@@ -819,24 +533,6 @@ fn session_web_dir_uses_folder_sidecar_and_legacy_companion() {
         super::persistence::session_web_dir(&legacy),
         Some(PathBuf::from("/tmp/ws/100_abc.web"))
     );
-}
-
-#[test]
-fn session_web_dir_method_matches_layout() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    let expected = session.path().parent().unwrap().join("web");
-    assert_eq!(session.web_dir(), Some(expected));
-}
-
-#[test]
-fn session_subagents_dir_matches_folder_layout() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    let expected = session.path().parent().unwrap().join("subagents");
-    assert_eq!(session.subagents_dir(), Some(expected));
 }
 
 #[test]

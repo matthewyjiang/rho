@@ -2,8 +2,6 @@ use tokio::sync::oneshot;
 
 mod render;
 
-#[cfg(test)]
-use render::questionnaire_frame;
 pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 
 use super::paste_burst::{next_word_boundary, previous_word_boundary};

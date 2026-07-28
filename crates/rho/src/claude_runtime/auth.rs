@@ -267,14 +267,6 @@ pub(crate) async fn version_executable(
 }
 
 #[cfg(test)]
-pub(crate) fn describe_probe_result(result: &Result<ClaudeAuthStatus, ClaudeAuthError>) -> String {
-    match result {
-        Ok(status) => status.describe(),
-        Err(error) => error.to_string(),
-    }
-}
-
-#[cfg(test)]
 impl ClaudeAuthError {
     pub(crate) fn is_binary_missing(&self) -> bool {
         matches!(self, Self::BinaryMissing)

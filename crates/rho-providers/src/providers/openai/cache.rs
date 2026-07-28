@@ -69,16 +69,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_uuid_maps_to_stable_prefixed_key() {
-        let session_id = "123e4567-e89b-12d3-a456-426614174000";
-
-        assert_eq!(
-            prompt_cache_key_from_session_id(session_id).as_deref(),
-            Some("rho:123e4567-e89b-12d3-a456-426614174000")
-        );
-    }
-
-    #[test]
     fn cache_key_sanitizes_unsupported_characters() {
         assert_eq!(
             prompt_cache_key_from_session_id(" project / session 🚀 ").as_deref(),

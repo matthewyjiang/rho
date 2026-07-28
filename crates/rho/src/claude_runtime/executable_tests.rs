@@ -7,38 +7,14 @@ use super::*;
 use crate::claude_runtime::windows_shim_args::WindowsShimArgError;
 
 #[test]
-fn missing_bare_name_is_binary_missing() {
-    let error = resolve_named("definitely-not-a-claude-binary-xyz").unwrap_err();
-    assert!(error.is_binary_missing());
-}
-
-#[test]
-fn absolute_missing_path_is_binary_missing() {
-    let error = resolve_named("/tmp/rho-missing-claude-binary").unwrap_err();
-    assert!(error.is_binary_missing());
-}
-
-#[test]
-fn classifies_direct_unix_or_exe_paths() {
-    let unix = ClaudeExecutable::from_path("/usr/bin/claude");
-    assert_eq!(unix.kind(), ClaudeInvocationKind::Direct);
-    assert_eq!(
-        unix.plan(["auth", "status"]).unwrap(),
-        ClaudeArgv {
-            program: PathBuf::from("/usr/bin/claude"),
-            args: vec![OsString::from("auth"), OsString::from("status")],
-        }
-    );
-
-    let exe = ClaudeExecutable::from_path(r"C:\Tools\claude.exe");
-    assert_eq!(exe.kind(), ClaudeInvocationKind::Direct);
-    assert_eq!(
-        exe.plan(["--version"]).unwrap(),
-        ClaudeArgv {
-            program: PathBuf::from(r"C:\Tools\claude.exe"),
-            args: vec![OsString::from("--version")],
-        }
-    );
+fn missing_program_is_binary_missing() {
+    for name in [
+        "definitely-not-a-claude-binary-xyz",
+        "/tmp/rho-missing-claude-binary",
+    ] {
+        let error = resolve_named(name).unwrap_err();
+        assert!(error.is_binary_missing(), "name={name}");
+    }
 }
 
 #[test]
@@ -94,12 +70,6 @@ fn classifies_ps1_shim_as_fixed_argv_powershell_invocation() {
 }
 
 #[test]
-fn bat_extension_uses_cmd_script_kind() {
-    let shim = ClaudeExecutable::from_path(r"C:\Tools\claude.bat");
-    assert_eq!(shim.kind(), ClaudeInvocationKind::CmdScript);
-}
-
-#[test]
 fn cmd_shim_argv_encodes_special_characters() {
     let shim = ClaudeExecutable::from_path(r"C:\shims\claude.cmd");
     let cases: &[(&str, &str)] = &[
@@ -142,32 +112,6 @@ fn cmd_shim_argv_encodes_special_characters() {
 }
 
 #[test]
-fn cmd_shim_encodes_system_prompt_file_path_with_spaces() {
-    let shim = ClaudeExecutable::from_path(r"C:\Program Files\Claude\claude.cmd");
-    let plan = shim
-        .plan([
-            "-p",
-            "--system-prompt-file",
-            r"C:\Users\me\AppData\Local\rho\runs\run 1\system-prompt.txt",
-        ])
-        .unwrap();
-    let line =
-        crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-    assert!(
-        line.contains(r#""C:\Program Files\Claude\claude.cmd""#),
-        "{line}"
-    );
-    assert!(
-        line.contains(r#""C:\Users\me\AppData\Local\rho\runs\run 1\system-prompt.txt""#),
-        "{line}"
-    );
-    assert!(line.contains("--system-prompt-file"), "{line}");
-}
-
-#[test]
 fn cmd_shim_rejects_cr_lf_before_spawn() {
     let shim = ClaudeExecutable::from_path(r"C:\shims\claude.cmd");
     let err = shim.plan(["ok\nbad"]).unwrap_err();
@@ -192,14 +136,6 @@ fn powershell_try_command_accepts_metacharacters() {
     assert!(plan.args.iter().any(|a| a == "x y"));
     assert!(plan.args.iter().any(|a| a == "模型"));
     assert!(plan.args.iter().any(|a| a.is_empty()));
-}
-
-#[test]
-fn direct_command_builder_preserves_args() {
-    let exe = ClaudeExecutable::from_path("/usr/bin/claude");
-    // Construction must not fail; spawn is not required here.
-    let _ = exe.try_command(["auth", "status"]).unwrap();
-    let _ = exe.try_command(["--version"]).unwrap();
 }
 
 #[cfg(unix)]

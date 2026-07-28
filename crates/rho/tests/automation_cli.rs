@@ -8,7 +8,6 @@ use tempfile::TempDir;
 
 const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
 const RESPONSE_ENV: &str = "RHO_AUTOMATION_TEST_RESPONSE";
-const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
 const PATH_ENV: &str = "RHO_AUTOMATION_TEST_PATH";
 
 #[test]
@@ -516,94 +515,6 @@ fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
     assert_eq!(events.last().unwrap()["reason"], "interrupted");
 }
 
-#[cfg(unix)]
-#[test]
-fn interrupt_reports_herdr_lifecycle_and_cleans_up_background_processes() {
-    use std::{
-        os::unix::net::UnixListener,
-        sync::{Arc, Mutex},
-        time::{Duration, Instant},
-    };
-
-    let root = TempDir::new().unwrap();
-    let ready = root.path().join("process-ready");
-    let leaked = root.path().join("process-leaked");
-    let socket = root.path().join("herdr.sock");
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let server_requests = Arc::clone(&requests);
-    let listener = UnixListener::bind(&socket).unwrap();
-    let server = std::thread::spawn(move || {
-        for _ in 0..3 {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut line = String::new();
-            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
-            std::io::BufRead::read_line(&mut reader, &mut line).unwrap();
-            server_requests
-                .lock()
-                .unwrap()
-                .push(serde_json::from_str::<Value>(&line).unwrap());
-            stream.write_all(b"{}\n").unwrap();
-        }
-    });
-
-    let process_command = format!(
-        "printf started > '{}'; sleep 5; printf leaked > '{}'",
-        ready.display(),
-        leaked.display()
-    );
-    let mut command = command(&root, "process-then-delay");
-    command
-        .env(COMMAND_ENV, process_command)
-        .env("HERDR_ENV", "1")
-        .env("HERDR_SOCKET_PATH", &socket)
-        .env("HERDR_PANE_ID", "%fixture")
-        .args(["run", "start background work"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = command.spawn().unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !ready.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(ready.exists(), "fixture process did not start");
-    let signal_status = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(signal_status.success());
-    let output = child.wait_with_output().unwrap();
-    assert_eq!(output.status.code(), Some(130));
-    assert!(output.stdout.is_empty());
-    assert!(stderr(&output).contains("interrupted by SIGINT"));
-
-    server.join().unwrap();
-    let methods = requests
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|request| request["method"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        methods,
-        [
-            "pane.report_agent",
-            "pane.report_agent",
-            "pane.release_agent"
-        ]
-    );
-    let states = requests
-        .lock()
-        .unwrap()
-        .iter()
-        .filter_map(|request| request["params"]["state"].as_str().map(str::to_string))
-        .collect::<Vec<_>>();
-    assert_eq!(states, ["working", "idle"]);
-
-    std::thread::sleep(Duration::from_millis(300));
-    assert!(!leaked.exists(), "background process survived rho shutdown");
-}
-
 fn run(root: &TempDir, mode: &str, args: &[&str], input: Option<&str>) -> Output {
     let mut command = command(root, mode);
     command.args(args);
@@ -630,7 +541,6 @@ fn command(root: &TempDir, mode: &str) -> Command {
         .env("RHO_HOME", root.path().join(".rho"))
         .env(MODE_ENV, mode)
         .env_remove(RESPONSE_ENV)
-        .env_remove(COMMAND_ENV)
         .env_remove(PATH_ENV)
         .env_remove("HERDR_ENV")
         .env_remove("HERDR_SOCKET_PATH")

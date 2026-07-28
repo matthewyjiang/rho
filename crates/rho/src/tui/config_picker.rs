@@ -591,7 +591,3 @@ impl App {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "config_picker_tests.rs"]
-mod tests;

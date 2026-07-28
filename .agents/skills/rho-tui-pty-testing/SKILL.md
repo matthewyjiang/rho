@@ -8,6 +8,8 @@ compatibility: Requires a buildable Rho checkout. Unix PTY support is required f
 
 Use the `rho-tui-pty` crate to spawn a compiled Rho binary in a pseudo-terminal, inject input, reconstruct the visible screen, and assert user-visible behavior. This is the primary automated interactive TUI path.
 
+For whether a TUI change needs a PTY scenario vs a pure unit test, follow `rho-test-selection` first.
+
 ## When to use this vs Herdr
 
 | Need | Tool |

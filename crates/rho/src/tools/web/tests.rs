@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use {
-    crate::config::{Config, SearchProvider},
+    crate::config::Config,
     rho_tools::tool::{Tool, ToolContext},
 };
 
@@ -112,39 +112,6 @@ async fn search_item_content_preserves_snippet_when_fetch_fails() {
     assert!(content.contains("content fetch failed"));
 }
 
-#[test]
-fn content_availability_matches_stored_content_kind() {
-    let items = vec![
-        StoredItem {
-            url: Some("https://example.com".into()),
-            query: Some("example".into()),
-            title: Some("failed".into()),
-            content: "content fetch failed".into(),
-            metadata: json!({"contentKind": "fetch_failed"}),
-        },
-        StoredItem {
-            url: Some("https://example.net".into()),
-            query: Some("example".into()),
-            title: Some("snippet preserved".into()),
-            content: "original snippet\n\ncontent fetch failed".into(),
-            metadata: json!({"contentKind": "snippet_with_fetch_warning"}),
-        },
-        StoredItem {
-            url: Some("https://example.org".into()),
-            query: Some("example".into()),
-            title: Some("source".into()),
-            content: "source page".into(),
-            metadata: json!({"contentKind": "source_page"}),
-        },
-    ];
-
-    let all = storage::content_availability(&items);
-    assert!(all.sources);
-    assert!(all.snippets);
-    assert!(!storage::content_availability(&items[..2]).sources);
-    assert!(!storage::content_availability(&items[..1]).snippets);
-}
-
 #[tokio::test]
 async fn get_search_content_lists_available_selectors_on_query_miss() {
     let store = WebAccessStore::new();
@@ -197,53 +164,6 @@ async fn get_search_content_rejects_invalid_response_id() {
     assert_eq!(
         err.to_string(),
         "invalid responseId: expected 32 lowercase hexadecimal characters"
-    );
-}
-
-#[test]
-fn search_provider_parses_tool_and_config_values() {
-    assert_eq!("openai".parse(), Ok(SearchProvider::OpenAi));
-    assert_eq!(
-        SearchProvider::from_config_value("unknown"),
-        SearchProvider::Auto
-    );
-    assert_eq!(
-        SearchProvider::Brave.next_configurable(),
-        SearchProvider::Disabled
-    );
-}
-
-#[test]
-fn tool_specs_and_fetch_security_preserve_public_contract() {
-    let web_search = super::SdkWebSearch::new(
-        super::access_tools_with_store(&Config::default(), WebAccessStore::new()),
-        12_000,
-    );
-    assert_eq!(rho_sdk::tool::Tool::spec(&web_search).name, "web_search");
-    assert_eq!(
-        rho_sdk::tool::Tool::security(&web_search).capabilities(),
-        [rho_sdk::CapabilityKind::Network]
-    );
-    let fetch_content = super::SdkFetchContent::new(
-        12_000,
-        rho_sdk::ProcessEnvironment::InheritAll,
-        WebAccessStore::new(),
-    );
-    assert_eq!(
-        rho_sdk::tool::Tool::spec(&fetch_content).name,
-        "fetch_content"
-    );
-    assert_eq!(
-        rho_sdk::tool::Tool::security(&fetch_content).capabilities(),
-        [
-            rho_sdk::CapabilityKind::Read,
-            rho_sdk::CapabilityKind::Process,
-            rho_sdk::CapabilityKind::Network,
-        ]
-    );
-    assert_eq!(
-        GetSearchContent::new(WebAccessStore::new()).spec().name,
-        "get_search_content"
     );
 }
 

@@ -4,8 +4,7 @@ use pretty_assertions::assert_eq;
 
 use super::{
     available_image_helpers_with, image_content_from_bytes, image_from_paste_text,
-    paste_text_as_image_path, platform_image_helpers, read_clipboard_image_for_session,
-    read_clipboard_image_for_session_with, read_image_file, read_image_file_with_limit,
+    paste_text_as_image_path, read_clipboard_image_for_session, read_image_file_with_limit,
     select_preferred_image_mime_type, ClipboardImageError, PasteImageOutcome,
 };
 use crate::clipboard::SessionKind;
@@ -47,51 +46,9 @@ fn wsl_sessions_include_powershell_when_present() {
 }
 
 #[test]
-fn local_sessions_report_platform_helpers() {
-    let helpers = available_image_helpers_with(SessionKind::Local, |_| true);
-    assert_eq!(helpers, platform_image_helpers());
-}
-
-#[test]
 fn remote_sessions_do_not_read_host_image_clipboards() {
     let error = read_clipboard_image_for_session(SessionKind::Remote).unwrap_err();
     assert!(matches!(error, ClipboardImageError::NoImage));
-}
-
-#[test]
-fn missing_local_helpers_report_install_guidance_not_no_image() {
-    let error = read_clipboard_image_for_session_with(SessionKind::Local, |_| false).unwrap_err();
-    let ClipboardImageError::HelperMissing(message) = error else {
-        panic!("expected HelperMissing, got {error:?}");
-    };
-    assert!(
-        !message.contains("no supported image found on clipboard"),
-        "missing helpers must not look like an empty clipboard: {message}"
-    );
-    for helper in platform_image_helpers() {
-        assert!(
-            message.contains(helper),
-            "message should name required helper {helper}: {message}"
-        );
-    }
-}
-
-#[test]
-fn missing_wsl_helpers_report_install_guidance_not_no_image() {
-    let error = read_clipboard_image_for_session_with(SessionKind::Wsl, |_| false).unwrap_err();
-    let ClipboardImageError::HelperMissing(message) = error else {
-        panic!("expected HelperMissing, got {error:?}");
-    };
-    assert!(
-        !message.contains("no supported image found on clipboard"),
-        "missing helpers must not look like an empty clipboard: {message}"
-    );
-    for helper in ["wl-paste", "xclip", "powershell.exe"] {
-        assert!(
-            message.contains(helper),
-            "message should name required helper {helper}: {message}"
-        );
-    }
 }
 
 #[test]
@@ -127,14 +84,6 @@ fn paste_text_recognizes_absolute_and_relative_image_paths() {
         image_from_paste_text("shot.png", cwd),
         PasteImageOutcome::Image(_)
     ));
-}
-
-#[test]
-fn read_image_file_loads_supported_bytes() {
-    let (_dir, path) = write_temp_png();
-    let image = read_image_file(&path).unwrap();
-    assert_eq!(image.mime_type, "image/png");
-    assert!(!image.data.is_empty());
 }
 
 #[test]

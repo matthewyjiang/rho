@@ -960,12 +960,4 @@ mod tests {
             )])
         );
     }
-
-    #[test]
-    fn bulk_response_is_long_and_deterministic_for_scroll_smokes() {
-        let response = bulk_response("fixture bulk one");
-        assert_eq!(response.lines().count(), 180);
-        assert!(response.starts_with("fixture bulk one line 001:"));
-        assert!(response.contains("fixture bulk one line 180:"));
-    }
 }

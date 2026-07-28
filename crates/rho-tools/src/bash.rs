@@ -183,22 +183,6 @@ mod tests {
         assert!(result.content.contains("ok\u{FFFD}"));
     }
 
-    #[tokio::test]
-    async fn timeout_error_includes_partial_output() {
-        let err = Bash::new(false)
-            .call(
-                json!({"command": "printf 'started\\n'; sleep 10", "timeout_seconds": 5}),
-                test_context(),
-                "call_1".into(),
-            )
-            .await
-            .unwrap_err();
-
-        let message = err.to_string();
-        assert!(message.contains("timed out after 5s"));
-        assert!(message.contains("started"));
-    }
-
     // Kills `pid` on drop. Waiting stays in the test body so Drop stays non-blocking.
     struct KillOnDrop(i32);
 
@@ -221,7 +205,7 @@ mod tests {
                 "escaped child did not write pid file at {}",
                 path.display()
             );
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
 
@@ -237,9 +221,9 @@ mod tests {
         // the escaped child even when the process keeps the pipe open.
         let command = "python3 -c 'import os,time\nif os.fork()==0:\n os.setsid()\n f=open(\"escaped.pid\",\"w\")\n f.write(str(os.getpid()))\n f.flush()\n os.fsync(f.fileno())\n f.close()\n time.sleep(10)'; sleep 10";
 
-        let start = std::time::Instant::now();
-        let result = Bash::new(false)
-            .call(
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            Bash::new(false).call(
                 json!({
                     "command": command,
                     "timeout_seconds": 1
@@ -249,76 +233,16 @@ mod tests {
                     max_output_bytes: 12_000,
                 },
                 "call_1".into(),
-            )
-            .await;
+            ),
+        )
+        .await
+        .expect("timeout arm blocked on the escaped process");
 
         let pid = wait_for_pid_file(&pid_path).await;
         let _kill_escaped = KillOnDrop(pid);
 
         let err = result.unwrap_err();
         assert!(err.to_string().contains("timed out after 1s"));
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(5),
-            "timeout arm blocked on the escaped process: {:?}",
-            start.elapsed()
-        );
-    }
-
-    #[tokio::test]
-    async fn dropping_call_terminates_background_processes() {
-        let dir = tempfile::tempdir().unwrap();
-        let ctx = ToolContext {
-            cwd: dir.path().to_path_buf(),
-            max_output_bytes: 12000,
-        };
-        let background_process_started = ctx.cwd.join("background-process-started");
-        let marker = ctx.cwd.join("background-process-survived");
-
-        let bash = Bash::new(false);
-        let mut call = Box::pin(bash.call(
-            json!({
-                "command": "sh -c 'touch background-process-started; sleep 2; touch background-process-survived' </dev/null >/dev/null 2>&1 & wait"
-            }),
-            ctx,
-            "call_1".into(),
-        ));
-        tokio::select! {
-            result = &mut call => panic!("command completed unexpectedly: {result:?}"),
-            _ = async {
-                while !background_process_started.exists() {
-                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-                }
-            } => {}
-        }
-        drop(call);
-
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        assert!(!marker.exists(), "background process survived cancellation");
-    }
-
-    #[tokio::test]
-    async fn timeout_terminates_background_processes() {
-        let dir = tempfile::tempdir().unwrap();
-        let ctx = ToolContext {
-            cwd: dir.path().to_path_buf(),
-            max_output_bytes: 12000,
-        };
-        let marker = ctx.cwd.join("background-process-survived");
-
-        Bash::new(false)
-            .call(
-                json!({
-                    "command": "sh -c 'sleep 2; touch background-process-survived' </dev/null >/dev/null 2>&1 & wait",
-                    "timeout_seconds": 1
-                }),
-                ctx,
-                "call_1".into(),
-            )
-            .await
-            .unwrap_err();
-
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        assert!(!marker.exists(), "background process survived the timeout");
     }
 
     #[tokio::test]

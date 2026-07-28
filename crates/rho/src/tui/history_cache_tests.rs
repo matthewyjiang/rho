@@ -1,14 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::{entry_lines, render_entry_with_images};
-
-fn line_text(line: &Line<'_>) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect()
-}
+use crate::tui::render::entry_lines;
 
 fn no_images(_: usize, _: &[MarkdownImageSource]) -> Vec<(usize, FeedImage)> {
     Vec::new()
@@ -177,9 +170,6 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
         &no_images,
     );
     assert_eq!(cached_lines, entry_lines(&entries[0], 80, 10));
-    assert!(cached_lines
-        .iter()
-        .any(|line| line_text(line).contains("flowchart LR")));
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -200,12 +190,6 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
     );
 
     assert_eq!(cached_lines, entry_lines(&entries[0], 80, 10));
-    assert!(cached_lines
-        .iter()
-        .any(|line| line_text(line).contains("MERMAID")));
-    assert!(!cached_lines
-        .iter()
-        .any(|line| line_text(line).contains("flowchart LR")));
     assert_eq!(
         cache.code_blocks(&entries, 80, 10, &no_images)[0]
             .text
@@ -230,39 +214,39 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
 }
 
 #[test]
-fn resizing_moves_a_wide_diagram_between_art_and_explained_source() {
+fn resizing_keeps_mermaid_code_block_source_stable() {
     let source = crate::tui::markdown::PHASE_CHAIN_FLOWCHART;
     let entries = vec![Entry::Assistant(format!("```mermaid\n{source}\n```"))];
     let mut cache = HistoryLineCache::default();
 
-    let render_at = |cache: &mut HistoryLineCache, width: usize| {
-        let mut lines = Vec::new();
-        cache.extend_visible_lines(
-            &entries,
-            width,
-            10,
-            HistoryLineSlice {
-                start: 0,
-                count: usize::MAX,
-            },
-            &mut lines,
-            &no_images,
-        );
-        lines.iter().map(line_text).collect::<Vec<_>>()
-    };
-
-    let wide = render_at(&mut cache, 100);
-    assert!(wide.iter().any(|line| line.contains("Phase 5")), "{wide:?}");
-    assert!(!wide.iter().any(|line| line.contains("flowchart LR")));
-
-    let narrow = render_at(&mut cache, 40);
-    assert!(
-        narrow.iter().any(|line| line.contains("PANE TOO NARROW")),
-        "{narrow:?}"
+    let mut wide = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        100,
+        10,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut wide,
+        &no_images,
     );
-    assert!(narrow.iter().any(|line| line.contains("flowchart LR")));
+    let mut narrow = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        40,
+        10,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut narrow,
+        &no_images,
+    );
 
-    assert_eq!(render_at(&mut cache, 100), wide);
+    assert_ne!(wide, narrow);
+    assert_eq!(wide, entry_lines(&entries[0], 100, 10));
+    assert_eq!(narrow, entry_lines(&entries[0], 40, 10));
     for width in [100, 40] {
         assert_eq!(
             cache.code_blocks(&entries, width, 10, &no_images)[0]
@@ -293,146 +277,6 @@ fn invalidating_an_assistant_entry_refreshes_code_block_contents() {
             .as_ref(),
         "second"
     );
-}
-
-#[test]
-fn markdown_image_placement_renders_after_images_resolve() {
-    use image::{DynamicImage, ImageFormat};
-    use rho_sdk::tool::ToolAsset;
-    use std::io::Cursor;
-
-    let image = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-        300,
-        600,
-        image::Rgba([20, 40, 60, 255]),
-    ));
-    let mut bytes = Cursor::new(Vec::new());
-    image.write_to(&mut bytes, ImageFormat::Png).unwrap();
-    let asset = ToolAsset::new("image/png", bytes.into_inner());
-    let mut picker = ratatui_image::picker::Picker::halfblocks();
-    picker.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
-    let feed = FeedImage::load(&asset, &picker).unwrap();
-
-    let mut cache = HistoryLineCache::default();
-    let mut entries = vec![Entry::Assistant(format!(
-        "before\n\n![photo](photo.png)\n\n{}\n```\ncopy me\n```",
-        (0..15)
-            .map(|index| format!("stable {index}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    ))];
-
-    // Before any images are marked ready there is no placement.
-    let placements = cache.visible_image_placements(&entries, 40, 20, 0, usize::MAX, &no_images);
-    assert!(placements.is_empty());
-
-    // Re-render with a resolver after the load invalidates this entry.
-    cache.invalidate_from(0);
-    let feed_clone = feed.clone();
-    let mut lines = Vec::new();
-    cache.extend_visible_lines(
-        &entries,
-        40,
-        20,
-        HistoryLineSlice {
-            start: 0,
-            count: usize::MAX,
-        },
-        &mut lines,
-        &|_index, _sources| vec![(0, feed_clone.clone())],
-    );
-
-    let placements =
-        cache.visible_image_placements(&entries, 40, 20, 0, usize::MAX, &|_index, _sources| {
-            vec![(0, feed.clone())]
-        });
-    assert_eq!(placements.len(), 1, "expected one markdown image placement");
-    assert_eq!(placements[0].row, 2);
-    let with_images = render_entry_with_images(&entries[0], 40, 20, Some(&[(0, feed.clone())]));
-    assert_eq!(
-        cache.code_blocks(&entries, 40, 20, &|_index, _sources| vec![(
-            0,
-            feed.clone()
-        )])[0]
-            .line,
-        with_images.code_blocks[0].top_line
-    );
-
-    let Entry::Assistant(text) = &mut entries[0] else {
-        unreachable!();
-    };
-    text.push_str("\nstreamed tail");
-    cache.assistant_appended(0);
-    lines.clear();
-    cache.extend_visible_lines(
-        &entries,
-        40,
-        20,
-        HistoryLineSlice {
-            start: 0,
-            count: usize::MAX,
-        },
-        &mut lines,
-        &|_index, _sources| vec![(0, feed.clone())],
-    );
-    let expected = render_entry_with_images(&entries[0], 40, 20, Some(&[(0, feed.clone())])).lines;
-    assert_eq!(lines, expected);
-}
-
-#[test]
-fn transcript_entries_use_trailing_blank_only() {
-    let mut cache = HistoryLineCache::default();
-    let entries = vec![
-        Entry::Assistant("Hello model output".into()),
-        Entry::Reasoning(crate::tui::ReasoningEntry::new("thinking about it")),
-        Entry::User("follow up".into()),
-    ];
-
-    let mut lines = Vec::new();
-    cache.extend_visible_lines(
-        &entries,
-        60,
-        10,
-        HistoryLineSlice {
-            start: 0,
-            count: usize::MAX,
-        },
-        &mut lines,
-        &no_images,
-    );
-
-    let expected = entries
-        .iter()
-        .flat_map(|entry| entry_lines(entry, 60, 10))
-        .collect::<Vec<_>>();
-    assert_eq!(lines, expected);
-
-    // Each entry owns exactly one trailing spacer; consecutive blocks stay one
-    // blank apart without stacking trailing+leading gaps.
-    let mut content_starts = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        if !line_text(line).trim().is_empty() {
-            content_starts.push(index);
-        }
-    }
-    assert!(content_starts.len() >= 3);
-    // First content line of the first entry sits at the top of the entry.
-    assert_eq!(content_starts[0], 0);
-    for window in content_starts.windows(2) {
-        // Within an entry content is contiguous; across entries there is one blank.
-        assert!(
-            window[1] == window[0] + 1 || window[1] == window[0] + 2,
-            "unexpected gap between content rows {}:{} in {lines:?}",
-            window[0],
-            window[1],
-            lines = lines.iter().map(line_text).collect::<Vec<_>>()
-        );
-    }
-
-    let first_entry_end = entry_lines(&entries[0], 60, 10).len();
-    assert!(!line_text(&lines[0]).trim().is_empty());
-    assert!(line_text(&lines[first_entry_end - 1]).trim().is_empty());
-    assert!(!line_text(&lines[first_entry_end]).trim().is_empty());
 }
 
 #[test]

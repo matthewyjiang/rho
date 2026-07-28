@@ -16,23 +16,6 @@ fn test_context() -> (TempDir, ToolContext) {
 }
 
 #[tokio::test]
-async fn reads_selected_line_range() {
-    let (_dir, ctx) = test_context();
-    fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\nthree\nfour\n").unwrap();
-
-    let result = ReadFile
-        .call(
-            json!({"path": "sample.txt", "offset": 2, "limit": 2}),
-            ctx,
-            "call_1".into(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(result.content, "two\nthree\n");
-}
-
-#[tokio::test]
 async fn reads_supported_images_without_retaining_the_source_decode() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("photo.png");

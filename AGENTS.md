@@ -30,6 +30,7 @@ For PRs:
 - Prefer the most user-visible type, usually `feat`, `fix`, `docs`, or `refactor`.
 - Clearly summarize what changed and why, list validation, and call out breaking changes with a `BREAKING CHANGE:` section.
 - Update documentation for important user-visible changes.
+- When the diff adds or materially expands tests, follow the `rho-test-selection` skill and fill the test-gate section in the pull request template.
 
 ## Rust code
 
@@ -61,23 +62,22 @@ For PRs:
 
 ## Rust tests
 
-- Prefer integration or behavior tests for user-visible logic and unit tests for focused pure logic.
-- Put new test modules in sibling `*_tests.rs` files with explicit `#[path = "..."] mod tests;` declarations instead of growing implementation files.
-- Prefer `pretty_assertions::assert_eq` when available and whole-object comparisons over field-by-field assertions.
-- Do not test static constants or add negative tests solely for removed behavior.
-- Do not lock instructional prose, system-prompt wording, help text, or other copy behind string-contains tests. Review that text in the PR. Test assembly seams and user-visible behavior instead, such as conditional inclusion, rendering, tool gating, and end-to-end effects.
-- Avoid mutating process environment; pass environment-derived values or dependencies explicitly when possible.
+Use the `rho-test-selection` skill when adding, expanding, reviewing, or deleting tests. It is the source of truth for:
 
-## Rho TUI testing
+- failure-mode / owner-layer gate
+- Tier A/B/C keep vs reject
+- determinism (no sleep-sync or known flakes)
+- table-driven style and assertion rules
+- PTY as the interactive TUI product gate
 
-Prefer the deterministic PTY harness for automated interactive TUI regressions:
+Short defaults:
 
-- harness crate: `crates/rho-tui-pty`
-- smoke tests: `cargo test -p rho-coding-agent --test tui_pty`
-- single scenario: `cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho <scenario>`
-- skill: `rho-tui-pty-testing`
-
-Use Herdr sibling-pane smoke tests only for exploratory validation, novel bugs not yet covered by a scenario, or real-terminal parity checks. Follow `rho-tui-herdr-testing` for that workflow.
+- Prefer behavior or integration tests for user-visible logic and unit tests for focused pure logic.
+- Put new test modules in sibling `*_tests.rs` files with explicit `#[path = "..."] mod tests;`.
+- Prefer `pretty_assertions::assert_eq` and whole-object comparisons when available.
+- Do not test static constants or removed behavior; do not lock copy behind string-contains tests.
+- Avoid mutating process environment; inject environment-derived values instead.
+- Interactive TUI defaults to PTY (`rho-tui-pty-testing`); use Herdr only for exploration (`rho-tui-herdr-testing`).
 
 ## Rho experience tests
 

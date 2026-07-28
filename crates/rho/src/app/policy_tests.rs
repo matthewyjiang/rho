@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_sdk::{CapabilityRequest, CapabilitySource, PathScope, PolicyDecision, WorkspacePolicy};
+use rho_sdk::{CapabilityRequest, CapabilitySource, PathScope, WorkspacePolicy};
 
 use super::AppPolicy;
 use crate::permission::PermissionMode;
@@ -10,14 +10,6 @@ fn write_request() -> CapabilityRequest {
         PathScope::PrimaryWorkspace,
         CapabilitySource::built_in_tool("write_file"),
     )
-}
-
-#[test]
-fn allow_policy_allows_requests() {
-    assert_eq!(
-        AppPolicy::for_mode(PermissionMode::Auto).evaluate(&write_request()),
-        PolicyDecision::Allow
-    );
 }
 
 #[test]

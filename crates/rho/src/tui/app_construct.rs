@@ -88,16 +88,6 @@ impl App {
             clipboard: Box::new(SystemClipboard::default()),
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
-            #[cfg(test)]
-            test_claude_probe_snapshot: None,
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn set_test_claude_probe_snapshot(
-        &mut self,
-        snapshot: crate::claude_runtime::auth::ClaudeProbeSnapshot,
-    ) {
-        self.test_claude_probe_snapshot = Some(snapshot);
     }
 }

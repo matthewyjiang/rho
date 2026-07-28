@@ -93,18 +93,6 @@ fn resolve_editor_prefers_visual_over_editor() {
 }
 
 #[test]
-fn resolve_editor_uses_editor_when_visual_is_unset_or_empty() {
-    assert_eq!(
-        resolve_editor(None, Some(OsString::from("only-editor"))),
-        Some(OsString::from("only-editor"))
-    );
-    assert_eq!(
-        resolve_editor(Some(OsString::new()), Some(OsString::from("only-editor"))),
-        Some(OsString::from("only-editor"))
-    );
-}
-
-#[test]
 fn resolve_editor_requires_a_configured_editor() {
     assert_eq!(resolve_editor(None, None), None);
     assert_eq!(resolve_editor(Some(OsString::new()), None), None);

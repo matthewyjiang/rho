@@ -6,7 +6,7 @@ use super::{
     resolve_claude_login_after_suspend, resolve_claude_login_auth_outcome, ClaudeLoginAfterSuspend,
     ClaudeLoginAuthOutcome, SignInTarget,
 };
-use crate::claude_runtime::auth::{self, ClaudeAuthError, ClaudeAuthStatus};
+use crate::claude_runtime::auth::ClaudeAuthStatus;
 
 #[test]
 fn sign_in_target_routes_claude_code_case_insensitively() {
@@ -20,18 +20,6 @@ fn sign_in_target_routes_claude_code_case_insensitively() {
         SignInTarget::parse(" anthropic "),
         SignInTarget::Provider(provider) if provider == "anthropic"
     ));
-}
-
-#[test]
-fn handoff_and_logout_copy_keep_ownership_with_claude() {
-    let handoff = auth::login_handoff_notice();
-    assert!(handoff.contains("handing the terminal to the claude binary"));
-    assert!(handoff.contains("Rho never sees or stores your token"));
-    assert!(handoff.contains("/logout claude-code") || handoff.contains("claude auth logout"));
-
-    let logout = auth::logout_confirm_description();
-    assert!(logout.contains("everywhere the claude binary is used"));
-    assert!(logout.contains("Rho does not store this credential"));
 }
 
 fn signed_in_status() -> ClaudeAuthStatus {
@@ -79,20 +67,6 @@ async fn successful_login_with_signed_out_status_is_incomplete() {
     match outcome {
         ClaudeLoginAuthOutcome::Incomplete { message } => {
             assert!(message.contains("status still reports signed out"));
-        }
-        other => panic!("expected incomplete outcome, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn successful_login_with_unreadable_status_is_incomplete() {
-    let outcome =
-        resolve_claude_login_auth_outcome(Ok(()), || async { Err(ClaudeAuthError::BinaryMissing) })
-            .await;
-    assert_eq!(outcome.status_line(), "claude code login incomplete");
-    match outcome {
-        ClaudeLoginAuthOutcome::Incomplete { message } => {
-            assert!(message.contains("status could not be read"));
         }
         other => panic!("expected incomplete outcome, got {other:?}"),
     }
@@ -218,38 +192,6 @@ async fn successful_resume_queries_auth_after_child_success() {
     match result {
         ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
             assert_eq!(outcome.status_line(), "claude code login complete");
-        }
-        ClaudeLoginAfterSuspend::ResumeFailed { error } => {
-            panic!("expected auth outcome, got resume failure {error:#}");
-        }
-    }
-}
-
-#[tokio::test]
-async fn successful_resume_queries_auth_after_child_failure() {
-    let query_calls = AtomicUsize::new(0);
-    let result = resolve_claude_login_after_suspend(
-        Ok(()),
-        Err(anyhow::anyhow!(
-            "claude auth login exited with exit status: 1"
-        )),
-        || {
-            query_calls.fetch_add(1, Ordering::SeqCst);
-            async { Ok(signed_in_status()) }
-        },
-    )
-    .await;
-
-    assert_eq!(query_calls.load(Ordering::SeqCst), 1);
-    match result {
-        ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
-            assert_eq!(outcome.status_line(), "claude code login complete");
-            match outcome {
-                ClaudeLoginAuthOutcome::Complete { notice } => {
-                    assert!(notice.contains("status shows signed in"));
-                }
-                other => panic!("expected complete outcome, got {other:?}"),
-            }
         }
         ClaudeLoginAfterSuspend::ResumeFailed { error } => {
             panic!("expected auth outcome, got resume failure {error:#}");

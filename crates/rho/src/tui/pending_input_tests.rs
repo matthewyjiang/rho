@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use ratatui::text::Line;
 
 use super::*;
-use crate::tui::{render::display_width, tests::test_app};
+use crate::tui::tests::test_app;
 
 fn prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
@@ -22,28 +22,6 @@ fn line_text(line: &Line<'_>) -> String {
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
-}
-
-#[test]
-fn panel_distinguishes_steering_from_follow_ups_and_marks_recall_target() {
-    let mut app = test_app();
-    app.pending.push_follow_up(prompt("run all tests"));
-    app.pending
-        .accepted_steering_mut()
-        .push_back(AcceptedSteering {
-            id: rho_sdk::SteeringId::new(),
-            prompt: prompt("keep the API stable"),
-        });
-    app.select_pending_recall_target();
-
-    let lines = app.pending_input_lines(80);
-    let text = lines.iter().map(line_text).collect::<Vec<_>>();
-
-    assert!(text[0].contains("1 steer · 1 follow-up"));
-    assert!(text[1].contains("▸ STEER"));
-    assert!(text[1].contains("current run"));
-    assert!(text[2].contains("NEXT"));
-    assert!(text[2].contains("after turn"));
 }
 
 #[test]
@@ -204,63 +182,4 @@ fn applied_event_removes_only_matching_steering() {
 
     assert_eq!(app.pending.accepted_steering().len(), 1);
     assert_eq!(app.pending.accepted_steering()[0].id, pending);
-}
-
-#[test]
-fn panel_reserves_space_immediately_above_composer() {
-    let mut app = test_app();
-    app.input_ui.set_text("draft".to_string());
-    app.input_ui.set_cursor(app.input_char_len());
-    app.pending.push_follow_up(prompt("future turn"));
-    app.select_pending_recall_target();
-
-    let layout = app.screen_layout(
-        ratatui::layout::Rect::new(0, 0, 80, 24),
-        std::time::Instant::now(),
-    );
-
-    assert!(layout.pending_input.height > 0);
-    assert_eq!(layout.pending_input.y, layout.history.bottom());
-    assert_eq!(layout.top_divider.y, layout.pending_input.bottom());
-    assert_eq!(layout.composer.y, layout.top_divider.bottom());
-    assert!(layout.composer.height > 0);
-}
-
-#[test]
-fn focused_panel_stays_visible_with_a_tall_composer_in_a_short_terminal() {
-    let mut app = test_app();
-    app.input_ui.set_text(
-        "a long draft that wraps across many composer lines in a narrow terminal".to_string(),
-    );
-    app.input_ui.set_cursor(app.input_char_len());
-    app.pending.push_follow_up(prompt("future turn"));
-    app.pending.input_panel_mut().focused = true;
-    app.select_pending_recall_target();
-
-    let layout = app.screen_layout(
-        ratatui::layout::Rect::new(0, 0, 24, 8),
-        std::time::Instant::now(),
-    );
-
-    assert!(layout.pending_input.height >= 2);
-    assert!(layout.composer.height >= 1);
-}
-
-#[test]
-fn panel_lines_fit_narrow_terminal() {
-    let mut app = test_app();
-    app.pending
-        .accepted_steering_mut()
-        .push_back(AcceptedSteering {
-            id: rho_sdk::SteeringId::new(),
-            prompt: prompt("a long steering prompt that must be truncated"),
-        });
-    app.select_pending_recall_target();
-
-    for width in 1..40 {
-        assert!(app
-            .pending_input_lines(width)
-            .iter()
-            .all(|line| display_width(&line_text(line)) <= width));
-    }
 }

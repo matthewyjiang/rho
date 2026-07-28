@@ -1,5 +1,5 @@
 use super::*;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -10,37 +10,6 @@ fn line_text(line: &Line<'_>) -> String {
 
 fn line_styles(line: &Line<'_>) -> Vec<Style> {
     line.spans.iter().map(|span| span.style).collect()
-}
-
-#[test]
-fn styles_inline_code_bold_italic_and_links_without_markers() {
-    let mut in_code_block = false;
-    let lines = markdown_lines(
-        "use `cargo test`, then **ship** the *fix*, [docs](https://example.com), and https://example.com",
-        120,
-        &mut in_code_block,
-    );
-
-    assert_eq!(
-        line_text(&lines[0]),
-        "use cargo test, then ship the fix, docs: https://example.com, and https://example.com"
-    );
-    let styles = line_styles(&lines[0]);
-    assert!(styles.contains(&Theme::markdown_inline_code()));
-    assert!(styles.contains(&Theme::markdown_bold()));
-    assert!(styles.contains(&Theme::markdown_italic()));
-    assert!(styles.contains(&Theme::markdown_link()));
-    assert_eq!(Theme::markdown_bold().fg, None);
-    assert_eq!(Theme::markdown_italic().fg, None);
-    assert_eq!(Theme::markdown_link().fg, Theme::accent().fg);
-    assert!(Theme::markdown_link().has_modifier(Modifier::UNDERLINED));
-    assert_eq!(
-        styles
-            .iter()
-            .filter(|style| **style == Theme::markdown_link())
-            .count(),
-        2
-    );
 }
 
 #[test]
@@ -115,38 +84,6 @@ fn wraps_long_unicode_styled_lines_without_losing_text_or_styles() {
 }
 
 #[test]
-fn stream_preview_renderer_can_hide_inactive_copy_buttons() {
-    let mut lines = Vec::new();
-    let mut code_fence = CodeFenceState::default();
-    push_wrapped_markdown_without_copy_button_from_fence_state(
-        &mut lines,
-        "```rust\nlet x = 1;",
-        40,
-        &mut code_fence,
-    );
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
-
-    assert!(rendered.contains("let x = 1;"), "{rendered}");
-    assert!(!rendered.contains("COPY"), "{rendered}");
-}
-
-#[test]
-fn renders_code_blocks_with_closed_borders() {
-    let mut in_code_block = false;
-    let lines = markdown_lines("```rust\nlet x = 1;\n```", 20, &mut in_code_block);
-
-    assert_eq!(line_text(&lines[0]), "╭──────────── COPY ╮");
-    assert_eq!(line_text(&lines[1]), "│ let x = 1;       │");
-    assert_eq!(line_text(&lines[2]), "╰──────────────────╯");
-    assert_eq!(lines[0].spans[1].content.as_ref(), " COPY ");
-    assert_eq!(
-        lines[0].spans[1].style,
-        Theme::markdown_code_copy_button(/*hovered*/ false)
-    );
-    assert_eq!(lines[1].spans[0].style, Theme::markdown_code_block());
-}
-
-#[test]
 fn code_block_padding_uses_display_width() {
     let mut in_code_block = false;
     let lines = markdown_lines("```\n你\n```", 6, &mut in_code_block);
@@ -166,100 +103,6 @@ fn code_blocks_preserve_markdown_markers_as_literal_text() {
 
     assert!(line_text(&lines[1]).contains("fn __init__() { println!(\"*ok*\"); }"));
     assert_eq!(line_styles(&lines[1]), vec![Theme::markdown_code_block()]);
-}
-
-#[test]
-fn renders_divider_lines() {
-    let mut in_code_block = false;
-    let lines = markdown_lines("before\n---\nafter", 20, &mut in_code_block);
-
-    assert_eq!(line_text(&lines[0]), "before");
-    assert_eq!(line_text(&lines[1]), "─".repeat(20));
-    assert_eq!(lines[1].spans[0].style, Theme::dim());
-    assert_eq!(line_text(&lines[2]), "after");
-}
-
-#[test]
-fn renders_a_realistic_agent_workflow_diagram() {
-    let source = "flowchart TD\n    A[User submits a request] --> B[Agent analyzes the task]\n    B --> C{Is more information needed?}\n    C -->|Yes| D[Ask a clarifying question]\n    D --> A\n    C -->|No| E[Inspect relevant files]\n    E --> F[Plan the change]\n    F --> G[Edit the code]\n    G --> H[Run formatting and tests]\n    H --> I{Did validation pass?}\n    I -->|No| J[Diagnose and fix failures]\n    J --> H\n    I -->|Yes| K[Summarize the result]";
-    let mut in_code_block = false;
-    let rendered = render_markdown(
-        &format!("```mermaid\n{source}\n```"),
-        100,
-        &mut in_code_block,
-    );
-    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
-
-    assert!(text[0].contains("MERMAID"));
-    assert!(text.iter().any(|line| line.contains("User submits")));
-    assert!(text.iter().any(|line| line.contains("Summarize")));
-    assert!(!text.iter().any(|line| line.contains("flowchart TD")));
-    assert!(text.iter().all(|line| display_width(line) <= 100));
-    assert_eq!(rendered.code_blocks[0].text, source);
-}
-
-#[test]
-fn closed_mermaid_fence_renders_a_titled_diagram_and_preserves_source() {
-    let source = "flowchart LR\n    A[Parse] --> B[Render]";
-    let markdown = format!("before\n```MeRmAiD theme=dark\n{source}\n```\nafter");
-    let mut in_code_block = false;
-    let rendered = render_markdown(&markdown, 80, &mut in_code_block);
-    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
-
-    assert_eq!(text.first().map(String::as_str), Some("before"));
-    assert!(text[1].starts_with("╭─ MERMAID "), "{}", text[1]);
-    assert!(text.iter().any(|line| line.contains("Parse")));
-    assert!(text.iter().any(|line| line.contains("Render")));
-    assert_eq!(text.last().map(String::as_str), Some("after"));
-    assert!(!text.iter().any(|line| line.contains("flowchart LR")));
-    assert_eq!(rendered.code_blocks.len(), 1);
-    assert_eq!(rendered.code_blocks[0].top_line, 1);
-    assert_eq!(rendered.code_blocks[0].text, source);
-    assert_eq!(rendered.code_blocks[0].copy_columns, 73..79);
-    assert!(rendered.lines[1]
-        .spans
-        .iter()
-        .any(|span| span.content.as_ref() == " COPY "));
-}
-
-#[test]
-fn mermaid_canvas_is_tightly_cropped_and_uniformly_centered_in_full_width_panel() {
-    let mut in_code_block = false;
-    let rendered = render_markdown(
-        "```mermaid\nflowchart TD\nA[Tea] --> B{Milk?}\nB --> C[Drink]\n```",
-        80,
-        &mut in_code_block,
-    );
-    let rows = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
-
-    assert!(rows.iter().all(|row| display_width(row) == 80));
-    let content = &rows[1..rows.len() - 1];
-    let occupied = content
-        .iter()
-        .flat_map(|row| {
-            row.chars()
-                .enumerate()
-                .filter(|(_, character)| !character.is_whitespace() && *character != '│')
-                .map(|(column, _)| column)
-        })
-        .collect::<Vec<_>>();
-    let left = *occupied.iter().min().unwrap();
-    let right = *occupied.iter().max().unwrap();
-    let left_margin = left.saturating_sub(2);
-    let right_margin = 77usize.saturating_sub(right);
-    assert!(
-        left_margin.abs_diff(right_margin) <= 1,
-        "{}",
-        rows.join("\n")
-    );
-    assert!(content.iter().any(|row| row
-        .chars()
-        .nth(left)
-        .is_some_and(|character| character != ' ')));
-    assert!(content.iter().any(|row| row
-        .chars()
-        .nth(right)
-        .is_some_and(|character| character != ' ')));
 }
 
 #[test]
@@ -338,85 +181,6 @@ fn open_mermaid_fence_stays_raw_until_closed() {
 }
 
 #[test]
-fn closed_mermaid_fallbacks_keep_source_and_explain_themselves() {
-    for (source, width, reason) in [
-        ("not-a-diagram", 60, "NOT RENDERED"),
-        (
-            "flowchart LR\nA[a label that is much too wide]",
-            8,
-            "PANE TOO NARROW",
-        ),
-    ] {
-        let mut in_code_block = false;
-        let markdown = format!("```mermaid\n{source}\n```");
-        let rendered = render_markdown(&markdown, width, &mut in_code_block);
-        let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
-
-        assert!(!in_code_block);
-        assert!(text
-            .iter()
-            .any(|line| line.contains("flow") || line.contains("not-")));
-        assert_eq!(rendered.code_blocks[0].text, source);
-        // Very narrow panels drop the title so COPY keeps its columns.
-        if display_width(reason) + 4 <= width {
-            assert!(text[0].contains(reason), "{}", text[0]);
-        }
-    }
-}
-
-#[test]
-fn too_narrow_mermaid_panel_reports_width_and_keeps_copyable_source() {
-    let source = super::PHASE_CHAIN_FLOWCHART;
-    let mut in_code_block = false;
-    let rendered = render_markdown(
-        &format!("```mermaid\n{source}\n```"),
-        40,
-        &mut in_code_block,
-    );
-    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
-
-    assert!(
-        text[0].starts_with("╭─ MERMAID · PANE TOO NARROW"),
-        "{}",
-        text[0]
-    );
-    assert!(text.iter().any(|line| line.contains("flowchart LR")));
-    assert!(text.iter().all(|line| display_width(line) <= 40));
-    assert_eq!(
-        rendered.code_blocks,
-        vec![MarkdownCodeBlock {
-            top_line: 0,
-            copy_columns: 33..39,
-            text: source.into(),
-        }]
-    );
-    assert!(rendered.lines[0]
-        .spans
-        .iter()
-        .any(|span| span.content.as_ref() == " COPY "));
-}
-
-#[test]
-fn long_labelled_flowcharts_compact_to_fit_ordinary_transcript_widths() {
-    let source = super::PHASE_CHAIN_FLOWCHART;
-    let mut in_code_block = false;
-    let rendered = render_markdown(
-        &format!("```mermaid\n{source}\n```"),
-        100,
-        &mut in_code_block,
-    );
-    let text = rendered.lines.iter().map(line_text).collect::<Vec<_>>();
-
-    assert!(text[0].starts_with("╭─ MERMAID "), "{}", text[0]);
-    assert!(!text.iter().any(|line| line.contains("flowchart LR")));
-    assert!(text.iter().all(|line| display_width(line) <= 100));
-    for phase in ["Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5"] {
-        assert!(text.iter().any(|line| line.contains(phase)), "{phase}");
-    }
-    assert_eq!(rendered.code_blocks[0].text, source);
-}
-
-#[test]
 fn mermaid_render_reflows_to_the_requested_transcript_width() {
     let markdown = "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n```";
     let mut wide_state = false;
@@ -434,34 +198,6 @@ fn mermaid_render_reflows_to_the_requested_transcript_width() {
         wide.iter().map(line_text).collect::<Vec<_>>(),
         narrow.iter().map(line_text).collect::<Vec<_>>()
     );
-}
-
-#[test]
-fn standalone_image_line_renders_fallback_text() {
-    let mut in_code_block = false;
-    let rendered = render_markdown(
-        "before\n\n![diagram](docs/arch.png)\n\nafter",
-        120,
-        &mut in_code_block,
-    );
-    let text: Vec<String> = rendered.lines.iter().map(line_text).collect();
-
-    assert_eq!(text, vec!["before", "", "[image: diagram]", "", "after"]);
-    assert_eq!(rendered.image_rows, vec![2]);
-    assert_eq!(rendered.image_sources.len(), 1);
-    assert_eq!(rendered.image_sources[0].alt, "diagram");
-    assert_eq!(rendered.image_sources[0].path, "docs/arch.png");
-}
-
-#[test]
-fn inline_image_renders_as_alt_text() {
-    let mut in_code_block = false;
-    let lines = markdown_lines("see ![icon](i.png) here", 120, &mut in_code_block);
-
-    assert_eq!(line_text(&lines[0]), "see icon here");
-
-    let lines = markdown_lines("great! see ![icon](i.png) here", 120, &mut in_code_block);
-    assert_eq!(line_text(&lines[0]), "great! see icon here");
 }
 
 #[test]

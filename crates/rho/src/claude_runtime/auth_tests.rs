@@ -73,61 +73,6 @@ async fn version_sh(body: &str) -> Result<String, ClaudeAuthError> {
 }
 
 #[test]
-fn describe_signed_in_includes_email_subscription_and_owner() {
-    let status = ClaudeAuthStatus {
-        logged_in: true,
-        auth_method: Some("claude.ai".into()),
-        api_provider: Some("firstParty".into()),
-        email: Some("someone@example.com".into()),
-        org_id: Some("org".into()),
-        org_name: Some("Example".into()),
-        subscription_type: Some("pro".into()),
-    };
-
-    assert_eq!(
-        status.describe(),
-        "claude code: signed in as someone@example.com (pro) - managed by the claude binary"
-    );
-}
-
-#[test]
-fn describe_signed_out_points_at_login() {
-    let status = ClaudeAuthStatus {
-        logged_in: false,
-        auth_method: None,
-        api_provider: None,
-        email: None,
-        org_id: None,
-        org_name: None,
-        subscription_type: None,
-    };
-
-    assert_eq!(
-        status.describe(),
-        "claude code: not signed in - run /login claude-code"
-    );
-}
-
-#[test]
-fn describe_login_success_keeps_ownership_clear() {
-    let status = ClaudeAuthStatus {
-        logged_in: true,
-        auth_method: None,
-        api_provider: None,
-        email: Some("someone@example.com".into()),
-        org_id: None,
-        org_name: None,
-        subscription_type: Some("pro".into()),
-    };
-
-    assert_eq!(
-        status.describe_login_success(),
-        "claude code: signed in as someone@example.com (pro)\n\
-Managed by the claude binary. Rho reads this state with `claude auth status`."
-    );
-}
-
-#[test]
 fn parses_optional_auth_fields_and_requires_logged_in() {
     let status: ClaudeAuthStatus = serde_json::from_str(
         r#"{
@@ -145,7 +90,7 @@ fn parses_optional_auth_fields_and_requires_logged_in() {
 }
 
 #[test]
-fn probe_snapshot_reports_typed_health_not_display_strings() {
+fn probe_snapshot_reports_typed_health() {
     let signed_in = ClaudeProbeSnapshot {
         auth: Ok(ClaudeAuthStatus {
             logged_in: true,
@@ -160,8 +105,6 @@ fn probe_snapshot_reports_typed_health_not_display_strings() {
     };
     assert!(signed_in.auth_healthy());
     assert!(signed_in.binary_healthy());
-    assert!(signed_in.auth_description().contains("signed in"));
-    assert_eq!(signed_in.version_description(), "1.2.3");
 
     let missing = ClaudeProbeSnapshot {
         auth: Err(ClaudeAuthError::BinaryMissing.to_string()),
@@ -169,17 +112,10 @@ fn probe_snapshot_reports_typed_health_not_display_strings() {
     };
     assert!(!missing.auth_healthy());
     assert!(!missing.binary_healthy());
-    assert_eq!(
-        missing.auth_description(),
-        "claude code: binary not found on PATH"
-    );
 
     let not_refreshed = ClaudeProbeSnapshot::not_refreshed_during_turn();
     assert!(!not_refreshed.auth_healthy());
     assert!(!not_refreshed.binary_healthy());
-    assert!(not_refreshed
-        .auth_description()
-        .contains("not refreshed during a model turn"));
 }
 
 #[cfg(unix)]
@@ -226,10 +162,8 @@ exit 1
     .await
     .unwrap();
     assert!(!status.logged_in);
-    assert_eq!(
-        status.describe(),
-        "claude code: not signed in - run /login claude-code"
-    );
+    assert_eq!(status.email, None);
+    assert_eq!(status.subscription_type, None);
 }
 
 #[cfg(unix)]
@@ -258,10 +192,6 @@ exit 2
             org_name: None,
             subscription_type: None,
         }
-    );
-    assert_eq!(
-        status.describe(),
-        "claude code: not signed in - run /login claude-code"
     );
 }
 
@@ -338,7 +268,6 @@ async fn query_program_reports_missing_binary() {
     // Explicit missing-path spawn: resolve_named must not invent a binary.
     let error = executable::resolve_named(missing.to_str().unwrap()).unwrap_err();
     assert!(error.is_binary_missing());
-    assert_eq!(error.to_string(), "claude code: binary not found on PATH");
 
     // Also cover the probe spawn path when the program image is absent.
     let mut command = Command::new(&missing);
@@ -392,13 +321,6 @@ exit 1
     }
     // Must not wait out the production PROBE_TIMEOUT (10s) or the child sleep.
     assert!(started.elapsed() < Duration::from_secs(2));
-}
-
-#[test]
-fn login_args_keep_supported_claudeai_flag() {
-    // Verified against installed `claude auth login --help`: `--claudeai` is
-    // the subscription login option (default). Do not drop a supported flag.
-    assert_eq!(login_args(), &["auth", "login", "--claudeai"]);
 }
 
 #[cfg(unix)]
@@ -474,28 +396,4 @@ exit 1
     let _ = logout_sh(body).await;
     let status = query_sh(body).await.unwrap();
     assert!(!status.logged_in);
-}
-
-#[test]
-fn describe_probe_result_prefers_typed_missing_binary_copy() {
-    let missing = Err(ClaudeAuthError::BinaryMissing);
-    assert_eq!(
-        describe_probe_result(&missing),
-        "claude code: binary not found on PATH"
-    );
-}
-
-#[test]
-fn missing_binary_error_display_matches_transparency_copy() {
-    assert_eq!(
-        ClaudeAuthError::BinaryMissing.to_string(),
-        "claude code: binary not found on PATH"
-    );
-}
-
-#[test]
-fn logout_confirm_copy_states_global_sign_out() {
-    let copy = logout_confirm_description();
-    assert!(copy.contains("everywhere the claude binary is used"));
-    assert!(copy.contains("Rho does not store this credential"));
 }

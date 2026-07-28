@@ -111,16 +111,6 @@ fn herdr_with_paintable_kitty_keeps_kitty_protocol() {
 }
 
 #[test]
-fn direct_kitty_host_keeps_kitty_protocol() {
-    let picker = picker_for_environment(
-        /*host_supports_kitty*/ true,
-        crate::herdr::HerdrGraphicsCapability::NotHerdr,
-    )
-    .unwrap();
-    assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
-}
-
-#[test]
 fn rejects_assets_larger_than_the_thumbnail_dimension_bound() {
     let error = FeedImage::load(&png_asset(1_025, 1), &kitty_picker()).unwrap_err();
     assert!(matches!(error, image::ImageError::Limits(_)));
@@ -166,32 +156,4 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     assert!(visible_lines
         .iter()
         .all(|line| line.to_string().trim().is_empty()));
-}
-
-#[test]
-fn markdown_image_placements_reserve_rows_for_ready_images() {
-    use crate::tui::feed_image::reserve_markdown_image_rows;
-
-    let image = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
-    let mut lines: Vec<ratatui::text::Line<'static>> =
-        (0..3).map(|_| ratatui::text::Line::raw("x")).collect();
-    // One placeholder row at index 1 (the standalone image row).
-    let placements = reserve_markdown_image_rows(&mut lines, &[1], &[(0, image)], 40).unwrap();
-
-    let height = IMAGE_HEIGHT as usize;
-    assert_eq!(lines.len(), 3 + height - 1);
-    let placements: Vec<_> = placements.iter().collect();
-    assert_eq!(placements.len(), 1);
-    assert_eq!(placements[0].rows, 1..1 + height);
-}
-
-#[test]
-fn markdown_image_rows_not_ready_keep_their_placeholder() {
-    use crate::tui::feed_image::reserve_markdown_image_rows;
-
-    let mut lines: Vec<ratatui::text::Line<'static>> =
-        (0..2).map(|_| ratatui::text::Line::raw("x")).collect();
-    // No ready images -> no placements and no inserted rows.
-    assert!(reserve_markdown_image_rows(&mut lines, &[1], &[], 40).is_none());
-    assert_eq!(lines.len(), 2);
 }

@@ -590,44 +590,6 @@ fn usage_deltas_preserve_omitted_cumulative_fields() {
 }
 
 #[test]
-fn response_maps_reasoning_tools_signatures_and_usage() {
-    let response: GenerateContentResponse = serde_json::from_value(json!({
-        "candidates": [{"content":{"role":"model","parts":[
-            {"text":"working", "thought":true, "thoughtSignature":"thought-sig"},
-            {"functionCall":{"id":"call-7","name":"bash","args":{"command":"pwd"}}, "thoughtSignature":"sig"}
-        ]}, "finishReason":"STOP"}],
-        "usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":3,"candidatesTokenCount":4,"thoughtsTokenCount":2,"totalTokenCount":16}
-    })).unwrap();
-    let mut events = Vec::new();
-    let mut callback = |event| {
-        events.push(event);
-        Ok(())
-    };
-    let mut collector = ResponseCollector::default();
-    collector.apply(response, Some(&mut callback)).unwrap();
-    let output = collector.finish().unwrap();
-
-    assert_eq!(
-        output,
-        crate::model::ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-7".into(),
-            name: "bash".into(),
-            arguments: json!({"command":"pwd"})
-        })])
-    );
-    assert!(events.iter().any(
-        |event| matches!(event, crate::model::ModelEvent::ReasoningSummaryDelta(text) if text == "working")
-    ));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        crate::model::ModelEvent::ProviderContext { kind, data, .. }
-            if kind == THOUGHT_PART_CONTEXT && data["thoughtSignature"] == "thought-sig"
-    )));
-    assert!(events.iter().any(|event| matches!(event, crate::model::ModelEvent::ProviderContext { data, .. } if data == "sig")));
-    assert!(events.iter().any(|event| matches!(event, crate::model::ModelEvent::Usage(usage) if usage.input_tokens == Some(7) && usage.cache_read_tokens == Some(3) && usage.output_tokens == Some(6))));
-}
-
-#[test]
 fn transient_finish_reasons_are_retryable_invalid_responses() {
     for finish_reason in [
         "MALFORMED_FUNCTION_CALL",

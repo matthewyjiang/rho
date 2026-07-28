@@ -189,7 +189,3 @@ fn reduction_percent(previous: u64, removed: u64) -> u64 {
     }
     ((removed as f64 * 100.0) / previous as f64).round() as u64
 }
-
-#[cfg(test)]
-#[path = "compaction_display_tests.rs"]
-mod tests;

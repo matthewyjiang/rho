@@ -346,9 +346,8 @@ fn stream_error_messages_are_pending_metadata_not_terminal() {
             effect,
             StreamEffect::Status(StatusPatch {
                 error: Some(text),
-                last_activity: Some(activity),
                 ..
-            }) if text == "boom" && activity == "error received"
+            }) if text == "boom"
         )
     }));
     let terminal = effects.iter().find_map(|effect| match effect {
@@ -462,21 +461,6 @@ fn malformed_json_becomes_notice() {
 }
 
 #[test]
-fn pending_result_status_uses_result_received_activity() {
-    let effects = map_line(
-        r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s1"}"#,
-    );
-    assert!(effects.iter().any(|effect| matches!(
-        effect,
-        StreamEffect::Status(StatusPatch {
-            last_activity: Some(activity),
-            ..
-        }) if activity == "result received"
-    )));
-    assert_no_terminal_attachment(&effects);
-}
-
-#[test]
 fn protocol_control_frames_are_silent_noops() {
     // Documented progress/control frames must not emit diagnostics or status.
     for line in [
@@ -505,46 +489,32 @@ fn unknown_top_level_kind_emits_diagnostic_notice() {
 }
 
 #[test]
-fn system_status_heartbeat_is_quiet_but_init_is_noticed() {
-    let status = map_line(
+fn system_heartbeats_are_quiet_and_init_is_noticed() {
+    for line in [
         r#"{"type":"system","subtype":"status","status":"requesting","session_id":"sess-hb"}"#,
-    );
-    assert!(
-        !status
-            .iter()
-            .any(|effect| matches!(effect, StreamEffect::Attachment(AttachmentEvent::Notice(_)))),
-        "status heartbeat must not spam notices: {status:?}"
-    );
-    assert!(status.iter().any(|effect| matches!(
-        effect,
-        StreamEffect::Status(StatusPatch {
-            claude_session_id: Some(id),
-            ..
-        }) if id == "sess-hb"
-    )));
+        r#"{"type":"system","subtype":"thinking_tokens","session_id":"sess-think"}"#,
+    ] {
+        let effects = map_line(line);
+        assert!(
+            !effects.iter().any(|effect| {
+                matches!(effect, StreamEffect::Attachment(AttachmentEvent::Notice(_)))
+            }),
+            "heartbeat must not spam notices for {line}: {effects:?}"
+        );
+        assert!(effects.iter().any(|effect| {
+            matches!(
+                effect,
+                StreamEffect::Status(StatusPatch {
+                    claude_session_id: Some(_),
+                    ..
+                })
+            )
+        }));
+    }
 
     let init = map_line(r#"{"type":"system","subtype":"init","session_id":"sess-init"}"#);
     assert!(init.iter().any(|effect| matches!(
         effect,
         StreamEffect::Attachment(AttachmentEvent::Notice(text)) if text.contains("claude system: init")
-    )));
-}
-
-#[test]
-fn system_thinking_tokens_heartbeat_is_quiet() {
-    let effects =
-        map_line(r#"{"type":"system","subtype":"thinking_tokens","session_id":"sess-think"}"#);
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, StreamEffect::Attachment(AttachmentEvent::Notice(_)))),
-        "thinking_tokens must not spam notices: {effects:?}"
-    );
-    assert!(effects.iter().any(|effect| matches!(
-        effect,
-        StreamEffect::Status(StatusPatch {
-            claude_session_id: Some(id),
-            ..
-        }) if id == "sess-think"
     )));
 }

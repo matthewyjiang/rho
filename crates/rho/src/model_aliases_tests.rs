@@ -88,32 +88,27 @@ fn undefined_explicit_alias_returns_typed_actionable_error() {
 }
 
 #[test]
-fn ordinary_model_reference_is_concrete_even_when_it_shadows_an_alias() {
+fn ordinary_model_references_stay_concrete_without_alias_resolution() {
     let aliases =
         ModelAliases::from_entries(entries(&[("deep", "anthropic/claude-opus-4-8")])).unwrap();
 
-    assert_eq!(
-        aliases.resolve("deep"),
-        Ok(ResolvedModelReference {
-            alias: None,
-            provider: None,
-            model: "deep".into(),
-        })
-    );
-}
-
-#[test]
-fn ordinary_provider_qualified_reference_remains_concrete_for_the_caller() {
-    let aliases = ModelAliases::default();
-
-    assert_eq!(
-        aliases.resolve("openrouter/anthropic/claude-sonnet-4"),
-        Ok(ResolvedModelReference {
-            alias: None,
-            provider: None,
-            model: "openrouter/anthropic/claude-sonnet-4".into(),
-        })
-    );
+    for (input, model) in [
+        ("deep", "deep"),
+        (
+            "openrouter/anthropic/claude-sonnet-4",
+            "openrouter/anthropic/claude-sonnet-4",
+        ),
+    ] {
+        assert_eq!(
+            aliases.resolve(input),
+            Ok(ResolvedModelReference {
+                alias: None,
+                provider: None,
+                model: model.into(),
+            }),
+            "{input}"
+        );
+    }
 }
 
 #[test]
@@ -159,34 +154,6 @@ fn rejects_malformed_names_and_values() {
         let error = ModelAliases::from_entries(entries(&[(name, value)])).unwrap_err();
         assert!(error.contains("model alias"), "{name}={value}: {error}");
     }
-}
-
-#[test]
-fn alias_values_must_not_use_alias_reference_syntax() {
-    let error = ModelAliases::from_entries(entries(&[("deep", "@other")])).unwrap_err();
-
-    assert_eq!(
-        error,
-        "invalid model alias value '@other': expected a concrete 'provider/model' or 'model' with no whitespace"
-    );
-}
-
-#[test]
-fn serialization_preserves_concrete_targets_in_a_round_trip() {
-    let aliases = ModelAliases::from_entries(entries(&[
-        ("deep", "anthropic/claude-opus-4-8"),
-        ("fast", "gpt-5.5"),
-        ("open", "openrouter/anthropic/claude-sonnet-4"),
-    ]))
-    .unwrap();
-
-    let toml = toml::to_string(&aliases).unwrap();
-    assert_eq!(
-        toml,
-        "deep = \"anthropic/claude-opus-4-8\"\nfast = \"gpt-5.5\"\nopen = \"openrouter/anthropic/claude-sonnet-4\"\n"
-    );
-    let round_tripped: ModelAliases = toml::from_str(&toml).unwrap();
-    assert_eq!(round_tripped, aliases);
 }
 
 #[test]

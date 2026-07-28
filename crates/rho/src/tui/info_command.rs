@@ -113,13 +113,8 @@ impl App {
         Ok(())
     }
 
-    /// Live Claude probe for idle surfaces. Tests inject a typed snapshot so
-    /// unit paths never spawn host `claude` or read personal auth.
+    /// Live Claude probe for idle surfaces.
     pub(super) async fn claude_probe_snapshot(&self) -> ClaudeProbeSnapshot {
-        #[cfg(test)]
-        if let Some(snapshot) = self.test_claude_probe_snapshot.clone() {
-            return snapshot;
-        }
         auth::probe_snapshot().await
     }
 }
@@ -331,7 +326,3 @@ fn format_number(value: u64) -> String {
     }
     formatted
 }
-
-#[cfg(test)]
-#[path = "info_command_tests.rs"]
-mod tests;

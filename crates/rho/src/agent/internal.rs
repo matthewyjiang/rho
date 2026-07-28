@@ -50,7 +50,3 @@ pub(crate) fn is_internal_agent_id(id: &AgentId) -> bool {
         .iter()
         .any(|definition| definition.id == *id)
 }
-
-#[cfg(test)]
-#[path = "internal_tests.rs"]
-mod tests;

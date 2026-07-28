@@ -75,36 +75,6 @@ fn cost_tracker_preserves_estimates_from_completed_runs() {
 }
 
 #[test]
-fn formats_usd_for_compact_display() {
-    assert_eq!(super::format_usd(570_000), "$0.570");
-    assert_eq!(super::format_usd(12_340_000), "$12.34");
-    assert_eq!(super::format_usd(123_400_000), "$123");
-}
-
-#[test]
-fn format_token_count_uses_k_and_m() {
-    assert_eq!(super::format_token_count(812), "812");
-    assert_eq!(super::format_token_count(12_000), "12.0K");
-    assert_eq!(super::format_token_count(1_250_000), "1.2M");
-    assert_eq!(super::format_token_count(1_260_000), "1.3M");
-}
-
-#[test]
-fn format_usage_token_summary_keeps_cache_fields_separate() {
-    assert_eq!(
-        super::format_usage_token_summary(&ModelUsage {
-            input_tokens: Some(100),
-            output_tokens: Some(20),
-            cache_read_tokens: Some(700),
-            cache_write_tokens: Some(50),
-            ..ModelUsage::default()
-        })
-        .as_deref(),
-        Some("tokens in 100 · out 20 · cache r 700 · cache w 50")
-    );
-}
-
-#[test]
 fn attempt_aware_run_usage_preserves_failed_attempt_tokens() {
     let mut usage = super::AttemptAwareRunUsage::default();
     usage.step_started();

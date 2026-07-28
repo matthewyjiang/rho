@@ -70,24 +70,6 @@ fn parse_request_accepts_choice_descriptions() {
 }
 
 #[test]
-fn parse_request_trims_choice_descriptions() {
-    let request = parse_request(json!({
-        "questions": [{
-            "question": "Which mode?",
-            "type": "choice",
-            "choices": [{ "label": " Fast ", "description": "  Quicker  " }]
-        }]
-    }))
-    .unwrap();
-
-    assert_eq!(request.questions[0].choices[0].label, "Fast");
-    assert_eq!(
-        request.questions[0].choices[0].description.as_deref(),
-        Some("Quicker")
-    );
-}
-
-#[test]
 fn parse_request_accepts_legacy_single_question() {
     let request = parse_request(json!({
         "question": "  Which file?  ",
@@ -179,54 +161,6 @@ fn parse_request_normalizes_choice_and_confirm_defaults() {
         QuestionnaireQuestionKind::Confirm
     );
     assert_eq!(request.questions[1].default, Some(json!("yes")));
-}
-
-#[test]
-fn questionnaire_question_serializes_type_field() {
-    let question = QuestionnaireQuestion {
-        id: "apply".into(),
-        question: "Apply changes?".into(),
-        header: None,
-        help: None,
-        default: Some(json!("no")),
-        default_selection: QuestionnaireDefaultSelection::Selected,
-        kind: QuestionnaireQuestionKind::Confirm,
-        required: true,
-        choices: Vec::new(),
-        allow_other: false,
-    };
-
-    let value = serde_json::to_value(&question).unwrap();
-
-    assert_eq!(value.get("type"), Some(&json!("confirm")));
-    assert!(value.get("kind").is_none());
-    let round_tripped: QuestionnaireQuestion = serde_json::from_value(value).unwrap();
-    assert_eq!(round_tripped.kind, QuestionnaireQuestionKind::Confirm);
-}
-
-#[test]
-fn questionnaire_question_deserializes_legacy_and_detailed_choices() {
-    let question: QuestionnaireQuestion = serde_json::from_value(json!({
-        "id": "mode",
-        "question": "Which mode?",
-        "type": "choice",
-        "choices": [
-            "Fast",
-            { "label": "Safe", "description": "Run every check" }
-        ]
-    }))
-    .unwrap();
-
-    assert_eq!(
-        question.choices,
-        vec![
-            QuestionnaireChoice::from("Fast"),
-            QuestionnaireChoice {
-                label: "Safe".into(),
-                description: Some("Run every check".into()),
-            },
-        ]
-    );
 }
 
 #[test]

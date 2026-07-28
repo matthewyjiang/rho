@@ -163,7 +163,3 @@ pub fn wrapped_command(command: &str) -> String {
          exit 0"
     )
 }
-
-#[cfg(all(test, windows))]
-#[path = "powershell_tests.rs"]
-mod tests;

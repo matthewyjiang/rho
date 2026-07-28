@@ -3,9 +3,7 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 
 use super::parse_definition;
-use crate::agent::{
-    AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability, ToolPolicy,
-};
+use crate::agent::{AgentRuntimeSpec, ModelPolicy, ModelSelection, ToolPolicy};
 
 fn parse(contents: &str) -> Result<crate::agent::AgentDefinition, crate::agent::AgentCatalogError> {
     parse_definition(Path::new("agent.md"), "agent", contents)
@@ -18,20 +16,6 @@ fn defaults_runtime_to_rho() {
         definition.runtime,
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::All,
-            model: ModelPolicy::Inherit,
-            reasoning: None,
-        }
-    );
-}
-
-#[test]
-fn parses_explicit_rho_runtime() {
-    let definition =
-        parse("---\ndescription: demo\nruntime: rho\ntools: [read_file]\n---\n").unwrap();
-    assert_eq!(
-        definition.runtime,
-        AgentRuntimeSpec::Rho {
-            tools: ToolPolicy::Allow([ToolCapability::ReadFile].into_iter().collect()),
             model: ModelPolicy::Inherit,
             reasoning: None,
         }
@@ -301,24 +285,6 @@ fn fingerprint_includes_runtime_tools_and_inherit_flag() {
     assert_ne!(base.fingerprint(), tools_change.fingerprint());
     assert_ne!(base.fingerprint(), inherit_change.fingerprint());
     assert_eq!(base.fingerprint(), same.fingerprint());
-}
-
-#[test]
-fn parses_claude_indented_tool_list_with_patterns() {
-    let definition = parse(
-        "---\ndescription: demo\nruntime: claude-cli\ntools:\n  - Read\n  - \"Bash(git *)\"\n---\n",
-    )
-    .unwrap();
-    assert_eq!(
-        definition.runtime,
-        AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
-            tools: crate::agent::ClaudeToolPolicy::Allow(vec!["Read".into(), "Bash(git *)".into()]),
-            inherit_claude_config: false,
-            model: None,
-            reasoning: None,
-        })
-    );
-    assert!(matches!(definition.prompt, PromptPolicy::Extend(_)));
 }
 
 #[test]

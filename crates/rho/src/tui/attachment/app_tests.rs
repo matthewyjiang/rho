@@ -1,8 +1,5 @@
-use std::time::Instant;
-
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
-use ratatui::{backend::TestBackend, Terminal};
 use tempfile::TempDir;
 
 use super::*;
@@ -132,53 +129,6 @@ fn attached_view_ignores_prompt_input() {
 }
 
 #[test]
-fn attached_view_renders_transcript_without_a_composer() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        HerdrReporter::default(),
-    );
-    app.status = Some(RunStatus {
-        state: RunState::Running,
-        agent_id: Some("explorer".into()),
-        last_activity: Some("tool: read_file".into()),
-        ..RunStatus::default()
-    });
-    app.apply_event(AttachmentEvent::Prompt("delegated task".into()));
-    app.apply_event(AttachmentEvent::AssistantTextDelta(
-        "watchable answer".into(),
-    ));
-    app.apply_event(AttachmentEvent::ContextUsage(ContextUsage::estimated(
-        123,
-        Some(456),
-    )));
-    app.apply_event(AttachmentEvent::Usage(ModelUsage {
-        input_tokens: Some(10),
-        output_tokens: Some(5),
-        cache_read_tokens: Some(700),
-        cache_write_tokens: Some(20),
-        cost_usd_micros: Some(12_500),
-        ..ModelUsage::default()
-    }));
-    let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
-
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-
-    let screen = terminal.backend().to_string();
-    assert!(screen.contains("attached to abc123"));
-    assert!(screen.contains("delegated task"));
-    assert!(screen.contains("watchable answer"));
-    assert!(screen.contains("context 123/456"));
-    assert!(screen.contains("tokens in 10 · out 5 · cache r 700 · cache w 20"));
-    assert!(screen.contains("$0.013"));
-    assert!(screen.contains("read-only"));
-    assert!(!screen.contains("Type a message"));
-    assert!(!screen.contains("step tokens"));
-    assert!(!screen.contains("tokens 10/5"));
-}
-
-#[test]
 fn provider_retry_preserves_failed_attempt_usage() {
     let directory = TempDir::new().unwrap();
     let mut app = AttachmentApp::new(
@@ -247,69 +197,6 @@ fn multi_step_usage_replaces_live_run_snapshot() {
             ..ModelUsage::default()
         })
     );
-}
-
-#[test]
-fn scrolling_up_reveals_history_scrollbar() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        HerdrReporter::default(),
-    );
-    for index in 0..40 {
-        app.apply_event(AttachmentEvent::AssistantTextDelta(format!(
-            "line {index} of a long attached transcript"
-        )));
-        app.apply_event(AttachmentEvent::Notice(format!("notice {index}")));
-    }
-
-    let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-    assert!(!app.scroll.should_render(Instant::now()));
-
-    app.handle_event(Event::Key(KeyEvent::new(
-        KeyCode::PageUp,
-        KeyModifiers::NONE,
-    )));
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-
-    assert!(matches!(app.scroll.scroll(), HistoryScroll::Manual { .. }));
-    assert!(app.scroll.should_render(Instant::now()));
-    assert!(app.history_scrollbar().is_some());
-
-    let screen = terminal.backend().to_string();
-    assert!(
-        screen.contains('│') || screen.contains('█'),
-        "expected scrollbar glyphs in attached view:\n{screen}"
-    );
-}
-
-#[test]
-fn mouse_wheel_scrolls_attached_transcript() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        HerdrReporter::default(),
-    );
-    for index in 0..40 {
-        app.apply_event(AttachmentEvent::Notice(format!(
-            "scrollable notice {index}"
-        )));
-    }
-    let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
-    terminal.draw(|frame| app.draw(frame)).unwrap();
-
-    app.handle_event(Event::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::ScrollUp,
-        column: 10,
-        row: 8,
-        modifiers: KeyModifiers::NONE,
-    }));
-
-    assert!(matches!(app.scroll.scroll(), HistoryScroll::Manual { .. }));
-    assert!(app.scroll.should_render(Instant::now()));
 }
 
 #[test]

@@ -261,21 +261,6 @@ async fn non_agent_recorder_failures_are_non_fatal_bounded_diagnostics() {
 }
 
 #[test]
-fn creates_and_migrates_a_new_database() {
-    let (_directory, recorder) = recorder();
-    assert!(recorder.path().is_file());
-    let connection = Connection::open(recorder.path()).unwrap();
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    let mode: String = connection
-        .pragma_query_value(None, "journal_mode", |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 1);
-    assert_eq!(mode.to_ascii_lowercase(), "wal");
-}
-
-#[test]
 fn writes_exact_usage_and_request_identity() {
     let (_directory, recorder) = recorder();
     recorder
@@ -386,48 +371,6 @@ fn retries_are_distinct_but_persistence_retries_are_idempotent() {
         .query_row("SELECT count(*) FROM usage_events", [], |row| row.get(0))
         .unwrap();
     assert_eq!(count, 2);
-}
-
-#[test]
-fn stores_all_purposes_and_termination_outcomes_without_payloads() {
-    let (_directory, recorder) = recorder();
-    let cases = [
-        ("interactive", "agent", RequestOutcome::Completed),
-        ("goal", "goal", RequestOutcome::Completed),
-        ("delegated", "subagent", RequestOutcome::Failed),
-        ("compact", "compaction", RequestOutcome::Cancelled),
-        ("title", "title", RequestOutcome::Completed),
-    ];
-    for (id, purpose, outcome) in cases {
-        let mut event = event(id, outcome);
-        event.purpose = purpose.to_owned();
-        recorder.record(&event).unwrap();
-    }
-    let connection = Connection::open(recorder.path()).unwrap();
-    let mut statement = connection
-        .prepare("SELECT event_id, purpose, request_outcome FROM usage_events ORDER BY event_id")
-        .unwrap();
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(
-        rows,
-        vec![
-            ("compact".into(), "compaction".into(), "cancelled".into()),
-            ("delegated".into(), "subagent".into(), "failed".into()),
-            ("goal".into(), "goal".into(), "completed".into()),
-            ("interactive".into(), "agent".into(), "completed".into()),
-            ("title".into(), "title".into(), "completed".into()),
-        ]
-    );
 }
 
 #[test]

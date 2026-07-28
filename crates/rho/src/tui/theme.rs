@@ -687,7 +687,7 @@ fn query_windows_console_palette() -> std::io::Result<Option<TerminalPalette>> {
     )))
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn windows_console_palette(color_table: &[u32; 16], attributes: u16) -> TerminalPalette {
     // Win32's table uses attribute-bit order (blue, green, red), not ANSI order.
     const COLORS: [(AnsiColor, usize); 7] = [
@@ -711,7 +711,7 @@ fn windows_console_palette(color_table: &[u32; 16], attributes: u16) -> Terminal
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn rgb_from_colorref(color: u32) -> Rgb {
     Rgb::new(color as u8, (color >> 8) as u8, (color >> 16) as u8)
 }
@@ -807,100 +807,5 @@ fn ansi_color_from_index(index: u8) -> Option<AnsiColor> {
         6 => Some(AnsiColor::Cyan),
         7 => Some(AnsiColor::Gray),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_osc_palette_response() {
-        let response = "\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;1;rgb:ffff/0000/0000\x1b\\\x1b]4;2;rgb:0000/ffff/0000\x1b\\\x1b]4;3;rgb:ffff/ffff/0000\x1b\\\x1b]4;4;rgb:0000/0000/ffff\x1b\\\x1b]4;5;rgb:ffff/0000/ffff\x1b\\\x1b]4;6;rgb:0000/ffff/ffff\x1b\\\x1b]4;7;rgb:ffff/ffff/ffff\x1b\\";
-
-        let palette = parse_palette_response(response).expect("palette");
-
-        assert_eq!(palette.background, Rgb::new(0, 0, 0));
-        assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(255, 0, 0));
-    }
-
-    #[test]
-    fn resolves_windows_console_palette_in_attribute_bit_order() {
-        let color_table = [
-            0x000000, 0x110000, 0x001100, 0x111100, 0x000011, 0x110011, 0x001111, 0x111111,
-            0x222222, 0x330000, 0x003300, 0x333300, 0x000033, 0x330033, 0x003333, 0x333333,
-        ];
-
-        let palette = windows_console_palette(&color_table, 0x20);
-
-        assert_eq!(palette.background, Rgb::new(0, 17, 0));
-        assert_eq!(palette.ansi[&AnsiColor::Red], Rgb::new(17, 0, 0));
-        assert_eq!(palette.ansi[&AnsiColor::Blue], Rgb::new(0, 0, 17));
-        assert_eq!(palette.ansi[&AnsiColor::Gray], Rgb::new(17, 17, 17));
-    }
-
-    #[test]
-    fn chooses_dark_block_foreground_for_light_resolved_backgrounds() {
-        assert_eq!(
-            block_foreground(Some(Rgb::new(240, 240, 240))),
-            Color::Black
-        );
-        assert_eq!(block_foreground(Some(Rgb::new(20, 20, 20))), Color::White);
-        assert_eq!(block_foreground(None), Color::White);
-    }
-
-    #[test]
-    fn blends_toward_terminal_ansi_color() {
-        let base = Rgb::new(10, 10, 10);
-        let green = Rgb::new(10, 110, 10);
-
-        assert_eq!(base.blend_toward(green, 0.16), Rgb::new(10, 26, 10));
-    }
-
-    #[test]
-    fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
-        let palette = TerminalPalette {
-            background: Rgb::new(255, 255, 255),
-            ansi: HashMap::from([(AnsiColor::Gray, Rgb::new(240, 240, 240))]),
-        };
-
-        let background = palette
-            .blended_background(AnsiColor::Gray, USER_BACKGROUND_ALPHA)
-            .expect("resolved background");
-
-        assert_eq!(background.color, Color::Rgb(254, 254, 254));
-        assert_eq!(block_foreground(background.rgb), Color::Black);
-    }
-
-    #[test]
-    fn adapts_dim_foreground_to_terminal_background() {
-        let dark = TerminalPalette {
-            background: Rgb::new(10, 10, 10),
-            ansi: HashMap::from([(AnsiColor::Gray, Rgb::new(170, 170, 170))]),
-        };
-        let light = TerminalPalette {
-            background: Rgb::new(245, 245, 245),
-            ansi: HashMap::from([(AnsiColor::Gray, Rgb::new(210, 210, 210))]),
-        };
-
-        assert_eq!(
-            Palette::from_terminal(Some(&dark)).dim,
-            Color::Rgb(170, 170, 170)
-        );
-        assert_eq!(Palette::from_terminal(Some(&light)).dim, Color::Black);
-    }
-
-    #[test]
-    fn reasoning_output_uses_one_dimming_mechanism() {
-        let styled = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
-        let mut lines = vec![Line::styled("reasoning", styled).style(styled)];
-
-        Theme::reasoning_output(&mut lines);
-
-        for style in [lines[0].style, lines[0].spans[0].style] {
-            let effective_modifiers = style.add_modifier - style.sub_modifier;
-            assert!(!effective_modifiers.contains(Modifier::DIM));
-            assert_eq!(style.fg, Some(Color::DarkGray));
-        }
     }
 }

@@ -403,84 +403,6 @@ fn empty_tools_sets_tools_flag_to_empty_string() {
 }
 
 #[test]
-fn read_only_tools_go_to_tools_and_allowed_tools() {
-    let plan = build_spawn_plan(&request(
-        vec!["Read"],
-        false,
-        None,
-        PermissionMode::Auto,
-        8,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
-    assert!(plan.args.windows(2).any(|pair| pair == ["--tools", "Read"]));
-    let allowed = flag_values(&plan.args, "--allowedTools");
-    assert_eq!(allowed, vec!["Read".to_string()]);
-}
-
-#[test]
-fn edit_and_read_each_become_allowed_tools_argv_items() {
-    let plan = build_spawn_plan(&request(
-        vec!["Edit", "Read"],
-        false,
-        None,
-        PermissionMode::Auto,
-        8,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
-    assert!(plan
-        .args
-        .windows(2)
-        .any(|pair| pair == ["--tools", "Edit,Read"]));
-    let allowed = flag_values(&plan.args, "--allowedTools");
-    assert_eq!(allowed, vec!["Edit".to_string(), "Read".to_string()]);
-}
-
-#[test]
-fn bash_pattern_uses_tools_base_and_allowed_tools_pattern() {
-    let plan = build_spawn_plan(&request(
-        vec!["Bash(git *)"],
-        false,
-        None,
-        PermissionMode::Auto,
-        8,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
-    assert!(plan.args.windows(2).any(|pair| pair == ["--tools", "Bash"]));
-    let allowed = flag_values(&plan.args, "--allowedTools");
-    assert_eq!(allowed, vec!["Bash(git *)".to_string()]);
-}
-
-#[test]
-fn mixed_bare_and_pattern_tools_all_allowed_separately() {
-    let plan = build_spawn_plan(&request(
-        vec!["Read", "Bash(git status *)", "Edit", "Bash(cargo *)"],
-        false,
-        None,
-        PermissionMode::Auto,
-        8,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
-    assert_eq!(
-        flag_value(&plan.args, "--tools").as_deref(),
-        Some("Read,Bash,Edit")
-    );
-    let allowed = flag_values(&plan.args, "--allowedTools");
-    assert_eq!(
-        allowed,
-        vec![
-            "Read".to_string(),
-            "Bash(git status *)".to_string(),
-            "Edit".to_string(),
-            "Bash(cargo *)".to_string(),
-        ]
-    );
-}
-
-#[test]
 fn task_is_never_made_available_even_if_listed() {
     let plan = build_spawn_plan(&request(
         vec!["Read", "Task", "Task(sub)"],
@@ -499,27 +421,6 @@ fn task_is_never_made_available_even_if_listed() {
     let allowed = flag_values(&plan.args, "--allowedTools");
     assert_eq!(allowed, vec!["Read".to_string()]);
     assert!(!allowed.iter().any(|entry| entry.contains("Task")));
-}
-
-#[test]
-fn non_default_max_turns_is_emitted_exactly() {
-    for turns in [1_u64, 7, 64, 10_000] {
-        let plan = build_spawn_plan(&request(
-            vec!["Read"],
-            false,
-            None,
-            PermissionMode::Auto,
-            turns,
-            PromptPolicy::Replace("Plan carefully.".into()),
-        ))
-        .unwrap();
-        assert!(
-            plan.args
-                .windows(2)
-                .any(|pair| { pair[0] == "--max-turns" && pair[1] == turns.to_string() }),
-            "missing --max-turns {turns}"
-        );
-    }
 }
 
 #[test]

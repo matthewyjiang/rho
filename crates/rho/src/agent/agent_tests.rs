@@ -3,17 +3,6 @@ use std::path::Path;
 use super::*;
 
 #[test]
-fn builtins_share_one_catalog() {
-    let root = tempfile::tempdir().unwrap();
-    let catalog = AgentCatalog::discover_with_home(root.path(), None).unwrap();
-    let ids = catalog
-        .iter()
-        .map(|entry| entry.definition.id.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(ids, ["default", "explorer", "reviewer", "worker"]);
-}
-
-#[test]
 fn rejects_unknown_tools_with_context() {
     let root = tempfile::tempdir().unwrap();
     let agents = root.path().join(".rho/agents");

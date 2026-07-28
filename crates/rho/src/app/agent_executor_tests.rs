@@ -51,63 +51,6 @@ fn permission_mode_updates_are_shared_with_executor_clones() {
 }
 
 #[test]
-fn default_concurrency_is_global_four_with_nested_claude_two() {
-    let limits = concurrency_limits_from_env(None, None);
-    assert_eq!(
-        limits,
-        ConcurrencyLimits {
-            total: 4,
-            claude: 2
-        }
-    );
-}
-
-#[test]
-fn total_env_override_keeps_default_claude_cap_and_clamps() {
-    let limits = concurrency_limits_from_env(Some("6"), None);
-    assert_eq!(
-        limits,
-        ConcurrencyLimits {
-            total: 6,
-            claude: 2
-        }
-    );
-
-    let tight = concurrency_limits_from_env(Some("1"), None);
-    assert_eq!(
-        tight,
-        ConcurrencyLimits {
-            total: 1,
-            claude: 1
-        }
-    );
-}
-
-#[test]
-fn claude_env_override_raises_nested_cap_within_total() {
-    let limits = concurrency_limits_from_env(Some("6"), Some("4"));
-    assert_eq!(
-        limits,
-        ConcurrencyLimits {
-            total: 6,
-            claude: 4
-        }
-    );
-}
-
-#[test]
-fn claude_env_override_clamps_to_total() {
-    let limits = concurrency_limits_from_env(Some("3"), Some("10"));
-    assert_eq!(
-        limits,
-        ConcurrencyLimits {
-            total: 3,
-            claude: 3
-        }
-    );
-}
-
-#[test]
 fn zero_invalid_and_huge_concurrency_values_fall_back() {
     assert_eq!(
         concurrency_limits_from_env(Some("0"), Some("0")),

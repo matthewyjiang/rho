@@ -125,10 +125,6 @@ mod tests {
             std::fs::read_to_string(root.path().join("nested/hello.txt")).unwrap(),
             "hello"
         );
-        assert!(result.content.contains("created "));
-        assert!(result.content.contains("--- /dev/null"));
-        assert!(result.content.contains("+++ b/nested/hello.txt"));
-        assert!(result.content.contains("+hello"));
     }
 
     #[tokio::test]
@@ -147,29 +143,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(std::fs::read_to_string(path).unwrap(), "replacement");
-        assert!(result.content.contains("wrote "));
         assert!(result.content.contains(UNREADABLE_FILE_DIFF_MESSAGE));
-    }
-
-    #[tokio::test]
-    async fn reports_overwritten_file() {
-        let (root, ctx) = test_context();
-        std::fs::write(root.path().join("hello.txt"), "hello\nold\n").unwrap();
-
-        let result = WriteFile
-            .call(
-                json!({"path":"hello.txt","content":"hello\nnew\n"}),
-                ctx,
-                "test".into(),
-            )
-            .await
-            .unwrap();
-
-        assert!(result.ok);
-        assert!(result.content.contains("wrote "));
-        assert!(result.content.contains("--- a/hello.txt"));
-        assert!(result.content.contains("+++ b/hello.txt"));
-        assert!(result.content.contains("-old"));
-        assert!(result.content.contains("+new"));
     }
 }

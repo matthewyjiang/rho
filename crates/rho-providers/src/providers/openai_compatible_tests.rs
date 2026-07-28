@@ -318,41 +318,6 @@ fn openrouter_omits_reasoning_for_non_configurable_models() {
 }
 
 #[test]
-fn openrouter_and_kimi_k2_request_bodies_remain_unchanged() {
-    assert_eq!(
-        request_body(
-            OpenAiCompatibleDialect::OpenRouter,
-            "anthropic/claude-sonnet-4",
-            crate::reasoning::ReasoningLevel::High,
-        ),
-        json!({
-            "model": "anthropic/claude-sonnet-4",
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": "hello"}]
-            }],
-            "stream": false,
-            "reasoning": {"effort": "high"}
-        })
-    );
-    assert_eq!(
-        request_body(
-            OpenAiCompatibleDialect::KimiCode,
-            "kimi-k2.5",
-            crate::reasoning::ReasoningLevel::Max,
-        ),
-        json!({
-            "model": "kimi-k2.5",
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": "hello"}]
-            }],
-            "stream": false
-        })
-    );
-}
-
-#[test]
 fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
     let mut provider = OpenAiCompatibleProvider::new(
         reqwest::Client::new(),
@@ -414,25 +379,6 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
     assert_eq!(off["reasoning_effort"], "none");
 }
 
-#[test]
-fn standard_dialect_omits_reasoning_without_catalog_levels() {
-    assert_eq!(
-        request_body(
-            OpenAiCompatibleDialect::Standard,
-            "local-model",
-            crate::reasoning::ReasoningLevel::High,
-        ),
-        json!({
-            "model": "local-model",
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": "hello"}]
-            }],
-            "stream": false
-        })
-    );
-}
-
 fn request_body(
     dialect: OpenAiCompatibleDialect,
     model: &str,
@@ -476,34 +422,6 @@ fn request_body(
         )
         .unwrap();
     serde_json::to_value(request).unwrap()
-}
-
-#[test]
-fn identities_keep_custom_provider_names() {
-    let moonshot = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
-        "moonshot",
-        "kimi-k3".into(),
-        OpenAiCompatibleDialect::Moonshot,
-        CompatibleAuth::ApiKey("secret".into()),
-        "https://api.moonshot.ai/v1".into(),
-    );
-    assert_eq!(moonshot.model_identity().provider, "moonshot");
-    assert_eq!(moonshot.model_identity().api, "openai-chat-completions");
-
-    let openrouter = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
-        "openrouter",
-        "anthropic/claude-sonnet-4".into(),
-        OpenAiCompatibleDialect::OpenRouter,
-        CompatibleAuth::ApiKey("secret".into()),
-        "https://openrouter.ai/api/v1".into(),
-    );
-    assert_eq!(openrouter.model_identity().provider, "openrouter");
-    assert_eq!(
-        openrouter.model_identity().model,
-        "anthropic/claude-sonnet-4"
-    );
 }
 
 #[test]

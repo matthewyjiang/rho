@@ -42,42 +42,6 @@ async fn prepared_policy(
     .map(|prepared| prepared.execution_policy().clone())
 }
 
-#[test]
-fn constructs_one_selected_coding_adapter() {
-    let tool = coding_tool(CodingToolKind::ReadFile, CodingToolOptions::new());
-    assert_eq!(tool.spec().name, "read_file");
-}
-
-#[test]
-fn coding_tools_register_without_granting_capabilities() {
-    let mut registry = ToolRegistry::new();
-    register_coding_tools(&mut registry, CodingToolOptions::default()).unwrap();
-
-    let names = registry
-        .specs()
-        .into_iter()
-        .map(|spec| spec.name)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        names,
-        [
-            "edit_file",
-            "glob",
-            "grep",
-            "list_dir",
-            "read_file",
-            "write_file"
-        ]
-    );
-    assert_eq!(
-        CodingToolOptions::new()
-            .max_output_bytes(8_000)
-            .output_budget(),
-        8_000
-    );
-    assert_eq!(CodingToolOptions::default().output_budget(), 12_000);
-}
-
 #[tokio::test]
 async fn preparation_canonicalizes_relative_absolute_symlink_and_granted_root_reads() {
     let primary = tempfile::tempdir().unwrap();

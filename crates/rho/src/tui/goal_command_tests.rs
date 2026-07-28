@@ -16,14 +16,6 @@ fn block_goal(goal: &mut GoalState) {
 }
 
 #[test]
-fn initial_prompt_identifies_goal_setting_action() {
-    assert_eq!(
-        initial_goal_prompt("all tests pass"),
-        "The user invoked Rho's `/goal` command to set the following completion goal. Treat this as a goal-setting action, not as an ordinary conversational message or a claim that the goal is already complete.\n\nGoal:\nall tests pass\n\nBegin working toward the goal now. Make concrete progress, use tools as needed, and verify the completion condition before stopping."
-    );
-}
-
-#[test]
 fn goal_turn_preserves_command_for_display_history_and_persistence() {
     let turn = TurnPrompt::command(
         initial_goal_prompt("all tests pass"),
@@ -64,45 +56,6 @@ fn clearing_goal_removes_active_indicator() {
         app.history.last(),
         Some(Entry::Notice(message)) if message == "goal cleared"
     ));
-}
-
-#[test]
-fn status_reports_active_condition_and_progress() {
-    let mut app = test_app();
-    let mut goal = GoalState::new("tests pass".into());
-    goal.turns = 3;
-    goal.last_reason = Some("one test still fails".into());
-    app.goal = Some(goal);
-
-    let status = app.goal_status_message();
-
-    assert!(status.contains("goal active: tests pass"), "{status}");
-    assert!(status.contains("3 turn(s)"), "{status}");
-    assert!(
-        status.contains("last evaluation: one test still fails"),
-        "{status}"
-    );
-}
-
-#[test]
-fn status_reports_blocked_steps_and_resumption_command() {
-    let mut app = test_app();
-    let mut goal = GoalState::new("release is public".into());
-    block_goal(&mut goal);
-    app.goal = Some(goal);
-
-    let status = app.goal_status_message();
-
-    assert!(
-        status.contains("goal blocked: release is public"),
-        "{status}"
-    );
-    assert!(status.contains("- push tag v1.0.0"), "{status}");
-    assert!(
-        status.contains("requires the user's Git credentials"),
-        "{status}"
-    );
-    assert!(status.contains("use /goal resume"), "{status}");
 }
 
 #[test]

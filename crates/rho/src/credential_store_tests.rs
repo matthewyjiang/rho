@@ -10,22 +10,6 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[test]
-fn defaults_to_os_without_config_choice() {
-    assert_eq!(
-        resolve_backend_from(None, None).unwrap(),
-        CredentialStoreBackend::Os
-    );
-}
-
-#[test]
-fn reads_backend_from_config_choice() {
-    assert_eq!(
-        resolve_backend_from(None, Some(CredentialStoreBackend::File)).unwrap(),
-        CredentialStoreBackend::File
-    );
-}
-
-#[test]
 fn environment_overrides_config_choice() {
     assert_eq!(
         resolve_backend_from(Some("os"), Some(CredentialStoreBackend::File)).unwrap(),

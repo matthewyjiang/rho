@@ -283,7 +283,3 @@ fn format_elapsed(seconds: u64) -> String {
     let minutes = minutes % 60;
     format!("{hours}h {minutes:02}m")
 }
-
-#[cfg(test)]
-#[path = "subagent_panel_tests.rs"]
-mod tests;

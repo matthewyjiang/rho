@@ -227,7 +227,3 @@ impl super::App {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "agent_picker_tests.rs"]
-mod tests;

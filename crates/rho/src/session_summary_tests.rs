@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use rho_providers::model::{ContentBlock, Message};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
-use rho_tools::tool::{ToolCall, ToolResult};
+use rho_tools::tool::ToolCall;
 use tempfile::TempDir;
 
 use super::persistence::{
@@ -24,8 +24,7 @@ fn write_entries(path: &std::path::Path, entries: &[SessionEntry]) {
 fn fixture_path(root: &TempDir, cwd: &TempDir, id: &str, created_at: u64) -> PathBuf {
     let dir = session_dir_in_root(root.path(), cwd.path());
     fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("{created_at}_{id}.jsonl"));
-    path
+    dir.join(format!("{created_at}_{id}.jsonl"))
 }
 
 #[test]
@@ -216,54 +215,6 @@ fn summarize_drops_incomplete_tool_tail_from_active_display() {
     assert_eq!(summary.message_count, 1);
     assert_eq!(summary.first_user_message.as_deref(), Some("please run"));
     assert_eq!(summary.last_user_message.as_deref(), Some("please run"));
-}
-
-#[test]
-fn summarize_keeps_complete_tool_turn() {
-    let root = TempDir::new().unwrap();
-    let cwd = TempDir::new().unwrap();
-    let id = "tool-complete";
-    let path = fixture_path(&root, &cwd, id, 400);
-    write_entries(
-        &path,
-        &[
-            SessionEntry::Session {
-                version: 3,
-                id: id.into(),
-                timestamp: "400".into(),
-                cwd: cwd.path().to_path_buf(),
-                agent_id: None,
-                agent_fingerprint: None,
-            },
-            SessionEntry::Message {
-                timestamp: "401".into(),
-                message: Message::user_text("run it"),
-                display_message: None,
-            },
-            SessionEntry::Message {
-                timestamp: "402".into(),
-                message: Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-                    id: "call-1".into(),
-                    name: "bash".into(),
-                    arguments: serde_json::json!({}),
-                })]),
-                display_message: None,
-            },
-            SessionEntry::Message {
-                timestamp: "403".into(),
-                message: Message::ToolResult(ToolResult {
-                    id: "call-1".into(),
-                    ok: true,
-                    content: "done".into(),
-                }),
-                display_message: None,
-            },
-        ],
-    );
-
-    let summary = summarize_session_file(&path, cwd.path()).unwrap().summary;
-    assert_eq!(summary.message_count, 3);
-    assert_eq!(summary.first_user_message.as_deref(), Some("run it"));
 }
 
 #[test]

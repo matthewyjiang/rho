@@ -110,12 +110,6 @@ impl StreamUi {
         }
     }
 
-    /// Characters still held back from the active stream.
-    #[cfg(test)]
-    pub(super) fn held_chars(&self) -> usize {
-        self.hold.chars().count()
-    }
-
     /// Appends provider text into the hold and releases what the pacer allows.
     pub(super) fn push_delta(&mut self, kind: StreamKind, text: &str, now: Instant) {
         if text.is_empty() {
@@ -169,20 +163,6 @@ impl StreamUi {
     pub(super) fn discard_hold(&mut self) {
         self.hold.clear();
         self.pacer.reset();
-    }
-
-    /// Plays out everything the pacer is holding.
-    ///
-    /// Stands in for the frame ticks a live terminal supplies, so tests can
-    /// assert on streamed text without depending on wall-clock timing.
-    #[cfg(test)]
-    pub(super) fn play_out(&mut self) {
-        if let Some(kind) = self.current_stream_kind {
-            self.flush_hold(kind);
-        } else {
-            self.discard_hold();
-        }
-        self.stream_tick_deadline = None;
     }
 
     pub(super) fn schedule_tick(&mut self, kind: StreamKind, now: Instant) {

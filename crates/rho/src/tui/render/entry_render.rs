@@ -147,17 +147,3 @@ pub(in crate::tui) fn apply_markdown_images(
         rendered.image_placement = Some(placements);
     }
 }
-
-#[cfg(test)]
-pub(in crate::tui) fn render_entry_with_images(
-    entry: &Entry,
-    width: usize,
-    max_tool_output_lines: usize,
-    markdown_images: Option<&[(usize, FeedImage)]>,
-) -> RenderedEntry {
-    let mut rendered = render_entry(entry, width, max_tool_output_lines);
-    if let Some(images) = markdown_images {
-        apply_markdown_images(&mut rendered, images, width);
-    }
-    rendered
-}

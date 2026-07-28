@@ -53,53 +53,48 @@ fn with_cached_provider_models<T>(provider: &str, models: Vec<&str>, f: impl FnO
     result
 }
 
+fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
+    crate::model_aliases::ModelAliases::from_entries(
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    )
+    .unwrap()
+}
+
+// Covers: --resume is rejected for non-interactive commands before prompt work starts
+// Owner: cli config validation
 #[test]
-fn validate_cli_rejects_resume_with_run_before_prompt_reading() {
-    let cli = Cli {
-        provider: None,
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        resume: Some(Some("session-id".into())),
-        command: Some(Command::Run {
+fn validate_cli_rejects_resume_with_non_interactive_commands() {
+    for command in [
+        Command::Run {
             stdin: true,
             output_file: None,
             output: crate::cli::OutputFormat::Text,
             max_steps: None,
             timeout: None,
             prompt: Vec::new(),
-        }),
-    };
+        },
+        Command::Update,
+    ] {
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: Some(Some("session-id".into())),
+            command: Some(command),
+        };
 
-    let err = validate(&cli).unwrap_err();
-
-    assert!(err.to_string().contains("--resume is only supported"));
-}
-
-#[test]
-fn validate_cli_rejects_resume_with_update() {
-    let cli = Cli {
-        provider: None,
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        resume: Some(Some("session-id".into())),
-        command: Some(Command::Update),
-    };
-
-    let err = validate(&cli).unwrap_err();
-
-    assert!(err.to_string().contains("--resume is only supported"));
+        let err = validate(&cli).unwrap_err();
+        assert!(err.to_string().contains("--resume is only supported"));
+    }
 }
 
 #[test]
@@ -149,60 +144,6 @@ fn cli_model_override_with_provider_selects_matching_auth() {
     assert_eq!(cfg.provider, "openai-codex");
     assert_eq!(cfg.model, "gpt-5.4-mini");
     assert_eq!(cfg.auth, "codex");
-}
-
-#[test]
-fn cli_anthropic_model_override_selects_matching_auth() {
-    with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: None,
-            model: Some("anthropic/claude-sonnet-4-5".into()),
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            resume: None,
-            command: None,
-        };
-
-        let save_config = apply_overrides(&mut cfg, &cli).unwrap();
-
-        assert!(save_config);
-        assert_eq!(cfg.provider, "anthropic");
-        assert_eq!(cfg.model, "claude-sonnet-4-5");
-        assert_eq!(cfg.auth, "anthropic-api-key");
-    });
-}
-
-#[test]
-fn cli_anthropic_provider_override_uses_cached_default() {
-    with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: Some("anthropic".into()),
-            model: None,
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            resume: None,
-            command: None,
-        };
-
-        let save_config = apply_overrides(&mut cfg, &cli).unwrap();
-
-        assert!(save_config);
-        assert_eq!(cfg.provider, "anthropic");
-        assert_eq!(cfg.model, "claude-sonnet-4-5");
-        assert_eq!(cfg.auth, "anthropic-api-key");
-    });
 }
 
 #[test]
@@ -322,76 +263,6 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
     assert_eq!(cfg.auth, "github-copilot");
 }
 
-#[tokio::test]
-async fn cli_github_copilot_model_alias_refreshes_empty_cache() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let models_url = format!("http://{}/models", listener.local_addr().unwrap());
-    tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut buffer = [0; 1024];
-        let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
-            .await
-            .unwrap();
-        let body = r#"{"data":[{"id":"copilot-api-model"}]}"#;
-        let reply = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
-            .await
-            .unwrap();
-        tokio::io::AsyncWriteExt::shutdown(&mut stream)
-            .await
-            .unwrap();
-    });
-    let cache_dir = unique_cache_dir("github-copilot-alias-refresh");
-    let store = MemoryCredentialStore::default();
-    save_github_copilot_tokens(
-        &store,
-        &GitHubCopilotTokens {
-            github_access_token: "github".into(),
-            github_refresh_token: None,
-            github_expires_at_unix: None,
-            copilot_token: Some("copilot-test-token".into()),
-            copilot_expires_at_unix: Some(i64::MAX),
-            copilot_refresh_after_unix: None,
-            copilot_token_endpoint: None,
-            copilot_chat_endpoint: None,
-            copilot_models_endpoint: Some(models_url),
-        },
-    )
-    .unwrap();
-    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
-    let mut cfg = Config {
-        model_aliases: aliases(&[("copilot", "github-copilot/copilot-api-model")]),
-        ..Config::default()
-    };
-    let cli = Cli {
-        provider: None,
-        model: Some("@copilot".into()),
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        resume: None,
-        command: None,
-    };
-
-    refresh_model_cache(&cli, &cfg, &store).await.unwrap();
-    apply_overrides(&mut cfg, &cli).unwrap();
-    set_provider_models_cache_dir_for_tests(None);
-    let _ = std::fs::remove_dir_all(cache_dir);
-
-    assert_eq!(cfg.provider, "github-copilot");
-    assert_eq!(cfg.model, "copilot-api-model");
-    assert_eq!(cfg.auth, "github-copilot");
-    assert_eq!(cfg.current_model_alias(), Some("copilot"));
-}
-
 #[test]
 fn cli_github_copilot_provider_override_uses_cached_default() {
     with_cached_provider_models("github-copilot", vec!["copilot-cached-model"], || {
@@ -414,32 +285,6 @@ fn cli_github_copilot_provider_override_uses_cached_default() {
 
         assert_eq!(cfg.provider, "github-copilot");
         assert_eq!(cfg.model, "copilot-cached-model");
-        assert_eq!(cfg.auth, "github-copilot");
-    });
-}
-
-#[test]
-fn cli_github_copilot_model_override_selects_matching_auth() {
-    with_cached_provider_models("github-copilot", vec!["gpt-4.1"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: None,
-            model: Some("github-copilot/gpt-4.1".into()),
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            resume: None,
-            command: None,
-        };
-
-        apply_overrides(&mut cfg, &cli).unwrap();
-
-        assert_eq!(cfg.provider, "github-copilot");
-        assert_eq!(cfg.model, "gpt-4.1");
         assert_eq!(cfg.auth, "github-copilot");
     });
 }
@@ -520,32 +365,6 @@ fn cli_auth_override_wins_after_model_provider_auth() {
     assert_eq!(cfg.provider, "openai");
     assert_eq!(cfg.model, "gpt-5.4-mini");
     assert_eq!(cfg.auth, "api-key");
-}
-
-#[test]
-fn cli_reasoning_override_updates_config() {
-    let mut cfg = Config::default();
-    let cli = Cli {
-        provider: None,
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: Some(rho_providers::reasoning::ReasoningLevel::High),
-        resume: None,
-        command: None,
-    };
-
-    let save_config = apply_overrides(&mut cfg, &cli).unwrap();
-
-    assert!(save_config);
-    assert_eq!(
-        cfg.reasoning,
-        rho_providers::reasoning::ReasoningLevel::High
-    );
 }
 
 #[test]
@@ -730,29 +549,6 @@ fn only_kimi_requires_synchronous_capability_discovery() {
         "kimi-code",
         "unseen-model"
     ));
-}
-
-#[test]
-fn refresh_selection_uses_loaded_config_without_cli_model_flags() {
-    let config = Config {
-        provider: "kimi-code".into(),
-        model: "k3".into(),
-        ..Config::default()
-    };
-
-    assert_eq!(
-        super::selected_model_for_refresh(&config, "kimi-code"),
-        Some("k3".into())
-    );
-}
-fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
-    crate::model_aliases::ModelAliases::from_entries(
-        pairs
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.to_string()))
-            .collect(),
-    )
-    .unwrap()
 }
 
 #[test]

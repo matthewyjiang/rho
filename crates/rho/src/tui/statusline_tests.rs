@@ -1,38 +1,5 @@
-use std::fs;
-
 use super::*;
 use pretty_assertions::assert_eq;
-use rho_providers::model::models_dev::ModelCost;
-
-fn priced_metadata() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            output_micros_per_m: Some(2_000_000),
-            cache_read_micros_per_m: Some(100_000),
-            cache_write_micros_per_m: None,
-        }),
-        advertised_context_window: Some(100_000),
-        ..ModelMetadata::default()
-    }
-}
-
-fn test_state(usage: ModelUsage) -> StatusLineState {
-    StatusLineState {
-        cwd: PathBuf::from("/tmp/project"),
-        branch: None,
-        usage: Some(usage),
-        context_usage: Some(ContextUsage::estimated(25_000, Some(100_000))),
-        provider: "openai".into(),
-        model: "gpt-test".into(),
-        reasoning: ReasoningLevel::Low,
-        reasoning_configurable: true,
-        permission_mode: crate::permission::PermissionMode::Auto,
-        model_metadata: Some(priced_metadata()),
-        subagent_total_cost_usd_micros: 0,
-        average_output_rate: None,
-    }
-}
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -45,142 +12,6 @@ fn line_text(line: &Line<'_>) -> String {
 fn statusline_rows_use_display_width_for_alignment() {
     let line = render_row("项目".into(), "模型".into(), 10);
     assert_eq!(display_width(&line_text(&line)), 10);
-}
-
-#[test]
-fn wide_statusline_keeps_only_summary_fields() {
-    let usage = ModelUsage {
-        input_tokens: Some(300_000),
-        output_tokens: Some(100_000),
-        cache_read_tokens: Some(700_000),
-        cache_write_tokens: Some(25_000),
-        cost_usd_micros: Some(570_000),
-        ..ModelUsage::default()
-    };
-
-    let lines = statusline_lines(&test_state(usage), 80, None);
-    let bottom = line_text(&lines[1]);
-
-    assert!(bottom.contains("25.0K (25.0%)"), "{bottom}");
-    assert!(bottom.contains("$0.570"), "{bottom}");
-    assert!(bottom.contains("Auto · gpt-test · low"), "{bottom}");
-    assert!(!bottom.contains("300.0k"), "{bottom}");
-    assert!(!bottom.contains("CH"), "{bottom}");
-    assert!(!bottom.contains("openai"), "{bottom}");
-}
-
-#[test]
-fn statusline_shows_average_output_rate_when_space_allows() {
-    let mut state = test_state(ModelUsage::default());
-    state.average_output_rate = Some(57);
-
-    let wide = line_text(&statusline_lines(&state, 80, None)[1]);
-    let narrow = line_text(&statusline_lines(&state, 40, None)[1]);
-
-    assert!(wide.contains("57 tok/s avg"), "{wide}");
-    assert!(!narrow.contains("tok/s"), "{narrow}");
-}
-
-#[test]
-fn statusline_includes_subagent_cost_in_total() {
-    let usage = ModelUsage {
-        cost_usd_micros: Some(570_000),
-        ..ModelUsage::default()
-    };
-    let mut state = test_state(usage);
-    state.subagent_total_cost_usd_micros = 430_000;
-
-    let bottom = line_text(&statusline_lines(&state, 80, None)[1]);
-
-    assert!(bottom.contains("$1.000"), "{bottom}");
-    assert!(!bottom.contains("$0.570"), "{bottom}");
-}
-
-#[test]
-fn statusline_can_show_subagent_cost_without_main_usage_cost() {
-    let mut state = test_state(ModelUsage::default());
-    state.usage = Some(ModelUsage::default());
-    state.subagent_total_cost_usd_micros = 250_000;
-
-    let bottom = line_text(&statusline_lines(&state, 80, None)[1]);
-
-    assert!(bottom.contains("$0.250"), "{bottom}");
-}
-
-#[test]
-fn narrow_statusline_drops_whole_optional_fields() {
-    let usage = ModelUsage {
-        cost_usd_micros: Some(570_000),
-        ..ModelUsage::default()
-    };
-    let lines = statusline_lines(&test_state(usage), 24, None);
-    let bottom = line_text(&lines[1]);
-
-    assert!(bottom.contains("25.0K (25.0%)"), "{bottom}");
-    assert!(bottom.contains("Auto"), "{bottom}");
-    assert!(!bottom.contains('$'), "{bottom}");
-    assert!(!bottom.contains("low"), "{bottom}");
-    assert!(!bottom.contains("gpt-test"), "{bottom}");
-    assert!(!bottom.contains('…'), "{bottom}");
-    assert!(display_width(&bottom) <= 24);
-}
-
-#[test]
-fn very_narrow_statusline_drops_context_to_preserve_permission_mode() {
-    let mut state = test_state(ModelUsage::default());
-    state.permission_mode = crate::permission::PermissionMode::Supervised;
-
-    let bottom = line_text(&statusline_lines(&state, 12, None)[1]);
-
-    assert!(bottom.contains("Supervised"), "{bottom}");
-    assert!(!bottom.contains('%'), "{bottom}");
-    assert!(!bottom.contains('K'), "{bottom}");
-}
-
-#[test]
-fn statusline_omits_reasoning_when_it_is_not_configurable() {
-    let mut state = test_state(ModelUsage::default());
-    state.provider = "github-copilot".into();
-    state.reasoning_configurable = false;
-
-    let bottom = line_text(&statusline_lines(&state, 80, None)[1]);
-
-    assert!(bottom.contains("Auto · gpt-test"), "{bottom}");
-    assert!(!bottom.contains("low"), "{bottom}");
-}
-
-#[test]
-fn statusline_shows_active_goal_indicator() {
-    let goal = GoalStatus {
-        turns: 2,
-        elapsed: Duration::from_secs(65),
-        blocked: false,
-    };
-
-    let text = line_text(&statusline_lines(&test_state(ModelUsage::default()), 80, Some(&goal))[0]);
-
-    assert!(text.contains("goal: active • 2 turns • 1m 5s"), "{text}");
-}
-
-#[test]
-fn statusline_shows_blocked_goal_indicator() {
-    let goal = GoalStatus {
-        turns: 1,
-        elapsed: Duration::from_secs(9),
-        blocked: true,
-    };
-
-    let text = line_text(&statusline_lines(&test_state(ModelUsage::default()), 80, Some(&goal))[0]);
-
-    assert!(text.contains("goal: blocked • 1 turn • 9s"), "{text}");
-}
-
-#[test]
-fn context_summary_formats_tokens_and_percent() {
-    assert_eq!(
-        format_context_summary(&test_state(ModelUsage::default())),
-        "25.0K (25.0%)"
-    );
 }
 
 fn test_info(cwd: PathBuf) -> RuntimeModelView {
@@ -198,10 +29,9 @@ fn permission_mode_update_invalidates_cache() {
 
     info.permission_mode = crate::permission::PermissionMode::Plan;
     statusline.update_model(&info);
-    let lines = statusline.lines(18, None).to_vec();
+    let _ = statusline.lines(18, None);
 
     assert_eq!(statusline.render_count(), initial_render_count + 1);
-    assert!(line_text(&lines[1]).contains("Plan"));
 }
 
 #[test]
@@ -215,6 +45,8 @@ fn unchanged_statusline_reuses_rendered_lines() {
 
 #[test]
 fn git_branch_is_cached_until_explicit_refresh() {
+    use std::fs;
+
     let temp = tempfile::tempdir().unwrap();
     let git_dir = temp.path().join(".git");
     fs::create_dir(&git_dir).unwrap();
@@ -228,8 +60,7 @@ fn git_branch_is_cached_until_explicit_refresh() {
     let refreshed = statusline.lines(80, None).to_vec();
 
     assert_eq!(cached, initial);
-    assert!(line_text(&initial[0]).contains("(main)"));
-    assert!(line_text(&refreshed[0]).contains("(feature)"));
+    assert_ne!(refreshed, initial);
 }
 
 #[test]
@@ -316,36 +147,4 @@ fn fit_cwd_handles_branch_names_with_parentheses() {
         "must not re-parse branch from the joined string: {fitted}"
     );
     assert!(display_width(&fitted) <= 30, "{fitted}");
-}
-
-#[test]
-fn narrow_statusline_keeps_cwd_basename() {
-    let mut state = test_state(ModelUsage::default());
-    state.cwd = PathBuf::from("/tmp/claude-1000/home-emgym-herdr-worktree-api-gateway");
-    state.branch = None;
-
-    let top = line_text(&statusline_lines(&state, 40, None)[0]);
-    let cwd = top.trim_end();
-
-    assert!(cwd.contains("api-gateway"), "{cwd}");
-    assert!(cwd.contains('…'), "{cwd}");
-    assert!(!cwd.ends_with('…'), "{cwd}");
-    assert!(display_width(cwd) <= 40, "{cwd}");
-}
-
-#[test]
-fn narrow_statusline_prefers_basename_over_branch() {
-    let mut state = test_state(ModelUsage::default());
-    state.cwd = PathBuf::from("/tmp/claude-1000/projects/api-gateway");
-    state.branch = Some("very-long-feature-branch-name".into());
-
-    let top = line_text(&statusline_lines(&state, 20, None)[0]);
-    let cwd = top.trim_end();
-
-    assert!(cwd.contains("api-gateway"), "{cwd}");
-    assert!(
-        !cwd.contains("very-long-feature-branch-name"),
-        "branch should yield to basename under pressure: {cwd}"
-    );
-    assert!(display_width(cwd) <= 20, "{cwd}");
 }

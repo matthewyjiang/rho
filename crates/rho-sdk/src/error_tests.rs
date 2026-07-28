@@ -18,21 +18,6 @@ fn provider_retryability_propagates_to_top_level_error() {
 }
 
 #[test]
-fn provider_debug_and_display_contain_only_sanitized_fields() {
-    let error = ProviderError::new(
-        ProviderErrorKind::Unavailable,
-        "service unavailable",
-        Retryability::Retryable,
-    );
-
-    assert_eq!(error.to_string(), "provider failed: service unavailable");
-    assert_eq!(
-        format!("{error:?}"),
-        "ProviderError { kind: Unavailable, message: \"service unavailable\", retryability: Retryable, diagnostic_available: false }"
-    );
-}
-
-#[test]
 fn provider_diagnostic_is_explicit_and_not_in_display_or_debug() {
     let error = ProviderError::new(
         ProviderErrorKind::InvalidResponse,

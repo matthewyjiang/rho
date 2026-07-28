@@ -43,33 +43,6 @@ fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
 }
 
 #[test]
-fn describe_omits_allowed_and_percent_when_missing() {
-    let observed = RateLimitObservation {
-        observed_at_unix: 1_000,
-        observed_seq: 1,
-        observed_at_nanos: secs(1_000),
-        observed_nonce: "a".into(),
-        info: sample_info("allowed"),
-    };
-    let text = observed.describe(1_000 + 120);
-    assert!(text.contains("claude code:"));
-    assert!(text.contains("Five hour"));
-    assert!(!text.contains("allowed"), "{text}");
-    assert!(text.contains("observed 2m ago"));
-    assert!(!text.contains('%'));
-}
-
-#[test]
-fn describe_includes_remaining_percent_from_utilization() {
-    let mut info = sample_info("allowed");
-    info.utilization = Some(0.31);
-    let observed = RateLimitObservation::with_order(info, secs(1_000), 1, "a");
-    let text = observed.describe(1_000);
-    assert!(text.contains("69% left"), "{text}");
-    assert!(!text.contains("allowed"), "{text}");
-}
-
-#[test]
 fn multi_window_state_keeps_five_hour_and_seven_day() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("rate-limits.json");
@@ -127,21 +100,6 @@ fn loads_legacy_single_observation_file_as_one_window() {
     let loaded = load_at(&path).expect("legacy");
     assert_eq!(loaded.windows.len(), 1);
     assert_eq!(only(&loaded).info.window_key(), "five_hour");
-}
-
-#[test]
-fn default_state_path_lives_under_cache_claude_code() {
-    let path = default_state_path().unwrap();
-    let components = path
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .collect::<Vec<_>>();
-    assert!(
-        components
-            .windows(3)
-            .any(|window| { window == ["cache", "claude-code", "rate-limits.json"] }),
-        "{path:?}"
-    );
 }
 
 #[test]

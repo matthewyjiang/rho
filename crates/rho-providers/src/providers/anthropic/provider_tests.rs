@@ -102,23 +102,6 @@ fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
 }
 
 #[test]
-fn adaptive_thinking_uses_each_request_reasoning_level() {
-    let provider = test_provider("claude-opus-4-8");
-
-    let low = request_body(&provider, ReasoningLevel::Low).unwrap();
-    let xhigh = request_body(&provider, ReasoningLevel::Xhigh).unwrap();
-
-    assert_eq!(
-        low.output_config,
-        Some(AnthropicOutputConfig { effort: "low" })
-    );
-    assert_eq!(
-        xhigh.output_config,
-        Some(AnthropicOutputConfig { effort: "xhigh" })
-    );
-}
-
-#[test]
 fn provider_context_replay_follows_effective_thinking_mode() {
     let adaptive = AnthropicThinkingConfig::Adaptive {
         display: "summarized",

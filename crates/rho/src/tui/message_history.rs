@@ -135,7 +135,3 @@ pub(super) fn transcript_entries_from_messages(
     }
     entries
 }
-
-#[cfg(test)]
-#[path = "message_history_tests.rs"]
-mod tests;

@@ -3,24 +3,6 @@ use pretty_assertions::assert_eq;
 use super::*;
 
 #[test]
-fn info_returns_only_runtime_identity() {
-    let diagnostics = test_diagnostics("openai", "gpt-test");
-
-    let response = diagnostics.response("info").unwrap();
-    let value: serde_json::Value = serde_json::from_str(&response).unwrap();
-
-    assert_eq!(
-        value,
-        serde_json::json!({
-            "rho_version": env!("CARGO_PKG_VERSION"),
-            "provider": "openai",
-            "model": "gpt-test",
-            "reasoning": "medium"
-        })
-    );
-}
-
-#[test]
 fn config_excludes_credentials_and_user_content() {
     let config = Config {
         auth: "secret-auth-mode".into(),

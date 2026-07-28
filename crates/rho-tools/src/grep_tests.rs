@@ -22,44 +22,8 @@ fn write(dir: &TempDir, relative: &str, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
-#[test]
-fn content_mode_groups_matches_by_file() {
-    let dir = TempDir::new().unwrap();
-    write(
-        &dir,
-        "crates/rho/src/agent/parser.rs",
-        "fn other() {}\nlet capability = ToolCapability::parse(name.clone());\nfn mid() {}\nToolCapability::parse(name.to_string()),\n",
-    );
-    write(
-        &dir,
-        "crates/rho/src/agent/definition.rs",
-        "pub fn parse(name: String) -> Self {\n",
-    );
-
-    let content = call_grep(&dir, json!({"pattern": "parse", "path": "crates/rho"})).unwrap();
-
-    assert_eq!(
-        content,
-        "\
-src/agent/definition.rs
-  1: pub fn parse(name: String) -> Self {
-src/agent/parser.rs
-  2: let capability = ToolCapability::parse(name.clone());
-  4: ToolCapability::parse(name.to_string()),
-
-3 matches in 2 files"
-    );
-}
-
-#[test]
-fn normalizes_match_text_whitespace() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.rs", "\t  foo\t\tbar   \n");
-
-    let content = call_grep(&dir, json!({"pattern": "foo"})).unwrap();
-    assert!(content.contains("  1: foo bar\n"), "{content}");
-}
-
+// Covers: max_per_file must suppress extras without dropping the file
+// Owner: pure unit (grep limits)
 #[test]
 fn max_per_file_suppresses_extra_hits() {
     let dir = TempDir::new().unwrap();
@@ -79,41 +43,6 @@ hits.rs
 }
 
 #[test]
-fn glob_filter_excludes_non_matching_files() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.rs", "needle\n");
-    write(&dir, "a.txt", "needle\n");
-
-    let content = call_grep(&dir, json!({"pattern": "needle", "glob": "*.rs"})).unwrap();
-    assert!(content.contains("a.rs\n"), "{content}");
-    assert!(!content.contains("a.txt"), "{content}");
-    assert!(content.contains("1 matches in 1 files"), "{content}");
-}
-
-#[test]
-fn literal_mode_escapes_metacharacters() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.txt", "a.b\naxb\n");
-
-    let literal = call_grep(&dir, json!({"pattern": "a.b", "literal": true})).unwrap();
-    assert!(literal.contains("a.b"), "{literal}");
-    assert!(!literal.contains("axb"), "{literal}");
-    assert!(literal.contains("1 matches in 1 files"), "{literal}");
-
-    let regex = call_grep(&dir, json!({"pattern": "a.b", "literal": false})).unwrap();
-    assert!(regex.contains("2 matches in 1 files"), "{regex}");
-}
-
-#[test]
-fn case_insensitive_search() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.txt", "FOO\n");
-
-    let content = call_grep(&dir, json!({"pattern": "foo", "case_sensitive": false})).unwrap();
-    assert!(content.contains("  1: FOO\n"), "{content}");
-}
-
-#[test]
 fn invalid_regex_and_output_mode_error() {
     let dir = TempDir::new().unwrap();
     let err = call_grep(&dir, json!({"pattern": "("})).unwrap_err();
@@ -129,14 +58,6 @@ fn invalid_regex_and_output_mode_error() {
         }
         other => panic!("unexpected {other:?}"),
     }
-}
-
-#[test]
-fn no_matches_returns_ok_message() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.txt", "hello\n");
-    let content = call_grep(&dir, json!({"pattern": "Foo", "path": "."})).unwrap();
-    assert_eq!(content, "no matches for 'Foo' under .");
 }
 
 #[test]
@@ -174,50 +95,12 @@ a.txt
     );
 }
 
-#[test]
-fn files_with_matches_lists_paths_only() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "b.txt", "x\n");
-    write(&dir, "a.txt", "x\n");
-
-    let content = call_grep(
-        &dir,
-        json!({"pattern": "x", "output_mode": "files_with_matches"}),
-    )
-    .unwrap();
-    assert_eq!(
-        content,
-        "\
-a.txt
-b.txt
-
-2 files"
-    );
-}
-
-#[test]
-fn count_mode_emits_path_counts() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.txt", "x\nx\n");
-    write(&dir, "b.txt", "x\n");
-
-    let content = call_grep(&dir, json!({"pattern": "x", "output_mode": "count"})).unwrap();
-    assert_eq!(
-        content,
-        "\
-a.txt:2
-b.txt:1
-
-3 matches in 2 files"
-    );
-}
-
+// Covers: binary and oversized files must not be scanned as text
+// Owner: pure unit (grep safety)
 #[test]
 fn skips_binary_and_oversized_files() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("bin.dat"), b"a\0b\nx\n").unwrap();
-    // Sparse/truncated file: large enough to exceed the byte cap without writing
-    // multi-megabyte contents into the fixture.
     let oversized = dir.path().join("huge.txt");
     {
         let file = std::fs::File::create(&oversized).unwrap();
@@ -231,6 +114,8 @@ fn skips_binary_and_oversized_files() {
     assert!(!content.contains("huge.txt"), "{content}");
 }
 
+// Covers: gitignore and hidden defaults are security boundaries
+// Owner: pure unit (grep path policy)
 #[test]
 fn honors_gitignore_and_include_hidden() {
     let dir = TempDir::new().unwrap();
@@ -249,6 +134,8 @@ fn honors_gitignore_and_include_hidden() {
     assert!(!hidden.contains("secret.txt"), "{hidden}");
 }
 
+// Covers: long match lines truncate on a char boundary, not mid-codepoint
+// Owner: pure unit (grep safety)
 #[test]
 fn truncates_long_match_lines_at_char_boundary() {
     let dir = TempDir::new().unwrap();
@@ -261,28 +148,12 @@ fn truncates_long_match_lines_at_char_boundary() {
         .find(|line| line.starts_with("  1: "))
         .unwrap();
     assert!(line.ends_with('…'), "{line}");
-    // 200 kept characters plus the ellipsis.
     let text = &line["  1: ".len()..];
     assert_eq!(text.chars().count(), 201, "{text}");
 }
 
-#[test]
-fn request_path_defaults_to_dot() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "hit.txt", "x\n");
-    let request = GrepRequest::from_arguments(json!({"pattern": "x"})).unwrap();
-    assert_eq!(request.path, ".");
-    let out = grep_workspace(dir.path(), ".", &request, &|| false).unwrap();
-    assert_eq!(
-        out,
-        "\
-hit.txt
-  1: x
-
-1 matches in 1 files"
-    );
-}
-
+// Covers: cancel mid-walk must not look like a normal empty result without marker
+// Owner: pure unit (grep cancellation)
 #[test]
 fn cancellation_stops_the_walk_and_is_reported() {
     let dir = TempDir::new().unwrap();

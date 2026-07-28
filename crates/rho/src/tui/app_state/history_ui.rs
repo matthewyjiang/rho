@@ -102,11 +102,6 @@ impl HistoryUi {
         self.scroll.scroll()
     }
 
-    #[cfg(test)]
-    pub(in crate::tui) fn set_scroll(&mut self, scroll: HistoryScroll) {
-        self.scroll.set_scroll(scroll);
-    }
-
     pub(in crate::tui) fn scroll_to_bottom(&mut self) {
         self.scroll.scroll_to_bottom();
     }

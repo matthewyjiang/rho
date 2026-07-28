@@ -307,15 +307,6 @@ impl App {
     }
 
     #[cfg(test)]
-    pub(super) fn active_lines_for_height(
-        &mut self,
-        width: usize,
-        viewport_height: usize,
-    ) -> Vec<Line<'static>> {
-        self.active_lines_at_for_height(width, viewport_height, Instant::now())
-    }
-
-    #[cfg(test)]
     pub(super) fn active_lines_at_for_height(
         &mut self,
         width: usize,
@@ -399,12 +390,6 @@ impl App {
         );
 
         ActiveFrame { lines }
-    }
-
-    #[cfg(test)]
-    pub(super) fn history_lines(&mut self, width: usize, now: Instant) -> Vec<Line<'static>> {
-        let history_len = self.history_len(width, now);
-        self.visible_history_lines(width, now, 0, history_len)
     }
 
     pub(super) fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
@@ -627,20 +612,6 @@ impl App {
         self.history
             .scroll_chrome()
             .visible_start(history_len, height)
-    }
-
-    #[cfg(test)]
-    pub(super) fn should_show_jump_to_bottom(
-        &mut self,
-        width: usize,
-        height: usize,
-        now: Instant,
-    ) -> bool {
-        let history_len = self.history_len(width, now);
-        let content_height = self.history_content_height_for_screen(width, height, now);
-        content_height > 0
-            && self.visible_history_start(history_len, content_height)
-                < history_len.saturating_sub(content_height)
     }
 
     pub(super) fn scroll_history_to_bottom(&mut self) {

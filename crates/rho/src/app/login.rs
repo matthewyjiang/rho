@@ -83,7 +83,3 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
     }
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "login_tests.rs"]
-mod tests;

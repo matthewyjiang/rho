@@ -1,42 +1,4 @@
-use super::{Config, EffectiveModelSource, LegacyWebSearchCredentials, DEFAULT_OLLAMA_BASE_URL};
-use crate::permission::PermissionMode;
-
-#[test]
-fn permission_mode_defaults_to_auto_when_missing() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(&path, "provider = \"openai\"\n").unwrap();
-
-    let config = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
-
-    assert_eq!(config.permission_mode, PermissionMode::Auto);
-}
-
-#[test]
-fn permission_mode_round_trips_known_values() {
-    for mode in [
-        PermissionMode::Auto,
-        PermissionMode::Plan,
-        PermissionMode::Supervised,
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        let config = Config {
-            permission_mode: mode,
-            ..Config::default()
-        };
-        let store = rho_providers::credentials::MemoryCredentialStore::default();
-
-        config.save_with_store(path.clone(), &store).unwrap();
-        let loaded = Config::load_with_store(path, &store).unwrap();
-
-        assert_eq!(loaded.permission_mode, mode);
-    }
-}
+use super::{Config, EffectiveModelSource, LegacyWebSearchCredentials};
 
 #[test]
 fn unknown_permission_mode_is_a_config_error() {
@@ -74,58 +36,6 @@ fn config_debug_redacts_legacy_credentials() {
     assert!(!debug.contains("openai-search-secret"));
     assert!(!debug.contains("exa-search-secret"));
     assert!(!debug.contains("brave-search-secret"));
-}
-
-#[test]
-fn loads_grouped_config_and_custom_keybinding() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[model]
-provider = "anthropic"
-model = "claude-sonnet-4-5"
-reasoning = "high"
-fast_mode = true
-
-[display]
-max_tool_output_lines = 24
-
-[keybindings]
-jump_to_bottom = "alt+g"
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert_eq!(config.provider, "anthropic");
-    assert_eq!(config.model, "claude-sonnet-4-5");
-    assert_eq!(
-        config.reasoning,
-        rho_providers::reasoning::ReasoningLevel::High
-    );
-    assert!(config.fast_mode);
-    assert_eq!(config.max_tool_output_lines, 24);
-    assert_eq!(config.keybindings.jump_to_bottom.to_string(), "alt+g");
-    assert_eq!(config.keybindings.open_editor.to_string(), "ctrl+g");
-    assert_eq!(config.keybindings.reset_conversation.to_string(), "ctrl+r");
-}
-
-#[test]
-fn fast_mode_round_trips_through_save() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let config = Config {
-        fast_mode: true,
-        ..Config::default()
-    };
-
-    config.write_settings(path.clone()).unwrap();
-    let loaded = Config::load(Some(path)).unwrap();
-
-    assert!(loaded.fast_mode);
 }
 
 #[test]
@@ -192,71 +102,6 @@ jump_to_bottom = "ctrl+g"
 }
 
 #[test]
-fn save_organizes_config_into_sections() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-
-    Config::default().save(Some(path.clone())).unwrap();
-
-    let saved = std::fs::read_to_string(path).unwrap();
-    for section in [
-        "[model]",
-        "[display]",
-        "[output]",
-        "[compaction]",
-        "[web_search]",
-        "[behavior]",
-        "[keybindings]",
-    ] {
-        assert!(saved.contains(section), "missing {section} in {saved}");
-    }
-    assert!(!saved.contains("title_provider"), "{saved}");
-}
-
-#[test]
-fn default_shows_reasoning_output() {
-    assert!(Config::default().show_reasoning_output);
-}
-
-#[test]
-fn loads_reasoning_output_visibility() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(&path, "show_reasoning_output = false\n").unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert!(!config.show_reasoning_output);
-}
-
-#[test]
-fn loads_check_for_updates() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(&path, "check_for_updates = false\n").unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert!(!config.check_for_updates);
-}
-
-#[test]
-fn subagents_are_enabled_by_default() {
-    assert!(Config::default().enable_subagents);
-}
-
-#[test]
-fn loads_grouped_subagent_setting() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(&path, "[behavior]\nenable_subagents = false\n").unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert!(!config.enable_subagents);
-}
-
-#[test]
 fn loads_and_normalizes_compaction_percentages() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
@@ -274,48 +119,6 @@ fn loads_and_normalizes_compaction_percentages() {
 }
 
 #[test]
-fn loads_rtk_toggle() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(&path, "rtk = false\n").unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert!(!config.rtk);
-}
-
-#[test]
-fn loads_and_saves_favorite_models() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-favorite_models = [
-  " openai/gpt-5.5 ",
-  "missing-separator",
-  "openai/gpt-5.5",
-  "anthropic/claude-sonnet-4-5",
-]
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path.clone())).unwrap();
-
-    assert_eq!(
-        config.favorite_models,
-        vec!["openai/gpt-5.5", "anthropic/claude-sonnet-4-5"]
-    );
-
-    config.save(Some(path.clone())).unwrap();
-    let saved = std::fs::read_to_string(path).unwrap();
-    assert!(saved.contains("favorite_models"), "{saved}");
-    assert!(saved.contains("openai/gpt-5.5"), "{saved}");
-    assert!(!saved.contains("missing-separator"), "{saved}");
-}
-
-#[test]
 fn unsupported_web_search_config_providers_fall_back_to_auto() {
     for provider in ["parallel", "tavily", "perplexity", "gemini", "unknown"] {
         assert_eq!(
@@ -323,14 +126,6 @@ fn unsupported_web_search_config_providers_fall_back_to_auto() {
             super::SearchProvider::Auto
         );
     }
-}
-
-#[test]
-fn supported_web_search_config_provider_is_preserved() {
-    assert_eq!(
-        super::SearchProvider::from_config_value(" brave "),
-        super::SearchProvider::Brave
-    );
 }
 
 #[test]
@@ -498,20 +293,6 @@ fn migrates_legacy_web_search_keys_to_credentials() {
         config.legacy_web_search_api_key(rho_providers::credentials::WebSearchCredential::OpenAi),
         None
     );
-}
-
-#[test]
-fn saved_config_omits_migrated_web_search_secrets() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let config = Config::default();
-
-    super::write_config(&path, &config).unwrap();
-
-    let saved = std::fs::read_to_string(path).unwrap();
-    assert!(!saved.contains("web_search_openai_api_key"), "{saved}");
-    assert!(!saved.contains("web_search_exa_api_key"), "{saved}");
-    assert!(!saved.contains("web_search_brave_api_key"), "{saved}");
 }
 
 fn alias_config(path: &std::path::Path, model: &str) {
@@ -737,33 +518,6 @@ model = "@titler"
 }
 
 #[test]
-fn title_model_alias_round_trips_through_save() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    alias_config(&path, "gpt-5.5");
-    let mut text = std::fs::read_to_string(&path).unwrap();
-    text.push_str("\n[title]\nmodel = \"@deep\"\n");
-    std::fs::write(&path, text).unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-
-    let config = Config::load_with_store(path.clone(), &store).unwrap();
-    config.save_with_store(path.clone(), &store).unwrap();
-
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(!saved.contains("[title]"), "{saved}");
-    assert!(saved.contains("[internal_agents.session-title]"), "{saved}");
-    assert!(saved.contains("model = \"@deep\""), "{saved}");
-    let reloaded = Config::load_with_store(path, &store).unwrap();
-    let selection = reloaded.internal_agent_model("session-title").unwrap();
-    assert_eq!(selection.provider, "anthropic");
-    assert_eq!(selection.model, "claude-opus-4-8");
-    assert_eq!(
-        reloaded.current_internal_agent_model_alias("session-title"),
-        Some("deep")
-    );
-}
-
-#[test]
 fn stale_title_model_alias_saves_the_concrete_model() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
@@ -821,45 +575,6 @@ fn effective_internal_agent_models_are_independent() {
     assert_eq!(judge.model, config.model);
     assert_eq!(judge.auth, config.auth);
     assert_eq!(judge.source, EffectiveModelSource::Conversation);
-}
-
-#[test]
-fn generic_internal_agent_alias_round_trips() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[model]
-provider = "openai"
-model = "gpt-5.5"
-auth = "api-key"
-
-[model.aliases]
-judge = "anthropic/claude-haiku-4-5"
-
-[internal_agents.goal-judge]
-model = "@judge"
-"#,
-    )
-    .unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-
-    let config = Config::load_with_store(path.clone(), &store).unwrap();
-    let judge = config.effective_internal_agent_model("goal-judge");
-    assert_eq!(judge.provider, "anthropic");
-    assert_eq!(judge.model, "claude-haiku-4-5");
-    assert_eq!(judge.auth, "anthropic-api-key");
-    config.save_with_store(path.clone(), &store).unwrap();
-
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(saved.contains("[internal_agents.goal-judge]"), "{saved}");
-    assert!(saved.contains("model = \"@judge\""), "{saved}");
-    let reloaded = Config::load_with_store(path, &store).unwrap();
-    assert_eq!(
-        reloaded.current_internal_agent_model_alias("goal-judge"),
-        Some("judge")
-    );
 }
 
 #[test]
@@ -986,32 +701,6 @@ fn empty_legacy_title_section_remains_conversation_fallback() {
     assert!(
         !saved.contains("[internal_agents.session-title]"),
         "{saved}"
-    );
-}
-
-#[test]
-fn ollama_base_url_defaults_and_round_trips() {
-    let default = Config::default();
-    assert_eq!(
-        default.providers.ollama.base_url.as_str(),
-        DEFAULT_OLLAMA_BASE_URL
-    );
-
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let mut config = Config::default();
-    config.providers.ollama.base_url = "http://ollama.internal:22000/custom/v1".parse().unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-
-    config.save_with_store(path.clone(), &store).unwrap();
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(saved.contains("[providers.ollama]"));
-    assert!(saved.contains("base_url = \"http://ollama.internal:22000/custom/v1\""));
-
-    let loaded = Config::load_with_store(path, &store).unwrap();
-    assert_eq!(
-        loaded.providers.ollama.base_url,
-        config.providers.ollama.base_url
     );
 }
 

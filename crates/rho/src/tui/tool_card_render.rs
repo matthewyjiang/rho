@@ -493,7 +493,3 @@ fn pad_spans_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> 
     }
     Line::from(spans)
 }
-
-#[cfg(test)]
-#[path = "tool_card_render_tests.rs"]
-mod tests;

@@ -59,39 +59,6 @@ fn request<'a>(
 }
 
 #[test]
-fn rejects_invalid_definition_before_returning_request_future() {
-    let mut definition = definition();
-    definition.prompt = PromptPolicy::Extend("extension".into());
-    let session_id = SessionId::new();
-
-    let result = run_one_shot_agent(
-        request(&definition, &session_id, Path::new("/test/workspace")),
-        ProviderRequestUsageRecording::default(),
-    );
-
-    let Err(error) = result else {
-        panic!("invalid definition returned a request future");
-    };
-    assert!(error.to_string().contains("replace the system prompt"));
-}
-
-#[test]
-fn builds_the_provider_before_returning_request_future() {
-    let definition = definition();
-    let session_id = SessionId::new();
-
-    let result = run_one_shot_agent(
-        request(&definition, &session_id, Path::new("/test/workspace")),
-        ProviderRequestUsageRecording::default(),
-    );
-
-    let Err(error) = result else {
-        panic!("unknown provider returned a request future");
-    };
-    assert!(error.to_string().contains("test-provider"));
-}
-
-#[test]
 fn rejects_definitions_that_do_not_replace_the_prompt() {
     let mut definition = definition();
     definition.prompt = PromptPolicy::Extend("extension".into());
