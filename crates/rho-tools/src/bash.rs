@@ -209,7 +209,7 @@ mod tests {
     }
 
     async fn wait_for_pid_file(path: &std::path::Path) -> i32 {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if let Ok(contents) = std::fs::read_to_string(path) {
                 if let Ok(pid) = contents.trim().parse::<i32>() {
@@ -233,7 +233,9 @@ mod tests {
         // missing on macOS CI, while Python is present on both runner images.
         // Keep the script on one Rust string so indentation inside the Python
         // block is not eaten by `\` line continuations.
-        let command = "python3 -c 'import os,time\nif os.fork()==0:\n os.setsid()\n open(\"escaped.pid\",\"w\").write(str(os.getpid()))\n time.sleep(10)'; sleep 10";
+        // Flush+fsync the pid file before sleeping so the parent test can observe
+        // the escaped child even when the process keeps the pipe open.
+        let command = "python3 -c 'import os,time\nif os.fork()==0:\n os.setsid()\n f=open(\"escaped.pid\",\"w\")\n f.write(str(os.getpid()))\n f.flush()\n os.fsync(f.fileno())\n f.close()\n time.sleep(10)'; sleep 10";
 
         let start = std::time::Instant::now();
         let result = Bash::new(false)

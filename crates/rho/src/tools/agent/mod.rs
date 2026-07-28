@@ -561,7 +561,7 @@ impl Tool for AgentTool {
         if self.background_subagents.is_enabled() {
             properties["background"] = json!({
                 "type": "boolean",
-                "description": "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Independent agent calls in the same batch run together either way."
+                "description": "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Only background=true backgrounds a run; parallel batching does not. Independent agent calls in the same batch run together either way."
             });
         }
         // Parallel batch behavior is always true; background delivery text is
@@ -569,9 +569,9 @@ impl Tool for AgentTool {
         let parallel_guidance =
             " Independent agent calls in the same batch run together - issue them in one turn for parallel work.";
         let background_guidance = if self.background_subagents.is_enabled() {
-            " Foreground calls wait for completion. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
+            " Foreground calls (background omitted or false) wait for completion. Issuing a foreground agent beside other tools does not background it and can delay the rest of that batch until the run finishes. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
         } else {
-            " Calls wait for completion."
+            " Calls wait for completion. Issuing an agent beside other tools can delay the rest of that batch until the run finishes."
         };
         rho_sdk::model::ToolSpec {
             name: AGENT_TOOL.into(),
