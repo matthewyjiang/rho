@@ -4,8 +4,8 @@ use super::{
 };
 use {
     rho_providers::auth::login_dispatch::{
-        AuthenticationMethod, CompletedAuthentication, InteractiveLoginMode, InteractiveUserAction,
-        ProviderAuthentication,
+        AuthenticationMethod, CompletedAuthentication, InteractiveLoginCompletion,
+        InteractiveLoginMode, InteractiveUserAction, ProviderAuthentication,
     },
     rho_providers::model::{provider_models::ProviderModelEndpoint, registry},
     rho_providers::provider,
@@ -461,11 +461,18 @@ impl App {
         };
 
         let provider_label = login.provider_label;
+        let waits_for_confirmation =
+            matches!(&login.completion, InteractiveLoginCompletion::Confirm(_));
         let device_flow = matches!(&login.user_action, InteractiveUserAction::DeviceCode { .. });
         match login.user_action {
             InteractiveUserAction::BrowserOpened => {
+                let cancel_hint = if waits_for_confirmation {
+                    " Press esc to cancel."
+                } else {
+                    ""
+                };
                 self.insert_entry(&Entry::Notice(format!(
-                    "opening browser for {provider_label} login. Press esc to cancel."
+                    "opening browser for {provider_label} login.{cancel_hint}"
                 )));
             }
             InteractiveUserAction::OpenUrl { url, instruction } => {
@@ -487,15 +494,24 @@ impl App {
                 }
             }
         }
+        let completion = match login.completion {
+            InteractiveLoginCompletion::Confirm(completion) => completion,
+            InteractiveLoginCompletion::Unconfirmed { instruction } => {
+                self.insert_entry(&Entry::Notice(instruction.into()));
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.refresh_available_auths();
+                self.status = format!("{provider_label} device setup ready");
+                self.report_resting_herdr_state().await;
+                return Ok(());
+            }
+        };
         let flow = if device_flow { " device" } else { "" };
         self.status = format!("waiting for {provider_label}{flow} login; press esc to cancel");
         self.input_ui
             .set_composer(ComposerMode::InteractivePending(target.clone()));
         self.pending_interactive_login = Some(PendingInteractiveLogin {
             target,
-            handle: tokio::spawn(
-                async move { login.completion.await.map_err(|err| err.to_string()) },
-            ),
+            handle: tokio::spawn(async move { completion.await.map_err(|err| err.to_string()) }),
         });
         Ok(())
     }

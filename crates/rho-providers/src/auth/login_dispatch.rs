@@ -46,10 +46,30 @@ pub enum InteractiveUserAction {
     },
 }
 
+pub enum InteractiveLoginCompletion {
+    Confirm(AuthenticationFuture),
+    /// The external setup has started, but the provider cannot reliably confirm completion.
+    Unconfirmed {
+        instruction: &'static str,
+    },
+}
+
+impl std::fmt::Debug for InteractiveLoginCompletion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Confirm(_) => formatter.write_str("Confirm(<authentication future>)"),
+            Self::Unconfirmed { instruction } => formatter
+                .debug_struct("Unconfirmed")
+                .field("instruction", instruction)
+                .finish(),
+        }
+    }
+}
+
 pub struct InteractiveLogin {
     pub provider_label: &'static str,
     pub user_action: InteractiveUserAction,
-    pub completion: AuthenticationFuture,
+    pub completion: InteractiveLoginCompletion,
 }
 
 impl std::fmt::Debug for InteractiveLogin {
@@ -58,7 +78,7 @@ impl std::fmt::Debug for InteractiveLogin {
             .debug_struct("InteractiveLogin")
             .field("provider_label", &self.provider_label)
             .field("user_action", &self.user_action)
-            .field("completion", &"<authentication future>")
+            .field("completion", &self.completion)
             .finish()
     }
 }
@@ -97,8 +117,6 @@ impl CompletedAuthentication {
                 credentials::save_openrouter_oauth_key(store, &key)
             }
             LoginCredentials::Xai(tokens) => credentials::save_xai_tokens(store, &tokens),
-            // Device key already lives on disk outside the Rho store.
-            LoginCredentials::ExternalNoStore => Ok(()),
         }
     }
 }
@@ -115,7 +133,6 @@ enum LoginCredentials {
     Kimi(KimiTokens),
     OpenRouter(String),
     Xai(XaiTokens),
-    ExternalNoStore,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -282,14 +299,14 @@ async fn start_codex(mode: InteractiveLoginMode) -> Result<InteractiveLogin, Aut
         return Ok(InteractiveLogin {
             provider_label: "Codex",
             user_action: InteractiveUserAction::BrowserOpened,
-            completion: Box::pin(async {
+            completion: InteractiveLoginCompletion::Confirm(Box::pin(async {
                 codex_oauth::run_codex_oauth_flow()
                     .await
                     .map(|tokens| CompletedAuthentication {
                         credentials: LoginCredentials::Codex(tokens),
                     })
                     .map_err(flow_error)
-            }),
+            })),
         });
     }
 
@@ -304,14 +321,14 @@ async fn start_codex(mode: InteractiveLoginMode) -> Result<InteractiveLogin, Aut
     Ok(InteractiveLogin {
         provider_label: "Codex",
         user_action,
-        completion: Box::pin(async move {
+        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
             codex_oauth::complete_codex_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: LoginCredentials::Codex(tokens),
                 })
                 .map_err(flow_error)
-        }),
+        })),
     })
 }
 
@@ -327,14 +344,14 @@ async fn start_github_copilot() -> Result<InteractiveLogin, AuthenticationError>
     Ok(InteractiveLogin {
         provider_label: "GitHub Copilot",
         user_action,
-        completion: Box::pin(async move {
+        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
             github_copilot_device::complete_github_copilot_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: LoginCredentials::GithubCopilot(tokens),
                 })
                 .map_err(flow_error)
-        }),
+        })),
     })
 }
 
@@ -350,14 +367,14 @@ async fn start_kimi() -> Result<InteractiveLogin, AuthenticationError> {
     Ok(InteractiveLogin {
         provider_label: "Kimi",
         user_action,
-        completion: Box::pin(async move {
+        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
             kimi_oauth::complete_kimi_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: LoginCredentials::Kimi(tokens),
                 })
                 .map_err(flow_error)
-        }),
+        })),
     })
 }
 
@@ -372,14 +389,14 @@ async fn start_openrouter(
     Ok(InteractiveLogin {
         provider_label: "OpenRouter",
         user_action: InteractiveUserAction::BrowserOpened,
-        completion: Box::pin(async {
+        completion: InteractiveLoginCompletion::Confirm(Box::pin(async {
             openrouter_oauth::run_openrouter_oauth_flow()
                 .await
                 .map(|key| CompletedAuthentication {
                     credentials: LoginCredentials::OpenRouter(key),
                 })
                 .map_err(flow_error)
-        }),
+        })),
     })
 }
 
@@ -388,14 +405,14 @@ async fn start_xai(mode: InteractiveLoginMode) -> Result<InteractiveLogin, Authe
         return Ok(InteractiveLogin {
             provider_label: "xAI",
             user_action: InteractiveUserAction::BrowserOpened,
-            completion: Box::pin(async {
+            completion: InteractiveLoginCompletion::Confirm(Box::pin(async {
                 xai_oauth::run_xai_oauth_flow()
                     .await
                     .map(|tokens| CompletedAuthentication {
                         credentials: LoginCredentials::Xai(tokens),
                     })
                     .map_err(flow_error)
-            }),
+            })),
         });
     }
 
@@ -410,14 +427,14 @@ async fn start_xai(mode: InteractiveLoginMode) -> Result<InteractiveLogin, Authe
     Ok(InteractiveLogin {
         provider_label: "xAI",
         user_action,
-        completion: Box::pin(async move {
+        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
             xai_oauth::complete_xai_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: LoginCredentials::Xai(tokens),
                 })
                 .map_err(flow_error)
-        }),
+        })),
     })
 }
 
@@ -428,31 +445,28 @@ async fn start_ollama_device(
     let login = ollama_device::start_ollama_device_login(/* open_browser */ open_browser)
         .await
         .map_err(flow_error)?;
-    let user_action = if login.already_registered {
-        InteractiveUserAction::OpenUrl {
-            url: login.connect_url.clone(),
-            instruction: "Using existing registered Ollama device key".into(),
-        }
-    } else if open_browser {
+    Ok(ollama_interactive_login(login, open_browser))
+}
+
+fn ollama_interactive_login(
+    login: ollama_device::OllamaDeviceLogin,
+    open_browser: bool,
+) -> InteractiveLogin {
+    let user_action = if open_browser {
         InteractiveUserAction::BrowserOpened
     } else {
         InteractiveUserAction::OpenUrl {
-            url: login.connect_url.clone(),
+            url: login.connect_url,
             instruction: "Open this URL and approve the device for Ollama Cloud.".into(),
         }
     };
-    Ok(InteractiveLogin {
+    InteractiveLogin {
         provider_label: "Ollama Cloud",
         user_action,
-        completion: Box::pin(async move {
-            ollama_device::complete_ollama_device_login(login)
-                .await
-                .map(|()| CompletedAuthentication {
-                    credentials: LoginCredentials::ExternalNoStore,
-                })
-                .map_err(flow_error)
-        }),
-    })
+        completion: InteractiveLoginCompletion::Unconfirmed {
+            instruction: "Approve the device in your browser, then use an Ollama Cloud model. Rho does not receive a completion callback.",
+        },
+    }
 }
 
 fn flow_error(error: impl std::fmt::Display) -> AuthenticationError {

@@ -1,5 +1,8 @@
-use super::{AuthenticationError, AuthenticationMethod, ProviderAuthentication};
-use crate::credentials::MemoryCredentialStore;
+use super::{
+    ollama_interactive_login, AuthenticationError, AuthenticationMethod,
+    InteractiveLoginCompletion, InteractiveUserAction, ProviderAuthentication,
+};
+use crate::{auth::ollama_device::OllamaDeviceLogin, credentials::MemoryCredentialStore};
 
 #[test]
 fn dispatches_registered_providers_to_typed_authentication_methods() {
@@ -51,6 +54,28 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
     ));
     assert!(!ProviderAuthentication::supports_device_login(
         "openrouter-oauth"
+    ));
+}
+
+#[test]
+fn ollama_device_setup_does_not_wait_for_confirmation() {
+    let login = ollama_interactive_login(
+        OllamaDeviceLogin {
+            connect_url: "https://ollama.com/connect?key=test".into(),
+        },
+        /* open_browser */ false,
+    );
+
+    assert_eq!(login.provider_label, "Ollama Cloud");
+    match login.user_action {
+        InteractiveUserAction::OpenUrl { url, .. } => {
+            assert_eq!(url, "https://ollama.com/connect?key=test");
+        }
+        other => panic!("expected an Ollama connect URL, got {other:?}"),
+    }
+    assert!(matches!(
+        login.completion,
+        InteractiveLoginCompletion::Unconfirmed { .. }
     ));
 }
 
