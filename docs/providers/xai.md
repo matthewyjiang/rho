@@ -1,39 +1,26 @@
 # xAI
 
-xAI supports API-key authentication and OAuth for models available to a SuperGrok or X Premium+ subscription. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+xAI is one provider with API-key and OAuth auth modes. OAuth works with models available to a SuperGrok or X Premium+ subscription. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
 
 ## At a glance
 
-### API key
+| Method | Provider | Auth | Environment override |
+| --- | --- | --- | --- |
+| API key | `xai` | `xai-api-key` | `XAI_API_KEY` |
+| OAuth | `xai` | `xai-oauth` | `XAI_ACCESS_TOKEN` |
 
-| Setting | Value |
-| --- | --- |
-| Provider | `xai` |
-| Auth | `xai-api-key` |
-| Environment override | `XAI_API_KEY` |
-| API base | `https://api.x.ai/v1` |
-| Model list | Static allowlist maintained by Rho |
-
-### OAuth
-
-| Setting | Value |
-| --- | --- |
-| Provider | `xai-oauth` |
-| Auth | `xai-oauth` |
-| Environment override | `XAI_ACCESS_TOKEN` |
-| API base | `https://api.x.ai/v1` |
-| Model list | Static allowlist maintained by Rho |
+Both modes use `https://api.x.ai/v1` and the static model allowlist maintained by Rho.
 
 ## Sign in
 
-Run `/login`, select **xAI**, then choose **API Key** or **OAuth**. You can also target either method directly:
+Run `/login`, select **xAI**, then choose **API Key** or **OAuth**. `/login xai` opens the same method picker. You can also target either method directly:
 
 ```text
-/login xai
+/login xai-api-key
 /login xai-oauth
 ```
 
-`/login xai` opens a masked API-key entry box. `/login xai-oauth` opens Rho's browser-based xAI OAuth flow, or automatically uses xAI's device-code flow in SSH and headless environments. You can also request the OAuth device-code flow explicitly:
+API-key login opens a masked key entry box. `/login xai-oauth` opens Rho's browser-based xAI OAuth flow, or automatically uses xAI's device-code flow in SSH and headless environments. You can also request the OAuth device-code flow explicitly:
 
 ```bash
 rho login xai-oauth --device-auth
@@ -46,7 +33,7 @@ Credentials are stored in the configured credential store, not in config or tran
 Delete the stored credential for one method at a time:
 
 ```text
-/logout xai
+/logout xai-api-key
 /logout xai-oauth
 ```
 
@@ -63,19 +50,20 @@ XAI_ACCESS_TOKEN=...
 
 ## Models
 
-xAI uses a static allowlist rather than a refreshable API list: `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3`. Select the provider that matches the authentication method:
+xAI uses a static allowlist rather than a refreshable API list: `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3`. Both auth modes use the same provider model reference:
 
 ```text
 /model xai/grok-4.5
-/model xai-oauth/grok-4.5
 ```
 
-For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
+For a non-interactive run, pass the provider, matching auth mode, and model. These flags also update the persistent default:
 
 ```bash
 rho --provider xai --auth xai-api-key --model grok-4.5 run "hello"
-rho --provider xai-oauth --auth xai-oauth --model grok-4.5 run "hello"
+rho --provider xai --auth xai-oauth --model grok-4.5 run "hello"
 ```
+
+The retired `xai-oauth` provider value remains a compatibility alias. Config, CLI flags, favorites, and model references normalize it to `provider = "xai"` with `auth = "xai-oauth"`.
 
 Provide the matching environment override or log in once so Rho can read the stored credential.
 
@@ -83,4 +71,4 @@ Provide the matching environment override or log in once so Rho can read the sto
 
 - With OAuth, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for xAI OAuth when you are logged in.
-- Both `xai` and `xai-oauth` use xAI [server-side context compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction) (`POST /v1/responses/compact`) when automatic or manual compaction runs. The compact request body is only `model` plus full `input` (system messages included). The response is a single encrypted compaction item that replaces the prior window; host-owned system prompts are still retained client-side for portable handoff. The encrypted item only replays on a compatible xAI Responses turn for the same provider identity and model.
+- Both auth modes use xAI [server-side context compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction) (`POST /v1/responses/compact`) when automatic or manual compaction runs. The compact request body is only `model` plus full `input` (system messages included). The response is a single encrypted compaction item that replaces the prior window; host-owned system prompts are still retained client-side for portable handoff. The encrypted item only replays on a compatible xAI Responses turn for the same provider identity and model.

@@ -14,12 +14,6 @@ pub enum AuthMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum XaiAuthMode {
-    ApiKey,
-    OAuth,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderRuntime {
     OpenAi {
         auth_mode: AuthMode,
@@ -31,9 +25,7 @@ pub enum ProviderRuntime {
     Anthropic,
     Google,
     GithubCopilot,
-    Xai {
-        auth_mode: XaiAuthMode,
-    },
+    Xai,
 }
 
 pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
@@ -78,18 +70,7 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
             dialect: OpenAiCompatibleDialect::OpenRouter,
             default_api_base: "https://openrouter.ai/api/v1",
         },
-        RuntimeProviderId::Xai => ProviderRuntime::Xai {
-            auth_mode: match descriptor.default_auth().auth_kind {
-                ProviderAuthKind::ApiKey { .. } => XaiAuthMode::ApiKey,
-                ProviderAuthKind::XaiOAuth { .. } => XaiAuthMode::OAuth,
-                ProviderAuthKind::None
-                | ProviderAuthKind::CodexOAuth { .. }
-                | ProviderAuthKind::GithubCopilotDevice { .. }
-                | ProviderAuthKind::BearerCredential { .. }
-                | ProviderAuthKind::KimiOAuth { .. }
-                | ProviderAuthKind::OllamaDeviceKey { .. } => return None,
-            },
-        },
+        RuntimeProviderId::Xai => ProviderRuntime::Xai,
     })
 }
 
@@ -98,6 +79,23 @@ pub fn missing_credential_error(message: &'static str) -> ModelError {
 }
 
 pub fn missing_credentials_error(provider_name: &str) -> ModelError {
+    let selected = provider::resolve_auth_mode(provider_name)
+        .map(|(_, mode)| mode)
+        .or_else(|| {
+            provider::legacy_provider_alias(provider_name).and_then(|(provider, auth)| {
+                provider::provider_descriptor(provider)?.auth_mode(auth)
+            })
+        });
+    if let Some(mode) = selected {
+        return mode.auth_kind.missing_message().map_or_else(
+            || {
+                ModelError::InvalidResponse(format!(
+                    "provider '{provider_name}' does not require credentials"
+                ))
+            },
+            ModelError::missing_credentials,
+        );
+    }
     match provider::provider_descriptor(provider_name) {
         Some(descriptor) if descriptor.is_keyless() => ModelError::InvalidResponse(format!(
             "provider '{provider_name}' does not require credentials"

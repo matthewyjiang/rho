@@ -16,7 +16,7 @@ use crate::{
     model::{
         registry::{
             missing_credential_error, missing_credentials_error, provider_runtime, AuthMode,
-            ProviderRuntime, XaiAuthMode,
+            ProviderRuntime,
         },
         ModelError,
     },
@@ -140,39 +140,38 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                 };
                 Ok(ProviderCredential::OpenAiCompatible(auth))
             }
-            ProviderRuntime::Xai { auth_mode } => {
-                let (source, tokens) = match auth_mode {
-                    XaiAuthMode::ApiKey => (
+            ProviderRuntime::Xai => {
+                let (source, tokens) = match selected.auth_kind {
+                    ProviderAuthKind::ApiKey { .. } => (
                         XaiAuthSource::ApiKey,
                         XaiTokens {
-                            access_token: load_provider_api_key_auth("xai", self.store.as_ref())?,
+                            access_token: load_api_key_for_mode(
+                                selected.auth_kind,
+                                self.store.as_ref(),
+                            )?,
                             refresh_token: None,
                             expires_at_unix: None,
                             id_token: None,
                         },
                     ),
-                    XaiAuthMode::OAuth => {
-                        let descriptor = provider::provider_descriptor("xai-oauth")
-                            .expect("xAI OAuth provider must be registered");
-                        let env_var = descriptor
-                            .default_auth()
-                            .auth_kind
-                            .env_var()
-                            .expect("xAI OAuth must declare an environment variable");
-                        env_or_stored(
-                            env_var,
-                            |access_token| XaiTokens {
-                                access_token,
-                                refresh_token: None,
-                                expires_at_unix: None,
-                                id_token: None,
-                            },
-                            || Ok(load_xai_tokens(self.store.as_ref())?),
-                            missing_credentials_error("xai-oauth"),
-                            XaiAuthSource::Env,
-                            XaiAuthSource::Store,
-                        )?
-                    }
+                    ProviderAuthKind::XaiOAuth {
+                        env_var,
+                        missing_message,
+                        ..
+                    } => env_or_stored(
+                        env_var,
+                        |access_token| XaiTokens {
+                            access_token,
+                            refresh_token: None,
+                            expires_at_unix: None,
+                            id_token: None,
+                        },
+                        || Ok(load_xai_tokens(self.store.as_ref())?),
+                        missing_credential_error(missing_message),
+                        XaiAuthSource::Env,
+                        XaiAuthSource::Store,
+                    )?,
+                    _ => return Err(ModelError::UnsupportedProvider(provider.into())),
                 };
                 Ok(ProviderCredential::Xai(XaiAuthManager::from_tokens(
                     self.store.clone(),

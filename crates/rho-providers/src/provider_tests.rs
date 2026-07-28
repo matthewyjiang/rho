@@ -34,10 +34,6 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
         CatalogReasoningPolicy::OffAsNone
     );
     assert_eq!(
-        super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth).catalog_reasoning,
-        CatalogReasoningPolicy::OffAsNone
-    );
-    assert_eq!(
         super::provider_descriptor_by_id(ProviderId::Poolside).catalog_reasoning,
         CatalogReasoningPolicy::OffOrMax
     );
@@ -53,7 +49,7 @@ fn catalog_reasoning_policies_follow_provider_control_semantics() {
         super::provider_descriptor_by_id(ProviderId::Moonshot).catalog_reasoning,
         CatalogReasoningPolicy::ExactAdvertised
     );
-    for provider in [ProviderId::KimiCode, ProviderId::Xai, ProviderId::XaiOAuth] {
+    for provider in [ProviderId::KimiCode, ProviderId::Xai] {
         assert_eq!(
             super::provider_descriptor_by_id(provider).catalog_reasoning,
             CatalogReasoningPolicy::OffByAdvertisedToggle
@@ -98,19 +94,29 @@ fn plain_model_id_codec_leaves_ids_unchanged() {
 }
 
 #[test]
-fn openrouter_profiles_share_runtime_policy_and_resolve_by_auth() {
+fn openrouter_auth_modes_share_one_provider_and_legacy_aliases_normalize() {
     use super::{ProviderId, RuntimeProviderId};
 
-    let api_key = super::provider_descriptor_by_id(ProviderId::OpenRouter);
-    let oauth = super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth);
-    assert_eq!(api_key.runtime_id, RuntimeProviderId::OpenRouter);
-    assert_eq!(oauth.runtime_id, api_key.runtime_id);
+    let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);
+    assert_eq!(openrouter.runtime_id, RuntimeProviderId::OpenRouter);
+    assert!(openrouter.auth_mode("openrouter-api-key").is_some());
+    assert!(openrouter.auth_mode("openrouter-oauth").is_some());
+
     let resolved = super::resolve_profile("openrouter", "openrouter-oauth").unwrap();
-    assert_eq!(resolved.provider, oauth);
+    assert_eq!(resolved.provider, openrouter);
     assert_eq!(resolved.auth_id(), "openrouter-oauth");
+
     let resolved = super::resolve_profile("openrouter-oauth", "openrouter-api-key").unwrap();
-    assert_eq!(resolved.provider, api_key);
-    assert_eq!(resolved.auth_id(), "openrouter-api-key");
+    assert_eq!(resolved.provider, openrouter);
+    assert_eq!(resolved.auth_id(), "openrouter-oauth");
+}
+
+#[test]
+fn xai_legacy_provider_alias_selects_oauth_mode() {
+    let resolved = super::resolve_profile("xai-oauth", "xai-api-key").unwrap();
+
+    assert_eq!(resolved.provider_name(), "xai");
+    assert_eq!(resolved.auth_id(), "xai-oauth");
 }
 
 #[test]
@@ -181,8 +187,9 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         Some(super::OPENROUTER_API_KEY_ACCOUNT)
     );
 
-    let openrouter_oauth =
-        super::provider_descriptor_by_id(ProviderId::OpenRouterOAuth).default_auth();
+    let openrouter_oauth = super::provider_descriptor_by_id(ProviderId::OpenRouter)
+        .auth_mode("openrouter-oauth")
+        .unwrap();
     assert_eq!(openrouter_oauth.id, "openrouter-oauth");
     assert_eq!(
         openrouter_oauth.auth_kind.env_var(),
@@ -224,7 +231,9 @@ fn provider_auth_metadata_exposes_stable_storage_and_environment_keys() {
         }
     ));
 
-    let xai_oauth = super::provider_descriptor_by_id(ProviderId::XaiOAuth).default_auth();
+    let xai_oauth = super::provider_descriptor_by_id(ProviderId::Xai)
+        .auth_mode("xai-oauth")
+        .unwrap();
     assert_eq!(xai_oauth.auth_kind.env_var(), Some("XAI_ACCESS_TOKEN"));
     assert_eq!(
         xai_oauth.auth_kind.account(),

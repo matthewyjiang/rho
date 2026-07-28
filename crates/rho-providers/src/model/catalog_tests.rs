@@ -86,6 +86,33 @@ fn provider_model(provider: &str, model: &str) -> ProviderModel {
 }
 
 #[test]
+fn resolves_legacy_openrouter_model_references_to_canonical_provider() {
+    with_cached_provider_models(
+        "openrouter",
+        vec![provider_model("openrouter", "anthropic/claude-sonnet-4")],
+        || {
+            let selection = resolve_model_selection_for_auths(
+                "openrouter-oauth/anthropic/claude-sonnet-4",
+                "openai",
+                "api-key",
+                &["openrouter-oauth".into()],
+            )
+            .unwrap();
+
+            assert_eq!(
+                selection,
+                ModelSelection {
+                    provider: "openrouter".into(),
+                    model: "anthropic/claude-sonnet-4".into(),
+                    auth: "openrouter-oauth".into(),
+                    from_catalog: true,
+                }
+            );
+        },
+    );
+}
+
+#[test]
 fn resolves_poolside_references_to_internal_model_id() {
     with_cached_provider_models(
         "poolside",
@@ -133,7 +160,7 @@ fn parses_embedded_model_catalog() {
 fn available_models_includes_xai_static_catalog() {
     let models = available_models_for_auths(&["xai-oauth".into()]);
 
-    assert!(models.iter().all(|entry| entry.provider == "xai-oauth"));
+    assert!(models.iter().all(|entry| entry.provider == "xai"));
     assert_eq!(
         models
             .iter()
@@ -165,7 +192,7 @@ fn resolves_xai_static_catalog_selection() {
     assert_eq!(
         selection,
         ModelSelection {
-            provider: "xai-oauth".into(),
+            provider: "xai".into(),
             model: "grok-4.5".into(),
             auth: "xai-oauth".into(),
             from_catalog: true,
@@ -225,12 +252,12 @@ fn login_targets_use_provider_names() {
     assert!(providers.contains(&("github-copilot", "github-copilot")));
     assert!(providers.contains(&("moonshot", "moonshot-api-key")));
     assert!(providers.contains(&("openrouter", "openrouter-api-key")));
-    assert!(providers.contains(&("openrouter-oauth", "openrouter-oauth")));
+    assert!(providers.contains(&("openrouter", "openrouter-oauth")));
     assert!(providers.contains(&("ollama-cloud", "ollama-cloud-api-key")));
     assert!(providers.contains(&("ollama-cloud", "ollama-cloud-device")));
     assert!(providers.contains(&("kimi-code", "kimi-oauth")));
     assert!(providers.contains(&("xai", "xai-api-key")));
-    assert!(providers.contains(&("xai-oauth", "xai-oauth")));
+    assert!(providers.contains(&("xai", "xai-oauth")));
     let google = login_group("google").expect("Google login group");
     assert_eq!(google.methods.len(), 1);
     assert_eq!(google.methods[0].target.provider, "google");

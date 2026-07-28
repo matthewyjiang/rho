@@ -1,6 +1,7 @@
 use super::*;
 use crate::credentials::{
-    save_github_copilot_tokens, save_provider_api_key, GitHubCopilotTokens, MemoryCredentialStore,
+    save_github_copilot_tokens, save_openrouter_oauth_key, save_provider_api_key,
+    GitHubCopilotTokens, MemoryCredentialStore,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -173,6 +174,56 @@ async fn ollama_probe_distinguishes_models_empty_invalid_and_unreachable() {
         probe_provider_models("ollama", &unreachable, &store).await,
         ProviderModelHealth::Unreachable { .. }
     ));
+}
+
+#[tokio::test]
+async fn legacy_openrouter_refresh_writes_canonical_provider_models() {
+    struct CacheDirReset;
+
+    impl Drop for CacheDirReset {
+        fn drop(&mut self) {
+            set_provider_models_cache_dir_for_tests(None);
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 2048];
+        let bytes = stream.read(&mut request).await.unwrap();
+        let request = String::from_utf8_lossy(&request[..bytes]);
+        assert!(request.starts_with("GET /models HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer oauth-secret"));
+        let body = r#"{"data":[{"id":"anthropic/claude-sonnet-4"}]}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+    let store = MemoryCredentialStore::default();
+    save_openrouter_oauth_key(&store, "oauth-secret").unwrap();
+
+    let refresh = refresh_provider_models_with_store(
+        "openrouter-oauth",
+        "openrouter-api-key",
+        &store,
+        ProviderModelEndpoint::OpenAiCompatible(&api_base),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(refresh.provider, "openrouter");
+    assert_eq!(refresh.models[0].provider, "openrouter");
+    assert_eq!(cached_provider_models("openrouter"), refresh.models);
+    assert!(cached_provider_models("openrouter-oauth").is_empty());
+    server.await.unwrap();
 }
 
 #[tokio::test]

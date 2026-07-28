@@ -15,11 +15,9 @@ Rho's implemented providers are:
 | `anthropic` | `anthropic-api-key` | [Anthropic](/providers/anthropic) |
 | `google` | `google-api-key` | [Google Gemini](/providers/google-gemini) |
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
-| `xai` | `xai-api-key` | [xAI](/providers/xai) |
-| `xai-oauth` | `xai-oauth` | [xAI](/providers/xai) |
+| `xai` | `xai-api-key`, `xai-oauth` | [xAI](/providers/xai) |
 | `poolside` | `poolside-api-key` | [Poolside](/providers/poolside) |
-| `openrouter` | `openrouter-api-key` | [OpenRouter](/providers/openrouter) |
-| `openrouter-oauth` | `openrouter-oauth` | [OpenRouter](/providers/openrouter) |
+| `openrouter` | `openrouter-api-key`, `openrouter-oauth` | [OpenRouter](/providers/openrouter) |
 | `ollama` | None | [Ollama](/providers/ollama) |
 | `ollama-cloud` | `ollama-cloud-api-key`, `ollama-cloud-device` | [Ollama Cloud](/providers/ollama-cloud) |
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
@@ -80,11 +78,9 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 /model google/gemini-3.1-flash-lite
 /model github-copilot/gpt-4.1
 /model openrouter/anthropic/claude-sonnet-4
-/model openrouter-oauth/anthropic/claude-sonnet-4
 /model ollama/<installed-model>
 /model ollama-cloud/<hosted-model>
 /model xai/grok-4.5
-/model xai-oauth/grok-4.5
 ```
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
