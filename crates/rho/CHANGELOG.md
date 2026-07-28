@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.19.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.19.0...rho-coding-agent-v1.19.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **auth:** stop waiting for Ollama device callback ([#616](https://github.com/matthewyjiang/rho/issues/616)) ([54288d2](https://github.com/matthewyjiang/rho/commit/54288d28f7bcc68a36f0424e5de6c28e470fb479))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.12.0 to 0.12.1
+
 ## [1.19.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.18.2...rho-coding-agent-v1.19.0) (2026-07-28)
 
 

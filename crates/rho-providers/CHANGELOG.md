@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.12.0...rho-providers-v0.12.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **auth:** stop waiting for Ollama device callback ([#616](https://github.com/matthewyjiang/rho/issues/616)) ([54288d2](https://github.com/matthewyjiang/rho/commit/54288d28f7bcc68a36f0424e5de6c28e470fb479))
+
 ## [0.12.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.11.1...rho-providers-v0.12.0) (2026-07-28)
 
 
