@@ -227,9 +227,15 @@ thread_local! {
 pub fn with_ollama_device_key_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
     TEST_KEY_DIR.with(|key_dir| {
         let previous = key_dir.replace(Some(path));
-        let result = f();
-        key_dir.replace(previous);
-        result
+        // Restore the prior value even when `f` unwinds.
+        struct Restore<'a>(&'a std::cell::RefCell<Option<PathBuf>>, Option<PathBuf>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.replace(self.1.take());
+            }
+        }
+        let _guard = Restore(key_dir, previous);
+        f()
     })
 }
 
