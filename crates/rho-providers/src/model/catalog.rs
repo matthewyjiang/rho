@@ -227,13 +227,14 @@ fn builtin_default_model(provider: &str) -> Option<String> {
 pub fn resolve_model_selection_for_provider(
     provider: &str,
     model: &str,
+    preferred_auth: Option<&str>,
     available_auths: &[String],
 ) -> Result<ModelSelection, ModelSelectionError> {
     resolve_model_selection_for_provider_from(
         model_catalog(),
         provider.trim(),
         model.trim(),
-        None,
+        preferred_auth,
         available_auths,
     )
 }

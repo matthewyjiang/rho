@@ -296,7 +296,12 @@ fn apply_model_override(
             // No credential store is available during CLI override resolution, so
             // fall back to the provider default auth. An explicit `--auth` is
             // applied afterward and still takes precedence.
-            catalog::resolve_model_selection_for_provider(provider, &model_override.model, &[])?
+            catalog::resolve_model_selection_for_provider(
+                provider,
+                &model_override.model,
+                None,
+                &[],
+            )?
         }
         None => catalog::resolve_model_selection_for_auths(
             &model_override.model,

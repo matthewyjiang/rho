@@ -437,6 +437,7 @@ impl App {
         let selection = catalog::resolve_model_selection_for_provider(
             &identity.provider,
             &identity.model,
+            Some(&self.info.runtime.auth),
             &self.available_auths,
         )
         .ok()?;
