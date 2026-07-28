@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::{
     model::{ContentBlock, ModelUsage, ToolCall},
     tool::{ToolErrorKind, ToolMetadata, ToolOutput, ToolProgress},
@@ -127,6 +129,59 @@ pub enum ToolCompletion {
     Unavailable,
 }
 
+/// Timing and provider-reported output usage for one model call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelCallMetrics {
+    output_tokens: Option<u64>,
+    time_to_first_token: Option<Duration>,
+    generation_time: Option<Duration>,
+    total_latency: Duration,
+}
+
+impl ModelCallMetrics {
+    /// Creates metrics from provider output usage and local timing.
+    pub fn new(
+        output_tokens: Option<u64>,
+        time_to_first_token: Option<Duration>,
+        generation_time: Option<Duration>,
+        total_latency: Duration,
+    ) -> Self {
+        Self {
+            output_tokens,
+            time_to_first_token,
+            generation_time,
+            total_latency,
+        }
+    }
+
+    /// Provider-reported output tokens for this call.
+    pub fn output_tokens(self) -> Option<u64> {
+        self.output_tokens
+    }
+
+    /// Time from starting the request to receiving its first generated event.
+    pub fn time_to_first_token(self) -> Option<Duration> {
+        self.time_to_first_token
+    }
+
+    /// Time from the first generated event until stream completion.
+    pub fn generation_time(self) -> Option<Duration> {
+        self.generation_time
+    }
+
+    /// Time from starting the request until stream completion.
+    pub fn total_latency(self) -> Duration {
+        self.total_latency
+    }
+
+    /// Provider-reported output tokens divided by local generation time.
+    pub fn output_tokens_per_second(self) -> Option<f64> {
+        let tokens = self.output_tokens?;
+        let seconds = self.generation_time?.as_secs_f64();
+        (seconds > 0.0).then(|| tokens as f64 / seconds)
+    }
+}
+
 /// Ordered semantic event emitted during a run.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -241,4 +296,11 @@ pub enum RunEvent {
     /// Appended after existing variants so discriminant values of the 1.0
     /// surface stay stable under a minor release.
     ProviderRequestRetry,
+    /// A model call completed with local timing and provider-reported usage.
+    ///
+    /// Appended after existing variants so discriminant values of the 1.0
+    /// surface stay stable under a minor release.
+    ModelCallCompleted {
+        metrics: ModelCallMetrics,
+    },
 }

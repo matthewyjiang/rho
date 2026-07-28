@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use ratatui::text::Line;
 use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage};
@@ -49,6 +49,7 @@ pub(super) struct RuntimeInfo {
     branch: Option<String>,
     usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
+    latest_model_call: Option<rho_sdk::ModelCallMetrics>,
     context_usage: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
@@ -95,6 +96,7 @@ impl App {
             branch: git_branch(&self.info.runtime.cwd),
             usage: self.usage.cumulative_usage.clone(),
             latest_usage: self.usage.latest_usage.clone(),
+            latest_model_call: self.usage.latest_model_call,
             context_usage: self.usage.current_context.clone(),
             model_metadata: self.model_metadata.clone(),
             tree,
@@ -150,6 +152,21 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
 
     block.push_section("Session usage");
     push_usage_fields(&mut block, info);
+
+    if let Some(metrics) = info.latest_model_call {
+        block.push_section("Last model call");
+        if let Some(duration) = metrics.time_to_first_token() {
+            block.push_field("First token", &format_duration(duration));
+        }
+        if let Some(duration) = metrics.generation_time() {
+            block.push_field("Generation", &format_duration(duration));
+        }
+        push_optional_number(&mut block, "Output tokens", metrics.output_tokens());
+        if let Some(rate) = metrics.output_tokens_per_second() {
+            block.push_field("Output rate", &format!("{rate:.1} tok/s"));
+        }
+        block.push_field("Total latency", &format_duration(metrics.total_latency()));
+    }
 
     block.push_section("Workspace");
     block.push_field("Directory", &info.cwd.display().to_string());
@@ -280,6 +297,14 @@ fn format_context(info: &RuntimeInfo) -> Option<String> {
         format_number(tokens),
         format_number(window)
     ))
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration < Duration::from_secs(1) {
+        format!("{} ms", duration.as_millis())
+    } else {
+        format!("{:.1} s", duration.as_secs_f64())
+    }
 }
 
 fn format_number(value: u64) -> String {

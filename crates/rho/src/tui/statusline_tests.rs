@@ -30,6 +30,7 @@ fn test_state(usage: ModelUsage) -> StatusLineState {
         permission_mode: crate::permission::PermissionMode::Auto,
         model_metadata: Some(priced_metadata()),
         subagent_total_cost_usd_micros: 0,
+        latest_model_call: None,
     }
 }
 
@@ -66,6 +67,23 @@ fn wide_statusline_keeps_only_summary_fields() {
     assert!(!bottom.contains("300.0k"), "{bottom}");
     assert!(!bottom.contains("CH"), "{bottom}");
     assert!(!bottom.contains("openai"), "{bottom}");
+}
+
+#[test]
+fn statusline_shows_latest_completed_output_rate_when_space_allows() {
+    let mut state = test_state(ModelUsage::default());
+    state.latest_model_call = Some(rho_sdk::ModelCallMetrics::new(
+        /*output_tokens*/ Some(1_248),
+        /*time_to_first_token*/ Some(Duration::from_millis(620)),
+        /*generation_time*/ Some(Duration::from_millis(21_800)),
+        /*total_latency*/ Duration::from_millis(22_420),
+    ));
+
+    let wide = line_text(&statusline_lines(&state, 80, None)[1]);
+    let narrow = line_text(&statusline_lines(&state, 40, None)[1]);
+
+    assert!(wide.contains("57 tok/s"), "{wide}");
+    assert!(!narrow.contains("tok/s"), "{narrow}");
 }
 
 #[test]

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use rho_sdk::model::{ContextUsage, ModelUsage};
 
 use crate::tui::{app_state::SessionUiPhase, event_adapter::ViewModelEvent, tests::test_app};
@@ -29,6 +31,21 @@ fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
             .and_then(|usage| usage.input_tokens),
         Some(1_000)
     );
+}
+
+#[test]
+fn provider_stream_reset_clears_stale_model_call_metrics() {
+    let mut app = test_app();
+    app.usage.latest_model_call = Some(rho_sdk::ModelCallMetrics::new(
+        /*output_tokens*/ Some(10),
+        /*time_to_first_token*/ Some(Duration::from_millis(100)),
+        /*generation_time*/ Some(Duration::from_secs(1)),
+        /*total_latency*/ Duration::from_millis(1_100),
+    ));
+
+    app.reset_provider_attempt_stream();
+
+    assert_eq!(app.usage.latest_model_call, None);
 }
 
 #[test]

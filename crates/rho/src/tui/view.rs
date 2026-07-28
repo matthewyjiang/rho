@@ -806,6 +806,8 @@ impl App {
             self.usage.subagent_total_cost_usd_micros,
         );
         self.statusline
+            .update_model_call(self.usage.latest_model_call);
+        self.statusline
             .update_model_metadata(self.model_metadata.as_ref());
     }
 

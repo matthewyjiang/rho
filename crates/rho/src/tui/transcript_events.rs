@@ -47,6 +47,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ReasoningDelta(_)
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
+        | ViewModelEvent::ModelCallCompleted(_)
         | ViewModelEvent::ToolUpdated { .. } => false,
     }
 }
@@ -243,12 +244,14 @@ impl App {
     pub(super) fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         match event {
             ViewModelEvent::RunStarted => {
+                self.usage.latest_model_call = None;
                 self.usage.usage_cost_tracker.run_started();
                 self.usage.usage_before_current_run = self.usage.cumulative_usage.clone();
                 self.usage.run_usage.clear();
                 None
             }
             ViewModelEvent::StepStarted(step) => {
+                self.usage.latest_model_call = None;
                 self.usage.usage_cost_tracker.step_started();
                 self.usage.run_usage.step_started();
                 self.reset_streams();
@@ -286,7 +289,10 @@ impl App {
                 self.turn.tool_call_proposed(call_id, card);
                 None
             }
-            ViewModelEvent::ProviderStreamReset | ViewModelEvent::ProviderRetry => {
+            // The live handler resets streamed output before this recorder.
+            ViewModelEvent::ProviderStreamReset => None,
+            ViewModelEvent::ProviderRetry => {
+                self.usage.latest_model_call = None;
                 self.usage.usage_cost_tracker.attempt_restarted();
                 self.usage.run_usage.attempt_reset();
                 None
@@ -295,6 +301,10 @@ impl App {
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
                 self.usage.current_context = Some(usage);
+                None
+            }
+            ViewModelEvent::ModelCallCompleted(metrics) => {
+                self.usage.latest_model_call = Some(metrics);
                 None
             }
             ViewModelEvent::Usage(usage) => {
@@ -584,6 +594,9 @@ impl App {
     }
 
     pub(super) fn reset_provider_attempt_stream(&mut self) {
+        self.usage.latest_model_call = None;
+        self.usage.usage_cost_tracker.attempt_restarted();
+        self.usage.run_usage.attempt_reset();
         self.reset_streams();
         self.turn.clear_tool_calls();
         if let Some(start) = self

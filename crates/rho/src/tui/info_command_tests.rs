@@ -24,6 +24,7 @@ fn test_info() -> RuntimeInfo {
             cache_read_tokens: Some(900_000),
             ..ModelUsage::default()
         }),
+        latest_model_call: None,
         context_usage: Some(ContextUsage::estimated(25_000, Some(100_000))),
         model_metadata: None,
         tree: None,
@@ -78,6 +79,26 @@ fn runtime_info_groups_model_usage_and_workspace_details() {
     assert!(text.contains("Cost          $1.250"), "{text}");
     assert!(text.contains("Workspace\n"), "{text}");
     assert!(text.contains("Git branch    main"), "{text}");
+}
+
+#[test]
+fn runtime_info_shows_latest_model_call_metrics() {
+    let mut info = test_info();
+    info.latest_model_call = Some(rho_sdk::ModelCallMetrics::new(
+        /*output_tokens*/ Some(1_248),
+        /*time_to_first_token*/ Some(Duration::from_millis(620)),
+        /*generation_time*/ Some(Duration::from_millis(21_800)),
+        /*total_latency*/ Duration::from_millis(22_420),
+    ));
+
+    let text = rendered_text(&info, 80);
+
+    assert!(text.contains("Last model call"), "{text}");
+    assert!(text.contains("First token   620 ms"), "{text}");
+    assert!(text.contains("Generation    21.8 s"), "{text}");
+    assert!(text.contains("Output tokens 1,248"), "{text}");
+    assert!(text.contains("Output rate   57.2 tok/s"), "{text}");
+    assert!(text.contains("Total latency 22.4 s"), "{text}");
 }
 
 #[test]

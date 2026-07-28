@@ -477,9 +477,12 @@ async fn stream_usage_events_merge_within_a_turn() {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("hello")).await.unwrap();
     let mut last_usage = None;
+    let mut model_call_metrics = None;
     while let Some(event) = run.next_event().await {
-        if let RunEvent::UsageUpdated { usage } = event {
-            last_usage = Some(usage);
+        match event {
+            RunEvent::UsageUpdated { usage } => last_usage = Some(usage),
+            RunEvent::ModelCallCompleted { metrics } => model_call_metrics = Some(metrics),
+            _ => {}
         }
     }
     let outcome = run.outcome().await.unwrap();
@@ -496,6 +499,11 @@ async fn stream_usage_events_merge_within_a_turn() {
     assert_eq!(outcome.usage().input_tokens, Some(7));
     assert_eq!(outcome.usage().output_tokens, Some(5));
     assert_eq!(outcome.usage().cache_read_tokens, Some(3));
+    let metrics = model_call_metrics.expect("model call metrics event");
+    assert_eq!(metrics.output_tokens(), Some(5));
+    assert!(metrics.time_to_first_token().is_some());
+    assert!(metrics.generation_time().is_some());
+    assert!(metrics.output_tokens_per_second().is_some());
 }
 
 #[tokio::test]

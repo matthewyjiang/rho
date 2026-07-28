@@ -1,6 +1,6 @@
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
-    HostInputRequest, HostInputResponse, RunEvent,
+    HostInputRequest, HostInputResponse, ModelCallMetrics, RunEvent,
 };
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
@@ -31,6 +31,7 @@ pub(super) enum ViewModelEvent {
     ReasoningDelta(String),
     ContextUsage(ContextUsage),
     Usage(ModelUsage),
+    ModelCallCompleted(ModelCallMetrics),
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
         card: ToolCard,
@@ -260,6 +261,11 @@ impl SdkEventAdapter {
             }
             RunEvent::UsageUpdated { usage } => {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]
+            }
+            RunEvent::ModelCallCompleted { metrics } => {
+                vec![ViewEvent::Update(ViewModelEvent::ModelCallCompleted(
+                    metrics,
+                ))]
             }
             RunEvent::WebSearch { detail } => {
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {

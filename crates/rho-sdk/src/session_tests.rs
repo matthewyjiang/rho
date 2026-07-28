@@ -48,7 +48,7 @@ async fn completed_terminal_backpressure_keeps_the_run_owner_active() {
     );
     let runtime = Rho::builder()
         .provider(provider)
-        .event_capacity(NonZeroUsize::new(1).unwrap())
+        .event_capacity(NonZeroUsize::new(2).unwrap())
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
@@ -58,7 +58,8 @@ async fn completed_terminal_backpressure_keeps_the_run_owner_active() {
         run.next_event().await,
         Some(RunEvent::Started { .. })
     ));
-    // Leave `StepStarted` in the sole event slot so terminal delivery cannot complete.
+    // Leave `StepStarted` and the model metrics in the two event slots so
+    // terminal delivery cannot complete.
     wait_for_state(&session, SessionState::Completed).await;
 
     assert!(session.is_running());
@@ -69,6 +70,10 @@ async fn completed_terminal_backpressure_keeps_the_run_owner_active() {
     assert!(matches!(
         run.next_event().await,
         Some(RunEvent::StepStarted { step: 1 })
+    ));
+    assert!(matches!(
+        run.next_event().await,
+        Some(RunEvent::ModelCallCompleted { .. })
     ));
     assert!(matches!(
         run.next_event().await,

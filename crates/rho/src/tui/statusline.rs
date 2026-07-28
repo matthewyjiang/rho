@@ -40,6 +40,7 @@ pub(super) struct StatusLineState {
     permission_mode: PermissionMode,
     model_metadata: Option<ModelMetadata>,
     subagent_total_cost_usd_micros: u64,
+    latest_model_call: Option<rho_sdk::ModelCallMetrics>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -78,6 +79,7 @@ impl Default for StatusLineState {
             permission_mode: PermissionMode::default(),
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
+            latest_model_call: None,
         }
     }
 }
@@ -96,6 +98,7 @@ impl StatusLineState {
             permission_mode: info.permission_mode,
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
+            latest_model_call: None,
         }
     }
 }
@@ -146,6 +149,16 @@ impl StatusLine {
             self.state.usage = usage.cloned();
             self.state.context_usage = context_usage.cloned();
             self.state.subagent_total_cost_usd_micros = subagent_total_cost_usd_micros;
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn update_model_call(
+        &mut self,
+        latest_model_call: Option<rho_sdk::ModelCallMetrics>,
+    ) {
+        if self.state.latest_model_call != latest_model_call {
+            self.state.latest_model_call = latest_model_call;
             self.invalidate();
         }
     }
@@ -250,16 +263,30 @@ fn bottom_status(state: &StatusLineState, width: usize) -> (String, String) {
         right = with_reasoning;
     }
 
-    let Some(cost) = status_cost(state) else {
-        return (left, right);
-    };
-    let with_cost = if left.is_empty() {
-        cost
-    } else {
-        format!("{left} · {cost}")
-    };
-    if row_fits(&with_cost, &right, width) {
-        left = with_cost;
+    if let Some(cost) = status_cost(state) {
+        let with_cost = if left.is_empty() {
+            cost
+        } else {
+            format!("{left} · {cost}")
+        };
+        if row_fits(&with_cost, &right, width) {
+            left = with_cost;
+        }
+    }
+
+    if let Some(rate) = state
+        .latest_model_call
+        .and_then(rho_sdk::ModelCallMetrics::output_tokens_per_second)
+    {
+        let rate = format!("{rate:.0} tok/s");
+        let with_rate = if left.is_empty() {
+            rate
+        } else {
+            format!("{left} · {rate}")
+        };
+        if row_fits(&with_rate, &right, width) {
+            left = with_rate;
+        }
     }
     (left, right)
 }
