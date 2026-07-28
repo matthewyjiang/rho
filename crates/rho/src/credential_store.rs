@@ -184,15 +184,7 @@ pub(crate) fn build_provider_from_config(
     config: &Config,
     credential_store: Arc<dyn CredentialStore>,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
-    let mut options = rho_providers::providers::ProviderBuildOptions::new(
-        &config.provider,
-        &config.model,
-        config.reasoning,
-    )?
-    .with_auth(&config.auth)?;
-    if let Some(endpoint) = config.resolved_provider_endpoint(&config.provider) {
-        options = options.endpoint(endpoint)?;
-    }
+    let options = crate::app::sdk_config::provider_options_from_config(config)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         credential_store,
     );
@@ -205,12 +197,14 @@ pub(crate) fn build_provider(
     reasoning: rho_providers::reasoning::ReasoningLevel,
     auth: &str,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
-    let options = rho_providers::providers::ProviderBuildOptions::new(provider, model, reasoning)?
-        .with_auth(auth)?;
-    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-        Arc::new(AppCredentialStore),
-    );
-    rho_providers::providers::build_sdk_provider_with_source(options, &credentials)
+    let config = Config {
+        provider: provider.into(),
+        model: model.into(),
+        reasoning,
+        auth: auth.into(),
+        ..Config::default()
+    };
+    build_provider_from_config(&config, Arc::new(AppCredentialStore))
 }
 
 fn env_backend_override() -> Option<String> {

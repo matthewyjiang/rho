@@ -76,6 +76,7 @@ mod picker;
 mod picker_input;
 mod picker_overlay;
 mod prompt_turn;
+mod provider_actions;
 mod provider_attempt;
 mod provider_picker;
 mod questionnaire;

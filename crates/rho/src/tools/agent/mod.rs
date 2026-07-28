@@ -107,12 +107,15 @@ impl SubagentManager {
             .expect("delegated session lock") = placement;
     }
 
-    pub fn update_model(&self, provider: &str, model: &str, reasoning: rho_sdk::ReasoningLevel) {
-        self.executor.update_model(provider, model, reasoning);
-    }
-
-    pub(crate) fn update_auth(&self, auth: &str) {
-        self.executor.update_auth(auth);
+    pub fn update_selection(
+        &self,
+        provider: &str,
+        model: &str,
+        reasoning: rho_sdk::ReasoningLevel,
+        auth: &str,
+    ) {
+        self.executor
+            .update_selection(provider, model, reasoning, auth);
     }
 
     /// Updates the policy snapshot used by future launches. Already-spawned

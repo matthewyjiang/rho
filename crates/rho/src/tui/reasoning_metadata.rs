@@ -1,5 +1,4 @@
 use super::{config_picker, App, ComposerMode, Entry, InteractiveRuntime, PickerAction};
-use crate::credential_store::build_provider;
 use rho_providers::{
     model::{
         models_dev, ModelMetadata, ReasoningCapabilities, ReasoningRequestSource,
@@ -99,7 +98,7 @@ impl App {
             return Ok(());
         }
         let reasoning = capabilities.next_level(self.info.runtime.reasoning);
-        let provider = match build_provider(
+        let provider = match self.build_provider_for_selection(
             &self.info.runtime.provider,
             &self.info.runtime.model,
             reasoning,
@@ -114,7 +113,7 @@ impl App {
                 return Ok(());
             }
         };
-        agent.replace_provider(provider, reasoning)?;
+        agent.replace_provider(provider, reasoning, &self.info.runtime.auth)?;
         self.info
             .set_reasoning(reasoning, ReasoningRequestSource::Explicit);
         let save_result = self.info.services.config_repository.update(|config| {

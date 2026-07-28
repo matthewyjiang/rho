@@ -153,7 +153,11 @@ async fn replace_provider_rebuilds_compactor_with_current_context_window() {
     ));
 
     interactive
-        .replace_provider(Arc::clone(&replacement), rho_sdk::ReasoningLevel::Low)
+        .replace_provider(
+            Arc::clone(&replacement),
+            rho_sdk::ReasoningLevel::Low,
+            "test-auth",
+        )
         .unwrap();
 
     assert_eq!(

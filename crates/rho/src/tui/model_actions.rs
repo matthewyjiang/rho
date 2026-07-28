@@ -1,4 +1,3 @@
-use crate::credential_store::build_provider;
 use ratatui::DefaultTerminal;
 
 use rho_providers::{
@@ -564,7 +563,12 @@ impl App {
                 return Ok(None);
             }
         };
-        let new_provider = match build_provider(&provider, &model, reasoning.effective, &auth) {
+        let new_provider = match self.build_provider_for_selection(
+            &provider,
+            &model,
+            reasoning.effective,
+            &auth,
+        ) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -575,13 +579,12 @@ impl App {
             }
         };
 
-        let handoff = agent.replace_provider(new_provider, reasoning.effective)?;
+        let handoff = agent.replace_provider(new_provider, reasoning.effective, &auth)?;
         self.info.runtime.provider = provider.clone();
         self.info.runtime.model = model.clone();
         self.info
             .set_reasoning(reasoning.effective, reasoning.source);
         self.info.runtime.auth = auth.clone();
-        agent.update_inherited_auth(&auth);
         self.info.services.auth_unavailable = None;
         self.using_unavailable_provider = false;
         self.start_model_metadata_fetch(agent);
