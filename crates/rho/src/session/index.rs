@@ -12,6 +12,16 @@ const INDEX_SCHEMA_VERSION: u32 = 2;
 static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> =
     OnceLock::new();
 
+#[cfg(test)]
+pub(super) fn clear_index_connection_cache_for_test() {
+    if let Some(connections) = INDEX_CONNECTIONS.get() {
+        connections
+            .lock()
+            .expect("session index cache poisoned")
+            .clear();
+    }
+}
+
 use super::persistence::{
     clamp_u64_to_i64, session_dir_in_root, session_file_stats, session_id_from_path,
     set_private_dir_permissions, summarize_session_file, workspace_key,
@@ -122,12 +132,15 @@ fn query_existing_paths(
 
 pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<()> {
     let connection = open_index(session_root)?;
-    let connection = connection
+    let mut connection = connection
         .lock()
         .expect("session index connection poisoned");
     let workspace_key = workspace_key(cwd);
     let dir = session_dir_in_root(session_root, cwd);
+    // One map load drives staleness checks and deletes; no per-file index queries.
+    let indexed_files = indexed_workspace_files(&connection, &workspace_key)?;
     let mut seen = HashSet::new();
+    let mut changed_paths = Vec::new();
 
     if dir.exists() {
         for entry in fs::read_dir(&dir)? {
@@ -141,24 +154,31 @@ pub(super) fn sync_workspace(session_root: &Path, cwd: &Path) -> anyhow::Result<
             let transcript = unit.transcript_path();
             seen.insert(id.clone());
             let (file_size, file_mtime) = session_file_stats(&transcript);
-            if indexed_file_is_current(
-                &connection,
-                &workspace_key,
-                &id,
-                &transcript,
-                file_size,
-                file_mtime,
-            )? {
+            if indexed_files
+                .get(&id)
+                .is_some_and(|indexed| indexed.is_current(&transcript, file_size, file_mtime))
+            {
                 continue;
             }
-            if let Ok(record) = summarize_session_file(&transcript, cwd) {
-                upsert_record(&connection, &workspace_key, &record)?;
-            }
+            changed_paths.push(transcript);
         }
     }
 
-    remove_stale_records(&connection, &workspace_key, &seen)?;
-    Ok(())
+    // Parse transcripts before opening the write transaction so the transaction
+    // contains only the batched mutations. Unreadable or malformed files remain
+    // skipped (no upsert).
+    let mut records = Vec::new();
+    for transcript in &changed_paths {
+        if let Ok(record) = summarize_session_file(transcript, cwd) {
+            records.push(record);
+        }
+    }
+    let refreshed_ids = records
+        .iter()
+        .map(|record| record.summary.id.as_str())
+        .collect::<HashSet<_>>();
+    let stale_ids = stale_index_ids(&indexed_files, &seen, &refreshed_ids);
+    apply_workspace_updates(&mut connection, &workspace_key, &records, &stale_ids)
 }
 
 pub(super) fn sync_session_file(
@@ -427,6 +447,47 @@ fn set_private_file_permissions(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct IndexedFile {
+    path: String,
+    file_size: Option<i64>,
+    file_mtime: Option<i64>,
+    message_count: i64,
+    first_user_message: Option<String>,
+}
+
+impl IndexedFile {
+    fn is_current(&self, path: &Path, file_size: Option<i64>, file_mtime: Option<i64>) -> bool {
+        self.path == path.to_string_lossy().as_ref()
+            && self.file_size == file_size
+            && self.file_mtime == file_mtime
+            && (self.message_count == 0 || self.first_user_message.is_some())
+    }
+}
+
+fn indexed_workspace_files(
+    connection: &Connection,
+    workspace_key: &str,
+) -> rusqlite::Result<HashMap<String, IndexedFile>> {
+    let mut statement = connection.prepare(
+        "select id, path, file_size, file_mtime, message_count, first_user_message
+         from sessions where workspace_key = ?1",
+    )?;
+    let rows = statement.query_map(params![workspace_key], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            IndexedFile {
+                path: row.get(1)?,
+                file_size: row.get(2)?,
+                file_mtime: row.get(3)?,
+                message_count: row.get(4)?,
+                first_user_message: row.get(5)?,
+            },
+        ))
+    })?;
+    rows.collect()
+}
+
 fn indexed_file_is_current(
     connection: &Connection,
     workspace_key: &str,
@@ -441,24 +502,17 @@ fn indexed_file_is_current(
              from sessions where workspace_key = ?1 and id = ?2",
             params![workspace_key, id],
             |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<i64>>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
+                Ok(IndexedFile {
+                    path: row.get(0)?,
+                    file_size: row.get(1)?,
+                    file_mtime: row.get(2)?,
+                    message_count: row.get(3)?,
+                    first_user_message: row.get(4)?,
+                })
             },
         )
         .optional()?;
-    Ok(current.is_some_and(
-        |(indexed_path, indexed_size, indexed_mtime, message_count, first_user_message)| {
-            indexed_path == path.to_string_lossy().as_ref()
-                && indexed_size == file_size
-                && indexed_mtime == file_mtime
-                && (message_count == 0 || first_user_message.is_some())
-        },
-    ))
+    Ok(current.is_some_and(|indexed| indexed.is_current(path, file_size, file_mtime)))
 }
 
 fn upsert_record(
@@ -524,31 +578,42 @@ fn upsert_record(
     Ok(())
 }
 
-pub(super) fn remove_stale_records(
-    connection: &Connection,
-    workspace_key: &str,
+fn stale_index_ids(
+    indexed_files: &HashMap<String, IndexedFile>,
     seen: &HashSet<String>,
-) -> anyhow::Result<()> {
-    let mut statement =
-        connection.prepare("select id, path from sessions where workspace_key = ?1")?;
-    let rows = statement.query_map(params![workspace_key], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            PathBuf::from(row.get::<_, String>(1)?),
-        ))
-    })?;
-    let stale_ids = rows
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .into_iter()
-        .filter_map(|(id, path)| (!seen.contains(&id) || !path.exists()).then_some(id))
-        .collect::<Vec<_>>();
+    refreshed_ids: &HashSet<&str>,
+) -> Vec<String> {
+    indexed_files
+        .iter()
+        .filter(|(id, indexed)| {
+            !seen.contains(*id)
+                || (!Path::new(&indexed.path).exists() && !refreshed_ids.contains(id.as_str()))
+        })
+        .map(|(id, _)| id.clone())
+        .collect()
+}
 
+/// Applies upserts and stale deletes in one SQLite transaction.
+fn apply_workspace_updates(
+    connection: &mut Connection,
+    workspace_key: &str,
+    records: &[SessionIndexRecord],
+    stale_ids: &[String],
+) -> anyhow::Result<()> {
+    if records.is_empty() && stale_ids.is_empty() {
+        return Ok(());
+    }
+    let transaction = connection.transaction()?;
+    for record in records {
+        upsert_record(&transaction, workspace_key, record)?;
+    }
     for id in stale_ids {
-        connection.execute(
+        transaction.execute(
             "delete from sessions where workspace_key = ?1 and id = ?2",
             params![workspace_key, id],
         )?;
     }
+    transaction.commit()?;
     Ok(())
 }
 
@@ -582,6 +647,10 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
         last_user_message: row.get(8)?,
     })
 }
+
+#[cfg(test)]
+#[path = "index_sync_tests.rs"]
+mod sync_tests;
 
 #[cfg(test)]
 mod tests {

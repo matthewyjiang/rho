@@ -15,6 +15,8 @@ SDK-backed and retained baseline fixture where applicable.
 | History snapshot | Clone and serialize 1,000 representative messages | Median below 10 ms and peak retained allocation below 3 times serialized size |
 | Compaction orchestration | Partition, scripted summary, and atomic commit for a 1,000-message history | Median no more than 15% above the pre-SDK compaction fixture |
 | Parallel tool batch | The same representative independent multi-read batch at limits of one and four | Report both distributions and the observed speedup; the parallel run must preserve ordered results |
+| Streamed tool-argument capture | Geometric argument sizes streamed in fixed chunks, then cancelled before a final `ModelResponse` | Aborted history retains the complete tool call; median ns/byte at the largest size is at most 2x the smallest size |
+| Overlapping tool preparation | The same 64-call prepare batch at execution limits of one and four | Peak concurrent preparations equals the batch size at both limits; ordered tool results are preserved |
 | Slow consumer | Producer against a full bounded event channel | Memory remains bounded and cancellation completes within 250 ms after the consumer is dropped |
 
 Provider network latency, upstream rate limiting, authentication, OS keychain
@@ -27,6 +29,19 @@ and each sample checks that history retains model order. The evidence JSON
 records the raw samples for limits one and four plus the ratio of their median
 run times. This scenario reports speedup rather than setting a machine-wide
 minimum because timer resolution and available CPU vary across release runners.
+
+The streamed tool-argument fixture uses geometric payload sizes (16 KiB, 64 KiB,
+256 KiB) with fixed 256-byte deltas. After the final delta the run cancels so
+aborted history must come from stream capture, not a provider terminal tool
+call. Acceptance compares median nanoseconds per byte across the size span; a
+2x growth limit rejects super-linear capture without a machine-specific time
+budget.
+
+The overlapping tool-preparation fixture runs the same 64-call prepare batch at
+execution limits one and four. Preparation is currently unbounded by
+`max_parallel_tools`, so peak active prepare futures must equal the batch size
+at both limits while tool results stay in model order. Timings are recorded for
+evidence only.
 
 Relative compaction samples interleave the retained baseline and SDK candidate,
 alternating which runs first in each pair. This keeps both distributions exposed

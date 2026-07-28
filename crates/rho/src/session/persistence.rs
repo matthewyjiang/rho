@@ -197,6 +197,60 @@ pub(super) enum SessionEntry {
     },
 }
 
+impl SessionEntry {
+    /// Event timestamp used for summary `updated_at` / `created_at` accumulation.
+    fn event_timestamp(&self) -> &str {
+        match self {
+            SessionEntry::Session { timestamp, .. }
+            | SessionEntry::Message { timestamp, .. }
+            | SessionEntry::ReplaceHistory { timestamp, .. }
+            | SessionEntry::Snapshot { timestamp, .. }
+            | SessionEntry::SnapshotDelta { timestamp, .. }
+            | SessionEntry::SetLeaf { timestamp, .. }
+            | SessionEntry::Upgrade { timestamp, .. } => timestamp,
+            SessionEntry::Node { node } => node.timestamp.as_str(),
+        }
+    }
+}
+
+/// Metadata collected while the tree parses a transcript; messages come from the tree.
+#[derive(Debug)]
+struct SessionSummaryMeta {
+    cwd: PathBuf,
+    created_at: u64,
+    updated_at: u64,
+}
+
+impl SessionSummaryMeta {
+    fn new(path: &Path, fallback_cwd: &Path) -> Self {
+        let created_at = timestamp_from_filename(path).unwrap_or_default();
+        Self {
+            cwd: fallback_cwd.to_path_buf(),
+            created_at,
+            updated_at: created_at,
+        }
+    }
+
+    fn observe(&mut self, entry: &SessionEntry) {
+        if let SessionEntry::Session {
+            timestamp,
+            cwd: session_cwd,
+            ..
+        } = entry
+        {
+            self.cwd.clone_from(session_cwd);
+            if let Some(timestamp) = parse_timestamp(timestamp) {
+                self.created_at = timestamp;
+                self.updated_at = self.updated_at.max(timestamp);
+            }
+            return;
+        }
+        if let Some(timestamp) = parse_timestamp(entry.event_timestamp()) {
+            self.updated_at = self.updated_at.max(timestamp);
+        }
+    }
+}
+
 impl Session {
     fn append_entry(&self, entry: &SessionEntry) -> anyhow::Result<()> {
         let mut cursor = self
@@ -493,6 +547,7 @@ pub(super) fn next_revision(revision: Revision) -> anyhow::Result<Revision> {
         .ok_or_else(|| anyhow::anyhow!("session revision is exhausted"))
 }
 
+#[cfg(test)]
 fn visit_entries(
     path: &Path,
     mut visit: impl FnMut(SessionEntry) -> anyhow::Result<()>,
@@ -558,80 +613,15 @@ fn summarize_session_file_with_tree(
 ) -> anyhow::Result<(SessionIndexRecord, super::tree::SessionTree)> {
     let id = session_id_from_path(path)
         .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
-    let mut cwd = fallback_cwd.to_path_buf();
-    let mut created_at = timestamp_from_filename(path).unwrap_or_default();
-    let mut updated_at = created_at;
-    let mut messages = Vec::new();
-    let mut has_tree_records = false;
-
-    visit_entries(path, |entry| {
-        match entry {
-            SessionEntry::Session {
-                timestamp,
-                cwd: session_cwd,
-                ..
-            } => {
-                cwd = session_cwd;
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
-                    created_at = timestamp;
-                    updated_at = updated_at.max(timestamp);
-                }
-            }
-            SessionEntry::Message {
-                timestamp,
-                message,
-                display_message,
-            } => {
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
-                    updated_at = updated_at.max(timestamp);
-                }
-                messages.push(display_message.map_or(message, |message| *message));
-            }
-            SessionEntry::ReplaceHistory {
-                timestamp,
-                messages: replacement,
-            } => {
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
-                    updated_at = updated_at.max(timestamp);
-                }
-                messages = replacement;
-            }
-            SessionEntry::Snapshot {
-                timestamp,
-                display_messages,
-                ..
-            }
-            | SessionEntry::SnapshotDelta {
-                timestamp,
-                display_messages,
-                ..
-            } => {
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
-                    updated_at = updated_at.max(timestamp);
-                }
-                messages.extend(display_messages.into_iter().map(|entry| entry.message));
-            }
-            SessionEntry::Node { node } => {
-                has_tree_records = true;
-                if let Some(timestamp) = parse_timestamp(&node.timestamp) {
-                    updated_at = updated_at.max(timestamp);
-                }
-                messages.extend(node.display_messages.into_iter().map(|entry| entry.message));
-            }
-            SessionEntry::SetLeaf { timestamp, .. } | SessionEntry::Upgrade { timestamp, .. } => {
-                has_tree_records = true;
-                if let Some(timestamp) = parse_timestamp(&timestamp) {
-                    updated_at = updated_at.max(timestamp);
-                }
-            }
-        }
+    let mut meta = SessionSummaryMeta::new(path, fallback_cwd);
+    let tree = super::tree::SessionTree::load_with_entry_visitor(path, |entry| {
+        meta.observe(entry);
         Ok(())
     })?;
 
-    let tree = super::tree::SessionTree::load(path)?;
-    if has_tree_records {
-        messages = tree
-            .active_state()
+    // Canonical summary messages: active leaf display after incomplete tool tails.
+    let messages = drop_incomplete_tool_turn_tail(
+        tree.active_state()
             .map(|state| {
                 state
                     .display
@@ -639,15 +629,14 @@ fn summarize_session_file_with_tree(
                     .map(|entry| entry.message.clone())
                     .collect()
             })
-            .unwrap_or_default();
-    }
-    let messages = drop_incomplete_tool_turn_tail(messages);
+            .unwrap_or_default(),
+    );
     let (file_size, file_mtime) = session_file_stats(path);
-    if updated_at == 0 {
-        updated_at = file_mtime.map(|mtime| mtime as u64).unwrap_or_default();
+    if meta.updated_at == 0 {
+        meta.updated_at = file_mtime.map(|mtime| mtime as u64).unwrap_or_default();
     }
-    if created_at == 0 {
-        created_at = updated_at;
+    if meta.created_at == 0 {
+        meta.created_at = meta.updated_at;
     }
 
     let facts = tree.facts();
@@ -655,9 +644,9 @@ fn summarize_session_file_with_tree(
         summary: SessionSummary {
             id,
             path: path.to_path_buf(),
-            cwd,
-            created_at,
-            updated_at,
+            cwd: meta.cwd,
+            created_at: meta.created_at,
+            updated_at: meta.updated_at,
             message_count: messages.len() as u64,
             title: None,
             first_user_message: messages.iter().find_map(user_message_text),

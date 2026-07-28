@@ -20,7 +20,7 @@ pub(super) struct StreamCapture {
     reasoning: String,
     reasoning_summary: String,
     provider_context: Vec<ProviderContextBlock>,
-    partial_tool_calls: BTreeMap<usize, PartialToolCall>,
+    partial_tool_calls: BTreeMap<usize, CapturedToolCall>,
     usage: ModelUsage,
     failed_attempts: Vec<(ProviderErrorKind, ModelUsage)>,
 }
@@ -69,39 +69,119 @@ impl StreamCapture {
             provider_context: self.provider_context,
             // Keep fragments for provider fallbacks even when complete calls were also
             // placed into `content` to preserve stream positions.
-            tool_calls: self.partial_tool_calls.into_values().collect(),
+            tool_calls: self
+                .partial_tool_calls
+                .into_values()
+                .map(|call| call.partial)
+                .collect(),
             usage: self.usage,
         })
     }
 }
 
-fn upsert_captured_tool_call(capture: &mut StreamCapture, index: usize) {
-    let Some(partial) = capture.partial_tool_calls.get(&index) else {
-        return;
-    };
-    let Some(id) = partial.id.as_ref().filter(|id| !id.is_empty()) else {
-        return;
-    };
-    let Some(name) = partial.name.as_ref().filter(|name| !name.is_empty()) else {
-        return;
-    };
-    let Ok(arguments) = serde_json::from_str::<serde_json::Value>(&partial.arguments) else {
-        return;
-    };
-    if !arguments.is_object() {
-        return;
-    }
-    let call = ContentBlock::ToolCall(ToolCall {
-        id: id.clone(),
-        name: name.clone(),
-        arguments,
-    });
-    if let Some(&content_index) = capture.tool_call_content_index.get(&index) {
-        if let Some(slot) = capture.content.get_mut(content_index) {
-            *slot = call;
-            return;
+struct CapturedToolCall {
+    partial: PartialToolCall,
+    arguments: JsonObjectCompletion,
+    parsed_arguments: Option<serde_json::Value>,
+}
+
+impl Default for CapturedToolCall {
+    fn default() -> Self {
+        Self {
+            partial: PartialToolCall {
+                id: None,
+                name: None,
+                arguments: String::new(),
+            },
+            arguments: JsonObjectCompletion::default(),
+            parsed_arguments: None,
         }
     }
+}
+
+/// Tracks whether an append-only byte stream has closed one top-level JSON object.
+///
+/// This is only a completion detector. `serde_json` remains the source of truth
+/// for syntax and object validation when the outer object first closes.
+#[derive(Default)]
+struct JsonObjectCompletion {
+    depth: usize,
+    started: bool,
+    in_string: bool,
+    escaped: bool,
+    complete: bool,
+}
+
+impl JsonObjectCompletion {
+    fn push(&mut self, fragment: &str) -> bool {
+        if self.complete {
+            return false;
+        }
+        for byte in fragment.bytes() {
+            if self.in_string {
+                if self.escaped {
+                    self.escaped = false;
+                } else if byte == b'\\' {
+                    self.escaped = true;
+                } else if byte == b'"' {
+                    self.in_string = false;
+                }
+                continue;
+            }
+
+            match byte {
+                b'{' if !self.started => {
+                    self.started = true;
+                    self.depth = 1;
+                }
+                b'"' if self.started => self.in_string = true,
+                b'{' | b'[' if self.started => self.depth += 1,
+                b'}' | b']' if self.started && self.depth > 0 => {
+                    self.depth -= 1;
+                    if self.depth == 0 {
+                        self.complete = true;
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
+fn upsert_captured_tool_call(capture: &mut StreamCapture, index: usize) {
+    let content_index = capture.tool_call_content_index.get(&index).copied();
+    let Some(captured) = capture.partial_tool_calls.get_mut(&index) else {
+        return;
+    };
+    let partial = &captured.partial;
+    let Some(id) = partial.id.as_ref().filter(|id| !id.is_empty()).cloned() else {
+        return;
+    };
+    let Some(name) = partial
+        .name
+        .as_ref()
+        .filter(|name| !name.is_empty())
+        .cloned()
+    else {
+        return;
+    };
+    if let Some(content_index) = content_index {
+        if let Some(ContentBlock::ToolCall(call)) = capture.content.get_mut(content_index) {
+            call.id = id;
+            call.name = name;
+        }
+        return;
+    }
+    let Some(arguments) = captured.parsed_arguments.take() else {
+        return;
+    };
+    let call = ContentBlock::ToolCall(ToolCall {
+        id,
+        name,
+        arguments,
+    });
     let content_index = capture.content.len();
     capture.tool_call_content_index.insert(index, content_index);
     capture.content.push(call);
@@ -153,26 +233,24 @@ pub(super) fn capture_provider_event(
         } => {
             capture.merge_output_text = false;
             capture.seal_next_text_part = false;
-            let partial =
-                capture
-                    .partial_tool_calls
-                    .entry(index)
-                    .or_insert_with(|| PartialToolCall {
-                        id: None,
-                        name: None,
-                        arguments: String::new(),
-                    });
+            let partial = capture.partial_tool_calls.entry(index).or_default();
             if id.is_some() {
-                partial.id.clone_from(&id);
+                partial.partial.id.clone_from(&id);
             }
             if name.is_some() {
-                partial.name.clone_from(&name);
+                partial.partial.name.clone_from(&name);
             }
-            partial.arguments.push_str(&arguments);
+            partial.partial.arguments.push_str(&arguments);
+            if partial.arguments.push(&arguments) {
+                partial.parsed_arguments =
+                    serde_json::from_str::<serde_json::Value>(&partial.partial.arguments)
+                        .ok()
+                        .filter(serde_json::Value::is_object);
+            }
             // Later argument deltas often omit identity. Keep emitting the known
             // id/name so live previews can bind one slot before ToolProposed.
-            let id = id.or_else(|| partial.id.clone());
-            let name = name.or_else(|| partial.name.clone());
+            let id = id.or_else(|| partial.partial.id.clone());
+            let name = name.or_else(|| partial.partial.name.clone());
             upsert_captured_tool_call(capture, index);
             RunEvent::ToolCallUpdated {
                 index,

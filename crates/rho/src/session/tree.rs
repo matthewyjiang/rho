@@ -170,6 +170,13 @@ pub(crate) struct SessionTree {
 
 impl SessionTree {
     pub(crate) fn load(path: &Path) -> anyhow::Result<Self> {
+        Self::load_with_entry_visitor(path, |_| Ok(()))
+    }
+
+    pub(super) fn load_with_entry_visitor(
+        path: &Path,
+        mut visit: impl FnMut(&SessionEntry) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Self> {
         let file = fs::File::open(path)?;
         let mut reader = BufReader::new(file);
         let mut tree = Self::default();
@@ -192,6 +199,7 @@ impl SessionTree {
                 Err(error) if !terminated && error.is_eof() => break,
                 Err(error) => return Err(error.into()),
             };
+            visit(&entry)?;
             tree.apply_entry(
                 entry,
                 offset,
