@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.7.1...rho-agent-tools-v0.7.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **agents:** clarify foreground agent batch behavior ([#606](https://github.com/matthewyjiang/rho/issues/606)) ([9574e48](https://github.com/matthewyjiang/rho/commit/9574e4836a3c6e14eb28bc5863b8d2abc334e140))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.10.3 to 1.11.0
+
 ## [0.7.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.7.0...rho-agent-tools-v0.7.1) (2026-07-27)
 
 
