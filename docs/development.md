@@ -42,9 +42,15 @@ The full mode runs policy and script checks, Clippy for all targets and features
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
+## Test selection
+
+Before adding tests, use the gate in [`AGENTS.md`](../AGENTS.md): one distinct failure mode, one owner layer, and no duplicate coverage. Interactive TUI behavior defaults to a PTY scenario. Prefer table-driven unit tests for pure logic. Reject tests that only lock copy, restate defaults, or repeat the same branch at multiple layers.
+
+Pull requests that add tests should fill the test-gate section in the pull request template.
+
 ## Interactive TUI PTY harness
 
-Rho includes a deterministic PTY harness in `crates/rho-tui-pty` for automated interactive TUI tests. Prefer it over manual Herdr smoke tests for regressions that can be expressed as scripted scenarios.
+Rho includes a deterministic PTY harness in `crates/rho-tui-pty` for automated interactive TUI tests. Prefer it over manual Herdr smoke tests for regressions that can be expressed as scripted scenarios. PTY is the product gate for interactive behavior; unit tests under `crates/rho/src/tui` stay limited to pure logic.
 
 ### Layers
 
