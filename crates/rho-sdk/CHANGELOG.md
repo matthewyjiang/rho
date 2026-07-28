@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.10.3...rho-sdk-v1.11.0) (2026-07-28)
+
+
+### Features
+
+* **openai:** add fast mode ([#610](https://github.com/matthewyjiang/rho/issues/610)) ([8c5cd6d](https://github.com/matthewyjiang/rho/commit/8c5cd6d19e1758b85fc25c345769e49426f10ad0))
+
+
+### Performance Improvements
+
+* optimize orchestration and session hot paths ([#603](https://github.com/matthewyjiang/rho/issues/603)) ([62aa8f5](https://github.com/matthewyjiang/rho/commit/62aa8f50358fc82f1e6bef5bf0d2348fc6c0aaac))
+
 ## [1.10.3](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.10.2...rho-sdk-v1.10.3) (2026-07-27)
 
 

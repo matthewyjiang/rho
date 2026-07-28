@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.19.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.18.2...rho-coding-agent-v1.19.0) (2026-07-28)
+
+
+### Features
+
+* **auth:** add active auth mode switcher ([#609](https://github.com/matthewyjiang/rho/issues/609)) ([a2b0f68](https://github.com/matthewyjiang/rho/commit/a2b0f68f71033ca6f8594a35368a79b2388916ca))
+* **openai:** add fast mode ([#610](https://github.com/matthewyjiang/rho/issues/610)) ([8c5cd6d](https://github.com/matthewyjiang/rho/commit/8c5cd6d19e1758b85fc25c345769e49426f10ad0))
+* **providers:** add Ollama Cloud API provider ([#597](https://github.com/matthewyjiang/rho/issues/597)) ([f6a62dd](https://github.com/matthewyjiang/rho/commit/f6a62ddb8c77bae1f6ba386328b79db625ec1e5d))
+* **tui:** add composer prompt marker ([#614](https://github.com/matthewyjiang/rho/issues/614)) ([1994ff5](https://github.com/matthewyjiang/rho/commit/1994ff5280bf60fc4594d4a602fa8ab60c88f052))
+
+
+### Bug Fixes
+
+* **agents:** clarify foreground agent batch behavior ([#606](https://github.com/matthewyjiang/rho/issues/606)) ([9574e48](https://github.com/matthewyjiang/rho/commit/9574e4836a3c6e14eb28bc5863b8d2abc334e140))
+* **tui:** keep markdown list markers with long tokens ([#611](https://github.com/matthewyjiang/rho/issues/611)) ([90dafc9](https://github.com/matthewyjiang/rho/commit/90dafc9901cc75eefcf096011c463f6e7d9043d0))
+* **tui:** preserve newlines in multi-line tool header wrap ([#608](https://github.com/matthewyjiang/rho/issues/608)) ([1194088](https://github.com/matthewyjiang/rho/commit/11940882591bc4b2f752ae9456e9d1bb4de77e53))
+* **tui:** render command suggestions above composer ([#612](https://github.com/matthewyjiang/rho/issues/612)) ([9a81647](https://github.com/matthewyjiang/rho/commit/9a81647aace42ea97b461dcd17112dbd3f1a8459))
+* **tui:** show help shortcut descriptions ([#613](https://github.com/matthewyjiang/rho/issues/613)) ([3e8a034](https://github.com/matthewyjiang/rho/commit/3e8a034385e28c9cbc48ac973167eba9a92a9579))
+
+
+### Performance Improvements
+
+* optimize orchestration and session hot paths ([#603](https://github.com/matthewyjiang/rho/issues/603)) ([62aa8f5](https://github.com/matthewyjiang/rho/commit/62aa8f50358fc82f1e6bef5bf0d2348fc6c0aaac))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.10.3 to 1.11.0
+    * rho-providers bumped from 0.11.1 to 0.12.0
+
 ## [1.18.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.18.1...rho-coding-agent-v1.18.2) (2026-07-27)
 
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.11.1...rho-providers-v0.12.0) (2026-07-28)
+
+
+### Features
+
+* **auth:** add active auth mode switcher ([#609](https://github.com/matthewyjiang/rho/issues/609)) ([a2b0f68](https://github.com/matthewyjiang/rho/commit/a2b0f68f71033ca6f8594a35368a79b2388916ca))
+* **openai:** add fast mode ([#610](https://github.com/matthewyjiang/rho/issues/610)) ([8c5cd6d](https://github.com/matthewyjiang/rho/commit/8c5cd6d19e1758b85fc25c345769e49426f10ad0))
+* **providers:** add Ollama Cloud API provider ([#597](https://github.com/matthewyjiang/rho/issues/597)) ([f6a62dd](https://github.com/matthewyjiang/rho/commit/f6a62ddb8c77bae1f6ba386328b79db625ec1e5d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.10.3 to 1.11.0
+
 ## [0.11.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.11.0...rho-providers-v0.11.1) (2026-07-27)
 
 
