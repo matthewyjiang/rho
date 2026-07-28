@@ -220,6 +220,16 @@ impl App {
             .take(layout.composer.height as usize)
             .collect::<Vec<_>>();
         frame.render_widget(
+            Paragraph::new(
+                command_lines
+                    .into_iter()
+                    .take(layout.commands.height as usize)
+                    .collect::<Vec<_>>(),
+            )
+            .style(Style::default()),
+            layout.commands,
+        );
+        frame.render_widget(
             Paragraph::new(composer_visible).style(Style::default()),
             layout.composer,
         );
@@ -245,16 +255,6 @@ impl App {
             );
             frame.render_widget(line, row);
         }
-        frame.render_widget(
-            Paragraph::new(
-                command_lines
-                    .into_iter()
-                    .take(layout.commands.height as usize)
-                    .collect::<Vec<_>>(),
-            )
-            .style(Style::default()),
-            layout.commands,
-        );
         if let Some(notice) = &self.history.copy_notice() {
             render_copy_notice(frame, area, notice, now);
         }
@@ -378,6 +378,11 @@ impl App {
             lines.push(self.divider_line(width, /*shell_label*/ true));
         }
         lines.extend(
+            command_lines
+                .into_iter()
+                .take(layout.commands.height as usize),
+        );
+        lines.extend(
             composer_lines
                 .into_iter()
                 .skip(layout.composer_start)
@@ -391,11 +396,6 @@ impl App {
                 .iter()
                 .take(layout.statusline.height as usize)
                 .cloned(),
-        );
-        lines.extend(
-            command_lines
-                .into_iter()
-                .take(layout.commands.height as usize),
         );
 
         ActiveFrame { lines }

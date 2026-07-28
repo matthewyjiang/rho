@@ -876,7 +876,7 @@ fn long_input_keeps_statusline_and_cursor_visible() {
 }
 
 #[test]
-fn command_palette_anchors_last_suggestion_to_viewport_bottom() {
+fn command_palette_renders_above_composer_and_preserves_statusline() {
     let mut app = test_app();
     app.input_ui.set_text("/m".to_string());
     app.input_ui.set_cursor(2);
@@ -887,12 +887,17 @@ fn command_palette_anchors_last_suggestion_to_viewport_bottom() {
 
     terminal.draw(|frame| app.draw(frame)).unwrap();
 
-    let bottom = buffer_row_text(terminal.backend().buffer(), height.saturating_sub(1));
-    assert!(
-        bottom.contains("/model") || bottom.contains("/"),
-        "{bottom:?}"
-    );
-    assert!(!bottom.trim().is_empty(), "{bottom:?}");
+    let rows = (0..height)
+        .map(|row| buffer_row_text(terminal.backend().buffer(), row))
+        .collect::<Vec<_>>();
+    let suggestion_index = rows
+        .iter()
+        .position(|row| row.contains("> /model [model]"))
+        .unwrap();
+    let input_index = rows.iter().position(|row| row.trim_end() == "/m").unwrap();
+
+    assert_eq!(suggestion_index + 1, input_index, "{rows:#?}");
+    assert!(rows.last().unwrap().contains("low"), "{rows:#?}");
 }
 
 #[test]
@@ -979,6 +984,21 @@ fn file_palette_stays_inline_with_input_and_inserts_selected_path() {
         .join("\n");
     assert!(rendered.contains("> @src/lib.rs"), "{rendered}");
     assert!(rendered.contains("review @slr"), "{rendered}");
+
+    let lines = app
+        .active_lines(60)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let suggestion_index = lines
+        .iter()
+        .position(|line| line.contains("> @src/lib.rs"))
+        .unwrap();
+    let input_index = lines
+        .iter()
+        .position(|line| line.trim_end() == "review @slr")
+        .unwrap();
+    assert_eq!(suggestion_index + 1, input_index, "{lines:#?}");
 
     app.insert_selected_file_path("src/lib.rs");
     assert_eq!(app.input_ui.text(), "review @src/lib.rs ");
@@ -1073,30 +1093,6 @@ fn command_palette_rendering_shows_selected_match() {
 
     assert!(rendered.contains("> /model [model]"), "{rendered}");
     assert!(rendered.contains("show or switch model"), "{rendered}");
-}
-
-#[test]
-fn command_palette_renders_under_message_box() {
-    let mut app = test_app();
-    app.input_ui.set_text("/m".to_string());
-    app.input_ui.set_cursor(2);
-    app.clamp_command_selection();
-
-    let lines = app
-        .active_lines(60)
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>();
-    let input_index = lines
-        .iter()
-        .position(|line| line.trim_end() == "/m")
-        .unwrap();
-    let suggestion_index = lines
-        .iter()
-        .position(|line| line.contains("> /model [model]"))
-        .unwrap();
-
-    assert!(suggestion_index > input_index, "{lines:#?}");
 }
 
 #[test]

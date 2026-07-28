@@ -159,13 +159,13 @@ impl App {
         } else {
             Rect::new(area.x, y, area.width, 0)
         };
+        let commands = Rect::new(area.x, y, area.width, command_height as u16);
+        y = y.saturating_add(commands.height);
         let composer = Rect::new(area.x, y, area.width, visible_composer_len as u16);
         y = y.saturating_add(composer.height);
         let bottom_divider = Rect::new(area.x, y, area.width, bottom_divider_height as u16);
         y = y.saturating_add(bottom_divider.height);
         let statusline = Rect::new(area.x, y, area.width, statusline_height as u16);
-        y = y.saturating_add(statusline.height);
-        let commands = Rect::new(area.x, y, area.width, command_height as u16);
 
         ScreenLayout {
             history,
