@@ -41,14 +41,18 @@ impl App {
             Some(provider) => catalog::resolve_model_selection_for_provider(
                 &provider,
                 &resolved.model,
-                Some(current_auth),
-                &self.available_auths,
+                catalog::SelectionAuthContext {
+                    current: Some(current_auth),
+                    available: &self.available_auths,
+                },
             )?,
             None if alias.is_some() => catalog::resolve_model_selection_for_provider(
                 current_provider,
                 &resolved.model,
-                Some(current_auth),
-                &self.available_auths,
+                catalog::SelectionAuthContext {
+                    current: Some(current_auth),
+                    available: &self.available_auths,
+                },
             )?,
             None => catalog::resolve_model_selection_for_auths(
                 &resolved.model,

@@ -118,16 +118,22 @@ fn resolves_poolside_references_to_internal_model_id() {
         "poolside",
         vec![provider_model("poolside", "laguna-m.1")],
         || {
-            let clean =
-                resolve_model_selection_for_provider("poolside", "laguna-m.1", None, &[]).unwrap();
-            let legacy =
-                resolve_model_selection_for_provider("poolside", "poolside/laguna-m.1", None, &[])
-                    .unwrap();
+            let clean = resolve_model_selection_for_provider(
+                "poolside",
+                "laguna-m.1",
+                SelectionAuthContext::none(),
+            )
+            .unwrap();
+            let legacy = resolve_model_selection_for_provider(
+                "poolside",
+                "poolside/laguna-m.1",
+                SelectionAuthContext::none(),
+            )
+            .unwrap();
             let double = resolve_model_selection_for_provider(
                 "poolside",
                 "poolside/poolside/laguna-m.1",
-                None,
-                &[],
+                SelectionAuthContext::none(),
             )
             .unwrap();
 
@@ -147,8 +153,10 @@ fn provider_selection_prefers_credential_backed_auth_over_default() {
             let selection = resolve_model_selection_for_provider(
                 "ollama-cloud",
                 "glm-5.2",
-                None,
-                &["ollama-cloud-device".into()],
+                SelectionAuthContext {
+                    current: None,
+                    available: &["ollama-cloud-device".into()],
+                },
             )
             .unwrap();
 
@@ -176,8 +184,10 @@ fn provider_selection_keeps_current_auth_when_multiple_credentials_exist() {
             let selection = resolve_model_selection_for_provider(
                 "ollama-cloud",
                 "glm-5.2",
-                Some("ollama-cloud-device"),
-                &["ollama-cloud-api-key".into(), "ollama-cloud-device".into()],
+                SelectionAuthContext {
+                    current: Some("ollama-cloud-device"),
+                    available: &["ollama-cloud-api-key".into(), "ollama-cloud-device".into()],
+                },
             )
             .unwrap();
 
@@ -195,8 +205,10 @@ fn provider_selection_ignores_current_auth_from_another_provider() {
             let selection = resolve_model_selection_for_provider(
                 "ollama-cloud",
                 "glm-5.2",
-                Some("kimi-api-key"),
-                &["ollama-cloud-device".into()],
+                SelectionAuthContext {
+                    current: Some("kimi-api-key"),
+                    available: &["ollama-cloud-device".into()],
+                },
             )
             .unwrap();
 
@@ -211,8 +223,12 @@ fn provider_selection_uses_default_auth_when_no_credentials_available() {
         "ollama-cloud",
         vec![provider_model("ollama-cloud", "glm-5.2")],
         || {
-            let selection =
-                resolve_model_selection_for_provider("ollama-cloud", "glm-5.2", None, &[]).unwrap();
+            let selection = resolve_model_selection_for_provider(
+                "ollama-cloud",
+                "glm-5.2",
+                SelectionAuthContext::none(),
+            )
+            .unwrap();
 
             assert_eq!(selection.auth, "ollama-cloud-api-key");
         },
@@ -228,8 +244,10 @@ fn provider_selection_prefers_api_key_when_it_is_the_available_mode() {
             let selection = resolve_model_selection_for_provider(
                 "ollama-cloud",
                 "glm-5.2",
-                None,
-                &["ollama-cloud-api-key".into()],
+                SelectionAuthContext {
+                    current: None,
+                    available: &["ollama-cloud-api-key".into()],
+                },
             )
             .unwrap();
 

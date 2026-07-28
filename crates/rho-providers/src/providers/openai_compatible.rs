@@ -35,10 +35,7 @@ pub(crate) struct OpenAiCompatibleProvider {
     dialect: OpenAiCompatibleDialect,
     auth: CompatibleAuth,
     api_base: String,
-    standard_reasoning: Option<reasoning::StandardReasoningProfile>,
-    openrouter_reasoning: Option<reasoning::OpenRouterReasoningProfile>,
-    moonshot_reasoning: Option<reasoning::MoonshotReasoningProfile>,
-    kimi_reasoning: Option<reasoning::KimiReasoningProfile>,
+    reasoning: reasoning::DialectReasoning,
 }
 
 impl OpenAiCompatibleProvider {
@@ -50,27 +47,7 @@ impl OpenAiCompatibleProvider {
         auth: CompatibleAuth,
         api_base: String,
     ) -> Self {
-        let standard_reasoning = (dialect == OpenAiCompatibleDialect::Standard).then(|| {
-            reasoning::StandardReasoningProfile::from_metadata(
-                crate::model::models_dev::current_model_metadata(provider, &model),
-            )
-        });
-        let openrouter_reasoning = (dialect == OpenAiCompatibleDialect::OpenRouter).then(|| {
-            reasoning::OpenRouterReasoningProfile::from_metadata(
-                crate::model::models_dev::current_model_metadata(provider, &model),
-            )
-        });
-        let moonshot_reasoning = (dialect == OpenAiCompatibleDialect::Moonshot).then(|| {
-            reasoning::MoonshotReasoningProfile::from_metadata(
-                &model,
-                crate::model::models_dev::current_model_metadata(provider, &model),
-            )
-        });
-        let kimi_reasoning = (dialect == OpenAiCompatibleDialect::KimiCode).then(|| {
-            reasoning::KimiReasoningProfile::new(
-                crate::model::models_dev::current_reasoning_capabilities(provider, &model),
-            )
-        });
+        let reasoning = reasoning::DialectReasoning::new(dialect, provider, &model);
         Self {
             client,
             provider,
@@ -78,10 +55,7 @@ impl OpenAiCompatibleProvider {
             dialect,
             auth,
             api_base,
-            standard_reasoning,
-            openrouter_reasoning,
-            moonshot_reasoning,
-            kimi_reasoning,
+            reasoning,
         }
     }
 
@@ -180,14 +154,7 @@ impl OpenAiCompatibleProvider {
             .map(|tool| self.dialect.normalize_tool(tool))
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
-        let reasoning_fields = self.dialect.reasoning_fields(
-            self.standard_reasoning.as_ref(),
-            self.openrouter_reasoning.as_ref(),
-            self.moonshot_reasoning.as_ref(),
-            self.kimi_reasoning.as_ref(),
-            &self.model,
-            request.reasoning_level,
-        );
+        let reasoning_fields = self.reasoning.fields(&self.model, request.reasoning_level);
         let wire_model = crate::provider::provider_descriptor(self.provider)
             .map(|descriptor| descriptor.wire_model_id(&self.model))
             .unwrap_or_else(|| self.model.clone());

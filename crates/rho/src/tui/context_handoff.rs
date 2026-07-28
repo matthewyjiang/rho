@@ -437,8 +437,10 @@ impl App {
         let selection = catalog::resolve_model_selection_for_provider(
             &identity.provider,
             &identity.model,
-            Some(&self.info.runtime.auth),
-            &self.available_auths,
+            catalog::SelectionAuthContext {
+                current: Some(&self.info.runtime.auth),
+                available: &self.available_auths,
+            },
         )
         .ok()?;
         if !self

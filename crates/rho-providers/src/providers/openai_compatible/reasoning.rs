@@ -14,19 +14,104 @@ pub(super) struct ReasoningFields {
     pub(super) chat_template_kwargs: Option<ChatTemplateKwargs>,
 }
 
-/// Metadata-driven `reasoning_effort` for Ollama Cloud and other Standard dialect hosts.
+/// Per-dialect reasoning policy, paired with the profile that dialect needs.
 ///
-/// Ollama auto-enables thinking when the field is omitted, so Off must serialize as `"none"`.
-pub(super) struct StandardReasoningProfile {
-    capabilities: ReasoningCapabilities,
+/// Construction is keyed by [`OpenAiCompatibleDialect`], so a provider can
+/// never hold a profile that does not match its dialect.
+pub(super) enum DialectReasoning {
+    /// Metadata-driven `reasoning_effort` for Ollama Cloud and other Standard
+    /// dialect hosts. Ollama auto-enables thinking when the field is omitted,
+    /// so Off must serialize as `"none"`.
+    Standard(EffortProfile),
+    Poolside,
+    OpenRouter(EffortProfile),
+    Moonshot(MoonshotReasoningProfile),
+    KimiCode(KimiReasoningProfile),
 }
 
-impl StandardReasoningProfile {
-    pub(super) fn from_metadata(metadata: Option<ModelMetadata>) -> Self {
+impl DialectReasoning {
+    pub(super) fn new(
+        dialect: OpenAiCompatibleDialect,
+        provider: &'static str,
+        model: &str,
+    ) -> Self {
+        let metadata = || crate::model::models_dev::current_model_metadata(provider, model);
+        match dialect {
+            OpenAiCompatibleDialect::Standard => {
+                Self::Standard(EffortProfile::omit_when_unknown(metadata()))
+            }
+            OpenAiCompatibleDialect::Poolside => Self::Poolside,
+            OpenAiCompatibleDialect::OpenRouter => {
+                Self::OpenRouter(EffortProfile::send_when_unknown(metadata()))
+            }
+            OpenAiCompatibleDialect::Moonshot => {
+                Self::Moonshot(MoonshotReasoningProfile::from_metadata(model, metadata()))
+            }
+            OpenAiCompatibleDialect::KimiCode => Self::KimiCode(KimiReasoningProfile::new(
+                crate::model::models_dev::current_reasoning_capabilities(provider, model),
+            )),
+        }
+    }
+
+    pub(super) fn fields(&self, model: &str, reasoning: ReasoningLevel) -> ReasoningFields {
+        match self {
+            Self::Standard(profile) => ReasoningFields {
+                reasoning_effort: profile.effort(reasoning).map(str::to_string),
+                ..Default::default()
+            },
+            Self::Poolside => ReasoningFields {
+                chat_template_kwargs: (reasoning == ReasoningLevel::Off).then_some(
+                    ChatTemplateKwargs {
+                        enable_thinking: false,
+                    },
+                ),
+                ..Default::default()
+            },
+            Self::OpenRouter(profile) => ReasoningFields {
+                reasoning: profile.effort(reasoning).map(|effort| OpenAiReasoning {
+                    effort: effort.to_string(),
+                }),
+                ..Default::default()
+            },
+            Self::Moonshot(profile) => ReasoningFields {
+                reasoning_effort: profile.effort(reasoning).map(str::to_string),
+                ..Default::default()
+            },
+            Self::KimiCode(profile) => kimi_code_reasoning_fields(profile, model, reasoning),
+        }
+    }
+}
+
+/// Metadata-driven effort selection for dialects that speak level names on the
+/// wire, with an explicit policy for models whose capabilities are unknown.
+pub(super) struct EffortProfile {
+    capabilities: ReasoningCapabilities,
+    when_unknown: UnknownCapabilities,
+}
+
+/// What to serialize when a model's reasoning capabilities are unknown.
+enum UnknownCapabilities {
+    /// Omit the field so the host applies its own default.
+    Omit,
+    /// Send the requested level unchanged.
+    SendRequested,
+}
+
+impl EffortProfile {
+    pub(super) fn omit_when_unknown(metadata: Option<ModelMetadata>) -> Self {
+        Self::from_metadata(metadata, UnknownCapabilities::Omit)
+    }
+
+    pub(super) fn send_when_unknown(metadata: Option<ModelMetadata>) -> Self {
+        Self::from_metadata(metadata, UnknownCapabilities::SendRequested)
+    }
+
+    fn from_metadata(metadata: Option<ModelMetadata>, when_unknown: UnknownCapabilities) -> Self {
         Self {
             capabilities: metadata
                 .map(|metadata| metadata.reasoning_capabilities())
                 .unwrap_or_default(),
+            when_unknown,
         }
     }
 
@@ -38,31 +123,7 @@ impl StandardReasoningProfile {
             capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
                 levels.into_iter().collect(),
             )),
-        }
-    }
-
-    fn effort(&self, requested: ReasoningLevel) -> Option<&'static str> {
-        match &self.capabilities {
-            ReasoningCapabilities::NotConfigurable | ReasoningCapabilities::Unknown => None,
-            ReasoningCapabilities::Levels(_) => self
-                .capabilities
-                .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
-                .effective()
-                .map(effort_or_none),
-        }
-    }
-}
-
-pub(super) struct OpenRouterReasoningProfile {
-    capabilities: ReasoningCapabilities,
-}
-
-impl OpenRouterReasoningProfile {
-    pub(super) fn from_metadata(metadata: Option<ModelMetadata>) -> Self {
-        Self {
-            capabilities: metadata
-                .map(|metadata| metadata.reasoning_capabilities())
-                .unwrap_or_default(),
+            when_unknown: UnknownCapabilities::Omit,
         }
     }
 
@@ -70,13 +131,17 @@ impl OpenRouterReasoningProfile {
     pub(super) fn not_configurable() -> Self {
         Self {
             capabilities: ReasoningCapabilities::NotConfigurable,
+            when_unknown: UnknownCapabilities::Omit,
         }
     }
 
     fn effort(&self, requested: ReasoningLevel) -> Option<&'static str> {
         match &self.capabilities {
             ReasoningCapabilities::NotConfigurable => None,
-            ReasoningCapabilities::Unknown => Some(effort_or_none(requested)),
+            ReasoningCapabilities::Unknown => match self.when_unknown {
+                UnknownCapabilities::Omit => None,
+                UnknownCapabilities::SendRequested => Some(effort_or_none(requested)),
+            },
             ReasoningCapabilities::Levels(_) => self
                 .capabilities
                 .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
@@ -152,59 +217,15 @@ impl KimiReasoningProfile {
     }
 }
 
-impl OpenAiCompatibleDialect {
-    pub(super) fn reasoning_fields(
-        self,
-        standard: Option<&StandardReasoningProfile>,
-        openrouter: Option<&OpenRouterReasoningProfile>,
-        moonshot: Option<&MoonshotReasoningProfile>,
-        kimi: Option<&KimiReasoningProfile>,
-        model: &str,
-        reasoning: ReasoningLevel,
-    ) -> ReasoningFields {
-        match self {
-            Self::Standard => ReasoningFields {
-                reasoning_effort: standard
-                    .and_then(|profile| profile.effort(reasoning))
-                    .map(str::to_string),
-                ..Default::default()
-            },
-            Self::Poolside => ReasoningFields {
-                chat_template_kwargs: (reasoning == ReasoningLevel::Off).then_some(
-                    ChatTemplateKwargs {
-                        enable_thinking: false,
-                    },
-                ),
-                ..Default::default()
-            },
-            Self::OpenRouter => ReasoningFields {
-                reasoning: openrouter
-                    .and_then(|profile| profile.effort(reasoning))
-                    .map(|effort| OpenAiReasoning {
-                        effort: effort.to_string(),
-                    }),
-                ..Default::default()
-            },
-            Self::Moonshot => ReasoningFields {
-                reasoning_effort: moonshot
-                    .and_then(|profile| profile.effort(reasoning))
-                    .map(str::to_string),
-                ..Default::default()
-            },
-            Self::KimiCode => kimi_code_reasoning_fields(kimi, model, reasoning),
-        }
-    }
-}
-
 fn kimi_code_reasoning_fields(
-    profile: Option<&KimiReasoningProfile>,
+    profile: &KimiReasoningProfile,
     model: &str,
     reasoning: ReasoningLevel,
 ) -> ReasoningFields {
     if model != "k3" {
         return Default::default();
     }
-    let Some(reasoning) = profile.and_then(|profile| profile.effective(reasoning)) else {
+    let Some(reasoning) = profile.effective(reasoning) else {
         return Default::default();
     };
     ReasoningFields {

@@ -63,11 +63,12 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
         CompatibleAuth::ApiKey("moonshot-secret".into()),
         api_base,
     );
-    provider.moonshot_reasoning = Some(reasoning::MoonshotReasoningProfile::exact([
-        crate::reasoning::ReasoningLevel::Off,
-        crate::reasoning::ReasoningLevel::Low,
-        crate::reasoning::ReasoningLevel::Max,
-    ]));
+    provider.reasoning =
+        reasoning::DialectReasoning::Moonshot(reasoning::MoonshotReasoningProfile::exact([
+            crate::reasoning::ReasoningLevel::Off,
+            crate::reasoning::ReasoningLevel::Low,
+            crate::reasoning::ReasoningLevel::Max,
+        ]));
     let tool = sample_tool();
     let response = provider
         .complete_turn(ModelRequest {
@@ -180,9 +181,9 @@ fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
         CompatibleAuth::ApiKey("secret".into()),
         "https://example.com".into(),
     );
-    provider.kimi_reasoning = Some(reasoning::KimiReasoningProfile::new(
-        ReasoningCapabilities::Unknown,
-    ));
+    provider.reasoning = reasoning::DialectReasoning::KimiCode(
+        reasoning::KimiReasoningProfile::new(ReasoningCapabilities::Unknown),
+    );
     let messages = [Message::user_text("hello")];
     let request = provider
         .request_body(
@@ -309,15 +310,9 @@ fn moonshot_exact_metadata_drives_top_level_reasoning_effort() {
 
 #[test]
 fn openrouter_omits_reasoning_for_non_configurable_models() {
-    let profile = reasoning::OpenRouterReasoningProfile::not_configurable();
-    let fields = OpenAiCompatibleDialect::OpenRouter.reasoning_fields(
-        None,
-        Some(&profile),
-        None,
-        None,
-        "fixed-model",
-        crate::reasoning::ReasoningLevel::High,
-    );
+    let profile =
+        reasoning::DialectReasoning::OpenRouter(reasoning::EffortProfile::not_configurable());
+    let fields = profile.fields("fixed-model", crate::reasoning::ReasoningLevel::High);
 
     assert!(fields.reasoning.is_none());
 }
@@ -367,7 +362,7 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
         CompatibleAuth::ApiKey("secret".into()),
         "https://ollama.com/v1".into(),
     );
-    provider.standard_reasoning = Some(reasoning::StandardReasoningProfile::levels([
+    provider.reasoning = reasoning::DialectReasoning::Standard(reasoning::EffortProfile::levels([
         crate::reasoning::ReasoningLevel::Off,
         crate::reasoning::ReasoningLevel::High,
         crate::reasoning::ReasoningLevel::Max,
@@ -459,12 +454,13 @@ fn request_body(
         "https://example.com".into(),
     );
     if dialect == OpenAiCompatibleDialect::Moonshot {
-        provider.moonshot_reasoning = Some(reasoning::MoonshotReasoningProfile::exact([
-            crate::reasoning::ReasoningLevel::Off,
-            crate::reasoning::ReasoningLevel::Low,
-            crate::reasoning::ReasoningLevel::High,
-            crate::reasoning::ReasoningLevel::Max,
-        ]));
+        provider.reasoning =
+            reasoning::DialectReasoning::Moonshot(reasoning::MoonshotReasoningProfile::exact([
+                crate::reasoning::ReasoningLevel::Off,
+                crate::reasoning::ReasoningLevel::Low,
+                crate::reasoning::ReasoningLevel::High,
+                crate::reasoning::ReasoningLevel::Max,
+            ]));
     }
     let messages = [Message::user_text("hello")];
     let request = provider
