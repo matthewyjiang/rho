@@ -137,7 +137,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                self.history.clear_text_selection();
+                self.clear_selections();
                 self.subagent_panel.clear_pointer_state();
                 self.handle_key(key, terminal, agent).await?;
             }
@@ -150,7 +150,7 @@ impl App {
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
                 self.clamp_overlay_detail_scroll(terminal);
-                self.history.clear_text_selection();
+                self.clear_selections();
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();
                 self.hide_history_scrollbar();

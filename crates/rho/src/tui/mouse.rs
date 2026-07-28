@@ -6,12 +6,18 @@ use ratatui::{backend::Backend, layout::Rect, Terminal};
 use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
     render::tool_entry_lines,
-    text_selection::{CopyNotice, TextSelection},
+    text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_output_ui::{expandable_tool_entry, tool_output_toggleable},
     App, ComposerMode,
 };
 
 impl App {
+    /// Drops both the history-anchored and screen-space text selections.
+    pub(super) fn clear_selections(&mut self) {
+        self.history.clear_text_selection();
+        self.screen_selection = None;
+    }
+
     fn mouse_history_view(&self, history_content: Rect, history_len: usize) -> (Rect, usize) {
         let (history_start, _) =
             self.visible_history_window(history_len, history_content.height as usize);
@@ -31,6 +37,7 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
+                self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
@@ -43,6 +50,7 @@ impl App {
                 );
             }
             MouseEventKind::ScrollDown => {
+                self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
@@ -55,6 +63,7 @@ impl App {
                 );
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                self.screen_selection = None;
                 let layout = self.screen_layout(Rect::new(0, 0, size.width, size.height), now);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
@@ -108,6 +117,9 @@ impl App {
                 } else {
                     self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
+                    let screen = Rect::new(0, 0, size.width, size.height);
+                    self.screen_selection =
+                        selection_position_clamped(screen, 0, column, row).map(TextSelection::new);
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
@@ -119,6 +131,14 @@ impl App {
                     self.history.set_hovered_code_block_copy(None);
                     if let Some(scrollbar) = layout.history_scrollbar {
                         self.history.scroll_chrome_mut().drag_to(scrollbar, row);
+                    }
+                } else if self.screen_selection.is_some() {
+                    let screen = Rect::new(0, 0, size.width, size.height);
+                    if let (Some(selection), Some(position)) = (
+                        self.screen_selection.as_mut(),
+                        selection_position_clamped(screen, 0, column, row),
+                    ) {
+                        selection.update(position);
                     }
                 } else {
                     let (history, history_start) =
@@ -190,6 +210,22 @@ impl App {
                         let line =
                             history_start.saturating_add(row.saturating_sub(history.y) as usize);
                         self.toggle_tool_output_at_history_line(line, width, terminal)?;
+                    }
+                } else if let Some(mut selection) = self.screen_selection.take() {
+                    let screen = Rect::new(0, 0, size.width, size.height);
+                    if let Some(position) = selection_position_clamped(screen, 0, column, row) {
+                        selection.update(position);
+                    }
+                    if selection.has_moved() {
+                        // Redraw so the completed frame holds the text the
+                        // selection was made over; the terminal's current
+                        // buffer is the cleared back buffer after a draw.
+                        let completed = terminal.draw(|frame| self.draw(frame))?;
+                        let lines = screen_lines(completed.buffer, screen);
+                        if let Some(text) = selection.selected_text(&lines, 0) {
+                            self.copy_text(&text, now);
+                            self.screen_selection = Some(selection);
+                        }
                     }
                 }
             }

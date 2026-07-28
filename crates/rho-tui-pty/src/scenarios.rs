@@ -26,7 +26,7 @@ use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
-use text_selection::TEXT_SELECTION_DRAG_STEPS;
+use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 
 use anyhow::Result;
 
@@ -877,6 +877,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Update the drag selection highlight before the mouse button is released",
         DEFAULT_SIZE,
         TEXT_SELECTION_DRAG_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "screen_text_selection",
+        "Drag over composer text outside the history area and copy it",
+        DEFAULT_SIZE,
+        SCREEN_TEXT_SELECTION_STEPS,
         false,
     ),
     Scenario::new(

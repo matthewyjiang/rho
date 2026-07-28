@@ -489,6 +489,11 @@ fn text_selection_highlight_follows_drag_before_release() {
 }
 
 #[test]
+fn screen_text_selection_copies_composer_text() {
+    assert_pass("screen_text_selection");
+}
+
+#[test]
 fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
 }
