@@ -8,11 +8,12 @@ use ratatui::{
 use super::{
     approval_lines, char_prefix_display_width,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
-    config_number_input_lines, config_text_input_lines, display_width, file_picker,
+    config_number_input_lines, display_width, file_picker,
     inline_choice::inline_choice_lines,
     inline_shell, input_cursor_position, input_image_lines, input_lines, labeled_divider_line,
     login::{interactive_pending_lines, secret_input_lines},
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
+    text_input::text_input_lines,
     truncate_one_line, App, ComposerMode, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
     MIN_COMMAND_DESCRIPTION_WIDTH,
 };
@@ -37,7 +38,7 @@ impl App {
             | ComposerMode::InlineChoice(_) => (Theme::input_prompt(), None),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::TextInput(_)
             | ComposerMode::InteractivePending(_) => (Theme::dim(), None),
         };
         if let Some(labels) = labels {
@@ -79,7 +80,7 @@ impl App {
             ComposerMode::Picker(picker) => picker_lines(picker, width),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
-            ComposerMode::ConfigTextInput(input) => config_text_input_lines(input, width),
+            ComposerMode::TextInput(input) => text_input_lines(input, width),
             ComposerMode::InteractivePending(target) => interactive_pending_lines(target, width),
             ComposerMode::InlineChoice(modal) => inline_choice_lines(&modal.choice, width),
             ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
@@ -112,8 +113,9 @@ impl App {
                 x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
                 y: 1,
             },
-            ComposerMode::ConfigTextInput(input) => Position {
-                x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1)) as u16,
+            ComposerMode::TextInput(input) => Position {
+                x: char_prefix_display_width(&input.editor.value, input.editor.cursor)
+                    .min(width.max(1)) as u16,
                 y: 1,
             },
             ComposerMode::Questionnaire(questionnaire) => {

@@ -22,6 +22,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                     tone: PickerBadgeTone::Internal,
                 }),
                 value: "explorer".into(),
+                selection_verb: None,
             },
             PickerItem {
                 section: None,
@@ -30,6 +31,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 preview: None,
                 badge: None,
                 value: "worker".into(),
+                selection_verb: None,
             },
         ],
         PickerAction::ViewAgent,

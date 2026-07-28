@@ -48,6 +48,7 @@ fn session_item(session: SessionSummary) -> PickerItem {
         preview,
         badge: None,
         value: session.id,
+        selection_verb: None,
     }
 }
 

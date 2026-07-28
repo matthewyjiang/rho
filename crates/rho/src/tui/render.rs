@@ -185,7 +185,8 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         | super::PickerAction::SwitchAuthMode
         | super::PickerAction::RefreshModelList
         | super::PickerAction::InsertSkillCommand
-        | super::PickerAction::ViewAgent => 30,
+        | super::PickerAction::ViewAgent
+        | super::PickerAction::EditAgent => 30,
     };
     let reserved_preview_width = width.saturating_sub(18);
     let available_width = if reserved_preview_width >= 12 {
@@ -279,7 +280,7 @@ fn picker_footer_text(picker: &UiPicker) -> String {
 
 pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
-        PickerBadgeTone::Internal => Theme::accent(),
+        PickerBadgeTone::Internal | PickerBadgeTone::Editable => Theme::accent(),
         PickerBadgeTone::Selected => Theme::warning(),
         PickerBadgeTone::Favorite | PickerBadgeTone::Healthy => Theme::success(),
         PickerBadgeTone::Warning => Theme::warning(),

@@ -28,7 +28,7 @@ impl App {
             ComposerMode::Questionnaire(_) => self.handle_questionnaire_key(key),
             ComposerMode::SecretInput(_) => self.handle_secret_key(key, terminal, agent).await,
             ComposerMode::ConfigNumberInput(_) => self.handle_config_number_key(key, terminal),
-            ComposerMode::ConfigTextInput(_) => self.handle_config_text_key(key),
+            ComposerMode::TextInput(_) => self.handle_text_input_key(key),
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
             // Approvals are handled on the during-turn path, not idle input.
             ComposerMode::Approval(_) => Ok(false),

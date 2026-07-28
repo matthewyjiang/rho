@@ -49,8 +49,34 @@ pub struct Scenario {
     pub id: &'static str,
     pub description: &'static str,
     pub size: PtySize,
+    pub setup: Option<fn(&IsolatedHome) -> Result<()>>,
     pub steps: &'static [Step],
     pub smoke: bool,
+}
+
+impl Scenario {
+    /// Builds a scenario with no home setup hook.
+    pub const fn new(
+        id: &'static str,
+        description: &'static str,
+        size: PtySize,
+        steps: &'static [Step],
+        smoke: bool,
+    ) -> Self {
+        Self {
+            id,
+            description,
+            size,
+            setup: None,
+            steps,
+            smoke,
+        }
+    }
+
+    pub const fn with_setup(mut self, setup: fn(&IsolatedHome) -> Result<()>) -> Self {
+        self.setup = Some(setup);
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +121,9 @@ impl ScenarioRunner {
 
     pub fn run(&self, scenario: &Scenario) -> Result<ScenarioOutcome> {
         let home = IsolatedHome::new()?;
+        if let Some(setup) = scenario.setup {
+            setup(&home)?;
+        }
         let plan = RhoLaunchPlan::matrix(&self.binary, &home, scenario.size);
         let mut harness = PtyHarness::spawn_named(&plan, scenario.id)?;
         harness.enable_timing(self.record_timing);

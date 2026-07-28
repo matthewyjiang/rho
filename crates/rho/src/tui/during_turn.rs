@@ -77,7 +77,7 @@ impl App {
         if self.handle_running_config_number_key(key, terminal)? {
             return Ok(false);
         }
-        if self.handle_running_config_text_key(key)? {
+        if self.handle_running_text_input_key(key)? {
             return Ok(false);
         }
         if self.handle_running_picker_key(key, terminal)? {
@@ -485,12 +485,11 @@ impl App {
             PickerAction::Dismiss | PickerAction::ViewAgent => {
                 self.status = "running".into();
             }
-            PickerAction::SelectInternalAgentModel => {
+            PickerAction::SelectInternalAgentModel | PickerAction::EditAgent => {
                 self.insert_entry(&Entry::Notice(
-                    "internal agent model changes are unavailable while a model turn is running"
-                        .into(),
+                    "agent editing is unavailable while a model turn is running".into(),
                 ));
-                self.status = "internal agent model change unavailable while running".into();
+                self.status = "agent editing unavailable while running".into();
             }
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
@@ -654,11 +653,11 @@ impl App {
         self.handle_config_number_key(key, terminal)
     }
 
-    pub(super) fn handle_running_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::ConfigTextInput(_)) {
+    pub(super) fn handle_running_text_input_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+        if !matches!(self.input_ui.composer(), ComposerMode::TextInput(_)) {
             return Ok(false);
         }
-        self.handle_config_text_key(key)
+        self.handle_text_input_key(key)
     }
 
     pub(super) fn next_running_frame_deadline(

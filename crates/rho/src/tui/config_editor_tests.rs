@@ -1,4 +1,6 @@
 use super::*;
+use crate::tui::line_editor::LineEditor;
+use crate::tui::text_input::{TextInput, TextInputTarget};
 
 #[test]
 fn number_input_accepts_only_ascii_digits() {
@@ -12,29 +14,33 @@ fn number_input_accepts_only_ascii_digits() {
 
 #[test]
 fn text_input_strips_line_breaks_and_edits_at_character_cursor() {
-    let mut input = ConfigTextInput::new(ConfigTextKey::Exa, Some("aé".into()));
-    input.cursor = 1;
+    let mut input = TextInput::config_api_key(ConfigTextKey::Exa, Some("aé".into()));
+    input.editor.cursor = 1;
 
-    input.insert_text("x\ny\r");
-    input.delete();
+    input.editor.insert_text("x\ny\r");
+    input.editor.delete();
 
-    assert_eq!(input.value, "axy");
-    assert_eq!(input.cursor, 3);
+    assert_eq!(input.editor.value, "axy");
+    assert_eq!(input.editor.cursor, 3);
+    assert!(matches!(
+        input.target,
+        TextInputTarget::ConfigApiKey(ConfigTextKey::Exa)
+    ));
 }
 
 #[test]
 fn editor_cursor_navigation_is_unicode_safe() {
-    let mut input = ConfigTextInput::new(ConfigTextKey::Brave, Some("aéz".into()));
+    let mut editor = LineEditor::new("aéz");
 
-    input.move_cursor_left();
-    input.backspace();
-    input.move_cursor_home();
-    input.move_cursor_right();
-    input.insert_char('x');
-    input.move_cursor_end();
+    editor.move_cursor_left();
+    editor.backspace();
+    editor.move_cursor_home();
+    editor.move_cursor_right();
+    editor.insert_char('x');
+    editor.move_cursor_end();
 
-    assert_eq!(input.value, "axz");
-    assert_eq!(input.cursor, 3);
+    assert_eq!(editor.value, "axz");
+    assert_eq!(editor.cursor, 3);
 }
 
 #[test]

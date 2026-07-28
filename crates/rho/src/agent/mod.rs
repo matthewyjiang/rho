@@ -5,16 +5,20 @@
 
 mod catalog;
 mod definition;
+mod edit;
 mod internal;
 mod one_shot;
 mod parser;
+mod serializer;
 
 pub(crate) use catalog::*;
 pub(crate) use definition::*;
+pub(crate) use edit::{save_definition, SaveDefinitionError};
 pub(crate) use internal::*;
 pub(crate) use one_shot::*;
-#[cfg(test)]
-pub(crate) use parser::parse_definition;
+pub(crate) use parser::{parse_definition, parse_tools_list_text};
+pub(crate) use rho_providers::reasoning::ReasoningLevel;
+pub(crate) use serializer::serialize_definition;
 
 #[cfg(test)]
 #[path = "agent_tests.rs"]

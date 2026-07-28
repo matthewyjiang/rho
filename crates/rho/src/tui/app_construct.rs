@@ -84,6 +84,7 @@ impl App {
             pending_update_notice,
             pending_model_selection: None,
             internal_agent_model_target: None,
+            agent_editor_session: None,
             pending_session_title: None,
             clipboard: Box::new(SystemClipboard::default()),
             pending_subagent_attaches: Vec::new(),

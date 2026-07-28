@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
-    config_editor::{ConfigNumberInput, ConfigNumberSave, ConfigTextInput},
+    config_editor::{ConfigNumberInput, ConfigNumberSave},
     config_picker, App, ComposerMode, Entry, InteractiveRuntime,
 };
 
@@ -198,18 +198,54 @@ impl App {
         }
     }
 
-    pub(super) fn handle_config_text_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::ConfigTextInput(_)) {
+    pub(super) fn handle_text_input_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+        if !matches!(self.input_ui.composer(), ComposerMode::TextInput(_)) {
             return Ok(false);
         }
 
         match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                let ComposerMode::ConfigTextInput(input) = self.input_ui.composer() else {
-                    return Ok(true);
-                };
-                let key = input.key;
-                let save_result = input.save(self.credential_store.as_ref());
+            (KeyModifiers::NONE, KeyCode::Enter) => self.commit_text_input(),
+            (KeyModifiers::NONE, KeyCode::Backspace) => {
+                self.with_text_input_mut(|input| input.editor.backspace());
+                Ok(true)
+            }
+            (KeyModifiers::NONE, KeyCode::Delete) => {
+                self.with_text_input_mut(|input| input.editor.delete());
+                Ok(true)
+            }
+            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
+                self.with_text_input_mut(|input| input.editor.insert_char(ch));
+                Ok(true)
+            }
+            (_, KeyCode::Left) => {
+                self.with_text_input_mut(|input| input.editor.move_cursor_left());
+                Ok(true)
+            }
+            (_, KeyCode::Right) => {
+                self.with_text_input_mut(|input| input.editor.move_cursor_right());
+                Ok(true)
+            }
+            (_, KeyCode::Home) => {
+                self.with_text_input_mut(|input| input.editor.move_cursor_home());
+                Ok(true)
+            }
+            (_, KeyCode::End) => {
+                self.with_text_input_mut(|input| input.editor.move_cursor_end());
+                Ok(true)
+            }
+            (_, KeyCode::Esc) => self.cancel_text_input(),
+            _ => Ok(true),
+        }
+    }
+
+    fn commit_text_input(&mut self) -> anyhow::Result<bool> {
+        let ComposerMode::TextInput(input) = self.input_ui.composer() else {
+            return Ok(true);
+        };
+        match input.target {
+            super::text_input::TextInputTarget::ConfigApiKey(key) => {
+                let value = input.editor.value.clone();
+                let save_result = save_config_api_key(self.credential_store.as_ref(), key, &value);
                 match save_result {
                     Ok(()) => {
                         self.refresh_web_search_config_picker(key.picker_value())?;
@@ -223,46 +259,29 @@ impl App {
                         self.status = "config save failed".into();
                     }
                 }
-                Ok(true)
             }
-            (KeyModifiers::NONE, KeyCode::Backspace) => {
-                self.with_config_text_mut(ConfigTextInput::backspace);
-                Ok(true)
+            super::text_input::TextInputTarget::AgentField(field) => {
+                let value = input.editor.value.clone();
+                self.commit_agent_text_input(field, value)?;
             }
-            (KeyModifiers::NONE, KeyCode::Delete) => {
-                self.with_config_text_mut(ConfigTextInput::delete);
-                Ok(true)
-            }
-            (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                self.with_config_text_mut(|input| input.insert_char(ch));
-                Ok(true)
-            }
-            (_, KeyCode::Left) => {
-                self.with_config_text_mut(ConfigTextInput::move_cursor_left);
-                Ok(true)
-            }
-            (_, KeyCode::Right) => {
-                self.with_config_text_mut(ConfigTextInput::move_cursor_right);
-                Ok(true)
-            }
-            (_, KeyCode::Home) => {
-                self.with_config_text_mut(ConfigTextInput::move_cursor_home);
-                Ok(true)
-            }
-            (_, KeyCode::End) => {
-                self.with_config_text_mut(ConfigTextInput::move_cursor_end);
-                Ok(true)
-            }
-            (_, KeyCode::Esc) => {
-                let ComposerMode::ConfigTextInput(input) = self.input_ui.composer() else {
-                    return Ok(true);
-                };
-                self.refresh_web_search_config_picker(input.key.picker_value())?;
-                self.status = "web search config".into();
-                Ok(true)
-            }
-            _ => Ok(true),
         }
+        Ok(true)
+    }
+
+    fn cancel_text_input(&mut self) -> anyhow::Result<bool> {
+        let ComposerMode::TextInput(input) = self.input_ui.composer() else {
+            return Ok(true);
+        };
+        match input.target {
+            super::text_input::TextInputTarget::ConfigApiKey(key) => {
+                self.refresh_web_search_config_picker(key.picker_value())?;
+                self.status = "web search config".into();
+            }
+            super::text_input::TextInputTarget::AgentField(field) => {
+                self.reopen_agent_field_picker(field.value());
+            }
+        }
+        Ok(true)
     }
 
     pub(super) fn handle_reasoning_cycle_key(
@@ -308,9 +327,24 @@ impl App {
         }
     }
 
-    fn with_config_text_mut(&mut self, f: impl FnOnce(&mut ConfigTextInput)) {
-        if let ComposerMode::ConfigTextInput(input) = self.input_ui.composer_mut() {
+    fn with_text_input_mut(&mut self, f: impl FnOnce(&mut super::text_input::TextInput)) {
+        if let ComposerMode::TextInput(input) = self.input_ui.composer_mut() {
             f(input);
         }
+    }
+}
+
+fn save_config_api_key(
+    credential_store: &dyn rho_providers::credentials::CredentialStore,
+    key: super::config_editor::ConfigTextKey,
+    value: &str,
+) -> rho_providers::credentials::CredentialResult<()> {
+    use rho_providers::credentials::{delete_web_search_api_key, save_web_search_api_key};
+    let value = value.trim();
+    let credential = key.web_search_credential();
+    if value.is_empty() {
+        delete_web_search_api_key(credential_store, credential).map(|_| ())
+    } else {
+        save_web_search_api_key(credential_store, credential, value)
     }
 }

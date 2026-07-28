@@ -2,15 +2,11 @@ use ratatui::text::Line;
 
 use {
     crate::app::config_repository::ConfigRepository,
-    rho_providers::credentials::{
-        delete_web_search_api_key, save_web_search_api_key, CredentialError, CredentialResult,
-        CredentialStore, WebSearchCredential,
-    },
+    rho_providers::credentials::{CredentialError, CredentialResult, WebSearchCredential},
 };
 
 use super::{
     config_picker,
-    picker::UiPicker,
     render::{styled_line, truncate_one_line, LineFill},
     theme::Theme,
 };
@@ -28,14 +24,6 @@ pub(super) enum ConfigNumberKey {
     MaxToolOutputLines,
     CompactThresholdPercent,
     CompactTargetPercent,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct ConfigTextInput {
-    pub(super) key: ConfigTextKey,
-    pub(super) value: String,
-    pub(super) cursor: usize,
-    return_picker: Option<Box<UiPicker>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -249,101 +237,6 @@ impl ConfigNumberInput {
     }
 }
 
-impl ConfigTextInput {
-    pub(super) fn new(key: ConfigTextKey, value: Option<String>) -> Self {
-        let value = value.unwrap_or_default();
-        let cursor = value.chars().count();
-        Self {
-            key,
-            value,
-            cursor,
-            return_picker: None,
-        }
-    }
-
-    pub(super) fn with_return_picker(mut self, picker: UiPicker) -> Self {
-        self.return_picker = Some(Box::new(picker));
-        self
-    }
-
-    pub(super) fn take_return_picker(&mut self) -> Option<UiPicker> {
-        self.return_picker.take().map(|picker| *picker)
-    }
-
-    pub(super) fn save(&self, credential_store: &dyn CredentialStore) -> CredentialResult<()> {
-        let value = self.value.trim();
-        let credential = self.key.web_search_credential();
-        if value.is_empty() {
-            delete_web_search_api_key(credential_store, credential).map(|_| ())
-        } else {
-            save_web_search_api_key(credential_store, credential, value)
-        }
-    }
-
-    fn char_len(&self) -> usize {
-        self.value.chars().count()
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
-    }
-
-    pub(super) fn insert_char(&mut self, ch: char) {
-        if ch == '\n' || ch == '\r' {
-            return;
-        }
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
-    }
-
-    pub(super) fn insert_text(&mut self, text: &str) {
-        let sanitized = text.replace(['\n', '\r'], "");
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert_str(byte_index, &sanitized);
-        self.cursor += sanitized.chars().count();
-    }
-
-    pub(super) fn move_cursor_left(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
-    }
-
-    pub(super) fn move_cursor_right(&mut self) {
-        self.cursor = (self.cursor + 1).min(self.char_len());
-    }
-
-    pub(super) fn move_cursor_home(&mut self) {
-        self.cursor = 0;
-    }
-
-    pub(super) fn move_cursor_end(&mut self) {
-        self.cursor = self.char_len();
-    }
-
-    pub(super) fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-
-    pub(super) fn delete(&mut self) {
-        if self.cursor >= self.char_len() {
-            return;
-        }
-        let start = self.byte_index(self.cursor);
-        let end = self.byte_index(self.cursor + 1);
-        self.value.replace_range(start..end, "");
-    }
-}
-
 pub(super) fn config_number_input_lines(
     input: &ConfigNumberInput,
     width: usize,
@@ -358,27 +251,6 @@ pub(super) fn config_number_input_lines(
         ),
         styled_line(
             truncate_one_line(&input.value, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
-}
-
-pub(super) fn config_text_input_lines(input: &ConfigTextInput, width: usize) -> Vec<Line<'static>> {
-    let masked = "•".repeat(input.value.chars().count());
-    vec![
-        styled_line(
-            truncate_one_line(
-                &format!("edit {}  enter save, esc cancel", input.key.label()),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&masked, width),
             width,
             Theme::text(),
             LineFill::Natural,

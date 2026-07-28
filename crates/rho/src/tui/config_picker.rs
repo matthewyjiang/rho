@@ -59,6 +59,7 @@ fn item(
         preview: None,
         badge: badge_text.map(badge),
         value: value.into(),
+        selection_verb: None,
     }
 }
 
@@ -357,6 +358,7 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
                 tone: PickerBadgeTone::Selected,
             }),
             value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
+            selection_verb: None,
         })
         .collect(),
         PickerAction::Config,
@@ -387,6 +389,7 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: format!("{INLINE_SHELL_PREFIX}{shell}"),
+                selection_verb: None,
             })
             .collect(),
         PickerAction::Config,
@@ -415,6 +418,7 @@ pub(super) fn web_search_config_picker(
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: WEB_SEARCH_PROVIDER_VALUE.into(),
+            selection_verb: None,
             },
             PickerItem {
                 section: None,
@@ -427,6 +431,7 @@ pub(super) fn web_search_config_picker(
                     WebSearchCredential::OpenAi,
                 )),
                 value: WEB_SEARCH_OPENAI_KEY_VALUE.into(),
+            selection_verb: None,
             },
             PickerItem {
                 section: None,
@@ -439,6 +444,7 @@ pub(super) fn web_search_config_picker(
                     WebSearchCredential::Exa,
                 )),
                 value: WEB_SEARCH_EXA_KEY_VALUE.into(),
+            selection_verb: None,
             },
             PickerItem {
                 section: None,
@@ -451,6 +457,7 @@ pub(super) fn web_search_config_picker(
                     WebSearchCredential::Brave,
                 )),
                 value: WEB_SEARCH_BRAVE_KEY_VALUE.into(),
+            selection_verb: None,
             },
         ],
         PickerAction::Config,
