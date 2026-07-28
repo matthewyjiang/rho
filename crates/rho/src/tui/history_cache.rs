@@ -7,7 +7,7 @@ use super::{
     markdown::incremental_markdown_tail_start,
     markdown_image::MarkdownImageSource,
     message_render::render_assistant_content,
-    render::{apply_markdown_images, pad_entry_line, render_entry_with_options, TrailingBlank},
+    render::{apply_markdown_images, pad_display_line, render_entry_with_options, TrailingBlank},
     Entry,
 };
 
@@ -264,8 +264,13 @@ impl HistoryLineCache {
             }
             self.lines.extend(rendered.lines);
             self.entry_ranges.push(range_start..self.lines.len());
+            // Only the last entry can be appended to, so only its cache is ever
+            // read (see `assistant_appended`). Building one for every entry would
+            // re-render each assistant message's stable prefix a second time,
+            // doubling the markdown work on every resize.
+            let is_last = entry_index + 1 == entries.len();
             self.assistant_caches.push(match entry {
-                Entry::Assistant(text) => {
+                Entry::Assistant(text) if is_last => {
                     let stable_source_len = incremental_markdown_tail_start(text);
                     let stable_line_count = if stable_source_len == 0 {
                         0
@@ -369,7 +374,7 @@ impl HistoryLineCache {
                 }),
         );
         self.lines
-            .extend(rendered.lines.into_iter().map(pad_entry_line));
+            .extend(rendered.lines.into_iter().map(pad_display_line));
     }
 }
 

@@ -11,7 +11,7 @@ use super::{
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
     theme::Theme,
-    Entry, FeedImage, PickerBadgeTone, PickerItem, UiPicker, DEFAULT_TUI_HEIGHT,
+    Entry, FeedImage, PickerBadgeTone, PickerItem, UiPicker,
 };
 use rho_providers::model::{image_summary, ImageContent};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -24,7 +24,18 @@ use ratatui::{
     text::{Line, Span},
 };
 
-const MAX_PICKER_ITEMS: usize = DEFAULT_TUI_HEIGHT as usize - 12;
+/// Rows a picker leaves to the rest of the screen: its own chrome (filter, count,
+/// detail, footer, spacers) plus history and the statusline.
+const PICKER_CHROME_ROWS: usize = 12;
+
+/// Items a picker can list in a `viewport_height` row terminal.
+///
+/// The list grows with the terminal instead of staying at the number that fits
+/// the default height fallback, so a tall window shows a long model or session
+/// list without scrolling.
+pub(super) fn picker_visible_item_cap(viewport_height: usize) -> usize {
+    viewport_height.saturating_sub(PICKER_CHROME_ROWS).max(1)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LineFill {
@@ -83,13 +94,22 @@ fn push_session_header_hints(lines: &mut Vec<Line<'static>>, width: usize) {
     }
 }
 
-pub(super) fn picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
-    list_picker_lines(picker, width)
+pub(super) fn picker_lines(
+    picker: &UiPicker,
+    width: usize,
+    viewport_height: usize,
+) -> Vec<Line<'static>> {
+    list_picker_lines(picker, width, viewport_height)
 }
 
-fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
+fn list_picker_lines(
+    picker: &UiPicker,
+    width: usize,
+    viewport_height: usize,
+) -> Vec<Line<'static>> {
+    let item_cap = picker_visible_item_cap(viewport_height);
     let matching_indices = picker.matching_indices();
-    let mut lines = Vec::with_capacity(MAX_PICKER_ITEMS + 7);
+    let mut lines = Vec::with_capacity(item_cap + 7);
     lines.push(picker_filter_line(picker, width));
     lines.push(Line::raw(""));
 
@@ -111,13 +131,8 @@ fn list_picker_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
     }
 
     let label_width = picker_label_width(picker, width);
-    let start = visible_picker_match_start(picker, &matching_indices);
-    for index in matching_indices
-        .iter()
-        .copied()
-        .skip(start)
-        .take(MAX_PICKER_ITEMS)
-    {
+    let start = visible_picker_match_start(picker, &matching_indices, item_cap);
+    for index in matching_indices.iter().copied().skip(start).take(item_cap) {
         let item = &picker.items[index];
         let selected = index == picker.selected;
         lines.push(picker_item_line(item, selected, label_width, width));
@@ -198,6 +213,8 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
     };
     let max_label_width = max_label_width.min(available_width);
     let min_label_width = 12.min(max_label_width).max(1);
+    // The widest label is taken across every item, not just the visible window, so
+    // the label column does not jump while scrolling.
     picker
         .items
         .iter()
@@ -289,14 +306,16 @@ pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     }
 }
 
-pub(super) fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[usize]) -> usize {
+pub(super) fn visible_picker_match_start(
+    picker: &UiPicker,
+    matching_indices: &[usize],
+    item_cap: usize,
+) -> usize {
     let selected_position = matching_indices
         .iter()
         .position(|index| *index == picker.selected)
         .unwrap_or(0);
-    selected_position
-        .saturating_add(1)
-        .saturating_sub(MAX_PICKER_ITEMS)
+    selected_position.saturating_add(1).saturating_sub(item_cap)
 }
 
 pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
@@ -451,8 +470,12 @@ fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> V
 }
 
 pub(super) fn input_cursor_position(input: &str, cursor: usize, width: usize) -> Position {
-    let prefix: String = input.chars().take(cursor).collect();
-    let lines = editable_input_visual_lines(&prefix, width);
+    // Borrow the prefix instead of rebuilding it: this runs on every frame.
+    let prefix_end = input
+        .char_indices()
+        .nth(cursor)
+        .map_or(input.len(), |(index, _)| index);
+    let lines = editable_input_visual_lines(&input[..prefix_end], width);
     Position {
         x: lines
             .last()
@@ -476,10 +499,19 @@ pub(super) fn input_cursor_index_on_visual_line(
     target_row: usize,
     target_column: usize,
 ) -> usize {
+    // Walk `input` once alongside the visual lines. Re-seeking with `nth` per row
+    // made cursor movement quadratic in the length of the composer text.
+    let mut chars = input.chars().peekable();
     let mut line_start = 0;
     for line in visual_lines.iter().take(target_row) {
-        line_start += line.chars().count();
-        if input.chars().nth(line_start) == Some('\n') {
+        let consumed = line.chars().count();
+        for _ in 0..consumed {
+            chars.next();
+        }
+        line_start += consumed;
+        // A hard newline sits between visual lines and belongs to neither.
+        if chars.peek() == Some(&'\n') {
+            chars.next();
             line_start += 1;
         }
     }
@@ -521,10 +553,14 @@ pub(super) fn input_lines(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let input_lines = editable_input_visual_lines(input, width);
-    let input_chars = input.chars().collect::<Vec<_>>();
+    // Walk `input` in lockstep with the visual lines. Wrapping never inserts or
+    // drops characters, so one pass replaces a per-frame `Vec<char>` of the whole
+    // composer.
+    let mut input_chars = input.chars().peekable();
     let mut input_cursor = 0;
     for (line_index, visual_line) in input_lines.into_iter().enumerate() {
-        if line_index > 0 && input_chars.get(input_cursor) == Some(&'\n') {
+        if line_index > 0 && input_chars.peek() == Some(&'\n') {
+            input_chars.next();
             input_cursor += 1;
         }
         let mut spans = Vec::new();
@@ -534,6 +570,7 @@ pub(super) fn input_lines(
             let highlighted = highlighted_range
                 .as_ref()
                 .is_some_and(|range| range.contains(&input_cursor));
+            input_chars.next();
             input_cursor += 1;
             if !span_text.is_empty() && highlighted != span_highlighted {
                 let style = if span_highlighted {
@@ -681,27 +718,6 @@ pub(super) fn styled_line(
         }
     }
     Line::from(Span::styled(text, style))
-}
-
-pub(super) fn padded_inner_width(width: usize) -> usize {
-    width.saturating_sub(2).max(1)
-}
-
-pub(super) fn pad_entry_line(line: Line<'static>) -> Line<'static> {
-    pad_line(line)
-}
-
-fn pad_line(line: Line<'static>) -> Line<'static> {
-    let edge_style = line
-        .spans
-        .first()
-        .map(|span| span.style)
-        .unwrap_or_default();
-    let mut spans = Vec::with_capacity(line.spans.len() + 2);
-    spans.push(Span::styled(" ", edge_style));
-    spans.extend(line.spans);
-    spans.push(Span::styled(" ", edge_style));
-    Line::from(spans)
 }
 
 pub(super) fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
@@ -927,10 +943,12 @@ pub(super) fn labeled_divider_line(
     None
 }
 
+/// Width left for content after [`pad_display_line`] takes a column on each side.
 pub(super) fn padded_content_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 
+/// Indent a rendered line by one column on each side, keeping the leading style.
 pub(super) fn pad_display_line(line: Line<'static>) -> Line<'static> {
     let edge_style = line
         .spans

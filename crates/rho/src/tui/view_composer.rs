@@ -49,7 +49,15 @@ impl App {
         Line::styled("─".repeat(width), style)
     }
 
-    pub(super) fn composer_lines(&self, width: usize) -> Vec<Line<'static>> {
+    /// Composer rows for a `width` by `viewport_height` screen.
+    ///
+    /// Pickers size their list to the viewport, so the height must be the real
+    /// terminal height rather than a fallback.
+    pub(super) fn composer_lines(
+        &self,
+        width: usize,
+        viewport_height: usize,
+    ) -> Vec<Line<'static>> {
         match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self
@@ -77,7 +85,7 @@ impl App {
                 lines
             }
             ComposerMode::Picker(picker) if picker.is_overlay() => Vec::new(),
-            ComposerMode::Picker(picker) => picker_lines(picker, width),
+            ComposerMode::Picker(picker) => picker_lines(picker, width, viewport_height),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
             ComposerMode::TextInput(input) => text_input_lines(input, width),
