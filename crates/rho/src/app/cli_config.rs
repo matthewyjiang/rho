@@ -262,11 +262,10 @@ pub(super) fn apply_provider_override(
     provider: &str,
     has_model_override: bool,
 ) -> anyhow::Result<()> {
-    if !catalog::implemented_providers().contains(&provider) {
-        anyhow::bail!("unknown provider '{provider}' for --provider");
-    }
-    let auth =
-        provider::provider_descriptor(provider).map(|descriptor| descriptor.default_auth().id);
+    let profile = provider::resolve_provider_reference(provider)
+        .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
+    let provider = profile.provider_name();
+    let auth = Some(profile.auth_id());
     let model = if has_model_override {
         None
     } else {

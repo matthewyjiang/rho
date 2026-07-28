@@ -116,6 +116,17 @@ fn poolside_model_override_persists_internal_model_id() {
 }
 
 #[test]
+fn legacy_xai_provider_override_normalizes_to_oauth_mode() {
+    let mut config = Config::default();
+    let cli = Cli::try_parse_from(["rho", "--provider", "xai-oauth"]).unwrap();
+
+    assert!(apply_overrides(&mut config, &cli).unwrap());
+    assert_eq!(config.provider, "xai");
+    assert_eq!(config.model, "grok-4.5");
+    assert_eq!(config.auth, "xai-oauth");
+}
+
+#[test]
 fn cli_model_override_with_provider_selects_matching_auth() {
     let mut cfg = Config::default();
     let cli = Cli {
@@ -833,32 +844,28 @@ fn undefined_cli_model_alias_names_flag() {
 
 #[test]
 fn cli_auth_only_selection_resolves_provider_profile() {
-    with_cached_provider_models(
-        "openrouter-oauth",
-        vec!["anthropic/claude-sonnet-4"],
-        || {
-            let mut cfg = Config::default();
-            let cli = Cli {
-                provider: None,
-                model: None,
-                config: None,
-                auth: Some("openrouter-oauth".into()),
-                no_system_prompt: false,
-                no_tools: false,
-                no_subagents: false,
-                agent: None,
-                reasoning: None,
-                resume: None,
-                command: None,
-            };
+    with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: None,
+            model: None,
+            config: None,
+            auth: Some("openrouter-oauth".into()),
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
 
-            apply_overrides(&mut cfg, &cli).unwrap();
+        apply_overrides(&mut cfg, &cli).unwrap();
 
-            assert_eq!(cfg.provider, "openrouter-oauth");
-            assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
-            assert_eq!(cfg.auth, "openrouter-oauth");
-        },
-    );
+        assert_eq!(cfg.provider, "openrouter");
+        assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
+        assert_eq!(cfg.auth, "openrouter-oauth");
+    });
 }
 
 #[test]
@@ -881,7 +888,7 @@ fn cli_auth_profile_normalizes_compatible_provider() {
 
         apply_overrides(&mut cfg, &cli).unwrap();
 
-        assert_eq!(cfg.provider, "openrouter-oauth");
+        assert_eq!(cfg.provider, "openrouter");
         assert_eq!(cfg.auth, "openrouter-oauth");
     });
 }

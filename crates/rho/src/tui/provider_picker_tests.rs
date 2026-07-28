@@ -73,7 +73,7 @@ fn login_picker_lists_providers_alphabetically_by_label() {
 }
 
 #[test]
-fn refresh_picker_distinguishes_openrouter_auth_modes() {
+fn refresh_picker_lists_openrouter_once_for_multiple_auth_modes() {
     let picker =
         refresh_model_list_picker(&["openrouter-api-key".into(), "openrouter-oauth".into()]);
     let openrouter = picker
@@ -85,13 +85,7 @@ fn refresh_picker_distinguishes_openrouter_auth_modes() {
 
     assert_eq!(
         openrouter,
-        vec![
-            ("openrouter", Some("Refresh cached OpenRouter models."),),
-            (
-                "openrouter-oauth",
-                Some("Refresh cached OpenRouter models."),
-            ),
-        ]
+        vec![("openrouter", Some("Refresh cached OpenRouter models."),)]
     );
 }
 

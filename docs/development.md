@@ -68,6 +68,12 @@ Scenarios launch Rho with:
 
 Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. See the `rho-tui-pty-testing` and `rho-tui-herdr-testing` skills.
 
+## Provider identity and auth modes
+
+A provider identifies one API or product surface. If two login methods use the same API base, wire protocol, and model catalog, add both to that provider's `auth_modes` list rather than adding a second provider. The first mode is the default. Keep separate providers when endpoints, protocols, catalogs, or product surfaces differ. For example, OpenRouter API-key and OAuth access share `openrouter`, while the OpenAI API and Codex remain `openai` and `openai-codex`.
+
+When retiring a same-API provider name, add a load-time alias that selects both the canonical provider and the matching auth mode. New config, model references, favorites, runtime identities, and cache entries must use the canonical provider name.
+
 ## Model integration layers
 
 Model integrations are split into three layers:

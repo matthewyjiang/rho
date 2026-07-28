@@ -12,6 +12,23 @@ use super::{
     ModelSelection, PickerAction, UiPicker,
 };
 
+fn refresh_auth_for_provider(
+    descriptor: &'static provider::ProviderDescriptor,
+    preferred_auth: &str,
+    available_auths: &[String],
+) -> &'static str {
+    descriptor
+        .auth_mode(preferred_auth)
+        .filter(|mode| available_auths.iter().any(|auth| auth == mode.id))
+        .or_else(|| {
+            descriptor
+                .auth_modes()
+                .find(|mode| available_auths.iter().any(|auth| auth == mode.id))
+        })
+        .unwrap_or_else(|| descriptor.default_auth())
+        .id
+}
+
 impl App {
     pub(super) fn resolve_model_selection(
         &self,
@@ -54,25 +71,26 @@ impl App {
                         .any(|mode| self.available_auths.iter().any(|auth| auth == mode.id))
                 })
                 .map(|descriptor| {
-                    let auth = descriptor
-                        .auth_modes()
-                        .find(|mode| self.available_auths.iter().any(|auth| auth == mode.id))
-                        .unwrap_or_else(|| descriptor.default_auth());
-                    (descriptor.name.to_string(), auth.id.to_string())
+                    (
+                        descriptor.name.to_string(),
+                        refresh_auth_for_provider(
+                            descriptor,
+                            &self.info.runtime.auth,
+                            &self.available_auths,
+                        )
+                        .to_string(),
+                    )
                 })
                 .collect()
         } else {
             let auth = provider::provider_descriptor(selected_provider)
-                .and_then(|descriptor| {
-                    descriptor
-                        .auth_modes()
-                        .find(|mode| self.available_auths.iter().any(|auth| auth == mode.id))
-                        .or_else(|| {
-                            // Fall back to the runtime's selected auth when it matches.
-                            descriptor.auth_mode(&self.info.runtime.auth)
-                        })
-                        .map(|mode| mode.id.to_string())
-                        .or_else(|| Some(descriptor.default_auth().id.to_string()))
+                .map(|descriptor| {
+                    refresh_auth_for_provider(
+                        descriptor,
+                        &self.info.runtime.auth,
+                        &self.available_auths,
+                    )
+                    .to_string()
                 })
                 .unwrap_or_else(|| self.info.runtime.auth.clone());
             vec![(selected_provider.to_string(), auth)]

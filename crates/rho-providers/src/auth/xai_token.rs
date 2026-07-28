@@ -57,12 +57,12 @@ struct XaiRefreshResponse {
 impl XaiAuthManager {
     #[cfg(test)]
     pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Result<Self, ModelError> {
-        let descriptor =
-            provider::provider_descriptor("xai-oauth").expect("xAI OAuth provider must exist");
+        let descriptor = provider::provider_descriptor("xai").expect("xAI provider must exist");
+        let auth = descriptor
+            .auth_mode("xai-oauth")
+            .expect("xAI OAuth mode must exist");
         let (source, tokens) = match std::env::var(
-            descriptor
-                .default_auth()
-                .auth_kind
+            auth.auth_kind
                 .env_var()
                 .expect("authenticated provider must declare an environment variable"),
         ) {

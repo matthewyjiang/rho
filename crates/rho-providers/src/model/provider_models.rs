@@ -165,11 +165,11 @@ pub async fn refresh_provider_models_with_store(
     store: &dyn CredentialStore,
     endpoint: ProviderModelEndpoint<'_>,
 ) -> Result<ProviderModelRefresh, ModelError> {
-    let descriptor = provider::provider_descriptor(provider)
-        .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
-    let auth_mode = descriptor
-        .auth_mode(auth)
-        .unwrap_or_else(|| descriptor.default_auth());
+    let profile = provider::resolve_profile(provider, auth)
+        .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
+    let descriptor = profile.provider;
+    let provider = descriptor.name;
+    let auth_mode = profile.auth;
     let models = match descriptor.model_refresh {
         Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
         Some(ProviderModelRefreshKind::Anthropic) => {

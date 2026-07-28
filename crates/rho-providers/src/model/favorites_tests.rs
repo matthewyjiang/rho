@@ -43,6 +43,22 @@ fn poolside_favorites_normalize_to_internal_model_and_match_legacy_forms() {
 }
 
 #[test]
+fn legacy_provider_aliases_normalize_favorites() {
+    let favorites = normalized_favorite_models(&[
+        "openrouter-oauth/anthropic/claude-sonnet-4".into(),
+        "openrouter/anthropic/claude-sonnet-4".into(),
+        "xai-oauth/grok-4.5".into(),
+    ]);
+
+    assert_eq!(
+        favorite_model_values(&favorites),
+        vec!["openrouter/anthropic/claude-sonnet-4", "xai/grok-4.5",]
+    );
+    assert!(favorites[0].matches("openrouter-oauth", "anthropic/claude-sonnet-4"));
+    assert!(favorites[1].matches("xai-oauth", "grok-4.5"));
+}
+
+#[test]
 fn reorders_available_models_by_favorites() {
     let models = vec![
         entry("anthropic", "claude"),

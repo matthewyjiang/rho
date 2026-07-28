@@ -9,6 +9,9 @@ pub struct FavoriteModel {
 impl FavoriteModel {
     pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
         let provider = provider.into();
+        let provider = crate::provider::legacy_provider_alias(&provider)
+            .map(|(provider, _)| provider.to_string())
+            .unwrap_or(provider);
         let model = model.into();
         let model = crate::provider::provider_descriptor(&provider)
             .map(|descriptor| descriptor.canonicalize_model_id(&model))
@@ -21,6 +24,9 @@ impl FavoriteModel {
     }
 
     pub fn matches(&self, provider: &str, model: &str) -> bool {
+        let provider = crate::provider::legacy_provider_alias(provider)
+            .map(|(provider, _)| provider)
+            .unwrap_or(provider);
         if self.provider != provider {
             return false;
         }

@@ -62,11 +62,11 @@ impl ProviderBuildOptions {
                 "model name must not be empty".into(),
             ));
         }
-        let descriptor = provider::provider_descriptor(&provider)
-            .ok_or_else(|| ModelError::UnsupportedProvider(provider.clone()))?;
+        let profile = provider::resolve_provider_reference(&provider)
+            .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
         Ok(Self {
-            provider,
-            auth: descriptor.default_auth().id.into(),
+            provider: profile.provider_name().into(),
+            auth: profile.auth_id().into(),
             model,
             endpoint: None,
             request_timeout: None,
@@ -251,14 +251,9 @@ impl ProviderBuilder {
                     endpoint.unwrap_or_else(|| default_api_base.into()),
                 )))
             }
-            (ProviderRuntime::Xai { .. }, ProviderCredential::Xai(auth)) => {
-                let provider = match self.options.provider.as_str() {
-                    "xai" => "xai",
-                    "xai-oauth" => "xai-oauth",
-                    _ => unreachable!("xAI runtime must have an xAI provider identity"),
-                };
+            (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
                 Ok(Arc::new(XaiProvider::new_with_transport(
-                    provider,
+                    "xai",
                     self.options.model,
                     auth,
                     client,

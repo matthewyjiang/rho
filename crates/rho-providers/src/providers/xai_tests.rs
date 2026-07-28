@@ -19,11 +19,11 @@ use crate::{
 };
 
 #[test]
-fn empty_cache_construction_preserves_static_wire_semantics_for_both_identities() {
+fn empty_cache_construction_preserves_static_wire_semantics() {
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir_for_tests(cache.path().join("models-dev"), || {
         with_provider_models_cache_dir_for_tests(cache.path().join("provider-models"), || {
-            for provider_name in ["xai", "xai-oauth"] {
+            for provider_name in ["xai"] {
                 for (model, off, high) in [
                     ("grok-build-0.1", None, None),
                     ("grok-composer-2.5-fast", None, None),
@@ -210,9 +210,9 @@ fn compact_body_is_model_and_full_input_only() {
 }
 
 #[test]
-fn compact_body_works_for_oauth_identity() {
+fn compact_body_uses_canonical_provider_identity() {
     let body = build_xai_compact_body(
-        "xai-oauth",
+        "xai",
         "grok-4.5",
         ModelRequest {
             messages: &[

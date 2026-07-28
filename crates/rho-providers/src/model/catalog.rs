@@ -250,9 +250,11 @@ fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
     let file: ModelCatalogFile =
         toml::from_str(text).expect("embedded model catalog must be valid");
     let mut entries = model_entries("openai-codex", "codex", file.openai_codex_models);
-    let xai_models = file.xai_models;
-    entries.extend(model_entries("xai", "xai-api-key", xai_models.clone()));
-    entries.extend(model_entries("xai-oauth", "xai-oauth", xai_models));
+    let mut xai_models = model_entries("xai", "xai-api-key", file.xai_models);
+    for entry in &mut xai_models {
+        entry.auth_modes.push("xai-oauth".into());
+    }
+    entries.extend(xai_models);
     entries
 }
 
@@ -429,6 +431,10 @@ fn resolve_model_selection_for_provider_from(
     if provider.is_empty() || model.is_empty() {
         return Err(ModelSelectionError::Empty);
     }
+    let (provider, alias_auth) = provider::legacy_provider_alias(provider)
+        .map(|(provider, auth)| (provider, Some(auth)))
+        .unwrap_or((provider, None));
+    let preferred_auth = alias_auth.or(preferred_auth);
     if !implemented_providers().contains(&provider) {
         return Err(ModelSelectionError::UnknownProvider {
             provider: provider.to_string(),
