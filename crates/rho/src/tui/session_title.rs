@@ -60,9 +60,11 @@ impl Drop for PendingSessionTitle {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // provider/model/auth identity plus run context
 pub(super) async fn generate_session_title(
     provider_name: String,
     model: String,
+    auth: String,
     first_user_message: String,
     session_id: SessionId,
     workspace_path: std::path::PathBuf,
@@ -75,6 +77,7 @@ pub(super) async fn generate_session_title(
             usage_purpose: "title",
             provider_name: &provider_name,
             model: &model,
+            auth: &auth,
             input: format!("First user message:\n\n{first_user_message}"),
             cancellation: cancellation.clone(),
             session_id: &session_id,
@@ -162,6 +165,7 @@ impl App {
             let title = generate_session_title(
                 selection.provider,
                 selection.model,
+                selection.auth,
                 first_user_message,
                 task_session_id.clone(),
                 workspace_path,

@@ -161,11 +161,15 @@ fn provider_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {
 
 pub async fn refresh_provider_models_with_store(
     provider: &str,
+    auth: &str,
     store: &dyn CredentialStore,
     endpoint: ProviderModelEndpoint<'_>,
 ) -> Result<ProviderModelRefresh, ModelError> {
     let descriptor = provider::provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
+    let auth_mode = descriptor
+        .auth_mode(auth)
+        .unwrap_or_else(|| descriptor.default_auth());
     let models = match descriptor.model_refresh {
         Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
         Some(ProviderModelRefreshKind::Anthropic) => {
@@ -184,7 +188,7 @@ pub async fn refresh_provider_models_with_store(
                     descriptor.name
                 )));
             };
-            openai_compatible::fetch(descriptor, api_base, store).await?
+            openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?
         }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
@@ -345,7 +349,9 @@ async fn fetch_github_copilot_models(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return if status == StatusCode::UNAUTHORIZED {
-            Err(ModelError::MissingGithubCopilotAuth)
+            Err(crate::model::registry::missing_credentials_error(
+                "github-copilot",
+            ))
         } else {
             Err(ModelError::HttpStatus { status, body })
         };
@@ -418,8 +424,10 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
     let descriptor = provider::provider_descriptor(provider)
         .ok_or_else(|| ModelError::UnsupportedProvider(provider.to_string()))?;
     let ProviderAuthKind::ApiKey {
-        env_var, missing, ..
-    } = descriptor.auth_kind
+        env_var,
+        missing_message,
+        ..
+    } = descriptor.default_auth().auth_kind
     else {
         return Err(ModelError::UnsupportedProvider(provider.to_string()));
     };
@@ -428,7 +436,7 @@ fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<Stri
             return Ok(key);
         }
     }
-    load_provider_api_key(store, provider)?.ok_or_else(|| missing_credential_error(missing))
+    load_provider_api_key(store, provider)?.ok_or_else(|| missing_credential_error(missing_message))
 }
 
 fn is_supported_openai_model(model: &str) -> bool {

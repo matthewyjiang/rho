@@ -184,8 +184,10 @@ pub(crate) fn build_provider(
     provider: &str,
     model: &str,
     reasoning: rho_providers::reasoning::ReasoningLevel,
+    auth: &str,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
-    let options = rho_providers::providers::ProviderBuildOptions::new(provider, model, reasoning)?;
+    let options = rho_providers::providers::ProviderBuildOptions::new(provider, model, reasoning)?
+        .with_auth(auth)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),
     );

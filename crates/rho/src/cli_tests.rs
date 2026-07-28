@@ -4,19 +4,19 @@ use super::*;
 
 #[test]
 fn parses_new_provider_auth_modes() {
-    for auth in [
-        "moonshot-api-key",
-        "poolside-api-key",
-        "openrouter-api-key",
-        "openrouter-oauth",
-        "kimi-oauth",
-        "xai-api-key",
-        "xai-oauth",
-        "google-api-key",
-    ] {
+    for auth in rho_providers::auth_profiles() {
         let cli = Cli::try_parse_from(["rho", "--auth", auth]).unwrap();
-        assert_eq!(cli.auth.as_deref(), Some(auth));
+        assert_eq!(cli.auth.as_deref(), Some(*auth));
     }
+}
+
+#[test]
+fn rejects_unknown_auth_profiles() {
+    let error = Cli::try_parse_from(["rho", "--auth", "not-a-real-auth"]).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("invalid value 'not-a-real-auth'"));
+    assert!(error.to_string().contains("ollama-cloud-api-key"));
 }
 
 #[test]

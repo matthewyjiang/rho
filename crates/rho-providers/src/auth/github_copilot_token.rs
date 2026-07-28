@@ -89,8 +89,9 @@ impl GitHubCopilotAuthManager {
         let credential = match nonempty_token(env_token) {
             Some(token) => GitHubCopilotCredential::Env(token),
             None => GitHubCopilotCredential::Store(Arc::new(tokio::sync::Mutex::new(
-                load_github_copilot_tokens(store.as_ref())?
-                    .ok_or(ModelError::MissingGithubCopilotAuth)?,
+                load_github_copilot_tokens(store.as_ref())?.ok_or(
+                    crate::model::registry::missing_credentials_error("github-copilot"),
+                )?,
             ))),
         };
         Ok(Self { store, credential })
@@ -166,8 +167,9 @@ async fn auth_material_with_env_token(
         });
     }
 
-    let mut tokens =
-        load_github_copilot_tokens(store)?.ok_or(ModelError::MissingGithubCopilotAuth)?;
+    let mut tokens = load_github_copilot_tokens(store)?.ok_or(
+        crate::model::registry::missing_credentials_error("github-copilot"),
+    )?;
     if let Some(token) = fresh_cached_copilot_token(&tokens, now_unix_seconds()) {
         return Ok(material_from_stored_token(token, &tokens));
     }
@@ -221,7 +223,9 @@ async fn refresh_copilot_token_with_store(
         response.status(),
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
     ) {
-        return Err(ModelError::MissingGithubCopilotAuth);
+        return Err(crate::model::registry::missing_credentials_error(
+            "github-copilot",
+        ));
     }
     if !response.status().is_success() {
         let status = response.status();
@@ -279,7 +283,7 @@ async fn refresh_github_token(
     let refreshed =
         github_copilot_device::refresh_github_copilot_github_token(client, refresh_token)
             .await
-            .map_err(|_| ModelError::MissingGithubCopilotAuth)?;
+            .map_err(|_| crate::model::registry::missing_credentials_error("github-copilot"))?;
     tokens.github_access_token = refreshed.access_token;
     if refreshed.refresh_token.is_some() {
         tokens.github_refresh_token = refreshed.refresh_token;
@@ -356,6 +360,7 @@ fn now_unix_seconds() -> i64 {
 
 fn nonempty_env_copilot_token() -> Option<String> {
     let env_var = provider::provider_descriptor_by_id(ProviderId::GithubCopilot)
+        .default_auth()
         .auth_kind
         .env_var()
         .expect("authenticated provider must declare an environment variable");
@@ -540,7 +545,10 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, ModelError::MissingGithubCopilotAuth));
+        assert_eq!(
+            err.to_string(),
+            crate::model::registry::missing_credentials_error("github-copilot").to_string()
+        );
     }
 
     #[test]

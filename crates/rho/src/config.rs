@@ -86,7 +86,7 @@ fn inferred_provider_auth(provider: &str, current_provider: &str, current_auth: 
         return current_auth.into();
     }
     provider::provider_descriptor(provider)
-        .map(|descriptor| descriptor.auth.into())
+        .map(|descriptor| descriptor.default_auth().id.into())
         .unwrap_or_else(|| current_auth.into())
 }
 
@@ -516,7 +516,7 @@ impl Config {
             .filter(|provider| *provider != self.provider)
         {
             if let Some(descriptor) = provider::provider_descriptor(provider) {
-                self.auth = descriptor.auth.into();
+                self.auth = descriptor.default_auth().id.into();
             }
             self.provider = provider.to_string();
         }
@@ -534,7 +534,7 @@ impl Config {
             if let Some(provider) = resolved.provider {
                 if selection.provider != provider {
                     if let Some(descriptor) = provider::provider_descriptor(&provider) {
-                        selection.auth = descriptor.auth.into();
+                        selection.auth = descriptor.default_auth().id.into();
                     }
                     selection.provider = provider;
                 }

@@ -91,52 +91,60 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
 fn authentication_checks(store: &dyn CredentialStore) -> Vec<DoctorCheck> {
     provider::providers()
         .iter()
-        .map(|descriptor| {
-            let (healthy, status, detail) = if descriptor.auth_kind == ProviderAuthKind::None {
-                (
-                    true,
-                    "no authentication required",
-                    "This provider does not require authentication.",
-                )
-            } else {
-                match ProviderAuthentication::has_credentials(store, descriptor.name) {
-                    Ok(true)
-                        if ProviderAuthentication::has_environment_override(descriptor.name) =>
-                    {
-                        (
-                            true,
-                            "authenticated",
-                            "Credentials are provided by an environment variable.",
-                        )
-                    }
-                    Ok(true) => (
-                        true,
-                        "authenticated",
-                        "Credentials are available in the configured credential store.",
-                    ),
-                    Ok(false) => (
-                        false,
-                        "missing",
-                        "No credentials found. Run /login to authenticate this provider.",
-                    ),
-                    Err(_) => (
-                        false,
-                        "error",
-                        "The configured credential store could not be read. No secret values were inspected or displayed.",
-                    ),
-                }
-            };
-            DoctorCheck {
-                section: DoctorSection::Authentication,
-                label: if descriptor.auth_kind == ProviderAuthKind::None {
-                    format!("{} authentication", descriptor.display_name)
-                } else {
-                    descriptor.login_label.to_string()
-                },
-                status: status.into(),
-                healthy,
-                detail: detail.into(),
+        .flat_map(|descriptor| {
+            if descriptor.is_keyless() {
+                return vec![DoctorCheck {
+                    section: DoctorSection::Authentication,
+                    label: format!("{} authentication", descriptor.display_name),
+                    status: "no authentication required".into(),
+                    healthy: true,
+                    detail: "This provider does not require authentication.".into(),
+                }];
             }
+            descriptor
+                .auth_modes()
+                .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
+                .map(|mode| {
+                    let (healthy, status, detail) =
+                        match ProviderAuthentication::has_credentials(store, mode.id) {
+                            Ok(true)
+                                if ProviderAuthentication::has_environment_override(mode.id) =>
+                            {
+                                (
+                                    true,
+                                    "authenticated",
+                                    "Credentials are provided by an environment variable.".into(),
+                                )
+                            }
+                            Ok(true) => (
+                                true,
+                                "authenticated",
+                                "Credentials are available in the configured credential store."
+                                    .into(),
+                            ),
+                            Ok(false) => (
+                                false,
+                                "missing",
+                                format!(
+                                    "No credentials found. Run /login {} to authenticate this mode.",
+                                    mode.id
+                                ),
+                            ),
+                            Err(_) => (
+                                false,
+                                "error",
+                                "The configured credential store could not be read. No secret values were inspected or displayed.".into(),
+                            ),
+                        };
+                    DoctorCheck {
+                        section: DoctorSection::Authentication,
+                        label: mode.login_label.to_string(),
+                        status: status.into(),
+                        healthy,
+                        detail,
+                    }
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -151,14 +159,7 @@ fn cache_checks() -> Vec<DoctorCheck> {
                     .len();
             DoctorCheck {
                 section: DoctorSection::Cache,
-                label: format!(
-                    "{} model cache",
-                    if descriptor.auth_kind == ProviderAuthKind::None {
-                        descriptor.display_name
-                    } else {
-                        descriptor.login_label
-                    }
-                ),
+                label: format!("{} model cache", descriptor.display_name),
                 status: if count > 0 {
                     "populated".into()
                 } else {
@@ -227,7 +228,7 @@ fn model_endpoint_checks(provider_health: &[(String, ProviderModelHealth)]) -> V
     provider::providers()
         .iter()
         .filter(|descriptor| {
-            descriptor.auth_kind == ProviderAuthKind::None
+            descriptor.is_keyless()
                 && descriptor.model_refresh
                     == Some(provider::ProviderModelRefreshKind::OpenAiCompatible)
         })

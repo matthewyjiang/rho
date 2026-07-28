@@ -50,6 +50,7 @@ fn request<'a>(
         usage_purpose: "test-purpose",
         provider_name: "test-provider",
         model: "test-model",
+        auth: "api-key",
         input: "user input".into(),
         cancellation: CancellationToken::new(),
         session_id,

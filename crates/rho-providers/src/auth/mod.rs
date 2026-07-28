@@ -5,6 +5,7 @@ pub mod kimi_oauth;
 pub mod kimi_token;
 pub mod login_dispatch;
 pub(crate) mod loopback;
+pub mod ollama_device;
 pub mod openrouter_oauth;
 pub mod provider_credentials;
 pub mod xai_oauth;

@@ -1,5 +1,7 @@
 use std::{fmt, sync::Arc};
 
+use rho_sdk::ProviderError;
+
 use crate::{
     auth::provider_credentials::ProviderCredentialSource,
     model::ModelError,
@@ -28,7 +30,7 @@ pub fn build_sdk_provider_with_source(
         return Ok(provider);
     }
 
-    let credential = credentials.acquire(options.provider())?;
+    let credential = credentials.acquire(options.provider(), options.auth())?;
     build_sdk_provider_explicit(options, credential)
 }
 
@@ -61,76 +63,23 @@ pub fn build_sdk_provider(
     build_sdk_provider_with_source(options, credentials)
 }
 
+/// Provider stub that always fails with a sanitized, cloneable error.
+///
+/// Construction converts the source [`ModelError`] once so the runtime does not
+/// need a hand-maintained clone ladder for every credential variant.
 #[derive(Debug)]
 pub struct UnavailableProvider {
-    error: ModelError,
+    error: ProviderError,
+    message: String,
 }
 
 impl UnavailableProvider {
     pub fn new(error: ModelError) -> Self {
-        Self { error }
-    }
-}
-
-fn clone_model_error(error: &ModelError) -> ModelError {
-    match error {
-        ModelError::MissingApiKey => ModelError::MissingApiKey,
-        ModelError::MissingCodexAuth => ModelError::MissingCodexAuth,
-        ModelError::MissingAnthropicApiKey => ModelError::MissingAnthropicApiKey,
-        ModelError::MissingGoogleApiKey => ModelError::MissingGoogleApiKey,
-        ModelError::MissingGithubCopilotAuth => ModelError::MissingGithubCopilotAuth,
-        ModelError::MissingXaiApiKey => ModelError::MissingXaiApiKey,
-        ModelError::MissingXaiAuth => ModelError::MissingXaiAuth,
-        ModelError::MissingMoonshotApiKey => ModelError::MissingMoonshotApiKey,
-        ModelError::MissingPoolsideApiKey => ModelError::MissingPoolsideApiKey,
-        ModelError::MissingOpenRouterApiKey => ModelError::MissingOpenRouterApiKey,
-        ModelError::MissingCredentialProfile(message) => {
-            ModelError::MissingCredentialProfile(message)
-        }
-        ModelError::MissingKimiAuth => ModelError::MissingKimiAuth,
-        ModelError::Credentials(err) => ModelError::Credentials(err.clone()),
-        ModelError::UnsupportedReasoning {
-            provider,
-            model,
-            requested,
-        } => ModelError::UnsupportedReasoning {
-            provider,
-            model: model.clone(),
-            requested: *requested,
-        },
-        ModelError::UnsupportedProvider(provider) => {
-            ModelError::UnsupportedProvider(provider.clone())
-        }
-        ModelError::InvalidResponse(message) => ModelError::InvalidResponse(message.clone()),
-        ModelError::RetryableInvalidResponse {
-            error_type,
+        let message = error.to_string();
+        Self {
+            error: super::sdk_contract::provider_error_from_model_error(error),
             message,
-        } => ModelError::RetryableInvalidResponse {
-            error_type: error_type.clone(),
-            message: message.clone(),
-        },
-        ModelError::ProviderReported {
-            kind,
-            error_type,
-            message,
-        } => ModelError::ProviderReported {
-            kind: *kind,
-            error_type: error_type.clone(),
-            message: message.clone(),
-        },
-        ModelError::Interrupted => ModelError::Interrupted,
-        ModelError::StreamIdleTimeout { timeout } => {
-            ModelError::StreamIdleTimeout { timeout: *timeout }
         }
-        ModelError::StreamFailedAfterOutput { message } => ModelError::StreamFailedAfterOutput {
-            message: message.clone(),
-        },
-        ModelError::HttpStatus { status, body } => ModelError::HttpStatus {
-            status: *status,
-            body: body.clone(),
-        },
-        ModelError::Io(_) => ModelError::InvalidResponse("provider I/O failed".into()),
-        ModelError::Request(_) => ModelError::InvalidResponse("provider request failed".into()),
     }
 }
 
@@ -143,16 +92,13 @@ impl rho_sdk::provider::ModelProvider for UnavailableProvider {
         &'a self,
         _request: rho_sdk::model::ModelRequest<'a>,
     ) -> rho_sdk::provider::ProviderFuture<'a> {
-        Box::pin(async move {
-            Err(super::sdk_contract::provider_error_from_model_error(
-                clone_model_error(&self.error),
-            ))
-        })
+        let error = self.error.clone();
+        Box::pin(async move { Err(error) })
     }
 }
 
 impl fmt::Display for UnavailableProvider {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.error)
+        write!(formatter, "{}", self.message)
     }
 }

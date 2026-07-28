@@ -170,6 +170,7 @@ impl GoalEvaluation {
 pub(super) struct EvaluationRequest<'a> {
     pub provider_name: &'a str,
     pub model: &'a str,
+    pub auth: &'a str,
     pub condition: &'a str,
     pub messages: &'a [Message],
     pub cancellation: CancellationToken,
@@ -184,6 +185,7 @@ pub(super) async fn evaluate(
     let EvaluationRequest {
         provider_name,
         model,
+        auth,
         condition,
         messages,
         cancellation,
@@ -197,6 +199,7 @@ pub(super) async fn evaluate(
             usage_purpose: "goal",
             provider_name,
             model,
+            auth,
             input: format!(
                 "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
             ),

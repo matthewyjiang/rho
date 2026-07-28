@@ -10,6 +10,17 @@ fn parse_credential_store_backend(value: &str) -> Result<CredentialStoreBackend,
     CredentialStoreBackend::parse(value).map_err(|error| error.to_string())
 }
 
+fn parse_auth_profile(value: &str) -> Result<String, String> {
+    let profiles = rho_providers::auth_profiles();
+    if profiles.contains(&value) {
+        return Ok(value.to_string());
+    }
+    Err(format!(
+        "invalid value '{value}' for '--auth'; expected one of: {}",
+        profiles.join(", ")
+    ))
+}
+
 /// Output contract used by a non-interactive `rho run` invocation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
@@ -29,7 +40,7 @@ pub struct Cli {
     pub model: Option<String>,
     #[arg(long)]
     pub config: Option<PathBuf>,
-    #[arg(long, value_parser = ["api-key", "codex", "anthropic-api-key", "google-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "poolside-api-key", "openrouter-api-key", "openrouter-oauth", "kimi-oauth"])]
+    #[arg(long, value_parser = parse_auth_profile)]
     pub auth: Option<String>,
     /// Do not send rho's system prompt, including AGENTS.md and skill context.
     #[arg(long)]

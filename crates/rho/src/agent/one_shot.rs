@@ -16,6 +16,7 @@ pub(crate) struct OneShotAgentRequest<'a> {
     pub usage_purpose: &'static str,
     pub provider_name: &'a str,
     pub model: &'a str,
+    pub auth: &'a str,
     pub input: String,
     pub cancellation: CancellationToken,
     pub session_id: &'a SessionId,
@@ -28,7 +29,12 @@ pub(crate) fn run_one_shot_agent(
     usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<impl Future<Output = anyhow::Result<Vec<String>>> + '_> {
     let reasoning = validate_definition(request.definition)?;
-    let provider = build_provider(request.provider_name, request.model, reasoning)?;
+    let provider = build_provider(
+        request.provider_name,
+        request.model,
+        reasoning,
+        request.auth,
+    )?;
     Ok(async move { run_one_shot_with_provider(provider.as_ref(), request, usage_recording).await })
 }
 

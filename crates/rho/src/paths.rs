@@ -62,6 +62,19 @@ pub(crate) fn usage_database_path() -> anyhow::Result<PathBuf> {
     Ok(rho_dir()?.join("usage.sqlite3"))
 }
 
+/// Process-wide lock for tests that read or mutate `RHO_HOME` / related env.
+///
+/// Hold this for the entire critical section. Concurrent tests that only set the
+/// variable briefly still race with readers that use `rho_dir()` afterward.
+#[cfg(test)]
+pub(crate) fn process_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

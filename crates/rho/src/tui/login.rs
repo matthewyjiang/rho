@@ -2,7 +2,7 @@ use super::{InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePen
 use {
     crate::credential_store::build_provider,
     rho_providers::auth::login_dispatch::{
-        AuthenticationMethod, CompletedAuthentication, OAuthMode, OAuthUserAction,
+        AuthenticationMethod, CompletedAuthentication, InteractiveLoginMode, InteractiveUserAction,
         ProviderAuthentication,
     },
     rho_providers::model::{provider_models::ProviderModelEndpoint, registry},
@@ -71,7 +71,7 @@ impl SecretInput {
 }
 
 #[derive(Debug)]
-pub(super) struct PendingOAuthLogin {
+pub(super) struct PendingInteractiveLogin {
     pub(super) target: LoginTarget,
     pub(super) handle: tokio::task::JoinHandle<Result<CompletedAuthentication, String>>,
 }
@@ -305,8 +305,7 @@ impl App {
             return Ok(());
         }
         let provider = provider.trim();
-        if provider::provider_descriptor(provider)
-            .is_some_and(|descriptor| descriptor.auth_kind == provider::ProviderAuthKind::None)
+        if provider::provider_descriptor(provider).is_some_and(|descriptor| descriptor.is_keyless())
         {
             self.insert_entry(&Entry::Notice(format!(
                 "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
@@ -314,21 +313,62 @@ impl App {
             self.status = "no login required".into();
             return Ok(());
         }
-        let Some(target) = catalog::login_target_for_provider(provider) else {
-            let providers = catalog::login_targets()
-                .into_iter()
-                .map(|target| format!("/login {}", target.provider))
-                .collect::<Vec<_>>()
-                .join(", ");
-            self.insert_entry(&Entry::Error(format!(
-                "unsupported login provider '{provider}'. Use {providers}, /login {}",
-                claude_login::CLAUDE_CODE_TARGET
-            )));
-            self.status = "login failed".into();
-            return Ok(());
-        };
+        // Resolve in this order:
+        // 1. exact auth profile id (method picker values, `/login ollama-cloud-device`)
+        // 2. unique provider login target (`/login openai` → api-key only)
+        // 3. login group method picker (multi-mode providers / multi-product groups)
+        //
+        // Group lookup must not win over a unique provider target: the OpenAI
+        // group also offers Codex, but `/login openai` means the OpenAI provider.
+        if let Some(target) = catalog::login_target_for_auth(provider) {
+            return self.start_login_for_target(target, terminal, agent).await;
+        }
+        if let Some(target) = catalog::login_target_for_provider(provider) {
+            return self.start_login_for_target(target, terminal, agent).await;
+        }
+        if let Some(group) = catalog::login_group(provider) {
+            match super::provider_picker::login_group_next(group) {
+                super::provider_picker::LoginGroupNext::Provider(value) => {
+                    let Some(target) = catalog::login_target_for_auth(&value)
+                        .or_else(|| catalog::login_target_for_provider(&value))
+                    else {
+                        self.insert_entry(&Entry::Error(format!(
+                            "unsupported login provider '{value}'"
+                        )));
+                        self.status = "login failed".into();
+                        return Ok(());
+                    };
+                    return self.start_login_for_target(target, terminal, agent).await;
+                }
+                super::provider_picker::LoginGroupNext::MethodPicker(picker) => {
+                    self.input_ui.set_composer(ComposerMode::Picker(*picker));
+                    self.status = format!("select {} login method", provider);
+                    return Ok(());
+                }
+            }
+        }
+        let mut providers = catalog::login_targets()
+            .into_iter()
+            .map(|target| format!("/login {}", target.provider))
+            .collect::<Vec<_>>();
+        providers.sort();
+        providers.dedup();
+        let providers = providers.join(", ");
+        self.insert_entry(&Entry::Error(format!(
+            "unsupported login provider '{provider}'. Use {providers}, /login {}",
+            claude_login::CLAUDE_CODE_TARGET
+        )));
+        self.status = "login failed".into();
+        Ok(())
+    }
 
-        match ProviderAuthentication::method(&target.provider)
+    async fn start_login_for_target(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        match ProviderAuthentication::method(&target.auth)
             .expect("catalog returned unsupported login provider")
         {
             AuthenticationMethod::None => {
@@ -345,8 +385,8 @@ impl App {
                 self.status = format!("enter {entry_label}");
                 Ok(())
             }
-            AuthenticationMethod::OAuth { provider_label } => {
-                self.start_oauth_login(target, provider_label, terminal, agent)
+            AuthenticationMethod::Interactive { provider_label } => {
+                self.start_interactive_login_flow(target, provider_label, terminal, agent)
                     .await
             }
         }
@@ -367,7 +407,7 @@ impl App {
         self.cancel_limits_command().await;
         let saved = ProviderAuthentication::save_api_key(
             self.credential_store.as_ref(),
-            &target.provider,
+            &target.auth,
             &key,
         );
         match saved {
@@ -380,16 +420,16 @@ impl App {
         }
     }
 
-    async fn start_oauth_login(
+    async fn start_interactive_login_flow(
         &mut self,
         target: LoginTarget,
         provider_label: &'static str,
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.pending_oauth_login.is_some() {
+        if self.pending_interactive_login.is_some() {
             self.insert_entry(&Entry::Notice(
-                "OAuth login is already in progress. Press esc to cancel.".into(),
+                "Interactive login is already in progress. Press esc to cancel.".into(),
             ));
             return Ok(());
         }
@@ -397,19 +437,19 @@ impl App {
         let remote_or_nested = std::env::var_os("SSH_CONNECTION").is_some()
             || std::env::var_os("SSH_TTY").is_some()
             || std::env::var_os("HERDR_ENV").is_some();
-        let mode = if remote_or_nested
-            && ProviderAuthentication::supports_device_login(&target.provider)
-        {
-            OAuthMode::Device
-        } else {
-            OAuthMode::Browser
-        };
+        let mode =
+            if remote_or_nested && ProviderAuthentication::supports_device_login(&target.auth) {
+                InteractiveLoginMode::Device
+            } else {
+                InteractiveLoginMode::Browser
+            };
         self.status = match mode {
-            OAuthMode::Browser => format!("starting {provider_label} login"),
-            OAuthMode::Device => format!("starting {provider_label} device login"),
+            InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
+            InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
         };
         terminal.draw(|frame| self.draw(frame))?;
-        let login = match ProviderAuthentication::start_oauth(&target.provider, mode).await {
+        let login = match ProviderAuthentication::start_interactive_login(&target.auth, mode).await
+        {
             Ok(login) => login,
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
@@ -419,14 +459,18 @@ impl App {
         };
 
         let provider_label = login.provider_label;
-        let device_flow = matches!(&login.user_action, OAuthUserAction::DeviceCode { .. });
+        let device_flow = matches!(&login.user_action, InteractiveUserAction::DeviceCode { .. });
         match login.user_action {
-            OAuthUserAction::BrowserOpened => {
+            InteractiveUserAction::BrowserOpened => {
                 self.insert_entry(&Entry::Notice(format!(
                     "opening browser for {provider_label} login. Press esc to cancel."
                 )));
             }
-            OAuthUserAction::DeviceCode {
+            InteractiveUserAction::OpenUrl { url, instruction } => {
+                self.insert_entry(&Entry::Notice(format!("{provider_label}: {instruction}")));
+                self.insert_entry(&Entry::Notice(url));
+            }
+            InteractiveUserAction::DeviceCode {
                 verification_uri,
                 user_code,
                 verification_uri_complete,
@@ -444,8 +488,8 @@ impl App {
         let flow = if device_flow { " device" } else { "" };
         self.status = format!("waiting for {provider_label}{flow} login; press esc to cancel");
         self.input_ui
-            .set_composer(ComposerMode::OAuthPending(target.clone()));
-        self.pending_oauth_login = Some(PendingOAuthLogin {
+            .set_composer(ComposerMode::InteractivePending(target.clone()));
+        self.pending_interactive_login = Some(PendingInteractiveLogin {
             target,
             handle: tokio::spawn(
                 async move { login.completion.await.map_err(|err| err.to_string()) },
@@ -454,19 +498,19 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn poll_pending_oauth_login(
+    pub(super) async fn poll_pending_interactive_login(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let Some(pending) = self.pending_oauth_login.as_ref() else {
+        let Some(pending) = self.pending_interactive_login.as_ref() else {
             return Ok(());
         };
         if !pending.handle.is_finished() {
             return Ok(());
         }
 
-        let pending = self.pending_oauth_login.take().unwrap();
+        let pending = self.pending_interactive_login.take().unwrap();
         let target = pending.target;
         match pending.handle.await {
             Ok(Ok(result)) => {
@@ -498,7 +542,9 @@ impl App {
             }
             Err(err) => {
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Error(format!("OAuth login task failed: {err}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "Interactive login task failed: {err}"
+                )));
                 self.status = "login failed".into();
                 Ok(())
             }
@@ -566,6 +612,7 @@ impl App {
         );
         match refresh_provider_models_with_store(
             &target.provider,
+            &target.auth,
             self.credential_store.as_ref(),
             model_endpoint,
         )
@@ -622,17 +669,18 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&provider, &model) else {
             return Ok(false);
         };
-        let new_provider = match build_provider(&provider, &model, reasoning.effective) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but could not refresh {}: {err}",
-                    target.provider
-                )));
-                self.status = "login saved".into();
-                return Ok(false);
-            }
-        };
+        let new_provider =
+            match build_provider(&provider, &model, reasoning.effective, &target.auth) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(format!(
+                        "stored credentials, but could not refresh {}: {err}",
+                        target.provider
+                    )));
+                    self.status = "login saved".into();
+                    return Ok(false);
+                }
+            };
 
         agent.replace_provider(new_provider, reasoning.effective)?;
         self.info
@@ -669,17 +717,18 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
             return Ok(false);
         };
-        let new_provider = match build_provider(&target.provider, &model, reasoning.effective) {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but could not activate {}: {err}",
-                    target.provider
-                )));
-                self.status = "login saved".into();
-                return Ok(false);
-            }
-        };
+        let new_provider =
+            match build_provider(&target.provider, &model, reasoning.effective, &target.auth) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(format!(
+                        "stored credentials, but could not activate {}: {err}",
+                        target.provider
+                    )));
+                    self.status = "login saved".into();
+                    return Ok(false);
+                }
+            };
 
         agent.replace_provider(new_provider, reasoning.effective)?;
         self.info.runtime.provider = target.provider.clone();
@@ -735,13 +784,13 @@ impl App {
         self.cancel_limits_command().await;
         let deleted = ProviderAuthentication::delete_credentials(
             self.credential_store.as_ref(),
-            &target.provider,
+            &target.auth,
         );
 
         match deleted {
             Ok(deleted) => {
                 self.refresh_available_auths();
-                let env_active = ProviderAuthentication::has_environment_override(&target.provider);
+                let env_active = ProviderAuthentication::has_environment_override(&target.auth);
                 let message = if env_active {
                     format!(
                         "deleted stored credentials for {}, but an env override is still active",
@@ -776,11 +825,11 @@ impl App {
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
     ) -> bool {
-        if self.info.runtime.provider != target.provider {
+        if self.info.runtime.provider != target.provider || self.info.runtime.auth != target.auth {
             self.status = "logout complete".into();
             return false;
         }
-        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.provider)
+        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.auth)
             .unwrap_or(false)
         {
             self.status = "logout complete".into();
@@ -836,15 +885,20 @@ pub(super) fn secret_input_lines(
     ]
 }
 
-pub(super) fn oauth_pending_lines(
+pub(super) fn interactive_pending_lines(
     target: &LoginTarget,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
+    let label = if target.auth == "ollama-cloud-device" {
+        format!(
+            "waiting for {} device-key login  esc cancel",
+            target.provider
+        )
+    } else {
+        format!("waiting for {} login  esc cancel", target.label)
+    };
     vec![styled_line(
-        truncate_one_line(
-            &format!("waiting for {} OAuth login  esc cancel", target.provider),
-            width,
-        ),
+        truncate_one_line(&label, width),
         width,
         Theme::dim(),
         LineFill::Natural,

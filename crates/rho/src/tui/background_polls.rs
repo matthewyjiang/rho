@@ -100,6 +100,7 @@ impl App {
                     &self.info.runtime.provider,
                     &self.info.runtime.model,
                     reasoning,
+                    &self.info.runtime.auth,
                 ) {
                     Ok(provider) => match agent.replace_provider(provider, reasoning) {
                         Ok(_) => true,

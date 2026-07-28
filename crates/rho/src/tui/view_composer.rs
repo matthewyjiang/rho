@@ -7,7 +7,7 @@ use super::{
     display_width, file_picker,
     inline_choice::inline_choice_lines,
     inline_shell, input_cursor_position, input_lines_with_images, labeled_divider_line,
-    login::{oauth_pending_lines, secret_input_lines},
+    login::{interactive_pending_lines, secret_input_lines},
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
     truncate_one_line, App, ComposerMode, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
     MIN_COMMAND_DESCRIPTION_WIDTH,
@@ -34,7 +34,7 @@ impl App {
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::ConfigTextInput(_)
-            | ComposerMode::OAuthPending(_) => (Theme::dim(), None),
+            | ComposerMode::InteractivePending(_) => (Theme::dim(), None),
         };
         if let Some(labels) = labels {
             if let Some(line) = labeled_divider_line(labels, style, width) {
@@ -62,7 +62,7 @@ impl App {
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
             ComposerMode::ConfigTextInput(input) => config_text_input_lines(input, width),
-            ComposerMode::OAuthPending(target) => oauth_pending_lines(target, width),
+            ComposerMode::InteractivePending(target) => interactive_pending_lines(target, width),
             ComposerMode::InlineChoice(modal) => inline_choice_lines(&modal.choice, width),
             ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
             ComposerMode::Approval(approval) => approval_lines(approval, width),
@@ -94,7 +94,7 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire_cursor_position(questionnaire, width)
             }
-            ComposerMode::OAuthPending(_)
+            ComposerMode::InteractivePending(_)
             | ComposerMode::Approval(_)
             | ComposerMode::InlineChoice(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {

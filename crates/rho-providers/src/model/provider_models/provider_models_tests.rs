@@ -84,6 +84,7 @@ async fn ollama_discovery_uses_resolved_v1_url_without_auth() {
 
     let models = refresh_provider_models_with_store(
         descriptor.name,
+        descriptor.default_auth().id,
         &store,
         ProviderModelEndpoint::OpenAiCompatible(&api_base),
     )
@@ -198,7 +199,7 @@ async fn openai_compatible_models_preserve_account_context_length() {
     save_provider_api_key(&store, "moonshot", "moonshot-secret").unwrap();
     let descriptor = provider::provider_descriptor("moonshot").unwrap();
 
-    let models = openai_compatible::fetch(descriptor, &api_base, &store)
+    let models = openai_compatible::fetch(descriptor, descriptor.default_auth(), &api_base, &store)
         .await
         .unwrap();
 

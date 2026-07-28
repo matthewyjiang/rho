@@ -47,16 +47,35 @@ impl App {
             self.refresh_available_auths();
             provider::providers()
                 .iter()
-                .filter(|provider| provider.model_refresh.is_some())
-                .filter(|provider| {
-                    self.available_auths
-                        .iter()
-                        .any(|auth| auth == provider.auth)
+                .filter(|descriptor| descriptor.model_refresh.is_some())
+                .filter(|descriptor| {
+                    descriptor
+                        .auth_modes()
+                        .any(|mode| self.available_auths.iter().any(|auth| auth == mode.id))
                 })
-                .map(|provider| provider.name.to_string())
+                .map(|descriptor| {
+                    let auth = descriptor
+                        .auth_modes()
+                        .find(|mode| self.available_auths.iter().any(|auth| auth == mode.id))
+                        .unwrap_or_else(|| descriptor.default_auth());
+                    (descriptor.name.to_string(), auth.id.to_string())
+                })
                 .collect()
         } else {
-            vec![selected_provider.to_string()]
+            let auth = provider::provider_descriptor(selected_provider)
+                .and_then(|descriptor| {
+                    descriptor
+                        .auth_modes()
+                        .find(|mode| self.available_auths.iter().any(|auth| auth == mode.id))
+                        .or_else(|| {
+                            // Fall back to the runtime's selected auth when it matches.
+                            descriptor.auth_mode(&self.info.runtime.auth)
+                        })
+                        .map(|mode| mode.id.to_string())
+                        .or_else(|| Some(descriptor.default_auth().id.to_string()))
+                })
+                .unwrap_or_else(|| self.info.runtime.auth.clone());
+            vec![(selected_provider.to_string(), auth)]
         };
 
         if providers.is_empty() {
@@ -72,7 +91,7 @@ impl App {
         self.status = "refreshing model list".into();
         terminal.draw(|frame| self.draw(frame))?;
         let config = self.info.services.config_repository.load()?;
-        for provider in providers {
+        for (provider, auth) in providers {
             let endpoint = config.resolved_provider_endpoint(&provider);
             let model_endpoint = endpoint.as_ref().map_or(
                 ProviderModelEndpoint::ProviderOwned,
@@ -80,6 +99,7 @@ impl App {
             );
             match refresh_provider_models_with_store(
                 &provider,
+                &auth,
                 self.credential_store.as_ref(),
                 model_endpoint,
             )
@@ -523,7 +543,7 @@ impl App {
                 return Ok(None);
             }
         };
-        let new_provider = match build_provider(&provider, &model, reasoning.effective) {
+        let new_provider = match build_provider(&provider, &model, reasoning.effective, &auth) {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(

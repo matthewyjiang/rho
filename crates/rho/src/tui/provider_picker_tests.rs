@@ -19,6 +19,28 @@ fn login_picker_lists_poolside() {
 }
 
 #[test]
+fn login_picker_lists_ollama_cloud() {
+    let picker = login_group_picker();
+    let ollama_cloud = picker
+        .items
+        .iter()
+        .find(|item| item.value == "ollama-cloud")
+        .expect("Ollama Cloud should be available for login");
+
+    assert_eq!(ollama_cloud.label, "Ollama Cloud");
+
+    let methods = login_method_picker(
+        catalog::login_group("ollama-cloud").expect("Ollama Cloud login group"),
+    );
+    let values = methods
+        .items
+        .iter()
+        .map(|item| item.value.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(values, vec!["ollama-cloud-api-key", "ollama-cloud-device"]);
+}
+
+#[test]
 fn refresh_picker_lists_all_and_available_refreshable_providers() {
     let picker = refresh_model_list_picker(&[
         "api-key".into(),
@@ -64,13 +86,10 @@ fn refresh_picker_distinguishes_openrouter_auth_modes() {
     assert_eq!(
         openrouter,
         vec![
-            (
-                "openrouter",
-                Some("Refresh cached OpenRouter models with OpenRouter API key."),
-            ),
+            ("openrouter", Some("Refresh cached OpenRouter models."),),
             (
                 "openrouter-oauth",
-                Some("Refresh cached OpenRouter models with OpenRouter OAuth."),
+                Some("Refresh cached OpenRouter models."),
             ),
         ]
     );
@@ -123,11 +142,11 @@ fn anthropic_login_methods_include_claude_code_for_delegation() {
         .iter()
         .map(|item| item.value.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(values, vec!["anthropic", "claude-code"]);
+    assert_eq!(values, vec!["anthropic-api-key", "claude-code"]);
 
     let api_key = &picker.items[0];
     assert_eq!(api_key.label, "API Key");
-    assert_eq!(api_key.value, "anthropic");
+    assert_eq!(api_key.value, "anthropic-api-key");
 
     let claude = &picker.items[1];
     assert_eq!(claude.label, "Claude Code (delegation only)");
@@ -160,7 +179,7 @@ fn login_group_next_opens_anthropic_methods_including_claude_code() {
                 .iter()
                 .map(|item| item.value.as_str())
                 .collect::<Vec<_>>();
-            assert_eq!(values, vec!["anthropic", "claude-code"]);
+            assert_eq!(values, vec!["anthropic-api-key", "claude-code"]);
         }
         LoginGroupNext::Provider(provider) => {
             panic!("Anthropic should open a method picker, got direct provider {provider}")
@@ -171,7 +190,7 @@ fn login_group_next_opens_anthropic_methods_including_claude_code() {
 #[test]
 fn login_group_next_keeps_single_catalog_method_direct() {
     match login_group_next(catalog::login_group("poolside").expect("poolside group")) {
-        LoginGroupNext::Provider(provider) => assert_eq!(provider, "poolside"),
+        LoginGroupNext::Provider(provider) => assert_eq!(provider, "poolside-api-key"),
         LoginGroupNext::MethodPicker(picker) => panic!(
             "single-method groups should stay direct, got {:?}",
             picker

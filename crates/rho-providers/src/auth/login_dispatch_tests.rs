@@ -11,38 +11,60 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
     );
     assert_eq!(
         ProviderAuthentication::method("openai-codex").unwrap(),
-        AuthenticationMethod::OAuth {
+        AuthenticationMethod::Interactive {
             provider_label: "Codex",
         }
     );
     assert_eq!(
         ProviderAuthentication::method("github-copilot").unwrap(),
-        AuthenticationMethod::OAuth {
+        AuthenticationMethod::Interactive {
             provider_label: "GitHub Copilot",
         }
     );
     assert_eq!(
         ProviderAuthentication::method("kimi-code").unwrap(),
-        AuthenticationMethod::OAuth {
+        AuthenticationMethod::Interactive {
             provider_label: "Kimi",
         }
     );
     assert_eq!(
         ProviderAuthentication::method("openrouter-oauth").unwrap(),
-        AuthenticationMethod::OAuth {
+        AuthenticationMethod::Interactive {
             provider_label: "OpenRouter",
         }
     );
     assert_eq!(
         ProviderAuthentication::method("xai-oauth").unwrap(),
-        AuthenticationMethod::OAuth {
+        AuthenticationMethod::Interactive {
             provider_label: "xAI",
         }
     );
+    assert_eq!(
+        ProviderAuthentication::method("ollama-cloud-device").unwrap(),
+        AuthenticationMethod::Interactive {
+            provider_label: "Ollama Cloud",
+        }
+    );
     assert!(ProviderAuthentication::supports_device_login("xai-oauth"));
+    assert!(ProviderAuthentication::supports_device_login(
+        "ollama-cloud-device"
+    ));
     assert!(!ProviderAuthentication::supports_device_login(
         "openrouter-oauth"
     ));
+}
+
+#[test]
+fn multi_auth_provider_name_is_ambiguous_for_login() {
+    let error = ProviderAuthentication::method("ollama-cloud").unwrap_err();
+    match error {
+        AuthenticationError::AmbiguousProvider { provider, auth_ids } => {
+            assert_eq!(provider, "ollama-cloud");
+            assert!(auth_ids.contains(&"ollama-cloud-api-key"));
+            assert!(auth_ids.contains(&"ollama-cloud-device"));
+        }
+        other => panic!("expected AmbiguousProvider, got {other:?}"),
+    }
 }
 
 #[test]

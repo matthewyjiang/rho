@@ -42,6 +42,7 @@ features:
   - [Google Gemini](/providers/google-gemini)
   - [GitHub Copilot](/providers/github-copilot)
   - [Ollama](/providers/ollama)
+  - [Ollama Cloud](/providers/ollama-cloud)
   - [OpenRouter](/providers/openrouter)
   - [Poolside](/providers/poolside)
   - [Moonshot and Kimi Code](/providers/moonshot-kimi)

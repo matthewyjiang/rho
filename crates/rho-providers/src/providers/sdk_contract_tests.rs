@@ -346,27 +346,29 @@ async fn cancels_a_streaming_turn_that_never_completes() {
 fn maps_model_errors_to_sanitized_provider_errors() {
     let cases = [
         (
-            ModelError::MissingApiKey,
+            ModelError::missing_credentials(
+                "missing OpenAI API key; run /login openai in the TUI or set OPENAI_API_KEY as a CI/dev override",
+            ),
             ProviderErrorKind::Authentication,
             false,
         ),
         (
-            ModelError::MissingCodexAuth,
+            crate::model::registry::missing_credentials_error("openai-codex"),
             ProviderErrorKind::Authentication,
             false,
         ),
         (
-            ModelError::MissingAnthropicApiKey,
+            crate::model::registry::missing_credentials_error("anthropic"),
             ProviderErrorKind::Authentication,
             false,
         ),
         (
-            ModelError::MissingGithubCopilotAuth,
+            crate::model::registry::missing_credentials_error("github-copilot"),
             ProviderErrorKind::Authentication,
             false,
         ),
         (
-            ModelError::MissingXaiAuth,
+            crate::model::registry::missing_credentials_error("xai-oauth"),
             ProviderErrorKind::Authentication,
             false,
         ),
@@ -711,7 +713,9 @@ fn retryability_matches_provider_error_contract() {
         status: StatusCode::TOO_MANY_REQUESTS,
         body: String::new(),
     });
-    let permanent = provider_error_from_model_error(ModelError::MissingApiKey);
+    let permanent = provider_error_from_model_error(
+        crate::model::registry::missing_credentials_error("openai"),
+    );
 
     assert!(retryable.is_retryable());
     assert!(!permanent.is_retryable());

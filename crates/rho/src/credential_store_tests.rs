@@ -1,17 +1,11 @@
-use std::{
-    fs,
-    sync::{Mutex, OnceLock},
-};
+use std::fs;
 
 use pretty_assertions::assert_eq;
 
 use super::*;
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
+    crate::paths::process_env_lock()
 }
 
 #[test]

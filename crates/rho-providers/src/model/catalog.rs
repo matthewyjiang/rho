@@ -85,34 +85,58 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 
 pub fn login_groups() -> Vec<LoginGroup> {
     // Keep alphabetical by display `prompt` so login pickers stay sorted as groups are added.
+    // Method values are auth profile ids; the resolved LoginTarget carries the provider name.
     [
-        ("anthropic", "Anthropic", &[("API Key", "anthropic")][..]),
+        (
+            "anthropic",
+            "Anthropic",
+            &[("API Key", "anthropic-api-key")][..],
+        ),
         (
             "github-copilot",
             "GitHub Copilot",
             &[("OAuth", "github-copilot")][..],
         ),
-        ("google", "Google Gemini", &[("API Key", "google")][..]),
+        (
+            "google",
+            "Google Gemini",
+            &[("API Key", "google-api-key")][..],
+        ),
         (
             "moonshot",
             "Moonshot AI",
-            &[("API Key", "moonshot"), ("OAuth", "kimi-code")][..],
+            &[("API Key", "moonshot-api-key"), ("OAuth", "kimi-oauth")][..],
+        ),
+        (
+            "ollama-cloud",
+            "Ollama Cloud",
+            &[
+                ("API Key", "ollama-cloud-api-key"),
+                ("Device Key", "ollama-cloud-device"),
+            ][..],
         ),
         (
             "openai",
             "OpenAI",
-            &[("API Key", "openai"), ("OAuth", "openai-codex")][..],
+            &[("API Key", "api-key"), ("OAuth", "codex")][..],
         ),
         (
             "openrouter",
             "OpenRouter",
-            &[("API Key", "openrouter"), ("OAuth", "openrouter-oauth")][..],
+            &[
+                ("API Key", "openrouter-api-key"),
+                ("OAuth", "openrouter-oauth"),
+            ][..],
         ),
-        ("poolside", "Poolside", &[("API Key", "poolside")][..]),
+        (
+            "poolside",
+            "Poolside",
+            &[("API Key", "poolside-api-key")][..],
+        ),
         (
             "xai",
             "xAI",
-            &[("API Key", "xai"), ("OAuth", "xai-oauth")][..],
+            &[("API Key", "xai-api-key"), ("OAuth", "xai-oauth")][..],
         ),
     ]
     .into_iter()
@@ -121,10 +145,10 @@ pub fn login_groups() -> Vec<LoginGroup> {
         prompt: prompt.into(),
         methods: methods
             .iter()
-            .map(|(prompt, provider)| LoginMethod {
+            .map(|(prompt, auth)| LoginMethod {
                 prompt: (*prompt).into(),
-                target: login_target_for_provider(provider)
-                    .expect("login group targets must reference registered providers"),
+                target: login_target_for_auth(auth)
+                    .expect("login group targets must reference registered auth profiles"),
             })
             .collect(),
     })
@@ -138,19 +162,38 @@ pub fn login_group(id: &str) -> Option<LoginGroup> {
 pub fn login_targets() -> Vec<LoginTarget> {
     provider::providers()
         .iter()
-        .filter(|provider| provider.auth_kind != ProviderAuthKind::None)
-        .map(|provider| LoginTarget {
-            provider: provider.name.into(),
-            auth: provider.auth.into(),
-            label: provider.login_label.into(),
+        .flat_map(|provider| {
+            provider
+                .auth_modes()
+                .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
+                .map(|mode| LoginTarget {
+                    provider: provider.name.into(),
+                    auth: mode.id.into(),
+                    label: mode.login_label.into(),
+                })
         })
         .collect()
 }
 
-pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
+pub fn login_target_for_auth(auth: &str) -> Option<LoginTarget> {
     login_targets()
         .into_iter()
-        .find(|target| target.provider == provider)
+        .find(|target| target.auth == auth)
+}
+
+pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
+    // Prefer an exact auth profile id, then a unique provider with one login mode.
+    if let Some(target) = login_target_for_auth(provider) {
+        return Some(target);
+    }
+    let matches = login_targets()
+        .into_iter()
+        .filter(|target| target.provider == provider)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
 }
 
 pub fn default_model_for_provider(provider: &str) -> Option<String> {
@@ -185,7 +228,7 @@ pub fn resolve_model_selection_for_provider(
     provider: &str,
     model: &str,
 ) -> Result<ModelSelection, ModelSelectionError> {
-    resolve_model_selection_for_provider_from(model_catalog(), provider.trim(), model.trim())
+    resolve_model_selection_for_provider_from(model_catalog(), provider.trim(), model.trim(), None)
 }
 
 pub fn resolve_model_selection_for_auths(
@@ -244,9 +287,16 @@ fn available_models_for_auths_from(
     for provider in provider::providers()
         .iter()
         .filter(|provider| provider_uses_cached_models(provider.name))
-        .filter(|provider| auths.iter().any(|auth| auth == provider.auth))
     {
-        models.extend(cached_provider_entries(provider.name, provider.auth));
+        let available_modes = provider
+            .auth_modes()
+            .filter(|mode| auths.iter().any(|auth| auth == mode.id))
+            .map(|mode| mode.id.to_string())
+            .collect::<Vec<_>>();
+        if available_modes.is_empty() {
+            continue;
+        }
+        models.extend(cached_provider_entries(provider.name, &available_modes));
     }
     models.sort_by(|left, right| {
         left.provider
@@ -256,20 +306,20 @@ fn available_models_for_auths_from(
     models
 }
 
-fn cached_provider_entries(provider: &str, auth: &str) -> Vec<ModelCatalogEntry> {
+fn cached_provider_entries(provider: &str, auth_modes: &[String]) -> Vec<ModelCatalogEntry> {
     provider_models::cached_provider_models(provider)
         .into_iter()
         .map(|model| ModelCatalogEntry {
             provider: model.provider,
             display_name: model.display_name,
             model: model.model,
-            auth_modes: vec![auth.to_string()],
+            auth_modes: auth_modes.to_vec(),
         })
         .collect()
 }
 
 fn provider_default_auth(provider: &str) -> Option<&'static str> {
-    provider::provider_descriptor(provider).map(|descriptor| descriptor.auth)
+    provider::provider_descriptor(provider).map(|descriptor| descriptor.default_auth().id)
 }
 
 fn provider_uses_cached_models(provider: &str) -> bool {
@@ -300,27 +350,33 @@ fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
 fn selection_from_provider_model(
     provider: &str,
     model: &provider_models::ProviderModel,
+    preferred_auth: Option<&str>,
 ) -> ModelSelection {
+    let auth = preferred_auth
+        .and_then(|auth| {
+            provider::provider_descriptor(provider)
+                .and_then(|descriptor| descriptor.auth_mode(auth).map(|mode| mode.id))
+        })
+        .or_else(|| provider_default_auth(provider))
+        .unwrap_or("api-key");
     ModelSelection {
         provider: provider.to_string(),
         model: model.model.clone(),
-        auth: provider_default_auth(provider)
-            .unwrap_or("api-key")
-            .to_string(),
+        auth: auth.to_string(),
         from_catalog: true,
     }
 }
 
-fn selection_from_entry(entry: &ModelCatalogEntry) -> ModelSelection {
+fn selection_from_entry(entry: &ModelCatalogEntry, preferred_auth: Option<&str>) -> ModelSelection {
+    let auth = preferred_auth
+        .filter(|auth| entry.auth_modes.iter().any(|mode| mode == auth))
+        .map(str::to_string)
+        .or_else(|| entry.auth_modes.first().cloned())
+        .unwrap_or_else(|| "api-key".into());
     ModelSelection {
         provider: entry.provider.clone(),
         model: entry.model.clone(),
-        auth: entry
-            .auth_modes
-            .first()
-            .map(String::as_str)
-            .unwrap_or("api-key")
-            .to_string(),
+        auth,
         from_catalog: true,
     }
 }
@@ -338,7 +394,12 @@ fn resolve_model_selection_from(
     }
 
     if let Some((provider, model)) = input.split_once('/') {
-        return resolve_model_selection_for_provider_from(catalog, provider.trim(), model.trim());
+        return resolve_model_selection_for_provider_from(
+            catalog,
+            provider.trim(),
+            model.trim(),
+            Some(auth),
+        );
     }
 
     let auths = if available_auths.is_empty() {
@@ -351,7 +412,7 @@ fn resolve_model_selection_from(
         .filter(|entry| entry.model == input)
         .collect::<Vec<_>>();
     match matches.as_slice() {
-        [entry] => Ok(selection_from_entry(entry)),
+        [entry] => Ok(selection_from_entry(entry, Some(auth))),
         [] => Err(unavailable_model_error(current_provider, input)),
         _ => Err(ModelSelectionError::AmbiguousModel {
             model: input.to_string(),
@@ -363,6 +424,7 @@ fn resolve_model_selection_for_provider_from(
     catalog: &[ModelCatalogEntry],
     provider: &str,
     model: &str,
+    preferred_auth: Option<&str>,
 ) -> Result<ModelSelection, ModelSelectionError> {
     if provider.is_empty() || model.is_empty() {
         return Err(ModelSelectionError::Empty);
@@ -378,15 +440,24 @@ fn resolve_model_selection_for_provider_from(
             |descriptor| descriptor.canonicalize_model_id(model),
         );
         if let Some(entry) = provider_models::cached_provider_model(provider, &model_id) {
-            return Ok(selection_from_provider_model(provider, &entry));
+            return Ok(selection_from_provider_model(
+                provider,
+                &entry,
+                preferred_auth,
+            ));
         }
         if builtin_default_model(provider).as_deref() == Some(model_id.as_str()) {
+            let auth = preferred_auth
+                .and_then(|auth| {
+                    provider::provider_descriptor(provider)
+                        .and_then(|descriptor| descriptor.auth_mode(auth).map(|mode| mode.id))
+                })
+                .or_else(|| provider_default_auth(provider))
+                .unwrap_or("api-key");
             return Ok(ModelSelection {
                 provider: provider.to_string(),
                 model: model_id,
-                auth: provider_default_auth(provider)
-                    .unwrap_or("api-key")
-                    .to_string(),
+                auth: auth.to_string(),
                 from_catalog: true,
             });
         }
@@ -395,7 +466,7 @@ fn resolve_model_selection_for_provider_from(
     catalog
         .iter()
         .find(|entry| entry.provider == provider && entry.model == model)
-        .map(selection_from_entry)
+        .map(|entry| selection_from_entry(entry, preferred_auth))
         .ok_or_else(|| unavailable_model_error(provider, model))
 }
 

@@ -61,6 +61,7 @@ impl XaiAuthManager {
             provider::provider_descriptor("xai-oauth").expect("xAI OAuth provider must exist");
         let (source, tokens) = match std::env::var(
             descriptor
+                .default_auth()
                 .auth_kind
                 .env_var()
                 .expect("authenticated provider must declare an environment variable"),
@@ -76,7 +77,9 @@ impl XaiAuthManager {
             ),
             _ => (
                 XaiAuthSource::Store,
-                load_xai_tokens(store.as_ref())?.ok_or(ModelError::MissingXaiAuth)?,
+                load_xai_tokens(store.as_ref())?.ok_or(
+                    crate::model::registry::missing_credentials_error("xai-oauth"),
+                )?,
             ),
         };
         Ok(Self::from_tokens(store, source, tokens))
@@ -113,7 +116,7 @@ impl XaiAuthManager {
         if self.source != XaiAuthSource::Store {
             return Ok(None);
         }
-        // No refresh token means the 401 is final; do not surface MissingXaiAuth
+        // No refresh token means the 401 is final; do not surface missing xAI OAuth credentials
         // as a distinct refresh failure (that would double-count attempts).
         {
             let tokens = self.tokens.lock().await;
@@ -135,10 +138,9 @@ impl XaiAuthManager {
                 access_token: current.access_token.clone(),
             });
         }
-        let refresh_token = current
-            .refresh_token
-            .clone()
-            .ok_or(ModelError::MissingXaiAuth)?;
+        let refresh_token = current.refresh_token.clone().ok_or(
+            crate::model::registry::missing_credentials_error("xai-oauth"),
+        )?;
         let refreshed = refresh_xai_tokens(&self.client, &refresh_token, &current).await?;
         save_xai_tokens(self.store.as_ref(), &refreshed)?;
         let access_token = refreshed.access_token.clone();

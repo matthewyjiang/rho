@@ -395,19 +395,9 @@ fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
         if let Some(error) = cause.downcast_ref::<rho_providers::model::ModelError>() {
             use rho_providers::model::ModelError;
             return match error {
-                ModelError::MissingApiKey
-                | ModelError::MissingCodexAuth
-                | ModelError::MissingAnthropicApiKey
-                | ModelError::MissingGoogleApiKey
-                | ModelError::MissingGithubCopilotAuth
-                | ModelError::MissingMoonshotApiKey
-                | ModelError::MissingPoolsideApiKey
-                | ModelError::MissingOpenRouterApiKey
-                | ModelError::MissingCredentialProfile(_)
-                | ModelError::MissingKimiAuth
-                | ModelError::MissingXaiApiKey
-                | ModelError::MissingXaiAuth
-                | ModelError::Credentials(_) => (TerminalReason::Authentication, 1),
+                ModelError::MissingCredentials(_) | ModelError::Credentials(_) => {
+                    (TerminalReason::Authentication, 1)
+                }
                 ModelError::UnsupportedReasoning { .. } | ModelError::UnsupportedProvider(_) => {
                     (TerminalReason::ConfigurationError, 2)
                 }

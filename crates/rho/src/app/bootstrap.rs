@@ -516,12 +516,7 @@ fn validate_terminal_mode(cli: &Cli) -> anyhow::Result<()> {
 fn is_interactive_startup_unavailable_error(error: &ModelError) -> bool {
     matches!(
         error,
-        ModelError::MissingApiKey
-            | ModelError::MissingCodexAuth
-            | ModelError::MissingAnthropicApiKey
-            | ModelError::MissingGithubCopilotAuth
-            | ModelError::MissingXaiApiKey
-            | ModelError::MissingXaiAuth
+        ModelError::MissingCredentials(_)
             | ModelError::Credentials(_)
             | ModelError::UnsupportedProvider(_)
     )

@@ -226,6 +226,8 @@ fn login_targets_use_provider_names() {
     assert!(providers.contains(&("moonshot", "moonshot-api-key")));
     assert!(providers.contains(&("openrouter", "openrouter-api-key")));
     assert!(providers.contains(&("openrouter-oauth", "openrouter-oauth")));
+    assert!(providers.contains(&("ollama-cloud", "ollama-cloud-api-key")));
+    assert!(providers.contains(&("ollama-cloud", "ollama-cloud-device")));
     assert!(providers.contains(&("kimi-code", "kimi-oauth")));
     assert!(providers.contains(&("xai", "xai-api-key")));
     assert!(providers.contains(&("xai-oauth", "xai-oauth")));
@@ -233,10 +235,34 @@ fn login_targets_use_provider_names() {
     assert_eq!(google.methods.len(), 1);
     assert_eq!(google.methods[0].target.provider, "google");
     assert!(login_target_for_provider("ollama").is_none());
-    assert!(login_target_for_provider("api-key").is_none());
-    assert!(login_target_for_provider("codex").is_none());
-    assert!(login_target_for_provider("anthropic-api-key").is_none());
-    assert!(login_target_for_provider("xai-api-key").is_none());
+    assert!(login_target_for_auth("ollama-cloud-device").is_some());
+    assert_eq!(
+        login_target_for_auth("ollama-cloud-device")
+            .unwrap()
+            .provider,
+        "ollama-cloud"
+    );
+    // Multi-mode provider name is ambiguous without a method picker.
+    assert!(login_target_for_provider("ollama-cloud").is_none());
+    // Auth profile ids resolve through the same helper used by /login.
+    assert_eq!(
+        login_target_for_provider("api-key").unwrap().provider,
+        "openai"
+    );
+    assert_eq!(
+        login_target_for_provider("codex").unwrap().provider,
+        "openai-codex"
+    );
+    assert_eq!(
+        login_target_for_provider("anthropic-api-key")
+            .unwrap()
+            .provider,
+        "anthropic"
+    );
+    assert_eq!(
+        login_target_for_provider("xai-api-key").unwrap().provider,
+        "xai"
+    );
     assert!(login_target_for_provider("xai-oauth").is_some());
 }
 
