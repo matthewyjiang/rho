@@ -4,8 +4,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     commands,
+    composer_layout::content_width,
     paste_burst::{normalize_paste, paste_marker_for, previous_word_boundary},
-    render::{input_cursor_index_on_visual_line, input_cursor_position, input_visual_lines},
+    render::{
+        editable_input_visual_lines, input_cursor_index_on_visual_line, input_cursor_position,
+    },
     App, CommandInvocation, ComposerMode, HistoryDirection, InputDraft, InputSubmissionMode,
     PasteBurstEnter, PasteBurstKey, PasteSegment,
 };
@@ -208,9 +211,10 @@ impl App {
         direction: HistoryDirection,
         terminal_width: usize,
     ) {
-        let visual_lines = input_visual_lines(self.input_ui.text(), terminal_width);
+        let content_width = content_width(terminal_width);
+        let visual_lines = editable_input_visual_lines(self.input_ui.text(), content_width);
         let cursor_position =
-            input_cursor_position(self.input_ui.text(), self.input_ui.cursor(), terminal_width);
+            input_cursor_position(self.input_ui.text(), self.input_ui.cursor(), content_width);
         let can_recall = match direction {
             HistoryDirection::Previous => cursor_position.y == 0,
             HistoryDirection::Next => cursor_position.y as usize + 1 >= visual_lines.len(),

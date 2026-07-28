@@ -49,6 +49,7 @@ mod subagent_questionnaires;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod choice_actions;
 mod claude_login;
+mod composer_layout;
 mod during_turn;
 mod goal_command;
 mod help_picker;
@@ -160,9 +161,9 @@ use questionnaire::{
     QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_cursor_position, input_lines_with_images,
-    labeled_divider_line, picker_lines, session_header_lines, styled_line, tool_entry_lines,
-    truncate_one_line, LineFill,
+    char_prefix_display_width, display_width, input_cursor_position, input_image_lines,
+    input_lines, labeled_divider_line, picker_lines, session_header_lines, styled_line,
+    tool_entry_lines, truncate_one_line, LineFill,
 };
 use scrollbar::HistoryScrollbar;
 #[cfg(test)]
