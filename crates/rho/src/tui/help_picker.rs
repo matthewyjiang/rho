@@ -1,8 +1,8 @@
 use crate::keybindings::Keybindings;
 
 use super::{
-    picker_overlay::OverlayChrome, App, ComposerMode, PickerAction, PickerItem, PickerLayout,
-    UiPicker,
+    picker_overlay::OverlayChrome, App, ComposerMode, PickerAction, PickerBadge, PickerBadgeTone,
+    PickerItem, PickerLayout, UiPicker,
 };
 
 pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
@@ -151,9 +151,12 @@ fn entry(keys: impl Into<String>, summary: &str, detail: &str) -> PickerItem {
     PickerItem {
         section: None,
         label: keys.clone(),
-        detail: Some(format!("{summary}\n\n{detail}")),
+        detail: Some(detail.into()),
         preview: None,
-        badge: None,
+        badge: Some(PickerBadge {
+            text: summary.into(),
+            tone: PickerBadgeTone::Selected,
+        }),
         value: keys,
     }
 }
