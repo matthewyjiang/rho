@@ -129,7 +129,7 @@ impl App {
                             .map(|target| target.line),
                     );
                     if let (Some(selection), Some(position)) = (
-                        &mut self.history.text_selection(),
+                        self.history.text_selection_mut().as_mut(),
                         selection_position_clamped(history, history_start, column, row),
                     ) {
                         selection.update(position);

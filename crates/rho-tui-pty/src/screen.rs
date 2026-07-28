@@ -50,6 +50,18 @@ impl ScreenModel {
         self.parser.screen().cursor_position()
     }
 
+    /// Columns in `row` rendered with the inverse (reverse-video) attribute.
+    pub fn inverse_columns(&self, row: u16) -> Vec<u16> {
+        (0..self.cols())
+            .filter(|&col| {
+                self.parser
+                    .screen()
+                    .cell(row, col)
+                    .is_some_and(vt100::Cell::inverse)
+            })
+            .collect()
+    }
+
     pub fn contains_text(&self, needle: &str) -> bool {
         self.contents().contains(needle)
     }

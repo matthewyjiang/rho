@@ -9,6 +9,7 @@ mod pickers;
 mod resume_delete;
 mod runtime_info;
 mod subagent_rail;
+mod text_selection;
 
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
@@ -25,6 +26,7 @@ use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
+use text_selection::TEXT_SELECTION_DRAG_STEPS;
 
 use anyhow::Result;
 
@@ -868,6 +870,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Keep hover through refreshes and activate rows on a completed click",
         DEFAULT_SIZE,
         SUBAGENT_RAIL_MOUSE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "text_selection_drag",
+        "Update the drag selection highlight before the mouse button is released",
+        DEFAULT_SIZE,
+        TEXT_SELECTION_DRAG_STEPS,
         false,
     ),
     Scenario::new(

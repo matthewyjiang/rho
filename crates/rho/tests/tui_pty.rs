@@ -484,6 +484,11 @@ fn subagent_rail_mouse_activation_uses_release_and_survives_refresh() {
 }
 
 #[test]
+fn text_selection_highlight_follows_drag_before_release() {
+    assert_pass("text_selection_drag");
+}
+
+#[test]
 fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
 }
