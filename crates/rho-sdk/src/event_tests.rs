@@ -4,11 +4,10 @@ use pretty_assertions::assert_eq;
 
 use super::ModelCallMetrics;
 
-// Covers: hidden reasoning tokens must include pre-stream reasoning time in their rate,
-// and retry backoff must not deflate it.
+// Covers: hidden reasoning tokens must include pre-stream reasoning time in their rate.
 // Owner: SDK model-call metrics
 #[test]
-fn output_rate_uses_attempt_latency() {
+fn output_rate_divides_tokens_by_total_latency() {
     let cases = [
         (
             "reasoning before the first event is charged to the rate",
@@ -16,19 +15,7 @@ fn output_rate_uses_attempt_latency() {
                 output_tokens: Some(100),
                 time_to_first_token: Some(Duration::from_secs(8)),
                 generation_time: Some(Duration::from_secs(2)),
-                attempt_latency: Duration::from_secs(10),
                 total_latency: Duration::from_secs(10),
-            },
-            Some(10.0),
-        ),
-        (
-            "retry backoff before the winning attempt is not charged",
-            ModelCallMetrics {
-                output_tokens: Some(100),
-                time_to_first_token: Some(Duration::from_secs(8)),
-                generation_time: Some(Duration::from_secs(2)),
-                attempt_latency: Duration::from_secs(10),
-                total_latency: Duration::from_secs(40),
             },
             Some(10.0),
         ),
@@ -38,7 +25,6 @@ fn output_rate_uses_attempt_latency() {
                 output_tokens: Some(50),
                 time_to_first_token: None,
                 generation_time: None,
-                attempt_latency: Duration::from_secs(5),
                 total_latency: Duration::from_secs(5),
             },
             Some(10.0),
@@ -49,7 +35,6 @@ fn output_rate_uses_attempt_latency() {
                 output_tokens: None,
                 time_to_first_token: None,
                 generation_time: None,
-                attempt_latency: Duration::from_secs(5),
                 total_latency: Duration::from_secs(5),
             },
             None,
@@ -60,7 +45,6 @@ fn output_rate_uses_attempt_latency() {
                 output_tokens: Some(50),
                 time_to_first_token: None,
                 generation_time: None,
-                attempt_latency: Duration::ZERO,
                 total_latency: Duration::ZERO,
             },
             None,

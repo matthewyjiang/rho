@@ -21,13 +21,13 @@ fn profile(
 
 /// Builds metrics for a call that succeeded on its first attempt, where the
 /// attempt spans the whole request and drives the reported rate.
-fn metrics(output_tokens: u64, attempt_latency: Duration) -> ModelCallMetrics {
+fn metrics(output_tokens: u64, total_latency: Duration) -> ModelCallMetrics {
     ModelCallMetrics {
         output_tokens: Some(output_tokens),
         time_to_first_token: Some(Duration::from_millis(200)),
-        generation_time: attempt_latency.checked_sub(Duration::from_millis(200)),
-        attempt_latency,
-        total_latency: attempt_latency,
+        generation_time: total_latency.checked_sub(Duration::from_millis(200)),
+
+        total_latency,
     }
 }
 
@@ -77,7 +77,6 @@ fn counts_calls_that_reported_tokens_without_streaming_any_output() {
         output_tokens: Some(100),
         time_to_first_token: None,
         generation_time: None,
-        attempt_latency: Duration::from_secs(2),
         total_latency: Duration::from_secs(2),
     };
 
