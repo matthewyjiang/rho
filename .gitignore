@@ -5,4 +5,5 @@
 /plans
 __pycache__/
 .env
-.claude/
+.claude/*
+!.claude/skills
