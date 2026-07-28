@@ -37,11 +37,17 @@ Correct clear in-scope issues before validation.
 
 ### Tests
 
+Load the `rho-test-selection` skill before adding, expanding, reviewing, or deleting tests. Enforce its failure-mode / owner-layer gate, Tier A/B/C rules, determinism rules, and PTY defaults.
+
+Short checks while reviewing the diff:
+
 - Prefer behavior or integration tests for user-visible behavior and unit tests for focused pure logic.
 - Put new test modules in sibling `*_tests.rs` files with an explicit `#[path = "..."] mod tests;` when practical.
 - Prefer `pretty_assertions::assert_eq` and whole-object comparisons when available.
-- Do not test static constants or removed behavior.
+- Do not test static constants or removed behavior; do not lock copy behind string-contains tests.
 - Avoid mutating process environment; inject environment-derived values or dependencies instead.
+- Reject sleep-synced or known-flaky tests; wait on explicit signals or use PTY harness waits.
+- Interactive TUI changes default to PTY scenarios (`rho-tui-pty-testing`), not new chrome unit tests.
 
 For bug fixes, reproduce the issue through the closest practical user path before finalizing when feasible.
 

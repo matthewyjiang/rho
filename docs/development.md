@@ -44,7 +44,10 @@ Development and test profiles use reduced debug information to keep artifacts an
 
 ## Test selection
 
-Before adding tests, use the gate in [`AGENTS.md`](../AGENTS.md): one distinct failure mode, one owner layer, and no duplicate coverage. Interactive TUI behavior defaults to a PTY scenario. Prefer table-driven unit tests for pure logic. Reject tests that only lock copy, restate defaults, or repeat the same branch at multiple layers.
+Before adding, expanding, reviewing, or deleting tests, follow the project skill
+[`.agents/skills/rho-test-selection/SKILL.md`](../.agents/skills/rho-test-selection/SKILL.md)
+(`rho-test-selection`). It defines the failure-mode / owner-layer gate, Tier A/B/C
+rules, determinism requirements, and PTY-as-product-gate defaults.
 
 Pull requests that add tests should fill the test-gate section in the pull request template.
 

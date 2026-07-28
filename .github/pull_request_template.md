@@ -11,8 +11,9 @@
 
 ## Test gate
 
-<!-- Required when this PR adds or materially expands tests. Delete this section only if the diff adds no tests. -->
+<!-- Required when this PR adds or materially expands tests. Delete this section only if the diff adds no tests. Full rules: rho-test-selection skill. -->
 
+- [ ] Followed `rho-test-selection` (failure mode, owner layer, gap).
 - [ ] Each new test names a distinct **failure mode** (user-visible or contract bug).
 - [ ] Each new test has one **owner layer** (pure unit / SDK contract / PTY / OS).
 - [ ] No existing test already covers that failure mode at a better layer.
@@ -20,6 +21,7 @@
 - [ ] Cases share one test function per rule (tables), not twin functions per literal.
 - [ ] Asserts use structured values; string `.contains` only for redaction, wire format, or security escaping.
 - [ ] No locks on help text, statusline chrome, labels, or other copy.
+- [ ] No wall-clock sleep used for synchronization; no known-flaky timing races.
 - [ ] Nearby weaker or duplicate tests were removed or merged when practical.
 
 ### New tests
