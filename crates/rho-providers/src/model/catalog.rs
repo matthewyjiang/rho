@@ -352,20 +352,6 @@ fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
     }
 }
 
-fn selection_from_provider_model(
-    provider: &str,
-    model: &provider_models::ProviderModel,
-    preferred_auth: Option<&str>,
-    available_auths: &[String],
-) -> ModelSelection {
-    ModelSelection {
-        provider: provider.to_string(),
-        model: model.model.clone(),
-        auth: resolve_selection_auth(provider, None, preferred_auth, available_auths),
-        from_catalog: true,
-    }
-}
-
 fn selection_from_entry(
     entry: &ModelCatalogEntry,
     preferred_auth: Option<&str>,
@@ -374,51 +360,44 @@ fn selection_from_entry(
     ModelSelection {
         provider: entry.provider.clone(),
         model: entry.model.clone(),
-        auth: resolve_selection_auth(
-            &entry.provider,
-            Some(&entry.auth_modes),
-            preferred_auth,
-            available_auths,
-        ),
+        auth: resolve_selection_auth(&entry.auth_modes, preferred_auth, available_auths),
         from_catalog: true,
     }
 }
 
-/// Selects the auth mode for a model selection.
+/// Selects the auth mode for a model selection from the given candidate modes.
 ///
-/// Explicit preference (legacy provider alias or current auth) wins, then the
-/// first mode the caller reports as credential-backed, then the provider
-/// default so non-interactive callers without credential context keep working.
+/// Explicit preference (legacy provider alias or current auth) wins when it is
+/// a candidate, then the first mode the caller reports as credential-backed,
+/// then the first candidate so non-interactive callers without credential
+/// context keep the provider default.
 fn resolve_selection_auth(
-    provider: &str,
-    entry_auth_modes: Option<&[String]>,
+    auth_modes: &[String],
     preferred_auth: Option<&str>,
     available_auths: &[String],
 ) -> String {
-    let mode_available = |mode: &str| available_auths.iter().any(|auth| auth == mode);
-    if let Some(entry_modes) = entry_auth_modes {
-        return preferred_auth
-            .filter(|auth| entry_modes.iter().any(|mode| mode == auth))
-            .map(str::to_string)
-            .or_else(|| {
-                entry_modes
-                    .iter()
-                    .find(|mode| mode_available(mode))
-                    .cloned()
-            })
-            .or_else(|| entry_modes.first().cloned())
-            .unwrap_or_else(|| "api-key".into());
-    }
-    let descriptor = provider::provider_descriptor(provider);
     preferred_auth
-        .and_then(|auth| descriptor.and_then(|descriptor| descriptor.auth_mode(auth)))
+        .filter(|auth| auth_modes.iter().any(|mode| mode == auth))
+        .map(str::to_string)
         .or_else(|| {
-            descriptor
-                .and_then(|descriptor| descriptor.auth_modes().find(|mode| mode_available(mode.id)))
+            auth_modes
+                .iter()
+                .find(|mode| available_auths.contains(mode))
+                .cloned()
         })
-        .or_else(|| descriptor.map(|descriptor| descriptor.default_auth()))
-        .map(|mode| mode.id.to_string())
+        .or_else(|| auth_modes.first().cloned())
         .unwrap_or_else(|| "api-key".into())
+}
+
+fn provider_auth_mode_ids(provider: &str) -> Vec<String> {
+    provider::provider_descriptor(provider)
+        .map(|descriptor| {
+            descriptor
+                .auth_modes()
+                .map(|mode| mode.id.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn resolve_model_selection_from(
@@ -485,23 +464,25 @@ fn resolve_model_selection_for_provider_from(
             || model.to_string(),
             |descriptor| descriptor.canonicalize_model_id(model),
         );
-        if let Some(entry) = provider_models::cached_provider_model(provider, &model_id) {
-            return Ok(selection_from_provider_model(
-                provider,
-                &entry,
+        let selected_model = provider_models::cached_provider_model(provider, &model_id)
+            .map(|entry| entry.model)
+            .or_else(|| {
+                (builtin_default_model(provider).as_deref() == Some(model_id.as_str()))
+                    .then_some(model_id)
+            });
+        let Some(selected_model) = selected_model else {
+            return Err(unavailable_model_error(provider, model));
+        };
+        return Ok(ModelSelection {
+            provider: provider.to_string(),
+            model: selected_model,
+            auth: resolve_selection_auth(
+                &provider_auth_mode_ids(provider),
                 preferred_auth,
                 available_auths,
-            ));
-        }
-        if builtin_default_model(provider).as_deref() == Some(model_id.as_str()) {
-            return Ok(ModelSelection {
-                provider: provider.to_string(),
-                model: model_id,
-                auth: resolve_selection_auth(provider, None, preferred_auth, available_auths),
-                from_catalog: true,
-            });
-        }
-        return Err(unavailable_model_error(provider, model));
+            ),
+            from_catalog: true,
+        });
     }
     catalog
         .iter()
