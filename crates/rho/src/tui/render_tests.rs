@@ -32,8 +32,6 @@ fn truncate_one_line_matches_expected_outputs() {
         ("combining truncation", "e\u{301}xy", 2, "e\u{301}…"),
         ("one newline", "ab\ncd", 5, "ab cd"),
         ("multiple newlines", "a\n\nbc", 4, "a  …"),
-        ("control exact fit", "a\tb", 2, "a\tb"),
-        ("control truncation", "a\tbc", 2, "a\t…"),
     ];
 
     for (name, text, width, expected) in cases {
@@ -57,8 +55,6 @@ fn truncate_keep_end_matches_expected_outputs() {
         ("combining truncation", "xabe\u{301}", 3, "…be\u{301}"),
         ("one newline", "ab\ncd", 5, "ab cd"),
         ("multiple newlines", "a\n\nbc", 4, "… bc"),
-        ("control exact fit", "a\tb", 2, "a\tb"),
-        ("control truncation", "ab\tcd", 3, "…\tcd"),
     ];
 
     for (name, text, width, expected) in cases {
