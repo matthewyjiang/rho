@@ -1,4 +1,7 @@
-use super::{InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *};
+use super::{
+    provider_actions::{ProviderActivation, ProviderActivationOutcome},
+    InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *,
+};
 use {
     rho_providers::auth::login_dispatch::{
         AuthenticationMethod, CompletedAuthentication, InteractiveLoginMode, InteractiveUserAction,
@@ -685,15 +688,16 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider, reasoning.effective, &target.auth)?;
-        self.info
-            .set_reasoning(reasoning.effective, reasoning.source);
-        self.info.runtime.auth = target.auth.clone();
-        self.info.services.auth_unavailable = None;
-        self.start_model_metadata_fetch(agent);
-        match self.save_current_config() {
-            Ok(()) => self.status = "login saved".into(),
-            Err(err) => {
+        let activation = ProviderActivation {
+            provider,
+            model,
+            reasoning,
+            auth: target.auth.clone(),
+            replacement: new_provider,
+        };
+        match self.activate_provider(activation, agent)? {
+            ProviderActivationOutcome::Saved => self.status = "login saved".into(),
+            ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "login applied, but saving config failed: {err}"
                 )));
@@ -737,17 +741,15 @@ impl App {
             }
         };
 
-        agent.replace_provider(new_provider, reasoning.effective, &target.auth)?;
-        self.info.runtime.provider = target.provider.clone();
-        self.info.runtime.auth = target.auth.clone();
-        self.info.runtime.model = model;
-        self.info
-            .set_reasoning(reasoning.effective, reasoning.source);
-        self.info.services.auth_unavailable = None;
-        self.using_unavailable_provider = false;
-        self.start_model_metadata_fetch(agent);
-        match self.save_current_config() {
-            Ok(()) => {
+        let activation = ProviderActivation {
+            provider: target.provider.clone(),
+            model,
+            reasoning,
+            auth: target.auth.clone(),
+            replacement: new_provider,
+        };
+        match self.activate_provider(activation, agent)? {
+            ProviderActivationOutcome::Saved => {
                 self.status = format!(
                     "model: {}",
                     rho_providers::provider::model_reference(
@@ -756,7 +758,7 @@ impl App {
                     )
                 );
             }
-            Err(err) => {
+            ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "selected {}, but saving config failed: {err}",
                     rho_providers::provider::model_reference(
