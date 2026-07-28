@@ -1,6 +1,6 @@
 ---
 name: rho-rust-change-validation
-description: Validate and finalize Rust changes in Rho. Use after editing Rust, before committing or opening a PR, when fixing test or lint failures, or when reviewing compliance with Rho's architecture and test conventions. Review the diff, run focused checks, and report exactly what was validated.
+description: Validate and finalize Rust changes in Rho with the staged fast and full workflows. Use after editing Rust, before committing or opening a PR, when fixing test or lint failures, or when reviewing compliance with Rho's architecture and test conventions. Review the diff, run the narrowest useful checks during iteration, run comprehensive checks at the final gate, and report exactly what was validated.
 compatibility: Requires a Rho checkout with Rust, Cargo, and Python 3.
 ---
 
@@ -47,34 +47,58 @@ For bug fixes, reproduce the issue through the closest practical user path befor
 
 ## 3. Run validation
 
+Use the repository validation wrapper instead of assembling overlapping Cargo commands by hand. It caps Cargo at 12 jobs, keeps the edit loop narrow, and reserves all-target and all-feature checks for the final gate.
+
 Capture verbose output in temporary logs and inspect only relevant excerpts.
 
-### Required after Rust changes
+### Fast edit loop
+
+After Rust changes, format first, then run the fast workflow for the owning package:
 
 ```bash
 cargo fmt --all
-# CI equivalent: cargo fmt --all -- --check
-# (also enforced by: python3 scripts/check_sdk_compatibility.py --test-downstream)
 
-ARCH_LOG=$(mktemp /tmp/rho-architecture.XXXXXX.log)
-python3 scripts/check_architecture.py >"$ARCH_LOG" 2>&1
-
-TEST_LOG=$(mktemp /tmp/rho-tests.XXXXXX.log)
-cargo test <focused-filter-or-target> >"$TEST_LOG" 2>&1
+VALIDATION_LOG=$(mktemp /tmp/rho-validation.XXXXXX.log)
+python3 scripts/validate.py fast --package <package> >"$VALIDATION_LOG" 2>&1
 ```
 
-Choose the test target from the changed modules rather than copying the placeholder. Run broader `cargo test` only when changes cross boundaries or focused coverage is insufficient.
+The fast workflow checks formatting and architecture, then checks the selected package without compiling every target. Add the narrowest relevant test selection when behavior changed:
 
-When the change touches `rho-sdk`, downstream fixtures, or SDK packaging metadata, also run:
+```bash
+# Focused library or unit test
+python3 scripts/validate.py fast \
+  --package rho-sdk \
+  --lib \
+  --filter <test-name>
+
+# Focused integration test
+python3 scripts/validate.py fast \
+  --package rho-coding-agent \
+  --test <integration-target> \
+  --filter <test-name>
+```
+
+Use the Cargo package name, such as `rho-coding-agent`, `rho-providers`, `rho-sdk`, `rho-agent-tools`, or `rho-tui-pty`. Prefer an explicit `--lib` or `--test` target with a filter so Cargo does not compile unrelated test binaries. Run additional behavior or integration targets only when the change crosses their boundaries.
+
+If an SDK, downstream fixture, or SDK packaging change needs compatibility coverage before the full gate, run the matching focused command:
 
 ```bash
 python3 scripts/check_sdk_compatibility.py --test-features
 python3 scripts/check_sdk_compatibility.py --test-downstream
 ```
 
-Do not raise architecture line budgets merely to pass. Extract cohesive modules instead. Run `scripts/check_architecture.py --self-test` only when changing the checker, its policy, related documentation, or fixtures.
+### Full final gate
 
-Run `cargo check` or `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` when requested or when they add meaningful coverage. Never claim a check passed unless it was run.
+Before opening or updating a PR, and after broad or cross-crate changes, run:
+
+```bash
+VALIDATION_LOG=$(mktemp /tmp/rho-validation-full.XXXXXX.log)
+python3 scripts/validate.py full >"$VALIDATION_LOG" 2>&1
+```
+
+Full mode runs policy and script checks, Clippy for all workspace targets and features, normal workspace tests, documentation tests, and SDK feature and downstream checks. Do not precede it with a separate workspace `cargo check`; Clippy and tests already provide that compile coverage. Do not add `--all-targets` to the normal workspace test command; Clippy, platform CI, and the dedicated benchmark job cover examples and benchmarks.
+
+Do not raise architecture line budgets merely to pass. Extract cohesive modules instead. Full mode includes the architecture self-test, so run that self-test separately only when changing the checker and not running full mode.
 
 For interactive TUI behavior, load and follow `rho-tui-pty-testing` first. Run the PTY smoke suite or a named scenario when the change touches interactive flows. Fall back to `rho-tui-herdr-testing` only for exploratory validation or when a PTY scenario cannot cover the behavior yet. Record the path used and its result here.
 
@@ -83,8 +107,8 @@ For interactive TUI behavior, load and follow `rho-tui-pty-testing` first. Run t
 Inspect focused excerpts, for example:
 
 ```bash
-tail -n 80 "$TEST_LOG"
-rg -n "error|failed|failure|panicked|warning" "$TEST_LOG" | tail -n 80
+tail -n 80 "$VALIDATION_LOG"
+rg -n "error|failed|failure|panicked|warning" "$VALIDATION_LOG" | tail -n 80
 ```
 
 Classify failures as caused by the change, an adjacent issue to fix, unrelated pre-existing work, or environmental. Fix obvious adjacent issues when safe. Do not weaken tests, increase budgets, add broad allows, or silently skip checks to obtain a pass.
@@ -108,7 +132,7 @@ If committing, use the repository's Conventional Commit format. Keep the descrip
 Report:
 
 - behavior and code reviewed
-- exact formatting, architecture, test, lint, and smoke-test commands run
+- exact fast or full workflow, package, test target, lint, and smoke-test commands run
 - pass, failure, or blocked status for each
 - fixes made during validation
 - checks not run and why
