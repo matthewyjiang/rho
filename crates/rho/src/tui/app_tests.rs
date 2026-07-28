@@ -1211,8 +1211,11 @@ fn login_method_picker_uses_readable_auth_prompts() {
 /// Points device-key discovery at an empty directory so the developer's real
 /// `~/.ollama` key cannot leak into credential-availability assertions.
 fn without_local_ollama_device_key<T>(f: impl FnOnce() -> T) -> T {
-    let empty = std::env::temp_dir().join(format!("rho-no-device-key-{}", std::process::id()));
-    rho_providers::auth::ollama_device::with_ollama_device_key_dir_for_tests(empty, f)
+    let empty = tempfile::tempdir().unwrap();
+    rho_providers::auth::ollama_device::with_ollama_device_key_dir_for_tests(
+        empty.path().to_path_buf(),
+        f,
+    )
 }
 
 #[tokio::test]
