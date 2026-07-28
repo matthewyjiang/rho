@@ -1,7 +1,8 @@
 use {
     crate::credential_store::AppCredentialStore,
     rho_providers::auth::login_dispatch::{
-        AuthenticationMethod, InteractiveLoginMode, InteractiveUserAction, ProviderAuthentication,
+        AuthenticationMethod, InteractiveLoginCompletion, InteractiveLoginMode,
+        InteractiveUserAction, ProviderAuthentication,
     },
     rho_providers::model::catalog,
 };
@@ -71,8 +72,15 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         }
     }
 
-    login.completion.await?.save(&AppCredentialStore)?;
-    eprintln!("Successfully logged in to {}", target.auth);
+    match login.completion {
+        InteractiveLoginCompletion::Confirm(completion) => {
+            completion.await?.save(&AppCredentialStore)?;
+            eprintln!("Successfully logged in to {}", target.auth);
+        }
+        InteractiveLoginCompletion::Unconfirmed { instruction } => {
+            eprintln!("{instruction}");
+        }
+    }
     Ok(())
 }
 

@@ -8,25 +8,19 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use base64::{engine::general_purpose, Engine as _};
 use rand::rngs::OsRng;
-use serde::Deserialize;
 use signature::Signer;
 use ssh_key::{Algorithm, LineEnding, PrivateKey};
-use tokio::time::sleep;
 
 const DEFAULT_PRIVATE_KEY_NAME: &str = "id_ed25519";
 const DEFAULT_PUBLIC_KEY_NAME: &str = "id_ed25519.pub";
 const OPENSSH_PEM_BEGIN: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 const OPENSSH_PEM_END: &str = "-----END OPENSSH PRIVATE KEY-----";
 const CONNECT_BASE: &str = "https://ollama.com/connect";
-const WHOAMI_URL: &str = "https://ollama.com/api/me";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
-const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Owned Ed25519 material used to sign Ollama Cloud requests.
 #[derive(Clone)]
@@ -176,130 +170,32 @@ pub enum OllamaDeviceError {
     AlreadyExists,
     #[error("could not open a browser for Ollama device login")]
     Browser,
-    #[error("timed out waiting for Ollama device login")]
-    Timeout,
-    #[error("Ollama device login request failed: {0}")]
-    Request(#[from] reqwest::Error),
-    #[error("Ollama device login failed: {0}")]
-    Denied(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OllamaDeviceLogin {
     pub connect_url: String,
-    pub key: OllamaDeviceKey,
-    /// True when the key was already registered before this login attempt.
-    pub already_registered: bool,
-    expires_in: Duration,
-    interval: Duration,
-}
-
-impl std::fmt::Debug for OllamaDeviceLogin {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("OllamaDeviceLogin")
-            .field("connect_url", &self.connect_url)
-            .field("key", &self.key)
-            .field("already_registered", &self.already_registered)
-            .field("expires_in", &self.expires_in)
-            .field("interval", &self.interval)
-            .finish()
-    }
 }
 
 /// Starts sign-in for the local Ollama device key.
 ///
-/// When `open_browser` is true and the key is not already registered, opens the
-/// Ollama connect page. Callers in headless environments can pass false and show
-/// [`OllamaDeviceLogin::connect_url`] instead.
+/// When `open_browser` is true, opens the Ollama connect page. Callers in
+/// headless environments can pass false and show [`OllamaDeviceLogin::connect_url`]
+/// instead. Ollama does not send a completion callback to the client.
 pub async fn start_ollama_device_login(
     open_browser: bool,
 ) -> Result<OllamaDeviceLogin, OllamaDeviceError> {
     let key = OllamaDeviceKey::load_or_create_default()?;
     let connect_url = key.connect_url()?;
-    // Already registered keys finish immediately without forcing a browser hop.
-    if whoami(&http_client()?, &key).await?.is_some() {
-        return Ok(OllamaDeviceLogin {
-            connect_url,
-            key,
-            already_registered: true,
-            expires_in: Duration::from_secs(1),
-            interval: Duration::from_millis(1),
-        });
-    }
     if open_browser {
         webbrowser::open(&connect_url).map_err(|_| OllamaDeviceError::Browser)?;
     }
-    Ok(OllamaDeviceLogin {
-        connect_url,
-        key,
-        already_registered: false,
-        expires_in: DEFAULT_POLL_TIMEOUT,
-        interval: DEFAULT_POLL_INTERVAL,
-    })
-}
-
-/// Polls ollama.com until the device key is associated with an account.
-///
-/// The local key is the credential; nothing is persisted in Rho's store.
-pub async fn complete_ollama_device_login(
-    login: OllamaDeviceLogin,
-) -> Result<(), OllamaDeviceError> {
-    let client = http_client()?;
-    let deadline = Instant::now() + login.expires_in;
-    loop {
-        if let Some(username) = whoami(&client, &login.key).await? {
-            let _ = username;
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(OllamaDeviceError::Timeout);
-        }
-        sleep(login.interval).await;
-    }
+    Ok(OllamaDeviceLogin { connect_url })
 }
 
 /// True when a usable local Ollama device key exists on disk.
 pub fn ollama_device_credentials_available() -> bool {
     OllamaDeviceKey::load_default().is_ok()
-}
-
-async fn whoami(
-    client: &reqwest::Client,
-    key: &OllamaDeviceKey,
-) -> Result<Option<String>, OllamaDeviceError> {
-    let url =
-        url::Url::parse(WHOAMI_URL).map_err(|error| OllamaDeviceError::Setup(error.to_string()))?;
-    let (url, authorization) = key.authorize_request(reqwest::Method::POST.as_str(), url)?;
-    let response = client
-        .post(url)
-        .header(reqwest::header::AUTHORIZATION, authorization)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::CONTENT_LENGTH, 0)
-        .header(reqwest::header::USER_AGENT, crate::rho_user_agent())
-        .send()
-        .await?;
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Ok(None);
-    }
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(OllamaDeviceError::Denied(format!(
-            "HTTP {status}: {}",
-            body.trim()
-        )));
-    }
-    #[derive(Deserialize)]
-    struct UserResponse {
-        name: Option<String>,
-    }
-    let user = response.json::<UserResponse>().await?;
-    let name = user
-        .name
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty());
-    Ok(name)
 }
 
 fn parse_openssh_private_key(pem: &str) -> Result<PrivateKey, OllamaDeviceError> {
@@ -318,13 +214,6 @@ fn parse_openssh_private_key(pem: &str) -> Result<PrivateKey, OllamaDeviceError>
         .decode(payload)
         .map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))?;
     PrivateKey::from_bytes(&bytes).map_err(|error| OllamaDeviceError::InvalidKey(error.to_string()))
-}
-
-fn http_client() -> Result<reqwest::Client, OllamaDeviceError> {
-    reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(OllamaDeviceError::Request)
 }
 
 fn default_key_dir() -> Result<PathBuf, OllamaDeviceError> {
