@@ -28,7 +28,10 @@ pub(super) use stream::markdown_stream_bounds;
 mod table_tests;
 
 use super::{
-    render::{char_display_width, display_width, wrap_line_at_whitespace_ranges, wrap_line_hard},
+    render::{
+        char_display_width, display_width, wrap_line_at_whitespace_ranges_with_protected_prefix,
+        wrap_line_hard,
+    },
     theme::Theme,
 };
 
@@ -918,6 +921,33 @@ fn markdown_inline_text(line: &str) -> String {
         .collect()
 }
 
+fn wrap_markdown_line_ranges(line: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+    let protected_prefix_end = markdown_list_body_start(line).unwrap_or_default();
+    wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, protected_prefix_end)
+}
+
+fn markdown_list_body_start(line: &str) -> Option<usize> {
+    let trimmed = line.trim_start_matches(char::is_whitespace);
+    let leading_whitespace_len = line.len() - trimmed.len();
+    let marker_len = trimmed.find(char::is_whitespace)?;
+    let marker = &trimmed[..marker_len];
+    let is_list_marker = matches!(marker, "-" | "+" | "*")
+        || marker.strip_suffix(['.', ')']).is_some_and(|digits| {
+            (1..=9).contains(&digits.len()) && digits.bytes().all(|byte| byte.is_ascii_digit())
+        });
+    if !is_list_marker {
+        return None;
+    }
+
+    let separator_len = trimmed[marker_len..]
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .map(char::len_utf8)
+        .sum::<usize>();
+    let body_start = leading_whitespace_len + marker_len + separator_len;
+    (body_start < line.len()).then_some(body_start)
+}
+
 fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'static>> {
     let text = segments
         .iter()
@@ -929,7 +959,7 @@ fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'s
         .collect::<Vec<_>>();
 
     let mut char_start = 0;
-    wrap_line_at_whitespace_ranges(&text, width)
+    wrap_markdown_line_ranges(&text, width)
         .into_iter()
         .map(|range| {
             let char_count = text[range].chars().count();

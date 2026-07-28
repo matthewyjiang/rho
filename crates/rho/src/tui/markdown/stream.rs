@@ -157,7 +157,7 @@ struct CompleteStreamPrefix {
 }
 
 fn complete_word_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
-    wrap_line_at_whitespace_ranges(text, width)
+    wrap_markdown_line_ranges(text, width)
         .into_iter()
         .rfind(|range| {
             range.end < text.len() || display_width(&text[range.clone()]) >= width.max(1)

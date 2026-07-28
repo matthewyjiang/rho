@@ -44,6 +44,36 @@ fn styles_inline_code_bold_italic_and_links_without_markers() {
 }
 
 #[test]
+fn keeps_list_markers_with_a_long_path_in_narrow_output() {
+    for marker in ["-", "1.", "2)"] {
+        let markdown =
+            format!("{marker} fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0");
+        let mut in_code_block = false;
+        let lines = markdown_lines(&markdown, 39, &mut in_code_block);
+
+        let first_line_suffix_len = 39 - marker.len() - 1;
+        let path = "fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0";
+        assert_eq!(
+            lines.iter().map(line_text).collect::<Vec<_>>(),
+            vec![
+                format!("{marker} {}", &path[..first_line_suffix_len]),
+                path[first_line_suffix_len..].to_string(),
+            ]
+        );
+    }
+}
+
+#[test]
+fn streams_list_lines_at_the_same_wrap_boundary_as_final_rendering() {
+    let markdown = "- fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0";
+
+    let bounds = markdown_stream_bounds(markdown, 39, false);
+
+    assert_eq!(bounds.drain.byte_index, 39);
+    assert!(bounds.drain.ends_with_wrap);
+}
+
+#[test]
 fn preserves_underscores_inside_identifiers() {
     let mut in_code_block = false;
     let lines = markdown_lines(
