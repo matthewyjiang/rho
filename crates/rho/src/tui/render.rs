@@ -16,6 +16,8 @@ use super::{
 use rho_providers::model::{image_summary, ImageContent};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use std::borrow::Cow;
+
 use ratatui::{
     layout::Position,
     style::{Modifier, Style},
@@ -297,25 +299,47 @@ pub(super) fn visible_picker_match_start(picker: &UiPicker, matching_indices: &[
 }
 
 pub(super) fn truncate_one_line(text: &str, width: usize) -> String {
-    let text = text.replace('\n', " ");
-    if UnicodeWidthStr::width(text.as_str()) <= width {
-        return text;
+    // Fast path: no newlines means we skip the replace allocation entirely.
+    if !text.contains('\n') {
+        if UnicodeWidthStr::width(text) <= width {
+            return text.to_string();
+        }
+        if width <= 1 {
+            return "…".chars().take(width).collect();
+        }
+        return format!("{}…", truncate_to_display_width(text, width - 1));
+    }
+
+    let normalized = text.replace('\n', " ");
+    if UnicodeWidthStr::width(normalized.as_str()) <= width {
+        return normalized;
     }
     if width <= 1 {
         return "…".chars().take(width).collect();
     }
-    truncate_to_display_width(&text, width - 1).into_owned() + "…"
+    format!("{}…", truncate_to_display_width(&normalized, width - 1))
 }
 
 /// Truncate from the front, keeping the end of `text` with a leading ellipsis.
 pub(super) fn truncate_keep_end(text: &str, width: usize) -> String {
-    let text = text.replace('\n', " ");
     if width == 0 {
         return String::new();
     }
-    if display_width(&text) <= width {
-        return text;
+    // Fast path: no newlines means we skip the replace allocation entirely.
+    if !text.contains('\n') {
+        if display_width(text) <= width {
+            return text.to_string();
+        }
+        return truncate_keep_end_owned(text, width);
     }
+    let normalized = text.replace('\n', " ");
+    if display_width(&normalized) <= width {
+        return normalized;
+    }
+    truncate_keep_end_owned(&normalized, width)
+}
+
+fn truncate_keep_end_owned(text: &str, width: usize) -> String {
     if width <= 1 {
         return "…".chars().take(width).collect();
     }
@@ -344,9 +368,9 @@ pub(super) fn char_display_width(ch: char) -> usize {
     UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
-fn truncate_to_display_width(text: &str, max_width: usize) -> std::borrow::Cow<'_, str> {
+fn truncate_to_display_width(text: &str, max_width: usize) -> Cow<'_, str> {
     if display_width(text) <= max_width {
-        return std::borrow::Cow::Borrowed(text);
+        return Cow::Borrowed(text);
     }
     let mut end = 0;
     let mut width = 0;
@@ -358,7 +382,7 @@ fn truncate_to_display_width(text: &str, max_width: usize) -> std::borrow::Cow<'
         width += ch_width;
         end = index + ch.len_utf8();
     }
-    std::borrow::Cow::Owned(text[..end].to_string())
+    Cow::Owned(text[..end].to_string())
 }
 
 #[cfg(test)]
@@ -922,3 +946,7 @@ pub(super) fn pad_display_line(line: Line<'static>) -> Line<'static> {
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "render_benchmarks.rs"]
+mod render_benchmarks;

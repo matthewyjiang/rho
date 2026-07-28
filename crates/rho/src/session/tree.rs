@@ -166,6 +166,9 @@ pub(crate) struct SessionTree {
     session_id: Option<String>,
     version: Option<u32>,
     upgraded: bool,
+    /// Cached count of parent nodes with more than one child, maintained in
+    /// `insert_restored_node` so `facts()` avoids scanning every child list.
+    branch_count: usize,
 }
 
 impl SessionTree {
@@ -229,6 +232,13 @@ impl SessionTree {
     #[cfg(test)]
     pub(crate) fn children(&self, id: &NodeId) -> &[NodeId] {
         self.children.get(id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Test-only access to the full child map, used to benchmark the old
+    /// scan-every-child-list approach against the cached `branch_count` field.
+    #[cfg(test)]
+    pub(crate) fn children_map(&self) -> &HashMap<NodeId, Vec<NodeId>> {
+        &self.children
     }
 
     #[cfg(test)]
@@ -310,11 +320,7 @@ impl SessionTree {
     pub(crate) fn facts(&self) -> SessionTreeFacts {
         SessionTreeFacts {
             node_count: self.nodes.len(),
-            branch_count: self
-                .children
-                .values()
-                .filter(|children| children.len() > 1)
-                .count(),
+            branch_count: self.branch_count,
             active_leaf_id: self.active_leaf_id.clone(),
         }
     }
@@ -718,10 +724,12 @@ impl SessionTree {
             if !self.nodes.contains_key(parent_id) {
                 anyhow::bail!("node '{}' names missing parent '{parent_id}'", node.id);
             }
-            self.children
-                .entry(parent_id.clone())
-                .or_default()
-                .push(node.id.clone());
+            let children = self.children.entry(parent_id.clone()).or_default();
+            // A parent crosses from single-child to multi-child exactly once.
+            if children.len() == 1 {
+                self.branch_count += 1;
+            }
+            children.push(node.id.clone());
         }
         let id = node.id.clone();
         self.order.push(id.clone());
