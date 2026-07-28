@@ -395,6 +395,21 @@ fn wrapped_text_handles_wide_chars_in_narrow_width() {
 }
 
 #[test]
+fn wrapped_text_keeps_list_syntax_out_of_generic_wrapping() {
+    assert_eq!(
+        wrap_line_at_whitespace(
+            "- fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0",
+            39,
+        ),
+        vec![
+            "- ".to_string(),
+            "fixtures/downstream/no-default-features".to_string(),
+            "/Cargo.toml: package 0.0.0".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn long_words_still_hard_wrap() {
     let mut lines = Vec::new();
     push_wrapped_text(

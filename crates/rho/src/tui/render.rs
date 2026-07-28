@@ -682,6 +682,19 @@ pub(super) fn wrap_line_at_whitespace_ranges(
     line: &str,
     width: usize,
 ) -> Vec<std::ops::Range<usize>> {
+    wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, 0)
+}
+
+/// Wrap at whitespace without allowing the first break to strand a semantic prefix.
+///
+/// `protected_prefix_end` is a byte offset whose preceding whitespace cannot be
+/// used as the first wrap point. If the following token overflows, the first
+/// line is filled to `width` instead.
+pub(super) fn wrap_line_at_whitespace_ranges_with_protected_prefix(
+    line: &str,
+    width: usize,
+    protected_prefix_end: usize,
+) -> Vec<std::ops::Range<usize>> {
     let width = width.max(1);
     if line.is_empty() {
         return std::iter::once(0..0).collect();
@@ -722,7 +735,9 @@ pub(super) fn wrap_line_at_whitespace_ranges(
             break;
         }
 
-        let split = if prefer_width_split {
+        let split = if prefer_width_split
+            || (start == 0 && whitespace_break.is_some_and(|split| split <= protected_prefix_end))
+        {
             last_fitting_split.expect("overflow requires a fitting split")
         } else {
             whitespace_break
