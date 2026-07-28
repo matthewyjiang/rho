@@ -397,6 +397,7 @@ impl From<DoctorCheck> for PickerItem {
                     PickerBadgeTone::Warning
                 },
             }),
+            selection_verb: None,
         }
     }
 }

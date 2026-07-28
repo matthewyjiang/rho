@@ -41,6 +41,7 @@ fn tree_item(item: SessionTreeItem) -> PickerItem {
             tone: PickerBadgeTone::Selected,
         }),
         value: item.id.to_string(),
+        selection_verb: None,
     }
 }
 

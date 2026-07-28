@@ -9,6 +9,29 @@ use std::{
 /// On Windows, an existing destination is replaced with `ReplaceFileW` so
 /// repeated updates do not fail the way a plain rename-over-existing can.
 pub(crate) fn write_bytes_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    write_bytes_atomically_with_permissions(path, contents, None)
+}
+
+/// Atomically replaces a regular file while retaining its current permissions.
+///
+/// Unlike [`write_bytes_atomically`], this rejects symlink destinations so a
+/// caller cannot follow a link while preserving source-file metadata.
+pub(crate) fn replace_regular_file_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "destination is not a regular file",
+        ));
+    }
+    write_bytes_atomically_with_permissions(path, contents, Some(metadata.permissions()))
+}
+
+fn write_bytes_atomically_with_permissions(
+    path: &Path,
+    contents: &[u8],
+    permissions: Option<fs::Permissions>,
+) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -16,6 +39,9 @@ pub(crate) fn write_bytes_atomically(path: &Path, contents: &[u8]) -> std::io::R
     let result = (|| {
         let mut temp_file = create_temp_file(&temp_path)?;
         set_private_file_permissions(&temp_file)?;
+        if let Some(permissions) = permissions {
+            temp_file.set_permissions(permissions)?;
+        }
         temp_file.write_all(contents)?;
         temp_file.sync_all()?;
         drop(temp_file);

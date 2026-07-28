@@ -2,8 +2,8 @@ use rho_providers::credentials::load_web_search_api_key;
 
 use super::{
     config_editor, config_picker, resolve_web_search_editor_value, App, ComposerMode,
-    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigTextInput, ConfigTextKey,
-    ConfigToggle, Entry, InteractiveRuntime, PickerAction,
+    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigTextKey, ConfigToggle, Entry,
+    InteractiveRuntime, PickerAction,
 };
 
 impl App {
@@ -149,12 +149,11 @@ impl App {
                 None
             }
         };
-        let mut input = ConfigTextInput::new(key, value);
+        let mut input = super::text_input::TextInput::config_api_key(key, value);
         if let Some(picker) = return_picker {
             input = input.with_return_picker(picker);
         }
-        self.input_ui
-            .set_composer(ComposerMode::ConfigTextInput(input));
+        self.input_ui.set_composer(ComposerMode::TextInput(input));
         self.status = format!("edit {}", key.label());
         Ok(())
     }
@@ -218,7 +217,7 @@ impl App {
         let config = self.info.services.config_repository.load()?;
         let (filter, parent) = match self.input_ui.composer_mut() {
             ComposerMode::Picker(picker) => (picker.filter.clone(), picker.take_parent()),
-            ComposerMode::ConfigTextInput(input) => match input.take_return_picker() {
+            ComposerMode::TextInput(input) => match input.take_return_picker() {
                 Some(mut picker) => (picker.filter.clone(), picker.take_parent()),
                 None => (String::new(), None),
             },

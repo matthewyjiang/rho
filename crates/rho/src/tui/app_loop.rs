@@ -230,7 +230,7 @@ impl App {
             | ComposerMode::Picker(_)
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::TextInput(_)
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_) => None,
         };

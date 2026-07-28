@@ -79,7 +79,7 @@ impl App {
             ComposerMode::Approval(_)
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => {}
@@ -110,7 +110,7 @@ impl App {
             ComposerMode::Approval(_)
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
@@ -128,7 +128,7 @@ impl App {
             ComposerMode::Approval(_)
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::ConfigTextInput(_)
+            | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
@@ -514,7 +514,7 @@ impl App {
             ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
-            ComposerMode::ConfigTextInput(input) => input.insert_text(text),
+            ComposerMode::TextInput(input) => input.editor.insert_text(text),
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_text(text);
             }

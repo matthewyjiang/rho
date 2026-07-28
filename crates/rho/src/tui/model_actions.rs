@@ -220,7 +220,10 @@ impl App {
             };
         if !matches!(
             action,
-            PickerAction::Config | PickerAction::LoginGroup | PickerAction::ViewAgent
+            PickerAction::Config
+                | PickerAction::LoginGroup
+                | PickerAction::ViewAgent
+                | PickerAction::EditAgent
         ) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
@@ -338,13 +341,8 @@ impl App {
                 self.submit_tree_selection(&value, terminal, agent).await
             }
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
-            PickerAction::ViewAgent => {
-                if !self.open_selected_internal_agent_model_picker(&value) {
-                    self.input_ui.set_composer(ComposerMode::Input);
-                    self.status = "ready".into();
-                }
-                Ok(())
-            }
+            PickerAction::ViewAgent => self.submit_view_agent_selection(&value),
+            PickerAction::EditAgent => self.submit_edit_agent_selection(&value, terminal).await,
             PickerAction::Dismiss => Ok(()),
         };
         if let (true, Some((picker, selected_value))) = (result.is_ok(), other_return_picker) {
@@ -354,6 +352,31 @@ impl App {
     }
 
     pub(super) fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.action == PickerAction::EditAgent
+        ) {
+            let phase = self
+                .agent_editor_session
+                .as_ref()
+                .map(|session| session.phase());
+            match phase {
+                Some(super::agent_editor::AgentEditPhase::Fields) | None => {
+                    self.cancel_agent_editor();
+                    return Ok(());
+                }
+                Some(_) => {
+                    if self.pop_picker_level() {
+                        if let Some(session) = &mut self.agent_editor_session {
+                            session.set_phase(super::agent_editor::AgentEditPhase::Fields);
+                        }
+                        return Ok(());
+                    }
+                    self.cancel_agent_editor();
+                    return Ok(());
+                }
+            }
+        }
         if !self.pop_picker_level() {
             self.input_ui.set_composer(ComposerMode::Input);
             self.status = if running { "running" } else { "ready" }.into();
@@ -457,6 +480,7 @@ impl App {
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::Config
+            | PickerAction::EditAgent
             | PickerAction::Dismiss => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
@@ -519,6 +543,7 @@ impl App {
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::Config
+            | PickerAction::EditAgent
             | PickerAction::Dismiss => return None,
         };
         match self.input_ui.composer_mut() {

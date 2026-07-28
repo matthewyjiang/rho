@@ -14,6 +14,7 @@ use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
 mod activity;
+mod agent_editor;
 mod agent_picker;
 mod app_construct;
 mod app_state;
@@ -41,7 +42,9 @@ mod file_palette;
 mod file_picker;
 mod frame_scheduler;
 mod goal;
+mod line_editor;
 mod subagent_questionnaires;
+mod text_input;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod choice_actions;
 mod claude_login;
@@ -127,9 +130,8 @@ use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
 use clipboard::ClipboardWriter;
 use config_editor::{
-    config_number_input_lines, config_text_input_lines, resolve_web_search_editor_value,
-    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigTextInput, ConfigTextKey,
-    ConfigToggle,
+    config_number_input_lines, resolve_web_search_editor_value, ConfigMutation, ConfigNumberInput,
+    ConfigNumberKey, ConfigTextKey, ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
@@ -343,6 +345,7 @@ struct App {
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<String>,
+    agent_editor_session: Option<agent_editor::AgentEditSession>,
     pending_session_title: Option<PendingSessionTitle>,
     clipboard: Box<dyn ClipboardWriter + Send>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,

@@ -11,6 +11,7 @@ pub(super) fn skill_picker(skills: Vec<Skill>) -> UiPicker {
             preview: None,
             badge: None,
             value: skill.name,
+            selection_verb: None,
         })
         .collect::<Vec<_>>();
 

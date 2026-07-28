@@ -627,6 +627,17 @@ fn parse_scalar(path: &Path, field: &str, value: &str) -> Result<String, AgentCa
     })
 }
 
+/// Parses a bracket tools list like `[read_file, shell]` or `[Read, "Bash(git *)"]`.
+/// Used by the in-TUI agent editor so draft tool text shares the parser's rules.
+pub(crate) fn parse_tools_list_text(value: &str) -> Result<Vec<String>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    let path = Path::new("<draft>");
+    parse_inline_list(path, value).map_err(|error| error.message)
+}
+
 fn parse_inline_list(path: &Path, value: &str) -> Result<Vec<String>, AgentCatalogError> {
     if !value.starts_with('[') || !value.ends_with(']') {
         return Err(AgentCatalogError::at_field(

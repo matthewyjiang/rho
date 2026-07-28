@@ -45,7 +45,7 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         .collect();
     UiPicker::new(
         "loaded agents",
-        "type regex filter, enter configures internal agents or closes, esc closes",
+        "type regex filter, enter configures internal agents or edits user agents, esc closes",
         items,
         PickerAction::ViewAgent,
     )
@@ -59,16 +59,35 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
 
 fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {
     let definition = &entry.definition;
+    let selection_verb = match entry.metadata.origin {
+        AgentOrigin::Internal => Some("configure"),
+        AgentOrigin::RhoHome | AgentOrigin::Project => Some("edit"),
+        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome => Some("close"),
+    };
     PickerItem {
         section: None,
         label: definition.id.to_string(),
         detail: Some(agent_detail(entry, models)),
         preview: None,
-        badge: (entry.metadata.origin == AgentOrigin::Internal).then_some(PickerBadge {
+        badge: agent_badge(entry.metadata.origin),
+        value: definition.id.to_string(),
+        selection_verb,
+    }
+}
+
+/// Badge for the agents picker: internal agents show "(internal)", editable
+/// user agents (RhoHome or Project) show "(editable)", others have none.
+fn agent_badge(origin: AgentOrigin) -> Option<PickerBadge> {
+    match origin {
+        AgentOrigin::Internal => Some(PickerBadge {
             text: "(internal)".to_string(),
             tone: PickerBadgeTone::Internal,
         }),
-        value: definition.id.to_string(),
+        AgentOrigin::RhoHome | AgentOrigin::Project => Some(PickerBadge {
+            text: "(editable)".to_string(),
+            tone: PickerBadgeTone::Editable,
+        }),
+        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome => None,
     }
 }
 
@@ -213,6 +232,7 @@ impl super::App {
                 self.insert_entry(&super::Entry::Error(format!(
                     "could not reload agents: {error}"
                 )));
+                self.input_ui.set_composer(super::ComposerMode::Input);
                 self.status = "agent reload failed".into();
                 return Ok(());
             }

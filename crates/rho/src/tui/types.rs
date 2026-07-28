@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use super::{
     approval::ApprovalComposer,
     commands::{self, CommandSpec},
-    config_editor::{ConfigNumberInput, ConfigTextInput},
+    config_editor::ConfigNumberInput,
     feed_image::FeedImage,
     info_command,
     inline_choice::InlineChoiceModal,
@@ -120,7 +120,7 @@ pub(super) enum ComposerMode {
     Picker(UiPicker),
     SecretInput(SecretInput),
     ConfigNumberInput(ConfigNumberInput),
-    ConfigTextInput(ConfigTextInput),
+    TextInput(super::text_input::TextInput),
     InteractivePending(LoginTarget),
     InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),

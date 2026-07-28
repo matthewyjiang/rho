@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::{keys::Key, scenario::Step, PtyHarness};
+use crate::{env::IsolatedHome, keys::Key, scenario::Step, PtyHarness};
 
 use super::{SETTLE, STARTUP};
 
@@ -25,6 +25,70 @@ pub(super) const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+pub(super) fn setup_edit_user_agent(home: &IsolatedHome) -> Result<()> {
+    let agents = home.home.join(".rho/agents");
+    std::fs::create_dir_all(&agents)?;
+    std::fs::write(
+        agents.join("editable-fixture.md"),
+        "---\nid: editable-fixture\ndescription: fixture agent\n---\nfixture prompt\n",
+    )?;
+    Ok(())
+}
+
+pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "(editable)",
+        timeout: SETTLE,
+    },
+    Step::TypeText("editable-fixture"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit agent editable-fixture",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Description"),
+    Step::AssertText("Save"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "fixture agent",
+        timeout: SETTLE,
+    },
+    Step::TypeText(" updated"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit agent editable-fixture",
+        timeout: SETTLE,
+    },
+    Step::TypeText("Save"),
+    Step::WaitText {
+        text: "Serialize, validate",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "fixture agent updated",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit agent editable-fixture",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "loaded agents",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
 /// Phrase near the end of the goal-judge prompt body. On the default scenario
 /// size it starts below the first detail viewport and becomes visible after
 /// paging the detail pane.
@@ -35,8 +99,8 @@ fn assert_wide_popup_divider_is_stable(harness: &mut PtyHarness) -> Result<()> {
     let divider_columns = screen
         .lines()
         .filter_map(|line| {
-            line.find(" │ ")
-                .map(|divider| line[..divider].chars().count())
+            let dividers = line.match_indices('│').collect::<Vec<_>>();
+            (dividers.len() >= 3).then(|| line[..dividers[1].0].chars().count())
         })
         .collect::<Vec<_>>();
     if divider_columns.len() < 10 {
@@ -86,7 +150,7 @@ fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
     if !screen.contains("goal-judge") {
         anyhow::bail!("narrow agents popup missing navigation list:\n{screen}");
     }
-    if screen.contains(" │ ") {
+    if screen.lines().any(|line| line.matches('│').count() >= 3) {
         anyhow::bail!("narrow agents popup still used a side-by-side separator:\n{screen}");
     }
     Ok(())

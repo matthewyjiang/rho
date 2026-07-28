@@ -81,6 +81,7 @@ pub(super) fn internal_agent_model_picker(
                 tone: PickerBadgeTone::Selected,
             }),
             value: USE_CONVERSATION_MODEL.into(),
+            selection_verb: None,
         },
     );
     picker.selected = if uses_conversation_model {
@@ -149,6 +150,7 @@ fn model_picker_for_current(
             preview: None,
             badge,
             value,
+            selection_verb: None,
         }
     })
     .collect::<Vec<_>>();

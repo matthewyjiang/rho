@@ -1,0 +1,253 @@
+//! Draft mutation tests for agent edit/save helpers.
+
+use std::path::Path;
+
+use pretty_assertions::assert_eq;
+
+use super::*;
+use crate::agent::{
+    parse_definition, AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, ClaudeAgentConfig,
+    ClaudeToolPolicy, ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability,
+    ToolPolicy,
+};
+
+fn rho_draft() -> AgentDefinition {
+    AgentDefinition {
+        id: AgentId::new("draft").unwrap(),
+        description: "draft agent".into(),
+        prompt: PromptPolicy::Extend("body".into()),
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            model: ModelPolicy::Inherit,
+            reasoning: None,
+        },
+    }
+}
+
+fn claude_draft() -> AgentDefinition {
+    AgentDefinition {
+        id: AgentId::new("claude-draft").unwrap(),
+        description: "claude draft".into(),
+        prompt: PromptPolicy::Extend("body".into()),
+        runtime: AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
+            tools: ClaudeToolPolicy::None,
+            inherit_claude_config: false,
+            model: None,
+            reasoning: None,
+        }),
+    }
+}
+
+// Covers: switching rho -> claude-cli drops incompatible fields
+// Owner: agent edit
+#[test]
+fn switching_to_claude_cli_resets_incompatible_fields() {
+    let mut draft = AgentDefinition {
+        id: AgentId::new("switch").unwrap(),
+        description: "switch agent".into(),
+        prompt: PromptPolicy::Extend("body".into()),
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(
+                [ToolCapability::ReadFile, ToolCapability::Shell]
+                    .into_iter()
+                    .collect(),
+            ),
+            model: ModelPolicy::Select(ModelSelection {
+                provider: Some("openai".into()),
+                model: "gpt-5.5".into(),
+            }),
+            reasoning: Some(ReasoningLevel::Off),
+        },
+    };
+
+    assert!(draft.switch_runtime_kind("claude-cli"));
+    match &draft.runtime {
+        AgentRuntimeSpec::ClaudeCli(config) => {
+            assert_eq!(config.model.as_deref(), Some("gpt-5.5"));
+            assert!(!config.inherit_claude_config);
+            assert_eq!(config.reasoning, None);
+            assert!(matches!(config.tools, ClaudeToolPolicy::None));
+        }
+        _ => panic!("expected claude runtime"),
+    }
+}
+
+// Covers: switching claude-cli -> rho resets tools and keeps model/reasoning
+// Owner: agent edit
+#[test]
+fn switching_to_rho_keeps_compatible_fields() {
+    let mut draft = AgentDefinition {
+        id: AgentId::new("back").unwrap(),
+        description: "back agent".into(),
+        prompt: PromptPolicy::Extend("body".into()),
+        runtime: AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
+            tools: ClaudeToolPolicy::Allow(vec!["Read".into()]),
+            inherit_claude_config: true,
+            model: Some("opus".into()),
+            reasoning: Some(ReasoningLevel::High),
+        }),
+    };
+
+    assert!(draft.switch_runtime_kind("rho"));
+    match &draft.runtime {
+        AgentRuntimeSpec::Rho {
+            tools,
+            model,
+            reasoning,
+        } => {
+            assert!(matches!(tools, ToolPolicy::All));
+            assert!(matches!(model, ModelPolicy::Select(_)));
+            assert_eq!(*reasoning, Some(ReasoningLevel::High));
+        }
+        _ => panic!("expected rho runtime"),
+    }
+}
+
+// Covers: save round-trips and rejects stale sources
+// Owner: agent edit
+#[test]
+fn save_definition_round_trips_and_detects_conflicts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("draft.md");
+    let draft = rho_draft();
+    let original = "---\ndescription: old\n---\nold body\n";
+    std::fs::write(&path, original).unwrap();
+
+    let contents = save_definition(&draft, &path, original).unwrap();
+    let reparsed = parse_definition(&path, "draft", &contents).unwrap();
+    assert_eq!(reparsed, draft);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    assert_eq!(
+        save_definition(&draft, &path, original).unwrap_err(),
+        SaveDefinitionError::Conflict
+    );
+    // Lock sidecar is cleaned up after save.
+    assert!(!path.with_file_name(".draft.md.rho-edit.lock").exists());
+}
+
+// Covers: saving through a symlink cannot modify the linked target
+// Owner: agent edit
+#[cfg(unix)]
+#[test]
+fn save_definition_rejects_a_symlink_destination() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("target.md");
+    let path = dir.path().join("draft.md");
+    let original = "---\ndescription: target\n---\nbody\n";
+    std::fs::write(&target, original).unwrap();
+    symlink(&target, &path).unwrap();
+
+    let error = save_definition(&rho_draft(), &path, original).unwrap_err();
+    assert!(matches!(error, SaveDefinitionError::Write(_)));
+    assert_eq!(std::fs::read_to_string(target).unwrap(), original);
+}
+
+// Covers: tools text round-trips for both runtimes
+// Owner: agent edit
+#[test]
+fn tools_text_round_trips_for_rho_and_claude() {
+    let mut rho = rho_draft();
+    rho.set_tools_text("[read_file, shell]").unwrap();
+    match &rho.runtime {
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(capabilities),
+            ..
+        } => {
+            assert!(capabilities.contains(&ToolCapability::ReadFile));
+            assert!(capabilities.contains(&ToolCapability::Shell));
+        }
+        _ => panic!("expected rho allow tools"),
+    }
+    assert_eq!(rho.tools_text(), "[read_file, shell]");
+
+    let mut claude = claude_draft();
+    claude.set_tools_text("[Read, Edit]").unwrap();
+    assert_eq!(claude.tools_text(), "[Read, Edit]");
+}
+
+// Covers: prompt policy preserves body
+// Owner: agent edit
+#[test]
+fn prompt_policy_choice_preserves_body() {
+    let mut draft = rho_draft();
+    draft.prompt = PromptPolicy::Extend("keep me".into());
+    assert!(draft.set_prompt_policy_kind("replace"));
+    assert_eq!(draft.prompt, PromptPolicy::Replace("keep me".into()));
+}
+
+// Covers: validate_for_edit flags parser constraints early
+// Owner: agent edit
+#[test]
+fn validate_for_edit_flags_overlong_description_and_empty_replace() {
+    let mut draft = rho_draft();
+    assert_eq!(draft.validate_for_edit(), None);
+    draft.description = "x".repeat(1025);
+    assert_eq!(
+        draft.validate_for_edit().as_deref(),
+        Some("description must be at most 1024 characters")
+    );
+    draft.description = "ok".into();
+    draft.prompt = PromptPolicy::Replace(String::new());
+    assert_eq!(
+        draft.validate_for_edit().as_deref(),
+        Some("prompt policy 'replace' requires a non-empty prompt body")
+    );
+}
+
+// Covers: model text pins select policy for rho
+// Owner: agent edit
+#[test]
+fn setting_model_text_pins_select_policy_for_rho() {
+    let mut draft = rho_draft();
+    draft.set_model_text("gpt-5.5".into());
+    assert_eq!(
+        draft.model_policy().as_ref(),
+        &ModelPolicy::Select(ModelSelection {
+            provider: None,
+            model: "gpt-5.5".into(),
+        })
+    );
+}
+
+// Covers: save rejects invalid drafts before writing
+// Owner: agent edit
+#[test]
+fn save_definition_rejects_empty_replace_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bad.md");
+    let draft = AgentDefinition {
+        id: AgentId::new("bad").unwrap(),
+        description: "bad draft".into(),
+        prompt: PromptPolicy::Replace(String::new()),
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            model: ModelPolicy::Inherit,
+            reasoning: None,
+        },
+    };
+    let error = save_definition(&draft, &path, "").unwrap_err();
+    assert!(matches!(error, SaveDefinitionError::Validation(_)));
+    assert!(!path.exists());
+}
+
+// Covers: write errors surface for unwritable paths
+// Owner: agent edit
+#[test]
+fn save_definition_reports_write_error_for_unwritable_path() {
+    let path = Path::new("/dev/null/nonexistent/dir/draft.md");
+    let error = save_definition(&rho_draft(), path, "").unwrap_err();
+    assert!(matches!(error, SaveDefinitionError::Write(_)));
+}
+
+// Covers: same runtime switch is a no-op
+// Owner: agent edit
+#[test]
+fn switching_to_same_runtime_is_noop() {
+    let mut draft = rho_draft();
+    let before = draft.clone();
+    assert!(draft.switch_runtime_kind("rho"));
+    assert_eq!(draft, before);
+    assert_eq!(draft.runtime.runtime(), AgentRuntime::Rho);
+}

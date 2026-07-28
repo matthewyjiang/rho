@@ -60,6 +60,7 @@ similar = "2"
 same-file = "1"
 shell-words = "1"
 tempfile = "3"
+fs2 = "0.4.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tracing = "0.1"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }

@@ -158,6 +158,7 @@ fn entry(keys: impl Into<String>, summary: &str, detail: &str) -> PickerItem {
             tone: PickerBadgeTone::Selected,
         }),
         value: keys,
+        selection_verb: None,
     }
 }
 

@@ -51,6 +51,8 @@ pub(super) struct UiPicker {
     /// Top visible detail line for overlay pickers.
     pub(super) detail_scroll: usize,
     pub(super) confirm_verb: Option<String>,
+    /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
+    pub(super) force_fuzzy_filter: bool,
     pub(super) overlay_chrome: Option<super::picker_overlay::OverlayChrome>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
@@ -65,6 +67,8 @@ pub(super) struct PickerItem {
     pub(super) preview: Option<String>,
     pub(super) badge: Option<PickerBadge>,
     pub(super) value: String,
+    /// Optional Enter verb for this row. Overrides action defaults and badge heuristics.
+    pub(super) selection_verb: Option<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -76,6 +80,7 @@ pub(super) struct PickerBadge {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PickerBadgeTone {
     Internal,
+    Editable,
     Selected,
     Favorite,
     Healthy,
@@ -117,6 +122,7 @@ pub(super) enum PickerAction {
     ResumeSession,
     SelectTreeNode,
     Config,
+    EditAgent,
     Dismiss,
 }
 
@@ -136,7 +142,8 @@ impl PickerAction {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
-            | PickerAction::SelectTreeNode => false,
+            | PickerAction::SelectTreeNode
+            | PickerAction::EditAgent => false,
         }
     }
 
@@ -153,7 +160,8 @@ impl PickerAction {
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList => true,
+            | PickerAction::RefreshModelList
+            | PickerAction::EditAgent => true,
             PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => false,
         }
     }
@@ -188,6 +196,7 @@ impl UiPicker {
             badge_placement: PickerBadgePlacement::Navigation,
             detail_scroll: 0,
             confirm_verb: None,
+            force_fuzzy_filter: false,
             overlay_chrome: None,
             parent: None,
             matches: RefCell::default(),
@@ -198,6 +207,15 @@ impl UiPicker {
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
         self.layout = layout;
         self
+    }
+
+    pub(super) fn with_fuzzy_filter(mut self) -> Self {
+        self.force_fuzzy_filter = true;
+        self
+    }
+
+    pub(super) fn uses_regex_filter(&self) -> bool {
+        !self.force_fuzzy_filter && self.action.uses_regex_filter()
     }
 
     pub(super) fn with_badge_placement(mut self, placement: PickerBadgePlacement) -> Self {
@@ -357,20 +375,15 @@ impl UiPicker {
     }
 
     pub(super) fn confirm_action_label(&self) -> &str {
+        if let Some(verb) = self.selected_item().and_then(|item| item.selection_verb) {
+            return verb;
+        }
         if let Some(verb) = self.confirm_verb.as_deref() {
             return verb;
         }
         match self.action {
             PickerAction::Config => "change",
             PickerAction::Dismiss => "close",
-            PickerAction::ViewAgent
-                if self
-                    .selected_item()
-                    .and_then(|item| item.badge.as_ref())
-                    .is_some_and(|badge| badge.tone == PickerBadgeTone::Internal) =>
-            {
-                "configure"
-            }
             PickerAction::ViewAgent => "close",
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
@@ -380,7 +393,8 @@ impl UiPicker {
             | PickerAction::SwitchAuthMode
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
-            | PickerAction::SelectTreeNode => "select",
+            | PickerAction::SelectTreeNode
+            | PickerAction::EditAgent => "select",
             PickerAction::RefreshModelList => "refresh",
         }
     }
@@ -462,7 +476,7 @@ impl UiPicker {
 
     pub(super) fn complete_filter(&mut self) {
         if let Some(item) = self.selected_item() {
-            self.filter = if self.action.uses_regex_filter() {
+            self.filter = if self.uses_regex_filter() {
                 regex::escape(&item.value)
             } else {
                 item.value.clone()
@@ -493,7 +507,7 @@ impl UiPicker {
         };
         if stale {
             let filter = self.filter.trim();
-            let regex = if self.action.uses_regex_filter() && !filter.is_empty() {
+            let regex = if self.uses_regex_filter() && !filter.is_empty() {
                 RegexBuilder::new(filter)
                     .case_insensitive(true)
                     .build()
@@ -501,7 +515,7 @@ impl UiPicker {
             } else {
                 None
             };
-            let indices = if self.action.uses_regex_filter() {
+            let indices = if self.uses_regex_filter() {
                 picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
             } else {
                 fuzzy_picker_matching_indices(&self.items, filter)

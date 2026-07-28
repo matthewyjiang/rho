@@ -18,7 +18,9 @@ use goal::{
 };
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
-use pickers::{OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS};
+use pickers::{
+    setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS,
+};
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::Duration;
@@ -660,220 +662,225 @@ const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
 ];
 
 /// All registered scenarios.
+const ALL_SCENARIOS: &[Scenario] = &[
+    Scenario::new(
+        "startup_stream_exit",
+        "Start, stream a fixture response, and exit cleanly",
+        DEFAULT_SIZE,
+        STARTUP_STREAM_EXIT_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "cancel_and_resubmit",
+        "Cancel a long fixture stream and submit another prompt",
+        DEFAULT_SIZE,
+        CANCEL_AND_RESUBMIT_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "inline_shell_during_turn",
+        "Run local and context shell commands during an active turn",
+        DEFAULT_SIZE,
+        INLINE_SHELL_DURING_TURN_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "type_during_stream",
+        "Keep composer input responsive during continuous model output",
+        DEFAULT_SIZE,
+        TYPE_DURING_STREAM_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "resize_during_stream",
+        "Resize repeatedly while a fixture stream is active",
+        DEFAULT_SIZE,
+        RESIZE_DURING_STREAM_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "scroll_during_stream",
+        "Scroll during bulk output and return to bottom",
+        DEFAULT_SIZE,
+        SCROLL_DURING_STREAM_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "terminal_restoration",
+        "Verify alternate-screen enter/leave around a clean exit",
+        DEFAULT_SIZE,
+        TERMINAL_RESTORATION_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "paste_multiline",
+        "Paste multiline text without treating embedded lines as commands",
+        DEFAULT_SIZE,
+        PASTE_MULTILINE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "questionnaire",
+        "Exercise questionnaire keyboard selection and submission",
+        DEFAULT_SIZE,
+        QUESTIONNAIRE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "supervised_approval",
+        "Inspect and cancel a bounded supervised process approval",
+        PtySize {
+            rows: 14,
+            cols: 100,
+        },
+        SUPERVISED_APPROVAL_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "progress_tool",
+        "Run the fixture progress tool to completion",
+        DEFAULT_SIZE,
+        PROGRESS_TOOL_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "concurrent_progress",
+        "Keep concurrent progress visible through out-of-order completion",
+        DEFAULT_SIZE,
+        CONCURRENT_PROGRESS_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "retract_steering_during_tool",
+        "Inspect and retract steering while a tool is running",
+        DEFAULT_SIZE,
+        RETRACT_STEERING_DURING_TOOL_STEPS,
+        true,
+    ),
+    Scenario::new(
+        "markdown_headings",
+        "Render streamed Markdown heading levels without syntax markers",
+        DEFAULT_SIZE,
+        MARKDOWN_HEADINGS_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "mermaid_flowchart_resize",
+        "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
+        DEFAULT_SIZE,
+        MERMAID_FLOWCHART_RESIZE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "runtime_info",
+        "Show grouped runtime details and keep them readable after a narrow resize",
+        DEFAULT_SIZE,
+        RUNTIME_INFO_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "conversation_tree",
+        "Restore an earlier turn and continue on a new branch",
+        DEFAULT_SIZE,
+        CONVERSATION_TREE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "resume_picker_delete",
+        "Delete a saved session from the resume picker with confirm/cancel",
+        DEFAULT_SIZE,
+        RESUME_PICKER_DELETE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "open_model_picker",
+        "Open and dismiss the model picker",
+        DEFAULT_SIZE,
+        OPEN_MODEL_PICKER_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "open_config_picker",
+        "Open model and provider settings and browse model refresh options",
+        DEFAULT_SIZE,
+        OPEN_CONFIG_PICKER_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "open_agents_picker",
+        "Browse agent metadata in a navigable popup and scroll hidden detail into view",
+        DEFAULT_SIZE,
+        OPEN_AGENTS_PICKER_STEPS,
+        false,
+    ),
+    Scenario {
+        id: "edit_user_agent",
+        description: "Edit and save a user-defined agent through the agents picker",
+        size: DEFAULT_SIZE,
+        setup: Some(setup_edit_user_agent),
+        steps: EDIT_USER_AGENT_STEPS,
+        smoke: false,
+    },
+    Scenario::new(
+        "login_provider_groups",
+        "Group login providers and open readable authentication methods",
+        DEFAULT_SIZE,
+        LOGIN_PROVIDER_GROUPS_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "goal_blocked_and_resumed",
+        "Pause a goal for user action, inspect it, then resume it",
+        DEFAULT_SIZE,
+        GOAL_BLOCKED_AND_RESUMED_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "goal_waits_for_subagents",
+        "Wait for delegated runs before prompting an active goal to continue",
+        DEFAULT_SIZE,
+        GOAL_WAITS_FOR_SUBAGENTS_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "goal_questionnaire",
+        "Answer a background child questionnaire while an active goal waits",
+        DEFAULT_SIZE,
+        GOAL_QUESTIONNAIRE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "goal_waits_for_subagents_during_retry",
+        "Wait for delegated runs before retrying a failed goal turn",
+        DEFAULT_SIZE,
+        GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "background_agent_auto_delivery",
+        "Spawn a background agent, end the turn, and receive its completion automatically",
+        DEFAULT_SIZE,
+        BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "subagent_rail_mouse",
+        "Keep hover through refreshes and activate rows on a completed click",
+        DEFAULT_SIZE,
+        SUBAGENT_RAIL_MOUSE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "background_agent_questionnaire",
+        "Answer a questionnaire raised by a background agent and deliver its completion",
+        DEFAULT_SIZE,
+        BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+        false,
+    ),
+];
+
 pub fn all_scenarios() -> &'static [Scenario] {
-    &[
-        Scenario {
-            id: "startup_stream_exit",
-            description: "Start, stream a fixture response, and exit cleanly",
-            size: DEFAULT_SIZE,
-            steps: STARTUP_STREAM_EXIT_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "cancel_and_resubmit",
-            description: "Cancel a long fixture stream and submit another prompt",
-            size: DEFAULT_SIZE,
-            steps: CANCEL_AND_RESUBMIT_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "inline_shell_during_turn",
-            description: "Run local and context shell commands during an active turn",
-            size: DEFAULT_SIZE,
-            steps: INLINE_SHELL_DURING_TURN_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "type_during_stream",
-            description: "Keep composer input responsive during continuous model output",
-            size: DEFAULT_SIZE,
-            steps: TYPE_DURING_STREAM_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "resize_during_stream",
-            description: "Resize repeatedly while a fixture stream is active",
-            size: DEFAULT_SIZE,
-            steps: RESIZE_DURING_STREAM_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "scroll_during_stream",
-            description: "Scroll during bulk output and return to bottom",
-            size: DEFAULT_SIZE,
-            steps: SCROLL_DURING_STREAM_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "terminal_restoration",
-            description: "Verify alternate-screen enter/leave around a clean exit",
-            size: DEFAULT_SIZE,
-            steps: TERMINAL_RESTORATION_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "paste_multiline",
-            description: "Paste multiline text without treating embedded lines as commands",
-            size: DEFAULT_SIZE,
-            steps: PASTE_MULTILINE_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "questionnaire",
-            description: "Exercise questionnaire keyboard selection and submission",
-            size: DEFAULT_SIZE,
-            steps: QUESTIONNAIRE_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "supervised_approval",
-            description: "Inspect and cancel a bounded supervised process approval",
-            size: PtySize {
-                rows: 14,
-                cols: 100,
-            },
-            steps: SUPERVISED_APPROVAL_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "progress_tool",
-            description: "Run the fixture progress tool to completion",
-            size: DEFAULT_SIZE,
-            steps: PROGRESS_TOOL_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "concurrent_progress",
-            description: "Keep concurrent progress visible through out-of-order completion",
-            size: DEFAULT_SIZE,
-            steps: CONCURRENT_PROGRESS_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "retract_steering_during_tool",
-            description: "Inspect and retract steering while a tool is running",
-            size: DEFAULT_SIZE,
-            steps: RETRACT_STEERING_DURING_TOOL_STEPS,
-            smoke: true,
-        },
-        Scenario {
-            id: "markdown_headings",
-            description: "Render streamed Markdown heading levels without syntax markers",
-            size: DEFAULT_SIZE,
-            steps: MARKDOWN_HEADINGS_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "mermaid_flowchart_resize",
-            description:
-                "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
-            size: DEFAULT_SIZE,
-            steps: MERMAID_FLOWCHART_RESIZE_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "runtime_info",
-            description:
-                "Show grouped runtime details and keep them readable after a narrow resize",
-            size: DEFAULT_SIZE,
-            steps: RUNTIME_INFO_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "conversation_tree",
-            description: "Restore an earlier turn and continue on a new branch",
-            size: DEFAULT_SIZE,
-            steps: CONVERSATION_TREE_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "resume_picker_delete",
-            description: "Delete a saved session from the resume picker with confirm/cancel",
-            size: DEFAULT_SIZE,
-            steps: RESUME_PICKER_DELETE_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "open_model_picker",
-            description: "Open and dismiss the model picker",
-            size: DEFAULT_SIZE,
-            steps: OPEN_MODEL_PICKER_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "open_config_picker",
-            description: "Open model and provider settings and browse model refresh options",
-            size: DEFAULT_SIZE,
-            steps: OPEN_CONFIG_PICKER_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "open_agents_picker",
-            description:
-                "Browse agent metadata in a navigable popup and scroll hidden detail into view",
-            size: DEFAULT_SIZE,
-            steps: OPEN_AGENTS_PICKER_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "login_provider_groups",
-            description: "Group login providers and open readable authentication methods",
-            size: DEFAULT_SIZE,
-            steps: LOGIN_PROVIDER_GROUPS_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "goal_blocked_and_resumed",
-            description: "Pause a goal for user action, inspect it, then resume it",
-            size: DEFAULT_SIZE,
-            steps: GOAL_BLOCKED_AND_RESUMED_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "goal_waits_for_subagents",
-            description: "Wait for delegated runs before prompting an active goal to continue",
-            size: DEFAULT_SIZE,
-            steps: GOAL_WAITS_FOR_SUBAGENTS_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "goal_questionnaire",
-            description: "Answer a background child questionnaire while an active goal waits",
-            size: DEFAULT_SIZE,
-            steps: GOAL_QUESTIONNAIRE_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "goal_waits_for_subagents_during_retry",
-            description: "Wait for delegated runs before retrying a failed goal turn",
-            size: DEFAULT_SIZE,
-            steps: GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "background_agent_auto_delivery",
-            description:
-                "Spawn a background agent, end the turn, and receive its completion automatically",
-            size: DEFAULT_SIZE,
-            steps: BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "subagent_rail_mouse",
-            description: "Keep hover through refreshes and activate rows on a completed click",
-            size: DEFAULT_SIZE,
-            steps: SUBAGENT_RAIL_MOUSE_STEPS,
-            smoke: false,
-        },
-        Scenario {
-            id: "background_agent_questionnaire",
-            description:
-                "Answer a questionnaire raised by a background agent and deliver its completion",
-            size: DEFAULT_SIZE,
-            steps: BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
-            smoke: false,
-        },
-    ]
+    ALL_SCENARIOS
 }
 
 pub fn smoke_scenario_ids() -> Vec<&'static str> {
