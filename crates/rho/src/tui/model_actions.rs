@@ -38,12 +38,16 @@ impl App {
         let resolved = self.info.runtime.model_aliases.resolve(reference)?;
         let alias = resolved.alias;
         let selection = match resolved.provider {
-            Some(provider) => {
-                catalog::resolve_model_selection_for_provider(&provider, &resolved.model)?
-            }
-            None if alias.is_some() => {
-                catalog::resolve_model_selection_for_provider(current_provider, &resolved.model)?
-            }
+            Some(provider) => catalog::resolve_model_selection_for_provider(
+                &provider,
+                &resolved.model,
+                &self.available_auths,
+            )?,
+            None if alias.is_some() => catalog::resolve_model_selection_for_provider(
+                current_provider,
+                &resolved.model,
+                &self.available_auths,
+            )?,
             None => catalog::resolve_model_selection_for_auths(
                 &resolved.model,
                 current_provider,

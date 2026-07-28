@@ -118,16 +118,120 @@ fn resolves_poolside_references_to_internal_model_id() {
         "poolside",
         vec![provider_model("poolside", "laguna-m.1")],
         || {
-            let clean = resolve_model_selection_for_provider("poolside", "laguna-m.1").unwrap();
+            let clean =
+                resolve_model_selection_for_provider("poolside", "laguna-m.1", &[]).unwrap();
             let legacy =
-                resolve_model_selection_for_provider("poolside", "poolside/laguna-m.1").unwrap();
-            let double =
-                resolve_model_selection_for_provider("poolside", "poolside/poolside/laguna-m.1")
+                resolve_model_selection_for_provider("poolside", "poolside/laguna-m.1", &[])
                     .unwrap();
+            let double = resolve_model_selection_for_provider(
+                "poolside",
+                "poolside/poolside/laguna-m.1",
+                &[],
+            )
+            .unwrap();
 
             assert_eq!(clean.model, "laguna-m.1");
             assert_eq!(legacy, clean);
             assert_eq!(double, clean);
+        },
+    );
+}
+
+#[test]
+fn provider_selection_prefers_credential_backed_auth_over_default() {
+    with_cached_provider_models(
+        "ollama-cloud",
+        vec![provider_model("ollama-cloud", "glm-5.2")],
+        || {
+            let selection = resolve_model_selection_for_provider(
+                "ollama-cloud",
+                "glm-5.2",
+                &["ollama-cloud-device".into()],
+            )
+            .unwrap();
+
+            assert_eq!(
+                selection,
+                ModelSelection {
+                    provider: "ollama-cloud".into(),
+                    model: "glm-5.2".into(),
+                    auth: "ollama-cloud-device".into(),
+                    from_catalog: true,
+                }
+            );
+        },
+    );
+}
+
+#[test]
+fn provider_selection_uses_default_auth_when_no_credentials_available() {
+    with_cached_provider_models(
+        "ollama-cloud",
+        vec![provider_model("ollama-cloud", "glm-5.2")],
+        || {
+            let selection =
+                resolve_model_selection_for_provider("ollama-cloud", "glm-5.2", &[]).unwrap();
+
+            assert_eq!(selection.auth, "ollama-cloud-api-key");
+        },
+    );
+}
+
+#[test]
+fn provider_selection_prefers_api_key_when_it_is_the_available_mode() {
+    with_cached_provider_models(
+        "ollama-cloud",
+        vec![provider_model("ollama-cloud", "glm-5.2")],
+        || {
+            let selection = resolve_model_selection_for_provider(
+                "ollama-cloud",
+                "glm-5.2",
+                &["ollama-cloud-api-key".into()],
+            )
+            .unwrap();
+
+            assert_eq!(selection.auth, "ollama-cloud-api-key");
+        },
+    );
+}
+
+#[test]
+fn bare_model_selection_prefers_credential_backed_auth_mode() {
+    with_cached_provider_models(
+        "ollama-cloud",
+        vec![provider_model("ollama-cloud", "glm-5.2")],
+        || {
+            let selection = resolve_model_selection_for_auths(
+                "glm-5.2",
+                "openai",
+                "api-key",
+                &["ollama-cloud-device".into()],
+            )
+            .unwrap();
+
+            assert_eq!(selection.provider, "ollama-cloud");
+            assert_eq!(selection.auth, "ollama-cloud-device");
+        },
+    );
+}
+
+#[test]
+fn current_auth_wins_when_it_is_available_for_provider_selection() {
+    with_cached_provider_models(
+        "ollama-cloud",
+        vec![provider_model("ollama-cloud", "glm-5.2")],
+        || {
+            let available = vec!["ollama-cloud-device".into(), "ollama-cloud-api-key".into()];
+            // Qualified reference carries the current auth as preference.
+            let selection = resolve_model_selection_for_auths(
+                "ollama-cloud/glm-5.2",
+                "ollama-cloud",
+                "ollama-cloud-api-key",
+                &available,
+            )
+            .unwrap();
+
+            assert_eq!(selection.auth, "ollama-cloud-api-key");
         },
     );
 }
