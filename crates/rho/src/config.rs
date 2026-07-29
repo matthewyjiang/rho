@@ -66,6 +66,8 @@ pub struct Config {
     pub web_search_provider: SearchProvider,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
+    /// Enables native-tool workspace checkpoints and the experimental `/rewind` command.
+    pub experimental_workspace_rewind: bool,
     pub permission_mode: PermissionMode,
     /// Explicit credential backend. `None` means unset; runtime defaults to OS.
     pub credential_store: Option<CredentialStoreBackend>,
@@ -111,6 +113,7 @@ impl Default for Config {
             web_search_provider: SearchProvider::Auto,
             check_for_updates: true,
             enable_subagents: true,
+            experimental_workspace_rewind: false,
             permission_mode: PermissionMode::Auto,
             credential_store: None,
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
@@ -437,6 +440,9 @@ impl Config {
             }
             if let Some(value) = group.enable_subagents {
                 cfg.enable_subagents = value;
+            }
+            if let Some(value) = group.experimental_workspace_rewind {
+                cfg.experimental_workspace_rewind = value;
             }
             if let Some(value) = group.permission_mode {
                 cfg.permission_mode = value;
@@ -788,6 +794,7 @@ impl PartialConfig {
             let group = self.behavior.take().unwrap_or(PartialBehaviorConfig {
                 check_for_updates: None,
                 enable_subagents: None,
+                experimental_workspace_rewind: None,
                 permission_mode: None,
                 credential_store: None,
                 rtk: None,
@@ -796,6 +803,7 @@ impl PartialConfig {
             self.behavior = Some(PartialBehaviorConfig {
                 check_for_updates: group.check_for_updates.or(check_for_updates),
                 enable_subagents: group.enable_subagents.or(enable_subagents),
+                experimental_workspace_rewind: group.experimental_workspace_rewind,
                 permission_mode: group.permission_mode.or(permission_mode),
                 credential_store: group.credential_store,
                 rtk: group.rtk.or(rtk),
@@ -938,6 +946,7 @@ struct PartialWebSearchConfig {
 struct PartialBehaviorConfig {
     check_for_updates: Option<bool>,
     enable_subagents: Option<bool>,
+    experimental_workspace_rewind: Option<bool>,
     #[serde(default)]
     permission_mode: Option<PermissionMode>,
     credential_store: Option<String>,

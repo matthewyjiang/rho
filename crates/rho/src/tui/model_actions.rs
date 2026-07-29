@@ -224,6 +224,8 @@ impl App {
                 | PickerAction::LoginGroup
                 | PickerAction::ViewAgent
                 | PickerAction::EditAgent
+                | PickerAction::SelectRewindCheckpoint
+                | PickerAction::ConfirmRewindCheckpoint
         ) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
@@ -339,6 +341,11 @@ impl App {
             }
             PickerAction::SelectTreeNode => {
                 self.submit_tree_selection(&value, terminal, agent).await
+            }
+            PickerAction::SelectRewindCheckpoint => self.submit_rewind_preview(&value, agent),
+            PickerAction::ConfirmRewindCheckpoint => {
+                self.submit_rewind_confirmation(&value, terminal, agent)
+                    .await
             }
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
             PickerAction::ViewAgent => self.submit_view_agent_selection(&value),
@@ -479,6 +486,8 @@ impl App {
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
+            | PickerAction::SelectRewindCheckpoint
+            | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Config
             | PickerAction::EditAgent
             | PickerAction::Dismiss => return Ok(()),
@@ -542,6 +551,8 @@ impl App {
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
+            | PickerAction::SelectRewindCheckpoint
+            | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Config
             | PickerAction::EditAgent
             | PickerAction::Dismiss => return None,

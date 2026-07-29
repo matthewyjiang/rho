@@ -390,6 +390,7 @@ impl App {
             | CommandId::Login
             | CommandId::Logout
             | CommandId::Resume
+            | CommandId::Rewind
             | CommandId::Tree => {
                 self.insert_entry(&Entry::Notice(format!(
                     "/{} is unavailable while a model turn is running",
@@ -476,7 +477,10 @@ impl App {
                 self.input_ui.set_command_palette_dismissed(true);
                 self.status = "skill command inserted".into();
             }
-            PickerAction::ResumeSession | PickerAction::SelectTreeNode => {
+            PickerAction::ResumeSession
+            | PickerAction::SelectTreeNode
+            | PickerAction::SelectRewindCheckpoint
+            | PickerAction::ConfirmRewindCheckpoint => {
                 self.insert_entry(&Entry::Notice(
                     "session navigation is unavailable while a model turn is running".into(),
                 ));

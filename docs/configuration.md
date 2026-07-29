@@ -46,6 +46,7 @@ base_url = "http://127.0.0.1:11434/v1"
 [behavior]
 check_for_updates = true
 enable_subagents = true
+experimental_workspace_rewind = false
 permission_mode = "auto" # auto, plan, or supervised
 rtk = true
 # credential_store = "os" # or "file"; omit until first /login chooses
@@ -169,6 +170,8 @@ Model aliases work in these entries. Rho keeps reading the old `[title]` section
 Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the configured credential store when loaded. Empty strings are ignored. Set `provider = "disabled"` under `[web_search]` to remove the web search tool from the tool registry while keeping other workspace tools enabled.
 
 `enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
+
+`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart Rho after changing it. Checkpoints cover `write_file` and `edit_file` only. Rho warns when a turn ran a shell command because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only, `/rewind` branches conversation state and restores captured files, and Git commands remain separate operations.
 
 ## Permission modes
 

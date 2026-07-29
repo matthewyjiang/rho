@@ -30,6 +30,7 @@ impl App {
                 self.execute_resume_command(invocation, terminal, agent)
                     .await
             }
+            CommandId::Rewind => self.execute_rewind_command(invocation, agent),
             CommandId::Tree => self.execute_tree_command(agent),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command().await,

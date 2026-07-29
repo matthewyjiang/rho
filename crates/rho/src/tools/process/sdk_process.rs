@@ -17,18 +17,30 @@ pub(crate) struct SdkProcess {
     process: Process,
     max_output_bytes: usize,
     environment: ProcessEnvironment,
+    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 }
 
 impl SdkProcess {
+    #[cfg(test)]
     pub(crate) fn new(
         process: Process,
         max_output_bytes: usize,
         environment: ProcessEnvironment,
     ) -> Self {
+        Self::with_mutation_observer(process, max_output_bytes, environment, Arc::new(()))
+    }
+
+    pub(crate) fn with_mutation_observer(
+        process: Process,
+        max_output_bytes: usize,
+        environment: ProcessEnvironment,
+        mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
+    ) -> Self {
         Self {
             process,
             max_output_bytes,
             environment,
+            mutation_observer,
         }
     }
 
@@ -103,6 +115,7 @@ impl SdkProcess {
         if context.cancellation().is_cancelled() {
             return Err(ToolError::cancelled());
         }
+        self.mutation_observer.mark_untracked_effect("process");
         let snapshot = self
             .process
             .start_execution(execution)
@@ -262,6 +275,12 @@ pub(super) fn tool(
     process: Process,
     max_output_bytes: usize,
     environment: ProcessEnvironment,
+    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> Arc<dyn rho_sdk::tool::Tool> {
-    Arc::new(SdkProcess::new(process, max_output_bytes, environment))
+    Arc::new(SdkProcess::with_mutation_observer(
+        process,
+        max_output_bytes,
+        environment,
+        mutation_observer,
+    ))
 }

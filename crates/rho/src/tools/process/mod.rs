@@ -37,6 +37,7 @@ impl ToolBundle for SdkProcessBundle {
 pub(super) fn sdk_bundle(
     max_output_bytes: usize,
     environment: rho_sdk::ProcessEnvironment,
+    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> SdkProcessBundle {
     let manager = ProcessManager::with_environment(
         ProcessLimits {
@@ -49,6 +50,7 @@ pub(super) fn sdk_bundle(
         Process::new(manager.clone()),
         max_output_bytes,
         environment,
+        mutation_observer,
     )];
     SdkProcessBundle { tools, manager }
 }

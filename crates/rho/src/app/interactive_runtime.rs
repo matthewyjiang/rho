@@ -18,6 +18,9 @@ use {
     rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider},
 };
 
+#[path = "interactive_runtime_workspace_rewind.rs"]
+mod workspace_rewind;
+
 use super::{
     agent_binding::BoundAgent,
     interactive_run_controller::{InteractiveRunController, PendingTurn},
@@ -65,6 +68,7 @@ pub(crate) struct InteractiveRuntime {
     context_window: Option<u64>,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
     permission_mode: PermissionMode,
+    experimental_workspace_rewind: bool,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
     agent: BoundAgent,
@@ -169,6 +173,7 @@ impl InteractiveRuntime {
             context_window,
             usage_recording,
             permission_mode,
+            experimental_workspace_rewind: config.experimental_workspace_rewind,
             approval_handler,
             approval_receiver,
             agent,
@@ -182,6 +187,10 @@ impl InteractiveRuntime {
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
         self.permission_mode
+    }
+
+    pub(crate) fn workspace_rewind_enabled(&self) -> bool {
+        self.experimental_workspace_rewind
     }
 
     pub(crate) fn fast_mode(&self) -> bool {
@@ -395,16 +404,33 @@ impl InteractiveRuntime {
             rho_sdk::model::context::estimate_context_tokens(&request_history, &self.tools.specs()),
             self.context_window,
         );
-        let run = match prelude {
-            TurnPrelude::None => self.sessions.session().start(input).await?,
+        self.tools
+            .checkpoint_tracker()
+            .begin_turn(self.sessions.storage())
+            .map_err(|error| Error::Persistence {
+                message: error.to_string(),
+            })?;
+        let run_result = match prelude {
+            TurnPrelude::None => self.sessions.session().start(input).await,
             TurnPrelude::ToolCall(call) => {
                 self.sessions
                     .session()
                     .start_with_tool_call(input, call)
-                    .await?
+                    .await
             }
         };
-        self.runs.begin(run, pending_turn, context_usage)
+        let run = match run_result {
+            Ok(run) => run,
+            Err(error) => {
+                self.tools.checkpoint_tracker().discard_turn();
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.runs.begin(run, pending_turn, context_usage) {
+            self.tools.checkpoint_tracker().discard_turn();
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {
@@ -467,6 +493,7 @@ impl InteractiveRuntime {
     pub(crate) async fn finish_run(&mut self) -> anyhow::Result<RunOutcome> {
         let finished = self.runs.finish().await;
         if let Some(error) = self.pending_persistence_error.take() {
+            self.tools.checkpoint_tracker().discard_turn();
             let checkpoint = self.pending_persistence_checkpoint.take();
             let rollback = self.restore_durable_session(checkpoint).await;
             return match rollback {
@@ -478,12 +505,19 @@ impl InteractiveRuntime {
                 )),
             };
         }
-        let finished = finished?;
+        let finished = match finished {
+            Ok(finished) => finished,
+            Err(error) => {
+                self.tools.checkpoint_tracker().discard_turn();
+                return Err(error);
+            }
+        };
         let checkpoint = self.capture_durable_session();
         if let Err(error) = self.sessions.sync_finished_turn(
             finished.pending_turn.as_ref(),
             finished.outcome.as_ref().ok(),
         ) {
+            self.tools.checkpoint_tracker().discard_turn();
             let (checkpoint, capture_error) = match checkpoint {
                 Ok(checkpoint) => (checkpoint, None),
                 Err(capture_error) => (None, Some(capture_error)),
@@ -501,6 +535,34 @@ impl InteractiveRuntime {
                     "{error}; could not capture rollback checkpoint: {capture_error}; could not restore durable state: {rollback_error}"
                 )),
             };
+        }
+        if let Some(storage) = self.sessions.storage() {
+            let outcome = match finished.outcome.as_ref() {
+                Ok(_) => crate::session::workspace_checkpoint::CheckpointOutcome::Completed,
+                Err(Error::Cancelled | Error::Interrupted { .. }) => {
+                    crate::session::workspace_checkpoint::CheckpointOutcome::Cancelled
+                }
+                Err(_) => crate::session::workspace_checkpoint::CheckpointOutcome::Failed,
+            };
+            match storage.active_checkpoint_target() {
+                Ok(Some((node_id, revision))) => {
+                    if let Err(error) = self
+                        .tools
+                        .checkpoint_tracker()
+                        .finalize_turn(node_id, revision, outcome)
+                    {
+                        tracing::warn!(%error, "failed to persist workspace checkpoint");
+                        self.tools.checkpoint_tracker().discard_turn();
+                    }
+                }
+                Ok(None) => self.tools.checkpoint_tracker().discard_turn(),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to resolve workspace checkpoint target");
+                    self.tools.checkpoint_tracker().discard_turn();
+                }
+            }
+        } else {
+            self.tools.checkpoint_tracker().discard_turn();
         }
         self.refresh_context_usage();
         Ok(finished.outcome?)

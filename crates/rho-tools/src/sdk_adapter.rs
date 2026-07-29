@@ -24,9 +24,10 @@ use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
-        ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
+        AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolError,
+        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
+        ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
+        ToolSecurity,
     },
     CapabilityKind, ResolvedWorkspacePath, Workspace, WorkspacePathState,
 };
@@ -53,15 +54,17 @@ use super::{
 };
 
 /// Options for coding tools registered on an SDK runtime.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct CodingToolOptions {
     max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
 impl Default for CodingToolOptions {
     fn default() -> Self {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            mutation_observer: None,
         }
     }
 }
@@ -73,6 +76,14 @@ impl CodingToolOptions {
 
     pub fn max_output_bytes(mut self, max_output_bytes: usize) -> Self {
         self.max_output_bytes = max_output_bytes.max(1);
+        self
+    }
+
+    pub fn mutation_observer(
+        mut self,
+        observer: Arc<dyn crate::WorkspaceMutationObserver>,
+    ) -> Self {
+        self.mutation_observer = Some(observer);
         self
     }
 
@@ -120,9 +131,11 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
         }),
         CodingToolKind::WriteFile => Arc::new(WriteFileTool {
             max_output_bytes: options.max_output_bytes,
+            mutation_observer: options.mutation_observer.clone(),
         }),
         CodingToolKind::EditFile => Arc::new(EditFileTool {
             max_output_bytes: options.max_output_bytes,
+            mutation_observer: options.mutation_observer.clone(),
         }),
         CodingToolKind::Grep => Arc::new(GrepTool::new(options.max_output_bytes)),
         CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes)),
@@ -154,10 +167,12 @@ struct ReadFileTool {
 
 struct WriteFileTool {
     max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
 struct EditFileTool {
     max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
 #[derive(Deserialize)]
@@ -344,6 +359,7 @@ impl Tool for WriteFileTool {
                 move |context| {
                     execute_prepared_write(
                         self.max_output_bytes,
+                        self.mutation_observer.clone(),
                         workspace,
                         resolved,
                         args,
@@ -411,6 +427,7 @@ impl Tool for EditFileTool {
                 move |context| {
                     execute_prepared_edits(
                         self.max_output_bytes,
+                        self.mutation_observer.clone(),
                         workspace,
                         resolved_by_canonical,
                         resolved_by_request,
@@ -425,6 +442,7 @@ impl Tool for EditFileTool {
 
 fn execute_prepared_write(
     max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
     args: WriteArgs,
@@ -440,10 +458,36 @@ fn execute_prepared_write(
             )
             .await;
         workspace.revalidate(&resolved).map_err(map_path_error)?;
-        let outcome =
+        let mutation_paths = [resolved.path()];
+        if let Some(observer) = mutation_observer.as_ref() {
+            observer
+                .before_mutation(&mutation_paths)
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
+        }
+        let write_result =
             write_file_content(resolved.path(), &display, &args.content, max_output_bytes)
                 .await
-                .map_err(map_app_error)?;
+                .map_err(map_app_error);
+        let capture_result = match mutation_observer.as_ref() {
+            Some(observer) => observer
+                .after_mutation(&mutation_paths)
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
+            None => Ok(()),
+        };
+        let outcome = match (write_result, capture_result) {
+            (Ok(outcome), Ok(())) => outcome,
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
+            (Err(write_error), Err(capture_error)) => {
+                return Err(ToolError::new(
+                    ToolErrorKind::Execution,
+                    format!(
+                        "{write_error}; failed to capture resulting workspace state: {capture_error}"
+                    ),
+                ));
+            }
+        };
         Ok(ToolOutput::text(outcome.content).metadata(
             ToolMetadata::new()
                 .operation(OperationKind::Write)
@@ -455,6 +499,7 @@ fn execute_prepared_write(
 
 fn execute_prepared_edits(
     max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     workspace: Workspace,
     resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
     requested_paths: std::collections::HashMap<String, PathBuf>,
@@ -471,7 +516,20 @@ fn execute_prepared_edits(
                     .metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
-        let outcome = apply_edits(
+        let mutation_paths = resolved
+            .values()
+            .map(ResolvedWorkspacePath::path)
+            .collect::<Vec<_>>();
+        for prepared in resolved.values() {
+            workspace.revalidate(prepared).map_err(map_path_error)?;
+        }
+        if let Some(observer) = mutation_observer.as_ref() {
+            observer
+                .before_mutation(&mutation_paths)
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
+        }
+        let edit_result = apply_edits(
             edits,
             |requested| {
                 let path = requested_paths.get(requested).ok_or_else(|| {
@@ -494,7 +552,26 @@ fn execute_prepared_edits(
             max_output_bytes,
         )
         .await
-        .map_err(map_app_error)?;
+        .map_err(map_app_error);
+        let capture_result = match mutation_observer.as_ref() {
+            Some(observer) => observer
+                .after_mutation(&mutation_paths)
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
+            None => Ok(()),
+        };
+        let outcome = match (edit_result, capture_result) {
+            (Ok(outcome), Ok(())) => outcome,
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
+            (Err(edit_error), Err(capture_error)) => {
+                return Err(ToolError::new(
+                    ToolErrorKind::Execution,
+                    format!(
+                        "{edit_error}; failed to capture resulting workspace state: {capture_error}"
+                    ),
+                ));
+            }
+        };
         let _ = context
             .progress()
             .send(

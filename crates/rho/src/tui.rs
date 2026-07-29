@@ -97,6 +97,7 @@ pub(crate) use session_title::SESSION_TITLE_PROMPT;
 mod app_loop;
 mod idle_input;
 mod reasoning_phase;
+mod rewind_actions;
 mod skill_actions;
 mod skill_picker;
 #[cfg(debug_assertions)]
