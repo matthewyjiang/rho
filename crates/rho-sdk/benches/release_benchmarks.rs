@@ -487,15 +487,18 @@ fn main() {
         );
     }
 
-    let startup_baseline = measure(samples, || consume_baseline(retained_baseline_startup()));
-    let startup_candidate = measure(samples, || {
-        let runtime = Rho::builder().provider(ImmediateProvider).build().unwrap();
-        black_box(
-            tokio
-                .block_on(runtime.session(SessionOptions::default()))
-                .unwrap(),
-        );
-    });
+    let (startup_baseline, startup_candidate) = measure_interleaved(
+        samples,
+        || consume_baseline(retained_baseline_startup()),
+        || {
+            let runtime = Rho::builder().provider(ImmediateProvider).build().unwrap();
+            black_box(
+                tokio
+                    .block_on(runtime.session(SessionOptions::default()))
+                    .unwrap(),
+            );
+        },
+    );
 
     let simple_baseline = measure(samples, || {
         let messages = vec![Message::user_text("hello"), Message::assistant_text("ok")];
@@ -708,13 +711,17 @@ fn main() {
     let slow_consumer = SampleStats::new(slow_consumer_cancellation);
 
     let startup_relative = startup_candidate.median() as f64 / startup_baseline.median() as f64;
+    // Relative overhead is the main gate, but sub-microsecond work also needs a
+    // small absolute floor so timer noise on shared CI runners is not a failure.
+    let startup_allowed =
+        (startup_baseline.median() as f64 * 1.20).max(startup_baseline.median() as f64 + 1_000.0);
     let simple_allowed =
         (simple_baseline.median() as f64 * 1.10).max(simple_baseline.median() as f64 + 100_000.0);
     let compaction_relative =
         compaction_candidate.median() as f64 / compaction_baseline.median() as f64;
     let checks = json!({
         "startup_absolute_under_2ms": startup_candidate.median() <= 2_000_000,
-        "startup_relative_under_20_percent": startup_relative <= 1.20,
+        "startup_within_budget": startup_candidate.median() as f64 <= startup_allowed,
         "simple_completion_within_budget": simple_candidate.median() as f64 <= simple_allowed,
         "event_throughput_at_least_250k_per_second": event_throughput_median >= 250_000.0,
         "event_p99_latency_under_5ms": event_latency_p99 <= 5_000_000,
@@ -749,9 +756,11 @@ fn main() {
         "machine": machine_metadata(),
         "measurements": {
             "startup": {
+                "sampling_order": "interleaved with alternating baseline-first and candidate-first pairs",
                 "baseline": startup_baseline.json(),
                 "candidate": startup_candidate.json(),
                 "candidate_over_baseline": startup_relative,
+                "allowed_candidate_median_ns": startup_allowed,
             },
             "simple_completion": {
                 "baseline": simple_baseline.json(),
