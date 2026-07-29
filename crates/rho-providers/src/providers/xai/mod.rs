@@ -40,6 +40,7 @@ pub struct XaiProvider {
     auth: XaiAuthManager,
     api_base: String,
     reasoning: reasoning::XaiReasoningProfile,
+    hosted_web_search: bool,
 }
 
 impl XaiProvider {
@@ -49,6 +50,7 @@ impl XaiProvider {
         auth: XaiAuthManager,
         client: reqwest::Client,
         api_base: String,
+        hosted_web_search: bool,
     ) -> Self {
         let reasoning = reasoning::XaiReasoningProfile::from_metadata(
             &model,
@@ -61,6 +63,7 @@ impl XaiProvider {
             auth,
             api_base,
             reasoning,
+            hosted_web_search,
         }
     }
 
@@ -76,6 +79,7 @@ impl XaiProvider {
             XaiAuthManager::new(store)?,
             provider_client(),
             api_base,
+            /*hosted_web_search*/ true,
         ))
     }
 
@@ -88,7 +92,13 @@ impl XaiProvider {
         >,
     ) -> Result<reqwest::Response, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = build_xai_responses_body(self.provider, &self.model, &self.reasoning, request)?;
+        let body = build_xai_responses_body(
+            self.provider,
+            &self.model,
+            &self.reasoning,
+            request,
+            self.hosted_web_search,
+        )?;
         let mut on_request_event = on_request_event;
         let result = self
             .post_with_auth_retry("responses", &body, Some(&cancellation), || {

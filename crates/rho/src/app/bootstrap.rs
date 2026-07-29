@@ -472,7 +472,7 @@ fn host_capabilities(
         return crate::agent::AgentCapabilities::default();
     }
     let mut tools = crate::agent::AgentCapabilities::all_host_tools();
-    if !crate::tools::web::access_tools(config).is_available() {
+    if !crate::tools::web::web_search_available(config) {
         tools.remove(&ToolCapability::WebSearch);
     }
     #[cfg(windows)]

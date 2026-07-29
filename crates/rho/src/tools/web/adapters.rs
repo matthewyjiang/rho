@@ -41,7 +41,8 @@ impl WebSearch {
         }
     }
 
-    pub fn is_available(&self) -> bool {
+    /// Client-side backup backends only. Hosted provider search is separate.
+    pub fn backup_available(&self) -> bool {
         match self.config.provider {
             SearchProvider::Disabled => false,
             SearchProvider::OpenAi => search::openai_available(&self.config),
@@ -108,6 +109,11 @@ impl Tool for WebSearch {
         id: String,
     ) -> Result<ToolResult, ToolError> {
         let args: WebSearchArgs = serde_json::from_value(args)?;
+        if !self.backup_available() {
+            return Err(ToolError::Message(
+                "client web search backup is disabled; hosted search should handle web_search when the chat provider supports it".into(),
+            ));
+        }
         let queries = collect_values(args.query, args.queries, "query", "queries")?;
         let num_results = args.num_results.unwrap_or(5).clamp(1, 20);
         let provider = args.provider.unwrap_or(self.config.provider);

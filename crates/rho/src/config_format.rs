@@ -112,6 +112,7 @@ struct PersistedInternalAgentModelConfig<'a> {
 
 #[derive(Serialize)]
 struct WebSearchConfig<'a> {
+    hosted: bool,
     provider: SearchProvider,
     #[serde(skip_serializing_if = "Option::is_none")]
     openai_api_key: Option<&'a str>,
@@ -175,6 +176,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 compact_target_percent: config.compact_target_percent,
             },
             web_search: WebSearchConfig {
+                hosted: config.web_search_hosted,
                 provider: config.web_search_provider,
                 openai_api_key: config.legacy_web_search_credentials.openai.as_deref(),
                 exa_api_key: config.legacy_web_search_credentials.exa.as_deref(),

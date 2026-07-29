@@ -74,8 +74,8 @@ pub(crate) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
     }
 }
 
-pub(crate) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
-    if tool.name == "web_search" {
+pub(crate) fn to_responses_tool(tool: ToolSpec, hosted_web_search: bool) -> serde_json::Value {
+    if hosted_web_search && tool.name == "web_search" {
         return json!({
             "type": "web_search",
             "external_web_access": true,
@@ -89,6 +89,16 @@ pub(crate) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
         "parameters": tool.input_schema,
         "strict": false,
     })
+}
+
+/// xAI hosted web search uses the Responses built-in tool type without OpenAI-only fields.
+pub(crate) fn to_xai_responses_tool(tool: ToolSpec, hosted_web_search: bool) -> serde_json::Value {
+    if hosted_web_search && tool.name == "web_search" {
+        return json!({
+            "type": "web_search",
+        });
+    }
+    to_responses_lite_tool(tool)
 }
 
 pub(crate) fn to_responses_lite_tool(tool: ToolSpec) -> serde_json::Value {

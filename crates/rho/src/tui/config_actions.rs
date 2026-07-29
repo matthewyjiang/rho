@@ -112,6 +112,7 @@ impl App {
                 self.open_child_picker(child);
                 Ok(())
             }
+            config_picker::WEB_SEARCH_HOSTED_VALUE => self.toggle_web_search_hosted(),
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(),
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
                 self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)
@@ -262,6 +263,7 @@ impl App {
                 ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
@@ -296,6 +298,7 @@ impl App {
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
@@ -330,6 +333,7 @@ impl App {
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
@@ -366,6 +370,7 @@ impl App {
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
@@ -385,6 +390,36 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn toggle_web_search_hosted(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(
+            &self.info.services.config_repository,
+            ConfigToggle::WebSearchHosted,
+        ) {
+            Ok(ConfigMutation::WebSearchHosted(hosted)) => {
+                self.status = if hosted {
+                    "hosted web search: on next session".into()
+                } else {
+                    "hosted web search: off next session".into()
+                };
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save hosted web search setting: {err}"
+                )));
+                self.status = "config save failed".into();
+            }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
+        }
+        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_HOSTED_VALUE)?;
+        Ok(())
+    }
+
     pub(super) fn cycle_web_search_provider(&mut self) -> anyhow::Result<()> {
         let ConfigMutation::WebSearchProvider(provider) =
             config_editor::cycle_web_search_provider(&self.info.services.config_repository)?
@@ -392,7 +427,7 @@ impl App {
             unreachable!("provider cycle returned a mismatched config mutation");
         };
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
-        self.status = format!("web search: {provider}");
+        self.status = format!("backup web search: {provider}");
         Ok(())
     }
 

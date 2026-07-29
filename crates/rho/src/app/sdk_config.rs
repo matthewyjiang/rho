@@ -101,7 +101,8 @@ fn provider_options_with_transport(
 ) -> Result<ProviderBuildOptions, ModelError> {
     let mut provider =
         ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?
-            .with_auth(&config.auth)?;
+            .with_auth(&config.auth)?
+            .hosted_web_search(config.web_search_hosted);
     if let Some(endpoint) = endpoint {
         provider = provider.endpoint(endpoint)?;
     }

@@ -18,6 +18,31 @@ pub(super) use sdk_fetch_content::SdkFetchContent;
 pub(super) use sdk_web_search::SdkWebSearch;
 pub use storage::WebAccessStore;
 
+/// Whether the active chat provider can run hosted `web_search` for this model.
+pub(crate) fn supports_hosted_web_search(provider: &str, model: &str) -> bool {
+    match provider {
+        "openai" => true,
+        "openai-codex" => !matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"),
+        "xai" => true,
+        _ => false,
+    }
+}
+
+/// Hosted search is configured on and the active chat path can run it.
+pub(crate) fn hosted_web_search_active(config: &crate::config::Config) -> bool {
+    config.web_search_hosted && supports_hosted_web_search(&config.provider, &config.model)
+}
+
+/// Client backup backend can run for this config.
+pub(crate) fn backup_web_search_available(config: &crate::config::Config) -> bool {
+    access_tools(config).backup_available()
+}
+
+/// `web_search` capability is on when hosted search can run or a backup backend is ready.
+pub(crate) fn web_search_available(config: &crate::config::Config) -> bool {
+    hosted_web_search_active(config) || backup_web_search_available(config)
+}
+
 pub(crate) fn access_tools(config: &crate::config::Config) -> WebSearch {
     access_tools_with_store(config, WebAccessStore::new())
 }

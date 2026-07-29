@@ -4,7 +4,7 @@
 //! channel, tools, stream, and reasoning include; compact only accepts `model`
 //! and a full `input` window (system messages included).
 
-use crate::protocol::openai_responses::{codex_input_items_for_target, to_responses_lite_tool};
+use crate::protocol::openai_responses::{codex_input_items_for_target, to_xai_responses_tool};
 use serde_json::{json, Value};
 
 use super::reasoning;
@@ -45,12 +45,13 @@ pub(super) fn build_xai_responses_body(
     model: &str,
     reasoning: &reasoning::XaiReasoningProfile,
     request: ModelRequest<'_>,
+    hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let tools = request
         .tools
         .iter()
         .cloned()
-        .map(to_responses_lite_tool)
+        .map(|tool| to_xai_responses_tool(tool, hosted_web_search))
         .collect::<Vec<_>>();
     let XaiCreateLowered {
         instructions,

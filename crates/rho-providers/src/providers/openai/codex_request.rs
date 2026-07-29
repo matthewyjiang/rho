@@ -166,11 +166,12 @@ pub(super) fn build_responses_create_body(
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
+    hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let tools = request
         .tools
         .iter()
-        .map(|tool| responses_tool(profile.mode(), tool.clone()))
+        .map(|tool| responses_tool(profile.mode(), tool.clone(), hosted_web_search))
         .collect::<Vec<_>>();
     let ResponsesLowered {
         instructions,
@@ -280,9 +281,9 @@ pub(super) fn build_responses_compact_body(
     Ok(body)
 }
 
-fn responses_tool(mode: ResponsesRequestMode, tool: ToolSpec) -> Value {
+fn responses_tool(mode: ResponsesRequestMode, tool: ToolSpec, hosted_web_search: bool) -> Value {
     match mode {
-        ResponsesRequestMode::Standard => to_responses_tool(tool),
+        ResponsesRequestMode::Standard => to_responses_tool(tool, hosted_web_search),
         ResponsesRequestMode::ResponsesLite => to_responses_lite_tool(tool),
     }
 }
@@ -292,7 +293,7 @@ pub(super) fn build_codex_responses_body(
     model: &str,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
-    build_codex_responses_body_with_tier(model, request, None)
+    build_codex_responses_body_with_tier(model, request, None, /*hosted_web_search*/ true)
 }
 
 #[cfg(test)]
@@ -300,6 +301,7 @@ fn build_codex_responses_body_with_tier(
     model: &str,
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
+    hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let profile = ResponsesProfile::from_auth(
         &Auth::Codex {
@@ -318,6 +320,7 @@ fn build_codex_responses_body_with_tier(
         &OpenAiReasoningProfile::unknown(),
         request,
         service_tier,
+        hosted_web_search,
     )
 }
 
@@ -339,6 +342,7 @@ mod tests {
                 prompt_cache_key: None,
             },
             Some(ServiceTier::Priority),
+            /*hosted_web_search*/ true,
         )
         .unwrap();
 
@@ -357,6 +361,7 @@ mod tests {
                 prompt_cache_key: None,
             },
             Some(ServiceTier::Priority),
+            /*hosted_web_search*/ true,
         )
         .unwrap();
 
@@ -379,6 +384,7 @@ mod tests {
             &OpenAiReasoningProfile::unknown(),
             request,
             Some(ServiceTier::Priority),
+            /*hosted_web_search*/ true,
         )
         .unwrap();
 
@@ -479,6 +485,38 @@ mod tests {
             json!([{"type": "web_search", "external_web_access": true}])
         );
         assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn standard_requests_keep_function_web_search_when_hosted_disabled() {
+        let body = build_codex_responses_body_with_tier(
+            "gpt-5.5",
+            ModelRequest {
+                messages: &[Message::user_text("find current docs")],
+                tools: &[ToolSpec {
+                    name: "web_search".into(),
+                    description: "search the web".into(),
+                    input_schema: json!({"type": "object"}),
+                }],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            None,
+            /*hosted_web_search*/ false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            body["tools"],
+            json!([{
+                "type": "function",
+                "name": "web_search",
+                "description": "search the web",
+                "parameters": {"type": "object"},
+                "strict": false,
+            }])
+        );
     }
 
     #[test]

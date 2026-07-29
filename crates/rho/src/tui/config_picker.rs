@@ -34,6 +34,7 @@ pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
 pub(super) const INLINE_SHELL_VALUE: &str = "inline_shell";
 pub(super) const INLINE_SHELL_PREFIX: &str = "inline_shell:";
+pub(super) const WEB_SEARCH_HOSTED_VALUE: &str = "web_search_hosted";
 pub(super) const WEB_SEARCH_PROVIDER_VALUE: &str = "web_search_provider";
 pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
@@ -111,10 +112,11 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Tools",
-                "Inline shell, Web search provider, and Web search API keys.",
+                "Inline shell and web search (hosted + backup).",
                 Some(format!(
-                    "{} shell · search {}",
-                    config.inline_shell, config.web_search_provider
+                    "{} shell · {}",
+                    config.inline_shell,
+                    web_search_summary(config)
                 )),
                 TOOLS_CATEGORY_VALUE,
             ),
@@ -246,8 +248,8 @@ pub(super) fn category_picker(
                 ),
                 item(
                     "Web search",
-                    "Configure the web_search backend and API keys.",
-                    Some(config.web_search_provider.to_string()),
+                    "Hosted search when supported; backup client backend and API keys.",
+                    Some(web_search_summary(config)),
                     WEB_SEARCH_VALUE,
                 ),
             ],
@@ -406,9 +408,24 @@ pub(super) fn web_search_config_picker(
         vec![
             PickerItem {
                 section: None,
-                label: "Provider".into(),
+                label: "Hosted search".into(),
+                detail: Some(
+                    "Use the chat provider's native web_search when supported. Space or Enter toggles."
+                        .into(),
+                ),
+                preview: None,
+                badge: Some(PickerBadge {
+                    text: on_off(config.web_search_hosted),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: WEB_SEARCH_HOSTED_VALUE.into(),
+                selection_verb: None,
+            },
+            PickerItem {
+                section: None,
+                label: "Backup provider".into(),
                 detail: Some(format!(
-                    "Backend for web_search. Current: {}; Enter cycles to {}.",
+                    "Client web_search backend when hosted search is off or unsupported. Current: {}; Enter cycles to {}.",
                     config.web_search_provider,
                     config.web_search_provider.next_configurable()
                 )),
@@ -418,12 +435,12 @@ pub(super) fn web_search_config_picker(
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: WEB_SEARCH_PROVIDER_VALUE.into(),
-            selection_verb: None,
+                selection_verb: None,
             },
             PickerItem {
                 section: None,
                 label: "OpenAI API key".into(),
-                detail: Some("Optional key for OpenAI web search. Codex login is used automatically when available.".into()),
+                detail: Some("Optional key for the OpenAI backup search backend.".into()),
                 preview: None,
                 badge: Some(credential_badge(
                     config,
@@ -431,7 +448,7 @@ pub(super) fn web_search_config_picker(
                     WebSearchCredential::OpenAi,
                 )),
                 value: WEB_SEARCH_OPENAI_KEY_VALUE.into(),
-            selection_verb: None,
+                selection_verb: None,
             },
             PickerItem {
                 section: None,
@@ -444,12 +461,12 @@ pub(super) fn web_search_config_picker(
                     WebSearchCredential::Exa,
                 )),
                 value: WEB_SEARCH_EXA_KEY_VALUE.into(),
-            selection_verb: None,
+                selection_verb: None,
             },
             PickerItem {
                 section: None,
                 label: "Brave API key".into(),
-                detail: Some("Optional Brave Search API key used by the brave backend.".into()),
+                detail: Some("Optional Brave Search API key used by the brave backup backend.".into()),
                 preview: None,
                 badge: Some(credential_badge(
                     config,
@@ -457,11 +474,20 @@ pub(super) fn web_search_config_picker(
                     WebSearchCredential::Brave,
                 )),
                 value: WEB_SEARCH_BRAVE_KEY_VALUE.into(),
-            selection_verb: None,
+                selection_verb: None,
             },
         ],
         PickerAction::Config,
     )
+}
+
+fn web_search_summary(config: &Config) -> String {
+    let hosted = if config.web_search_hosted {
+        "hosted on"
+    } else {
+        "hosted off"
+    };
+    format!("{hosted}, backup {}", config.web_search_provider)
 }
 
 fn credential_badge(

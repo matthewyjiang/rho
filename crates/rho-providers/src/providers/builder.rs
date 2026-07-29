@@ -40,6 +40,8 @@ pub struct ProviderBuildOptions {
     model: String,
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
+    /// Prefer provider-hosted web search when the transport supports it.
+    hosted_web_search: bool,
 }
 
 impl ProviderBuildOptions {
@@ -70,6 +72,7 @@ impl ProviderBuildOptions {
             model,
             endpoint: None,
             request_timeout: None,
+            hosted_web_search: true,
         })
     }
 
@@ -103,6 +106,12 @@ impl ProviderBuildOptions {
         }
         self.request_timeout = Some(timeout);
         Ok(self)
+    }
+
+    /// Prefer the chat provider's hosted web search tool when supported.
+    pub fn hosted_web_search(mut self, enabled: bool) -> Self {
+        self.hosted_web_search = enabled;
+        self
     }
 
     pub(crate) fn provider(&self) -> &str {
@@ -206,6 +215,7 @@ impl ProviderBuilder {
                     refresh_store,
                     client,
                     endpoint,
+                    self.options.hosted_web_search,
                 )))
             }
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
@@ -258,6 +268,7 @@ impl ProviderBuilder {
                     auth,
                     client,
                     endpoint.unwrap_or_else(|| XAI_API_BASE.into()),
+                    self.options.hosted_web_search,
                 )))
             }
             _ => Err(ModelError::InvalidResponse(format!(

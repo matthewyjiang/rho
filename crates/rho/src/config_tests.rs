@@ -129,6 +129,45 @@ fn unsupported_web_search_config_providers_fall_back_to_auto() {
 }
 
 #[test]
+fn grouped_web_search_loads_hosted_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[web_search]
+hosted = false
+provider = "brave"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(path)).unwrap();
+
+    assert!(!config.web_search_hosted);
+    assert_eq!(config.web_search_provider, super::SearchProvider::Brave);
+}
+
+#[test]
+fn grouped_web_search_defaults_hosted_on_when_omitted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[web_search]
+provider = "exa"
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(path)).unwrap();
+
+    assert!(config.web_search_hosted);
+    assert_eq!(config.web_search_provider, super::SearchProvider::Exa);
+}
+
+#[test]
 fn grouped_web_search_preserves_omitted_legacy_keys() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
