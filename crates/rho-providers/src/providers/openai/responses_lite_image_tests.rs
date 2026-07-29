@@ -50,14 +50,14 @@ fn jpeg_with_rotate_90_orientation(width: u32, height: u32) -> ImageContent {
     }
 }
 
-fn animated_gif() -> ImageContent {
+fn animated_gif(width: u32, height: u32) -> ImageContent {
     let mut bytes = Vec::new();
     let mut encoder = GifEncoder::new(&mut bytes);
     encoder.set_repeat(Repeat::Infinite).unwrap();
     encoder
         .encode_frames([
-            Frame::new(RgbaImage::new(2, 1)),
-            Frame::new(RgbaImage::new(2, 1)),
+            Frame::new(RgbaImage::new(width, height)),
+            Frame::new(RgbaImage::new(width, height)),
         ])
         .unwrap();
     drop(encoder);
@@ -83,12 +83,21 @@ fn test_limits() -> LiteImageLimits {
 // Owner: OpenAI Responses Lite image policy.
 #[test]
 fn compliant_lite_image_preserves_original_encoding() {
-    let cases = [jpeg_with_rotate_90_orientation(16, 8), animated_gif()];
+    let cases = [jpeg_with_rotate_90_orientation(16, 8), animated_gif(2, 1)];
 
     for image in cases {
         let prepared = prepare_lite_image(image.clone(), test_limits()).unwrap();
         assert_eq!(prepared, image);
     }
+}
+
+// Covers: oversized animated GIFs must not be flattened into a static resize.
+// Owner: OpenAI Responses Lite image policy.
+#[test]
+fn oversized_animated_gif_is_rejected_instead_of_flattened() {
+    let image = animated_gif(128, 32);
+
+    assert_eq!(prepare_lite_image(image, test_limits()), None);
 }
 
 // Covers: Lite images must meet both dimension and patch limits before upload.

@@ -106,39 +106,53 @@ pub(super) async fn prepare_responses_lite_messages(
     let mut budget = LiteImageBudget::new(LITE_IMAGE_LIMITS);
 
     for message in messages {
-        let Message::User(blocks) = message else {
-            prepared_messages.push(message);
-            continue;
-        };
-        let mut prepared_blocks = Vec::with_capacity(blocks.len());
-        for block in blocks {
-            let ContentBlock::Image(image) = block else {
-                prepared_blocks.push(block);
-                continue;
-            };
-            if cancellation.is_cancelled() {
-                return Err(ModelError::Interrupted);
-            }
-            let Some(charge) = budget.charge(&image) else {
-                prepared_blocks.push(omitted_image());
-                continue;
-            };
+        match message {
+            Message::User(blocks) => {
+                let mut prepared_blocks = Vec::with_capacity(blocks.len());
+                for block in blocks {
+                    match block {
+                        ContentBlock::Image(image) => {
+                            if cancellation.is_cancelled() {
+                                return Err(ModelError::Interrupted);
+                            }
+                            let Some(charge) = budget.charge(&image) else {
+                                prepared_blocks.push(omitted_image());
+                                continue;
+                            };
 
-            let prepared =
-                tokio::task::spawn_blocking(move || prepare_lite_image(image, LITE_IMAGE_LIMITS))
-                    .await
-                    .map_err(|error| {
-                        ModelError::InvalidResponse(format!(
-                            "Responses Lite image preparation task failed: {error}"
-                        ))
-                    })?;
-            if cancellation.is_cancelled() {
-                return Err(ModelError::Interrupted);
+                            let prepared = tokio::task::spawn_blocking(move || {
+                                prepare_lite_image(image, LITE_IMAGE_LIMITS)
+                            })
+                            .await
+                            .map_err(|error| {
+                                ModelError::InvalidResponse(format!(
+                                    "Responses Lite image preparation task failed: {error}"
+                                ))
+                            })?;
+                            if cancellation.is_cancelled() {
+                                return Err(ModelError::Interrupted);
+                            }
+                            let prepared = budget.settle(charge, prepared);
+                            prepared_blocks
+                                .push(prepared.map_or_else(omitted_image, ContentBlock::Image));
+                        }
+                        // Non-image blocks stay as-is. New media variants must choose a
+                        // budget and validation policy here instead of passing through.
+                        block @ (ContentBlock::Text(_) | ContentBlock::ToolCall(_)) => {
+                            prepared_blocks.push(block);
+                        }
+                    }
+                }
+                prepared_messages.push(Message::User(prepared_blocks));
             }
-            let prepared = budget.settle(charge, prepared);
-            prepared_blocks.push(prepared.map_or_else(omitted_image, ContentBlock::Image));
+            Message::System(_)
+            | Message::Assistant(_)
+            | Message::EnrichedAssistant(_)
+            | Message::AbortedAssistant(_)
+            | Message::ToolResult(_) => {
+                prepared_messages.push(message);
+            }
         }
-        prepared_messages.push(Message::User(prepared_blocks));
     }
 
     Ok(prepared_messages)
@@ -169,7 +183,7 @@ fn prepare_lite_image(image: ImageContent, limits: LiteImageLimits) -> Option<Im
     }
     let format = image::guess_format(&bytes).ok()?;
     let resized_mime_type = supported_mime_type(format)?;
-    let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
+    let mut reader = ImageReader::with_format(Cursor::new(bytes.as_slice()), format);
     let mut decode_limits = Limits::default();
     decode_limits.max_alloc = Some(limits.max_decoded_bytes);
     reader.limits(decode_limits);
@@ -191,6 +205,11 @@ fn prepare_lite_image(image: ImageContent, limits: LiteImageLimits) -> Option<Im
     if target == (decoded.width(), decoded.height()) {
         return Some(image);
     }
+    // DynamicImage keeps only one frame. Refuse to flatten animated GIFs into a
+    // static resize; callers omit the image rather than send corrupted media.
+    if format == ImageFormat::Gif && gif_is_animated(bytes.as_slice()) {
+        return None;
+    }
 
     let processed = decoded.resize_exact(target.0, target.1, FilterType::Lanczos3);
     let mut output = CappedCursor::new(max_binary_bytes_for_base64(limits.max_base64_bytes));
@@ -199,6 +218,19 @@ fn prepare_lite_image(image: ImageContent, limits: LiteImageLimits) -> Option<Im
         data: STANDARD.encode(output.into_inner()),
         mime_type: resized_mime_type.into(),
     })
+}
+
+fn gif_is_animated(bytes: &[u8]) -> bool {
+    use image::{codecs::gif::GifDecoder, AnimationDecoder};
+
+    let Ok(decoder) = GifDecoder::new(Cursor::new(bytes)) else {
+        return false;
+    };
+    let mut frames = decoder.into_frames();
+    match frames.next() {
+        Some(Ok(_)) => matches!(frames.next(), Some(Ok(_))),
+        _ => false,
+    }
 }
 
 fn max_binary_bytes_for_base64(max_base64_bytes: usize) -> usize {
