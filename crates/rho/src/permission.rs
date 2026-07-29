@@ -58,9 +58,11 @@ impl PermissionMode {
                 },
             },
             Self::Supervised => match kind {
+                // Empty reason: the approval prompt itself is the signal. Keep a
+                // specific reason only when it adds information the chrome lacks.
                 CapabilityKind::Write | CapabilityKind::Process => {
                     PolicyDecision::RequireApproval {
-                        reason: "host approval is required".into(),
+                        reason: String::new(),
                     }
                 }
                 CapabilityKind::Read
@@ -68,7 +70,7 @@ impl PermissionMode {
                 | CapabilityKind::Skill
                 | CapabilityKind::InstructionDiscovery => PolicyDecision::Allow,
                 _ => PolicyDecision::RequireApproval {
-                    reason: "host approval is required for unknown capability".into(),
+                    reason: "unknown capability requires host approval".into(),
                 },
             },
         }

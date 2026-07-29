@@ -17,7 +17,8 @@ pub enum CapabilityKind {
 }
 
 impl CapabilityKind {
-    pub(crate) const fn label(self) -> &'static str {
+    /// Stable lowercase label for diagnostics and host UI.
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Read => "read",
             Self::Write => "write",

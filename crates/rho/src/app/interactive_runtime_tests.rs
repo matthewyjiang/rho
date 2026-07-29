@@ -310,7 +310,7 @@ async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_po
             .launch_permission_mode()
             .decision_for(rho_sdk::CapabilityKind::Write),
         PolicyDecision::RequireApproval {
-            reason: "host approval is required".into()
+            reason: String::new()
         }
     );
     assert!(interactive.approval_handler.is_some());

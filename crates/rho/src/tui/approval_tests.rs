@@ -5,10 +5,11 @@ use rho_sdk::{
 };
 
 use super::{
-    approval_decision, next_choice, previous_choice,
     render::{
-        approval_details, approval_lines_for_position, approval_title, format_direct_invocation,
+        approval_detail_page_lines, approval_details, approval_lines_for_position, approval_title,
+        format_direct_invocation,
     },
+    ApprovalChoice,
 };
 
 fn source() -> CapabilitySource {
@@ -29,19 +30,35 @@ fn line_text(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
 
 #[test]
 fn movement_stops_at_choice_boundaries() {
-    assert_eq!(previous_choice(0), 0);
-    assert_eq!(previous_choice(2), 1);
-    assert_eq!(next_choice(0), 1);
-    assert_eq!(next_choice(1), 2);
-    assert_eq!(next_choice(2), 2);
+    assert_eq!(
+        ApprovalChoice::AllowOnce.previous(),
+        ApprovalChoice::AllowOnce
+    );
+    assert_eq!(
+        ApprovalChoice::Deny.previous(),
+        ApprovalChoice::AllowForSession
+    );
+    assert_eq!(
+        ApprovalChoice::AllowOnce.next(),
+        ApprovalChoice::AllowForSession
+    );
+    assert_eq!(ApprovalChoice::AllowForSession.next(), ApprovalChoice::Deny);
+    assert_eq!(ApprovalChoice::Deny.next(), ApprovalChoice::Deny);
 }
 
 #[test]
-fn maps_choice_indices_to_decisions() {
-    assert_eq!(approval_decision(0), ApprovalDecision::AllowOnce);
-    assert_eq!(approval_decision(1), ApprovalDecision::AllowForSession);
+fn maps_choices_to_decisions_and_defaults_to_deny() {
+    assert_eq!(ApprovalChoice::default(), ApprovalChoice::Deny);
     assert_eq!(
-        approval_decision(2),
+        ApprovalChoice::AllowOnce.decision(),
+        ApprovalDecision::AllowOnce
+    );
+    assert_eq!(
+        ApprovalChoice::AllowForSession.decision(),
+        ApprovalDecision::AllowForSession
+    );
+    assert_eq!(
+        ApprovalChoice::Deny.decision(),
         ApprovalDecision::Deny {
             reason: "denied by user".into()
         }
@@ -71,11 +88,136 @@ fn every_rendered_line_respects_narrow_width() {
         source(),
     );
     let width = 14;
-    let lines = approval_lines_for_position(&request, "a long reason that must wrap", 1, 0, width);
+    let lines = approval_lines_for_position(
+        &request,
+        "a long reason that must wrap",
+        ApprovalChoice::AllowForSession,
+        0,
+        width,
+        14,
+    );
 
     assert!(lines.iter().all(|line| line.width() <= width));
     assert!(lines.len() <= 9);
     assert!(!line_text(&lines).is_empty());
+}
+
+// Covers: detail window opens at the request head, grows with the terminal, and
+// omits empty policy reasons without a UI denylist.
+// Owner: tui approval layout
+#[test]
+fn detail_window_starts_at_head_and_grows_with_viewport() {
+    let request = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path(
+                "sh",
+                vec!["-c".into()],
+                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
+            ),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        source(),
+    );
+    let width = 40;
+    let short = line_text(&approval_lines_for_position(
+        &request,
+        "",
+        ApprovalChoice::Deny,
+        0,
+        width,
+        14,
+    ));
+    let tall = line_text(&approval_lines_for_position(
+        &request,
+        "",
+        ApprovalChoice::Deny,
+        0,
+        width,
+        60,
+    ));
+    let with_reason = line_text(&approval_lines_for_position(
+        &request,
+        "custom audit reason",
+        ApprovalChoice::Deny,
+        0,
+        width,
+        60,
+    ));
+
+    assert!(
+        short
+            .iter()
+            .any(|line| line.contains("capability: process")),
+        "prompt should name the capability class"
+    );
+    assert!(
+        short.iter().any(|line| line.contains("> Deny")),
+        "prompt should focus Deny by default"
+    );
+    assert!(
+        !short
+            .iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
+        "short viewport must open on the start of the request, not the suffix"
+    );
+    assert!(
+        tall.iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
+        "tall viewport should expose more of the request without paging"
+    );
+    assert!(approval_detail_page_lines(14) >= 3);
+    assert!(approval_detail_page_lines(60) > approval_detail_page_lines(14));
+    assert!(
+        !short.iter().any(|line| line.contains("reason:")),
+        "empty policy reasons must not render a reason row"
+    );
+    assert!(
+        with_reason
+            .iter()
+            .any(|line| line.contains("reason: custom audit reason")),
+        "non-empty reasons should still render"
+    );
+}
+
+// Covers: stale offsets after a larger page size must clamp instead of sticking.
+// Owner: tui approval layout
+#[test]
+fn detail_offset_clamps_when_page_grows() {
+    let request = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path(
+                "sh",
+                vec!["-c".into()],
+                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
+            ),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        source(),
+    );
+    let width = 40;
+    let lines = line_text(&approval_lines_for_position(
+        &request,
+        "",
+        ApprovalChoice::Deny,
+        10_000,
+        width,
+        14,
+    ));
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
+        "oversized offsets should clamp to the final visible window"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("↑ earlier")),
+        "clamped end window on a short viewport should still offer paging back"
+    );
 }
 
 #[test]

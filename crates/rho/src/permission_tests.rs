@@ -71,8 +71,9 @@ fn decision_for_plan_denies_only_write_and_process() {
 fn decision_for_supervised_requires_approval_only_for_write_and_process() {
     for kind in all_capability_kinds() {
         let expected = match kind {
+            // Boilerplate reasons stay empty; the approval surface is the signal.
             CapabilityKind::Write | CapabilityKind::Process => PolicyDecision::RequireApproval {
-                reason: "host approval is required".into(),
+                reason: String::new(),
             },
             _ => PolicyDecision::Allow,
         };
