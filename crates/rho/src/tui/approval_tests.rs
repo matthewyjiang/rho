@@ -7,7 +7,8 @@ use rho_sdk::{
 use super::{
     approval_decision, next_choice, previous_choice,
     render::{
-        approval_details, approval_lines_for_position, approval_title, format_direct_invocation,
+        approval_detail_page_lines, approval_details, approval_lines_for_position, approval_title,
+        format_direct_invocation,
     },
 };
 
@@ -71,11 +72,65 @@ fn every_rendered_line_respects_narrow_width() {
         source(),
     );
     let width = 14;
-    let lines = approval_lines_for_position(&request, "a long reason that must wrap", 1, 0, width);
+    let lines =
+        approval_lines_for_position(&request, "a long reason that must wrap", 1, 0, width, 14);
 
     assert!(lines.iter().all(|line| line.width() <= width));
     assert!(lines.len() <= 9);
     assert!(!line_text(&lines).is_empty());
+}
+
+// Covers: detail paging must start at the request head and grow with the terminal.
+// Owner: tui approval layout
+#[test]
+fn detail_window_starts_at_head_and_grows_with_viewport() {
+    let request = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path(
+                "sh",
+                vec!["-c".into()],
+                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
+            ),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        source(),
+    );
+    let width = 40;
+    let short = line_text(&approval_lines_for_position(
+        &request,
+        "host approval is required",
+        2,
+        0,
+        width,
+        14,
+    ));
+    let tall = line_text(&approval_lines_for_position(
+        &request,
+        "host approval is required",
+        2,
+        0,
+        width,
+        60,
+    ));
+
+    assert!(
+        !short
+            .iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
+        "short viewport must open on the start of the request, not the suffix"
+    );
+    assert!(
+        tall.iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
+        "tall viewport should expose more of the request without paging"
+    );
+    assert!(approval_detail_page_lines(14) >= 3);
+    assert!(approval_detail_page_lines(60) > approval_detail_page_lines(14));
+    assert!(!short
+        .iter()
+        .any(|line| line.contains("reason: host approval is required")));
 }
 
 #[test]

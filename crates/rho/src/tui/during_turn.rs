@@ -61,7 +61,8 @@ impl App {
             return Ok(false);
         }
 
-        match self.handle_approval_key(key, terminal.size()?.width as usize)? {
+        let size = terminal.size()?;
+        match self.handle_approval_key(key, size.width as usize, size.height as usize)? {
             ApprovalKeyOutcome::Ignored => {}
             ApprovalKeyOutcome::Handled => return Ok(false),
             ApprovalKeyOutcome::Resolved => return Ok(true),
@@ -698,7 +699,7 @@ impl App {
                     if key.code == KeyCode::Esc
                         && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
                     {
-                        self.handle_approval_key(key, 1).map_err(|error| {
+                        self.handle_approval_key(key, 1, 1).map_err(|error| {
                             RunningTerminalError::Recoverable(
                                 rho_providers::model::ModelError::InvalidResponse(
                                     error.to_string(),

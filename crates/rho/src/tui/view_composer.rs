@@ -92,7 +92,7 @@ impl App {
             ComposerMode::InteractivePending(target) => interactive_pending_lines(target, width),
             ComposerMode::InlineChoice(modal) => inline_choice_lines(&modal.choice, width),
             ComposerMode::Questionnaire(questionnaire) => questionnaire_lines(questionnaire, width),
-            ComposerMode::Approval(approval) => approval_lines(approval, width),
+            ComposerMode::Approval(approval) => approval_lines(approval, width, viewport_height),
         }
     }
 

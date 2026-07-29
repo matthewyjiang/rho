@@ -9,6 +9,7 @@ use render::approval_detail_page_count;
 pub(in crate::tui) use render::approval_lines;
 
 const APPROVAL_CHOICE_COUNT: usize = 3;
+const DENY_CHOICE: usize = 2;
 const DENIED_BY_USER_REASON: &str = "denied by user";
 const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
 
@@ -23,15 +24,16 @@ pub(super) enum ApprovalKeyOutcome {
 pub(super) struct ApprovalComposer {
     pending: PendingApproval,
     active: usize,
-    detail_pages_before_end: usize,
+    /// Zero-based detail page index from the start of the request.
+    detail_page: usize,
 }
 
 impl ApprovalComposer {
     fn new(pending: PendingApproval) -> Self {
         Self {
             pending,
-            active: 0,
-            detail_pages_before_end: 0,
+            active: DENY_CHOICE,
+            detail_page: 0,
         }
     }
 
@@ -43,20 +45,20 @@ impl ApprovalComposer {
         self.active
     }
 
-    pub(super) fn detail_pages_before_end(&self) -> usize {
-        self.detail_pages_before_end
+    pub(super) fn detail_page(&self) -> usize {
+        self.detail_page
     }
 
-    fn scroll_details_up(&mut self, width: usize) {
-        let page_count = approval_detail_page_count(self.request(), width);
-        self.detail_pages_before_end = self
-            .detail_pages_before_end
+    fn scroll_details_up(&mut self) {
+        self.detail_page = self.detail_page.saturating_sub(1);
+    }
+
+    fn scroll_details_down(&mut self, width: usize, viewport_height: usize) {
+        let page_count = approval_detail_page_count(self.request(), width, viewport_height);
+        self.detail_page = self
+            .detail_page
             .saturating_add(1)
             .min(page_count.saturating_sub(1));
-    }
-
-    fn scroll_details_down(&mut self) {
-        self.detail_pages_before_end = self.detail_pages_before_end.saturating_sub(1);
     }
 
     fn move_previous(&mut self) {
@@ -103,6 +105,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         width: usize,
+        viewport_height: usize,
     ) -> anyhow::Result<ApprovalKeyOutcome> {
         if !matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
             return Ok(ApprovalKeyOutcome::Ignored);
@@ -123,13 +126,13 @@ impl App {
             }
             KeyCode::PageUp => {
                 if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
-                    approval.scroll_details_up(width);
+                    approval.scroll_details_up();
                 }
                 ApprovalKeyOutcome::Handled
             }
             KeyCode::PageDown => {
                 if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
-                    approval.scroll_details_down();
+                    approval.scroll_details_down(width, viewport_height);
                 }
                 ApprovalKeyOutcome::Handled
             }

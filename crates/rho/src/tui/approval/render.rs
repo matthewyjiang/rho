@@ -12,19 +12,28 @@ use crate::tui::{
     theme::Theme,
 };
 
-const CHOICES: [&str; 3] = ["Allow once", "Allow for session", "Deny"];
-const DETAIL_PAGE_LINES: usize = 3;
+const CHOICES: [&str; 3] = ["Allow once", "Allow for session (exact request)", "Deny"];
+/// Rows reserved outside the detail window: minimum history, dividers, statusline,
+/// and the approval chrome (title, three choices, status, footer).
+const APPROVAL_DETAIL_CHROME_ROWS: usize = 12;
+const MIN_DETAIL_PAGE_LINES: usize = 3;
+const GENERIC_APPROVAL_REASONS: [&str; 2] = [
+    "host approval is required",
+    "host approval is required for unknown capability",
+];
 
 pub(in crate::tui) fn approval_lines(
     approval: &ApprovalComposer,
     width: usize,
+    viewport_height: usize,
 ) -> Vec<Line<'static>> {
     approval_lines_for_position(
         approval.request().capability(),
         approval.request().reason(),
         approval.active(),
-        approval.detail_pages_before_end(),
+        approval.detail_page(),
         width,
+        viewport_height,
     )
 }
 
@@ -32,20 +41,22 @@ pub(super) fn approval_lines_for_position(
     request: &CapabilityRequest,
     reason: &str,
     active: usize,
-    detail_pages_before_end: usize,
+    detail_page: usize,
     width: usize,
+    viewport_height: usize,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
+    let page_lines = approval_detail_page_lines(viewport_height);
     let mut lines = vec![Line::styled(
         truncate_one_line(&approval_title(request), width),
         Theme::input_prompt(),
     )];
 
     let details = wrapped_detail_lines(request, reason, width);
-    let detail_start = details
-        .len()
-        .saturating_sub(DETAIL_PAGE_LINES.saturating_mul(detail_pages_before_end + 1));
-    let detail_end = (detail_start + DETAIL_PAGE_LINES).min(details.len());
+    let page_count = detail_page_count(details.len(), page_lines);
+    let detail_page = detail_page.min(page_count.saturating_sub(1));
+    let detail_start = page_lines.saturating_mul(detail_page);
+    let detail_end = (detail_start + page_lines).min(details.len());
     lines.extend(details[detail_start..detail_end].iter().cloned());
 
     for (index, choice) in CHOICES.iter().enumerate() {
@@ -63,7 +74,7 @@ pub(super) fn approval_lines_for_position(
         ));
     }
 
-    let detail_status = if details.len() > DETAIL_PAGE_LINES {
+    let detail_status = if details.len() > page_lines {
         let earlier = if detail_start > 0 {
             " · ↑ earlier"
         } else {
@@ -99,11 +110,23 @@ pub(super) fn approval_lines_for_position(
 pub(super) fn approval_detail_page_count(
     request: &rho_sdk::ApprovalRequest,
     width: usize,
+    viewport_height: usize,
 ) -> usize {
-    wrapped_detail_lines(request.capability(), request.reason(), width.max(1))
-        .len()
-        .div_ceil(DETAIL_PAGE_LINES)
-        .max(1)
+    let page_lines = approval_detail_page_lines(viewport_height);
+    detail_page_count(
+        wrapped_detail_lines(request.capability(), request.reason(), width.max(1)).len(),
+        page_lines,
+    )
+}
+
+pub(super) fn approval_detail_page_lines(viewport_height: usize) -> usize {
+    viewport_height
+        .saturating_sub(APPROVAL_DETAIL_CHROME_ROWS)
+        .max(MIN_DETAIL_PAGE_LINES)
+}
+
+fn detail_page_count(detail_line_count: usize, page_lines: usize) -> usize {
+    detail_line_count.div_ceil(page_lines.max(1)).max(1)
 }
 
 fn wrapped_detail_lines(
@@ -114,6 +137,13 @@ fn wrapped_detail_lines(
     let mut lines = Vec::new();
     push_wrapped_text(
         &mut lines,
+        &format!("capability: {}", capability_class_label(request.kind())),
+        width,
+        Theme::dim(),
+        LineFill::Natural,
+    );
+    push_wrapped_text(
+        &mut lines,
         source_detail(request.source()),
         width,
         Theme::dim(),
@@ -122,7 +152,7 @@ fn wrapped_detail_lines(
     for detail in approval_details(request) {
         push_wrapped_text(&mut lines, &detail, width, Theme::text(), LineFill::Natural);
     }
-    if !reason.is_empty() {
+    if should_show_reason(reason) {
         push_wrapped_text(
             &mut lines,
             &format!("reason: {}", sanitize_controls(reason)),
@@ -132,6 +162,23 @@ fn wrapped_detail_lines(
         );
     }
     lines
+}
+
+fn should_show_reason(reason: &str) -> bool {
+    let reason = reason.trim();
+    !reason.is_empty() && !GENERIC_APPROVAL_REASONS.contains(&reason)
+}
+
+fn capability_class_label(kind: CapabilityKind) -> &'static str {
+    match kind {
+        CapabilityKind::Read => "read",
+        CapabilityKind::Write => "write",
+        CapabilityKind::Process => "process",
+        CapabilityKind::Network => "network",
+        CapabilityKind::Skill => "skill",
+        CapabilityKind::InstructionDiscovery => "instruction discovery",
+        _ => "unknown",
+    }
 }
 
 pub(super) fn approval_title(request: &CapabilityRequest) -> String {

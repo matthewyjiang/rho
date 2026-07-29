@@ -350,21 +350,21 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::AssertText("Permission mode"),
     Step::Key(Key::Enter),
-    // Nested mode list keeps every mode label visible; only the detail pane
-    // shows the selected mode's description.
+    // Short terminals only show part of the nested mode list; move onto
+    // Supervised instead of requiring every label to fit at once.
     Step::WaitText {
         text: "No permission checks",
         timeout: SETTLE,
     },
     Step::AssertText("Auto"),
     Step::AssertText("Plan"),
-    Step::AssertText("Supervised"),
     Step::Key(Key::Down),
     Step::Key(Key::Down),
     Step::WaitText {
         text: "Ask before writes and processes",
         timeout: SETTLE,
     },
+    Step::AssertText("Supervised"),
     Step::Key(Key::Enter),
     // Selection returns to the agent-behavior category with the label badge.
     Step::WaitText {
@@ -394,28 +394,38 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::WaitText {
-        text: "DANGEROUS_SUFFIX_INSPECTABLE",
+        text: "capability: process",
         timeout: SETTLE,
     },
     Step::WaitText {
-        text: "Allow for session",
+        text: "Allow for session (exact request)",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "> Deny",
         timeout: SETTLE,
     },
     Step::WaitText {
         text: "pgup/pgdn details",
         timeout: SETTLE,
     },
-    Step::Key(Key::PageUp),
     Step::WaitText {
-        text: "output limit:",
+        text: "↓ later",
         timeout: SETTLE,
     },
+    Step::Key(Key::PageDown),
+    Step::Key(Key::PageDown),
+    Step::Key(Key::PageDown),
     Step::Key(Key::PageDown),
     Step::WaitText {
         text: "DANGEROUS_SUFFIX_INSPECTABLE",
         timeout: SETTLE,
     },
-    Step::Key(Key::Down),
+    Step::Key(Key::PageUp),
+    Step::WaitText {
+        text: "↑ earlier",
+        timeout: SETTLE,
+    },
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "model interrupted",
