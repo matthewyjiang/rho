@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.22.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.21.0...rho-coding-agent-v1.22.0) (2026-07-29)
+
+
+### Features
+
+* **sessions:** add workspace rewind checkpoints ([#638](https://github.com/matthewyjiang/rho/issues/638)) ([5a90b2d](https://github.com/matthewyjiang/rho/commit/5a90b2db5b1170f2701cbac1c0c7d056f9158754))
+
+
+### Bug Fixes
+
+* **tui:** open approval prompts at the start and default to deny ([#636](https://github.com/matthewyjiang/rho/issues/636)) ([59efc07](https://github.com/matthewyjiang/rho/commit/59efc07b26bf67597ebbe05551cd22f3affedc96))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.12.1 to 1.12.2
+    * rho-providers bumped from 0.13.1 to 0.13.2
+
 ## [1.21.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.20.0...rho-coding-agent-v1.21.0) (2026-07-28)
 
 

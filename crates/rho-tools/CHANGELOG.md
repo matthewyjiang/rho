@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.7.4...rho-agent-tools-v0.8.0) (2026-07-29)
+
+
+### Features
+
+* **sessions:** add workspace rewind checkpoints ([#638](https://github.com/matthewyjiang/rho/issues/638)) ([5a90b2d](https://github.com/matthewyjiang/rho/commit/5a90b2db5b1170f2701cbac1c0c7d056f9158754))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.12.1 to 1.12.2
+
 ## [0.7.4](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.7.3...rho-agent-tools-v0.7.4) (2026-07-28)
 
 
