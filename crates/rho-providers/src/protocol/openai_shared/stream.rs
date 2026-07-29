@@ -276,16 +276,11 @@ impl CodexSseState {
 }
 
 fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
-    let name = match item.get("type").and_then(|value| value.as_str()) {
-        Some("web_search_call") => "web_search",
-        Some("x_search_call") => "x_search",
-        _ => return None,
-    };
-    let detail = extract_codex_search_detail(item)?;
-    Some(ModelEvent::WebSearch {
-        name: name.into(),
-        detail,
-    })
+    match item.get("type").and_then(|value| value.as_str()) {
+        Some("web_search_call") => Some(ModelEvent::WebSearch(extract_codex_search_detail(item)?)),
+        Some("x_search_call") => Some(ModelEvent::XSearch(extract_codex_search_detail(item)?)),
+        _ => None,
+    }
 }
 
 fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {

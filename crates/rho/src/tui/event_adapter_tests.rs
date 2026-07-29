@@ -110,7 +110,6 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
         only_event(adapter.translate(RunEvent::WebSearch {
-            name: "web_search".into(),
             detail: "rho docs".into(),
         }))
     else {
@@ -130,8 +129,7 @@ fn provider_native_x_search_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
-        only_event(adapter.translate(RunEvent::WebSearch {
-            name: "x_search".into(),
+        only_event(adapter.translate(RunEvent::XSearch {
             detail: "for \"xAI\"".into(),
         }))
     else {

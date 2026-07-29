@@ -224,7 +224,8 @@ pub(super) fn capture_provider_event(
             capture.reasoning_summary.push_str(&text);
             RunEvent::ReasoningSummaryDelta { text }
         }
-        ModelEvent::WebSearch { name, detail } => RunEvent::WebSearch { name, detail },
+        ModelEvent::WebSearch(detail) => RunEvent::WebSearch { detail },
+        ModelEvent::XSearch(detail) => RunEvent::XSearch { detail },
         ModelEvent::ToolCallDelta {
             index,
             id,

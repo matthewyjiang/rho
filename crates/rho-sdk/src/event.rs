@@ -24,6 +24,12 @@ pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
 /// removed in the next major release.
 #[deprecated(since = "1.11.0", note = "use RunEvent::WebSearch")]
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
+/// Legacy provider activity kind emitted for provider-native X (x.com) searches.
+///
+/// Prefer [`RunEvent::XSearch`]. Still dual-emitted for 1.0 hosts; will be
+/// removed in the next major release.
+#[deprecated(since = "1.13.0", note = "use RunEvent::XSearch")]
+pub const PROVIDER_ACTIVITY_X_SEARCH: &str = "x_search";
 
 /// Why the current provider attempt was abandoned before a fresh request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,12 +227,13 @@ pub enum RunEvent {
     },
     /// Legacy stringly-typed provider activity.
     ///
-    /// Prefer [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], or
-    /// [`RunEvent::ProviderStreamReset`]. Still dual-emitted alongside those
-    /// typed events for 1.0 hosts; will be removed in the next major release.
+    /// Prefer [`RunEvent::WebSearch`], [`RunEvent::XSearch`],
+    /// [`RunEvent::ProviderRequestRetry`], or [`RunEvent::ProviderStreamReset`].
+    /// Still dual-emitted alongside those typed events for 1.0 hosts; will be
+    /// removed in the next major release.
     #[deprecated(
         since = "1.11.0",
-        note = "use WebSearch, ProviderRequestRetry, or ProviderStreamReset"
+        note = "use WebSearch, XSearch, ProviderRequestRetry, or ProviderStreamReset"
     )]
     ProviderActivity {
         kind: String,
@@ -276,13 +283,11 @@ pub enum RunEvent {
         call_id: ToolCallId,
         request: crate::HostInputRequest,
     },
-    /// Provider-native search activity observed during a model turn.
+    /// Provider-native web search activity observed during a model turn.
     ///
-    /// `name` is the hosted tool id such as `web_search` or `x_search`.
     /// Appended after existing variants so discriminant values of the 1.0
     /// surface stay stable under a minor release.
     WebSearch {
-        name: String,
         detail: String,
     },
     /// A physical provider request failed and will be retried.
@@ -297,6 +302,13 @@ pub enum RunEvent {
     ModelCallCompleted {
         profile: ModelCallProfile,
         metrics: ModelCallMetrics,
+    },
+    /// Provider-native X (x.com) search activity observed during a model turn.
+    ///
+    /// Appended after existing variants so discriminant values of the 1.0
+    /// surface stay stable under a minor release.
+    XSearch {
+        detail: String,
     },
 }
 

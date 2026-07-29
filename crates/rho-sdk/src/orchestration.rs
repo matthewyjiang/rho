@@ -770,8 +770,12 @@ async fn handle_provider_event(
     let run_event = capture_provider_event(event, identity, accumulated_usage, capture);
     #[allow(deprecated)]
     let legacy_activity = match &run_event {
-        RunEvent::WebSearch { name, detail } => Some(RunEvent::ProviderActivity {
-            kind: name.clone(),
+        RunEvent::WebSearch { detail } => Some(RunEvent::ProviderActivity {
+            kind: crate::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
+            detail: detail.clone(),
+        }),
+        RunEvent::XSearch { detail } => Some(RunEvent::ProviderActivity {
+            kind: crate::PROVIDER_ACTIVITY_X_SEARCH.into(),
             detail: detail.clone(),
         }),
         _ => None,

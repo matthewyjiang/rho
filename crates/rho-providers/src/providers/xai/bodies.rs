@@ -41,14 +41,16 @@ fn lower_xai_create_request(
 /// Maps client tool specs onto the xAI Responses tools array.
 ///
 /// `x_search` is an xAI-hosted server-side tool for searching X (x.com). It is
-/// independent of the client `web_search` tool. Every xAI create turn offers
-/// hosted X Search so it appears when the active provider is xAI and disappears
-/// as soon as the session switches away.
+/// independent of the client `web_search` tool and is attached as a provider
+/// amenity on every xAI create turn, including when the client tool list is
+/// empty or restricted. It disappears as soon as the session switches away
+/// from xAI. A client function named `x_search` is dropped so only the hosted
+/// form is advertised.
 fn xai_responses_tools(tools: &[ToolSpec]) -> Vec<Value> {
     let mut out = tools
         .iter()
-        .cloned()
         .filter(|tool| tool.name != "x_search")
+        .cloned()
         .map(to_responses_lite_tool)
         .collect::<Vec<_>>();
     out.push(json!({ "type": "x_search" }));
