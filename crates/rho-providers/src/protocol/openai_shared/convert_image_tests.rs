@@ -1,3 +1,5 @@
+use pretty_assertions::assert_eq;
+
 use super::*;
 use crate::model::ImageContent;
 
@@ -11,23 +13,18 @@ fn assistant_image() -> Message {
     ])
 }
 
-// Covers: assistant images must fail clearly instead of disappearing from history.
+// Covers: assistant images must leave a visible trace instead of disappearing from history.
 // Owner: OpenAI protocol wire conversion.
 #[test]
-fn openai_converters_reject_unsupported_assistant_image_history() {
-    let responses_error = codex_input_items(vec![assistant_image()], &mut Vec::new()).unwrap_err();
-    let Err(chat_error) = to_openai_message_for_target(assistant_image(), None) else {
-        panic!("assistant image history was silently accepted")
-    };
+fn openai_converters_replace_assistant_image_history_with_placeholder() {
+    let expected = format!("generated image\n{ASSISTANT_IMAGE_OMITTED_TEXT}");
 
-    assert!(matches!(
-        responses_error,
-        ModelError::InvalidResponse(message)
-            if message == "OpenAI Responses cannot encode image content in assistant history"
-    ));
-    assert!(matches!(
-        chat_error,
-        ModelError::InvalidResponse(message)
-            if message == "OpenAI Chat Completions cannot encode image content in assistant history"
-    ));
+    let responses = codex_input_items(vec![assistant_image()], &mut Vec::new()).unwrap();
+    let chat = to_openai_message_for_target(assistant_image(), None).unwrap();
+
+    assert_eq!(
+        responses,
+        vec![json!({ "role": "assistant", "content": expected })]
+    );
+    assert_eq!(chat.content, Some(json!(expected)));
 }

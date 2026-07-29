@@ -14,17 +14,19 @@ fn request_with_invalid_image<'a>(messages: &'a [Message]) -> ModelRequest<'a> {
 
 // Covers: only Responses Lite must replace unsafe image data before upload.
 // Owner: OpenAI Responses request mode wiring.
-#[test]
-fn responses_lite_applies_image_safety_policy() {
+#[tokio::test]
+async fn responses_lite_applies_image_safety_policy() {
     let messages = [Message::User(vec![ContentBlock::Image(ImageContent {
         data: "not base64".into(),
         mime_type: "image/png".into(),
     })])];
 
-    let lite =
-        build_codex_responses_body("gpt-5.6-sol", request_with_invalid_image(&messages)).unwrap();
-    let standard =
-        build_codex_responses_body("gpt-5.5", request_with_invalid_image(&messages)).unwrap();
+    let lite = build_codex_responses_body("gpt-5.6-sol", request_with_invalid_image(&messages))
+        .await
+        .unwrap();
+    let standard = build_codex_responses_body("gpt-5.5", request_with_invalid_image(&messages))
+        .await
+        .unwrap();
 
     assert_eq!(
         lite["input"][1]["content"],

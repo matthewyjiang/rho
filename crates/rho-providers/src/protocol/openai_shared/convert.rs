@@ -74,7 +74,30 @@ pub(crate) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
     }
 }
 
-pub(crate) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
+/// The `strict` value a Responses function tool carries on the wire.
+///
+/// Every Responses endpoint keeps the `strict` key, so this picks the value
+/// rather than whether the field appears. Codex sends an explicit JSON `null`;
+/// the public OpenAI API and xAI send a boolean.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToolStrictness {
+    /// Serializes as JSON `null`.
+    Unspecified,
+    /// Serializes as JSON `true` or `false`.
+    Explicit(bool),
+}
+
+impl ToolStrictness {
+    fn to_json(self) -> serde_json::Value {
+        match self {
+            Self::Unspecified => serde_json::Value::Null,
+            Self::Explicit(strict) => json!(strict),
+        }
+    }
+}
+
+/// Serializes a tool for a Responses endpoint that offers hosted tools.
+pub(crate) fn to_responses_tool(tool: ToolSpec, strictness: ToolStrictness) -> serde_json::Value {
     if tool.name == "web_search" {
         return json!({
             "type": "web_search",
@@ -82,22 +105,20 @@ pub(crate) fn to_responses_tool(tool: ToolSpec) -> serde_json::Value {
         });
     }
 
-    json!({
-        "type": "function",
-        "name": tool.name,
-        "description": tool.description,
-        "parameters": tool.input_schema,
-        "strict": false,
-    })
+    to_responses_lite_tool(tool, strictness)
 }
 
-pub(crate) fn to_responses_lite_tool(tool: ToolSpec) -> serde_json::Value {
+/// Serializes a tool for a Responses endpoint with no hosted tool types.
+pub(crate) fn to_responses_lite_tool(
+    tool: ToolSpec,
+    strictness: ToolStrictness,
+) -> serde_json::Value {
     json!({
         "type": "function",
         "name": tool.name,
         "description": tool.description,
         "parameters": tool.input_schema,
-        "strict": false,
+        "strict": strictness.to_json(),
     })
 }
 
@@ -197,15 +218,7 @@ fn append_codex_assistant(
     input: &mut Vec<serde_json::Value>,
     blocks: Vec<ContentBlock>,
 ) -> Result<(), ModelError> {
-    reject_assistant_images(&blocks, "OpenAI Responses")?;
-    let text = blocks
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text.as_str()),
-            ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = assistant_text(&blocks);
     if !text.is_empty() {
         input.push(json!({ "role": "assistant", "content": text }));
     }
@@ -223,15 +236,7 @@ fn append_codex_assistant(
 }
 
 fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
-    reject_assistant_images(&blocks, "OpenAI Chat Completions")?;
-    let content = blocks
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text.as_str()),
-            ContentBlock::ToolCall(_) | ContentBlock::Image(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let content = assistant_text(&blocks);
     let tool_calls = blocks
         .into_iter()
         .filter_map(|block| match block {
@@ -350,19 +355,26 @@ fn codex_content_blocks(blocks: &[ContentBlock]) -> serde_json::Value {
     json!(content)
 }
 
-fn reject_assistant_images(
-    blocks: &[ContentBlock],
-    protocol: &'static str,
-) -> Result<(), ModelError> {
-    if blocks
+/// Placeholder for an assistant image neither OpenAI protocol can encode.
+pub(crate) const ASSISTANT_IMAGE_OMITTED_TEXT: &str =
+    "[image omitted: assistant history cannot carry image content]";
+
+/// Joins assistant text, replacing images with [`ASSISTANT_IMAGE_OMITTED_TEXT`].
+///
+/// Neither OpenAI wire protocol has an assistant image slot. Images degrade to
+/// text, matching how the Responses Lite input path handles an image it cannot
+/// send, so history keeps a trace of the content instead of dropping it
+/// silently or failing the whole turn.
+fn assistant_text(blocks: &[ContentBlock]) -> String {
+    blocks
         .iter()
-        .any(|block| matches!(block, ContentBlock::Image(_)))
-    {
-        return Err(ModelError::InvalidResponse(format!(
-            "{protocol} cannot encode image content in assistant history"
-        )));
-    }
-    Ok(())
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::Image(_) => Some(ASSISTANT_IMAGE_OMITTED_TEXT),
+            ContentBlock::ToolCall(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn render_tool_call(call: &ToolCall) -> String {

@@ -1,9 +1,9 @@
 use std::io::{Cursor, Error, Seek, SeekFrom, Write};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use image::{imageops::FilterType, ImageFormat, ImageReader, Limits};
+use image::{imageops::FilterType, DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
 
-use crate::model::{ContentBlock, ImageContent, Message};
+use crate::model::{ContentBlock, ImageContent, Message, ModelError};
 
 const LITE_IMAGE_LIMITS: LiteImageLimits = LiteImageLimits {
     max_dimension: 2_048,
@@ -11,7 +11,10 @@ const LITE_IMAGE_LIMITS: LiteImageLimits = LiteImageLimits {
     patch_size: 32,
     max_base64_bytes: 64 * 1024 * 1024,
     max_decoded_bytes: 128 * 1024 * 1024,
+    max_images_per_request: 20,
+    max_request_base64_bytes: 64 * 1024 * 1024,
 };
+const IMAGE_OMITTED_TEXT: &str = "image content omitted because it could not be processed";
 
 #[derive(Clone, Copy)]
 struct LiteImageLimits {
@@ -20,50 +23,136 @@ struct LiteImageLimits {
     patch_size: u32,
     max_base64_bytes: usize,
     max_decoded_bytes: u64,
+    max_images_per_request: usize,
+    max_request_base64_bytes: usize,
 }
 
-/// Applies Responses Lite image limits to user-message images.
+/// Running image count and byte total for one Responses Lite request.
 ///
-/// Invalid or unsafe images become text so the request does not silently omit
-/// the affected content item or send data that the endpoint cannot process.
-pub(super) fn prepare_responses_lite_messages(messages: Vec<Message>) -> Vec<Message> {
-    messages
-        .into_iter()
-        .map(|message| match message {
-            Message::User(blocks) => Message::User(
-                blocks
-                    .into_iter()
-                    .map(|block| match block {
-                        ContentBlock::Image(image) => prepare_lite_image(&image).map_or_else(
-                            || {
-                                ContentBlock::Text(
-                                    "image content omitted because it could not be processed"
-                                        .into(),
-                                )
-                            },
-                            ContentBlock::Image,
-                        ),
-                        block => block,
-                    })
-                    .collect(),
-            ),
-            message => message,
-        })
-        .collect()
-}
-
-/// Validates and normalizes an inline image for the Responses Lite limits.
-///
-/// Invalid or unsafe inputs become `None` so the message converter can replace
-/// them with a text item instead of sending data that Lite cannot process.
-fn prepare_lite_image(image: &ImageContent) -> Option<ImageContent> {
-    prepare_lite_image_with_limits(image, LITE_IMAGE_LIMITS)
-}
-
-fn prepare_lite_image_with_limits(
-    image: &ImageContent,
+/// An image is charged at its input size before preparation and settled at its
+/// output size afterwards, so a resize that grows the payload still has to fit.
+struct LiteImageBudget {
     limits: LiteImageLimits,
-) -> Option<ImageContent> {
+    images: usize,
+    base64_bytes: usize,
+}
+
+/// One image's outstanding claim on a [`LiteImageBudget`].
+///
+/// Carrying the charged size makes it impossible to settle an image against
+/// the wrong input byte count.
+#[must_use = "an unsettled charge leaves the request budget overstated"]
+struct LiteImageCharge {
+    input_base64_bytes: usize,
+}
+
+impl LiteImageBudget {
+    fn new(limits: LiteImageLimits) -> Self {
+        Self {
+            limits,
+            images: 0,
+            base64_bytes: 0,
+        }
+    }
+
+    /// Reserves room for one input image, or returns `None` when it does not fit.
+    fn charge(&mut self, image: &ImageContent) -> Option<LiteImageCharge> {
+        let base64_bytes = self.base64_bytes.checked_add(image.data.len())?;
+        if self.images >= self.limits.max_images_per_request
+            || base64_bytes > self.limits.max_request_base64_bytes
+        {
+            return None;
+        }
+        self.images += 1;
+        self.base64_bytes = base64_bytes;
+        Some(LiteImageCharge {
+            input_base64_bytes: image.data.len(),
+        })
+    }
+
+    /// Swaps a charge for its prepared result, or returns `None` when it no longer fits.
+    fn settle(
+        &mut self,
+        charge: LiteImageCharge,
+        prepared: Option<ImageContent>,
+    ) -> Option<ImageContent> {
+        self.base64_bytes = self.base64_bytes.saturating_sub(charge.input_base64_bytes);
+        let prepared = prepared?;
+        let base64_bytes = self.base64_bytes.checked_add(prepared.data.len())?;
+        if base64_bytes > self.limits.max_request_base64_bytes {
+            return None;
+        }
+        self.base64_bytes = base64_bytes;
+        Some(prepared)
+    }
+}
+
+/// Applies Responses Lite image limits without blocking a Tokio worker.
+///
+/// Invalid, unsafe, or over-budget images become text so the request does not
+/// silently omit the affected content item or send data Lite cannot process.
+///
+/// Images are prepared one at a time on the blocking pool. Concurrency across
+/// turns is already bounded by the agent executor's run permits, so this adds
+/// no limiter of its own.
+pub(super) async fn prepare_responses_lite_messages(
+    messages: Vec<Message>,
+    cancellation: &rho_sdk::CancellationToken,
+) -> Result<Vec<Message>, ModelError> {
+    if cancellation.is_cancelled() {
+        return Err(ModelError::Interrupted);
+    }
+    let mut prepared_messages = Vec::with_capacity(messages.len());
+    let mut budget = LiteImageBudget::new(LITE_IMAGE_LIMITS);
+
+    for message in messages {
+        let Message::User(blocks) = message else {
+            prepared_messages.push(message);
+            continue;
+        };
+        let mut prepared_blocks = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            let ContentBlock::Image(image) = block else {
+                prepared_blocks.push(block);
+                continue;
+            };
+            if cancellation.is_cancelled() {
+                return Err(ModelError::Interrupted);
+            }
+            let Some(charge) = budget.charge(&image) else {
+                prepared_blocks.push(omitted_image());
+                continue;
+            };
+
+            let prepared =
+                tokio::task::spawn_blocking(move || prepare_lite_image(image, LITE_IMAGE_LIMITS))
+                    .await
+                    .map_err(|error| {
+                        ModelError::InvalidResponse(format!(
+                            "Responses Lite image preparation task failed: {error}"
+                        ))
+                    })?;
+            if cancellation.is_cancelled() {
+                return Err(ModelError::Interrupted);
+            }
+            let prepared = budget.settle(charge, prepared);
+            prepared_blocks.push(prepared.map_or_else(omitted_image, ContentBlock::Image));
+        }
+        prepared_messages.push(Message::User(prepared_blocks));
+    }
+
+    Ok(prepared_messages)
+}
+
+fn omitted_image() -> ContentBlock {
+    ContentBlock::Text(IMAGE_OMITTED_TEXT.into())
+}
+
+/// Validates and, only when required, resizes an inline image for Lite.
+///
+/// Compliant images retain their exact base64 data. A resize decodes pixels,
+/// applies supported EXIF orientation, and then encodes the requested format.
+fn prepare_lite_image(image: ImageContent, limits: LiteImageLimits) -> Option<ImageContent> {
     if !image
         .mime_type
         .get(..6)
@@ -79,31 +168,36 @@ fn prepare_lite_image_with_limits(
         return None;
     }
     let format = image::guess_format(&bytes).ok()?;
-    let mime_type = supported_mime_type(format)?;
+    let resized_mime_type = supported_mime_type(format)?;
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     let mut decode_limits = Limits::default();
     decode_limits.max_alloc = Some(limits.max_decoded_bytes);
     reader.limits(decode_limits);
-    let decoded = reader.decode().ok()?;
-    let (target_width, target_height) = target_dimensions(
+    let mut decoder = reader.into_decoder().ok()?;
+    if decoder.total_bytes() > limits.max_decoded_bytes {
+        return None;
+    }
+    let orientation = decoder.orientation().ok()?;
+    let mut decoded = DynamicImage::from_decoder(decoder).ok()?;
+    decoded.apply_orientation(orientation);
+
+    let target = target_dimensions(
         decoded.width(),
         decoded.height(),
         limits.max_dimension,
         limits.max_patches,
         limits.patch_size,
     )?;
-    let processed = if (target_width, target_height) == (decoded.width(), decoded.height()) {
-        decoded
-    } else {
-        decoded.resize_exact(target_width, target_height, FilterType::Lanczos3)
-    };
+    if target == (decoded.width(), decoded.height()) {
+        return Some(image);
+    }
 
+    let processed = decoded.resize_exact(target.0, target.1, FilterType::Lanczos3);
     let mut output = CappedCursor::new(max_binary_bytes_for_base64(limits.max_base64_bytes));
     processed.write_to(&mut output, format).ok()?;
-    let data = STANDARD.encode(output.into_inner());
     Some(ImageContent {
-        data,
-        mime_type: mime_type.into(),
+        data: STANDARD.encode(output.into_inner()),
+        mime_type: resized_mime_type.into(),
     })
 }
 

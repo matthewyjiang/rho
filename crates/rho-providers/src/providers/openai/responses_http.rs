@@ -253,7 +253,7 @@ impl<'a> ResponsesHttpTransport<'a> {
                     .header("User-Agent", "codex-cli")
                     .header("originator", "codex_cli_rs")
                     .header("OpenAI-Beta", "responses=experimental");
-                if self.profile.mode().uses_responses_lite() {
+                if self.profile.contract().uses_lite_transport_header() {
                     request = request.header("x-openai-internal-codex-responses-lite", "true");
                 }
                 if let Some(account_id) = account_id {

@@ -553,8 +553,8 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
     );
 }
 
-#[test]
-fn create_and_compact_body_builders_diverge_on_tools() {
+#[tokio::test]
+async fn create_and_compact_body_builders_diverge_on_tools() {
     let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
     let request = ModelRequest {
         messages: &[Message::user_text("hello")],
@@ -573,9 +573,11 @@ fn create_and_compact_body_builders_diverge_on_tools() {
         request.clone(),
         None,
     )
+    .await
     .unwrap();
     let compact =
         build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
+            .await
             .unwrap();
     assert_eq!(create["stream"], true);
     assert!(create.get("tools").is_some());
