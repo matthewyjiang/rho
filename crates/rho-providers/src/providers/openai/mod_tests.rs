@@ -102,8 +102,8 @@ fn openai_reasoning_normalization_never_turns_requested_reasoning_off() {
     );
 }
 
-#[test]
-fn api_responses_body_uses_each_request_reasoning_level() {
+#[tokio::test]
+async fn api_responses_body_uses_each_request_reasoning_level() {
     let provider = OpenAiProvider::new_with_auth(
         "rho-request-reasoning-test".into(),
         Auth::ApiKey("test-key".into()),
@@ -118,6 +118,7 @@ fn api_responses_body_uses_each_request_reasoning_level() {
             reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
         })
+        .await
         .unwrap();
     let high = provider
         .openai_api_responses_body(ModelRequest {
@@ -127,6 +128,7 @@ fn api_responses_body_uses_each_request_reasoning_level() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: None,
         })
+        .await
         .unwrap();
 
     assert_eq!(
@@ -142,8 +144,8 @@ fn api_responses_body_uses_each_request_reasoning_level() {
     assert_eq!(low["include"], json!(["reasoning.encrypted_content"]));
 }
 
-#[test]
-fn codex_responses_body_includes_prompt_cache_key_when_present() {
+#[tokio::test]
+async fn codex_responses_body_includes_prompt_cache_key_when_present() {
     let body = build_codex_responses_body(
         "gpt-5-codex",
         ModelRequest {
@@ -154,6 +156,7 @@ fn codex_responses_body_includes_prompt_cache_key_when_present() {
             prompt_cache_key: Some("rho:session-1"),
         },
     )
+    .await
     .unwrap();
 
     assert_eq!(body["prompt_cache_key"], "rho:session-1");
@@ -162,8 +165,8 @@ fn codex_responses_body_includes_prompt_cache_key_when_present() {
     assert_eq!(body["stream"], true);
 }
 
-#[test]
-fn codex_responses_body_uses_hosted_web_search_tool() {
+#[tokio::test]
+async fn codex_responses_body_uses_hosted_web_search_tool() {
     let body = build_codex_responses_body(
         "gpt-5-codex",
         ModelRequest {
@@ -178,6 +181,7 @@ fn codex_responses_body_uses_hosted_web_search_tool() {
             prompt_cache_key: None,
         },
     )
+    .await
     .unwrap();
 
     assert_eq!(
@@ -361,7 +365,7 @@ fn chat_stream_usage_normalizes_prompt_cache_tokens() {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
-                | ModelEvent::ToolCallDelta { .. } => {}
+                                | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
         },
@@ -392,7 +396,7 @@ fn codex_response_usage_normalizes_input_cache_tokens() {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
-                | ModelEvent::ToolCallDelta { .. } => {}
+                                | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
         }),
@@ -422,7 +426,7 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
                 ModelEvent::ReasoningSummaryDelta(delta) => deltas.push(delta),
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::WebSearch(_) => {}
-                ModelEvent::ToolCallDelta { .. } => {}
+                                ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
             }
             Ok(())
@@ -455,6 +459,35 @@ fn codex_sse_line_emits_web_search_detail() {
         &mut Some(&mut |event| {
             match event {
                 ModelEvent::WebSearch(detail) => searches.push(detail),
+                                ModelEvent::OutputDelta(_) => {}
+                ModelEvent::ReasoningDelta(_) => {}
+                ModelEvent::ReasoningSummaryDelta(_) => {}
+                ModelEvent::ProviderContext { .. } => {}
+                ModelEvent::ToolCallDelta { .. } => {}
+                ModelEvent::Usage(_) => {}
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(searches, vec!["for \"latest Rust release\"".to_string()]);
+}
+
+#[test]
+fn codex_sse_line_emits_x_search_detail() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","action":{"type":"search","query":"what people say about xAI"}}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            match event {
+                event if event.as_hosted_tool_activity().is_some() => {
+                    let (name, detail) = event.as_hosted_tool_activity().unwrap();
+                    searches.push((name.to_owned(), detail.to_owned()));
+                }
+                ModelEvent::WebSearch(_) => {}
                 ModelEvent::OutputDelta(_) => {}
                 ModelEvent::ReasoningDelta(_) => {}
                 ModelEvent::ReasoningSummaryDelta(_) => {}
@@ -467,7 +500,63 @@ fn codex_sse_line_emits_web_search_detail() {
     )
     .unwrap();
 
-    assert_eq!(searches, vec!["for \"latest Rust release\""]);
+    assert_eq!(
+        searches,
+        vec![(
+            "x_search".to_string(),
+            "for \"what people say about xAI\"".to_string()
+        )]
+    );
+}
+
+#[test]
+fn codex_sse_search_activity_is_not_duplicated_on_completed() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        match event {
+            ModelEvent::WebSearch(detail) => events.push(("web_search".into(), detail)),
+            ref event => {
+                if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                    events.push((name.to_owned(), detail.to_owned()));
+                }
+            }
+        }
+        Ok(())
+    };
+
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"latest Rust release"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","action":{"type":"search","query":"what people say about xAI"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"latest Rust release"}},{"type":"x_search_call","id":"xs_1","action":{"type":"search","query":"what people say about xAI"}},{"type":"message","content":[{"text":"done"}]}]}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(
+        events,
+        vec![
+            (
+                "web_search".to_string(),
+                "for \"latest Rust release\"".to_string()
+            ),
+            (
+                "x_search".to_string(),
+                "for \"what people say about xAI\"".to_string()
+            ),
+        ]
+    );
 }
 
 #[test]

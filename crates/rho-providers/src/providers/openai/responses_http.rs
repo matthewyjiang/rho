@@ -251,13 +251,9 @@ impl<'a> ResponsesHttpTransport<'a> {
                 request = request
                     .bearer_auth(access_token)
                     .header("User-Agent", "codex-cli")
-                    .header("originator", "codex_cli_rs");
-                // Compact historically sent the experimental beta header; create
-                // HTTP fallback did not. Keep that split.
-                if endpoint == ResponsesEndpoint::Compact {
-                    request = request.header("OpenAI-Beta", "responses=experimental");
-                }
-                if self.profile.mode().uses_responses_lite() {
+                    .header("originator", "codex_cli_rs")
+                    .header("OpenAI-Beta", "responses=experimental");
+                if self.profile.contract().uses_lite_transport_header() {
                     request = request.header("x-openai-internal-codex-responses-lite", "true");
                 }
                 if let Some(account_id) = account_id {

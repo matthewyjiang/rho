@@ -221,9 +221,11 @@ pub enum RunEvent {
     },
     /// Legacy stringly-typed provider activity.
     ///
-    /// Prefer [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], or
-    /// [`RunEvent::ProviderStreamReset`]. Still dual-emitted alongside those
-    /// typed events for 1.0 hosts; will be removed in the next major release.
+    /// Prefer the typed events instead. Still dual-emitted alongside
+    /// [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], and
+    /// [`RunEvent::ProviderStreamReset`] for 1.0 hosts. New activity such as
+    /// [`RunEvent::HostedToolActivity`] is typed-only and does not dual-emit
+    /// here. Will be removed in the next major release.
     #[deprecated(
         since = "1.11.0",
         note = "use WebSearch, ProviderRequestRetry, or ProviderStreamReset"
@@ -295,6 +297,16 @@ pub enum RunEvent {
     ModelCallCompleted {
         profile: ModelCallProfile,
         metrics: ModelCallMetrics,
+    },
+    /// Provider-native hosted tool activity observed during a model turn.
+    ///
+    /// `name` is the hosted tool id (for example `x_search`). Distinct from
+    /// client-executed tools and from the historical [`RunEvent::WebSearch`]
+    /// path. Appended after existing variants so discriminant values of the
+    /// 1.0 surface stay stable under a minor release.
+    HostedToolActivity {
+        name: String,
+        detail: String,
     },
 }
 

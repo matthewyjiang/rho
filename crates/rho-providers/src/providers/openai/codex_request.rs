@@ -5,77 +5,129 @@ use rho_sdk::model::{ServiceTier, ToolSpec};
 
 use crate::protocol::openai_responses::{
     codex_input_items_for_target, codex_reasoning_param, to_responses_lite_tool, to_responses_tool,
+    ToolStrictness,
 };
 
 use super::auth::Auth;
 use super::reasoning::OpenAiReasoningProfile;
+use super::responses_lite_image::prepare_responses_lite_messages;
 
-/// Wire shape for OpenAI Responses create/compact bodies.
+/// Complete wire policy for one OpenAI Responses endpoint variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ResponsesRequestMode {
-    Standard,
-    ResponsesLite,
+pub(super) enum ResponsesWireContract {
+    OpenAiStandard,
+    CodexStandard,
+    CodexLite,
 }
 
-impl ResponsesRequestMode {
-    pub(super) fn for_model(model: &str) -> Self {
-        match model {
-            "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" => Self::ResponsesLite,
-            _ => Self::Standard,
+impl ResponsesWireContract {
+    fn for_auth(auth: &Auth, model: &str) -> Self {
+        match auth {
+            Auth::ApiKey(_) => Self::OpenAiStandard,
+            Auth::Codex { .. } if is_responses_lite_model(model) => Self::CodexLite,
+            Auth::Codex { .. } => Self::CodexStandard,
+        }
+    }
+
+    fn provider(self) -> &'static str {
+        match self {
+            Self::OpenAiStandard => "openai",
+            Self::CodexStandard | Self::CodexLite => "openai-codex",
+        }
+    }
+
+    pub(super) fn default_api_base(self) -> &'static str {
+        match self {
+            Self::OpenAiStandard => "https://api.openai.com/v1",
+            Self::CodexStandard | Self::CodexLite => "https://chatgpt.com/backend-api/codex",
         }
     }
 
     pub(super) fn uses_responses_lite(self) -> bool {
-        matches!(self, Self::ResponsesLite)
+        match self {
+            Self::OpenAiStandard | Self::CodexStandard => false,
+            Self::CodexLite => true,
+        }
+    }
+
+    pub(super) fn uses_codex_websocket(self) -> bool {
+        match self {
+            Self::OpenAiStandard => false,
+            Self::CodexStandard | Self::CodexLite => true,
+        }
     }
 
     /// Rho does not yet retain server output items in its continuation baseline.
-    /// Responses Lite tool turns therefore use full request bodies so the
-    /// model's previous function call is not duplicated in the next delta.
+    /// Lite tool turns therefore use full bodies so the prior function call is
+    /// not duplicated in the next delta.
     pub(super) fn supports_incremental_websocket(self) -> bool {
-        matches!(self, Self::Standard)
+        match self {
+            Self::OpenAiStandard | Self::CodexLite => false,
+            Self::CodexStandard => true,
+        }
+    }
+
+    pub(super) fn uses_lite_transport_header(self) -> bool {
+        match self {
+            Self::OpenAiStandard | Self::CodexStandard => false,
+            Self::CodexLite => true,
+        }
+    }
+
+    fn include_encrypted_reasoning(self) -> bool {
+        match self {
+            Self::OpenAiStandard | Self::CodexStandard => true,
+            Self::CodexLite => false,
+        }
+    }
+
+    fn parallel_tool_calls(self) -> Option<bool> {
+        match self {
+            Self::OpenAiStandard => None,
+            Self::CodexStandard => Some(true),
+            Self::CodexLite => Some(false),
+        }
+    }
+
+    fn serialize_tool(self, tool: ToolSpec, hosted_web_search: bool) -> Value {
+        match self {
+            Self::OpenAiStandard => {
+                to_responses_tool(tool, ToolStrictness::Explicit(false), hosted_web_search)
+            }
+            Self::CodexStandard => {
+                to_responses_tool(tool, ToolStrictness::Unspecified, hosted_web_search)
+            }
+            Self::CodexLite => to_responses_lite_tool(tool, ToolStrictness::Unspecified),
+        }
     }
 }
 
-/// Credential-derived Responses identity and request defaults.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ResponsesProfile {
-    provider: &'static str,
-    model: String,
-    identity: ModelIdentity,
-    mode: ResponsesRequestMode,
-    flavor: ResponsesFlavor,
+fn is_responses_lite_model(model: &str) -> bool {
+    matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna")
 }
 
-/// Auth flavor that owns endpoint headers and token refresh policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ResponsesFlavor {
-    ApiKey,
-    Codex,
+/// Credential-derived Responses identity and wire contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ResponsesProfile {
+    model: String,
+    identity: ModelIdentity,
+    contract: ResponsesWireContract,
 }
 
 impl ResponsesProfile {
     pub(super) fn from_auth(auth: &Auth, model: impl Into<String>) -> Self {
         let model = model.into();
-        let (provider, flavor) = match auth {
-            Auth::ApiKey(_) => ("openai", ResponsesFlavor::ApiKey),
-            Auth::Codex { .. } => ("openai-codex", ResponsesFlavor::Codex),
-        };
-        let mode = match flavor {
-            ResponsesFlavor::Codex => ResponsesRequestMode::for_model(&model),
-            ResponsesFlavor::ApiKey => ResponsesRequestMode::Standard,
-        };
+        let contract = ResponsesWireContract::for_auth(auth, &model);
+        let provider = contract.provider();
         Self {
-            provider,
             identity: ModelIdentity::new(provider, "openai-responses", &model),
             model,
-            mode,
-            flavor,
+            contract,
         }
     }
 
     pub(super) fn provider(&self) -> &'static str {
-        self.provider
+        self.contract.provider()
     }
 
     pub(super) fn model(&self) -> &str {
@@ -86,19 +138,51 @@ impl ResponsesProfile {
         &self.identity
     }
 
-    pub(super) fn mode(&self) -> ResponsesRequestMode {
-        self.mode
-    }
-
-    pub(super) fn flavor(&self) -> ResponsesFlavor {
-        self.flavor
+    pub(super) fn contract(&self) -> ResponsesWireContract {
+        self.contract
     }
 
     pub(super) fn default_api_base(&self) -> &'static str {
-        match self.flavor {
-            ResponsesFlavor::Codex => "https://chatgpt.com/backend-api/codex",
-            ResponsesFlavor::ApiKey => "https://api.openai.com/v1",
-        }
+        self.contract.default_api_base()
+    }
+}
+
+/// A turn's history after contract-specific preparation, ready to lower.
+struct ResponsesBodyRequest<'a> {
+    messages: Vec<crate::model::Message>,
+    tools: &'a [ToolSpec],
+    reasoning_level: rho_sdk::ReasoningLevel,
+    prompt_cache_key: Option<String>,
+}
+
+impl<'a> ResponsesBodyRequest<'a> {
+    /// Applies whatever input preparation the wire contract requires.
+    ///
+    /// Responses Lite enforces its image limits here, so every body builder
+    /// gets the same prepared history without repeating the policy check.
+    async fn prepare(
+        request: ModelRequest<'a>,
+        contract: ResponsesWireContract,
+    ) -> Result<Self, ModelError> {
+        let ModelRequest {
+            messages,
+            tools,
+            cancellation,
+            reasoning_level,
+            prompt_cache_key,
+        } = request;
+        let messages = messages.to_vec();
+        let messages = if contract.uses_responses_lite() {
+            prepare_responses_lite_messages(messages, &cancellation).await?
+        } else {
+            messages
+        };
+        Ok(Self {
+            messages,
+            tools,
+            reasoning_level,
+            prompt_cache_key: prompt_cache_key.map(str::to_owned),
+        })
     }
 }
 
@@ -110,19 +194,17 @@ struct ResponsesLowered {
     reasoning: Option<Value>,
 }
 
-/// Lowers request history into instructions/input/reasoning/prompt_cache_key.
-///
-/// Tool conversion stays on the create path only.
+/// Lowers an already prepared request into common Responses fields.
 fn lower_responses_request(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
-    request: ModelRequest<'_>,
+    request: ResponsesBodyRequest<'_>,
 ) -> Result<ResponsesLowered, ModelError> {
     let reasoning =
         reasoning_profile.config(profile.provider(), profile.model(), request.reasoning_level)?;
     let mut instructions = Vec::new();
     let input = codex_input_items_for_target(
-        request.messages.to_vec(),
+        request.messages,
         &mut instructions,
         Some(profile.identity()),
     )?;
@@ -131,7 +213,7 @@ fn lower_responses_request(
     Ok(ResponsesLowered {
         instructions: instructions.join("\n\n"),
         input,
-        prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
+        prompt_cache_key: request.prompt_cache_key,
         reasoning,
     })
 }
@@ -145,7 +227,7 @@ fn base_responses_body(profile: &ResponsesProfile) -> Value {
 
 fn attach_prompt_cache_and_reasoning(
     body: &mut Value,
-    profile: &ResponsesProfile,
+    contract: ResponsesWireContract,
     prompt_cache_key: Option<String>,
     reasoning: Option<Value>,
 ) {
@@ -153,25 +235,28 @@ fn attach_prompt_cache_and_reasoning(
         body["prompt_cache_key"] = json!(prompt_cache_key);
     }
     if let Some(mut reasoning) = reasoning {
-        if profile.mode() == ResponsesRequestMode::ResponsesLite {
+        if contract == ResponsesWireContract::CodexLite {
             reasoning["context"] = json!("all_turns");
         }
         body["reasoning"] = reasoning;
     }
 }
 
-/// Builds a streaming Responses create body for a model turn.
-pub(super) fn build_responses_create_body(
+/// Builds a streaming Responses create body for one model turn.
+pub(super) async fn build_responses_create_body(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
     hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
+    let contract = profile.contract();
+    let request = ResponsesBodyRequest::prepare(request, contract).await?;
     let tools = request
         .tools
         .iter()
-        .map(|tool| responses_tool(profile.mode(), tool.clone(), hosted_web_search))
+        .cloned()
+        .map(|tool| contract.serialize_tool(tool, hosted_web_search))
         .collect::<Vec<_>>();
     let ResponsesLowered {
         instructions,
@@ -188,8 +273,8 @@ pub(super) fn build_responses_create_body(
         body["service_tier"] = json!("priority");
     }
 
-    match profile.mode() {
-        ResponsesRequestMode::Standard => {
+    match contract {
+        ResponsesWireContract::OpenAiStandard | ResponsesWireContract::CodexStandard => {
             body["instructions"] = json!(instructions);
             body["input"] = json!(input);
             if !tools.is_empty() {
@@ -197,7 +282,7 @@ pub(super) fn build_responses_create_body(
                 body["tool_choice"] = json!("auto");
             }
         }
-        ResponsesRequestMode::ResponsesLite => {
+        ResponsesWireContract::CodexLite => {
             let mut lite_input = input;
             lite_input.insert(
                 0,
@@ -222,16 +307,14 @@ pub(super) fn build_responses_create_body(
             }
             body["input"] = json!(lite_input);
             body["tool_choice"] = json!("auto");
-            // Responses Lite rejects parallel_tool_calls=true
-            // (X-OpenAI-Internal-Codex-Responses-Lite). Keep it off even though
-            // Rho can execute independent tool results concurrently when the
-            // model emits multiple calls across turns.
-            body["parallel_tool_calls"] = json!(false);
         }
     }
 
-    attach_prompt_cache_and_reasoning(&mut body, profile, prompt_cache_key, reasoning);
-    if profile.flavor() == ResponsesFlavor::ApiKey {
+    if let Some(parallel_tool_calls) = contract.parallel_tool_calls() {
+        body["parallel_tool_calls"] = json!(parallel_tool_calls);
+    }
+    attach_prompt_cache_and_reasoning(&mut body, contract, prompt_cache_key, reasoning);
+    if contract.include_encrypted_reasoning() {
         body["include"] = json!(["reasoning.encrypted_content"]);
     }
     Ok(body)
@@ -240,11 +323,13 @@ pub(super) fn build_responses_create_body(
 /// Builds a unary `/responses/compact` body.
 ///
 /// Compact never advertises tools and never streams.
-pub(super) fn build_responses_compact_body(
+pub(super) async fn build_responses_compact_body(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
+    let contract = profile.contract();
+    let request = ResponsesBodyRequest::prepare(request, contract).await?;
     let ResponsesLowered {
         instructions,
         input,
@@ -253,12 +338,12 @@ pub(super) fn build_responses_compact_body(
     } = lower_responses_request(profile, reasoning_profile, request)?;
     let mut body = base_responses_body(profile);
 
-    match profile.mode() {
-        ResponsesRequestMode::Standard => {
+    match contract {
+        ResponsesWireContract::OpenAiStandard | ResponsesWireContract::CodexStandard => {
             body["instructions"] = json!(instructions);
             body["input"] = json!(input);
         }
-        ResponsesRequestMode::ResponsesLite => {
+        ResponsesWireContract::CodexLite => {
             let mut lite_input = input;
             if !instructions.is_empty() {
                 lite_input.insert(
@@ -277,44 +362,39 @@ pub(super) fn build_responses_compact_body(
         }
     }
 
-    attach_prompt_cache_and_reasoning(&mut body, profile, prompt_cache_key, reasoning);
+    attach_prompt_cache_and_reasoning(&mut body, contract, prompt_cache_key, reasoning);
     Ok(body)
 }
 
-fn responses_tool(mode: ResponsesRequestMode, tool: ToolSpec, hosted_web_search: bool) -> Value {
-    match mode {
-        ResponsesRequestMode::Standard => to_responses_tool(tool, hosted_web_search),
-        ResponsesRequestMode::ResponsesLite => to_responses_lite_tool(tool),
+#[cfg(test)]
+pub(super) fn codex_test_auth() -> Auth {
+    Auth::Codex {
+        tokens: crate::credentials::CodexTokens {
+            access_token: "test".into(),
+            refresh_token: None,
+            id_token: None,
+            account_id: None,
+        },
+        source: super::auth::CodexAuthSource::Env,
     }
 }
 
 #[cfg(test)]
-pub(super) fn build_codex_responses_body(
+pub(super) async fn build_codex_responses_body(
     model: &str,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
-    build_codex_responses_body_with_tier(model, request, None, /*hosted_web_search*/ true)
+    build_codex_responses_body_with_tier(model, request, None, /*hosted_web_search*/ true).await
 }
 
 #[cfg(test)]
-fn build_codex_responses_body_with_tier(
+async fn build_codex_responses_body_with_tier(
     model: &str,
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
     hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
-    let profile = ResponsesProfile::from_auth(
-        &Auth::Codex {
-            tokens: crate::credentials::CodexTokens {
-                access_token: "test".into(),
-                refresh_token: None,
-                id_token: None,
-                account_id: None,
-            },
-            source: super::auth::CodexAuthSource::Env,
-        },
-        model,
-    );
+    let profile = ResponsesProfile::from_auth(&codex_test_auth(), model);
     build_responses_create_body(
         &profile,
         &OpenAiReasoningProfile::unknown(),
@@ -322,267 +402,13 @@ fn build_codex_responses_body_with_tier(
         service_tier,
         hosted_web_search,
     )
+    .await
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::auth::CodexAuthSource;
-    use super::*;
-    use crate::model::Message;
+#[path = "codex_request_image_tests.rs"]
+mod image_tests;
 
-    #[test]
-    fn priority_service_tier_is_sent_as_fast_mode() {
-        let body = build_codex_responses_body_with_tier(
-            "gpt-5.5",
-            ModelRequest {
-                messages: &[Message::user_text("hello")],
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
-            },
-            Some(ServiceTier::Priority),
-            /*hosted_web_search*/ true,
-        )
-        .unwrap();
-
-        assert_eq!(body["service_tier"], "priority");
-    }
-
-    #[test]
-    fn priority_service_tier_is_omitted_for_unsupported_codex_models() {
-        let body = build_codex_responses_body_with_tier(
-            "gpt-5.3-codex-spark",
-            ModelRequest {
-                messages: &[Message::user_text("hello")],
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
-            },
-            Some(ServiceTier::Priority),
-            /*hosted_web_search*/ true,
-        )
-        .unwrap();
-
-        assert!(body.get("service_tier").is_none());
-    }
-
-    #[test]
-    fn priority_service_tier_is_limited_to_codex_auth() {
-        let request = ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        };
-        let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.5");
-
-        let body = build_responses_create_body(
-            &profile,
-            &OpenAiReasoningProfile::unknown(),
-            request,
-            Some(ServiceTier::Priority),
-            /*hosted_web_search*/ true,
-        )
-        .unwrap();
-
-        assert!(body.get("service_tier").is_none());
-    }
-
-    #[test]
-    fn responses_lite_sets_all_turns_reasoning_context() {
-        let body = build_codex_responses_body(
-            "gpt-5.6-terra",
-            ModelRequest {
-                messages: &[Message::user_text("hello")],
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            body["reasoning"],
-            json!({"effort": "medium", "summary": "auto", "context": "all_turns"})
-        );
-    }
-
-    #[test]
-    fn responses_lite_moves_tools_and_instructions_into_input() {
-        let body = build_codex_responses_body(
-            "gpt-5.6-luna",
-            ModelRequest {
-                messages: &[
-                    Message::System("follow the repository instructions".into()),
-                    Message::user_text("fix the bug"),
-                ],
-                tools: &[ToolSpec {
-                    name: "web_search".into(),
-                    description: "search the web".into(),
-                    input_schema: json!({"type": "object"}),
-                }],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
-            },
-        )
-        .unwrap();
-
-        assert!(body.get("instructions").is_none());
-        assert!(body.get("tools").is_none());
-        assert_eq!(body["parallel_tool_calls"], false);
-        assert_eq!(
-            body["input"][0],
-            json!({
-                "type": "additional_tools",
-                "role": "developer",
-                "tools": [{
-                    "type": "function",
-                    "name": "web_search",
-                    "description": "search the web",
-                    "parameters": {"type": "object"},
-                    "strict": false,
-                }],
-            })
-        );
-        assert_eq!(
-            body["input"][1],
-            json!({
-                "type": "message",
-                "role": "developer",
-                "content": [{
-                    "type": "input_text",
-                    "text": "follow the repository instructions",
-                }],
-            })
-        );
-    }
-
-    #[test]
-    fn standard_requests_keep_hosted_web_search_tool() {
-        let body = build_codex_responses_body(
-            "gpt-5.5",
-            ModelRequest {
-                messages: &[Message::user_text("find current docs")],
-                tools: &[ToolSpec {
-                    name: "web_search".into(),
-                    description: "search the web".into(),
-                    input_schema: json!({"type": "object"}),
-                }],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            body["tools"],
-            json!([{"type": "web_search", "external_web_access": true}])
-        );
-        assert_eq!(body["tool_choice"], "auto");
-    }
-
-    #[test]
-    fn standard_requests_keep_function_web_search_when_hosted_disabled() {
-        let body = build_codex_responses_body_with_tier(
-            "gpt-5.5",
-            ModelRequest {
-                messages: &[Message::user_text("find current docs")],
-                tools: &[ToolSpec {
-                    name: "web_search".into(),
-                    description: "search the web".into(),
-                    input_schema: json!({"type": "object"}),
-                }],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
-            },
-            None,
-            /*hosted_web_search*/ false,
-        )
-        .unwrap();
-
-        assert_eq!(
-            body["tools"],
-            json!([{
-                "type": "function",
-                "name": "web_search",
-                "description": "search the web",
-                "parameters": {"type": "object"},
-                "strict": false,
-            }])
-        );
-    }
-
-    #[test]
-    fn compact_body_omits_stream_tools_and_tool_policy_fields() {
-        let tools = [ToolSpec {
-            name: "bash".into(),
-            description: "run a command".into(),
-            input_schema: json!({"type": "object"}),
-        }];
-        let request = ModelRequest {
-            messages: &[
-                Message::System("be helpful".into()),
-                Message::user_text("hello"),
-            ],
-            tools: &tools,
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: Some("session-1"),
-        };
-
-        let standard = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
-        let standard_body = build_responses_compact_body(
-            &standard,
-            &OpenAiReasoningProfile::unknown(),
-            request.clone(),
-        )
-        .unwrap();
-        assert_compact_body_omits_tool_fields(&standard_body);
-        assert_eq!(standard_body["prompt_cache_key"], "session-1");
-        assert_eq!(standard_body["store"], false);
-        assert!(standard_body.get("include").is_none());
-        assert!(standard_body.get("instructions").is_some());
-
-        let lite = ResponsesProfile::from_auth(
-            &Auth::Codex {
-                tokens: crate::credentials::CodexTokens {
-                    access_token: "test".into(),
-                    refresh_token: None,
-                    id_token: None,
-                    account_id: None,
-                },
-                source: CodexAuthSource::Env,
-            },
-            "gpt-5.6-sol",
-        );
-        let lite_body =
-            build_responses_compact_body(&lite, &OpenAiReasoningProfile::unknown(), request)
-                .unwrap();
-        assert_compact_body_omits_tool_fields(&lite_body);
-        assert!(lite_body
-            .get("input")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .all(|item| item.get("type").and_then(Value::as_str) != Some("additional_tools")));
-        assert_eq!(
-            lite_body["reasoning"],
-            json!({"effort": "medium", "summary": "auto", "context": "all_turns"})
-        );
-    }
-
-    fn assert_compact_body_omits_tool_fields(body: &Value) {
-        assert!(body.get("stream").is_none());
-        assert!(body.get("tools").is_none());
-        assert!(body.get("additional_tools").is_none());
-        assert!(body.get("tool_choice").is_none());
-        assert!(body.get("parallel_tool_calls").is_none());
-    }
-}
+#[cfg(test)]
+#[path = "codex_request_tests.rs"]
+mod tests;

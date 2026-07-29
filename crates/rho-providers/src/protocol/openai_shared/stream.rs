@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use futures_util::StreamExt;
 
@@ -247,6 +247,12 @@ pub(crate) struct CodexSseState {
     /// responses that carry arguments without incremental deltas, while never
     /// re-appending text consumers already hold.
     published_tool_arguments: BTreeMap<usize, String>,
+    /// Search activity keys already published from `output_item.done`.
+    ///
+    /// `response.completed` may restate the same `output` items when the
+    /// stream carried no text or function calls yet; skip those keys so
+    /// WebSearch / HostedToolActivity are not dual-emitted.
+    emitted_search_keys: BTreeSet<String>,
 }
 
 impl CodexSseState {
@@ -275,10 +281,53 @@ impl CodexSseState {
     }
 }
 
-fn extract_codex_web_search_detail(item: &serde_json::Value) -> Option<String> {
-    if item.get("type").and_then(|v| v.as_str()) != Some("web_search_call") {
-        return None;
+fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
+    match item.get("type").and_then(|value| value.as_str()) {
+        Some("web_search_call") => Some(ModelEvent::WebSearch(extract_codex_search_detail(item)?)),
+        Some("x_search_call") => Some(ModelEvent::hosted_tool_activity(
+            "x_search",
+            extract_codex_search_detail(item)?,
+        )),
+        _ => None,
     }
+}
+
+/// Stable key for a search output item, used to dedupe stream vs completed paths.
+fn codex_search_activity_key(item: &serde_json::Value) -> Option<String> {
+    extract_codex_search_activity(item)?;
+    if let Some(id) = item
+        .get("id")
+        .and_then(|value| value.as_str())
+        .filter(|id| !id.is_empty())
+    {
+        return Some(id.to_owned());
+    }
+    let kind = item.get("type").and_then(|value| value.as_str())?;
+    let detail = extract_codex_search_detail(item).unwrap_or_default();
+    Some(format!("{kind}:{detail}"))
+}
+
+fn emit_codex_search_activity(
+    item: &serde_json::Value,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    let Some(key) = codex_search_activity_key(item) else {
+        return Ok(());
+    };
+    if !state.emitted_search_keys.insert(key) {
+        return Ok(());
+    }
+    let Some(event) = extract_codex_search_activity(item) else {
+        return Ok(());
+    };
+    if let Some(on_event) = on_event.as_mut() {
+        on_event(event)?;
+    }
+    Ok(())
+}
+
+fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
     let action = item.get("action")?;
     if let Some(query) = action
         .get("query")
@@ -523,11 +572,7 @@ pub(crate) fn handle_codex_sse_value(
                 })?;
             }
         }
-        if let Some(detail) = extract_codex_web_search_detail(item) {
-            if let Some(on_event) = on_event.as_mut() {
-                on_event(ModelEvent::WebSearch(detail))?;
-            }
-        }
+        emit_codex_search_activity(item, state, on_event)?;
         if let Some(call) = extract_codex_function_call(item)? {
             // The finished item is the authoritative argument text. Identity is
             // repeated so a stream that never announced the call still reaches
@@ -586,11 +631,7 @@ pub(crate) fn handle_codex_sse_value(
                         })?;
                     }
                 }
-                if let Some(detail) = extract_codex_web_search_detail(item) {
-                    if let Some(on_event) = on_event.as_mut() {
-                        on_event(ModelEvent::WebSearch(detail))?;
-                    }
-                }
+                emit_codex_search_activity(item, state, on_event)?;
                 if let Some(call) = extract_codex_function_call(item)? {
                     state.tool_calls.push(call);
                 }

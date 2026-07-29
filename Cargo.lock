@@ -3304,6 +3304,7 @@ dependencies = [
  "base64",
  "futures-util",
  "gethostname",
+ "image",
  "keyring",
  "libc",
  "pretty_assertions",

@@ -43,7 +43,9 @@ fn continuation_uses_only_new_user_input_after_server_assistant_output() {
         ),
     );
 
-    let plan = state.continuation_body(&next, body(next.input.clone()));
+    let plan = state
+        .continuation_delta(&next)
+        .expect("snapshot extends this turn");
 
     assert_eq!(plan["previous_response_id"], "resp_1");
     assert_eq!(
@@ -77,7 +79,9 @@ fn continuation_retains_tool_result_after_server_function_call() {
         ),
     );
 
-    let plan = state.continuation_body(&next, body(next.input.clone()));
+    let plan = state
+        .continuation_delta(&next)
+        .expect("snapshot extends this turn");
 
     assert_eq!(plan["previous_response_id"], "resp_1");
     assert_eq!(
@@ -117,7 +121,9 @@ fn continuation_accepts_semantically_equivalent_function_call_arguments() {
         ),
     );
 
-    let plan = state.continuation_body(&next, body(next.input.clone()));
+    let plan = state
+        .continuation_delta(&next)
+        .expect("snapshot extends this turn");
 
     assert_eq!(plan["previous_response_id"], "resp_1");
     assert_eq!(
@@ -136,7 +142,6 @@ fn continuation_falls_back_to_full_request_when_server_output_is_unavailable() {
         json!({"role":"assistant","content":"two"}),
         json!({"role":"user","content":[{"type":"input_text","text":"three"}]}),
     ]);
-    let full_body = body(next.input.clone());
     let mut state = CodexContinuationState::default();
     state.record_success(
         &first,
@@ -147,7 +152,7 @@ fn continuation_falls_back_to_full_request_when_server_output_is_unavailable() {
         ),
     );
 
-    assert_eq!(state.continuation_body(&next, full_body.clone()), full_body);
+    assert_eq!(state.continuation_delta(&next), None);
 }
 
 #[test]
@@ -180,7 +185,7 @@ fn continuation_falls_back_to_full_request_when_request_properties_change() {
         ),
     );
 
-    assert_eq!(state.continuation_body(&next, next_body.clone()), next_body);
+    assert_eq!(state.continuation_delta(&next), None);
 }
 
 #[test]
@@ -193,7 +198,6 @@ fn continuation_falls_back_to_full_request_for_unrepresentable_server_output() {
         json!({"role":"assistant","content":"two"}),
         json!({"role":"user","content":[{"type":"input_text","text":"three"}]}),
     ]);
-    let full_body = body(next.input.clone());
     let mut state = CodexContinuationState::default();
     state.record_success(
         &first,
@@ -204,5 +208,5 @@ fn continuation_falls_back_to_full_request_for_unrepresentable_server_output() {
         ),
     );
 
-    assert_eq!(state.continuation_body(&next, full_body.clone()), full_body);
+    assert_eq!(state.continuation_delta(&next), None);
 }

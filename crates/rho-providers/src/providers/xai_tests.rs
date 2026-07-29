@@ -34,6 +34,8 @@ fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
 
     assert!(body.get("reasoning").is_none());
     assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(body["tools"], json!([{ "type": "x_search" }]));
+    assert_eq!(body["tool_choice"], "auto");
 }
 
 #[test]
@@ -71,7 +73,19 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
     assert_eq!(body["model"], "grok-4.5");
     assert_eq!(body["instructions"], "follow instructions");
     assert_eq!(body["input"][0]["role"], "user");
-    assert_eq!(body["tools"][0]["name"], "read_file");
+    assert_eq!(
+        body["tools"],
+        json!([
+            {
+                "type": "function",
+                "name": "read_file",
+                "description": "read a file",
+                "parameters": {"type": "object"},
+                "strict": false,
+            },
+            { "type": "x_search" },
+        ])
+    );
     assert_eq!(body["tool_choice"], "auto");
     assert_eq!(body["prompt_cache_key"], "rho:session");
     assert_eq!(body["reasoning"], json!({"effort": "high"}));
@@ -81,29 +95,42 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
 }
 
 #[test]
-fn responses_body_uses_hosted_web_search_when_enabled() {
-    let tools = [ToolSpec {
-        name: "web_search".into(),
-        description: "search the web".into(),
-        input_schema: json!({"type": "object"}),
-    }];
+fn responses_body_uses_hosted_web_search_and_adds_hosted_x_search() {
+    let tools = [
+        ToolSpec {
+            name: "web_search".into(),
+            description: "search the web".into(),
+            input_schema: json!({"type": "object"}),
+        },
+        ToolSpec {
+            name: "x_search".into(),
+            description: "ignored client form".into(),
+            input_schema: json!({"type": "object"}),
+        },
+    ];
     let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
     let body = build_xai_responses_body(
         "xai",
         "grok-4.5",
         &profile,
         ModelRequest {
-            messages: &[Message::user_text("find docs")],
+            messages: &[Message::user_text("what are people saying?")],
             tools: &tools,
             cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Medium,
+            reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
         /*hosted_web_search*/ true,
     )
     .unwrap();
 
-    assert_eq!(body["tools"], json!([{"type": "web_search"}]));
+    assert_eq!(
+        body["tools"],
+        json!([
+            { "type": "web_search" },
+            { "type": "x_search" },
+        ])
+    );
 }
 
 #[test]
@@ -131,14 +158,39 @@ fn responses_body_keeps_function_web_search_when_hosted_disabled() {
 
     assert_eq!(
         body["tools"],
-        json!([{
-            "type": "function",
-            "name": "web_search",
-            "description": "search the web",
-            "parameters": {"type": "object"},
-            "strict": false,
-        }])
+        json!([
+            {
+                "type": "function",
+                "name": "web_search",
+                "description": "search the web",
+                "parameters": {"type": "object"},
+                "strict": false,
+            },
+            { "type": "x_search" },
+        ])
     );
+}
+
+#[test]
+fn responses_body_always_includes_hosted_x_search() {
+    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
+    let body = build_xai_responses_body(
+        "xai",
+        "grok-4.5",
+        &profile,
+        ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Off,
+            prompt_cache_key: None,
+        },
+        /*hosted_web_search*/ true,
+    )
+    .unwrap();
+
+    assert_eq!(body["tools"], json!([{ "type": "x_search" }]));
+    assert_eq!(body["tool_choice"], "auto");
 }
 
 #[test]

@@ -4,8 +4,12 @@
 //! channel, tools, stream, and reasoning include; compact only accepts `model`
 //! and a full `input` window (system messages included).
 
-use crate::protocol::openai_responses::{codex_input_items_for_target, to_xai_responses_tool};
+use rho_sdk::model::ToolSpec;
 use serde_json::{json, Value};
+
+use crate::protocol::openai_responses::{
+    codex_input_items_for_target, to_xai_responses_tool, ToolStrictness,
+};
 
 use super::reasoning;
 use crate::model::{Message, ModelError, ModelIdentity, ModelRequest};
@@ -36,6 +40,26 @@ fn lower_xai_create_request(
     })
 }
 
+/// Maps client tool specs onto the xAI Responses tools array.
+///
+/// `x_search` is an xAI-hosted server-side tool for searching X (x.com). It is
+/// independent of the client `web_search` tool and is attached as a provider
+/// amenity on every xAI create turn, including when the client tool list is
+/// empty or restricted. It disappears as soon as the session switches away
+/// from xAI. Stock Rho never registers a client tool named `x_search`; any
+/// colliding custom function of that name is dropped so only the hosted form
+/// is advertised.
+fn xai_responses_tools(tools: &[ToolSpec], hosted_web_search: bool) -> Vec<Value> {
+    let mut out = tools
+        .iter()
+        .filter(|tool| tool.name != "x_search")
+        .cloned()
+        .map(|tool| to_xai_responses_tool(tool, ToolStrictness::Explicit(false), hosted_web_search))
+        .collect::<Vec<_>>();
+    out.push(json!({ "type": "x_search" }));
+    out
+}
+
 /// Builds a streaming Responses create body for an xAI model turn.
 ///
 /// Always requests encrypted reasoning content so later server-side compaction
@@ -47,12 +71,7 @@ pub(super) fn build_xai_responses_body(
     request: ModelRequest<'_>,
     hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
-    let tools = request
-        .tools
-        .iter()
-        .cloned()
-        .map(|tool| to_xai_responses_tool(tool, hosted_web_search))
-        .collect::<Vec<_>>();
+    let tools = xai_responses_tools(request.tools, hosted_web_search);
     let XaiCreateLowered {
         instructions,
         input,
@@ -66,10 +85,9 @@ pub(super) fn build_xai_responses_body(
         "stream": true,
         "include": ["reasoning.encrypted_content"],
     });
-    if !tools.is_empty() {
-        body["tools"] = json!(tools);
-        body["tool_choice"] = json!("auto");
-    }
+    // Hosted x_search is always present on xAI create turns.
+    body["tools"] = json!(tools);
+    body["tool_choice"] = json!("auto");
     if !instructions.is_empty() {
         body["instructions"] = json!(instructions);
     }

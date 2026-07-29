@@ -10,6 +10,7 @@ mod codex_ws;
 mod reasoning;
 mod remote_compaction;
 mod responses_http;
+mod responses_lite_image;
 
 pub use cache::prompt_cache_key_from_session_id;
 
@@ -107,7 +108,7 @@ impl OpenAiProvider {
         )
     }
 
-    fn create_body(
+    async fn create_body(
         &self,
         request: ModelRequest<'_>,
         options: ModelRequestOptions,
@@ -119,11 +120,16 @@ impl OpenAiProvider {
             options.service_tier(),
             self.hosted_web_search,
         )
+        .await
     }
 
     #[cfg(test)]
-    fn openai_api_responses_body(&self, request: ModelRequest<'_>) -> Result<Value, ModelError> {
+    async fn openai_api_responses_body(
+        &self,
+        request: ModelRequest<'_>,
+    ) -> Result<Value, ModelError> {
         self.create_body(request, ModelRequestOptions::default())
+            .await
     }
 }
 
@@ -137,9 +143,10 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        match &self.auth {
-            Auth::ApiKey(_) => self.send_openai_api_responses_complete(request).await,
-            Auth::Codex { .. } => self.send_codex_responses_complete(request).await,
+        if self.profile.contract().uses_codex_websocket() {
+            self.send_codex_responses_complete(request).await
+        } else {
+            self.send_openai_api_responses_complete(request).await
         }
     }
 
@@ -168,15 +175,12 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        match &self.auth {
-            Auth::ApiKey(_) => {
-                self.send_openai_api_responses_stream(request, options, on_event)
-                    .await
-            }
-            Auth::Codex { .. } => {
-                self.send_codex_responses_stream(request, options, on_event, on_request_event)
-                    .await
-            }
+        if self.profile.contract().uses_codex_websocket() {
+            self.send_codex_responses_stream(request, options, on_event, on_request_event)
+                .await
+        } else {
+            self.send_openai_api_responses_stream(request, options, on_event)
+                .await
         }
     }
 }
@@ -188,16 +192,18 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.create_body(request, ModelRequestOptions::default())?;
+        let body = self
+            .create_body(request, ModelRequestOptions::default())
+            .await?;
         let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
-        match self
+        let body = match self
             .codex_ws
-            .send_responses_turn_silent(body.clone(), &tokens, self.profile.mode())
+            .send_responses_turn_silent(body, &tokens, self.profile.contract())
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
-            CodexWsTurn::FullSseFallback { .. } => {}
-        }
+            CodexWsTurn::FullSseFallback { body, .. } => body,
+        };
 
         let http_result = self
             .http()
@@ -243,15 +249,18 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.create_body(request.clone(), options)?;
+        let body = self.create_body(request, options).await?;
         let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
-        match self
+        let body = match self
             .codex_ws
-            .send_responses_turn(body, &tokens, self.profile.mode(), &mut on_event)
+            .send_responses_turn(body, &tokens, self.profile.contract(), &mut on_event)
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
-            CodexWsTurn::FullSseFallback { request_submitted } => {
+            CodexWsTurn::FullSseFallback {
+                request_submitted,
+                body,
+            } => {
                 if request_submitted {
                     // The submitted WebSocket request may have reached the model
                     // before the transport failed, so account for it separately.
@@ -262,12 +271,10 @@ impl OpenAiProvider {
                         },
                     )?;
                 }
+                body
             }
-        }
+        };
 
-        // Rebuilt only on this rare fallback path so the common WebSocket
-        // turn does not clone the full-history request body.
-        let body = self.create_body(request, options)?;
         let http_result = self
             .http()
             .post_json(
@@ -364,7 +371,9 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self.create_body(request, ModelRequestOptions::default())?;
+        let body = self
+            .create_body(request, ModelRequestOptions::default())
+            .await?;
         let http_result = self
             .http()
             .post_json(
@@ -388,7 +397,7 @@ impl OpenAiProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self.create_body(request, options)?;
+        let body = self.create_body(request, options).await?;
         let http_result = self
             .http()
             .post_json(
