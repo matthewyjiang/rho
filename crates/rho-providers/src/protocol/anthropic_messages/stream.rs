@@ -465,7 +465,7 @@ mod tests {
                     | ModelEvent::ReasoningSummaryDelta(_)
                     | ModelEvent::ProviderContext { .. }
                     | ModelEvent::WebSearch(_)
-                    | ModelEvent::XSearch(_)
+                    | ModelEvent::HostedToolActivity { .. }
                     | ModelEvent::Usage(_)
                     | ModelEvent::ToolCallDelta { .. } => None,
                 })
@@ -539,7 +539,7 @@ mod tests {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
-                | ModelEvent::XSearch(_)
+                | ModelEvent::HostedToolActivity { .. }
                 | ModelEvent::ToolCallDelta { .. } => None,
             })
             .collect::<Vec<_>>();

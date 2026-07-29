@@ -274,8 +274,8 @@ impl SdkEventAdapter {
             RunEvent::WebSearch { detail } => {
                 vec![provider_native_search_finished("web_search", detail)]
             }
-            RunEvent::XSearch { detail } => {
-                vec![provider_native_search_finished("x_search", detail)]
+            RunEvent::HostedToolActivity { name, detail } => {
+                vec![provider_native_search_finished(&name, detail)]
             }
             RunEvent::ProviderRequestRetry => {
                 vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]

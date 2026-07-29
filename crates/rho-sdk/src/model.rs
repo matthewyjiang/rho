@@ -342,8 +342,6 @@ pub enum ModelEvent {
     ReasoningSummaryDelta(String),
     /// Provider-native web search activity observed during a model turn.
     WebSearch(String),
-    /// Provider-native X (x.com) search activity observed during a model turn.
-    XSearch(String),
     ToolCallDelta {
         index: usize,
         id: Option<String>,
@@ -356,6 +354,15 @@ pub enum ModelEvent {
         data: Value,
     },
     Usage(ModelUsage),
+    /// Provider-native hosted tool activity observed during a model turn.
+    ///
+    /// `name` is the hosted tool id (for example `x_search`). Appended after
+    /// existing variants so discriminant values stay stable under a minor
+    /// release. Prefer this over minting one-off variants per hosted tool.
+    HostedToolActivity {
+        name: String,
+        detail: String,
+    },
 }
 
 /// Source used to calculate the current context consumption.

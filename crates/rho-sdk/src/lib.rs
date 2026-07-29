@@ -160,7 +160,7 @@ pub use event::{
 #[allow(deprecated)]
 pub use event::{
     PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY, PROVIDER_ACTIVITY_REQUEST_RETRY,
-    PROVIDER_ACTIVITY_WEB_SEARCH, PROVIDER_ACTIVITY_X_SEARCH,
+    PROVIDER_ACTIVITY_WEB_SEARCH,
 };
 pub use host_input::{
     DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,

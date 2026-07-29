@@ -278,7 +278,10 @@ impl CodexSseState {
 fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
     match item.get("type").and_then(|value| value.as_str()) {
         Some("web_search_call") => Some(ModelEvent::WebSearch(extract_codex_search_detail(item)?)),
-        Some("x_search_call") => Some(ModelEvent::XSearch(extract_codex_search_detail(item)?)),
+        Some("x_search_call") => Some(ModelEvent::HostedToolActivity {
+            name: "x_search".into(),
+            detail: extract_codex_search_detail(item)?,
+        }),
         _ => None,
     }
 }

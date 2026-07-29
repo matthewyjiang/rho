@@ -225,7 +225,9 @@ pub(super) fn capture_provider_event(
             RunEvent::ReasoningSummaryDelta { text }
         }
         ModelEvent::WebSearch(detail) => RunEvent::WebSearch { detail },
-        ModelEvent::XSearch(detail) => RunEvent::XSearch { detail },
+        ModelEvent::HostedToolActivity { name, detail } => {
+            RunEvent::HostedToolActivity { name, detail }
+        }
         ModelEvent::ToolCallDelta {
             index,
             id,

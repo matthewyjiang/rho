@@ -44,8 +44,9 @@ fn lower_xai_create_request(
 /// independent of the client `web_search` tool and is attached as a provider
 /// amenity on every xAI create turn, including when the client tool list is
 /// empty or restricted. It disappears as soon as the session switches away
-/// from xAI. A client function named `x_search` is dropped so only the hosted
-/// form is advertised.
+/// from xAI. Stock Rho never registers a client tool named `x_search`; any
+/// colliding custom function of that name is dropped so only the hosted form
+/// is advertised.
 fn xai_responses_tools(tools: &[ToolSpec]) -> Vec<Value> {
     let mut out = tools
         .iter()

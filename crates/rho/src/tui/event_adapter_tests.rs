@@ -125,15 +125,16 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
 }
 
 #[test]
-fn provider_native_x_search_maps_to_tool_finished_view() {
+fn provider_native_hosted_tool_activity_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
-        only_event(adapter.translate(RunEvent::XSearch {
+        only_event(adapter.translate(RunEvent::HostedToolActivity {
+            name: "x_search".into(),
             detail: "for \"xAI\"".into(),
         }))
     else {
-        panic!("expected x search tool finished");
+        panic!("expected hosted tool activity finished");
     };
     assert_eq!(card.status, ToolStatus::Ok);
     assert_eq!(card.family, ToolFamily::Web);
