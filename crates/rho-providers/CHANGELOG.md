@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.3](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.13.2...rho-providers-v0.13.3) (2026-07-29)
+
+
+### Bug Fixes
+
+* **providers:** retry codex server_is_overloaded as unavailable ([#641](https://github.com/matthewyjiang/rho/issues/641)) ([9bb2c12](https://github.com/matthewyjiang/rho/commit/9bb2c124c758a2ee6bc4b8deb8d8b502f6145ff7)), closes [#639](https://github.com/matthewyjiang/rho/issues/639)
+
 ## [0.13.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.13.1...rho-providers-v0.13.2) (2026-07-29)
 
 
