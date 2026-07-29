@@ -5,11 +5,9 @@ use super::{App, ComposerMode, HerdrUserWait};
 
 mod render;
 
-use render::approval_detail_page_count;
 pub(in crate::tui) use render::approval_lines;
+use render::{approval_detail_line_count, approval_detail_page_lines};
 
-const APPROVAL_CHOICE_COUNT: usize = 3;
-const DENY_CHOICE: usize = 2;
 const DENIED_BY_USER_REASON: &str = "denied by user";
 const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
 
@@ -20,20 +18,67 @@ pub(super) enum ApprovalKeyOutcome {
     Resolved,
 }
 
+/// Fail-closed choice set for the supervised approval prompt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ApprovalChoice {
+    AllowOnce,
+    AllowForSession,
+    #[default]
+    Deny,
+}
+
+impl ApprovalChoice {
+    pub(super) const ALL: [Self; 3] = [Self::AllowOnce, Self::AllowForSession, Self::Deny];
+
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "Allow once",
+            Self::AllowForSession => "Allow for session (exact request)",
+            Self::Deny => "Deny",
+        }
+    }
+
+    pub(super) fn decision(self) -> ApprovalDecision {
+        match self {
+            Self::AllowOnce => ApprovalDecision::AllowOnce,
+            Self::AllowForSession => ApprovalDecision::AllowForSession,
+            Self::Deny => ApprovalDecision::Deny {
+                reason: DENIED_BY_USER_REASON.into(),
+            },
+        }
+    }
+
+    pub(super) const fn previous(self) -> Self {
+        match self {
+            Self::AllowOnce => Self::AllowOnce,
+            Self::AllowForSession => Self::AllowOnce,
+            Self::Deny => Self::AllowForSession,
+        }
+    }
+
+    pub(super) const fn next(self) -> Self {
+        match self {
+            Self::AllowOnce => Self::AllowForSession,
+            Self::AllowForSession => Self::Deny,
+            Self::Deny => Self::Deny,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ApprovalComposer {
     pending: PendingApproval,
-    active: usize,
-    /// Zero-based detail page index from the start of the request.
-    detail_page: usize,
+    active: ApprovalChoice,
+    /// First visible detail line, measured from the start of the request.
+    detail_offset: usize,
 }
 
 impl ApprovalComposer {
     fn new(pending: PendingApproval) -> Self {
         Self {
             pending,
-            active: DENY_CHOICE,
-            detail_page: 0,
+            active: ApprovalChoice::Deny,
+            detail_offset: 0,
         }
     }
 
@@ -41,54 +86,37 @@ impl ApprovalComposer {
         self.pending.request()
     }
 
-    pub(super) fn active(&self) -> usize {
+    pub(super) fn active(&self) -> ApprovalChoice {
         self.active
     }
 
-    pub(super) fn detail_page(&self) -> usize {
-        self.detail_page
+    pub(super) fn detail_offset(&self) -> usize {
+        self.detail_offset
     }
 
-    fn scroll_details_up(&mut self) {
-        self.detail_page = self.detail_page.saturating_sub(1);
-    }
-
-    fn scroll_details_down(&mut self, width: usize, viewport_height: usize) {
-        let page_count = approval_detail_page_count(self.request(), width, viewport_height);
-        self.detail_page = self
-            .detail_page
-            .saturating_add(1)
-            .min(page_count.saturating_sub(1));
+    fn scroll_details_by(&mut self, delta_pages: isize, width: usize, viewport_height: usize) {
+        let page_lines = approval_detail_page_lines(viewport_height).max(1);
+        let detail_len = approval_detail_line_count(self.request(), width);
+        let max_offset = detail_len.saturating_sub(page_lines);
+        let current = self.detail_offset.min(max_offset);
+        let delta_lines = delta_pages.saturating_mul(page_lines as isize);
+        self.detail_offset = if delta_lines < 0 {
+            current.saturating_sub(delta_lines.unsigned_abs())
+        } else {
+            current.saturating_add(delta_lines as usize).min(max_offset)
+        };
     }
 
     fn move_previous(&mut self) {
-        self.active = previous_choice(self.active);
+        self.active = self.active.previous();
     }
 
     fn move_next(&mut self) {
-        self.active = next_choice(self.active);
+        self.active = self.active.next();
     }
 
     fn respond(&mut self, decision: ApprovalDecision) {
         let _ = self.pending.respond(decision);
-    }
-}
-
-pub(super) fn previous_choice(active: usize) -> usize {
-    active.saturating_sub(1)
-}
-
-pub(super) fn next_choice(active: usize) -> usize {
-    (active + 1).min(APPROVAL_CHOICE_COUNT - 1)
-}
-
-pub(super) fn approval_decision(active: usize) -> ApprovalDecision {
-    match active {
-        0 => ApprovalDecision::AllowOnce,
-        1 => ApprovalDecision::AllowForSession,
-        _ => ApprovalDecision::Deny {
-            reason: DENIED_BY_USER_REASON.into(),
-        },
     }
 }
 
@@ -126,13 +154,13 @@ impl App {
             }
             KeyCode::PageUp => {
                 if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
-                    approval.scroll_details_up();
+                    approval.scroll_details_by(-1, width, viewport_height);
                 }
                 ApprovalKeyOutcome::Handled
             }
             KeyCode::PageDown => {
                 if let ComposerMode::Approval(approval) = self.input_ui.composer_mut() {
-                    approval.scroll_details_down(width, viewport_height);
+                    approval.scroll_details_by(1, width, viewport_height);
                 }
                 ApprovalKeyOutcome::Handled
             }
@@ -164,7 +192,7 @@ impl App {
     fn finish_approval(&mut self, decision: Option<ApprovalDecision>) {
         let composer = self.input_ui.take_composer();
         if let ComposerMode::Approval(mut approval) = composer {
-            let decision = decision.unwrap_or_else(|| approval_decision(approval.active));
+            let decision = decision.unwrap_or_else(|| approval.active.decision());
             approval.respond(decision);
             self.status = "running".into();
         }

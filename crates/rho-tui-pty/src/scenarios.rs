@@ -24,14 +24,14 @@ use pickers::{
 };
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 
 use anyhow::Result;
 
 use crate::{
-    harness::WaitTimeout,
+    harness::{PtyHarness, WaitTimeout},
     keys::Key,
     pty::PtySize,
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
@@ -413,14 +413,9 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         text: "↓ later",
         timeout: SETTLE,
     },
-    Step::Key(Key::PageDown),
-    Step::Key(Key::PageDown),
-    Step::Key(Key::PageDown),
-    Step::Key(Key::PageDown),
-    Step::WaitText {
-        text: "DANGEROUS_SUFFIX_INSPECTABLE",
-        timeout: SETTLE,
-    },
+    // Page size depends on terminal chrome; scroll until the suffix is visible
+    // instead of hard-coding a PageDown count.
+    Step::Custom(scroll_approval_detail_until_suffix_visible),
     Step::Key(Key::PageUp),
     Step::WaitText {
         text: "↑ earlier",
@@ -443,6 +438,27 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
+
+fn scroll_approval_detail_until_suffix_visible(harness: &mut PtyHarness) -> Result<()> {
+    const MARKER: &str = "DANGEROUS_SUFFIX_INSPECTABLE";
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        harness.poll(Duration::from_millis(30));
+        if harness.screen().contains_text(MARKER) {
+            return Ok(());
+        }
+        harness.inject_key(&Key::PageDown)?;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    harness.poll(Duration::from_millis(50));
+    if harness.screen().contains_text(MARKER) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "approval detail suffix never became visible after PageDown scrolling\n{}",
+        harness.screen().contents()
+    )
+}
 
 const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::Phase("startup"),
