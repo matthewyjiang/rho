@@ -472,6 +472,9 @@ fn main() {
         .and_then(|value| value.parse().ok())
         .unwrap_or(20usize)
         .max(5);
+    // Interleaved pairs alternate first-runner order. An odd count would leave
+    // one extra baseline-first pair, so bump to the next even effective count.
+    let samples = samples + (samples % 2);
     let tokio = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
