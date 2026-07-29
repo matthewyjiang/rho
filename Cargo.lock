@@ -3243,7 +3243,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "1.22.0"
+version = "1.22.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3297,7 +3297,7 @@ dependencies = [
 
 [[package]]
 name = "rho-providers"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "anyhow",
  "async-trait",
