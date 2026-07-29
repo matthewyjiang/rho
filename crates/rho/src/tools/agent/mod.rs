@@ -421,6 +421,7 @@ pub struct AgentTool {
     catalog: Arc<AgentCatalog>,
     agent_summaries: Vec<(String, String)>,
     background_subagents: BackgroundSubagents,
+    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 }
 
 impl AgentTool {
@@ -446,7 +447,16 @@ impl AgentTool {
             catalog,
             agent_summaries,
             background_subagents,
+            mutation_observer: Arc::new(()),
         }
+    }
+
+    fn with_mutation_observer(
+        mut self,
+        mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
+    ) -> Self {
+        self.mutation_observer = mutation_observer;
+        self
     }
 
     async fn execute(
@@ -468,6 +478,8 @@ impl AgentTool {
             .definition
             .clone();
         let definition_id = definition.id.to_string();
+        self.mutation_observer
+            .mark_untracked_effect(rho_tools::UntrackedWorkspaceEffect::MutatingTool, "agent");
         let cwd = context
             .workspace_root()
             .map(Path::to_path_buf)
@@ -831,6 +843,7 @@ impl super::sdk_registry::ToolBundle for SdkDelegationBundle {
 pub(super) fn sdk_bundle(
     config: &crate::config::Config,
     options: DelegationBundleOptions,
+    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> SdkDelegationBundle {
     let manager = SubagentManager::new(AgentExecutor::new(
         config.clone(),
@@ -840,11 +853,10 @@ pub(super) fn sdk_bundle(
     ));
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     if options.tools.launches() {
-        tools.push(Arc::new(AgentTool::new(
-            manager.clone(),
-            &options.cwd,
-            options.background,
-        )));
+        tools.push(Arc::new(
+            AgentTool::new(manager.clone(), &options.cwd, options.background)
+                .with_mutation_observer(mutation_observer),
+        ));
     }
     if options.tools.manages() {
         tools.push(Arc::new(AgentsTool::new(manager.clone())));

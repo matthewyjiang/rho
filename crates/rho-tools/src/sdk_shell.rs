@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use rho_sdk::{
     tool::{
         OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
@@ -18,10 +20,11 @@ use crate::{
 use super::{sdk_security::authorize_request, sdk_support::check_cancelled};
 
 /// Options for the host-facing shell tool adapter.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ShellToolOptions {
     max_output_bytes: usize,
     environment: ProcessEnvironment,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
 impl Default for ShellToolOptions {
@@ -29,6 +32,7 @@ impl Default for ShellToolOptions {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             environment: ProcessEnvironment::InheritAll,
+            mutation_observer: None,
         }
     }
 }
@@ -47,6 +51,14 @@ impl ShellToolOptions {
         self.environment = environment;
         self
     }
+
+    pub fn mutation_observer(
+        mut self,
+        observer: Arc<dyn crate::WorkspaceMutationObserver>,
+    ) -> Self {
+        self.mutation_observer = Some(observer);
+        self
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -61,6 +73,7 @@ struct SdkShellTool {
     kind: ShellKind,
     max_output_bytes: usize,
     environment: ProcessEnvironment,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
 impl SdkShellTool {
@@ -70,6 +83,7 @@ impl SdkShellTool {
             kind: ShellKind::Bash,
             max_output_bytes: options.max_output_bytes,
             environment: options.environment,
+            mutation_observer: options.mutation_observer,
         }
     }
 
@@ -79,6 +93,7 @@ impl SdkShellTool {
             kind: ShellKind::PowerShell,
             max_output_bytes: options.max_output_bytes,
             environment: options.environment,
+            mutation_observer: options.mutation_observer,
         }
     }
 }
@@ -263,6 +278,12 @@ impl Tool for SdkShellTool {
                 self.environment.clone(),
             )?;
             plan.authorize(self.kind, &context).await?;
+            if let Some(observer) = self.mutation_observer.as_ref() {
+                observer.mark_untracked_effect(
+                    crate::UntrackedWorkspaceEffect::ShellCommand,
+                    self.kind.name(),
+                );
+            }
             plan.execute(self.kind, invocation_id, &context).await
         })
     }

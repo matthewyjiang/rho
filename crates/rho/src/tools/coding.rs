@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::agent::{AgentCapabilities, ToolCapability};
 use rho_sdk::ProcessEnvironment;
 
@@ -5,10 +7,13 @@ pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
     process_environment: ProcessEnvironment,
+    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
 
-    let options = rho_tools::CodingToolOptions::new().max_output_bytes(max_output_bytes);
+    let options = rho_tools::CodingToolOptions::new()
+        .max_output_bytes(max_output_bytes)
+        .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [
         (ToolCapability::ListDir, CodingToolKind::ListDir),
@@ -34,7 +39,8 @@ pub(super) fn sdk_bundle(
         tools.push(rho_tools::shell_tool(
             rho_tools::ShellToolOptions::new()
                 .max_output_bytes(max_output_bytes)
-                .environment(process_environment),
+                .environment(process_environment)
+                .mutation_observer(mutation_observer),
         ));
     }
     super::sdk_registry::StaticToolBundle::new(tools)

@@ -90,6 +90,7 @@ pub struct AppToolSet {
     tools: Vec<Arc<dyn Tool>>,
     bundles: Vec<Box<dyn ToolBundle>>,
     subagents: Option<SubagentManager>,
+    checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
 }
 
@@ -99,6 +100,9 @@ impl AppToolSet {
             tools: Vec::new(),
             bundles: Vec::new(),
             subagents: None,
+            checkpoint_tracker: Arc::new(
+                crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(false),
+            ),
             web_access: super::web::WebAccessStore::new(),
         }
     }
@@ -109,6 +113,11 @@ impl AppToolSet {
             delegation,
         } = options;
         let mut tool_set = Self::disabled();
+        tool_set.checkpoint_tracker = Arc::new(
+            crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
+                config.experimental_workspace_rewind,
+            ),
+        );
         // Compose one child-process environment policy for every process tool.
         // Provider credential env vars are excluded so agent commands cannot
         // read host API keys from the ambient environment.
@@ -120,11 +129,13 @@ impl AppToolSet {
             &capabilities,
             config.max_output_bytes,
             process_environment.clone(),
+            tool_set.checkpoint_tracker.clone(),
         ));
         if capabilities.contains(&ToolCapability::Process) {
             tool_set.add_bundle(super::process::sdk_bundle(
                 config.max_output_bytes,
                 process_environment.clone(),
+                tool_set.checkpoint_tracker.clone(),
             ));
         }
         if capabilities.contains(&ToolCapability::Skill) {
@@ -160,6 +171,7 @@ impl AppToolSet {
                     config_path: delegation.config_path,
                     background: delegation.background,
                 },
+                tool_set.checkpoint_tracker.clone(),
             );
             tool_set.subagents = Some(bundle.manager_handle());
             tool_set.add_bundle(bundle);
@@ -187,6 +199,12 @@ impl AppToolSet {
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
+    }
+
+    pub fn checkpoint_tracker(
+        &self,
+    ) -> &Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker> {
+        &self.checkpoint_tracker
     }
 
     pub fn web_access(&self) -> &super::web::WebAccessStore {

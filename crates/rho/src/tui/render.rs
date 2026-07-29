@@ -193,7 +193,10 @@ fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
 fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
     let max_label_width = match picker.action {
         super::PickerAction::SelectModel | super::PickerAction::SelectInternalAgentModel => 60,
-        super::PickerAction::ResumeSession | super::PickerAction::SelectTreeNode => 60,
+        super::PickerAction::ResumeSession
+        | super::PickerAction::SelectTreeNode
+        | super::PickerAction::SelectRewindCheckpoint
+        | super::PickerAction::ConfirmRewindCheckpoint => 60,
         super::PickerAction::Config
         | super::PickerAction::Dismiss
         | super::PickerAction::LoginGroup

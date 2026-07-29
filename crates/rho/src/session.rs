@@ -35,6 +35,7 @@ mod tree_tests;
 #[cfg(test)]
 #[path = "session_version_tests.rs"]
 mod version_tests;
+pub(crate) mod workspace_checkpoint;
 
 #[cfg(test)]
 use layout::encode_cwd;

@@ -22,6 +22,7 @@ mod shell_process;
 pub use shell_process::{parse_shell_content, ShellContent};
 pub mod tool;
 pub mod tool_card;
+pub mod workspace_mutation;
 pub mod workspace_walk;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -50,6 +51,7 @@ pub use process_env::apply_process_environment;
 pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
 pub use sdk_shell::{shell_invocation, shell_tool, ShellToolOptions};
 pub use tool::{compact_display_path, resolve_path, truncate, Tool, ToolContext, ToolError};
+pub use workspace_mutation::{UntrackedWorkspaceEffect, WorkspaceMutationObserver};
 
 /// Default per-tool output budget, in bytes, when the host does not configure
 /// one explicitly.

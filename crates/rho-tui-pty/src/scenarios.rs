@@ -10,6 +10,7 @@ mod resume_delete;
 mod runtime_info;
 mod subagent_rail;
 mod text_selection;
+mod workspace_rewind;
 
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
@@ -27,6 +28,7 @@ use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::{Duration, Instant};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
+use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
 
 use anyhow::Result;
 
@@ -813,6 +815,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         CONVERSATION_TREE_STEPS,
         false,
     ),
+    WORKSPACE_REWIND_SCENARIO,
     Scenario::new(
         "resume_picker_delete",
         "Delete a saved session from the resume picker with confirm/cancel",

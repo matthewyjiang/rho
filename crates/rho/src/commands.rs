@@ -7,6 +7,7 @@ pub enum CommandId {
     Logout,
     Model,
     Resume,
+    Rewind,
     Tree,
     Config,
     Info,
@@ -203,6 +204,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "resume",
         usage: "/resume [id]",
         description: "resume a saved session",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Rewind,
+        name: "rewind",
+        usage: "/rewind [turn]",
+        description: "preview and restore a completed turn's workspace checkpoint",
         argument_choices: &[],
     },
     CommandSpec {
