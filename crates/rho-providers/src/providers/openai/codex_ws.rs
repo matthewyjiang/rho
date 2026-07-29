@@ -15,7 +15,7 @@ use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, Stre
 use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
-use super::codex_request::ResponsesRequestMode;
+use super::codex_request::ResponsesWireContract;
 use crate::protocol::openai_responses::{handle_codex_sse_value, CodexSseResponse, CodexSseState};
 
 /// WebSocket transport for Codex Responses turns.
@@ -64,20 +64,66 @@ impl CodexWsState {
 
 type CodexSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(super) enum CodexWsTurn {
     Completed(ModelResponse),
     /// The WebSocket transport could not complete the turn before emitting any
     /// caller-visible stream events. Continuation state has already been reset,
-    /// so the caller can safely retry the same full Responses body over SSE.
+    /// so the caller can safely retry `body` over SSE.
     FullSseFallback {
         request_submitted: bool,
+        /// The full Responses body the caller passed in, handed back so the
+        /// SSE retry does not need a copy taken before every WebSocket turn.
+        body: Value,
     },
 }
 
 struct CodexWsCompleted {
     response: CodexSseResponse,
     server_output_items: Vec<Value>,
+}
+
+/// The `response.create` frame for one turn, plus the body an SSE retry needs.
+///
+/// An incremental turn frames a small delta and holds the caller's full body
+/// aside. A full turn frames that body directly and recovers it from the frame
+/// only if the turn fails. Either way the conversation history exists once, so
+/// no WebSocket turn pays for a fallback that almost never happens.
+struct CodexWsFrame {
+    frame: Value,
+    /// Set only when the frame carries a delta rather than the full body.
+    full_body: Option<Value>,
+}
+
+impl CodexWsFrame {
+    fn new(
+        continuation: &mut CodexContinuationState,
+        candidate: &CodexContinuationCandidate,
+        body: Value,
+        contract: ResponsesWireContract,
+    ) -> Self {
+        let delta = if contract.supports_incremental_websocket() {
+            continuation.continuation_delta(candidate)
+        } else {
+            continuation.reset();
+            None
+        };
+        match delta {
+            Some(delta) => Self {
+                frame: response_create_frame(delta, contract),
+                full_body: Some(body),
+            },
+            None => Self {
+                frame: response_create_frame(body, contract),
+                full_body: None,
+            },
+        }
+    }
+
+    fn into_full_body(self) -> Value {
+        self.full_body
+            .unwrap_or_else(|| response_body_from_frame(self.frame))
+    }
 }
 
 #[derive(Debug)]
@@ -93,16 +139,18 @@ enum CodexWsFailure {
 }
 
 impl CodexWsFailure {
-    fn into_turn(self) -> Result<CodexWsTurn, ModelError> {
+    fn into_turn(self, body: Value) -> Result<CodexWsTurn, ModelError> {
         match self {
             Self::BeforeRequest { .. } => Ok(CodexWsTurn::FullSseFallback {
                 request_submitted: false,
+                body,
             }),
             Self::Transport {
                 events_emitted: false,
                 ..
             } => Ok(CodexWsTurn::FullSseFallback {
                 request_submitted: true,
+                body,
             }),
             Self::Transport {
                 message,
@@ -134,22 +182,22 @@ impl CodexWsTransport {
         &self,
         body: Value,
         tokens: &CodexTokens,
-        mode: ResponsesRequestMode,
+        contract: ResponsesWireContract,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
         state.open_turn();
-        let body = if mode.supports_incremental_websocket() {
-            state.continuation.continuation_body(&candidate, body)
-        } else {
-            state.continuation.reset();
-            body
-        };
-        let frame = response_create_frame(body, mode);
+        let turn = CodexWsFrame::new(&mut state.continuation, &candidate, body, contract);
 
         match state
-            .send_frame(&self.ws_url, tokens, frame, self.idle_timeout, on_event)
+            .send_frame(
+                &self.ws_url,
+                tokens,
+                &turn.frame,
+                self.idle_timeout,
+                on_event,
+            )
             .await
         {
             Ok(output) => {
@@ -170,7 +218,7 @@ impl CodexWsTransport {
             }
             Err(failure) => {
                 state.discard();
-                failure.into_turn()
+                failure.into_turn(turn.into_full_body())
             }
         }
     }
@@ -179,21 +227,15 @@ impl CodexWsTransport {
         &self,
         body: Value,
         tokens: &CodexTokens,
-        mode: ResponsesRequestMode,
+        contract: ResponsesWireContract,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
         state.open_turn();
-        let body = if mode.supports_incremental_websocket() {
-            state.continuation.continuation_body(&candidate, body)
-        } else {
-            state.continuation.reset();
-            body
-        };
-        let frame = response_create_frame(body, mode);
+        let turn = CodexWsFrame::new(&mut state.continuation, &candidate, body, contract);
 
         match state
-            .send_frame_silent(&self.ws_url, tokens, frame, self.idle_timeout)
+            .send_frame_silent(&self.ws_url, tokens, &turn.frame, self.idle_timeout)
             .await
         {
             Ok(output) => {
@@ -214,7 +256,7 @@ impl CodexWsTransport {
             }
             Err(failure) => {
                 state.discard();
-                failure.into_turn()
+                failure.into_turn(turn.into_full_body())
             }
         }
     }
@@ -248,7 +290,7 @@ impl CodexWsState {
         &mut self,
         ws_url: &str,
         tokens: &CodexTokens,
-        frame: Value,
+        frame: &Value,
         idle_timeout: std::time::Duration,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
@@ -275,7 +317,7 @@ impl CodexWsState {
         &mut self,
         ws_url: &str,
         tokens: &CodexTokens,
-        frame: Value,
+        frame: &Value,
         idle_timeout: std::time::Duration,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
         if self.connection.is_none() {
@@ -634,14 +676,30 @@ fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {
     }
 }
 
-fn response_create_frame(mut body: Value, mode: ResponsesRequestMode) -> Value {
-    if mode.uses_responses_lite() {
+/// Keys `response_create_frame` layers onto a Responses body.
+///
+/// Listed once so framing and unframing cannot drift: removing exactly these
+/// keys turns a frame back into the body the caller passed in.
+const FRAME_ONLY_KEYS: [&str; 2] = ["type", "client_metadata"];
+
+fn response_create_frame(mut body: Value, contract: ResponsesWireContract) -> Value {
+    if contract.uses_lite_transport_header() {
         body["client_metadata"] = json!({
             "ws_request_header_x_openai_internal_codex_responses_lite": "true",
         });
     }
     body["type"] = json!("response.create");
     body
+}
+
+/// Recovers the Responses body from a frame this transport built.
+fn response_body_from_frame(mut frame: Value) -> Value {
+    if let Some(object) = frame.as_object_mut() {
+        for key in FRAME_ONLY_KEYS {
+            object.remove(key);
+        }
+    }
+    frame
 }
 
 fn codex_ws_url(api_base: &str) -> String {

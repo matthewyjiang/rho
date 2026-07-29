@@ -9,7 +9,7 @@ SDK-backed and retained baseline fixture where applicable.
 
 | Scenario | Measurement | 1.0 acceptance budget |
 | --- | --- | --- |
-| Runtime plus session startup | Builder through ready idle session with a scripted provider | Median no more than 2 ms and no more than 20% above the pre-SDK fixture |
+| Runtime plus session startup | Builder through ready idle session with a scripted provider | Median no more than 2 ms, and no more than 20% or 1 microsecond above the pre-SDK fixture, whichever is larger |
 | Simple completion overhead | Scripted one-turn provider excluding simulated provider delay | Median no more than 10% or 100 microseconds above the pre-SDK fixture, whichever is larger |
 | Event delivery | 10,000 bounded provider deltas consumed by one run | At least 250,000 events/second median; p99 enqueue-to-consume latency below 5 ms |
 | History snapshot | Clone and serialize 1,000 representative messages | Median below 10 ms and peak retained allocation below 3 times serialized size |
@@ -43,10 +43,12 @@ execution limits one and four. Preparation is currently unbounded by
 at both limits while tool results stay in model order. Timings are recorded for
 evidence only.
 
-Relative compaction samples interleave the retained baseline and SDK candidate,
-alternating which runs first in each pair. This keeps both distributions exposed
-to the same short-term runner conditions without changing either fixture or the
-15% acceptance budget.
+Relative startup and compaction samples interleave the retained baseline and SDK
+candidate, alternating which runs first in each pair. This keeps both
+distributions exposed to the same short-term runner conditions without changing
+either fixture. Startup also uses a 1 microsecond absolute floor on top of the
+20% relative budget so sub-microsecond timer noise on shared runners is not a
+false failure.
 
 ## Regression policy
 

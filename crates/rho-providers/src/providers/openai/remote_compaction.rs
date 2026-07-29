@@ -58,7 +58,7 @@ pub(super) async fn compact_with_http(
     // Only system messages are preserved from the source history; capture those
     // alone so the full conversation is not cloned across the HTTP round-trip.
     let retained_system_messages = retained_system_messages(request.messages);
-    let body = match build_compact_request_body(profile, reasoning_profile, request) {
+    let body = match build_responses_compact_body(profile, reasoning_profile, request).await {
         Ok(body) => body,
         Err(error) => return native_compact_failure(error, Vec::new()),
     };
@@ -103,15 +103,6 @@ pub(super) async fn compact_with_http(
         CompactUserRetention::KeepServerUsers,
         failed_attempts,
     )
-}
-
-/// Builds a unary `/responses/compact` request body from the live turn snapshot.
-pub(super) fn build_compact_request_body(
-    profile: &ResponsesProfile,
-    reasoning_profile: &OpenAiReasoningProfile,
-    request: ModelRequest<'_>,
-) -> Result<Value, ModelError> {
-    build_responses_compact_body(profile, reasoning_profile, request)
 }
 
 #[cfg(test)]

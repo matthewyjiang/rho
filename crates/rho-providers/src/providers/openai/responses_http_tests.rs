@@ -168,6 +168,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
     assert_eq!(requests[1].path, "/responses/compact");
     let compact_headers = requests[1].headers.to_ascii_lowercase();
     assert!(compact_headers.contains("user-agent: rho"));
+    assert!(!compact_headers.contains("openai-beta"));
 }
 
 #[tokio::test]
@@ -207,18 +208,15 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].path, "/responses");
-    let create_headers = requests[0].headers.to_ascii_lowercase();
-    assert!(create_headers.contains("authorization: bearer access"));
-    assert!(create_headers.contains("user-agent: codex-cli"));
-    assert!(create_headers.contains("originator: codex_cli_rs"));
-    assert!(create_headers.contains("chatgpt-account-id: acct_1"));
-    assert!(!create_headers.contains("openai-beta"));
-
-    assert_eq!(requests[1].path, "/responses/compact");
-    let compact_headers = requests[1].headers.to_ascii_lowercase();
-    assert!(compact_headers.contains("openai-beta: responses=experimental"));
-    assert!(compact_headers.contains("user-agent: codex-cli"));
+    for (request, expected_path) in requests.iter().zip(["/responses", "/responses/compact"]) {
+        assert_eq!(request.path, expected_path);
+        let headers = request.headers.to_ascii_lowercase();
+        assert!(headers.contains("authorization: bearer access"));
+        assert!(headers.contains("user-agent: codex-cli"));
+        assert!(headers.contains("originator: codex_cli_rs"));
+        assert!(headers.contains("chatgpt-account-id: acct_1"));
+        assert!(headers.contains("openai-beta: responses=experimental"));
+    }
 }
 
 #[tokio::test]
@@ -555,8 +553,8 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
     );
 }
 
-#[test]
-fn create_and_compact_body_builders_diverge_on_tools() {
+#[tokio::test]
+async fn create_and_compact_body_builders_diverge_on_tools() {
     let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
     let request = ModelRequest {
         messages: &[Message::user_text("hello")],
@@ -575,9 +573,11 @@ fn create_and_compact_body_builders_diverge_on_tools() {
         request.clone(),
         None,
     )
+    .await
     .unwrap();
     let compact =
         build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
+            .await
             .unwrap();
     assert_eq!(create["stream"], true);
     assert!(create.get("tools").is_some());
