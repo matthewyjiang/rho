@@ -613,7 +613,7 @@ fn protocol_terminal_failure(
 
     let kind = match error_type {
         "rate_limit_exceeded" => ProviderReportedErrorKind::RateLimit,
-        "server_error" | "service_unavailable" | "websocket_error" => {
+        "server_error" | "service_unavailable" | "websocket_error" | "server_is_overloaded" => {
             ProviderReportedErrorKind::Unavailable
         }
         "timeout" | "request_timeout" => ProviderReportedErrorKind::Timeout,
