@@ -189,10 +189,7 @@ fn multi_chunk_object_arguments_materialize_on_aborted_capture() {
 fn hosted_tool_activity_maps_to_named_run_event() {
     let mut capture = StreamCapture::default();
     let event = capture_provider_event(
-        ModelEvent::HostedToolActivity {
-            name: "x_search".into(),
-            detail: "for \"xAI\"".into(),
-        },
+        ModelEvent::hosted_tool_activity("x_search", "for \"xAI\""),
         &identity(),
         &ModelUsage::default(),
         &mut capture,

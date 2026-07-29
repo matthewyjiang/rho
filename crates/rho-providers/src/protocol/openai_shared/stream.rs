@@ -284,19 +284,17 @@ impl CodexSseState {
 fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
     match item.get("type").and_then(|value| value.as_str()) {
         Some("web_search_call") => Some(ModelEvent::WebSearch(extract_codex_search_detail(item)?)),
-        Some("x_search_call") => Some(ModelEvent::HostedToolActivity {
-            name: "x_search".into(),
-            detail: extract_codex_search_detail(item)?,
-        }),
+        Some("x_search_call") => Some(ModelEvent::hosted_tool_activity(
+            "x_search",
+            extract_codex_search_detail(item)?,
+        )),
         _ => None,
     }
 }
 
 /// Stable key for a search output item, used to dedupe stream vs completed paths.
 fn codex_search_activity_key(item: &serde_json::Value) -> Option<String> {
-    if extract_codex_search_activity(item).is_none() {
-        return None;
-    }
+    extract_codex_search_activity(item)?;
     if let Some(id) = item
         .get("id")
         .and_then(|value| value.as_str())

@@ -225,9 +225,6 @@ pub(super) fn capture_provider_event(
             RunEvent::ReasoningSummaryDelta { text }
         }
         ModelEvent::WebSearch(detail) => RunEvent::WebSearch { detail },
-        ModelEvent::HostedToolActivity { name, detail } => {
-            RunEvent::HostedToolActivity { name, detail }
-        }
         ModelEvent::ToolCallDelta {
             index,
             id,
@@ -267,6 +264,21 @@ pub(super) fn capture_provider_event(
             position,
             data,
         } => {
+            // Hosted-tool activity reuses ProviderContext as a 1.x-compatible
+            // carrier; do not seal text or retain replay state for it.
+            if kind == crate::model::HOSTED_TOOL_ACTIVITY_KIND {
+                let name = data
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown")
+                    .to_owned();
+                let detail = data
+                    .get("detail")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                return RunEvent::HostedToolActivity { name, detail };
+            }
             // Provider-native boundaries (for example Gemini thought signatures)
             // must not be collapsed into a single cancelled text block.
             capture.merge_output_text = false;

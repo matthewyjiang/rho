@@ -300,7 +300,6 @@ fn completed_tool_call_arguments_are_published_exactly_once() {
             | ModelEvent::ReasoningDelta(_)
             | ModelEvent::ReasoningSummaryDelta(_)
             | ModelEvent::WebSearch(_)
-            | ModelEvent::HostedToolActivity { .. }
             | ModelEvent::ProviderContext { .. }
             | ModelEvent::Usage(_) => None,
         })
@@ -336,7 +335,6 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
             | ModelEvent::ReasoningDelta(_)
             | ModelEvent::ReasoningSummaryDelta(_)
             | ModelEvent::WebSearch(_)
-            | ModelEvent::HostedToolActivity { .. }
             | ModelEvent::ProviderContext { .. }
             | ModelEvent::Usage(_) => None,
         })
@@ -367,8 +365,7 @@ fn chat_stream_usage_normalizes_prompt_cache_tokens() {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
-                | ModelEvent::HostedToolActivity { .. }
-                | ModelEvent::ToolCallDelta { .. } => {}
+                                | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
         },
@@ -399,8 +396,7 @@ fn codex_response_usage_normalizes_input_cache_tokens() {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
-                | ModelEvent::HostedToolActivity { .. }
-                | ModelEvent::ToolCallDelta { .. } => {}
+                                | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
         }),
@@ -430,8 +426,7 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
                 ModelEvent::ReasoningSummaryDelta(delta) => deltas.push(delta),
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::WebSearch(_) => {}
-                ModelEvent::HostedToolActivity { .. } => {}
-                ModelEvent::ToolCallDelta { .. } => {}
+                                ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
             }
             Ok(())
@@ -464,8 +459,7 @@ fn codex_sse_line_emits_web_search_detail() {
         &mut Some(&mut |event| {
             match event {
                 ModelEvent::WebSearch(detail) => searches.push(detail),
-                ModelEvent::HostedToolActivity { .. } => {}
-                ModelEvent::OutputDelta(_) => {}
+                                ModelEvent::OutputDelta(_) => {}
                 ModelEvent::ReasoningDelta(_) => {}
                 ModelEvent::ReasoningSummaryDelta(_) => {}
                 ModelEvent::ProviderContext { .. } => {}
@@ -489,8 +483,9 @@ fn codex_sse_line_emits_x_search_detail() {
         &mut state,
         &mut Some(&mut |event| {
             match event {
-                ModelEvent::HostedToolActivity { name, detail } => {
-                    searches.push((name, detail));
+                event if event.as_hosted_tool_activity().is_some() => {
+                    let (name, detail) = event.as_hosted_tool_activity().unwrap();
+                    searches.push((name.to_owned(), detail.to_owned()));
                 }
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::OutputDelta(_) => {}
@@ -521,8 +516,11 @@ fn codex_sse_search_activity_is_not_duplicated_on_completed() {
     let mut collect = |event: ModelEvent| {
         match event {
             ModelEvent::WebSearch(detail) => events.push(("web_search".into(), detail)),
-            ModelEvent::HostedToolActivity { name, detail } => events.push((name, detail)),
-            _ => {}
+            ref event => {
+                if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                    events.push((name.to_owned(), detail.to_owned()));
+                }
+            }
         }
         Ok(())
     };

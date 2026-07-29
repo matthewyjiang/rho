@@ -5,7 +5,7 @@
 //! enum representation so existing session history remains readable.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 const PORTABLE_FALLBACK_CONTEXT_KIND: &str = "rho.sdk.portable_fallback.v1";
 
@@ -354,15 +354,45 @@ pub enum ModelEvent {
         data: Value,
     },
     Usage(ModelUsage),
-    /// Provider-native hosted tool activity observed during a model turn.
+}
+
+/// Reserved [`ModelEvent::ProviderContext::kind`] for provider-native hosted
+/// tool activity (for example xAI `x_search`).
+///
+/// Construct events with [`ModelEvent::hosted_tool_activity`]. The runtime maps
+/// this kind to [`crate::RunEvent::HostedToolActivity`] and does not retain it
+/// as provider-context replay state. This extension point exists because
+/// [`ModelEvent`] is exhaustive in 1.x; a future major release may promote
+/// hosted activity to a dedicated variant.
+pub const HOSTED_TOOL_ACTIVITY_KIND: &str = "hosted_tool_activity";
+
+impl ModelEvent {
+    /// Builds provider-native hosted tool activity for the stream.
     ///
-    /// `name` is the hosted tool id (for example `x_search`). Appended after
-    /// existing variants so discriminant values stay stable under a minor
-    /// release. Prefer this over minting one-off variants per hosted tool.
-    HostedToolActivity {
-        name: String,
-        detail: String,
-    },
+    /// Carried as a reserved [`ModelEvent::ProviderContext`] kind so 1.x stays
+    /// minor-compatible, then lowered to [`crate::RunEvent::HostedToolActivity`].
+    pub fn hosted_tool_activity(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self::ProviderContext {
+            kind: HOSTED_TOOL_ACTIVITY_KIND.into(),
+            position: None,
+            data: json!({
+                "name": name.into(),
+                "detail": detail.into(),
+            }),
+        }
+    }
+
+    /// Returns hosted-tool activity when this event carries that reserved kind.
+    pub fn as_hosted_tool_activity(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::ProviderContext { kind, data, .. } if kind == HOSTED_TOOL_ACTIVITY_KIND => {
+                let name = data.get("name")?.as_str()?;
+                let detail = data.get("detail")?.as_str()?;
+                Some((name, detail))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Source used to calculate the current context consumption.
