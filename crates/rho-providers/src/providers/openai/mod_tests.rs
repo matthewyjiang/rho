@@ -515,6 +515,53 @@ fn codex_sse_line_emits_x_search_detail() {
 }
 
 #[test]
+fn codex_sse_search_activity_is_not_duplicated_on_completed() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        match event {
+            ModelEvent::WebSearch(detail) => events.push(("web_search".into(), detail)),
+            ModelEvent::HostedToolActivity { name, detail } => events.push((name, detail)),
+            _ => {}
+        }
+        Ok(())
+    };
+
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"latest Rust release"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","action":{"type":"search","query":"what people say about xAI"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"latest Rust release"}},{"type":"x_search_call","id":"xs_1","action":{"type":"search","query":"what people say about xAI"}},{"type":"message","content":[{"text":"done"}]}]}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(
+        events,
+        vec![
+            (
+                "web_search".to_string(),
+                "for \"latest Rust release\"".to_string()
+            ),
+            (
+                "x_search".to_string(),
+                "for \"what people say about xAI\"".to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
 fn accumulates_streamed_tool_call_deltas() {
     let mut text = String::new();
     let mut tool_calls = Vec::new();

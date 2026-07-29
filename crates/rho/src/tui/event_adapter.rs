@@ -272,10 +272,18 @@ impl SdkEventAdapter {
                 })]
             }
             RunEvent::WebSearch { detail } => {
-                vec![provider_native_search_finished("web_search", detail)]
+                vec![provider_native_activity_finished(
+                    "web_search",
+                    detail,
+                    ToolFamily::Web,
+                )]
             }
             RunEvent::HostedToolActivity { name, detail } => {
-                vec![provider_native_search_finished(&name, detail)]
+                vec![provider_native_activity_finished(
+                    &name,
+                    detail,
+                    hosted_tool_family(&name),
+                )]
             }
             RunEvent::ProviderRequestRetry => {
                 vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
@@ -353,14 +361,18 @@ fn compaction_started() -> ViewModelEvent {
     }
 }
 
-fn provider_native_search_finished(name: &str, detail: String) -> ViewEvent {
+fn hosted_tool_family(name: &str) -> ToolFamily {
+    match name {
+        // Hosted X Search is a network lookup; keep the web chrome.
+        "x_search" => ToolFamily::Web,
+        _ => ToolFamily::Default,
+    }
+}
+
+fn provider_native_activity_finished(name: &str, detail: String, family: ToolFamily) -> ViewEvent {
     ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: rho_sdk::ToolCallId::new(),
-        card: ToolCard::new(
-            ToolStatus::Ok,
-            ToolFamily::Web,
-            ToolHeader::call(name, Some(detail)),
-        ),
+        card: ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, Some(detail))),
         image_asset: None,
     })
 }

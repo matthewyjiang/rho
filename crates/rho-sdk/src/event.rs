@@ -221,13 +221,14 @@ pub enum RunEvent {
     },
     /// Legacy stringly-typed provider activity.
     ///
-    /// Prefer [`RunEvent::WebSearch`], [`RunEvent::HostedToolActivity`],
-    /// [`RunEvent::ProviderRequestRetry`], or [`RunEvent::ProviderStreamReset`].
-    /// Still dual-emitted alongside those typed events for 1.0 hosts; will be
-    /// removed in the next major release.
+    /// Prefer the typed events instead. Still dual-emitted alongside
+    /// [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], and
+    /// [`RunEvent::ProviderStreamReset`] for 1.0 hosts. New activity such as
+    /// [`RunEvent::HostedToolActivity`] is typed-only and does not dual-emit
+    /// here. Will be removed in the next major release.
     #[deprecated(
         since = "1.11.0",
-        note = "use WebSearch, HostedToolActivity, ProviderRequestRetry, or ProviderStreamReset"
+        note = "use WebSearch, ProviderRequestRetry, or ProviderStreamReset"
     )]
     ProviderActivity {
         kind: String,
