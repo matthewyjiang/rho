@@ -503,6 +503,33 @@ fn terminal_failure_uses_error_type_when_code_is_null() {
             "server_error",
             ProviderReportedErrorKind::Unavailable,
         ),
+        (
+            json!({
+                "type":"error",
+                "error":{
+                    "type":"server_is_overloaded",
+                    "code":null,
+                    "message":"Our servers are currently overloaded. Please try again later."
+                }
+            }),
+            "server_is_overloaded",
+            ProviderReportedErrorKind::Unavailable,
+        ),
+        // Classification prefers `code` over `type`. A permanent invalid-request
+        // family with a specific code must stay permanent, not fall through a
+        // retryable catch-all keyed only on the code string.
+        (
+            json!({
+                "type":"error",
+                "error":{
+                    "type":"invalid_request_error",
+                    "code":"context_length_exceeded",
+                    "message":"Context length exceeded."
+                }
+            }),
+            "context_length_exceeded",
+            ProviderReportedErrorKind::InvalidResponse,
+        ),
     ] {
         assert!(matches!(
             codex_ws_terminal_failure(&event, /*events_emitted*/ false),
