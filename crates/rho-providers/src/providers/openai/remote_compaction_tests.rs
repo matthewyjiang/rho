@@ -4,31 +4,20 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::super::auth::Auth;
-use super::super::codex_request::ResponsesProfile;
+use super::super::codex_request::{codex_test_auth, ResponsesProfile};
 
 fn api_key_profile(model: &str) -> ResponsesProfile {
     ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), model)
 }
 
 fn codex_profile(model: &str) -> ResponsesProfile {
-    ResponsesProfile::from_auth(
-        &Auth::Codex {
-            tokens: crate::credentials::CodexTokens {
-                access_token: "token".into(),
-                refresh_token: None,
-                id_token: None,
-                account_id: None,
-            },
-            source: super::super::auth::CodexAuthSource::Env,
-        },
-        model,
-    )
+    ResponsesProfile::from_auth(&codex_test_auth(), model)
 }
 
-#[test]
-fn compact_request_body_is_unary_without_trigger() {
+#[tokio::test]
+async fn compact_request_body_is_unary_without_trigger() {
     let profile = api_key_profile("gpt-5.4");
-    let body = build_compact_request_body(
+    let body = build_responses_compact_body(
         &profile,
         &OpenAiReasoningProfile::unknown(),
         ModelRequest {
@@ -42,6 +31,7 @@ fn compact_request_body_is_unary_without_trigger() {
             prompt_cache_key: Some("session-1"),
         },
     )
+    .await
     .unwrap();
 
     let input = body["input"].as_array().unwrap();
@@ -57,10 +47,10 @@ fn compact_request_body_is_unary_without_trigger() {
     assert!(body.get("parallel_tool_calls").is_none());
 }
 
-#[test]
-fn compact_request_body_keeps_codex_responses_lite_shape_without_tools() {
+#[tokio::test]
+async fn compact_request_body_keeps_codex_responses_lite_shape_without_tools() {
     let profile = codex_profile("gpt-5.6-sol");
-    let body = build_compact_request_body(
+    let body = build_responses_compact_body(
         &profile,
         &OpenAiReasoningProfile::unknown(),
         ModelRequest {
@@ -78,6 +68,7 @@ fn compact_request_body_keeps_codex_responses_lite_shape_without_tools() {
             prompt_cache_key: None,
         },
     )
+    .await
     .unwrap();
 
     assert!(body.get("stream").is_none());

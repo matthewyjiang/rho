@@ -7,7 +7,9 @@
 use rho_sdk::model::ToolSpec;
 use serde_json::{json, Value};
 
-use crate::protocol::openai_responses::{codex_input_items_for_target, to_responses_lite_tool};
+use crate::protocol::openai_responses::{
+    codex_input_items_for_target, to_responses_lite_tool, ToolStrictness,
+};
 
 use super::reasoning;
 use crate::model::{Message, ModelError, ModelIdentity, ModelRequest};
@@ -52,7 +54,7 @@ fn xai_responses_tools(tools: &[ToolSpec]) -> Vec<Value> {
         .iter()
         .filter(|tool| tool.name != "x_search")
         .cloned()
-        .map(to_responses_lite_tool)
+        .map(|tool| to_responses_lite_tool(tool, ToolStrictness::Explicit(false)))
         .collect::<Vec<_>>();
     out.push(json!({ "type": "x_search" }));
     out

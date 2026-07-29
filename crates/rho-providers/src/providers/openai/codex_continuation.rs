@@ -145,41 +145,46 @@ fn canonical_json_value(value: Value) -> Value {
 }
 
 impl CodexContinuationState {
-    /// Returns the full request unless the preceding completed response supplies
-    /// a canonical server-output baseline and the new request exactly extends
+    /// Returns a delta body when the preceding completed response supplies a
+    /// canonical server-output baseline and the new request exactly extends
     /// rho's locally represented version of that baseline.
-    pub(super) fn continuation_body(
+    ///
+    /// Returns `None` after clearing a snapshot that can no longer extend, so
+    /// the caller sends its full body instead. Handing back `None` rather than
+    /// the full body lets the caller keep sole ownership of that body for an
+    /// SSE retry, so no turn has to copy conversation history up front.
+    pub(super) fn continuation_delta(
         &mut self,
         candidate: &CodexContinuationCandidate,
-        full_body: Value,
-    ) -> Value {
-        let Some(snapshot) = &self.snapshot else {
-            return full_body;
-        };
+    ) -> Option<Value> {
+        let delta = self.matching_delta(candidate);
+        if delta.is_none() {
+            self.reset();
+        }
+        delta
+    }
+
+    fn matching_delta(&self, candidate: &CodexContinuationCandidate) -> Option<Value> {
+        let snapshot = self.snapshot.as_ref()?;
         if snapshot.request_properties != candidate.request_properties
             || snapshot.server_output_items.is_empty()
         {
-            self.reset();
-            return full_body;
+            return None;
         }
 
-        let Some(local_output_items) = snapshot.local_output_items.as_deref() else {
-            self.reset();
-            return full_body;
-        };
+        let local_output_items = snapshot.local_output_items.as_deref()?;
         let prefix_length = snapshot.request_input.len() + local_output_items.len();
         if candidate.input.len() <= prefix_length
             || !candidate.input.starts_with(&snapshot.request_input)
             || !candidate.input[snapshot.request_input.len()..].starts_with(local_output_items)
         {
-            self.reset();
-            return full_body;
+            return None;
         }
 
-        candidate.continuation_body(
+        Some(candidate.continuation_body(
             &snapshot.response_id,
             candidate.input[prefix_length..].to_vec(),
-        )
+        ))
     }
 
     pub(super) fn record_success(

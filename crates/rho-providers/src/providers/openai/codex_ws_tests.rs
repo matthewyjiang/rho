@@ -265,7 +265,7 @@ async fn responses_lite_websocket_request_sets_lite_client_metadata() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::ResponsesLite,
+            ResponsesWireContract::CodexLite,
             &mut on_event,
         )
         .await
@@ -288,7 +288,7 @@ async fn responses_lite_websocket_requests_do_not_use_incomplete_continuation_st
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::ResponsesLite,
+            ResponsesWireContract::CodexLite,
             &mut on_event,
         )
         .await
@@ -301,7 +301,7 @@ async fn responses_lite_websocket_requests_do_not_use_incomplete_continuation_st
                 json!({"role":"user","content":"three"}),
             ]),
             &tokens(),
-            ResponsesRequestMode::ResponsesLite,
+            ResponsesWireContract::CodexLite,
             &mut on_event,
         )
         .await
@@ -330,7 +330,7 @@ async fn first_websocket_request_sends_full_input_without_previous_response_id()
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -354,7 +354,7 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -367,7 +367,7 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
                 json!({"role":"user","content":"three"}),
             ]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -399,7 +399,7 @@ async fn abandoned_turn_does_not_leave_continuation_state_for_the_next_turn() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -414,7 +414,7 @@ async fn abandoned_turn_does_not_leave_continuation_state_for_the_next_turn() {
             json!({"role":"user","content":"two"}),
         ]),
         &abandoned_tokens,
-        ResponsesRequestMode::Standard,
+        ResponsesWireContract::CodexStandard,
         &mut on_event,
     );
     assert!(
@@ -427,7 +427,7 @@ async fn abandoned_turn_does_not_leave_continuation_state_for_the_next_turn() {
     let turn = immediate(transport.send_responses_turn(
         body(vec![json!({"role":"user","content":"three"})]),
         &tokens(),
-        ResponsesRequestMode::Standard,
+        ResponsesWireContract::CodexStandard,
         &mut on_event,
     ))
     .await
@@ -460,7 +460,7 @@ async fn websocket_connection_failure_reports_that_no_model_request_was_submitte
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -469,7 +469,8 @@ async fn websocket_connection_failure_reports_that_no_model_request_was_submitte
     assert!(matches!(
         outcome,
         CodexWsTurn::FullSseFallback {
-            request_submitted: false
+            request_submitted: false,
+            ..
         }
     ));
 }
@@ -583,7 +584,7 @@ async fn continuation_error_before_output_returns_immediate_full_sse_fallback() 
             json!({"role":"user","content":"two"}),
         ]),
         &tokens(),
-        ResponsesRequestMode::Standard,
+        ResponsesWireContract::CodexStandard,
         &mut on_event,
     ))
     .await
@@ -592,7 +593,8 @@ async fn continuation_error_before_output_returns_immediate_full_sse_fallback() 
     assert!(matches!(
         outcome,
         CodexWsTurn::FullSseFallback {
-            request_submitted: true
+            request_submitted: true,
+            ..
         }
     ));
     let frames = frames.lock().unwrap();
@@ -631,7 +633,7 @@ async fn response_failed_after_delta_returns_immediately_without_replay() {
         immediate(transport.send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         ))
         .await
@@ -663,7 +665,7 @@ async fn silent_response_incomplete_returns_immediate_model_error() {
     let error = immediate(transport.send_responses_turn_silent(
         body(vec![json!({"role":"user","content":"one"})]),
         &tokens(),
-        ResponsesRequestMode::Standard,
+        ResponsesWireContract::CodexStandard,
     ))
     .await
     .unwrap_err();
@@ -688,31 +690,34 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
         .unwrap();
 
+    let sent = body(vec![
+        json!({"role":"user","content":"one"}),
+        json!({"role":"user","content":"two"}),
+    ]);
     let outcome = transport
         .send_responses_turn(
-            body(vec![
-                json!({"role":"user","content":"one"}),
-                json!({"role":"user","content":"two"}),
-            ]),
+            sent.clone(),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
         .unwrap();
 
-    assert!(matches!(
+    // The failed turn framed a delta, so the retained full body comes back intact.
+    assert_eq!(
         outcome,
         CodexWsTurn::FullSseFallback {
-            request_submitted: true
+            request_submitted: true,
+            body: sent,
         }
-    ));
+    );
 
     transport
         .send_responses_turn(
@@ -721,7 +726,7 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
                 json!({"role":"user","content":"two"}),
             ]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -729,6 +734,35 @@ async fn websocket_error_resets_continuation_and_returns_full_sse_fallback() {
     let frames = frames.lock().unwrap();
     assert_eq!(frames.len(), 2);
     assert!(frames[1].get("previous_response_id").is_none());
+}
+
+// Covers: an SSE fallback must return the caller's exact body, including for a
+// turn whose frame carried that body rather than a delta.
+// Owner: Codex WebSocket transport.
+#[tokio::test]
+async fn full_sse_fallback_returns_the_unframed_request_body() {
+    for contract in [
+        ResponsesWireContract::CodexStandard,
+        ResponsesWireContract::CodexLite,
+    ] {
+        let transport = CodexWsTransport::new_with_url(ws_server_empty_completion(false).await);
+        let mut on_event = None;
+        let sent = body(vec![json!({"role":"user","content":"one"})]);
+
+        let outcome = transport
+            .send_responses_turn(sent.clone(), &tokens(), contract, &mut on_event)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            CodexWsTurn::FullSseFallback {
+                request_submitted: true,
+                body: sent,
+            },
+            "{contract:?} fallback body"
+        );
+    }
 }
 
 #[tokio::test]
@@ -740,7 +774,7 @@ async fn empty_websocket_completion_before_output_falls_back_to_sse() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -749,7 +783,8 @@ async fn empty_websocket_completion_before_output_falls_back_to_sse() {
     assert!(matches!(
         outcome,
         CodexWsTurn::FullSseFallback {
-            request_submitted: true
+            request_submitted: true,
+            ..
         }
     ));
 }
@@ -765,7 +800,7 @@ async fn empty_websocket_completion_after_output_uses_streamed_output() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -796,7 +831,7 @@ async fn websocket_emits_delta_before_response_completes() {
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
-            ResponsesRequestMode::Standard,
+            ResponsesWireContract::CodexStandard,
             &mut on_event,
         )
         .await
@@ -823,7 +858,7 @@ async fn websocket_failure_after_delta_does_not_replay_request() {
             .send_responses_turn(
                 body(vec![json!({"role":"user","content":"one"})]),
                 &tokens(),
-                ResponsesRequestMode::Standard,
+                ResponsesWireContract::CodexStandard,
                 &mut on_event,
             )
             .await

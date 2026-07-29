@@ -102,8 +102,8 @@ fn openai_reasoning_normalization_never_turns_requested_reasoning_off() {
     );
 }
 
-#[test]
-fn api_responses_body_uses_each_request_reasoning_level() {
+#[tokio::test]
+async fn api_responses_body_uses_each_request_reasoning_level() {
     let provider = OpenAiProvider::new_with_auth(
         "rho-request-reasoning-test".into(),
         Auth::ApiKey("test-key".into()),
@@ -118,6 +118,7 @@ fn api_responses_body_uses_each_request_reasoning_level() {
             reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
         })
+        .await
         .unwrap();
     let high = provider
         .openai_api_responses_body(ModelRequest {
@@ -127,6 +128,7 @@ fn api_responses_body_uses_each_request_reasoning_level() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: None,
         })
+        .await
         .unwrap();
 
     assert_eq!(
@@ -142,8 +144,8 @@ fn api_responses_body_uses_each_request_reasoning_level() {
     assert_eq!(low["include"], json!(["reasoning.encrypted_content"]));
 }
 
-#[test]
-fn codex_responses_body_includes_prompt_cache_key_when_present() {
+#[tokio::test]
+async fn codex_responses_body_includes_prompt_cache_key_when_present() {
     let body = build_codex_responses_body(
         "gpt-5-codex",
         ModelRequest {
@@ -154,6 +156,7 @@ fn codex_responses_body_includes_prompt_cache_key_when_present() {
             prompt_cache_key: Some("rho:session-1"),
         },
     )
+    .await
     .unwrap();
 
     assert_eq!(body["prompt_cache_key"], "rho:session-1");
@@ -162,8 +165,8 @@ fn codex_responses_body_includes_prompt_cache_key_when_present() {
     assert_eq!(body["stream"], true);
 }
 
-#[test]
-fn codex_responses_body_uses_hosted_web_search_tool() {
+#[tokio::test]
+async fn codex_responses_body_uses_hosted_web_search_tool() {
     let body = build_codex_responses_body(
         "gpt-5-codex",
         ModelRequest {
@@ -178,6 +181,7 @@ fn codex_responses_body_uses_hosted_web_search_tool() {
             prompt_cache_key: None,
         },
     )
+    .await
     .unwrap();
 
     assert_eq!(
