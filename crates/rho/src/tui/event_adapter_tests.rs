@@ -125,6 +125,46 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
 }
 
 #[test]
+fn provider_native_hosted_tool_activity_maps_to_tool_finished_view() {
+    let mut adapter = SdkEventAdapter::default();
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
+        only_event(adapter.translate(RunEvent::HostedToolActivity {
+            name: "x_search".into(),
+            detail: "for \"xAI\"".into(),
+        }))
+    else {
+        panic!("expected hosted tool activity finished");
+    };
+    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.family, ToolFamily::Web);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("x_search", Some("for \"xAI\"".into()))
+    );
+    assert!(card.facts.is_empty());
+}
+
+#[test]
+fn unknown_hosted_tool_activity_uses_default_family() {
+    let mut adapter = SdkEventAdapter::default();
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
+        only_event(adapter.translate(RunEvent::HostedToolActivity {
+            name: "code_interpreter".into(),
+            detail: "ran analysis".into(),
+        }))
+    else {
+        panic!("expected hosted tool activity finished");
+    };
+    assert_eq!(card.family, ToolFamily::Default);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("code_interpreter", Some("ran analysis".into()))
+    );
+}
+
+#[test]
 fn legacy_provider_activity_is_ignored_by_tui() {
     let mut adapter = SdkEventAdapter::default();
 

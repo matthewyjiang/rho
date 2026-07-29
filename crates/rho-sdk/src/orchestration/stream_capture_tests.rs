@@ -184,3 +184,38 @@ fn multi_chunk_object_arguments_materialize_on_aborted_capture() {
         }]
     );
 }
+
+#[test]
+fn hosted_tool_activity_maps_to_named_run_event() {
+    let mut capture = StreamCapture::default();
+    let event = capture_provider_event(
+        ModelEvent::hosted_tool_activity("x_search", "for \"xAI\""),
+        &identity(),
+        &ModelUsage::default(),
+        &mut capture,
+    );
+    assert_eq!(
+        event,
+        RunEvent::HostedToolActivity {
+            name: "x_search".into(),
+            detail: "for \"xAI\"".into(),
+        }
+    );
+}
+
+#[test]
+fn web_search_activity_keeps_stable_run_event_shape() {
+    let mut capture = StreamCapture::default();
+    let event = capture_provider_event(
+        ModelEvent::WebSearch("for \"rho\"".into()),
+        &identity(),
+        &ModelUsage::default(),
+        &mut capture,
+    );
+    assert_eq!(
+        event,
+        RunEvent::WebSearch {
+            detail: "for \"rho\"".into(),
+        }
+    );
+}

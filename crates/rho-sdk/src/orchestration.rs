@@ -770,6 +770,8 @@ async fn handle_provider_event(
     let run_event = capture_provider_event(event, identity, accumulated_usage, capture);
     #[allow(deprecated)]
     let legacy_activity = match &run_event {
+        // Only dual-emit kinds that 1.0 hosts already understood. New hosted
+        // tools use HostedToolActivity alone — do not invent legacy kinds.
         RunEvent::WebSearch { detail } => Some(RunEvent::ProviderActivity {
             kind: crate::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
             detail: detail.clone(),

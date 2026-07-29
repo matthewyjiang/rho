@@ -33,6 +33,8 @@ fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
 
     assert!(body.get("reasoning").is_none());
     assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    assert_eq!(body["tools"], json!([{ "type": "x_search" }]));
+    assert_eq!(body["tool_choice"], "auto");
 }
 
 #[test]
@@ -69,13 +71,90 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
     assert_eq!(body["model"], "grok-4.5");
     assert_eq!(body["instructions"], "follow instructions");
     assert_eq!(body["input"][0]["role"], "user");
-    assert_eq!(body["tools"][0]["name"], "read_file");
+    assert_eq!(
+        body["tools"],
+        json!([
+            {
+                "type": "function",
+                "name": "read_file",
+                "description": "read a file",
+                "parameters": {"type": "object"},
+                "strict": false,
+            },
+            { "type": "x_search" },
+        ])
+    );
     assert_eq!(body["tool_choice"], "auto");
     assert_eq!(body["prompt_cache_key"], "rho:session");
     assert_eq!(body["reasoning"], json!({"effort": "high"}));
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
     assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+}
+
+#[test]
+fn responses_body_keeps_web_search_as_client_function_and_adds_hosted_x_search() {
+    let tools = [
+        ToolSpec {
+            name: "web_search".into(),
+            description: "search the web".into(),
+            input_schema: json!({"type": "object"}),
+        },
+        ToolSpec {
+            name: "x_search".into(),
+            description: "ignored client form".into(),
+            input_schema: json!({"type": "object"}),
+        },
+    ];
+    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
+    let body = build_xai_responses_body(
+        "xai",
+        "grok-4.5",
+        &profile,
+        ModelRequest {
+            messages: &[Message::user_text("what are people saying?")],
+            tools: &tools,
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Off,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        body["tools"],
+        json!([
+            {
+                "type": "function",
+                "name": "web_search",
+                "description": "search the web",
+                "parameters": {"type": "object"},
+                "strict": false,
+            },
+            { "type": "x_search" },
+        ])
+    );
+}
+
+#[test]
+fn responses_body_always_includes_hosted_x_search() {
+    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
+    let body = build_xai_responses_body(
+        "xai",
+        "grok-4.5",
+        &profile,
+        ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Off,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(body["tools"], json!([{ "type": "x_search" }]));
+    assert_eq!(body["tool_choice"], "auto");
 }
 
 #[test]
