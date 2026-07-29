@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.12.1...rho-sdk-v1.12.2) (2026-07-29)
+
+
+### Bug Fixes
+
+* **tui:** open approval prompts at the start and default to deny ([#636](https://github.com/matthewyjiang/rho/issues/636)) ([59efc07](https://github.com/matthewyjiang/rho/commit/59efc07b26bf67597ebbe05551cd22f3affedc96))
+
 ## [1.12.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.12.0...rho-sdk-v1.12.1) (2026-07-28)
 
 
