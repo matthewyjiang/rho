@@ -168,6 +168,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
     assert_eq!(requests[1].path, "/responses/compact");
     let compact_headers = requests[1].headers.to_ascii_lowercase();
     assert!(compact_headers.contains("user-agent: rho"));
+    assert!(!compact_headers.contains("openai-beta"));
 }
 
 #[tokio::test]
@@ -207,18 +208,15 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].path, "/responses");
-    let create_headers = requests[0].headers.to_ascii_lowercase();
-    assert!(create_headers.contains("authorization: bearer access"));
-    assert!(create_headers.contains("user-agent: codex-cli"));
-    assert!(create_headers.contains("originator: codex_cli_rs"));
-    assert!(create_headers.contains("chatgpt-account-id: acct_1"));
-    assert!(!create_headers.contains("openai-beta"));
-
-    assert_eq!(requests[1].path, "/responses/compact");
-    let compact_headers = requests[1].headers.to_ascii_lowercase();
-    assert!(compact_headers.contains("openai-beta: responses=experimental"));
-    assert!(compact_headers.contains("user-agent: codex-cli"));
+    for (request, expected_path) in requests.iter().zip(["/responses", "/responses/compact"]) {
+        assert_eq!(request.path, expected_path);
+        let headers = request.headers.to_ascii_lowercase();
+        assert!(headers.contains("authorization: bearer access"));
+        assert!(headers.contains("user-agent: codex-cli"));
+        assert!(headers.contains("originator: codex_cli_rs"));
+        assert!(headers.contains("chatgpt-account-id: acct_1"));
+        assert!(headers.contains("openai-beta: responses=experimental"));
+    }
 }
 
 #[tokio::test]

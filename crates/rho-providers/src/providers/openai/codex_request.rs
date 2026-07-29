@@ -9,6 +9,7 @@ use crate::protocol::openai_responses::{
 
 use super::auth::Auth;
 use super::reasoning::OpenAiReasoningProfile;
+use super::responses_lite_image::prepare_responses_lite_messages;
 
 /// Wire shape for OpenAI Responses create/compact bodies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,11 +122,14 @@ fn lower_responses_request(
     let reasoning =
         reasoning_profile.config(profile.provider(), profile.model(), request.reasoning_level)?;
     let mut instructions = Vec::new();
-    let input = codex_input_items_for_target(
-        request.messages.to_vec(),
-        &mut instructions,
-        Some(profile.identity()),
-    )?;
+    let messages = match profile.mode() {
+        ResponsesRequestMode::Standard => request.messages.to_vec(),
+        ResponsesRequestMode::ResponsesLite => {
+            prepare_responses_lite_messages(request.messages.to_vec())
+        }
+    };
+    let input =
+        codex_input_items_for_target(messages, &mut instructions, Some(profile.identity()))?;
     let reasoning =
         codex_reasoning_param(reasoning.effort.as_deref(), reasoning.summary.as_deref());
     Ok(ResponsesLowered {
@@ -170,7 +174,7 @@ pub(super) fn build_responses_create_body(
     let tools = request
         .tools
         .iter()
-        .map(|tool| responses_tool(profile.mode(), tool.clone()))
+        .map(|tool| responses_tool(profile, tool.clone()))
         .collect::<Vec<_>>();
     let ResponsesLowered {
         instructions,
@@ -194,6 +198,9 @@ pub(super) fn build_responses_create_body(
             if !tools.is_empty() {
                 body["tools"] = json!(tools);
                 body["tool_choice"] = json!("auto");
+            }
+            if profile.flavor() == ResponsesFlavor::Codex {
+                body["parallel_tool_calls"] = json!(true);
             }
         }
         ResponsesRequestMode::ResponsesLite => {
@@ -230,7 +237,10 @@ pub(super) fn build_responses_create_body(
     }
 
     attach_prompt_cache_and_reasoning(&mut body, profile, prompt_cache_key, reasoning);
-    if profile.flavor() == ResponsesFlavor::ApiKey {
+    if matches!(
+        (profile.flavor(), profile.mode()),
+        (ResponsesFlavor::ApiKey, _) | (ResponsesFlavor::Codex, ResponsesRequestMode::Standard)
+    ) {
         body["include"] = json!(["reasoning.encrypted_content"]);
     }
     Ok(body)
@@ -280,11 +290,17 @@ pub(super) fn build_responses_compact_body(
     Ok(body)
 }
 
-fn responses_tool(mode: ResponsesRequestMode, tool: ToolSpec) -> Value {
-    match mode {
+fn responses_tool(profile: &ResponsesProfile, tool: ToolSpec) -> Value {
+    let mut tool = match profile.mode() {
         ResponsesRequestMode::Standard => to_responses_tool(tool),
         ResponsesRequestMode::ResponsesLite => to_responses_lite_tool(tool),
+    };
+    if profile.flavor() == ResponsesFlavor::Codex
+        && tool.get("type").and_then(Value::as_str) == Some("function")
+    {
+        tool["strict"] = Value::Null;
     }
+    tool
 }
 
 #[cfg(test)]
@@ -320,6 +336,10 @@ fn build_codex_responses_body_with_tier(
         service_tier,
     )
 }
+
+#[cfg(test)]
+#[path = "codex_request_image_tests.rs"]
+mod image_tests;
 
 #[cfg(test)]
 mod tests {
@@ -439,7 +459,7 @@ mod tests {
                     "name": "web_search",
                     "description": "search the web",
                     "parameters": {"type": "object"},
-                    "strict": false,
+                    "strict": null,
                 }],
             })
         );
@@ -479,6 +499,84 @@ mod tests {
             json!([{"type": "web_search", "external_web_access": true}])
         );
         assert_eq!(body["tool_choice"], "auto");
+    }
+
+    // Covers: Codex and API-key requests must keep their distinct Responses wire contracts.
+    // Owner: OpenAI Responses request lowering
+    #[test]
+    fn standard_create_wire_contract_is_auth_flavor_specific() {
+        struct Case {
+            name: &'static str,
+            auth: Auth,
+            expected_strict: Value,
+            expected_parallel_tool_calls: Option<Value>,
+        }
+
+        let cases = [
+            Case {
+                name: "api key",
+                auth: Auth::ApiKey("key".into()),
+                expected_strict: json!(false),
+                expected_parallel_tool_calls: None,
+            },
+            Case {
+                name: "Codex",
+                auth: Auth::Codex {
+                    tokens: crate::credentials::CodexTokens {
+                        access_token: "test".into(),
+                        refresh_token: None,
+                        id_token: None,
+                        account_id: None,
+                    },
+                    source: CodexAuthSource::Env,
+                },
+                expected_strict: Value::Null,
+                expected_parallel_tool_calls: Some(json!(true)),
+            },
+        ];
+        let messages = [Message::user_text("hello")];
+        let tools = [ToolSpec {
+            name: "bash".into(),
+            description: "run a command".into(),
+            input_schema: json!({"type": "object"}),
+        }];
+        let expected_include = json!(["reasoning.encrypted_content"]);
+
+        for case in cases {
+            let profile = ResponsesProfile::from_auth(&case.auth, "gpt-5.4");
+            let body = build_responses_create_body(
+                &profile,
+                &OpenAiReasoningProfile::unknown(),
+                ModelRequest {
+                    messages: &messages,
+                    tools: &tools,
+                    cancellation: Default::default(),
+                    reasoning_level: Default::default(),
+                    prompt_cache_key: None,
+                },
+                None,
+            )
+            .unwrap();
+
+            assert_eq!(
+                body["tools"][0].get("strict").cloned(),
+                Some(case.expected_strict),
+                "{} function tool strictness",
+                case.name
+            );
+            assert_eq!(
+                body.get("include"),
+                Some(&expected_include),
+                "{} reasoning include",
+                case.name
+            );
+            assert_eq!(
+                body.get("parallel_tool_calls").cloned(),
+                case.expected_parallel_tool_calls,
+                "{} parallel tool policy",
+                case.name
+            );
+        }
     }
 
     #[test]

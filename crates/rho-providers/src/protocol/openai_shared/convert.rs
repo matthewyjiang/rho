@@ -197,6 +197,7 @@ fn append_codex_assistant(
     input: &mut Vec<serde_json::Value>,
     blocks: Vec<ContentBlock>,
 ) -> Result<(), ModelError> {
+    reject_assistant_images(&blocks, "OpenAI Responses")?;
     let text = blocks
         .iter()
         .filter_map(|block| match block {
@@ -222,6 +223,7 @@ fn append_codex_assistant(
 }
 
 fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
+    reject_assistant_images(&blocks, "OpenAI Chat Completions")?;
     let content = blocks
         .iter()
         .filter_map(|block| match block {
@@ -348,6 +350,21 @@ fn codex_content_blocks(blocks: &[ContentBlock]) -> serde_json::Value {
     json!(content)
 }
 
+fn reject_assistant_images(
+    blocks: &[ContentBlock],
+    protocol: &'static str,
+) -> Result<(), ModelError> {
+    if blocks
+        .iter()
+        .any(|block| matches!(block, ContentBlock::Image(_)))
+    {
+        return Err(ModelError::InvalidResponse(format!(
+            "{protocol} cannot encode image content in assistant history"
+        )));
+    }
+    Ok(())
+}
+
 fn render_tool_call(call: &ToolCall) -> String {
     let arguments = serde_json::to_string_pretty(&call.arguments)
         .unwrap_or_else(|_| call.arguments.to_string());
@@ -464,6 +481,10 @@ fn append_response_citations(text: &mut String, citations: Vec<(Option<String>, 
         text.push_str(&format!("\n- {title}: {url}"));
     }
 }
+
+#[cfg(test)]
+#[path = "convert_image_tests.rs"]
+mod image_tests;
 
 #[cfg(test)]
 mod handoff_tests {

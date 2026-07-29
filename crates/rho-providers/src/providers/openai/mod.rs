@@ -10,6 +10,7 @@ mod codex_ws;
 mod reasoning;
 mod remote_compaction;
 mod responses_http;
+mod responses_lite_image;
 
 pub use cache::prompt_cache_key_from_session_id;
 
