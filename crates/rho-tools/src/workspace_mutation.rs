@@ -1,5 +1,12 @@
 use std::{future::Future, path::Path, pin::Pin};
 
+/// A workspace effect that a native mutation observer cannot restore.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UntrackedWorkspaceEffect {
+    ShellCommand,
+    MutatingTool,
+}
+
 /// Host-owned boundary for tracking native workspace mutations.
 ///
 /// Implementors must capture each path's state before `before_mutation`
@@ -17,7 +24,7 @@ pub trait WorkspaceMutationObserver: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
 
     /// Records a tool effect whose workspace changes cannot be tracked.
-    fn mark_untracked_effect(&self, tool_name: &str);
+    fn mark_untracked_effect(&self, kind: UntrackedWorkspaceEffect, source: &str);
 }
 
 impl WorkspaceMutationObserver for () {
@@ -35,5 +42,5 @@ impl WorkspaceMutationObserver for () {
         Box::pin(async { Ok(()) })
     }
 
-    fn mark_untracked_effect(&self, _tool_name: &str) {}
+    fn mark_untracked_effect(&self, _kind: UntrackedWorkspaceEffect, _source: &str) {}
 }

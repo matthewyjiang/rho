@@ -13,7 +13,10 @@ impl InteractiveRuntime {
             .sessions
             .storage()
             .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
-        storage.workspace_checkpoint_store()?.list()
+        let Some(store) = storage.workspace_checkpoint_store()? else {
+            return Ok(Vec::new());
+        };
+        store.list()
     }
 
     pub(crate) fn preview_workspace_rewind(
@@ -27,7 +30,9 @@ impl InteractiveRuntime {
             .sessions
             .storage()
             .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
-        let store = storage.workspace_checkpoint_store()?;
+        let store = storage
+            .workspace_checkpoint_store()?
+            .ok_or_else(|| anyhow::anyhow!("workspace rewind is unavailable for this session"))?;
         let checkpoint = store
             .get(target_id)?
             .ok_or_else(|| anyhow::anyhow!("workspace checkpoint '{target_id}' was not found"))?;
@@ -40,6 +45,9 @@ impl InteractiveRuntime {
         &mut self,
         target_id: &crate::session::tree::NodeId,
     ) -> anyhow::Result<crate::session::workspace_checkpoint::RestoreAudit> {
+        if self.runs.is_active() {
+            anyhow::bail!("workspace rewind is unavailable while a provider run is active");
+        }
         if self.permission_mode == PermissionMode::Plan {
             anyhow::bail!("workspace rewind is unavailable in plan permission mode");
         }
@@ -47,16 +55,21 @@ impl InteractiveRuntime {
             .sessions
             .storage()
             .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
-        let store = storage.workspace_checkpoint_store()?;
+        let store = storage
+            .workspace_checkpoint_store()?
+            .ok_or_else(|| anyhow::anyhow!("workspace rewind is unavailable for this session"))?;
         let checkpoint = store
             .get(target_id)?
             .ok_or_else(|| anyhow::anyhow!("workspace checkpoint '{target_id}' was not found"))?;
         let current = self.observe_checkpoint_paths(&store, &checkpoint);
         let plan = crate::session::workspace_checkpoint::plan_restore(&checkpoint, &current)?;
         self.authorize_restore_actions(&plan)?;
-        Ok(store.restore(&checkpoint, &current, |path| {
-            self.observe_checkpoint_path(&store, path)
-        }))
+        Ok(store.restore(
+            &checkpoint,
+            &current,
+            |path| self.observe_checkpoint_path(&store, path),
+            |file, classification| self.apply_checkpoint_restore(&store, file, classification),
+        ))
     }
 
     fn observe_checkpoint_paths(
@@ -91,6 +104,22 @@ impl InteractiveRuntime {
                 reason: UnsupportedPath::Unreadable,
             },
         }
+    }
+
+    fn apply_checkpoint_restore(
+        &self,
+        store: &crate::session::workspace_checkpoint::WorkspaceCheckpointStore,
+        file: &crate::session::workspace_checkpoint::FileCheckpoint,
+        classification: RestoreClassification,
+    ) -> anyhow::Result<()> {
+        let resolved = self.workspace.resolve_for_write(&file.path)?;
+        anyhow::ensure!(
+            resolved.path() == file.path,
+            "checkpoint path '{}' resolves to a different workspace path",
+            file.path.display()
+        );
+        self.workspace.revalidate(&resolved)?;
+        store.apply_restore(file, classification)
     }
 
     fn authorize_restore_actions(

@@ -279,7 +279,10 @@ impl Tool for SdkShellTool {
             )?;
             plan.authorize(self.kind, &context).await?;
             if let Some(observer) = self.mutation_observer.as_ref() {
-                observer.mark_untracked_effect(self.kind.name());
+                observer.mark_untracked_effect(
+                    crate::UntrackedWorkspaceEffect::ShellCommand,
+                    self.kind.name(),
+                );
             }
             plan.execute(self.kind, invocation_id, &context).await
         })

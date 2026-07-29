@@ -58,6 +58,10 @@ impl SdkProcess {
                     .await
             }
             args => {
+                self.mutation_observer.mark_untracked_effect(
+                    rho_tools::UntrackedWorkspaceEffect::MutatingTool,
+                    "process",
+                );
                 execute_prepared(
                     &self.process,
                     args,
@@ -115,7 +119,8 @@ impl SdkProcess {
         if context.cancellation().is_cancelled() {
             return Err(ToolError::cancelled());
         }
-        self.mutation_observer.mark_untracked_effect("process");
+        self.mutation_observer
+            .mark_untracked_effect(rho_tools::UntrackedWorkspaceEffect::MutatingTool, "process");
         let snapshot = self
             .process
             .start_execution(execution)

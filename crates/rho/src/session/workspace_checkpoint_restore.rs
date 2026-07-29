@@ -6,61 +6,74 @@ impl WorkspaceCheckpointStore {
         checkpoint: &WorkspaceCheckpoint,
         current: &BTreeMap<PathBuf, ObservedFileState>,
         mut observe_fresh: impl FnMut(&Path) -> ObservedFileState,
+        mut apply: impl FnMut(&FileCheckpoint, RestoreClassification) -> anyhow::Result<()>,
     ) -> RestoreAudit {
-        let entries = checkpoint
-            .files
-            .iter()
-            .map(|file| {
-                let current =
-                    current
-                        .get(&file.path)
-                        .cloned()
-                        .unwrap_or(ObservedFileState::Unsupported {
+        let entries =
+            checkpoint
+                .files
+                .iter()
+                .map(|file| {
+                    let current = current.get(&file.path).cloned().unwrap_or(
+                        ObservedFileState::Unsupported {
                             reason: UnsupportedPath::Unreadable,
-                        });
-                let classification = classify_restore(file, &current);
-                let classification = if matches!(
-                    classification,
-                    RestoreClassification::Create
+                        },
+                    );
+                    let classification = classify_restore(file, &current);
+                    let classification = if matches!(
+                        classification,
+                        RestoreClassification::Create
+                            | RestoreClassification::Modify
+                            | RestoreClassification::Delete
+                    ) && observe_fresh(&file.path) != current
+                    {
+                        RestoreClassification::Conflict
+                    } else {
+                        classification
+                    };
+                    let result = match classification {
+                        RestoreClassification::Create
                         | RestoreClassification::Modify
-                        | RestoreClassification::Delete
-                ) && observe_fresh(&file.path) != current
-                {
-                    RestoreClassification::Conflict
-                } else {
-                    classification
-                };
-                let result = match classification {
-                    RestoreClassification::Create | RestoreClassification::Modify => {
-                        match &file.original {
-                            OriginalFileState::Regular(original) => {
-                                atomic_restore_file(&file.path, original)
-                            }
-                            _ => Err(anyhow::anyhow!("checkpoint has no captured file content")),
-                        }
+                        | RestoreClassification::Delete => apply(file, classification),
+                        RestoreClassification::Conflict
+                        | RestoreClassification::Unsupported
+                        | RestoreClassification::Skipped => Ok(()),
+                    };
+                    RestoreAuditEntry {
+                        path: file.path.clone(),
+                        classification,
+                        changed: result.is_ok()
+                            && matches!(
+                                classification,
+                                RestoreClassification::Create
+                                    | RestoreClassification::Modify
+                                    | RestoreClassification::Delete
+                            ),
+                        error: result.err().map(|error| error.to_string()),
                     }
-                    RestoreClassification::Delete => remove_captured_file(&file.path),
-                    RestoreClassification::Conflict
-                    | RestoreClassification::Unsupported
-                    | RestoreClassification::Skipped => Ok(()),
-                };
-                RestoreAuditEntry {
-                    path: file.path.clone(),
-                    classification,
-                    changed: result.is_ok()
-                        && matches!(
-                            classification,
-                            RestoreClassification::Create
-                                | RestoreClassification::Modify
-                                | RestoreClassification::Delete
-                        ),
-                    error: result.err().map(|error| error.to_string()),
-                }
-            })
-            .collect();
+                })
+                .collect();
         RestoreAudit {
             entries,
             limitations: checkpoint.limitations.clone(),
+        }
+    }
+
+    pub(crate) fn apply_restore(
+        &self,
+        file: &FileCheckpoint,
+        classification: RestoreClassification,
+    ) -> anyhow::Result<()> {
+        match classification {
+            RestoreClassification::Create | RestoreClassification::Modify => match &file.original {
+                OriginalFileState::Regular(original) => atomic_restore_file(&file.path, original),
+                _ => Err(anyhow::anyhow!("checkpoint has no captured file content")),
+            },
+            RestoreClassification::Delete => remove_captured_file(&file.path),
+            RestoreClassification::Conflict
+            | RestoreClassification::Unsupported
+            | RestoreClassification::Skipped => {
+                anyhow::bail!("restore classification is not a workspace mutation")
+            }
         }
     }
 }
@@ -108,6 +121,7 @@ fn atomic_restore_file(path: &Path, original: &CapturedRegularFile) -> anyhow::R
     let parent = path
         .parent()
         .context("checkpoint restore path has no parent directory")?;
+    fs::create_dir_all(parent)?;
     let file_name = path
         .file_name()
         .context("checkpoint restore path has no file name")?
@@ -129,8 +143,8 @@ fn atomic_restore_file(path: &Path, original: &CapturedRegularFile) -> anyhow::R
     let result = (|| -> anyhow::Result<()> {
         let mut file = options.open(&temp)?;
         file.write_all(&original.bytes)?;
-        file.sync_data()?;
         apply_basic_metadata(&file, &original.metadata)?;
+        file.sync_all()?;
         drop(file);
         replace_file(&temp, path)?;
         Ok(())

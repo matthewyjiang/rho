@@ -171,6 +171,7 @@ impl AppToolSet {
                     config_path: delegation.config_path,
                     background: delegation.background,
                 },
+                tool_set.checkpoint_tracker.clone(),
             );
             tool_set.subagents = Some(bundle.manager_handle());
             tool_set.add_bundle(bundle);

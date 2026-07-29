@@ -177,6 +177,7 @@ pub(crate) struct OpenWorkspaceCheckpoint {
     started_at: u64,
     max_file_bytes: u64,
     originals: BTreeMap<PathBuf, OriginalFileState>,
+    expected_after: BTreeMap<PathBuf, ObservedFileState>,
     limitations: Vec<UntrackedEffect>,
 }
 
@@ -192,7 +193,9 @@ impl OpenWorkspaceCheckpoint {
     }
 
     pub(crate) fn record_untracked_effect(&mut self, effect: UntrackedEffect) {
-        self.limitations.push(effect);
+        if !self.limitations.contains(&effect) {
+            self.limitations.push(effect);
+        }
     }
 }
 
@@ -206,21 +209,19 @@ pub(crate) struct WorkspaceCheckpointStore {
 }
 
 impl WorkspaceCheckpointStore {
-    fn for_session(session: &Session, limits: CheckpointLimits) -> anyhow::Result<Self> {
+    fn for_session(session: &Session, limits: CheckpointLimits) -> anyhow::Result<Option<Self>> {
         let unit = SessionUnit::from_path(&session.path)
             .context("session path does not identify a durable session unit")?;
         let SessionUnit::Folder { dir } = unit else {
-            anyhow::bail!(
-                "workspace checkpoints require the folder session layout; legacy flat sessions are read-only"
-            );
+            return Ok(None);
         };
         let checkpoint_dir = dir.join(CHECKPOINT_DIR_NAME);
-        Ok(Self {
+        Ok(Some(Self {
             session_id: SessionId::from_string(session.id.clone())?,
             journal_path: checkpoint_dir.join(CHECKPOINT_JOURNAL_NAME),
             checkpoint_dir,
             limits,
-        })
+        }))
     }
 
     pub(crate) fn open(&self, node_id: NodeId) -> OpenWorkspaceCheckpoint {
@@ -230,6 +231,7 @@ impl WorkspaceCheckpointStore {
             started_at: super::persistence::unix_timestamp_secs(),
             max_file_bytes: self.limits.max_file_bytes,
             originals: BTreeMap::new(),
+            expected_after: BTreeMap::new(),
             limitations: Vec::new(),
         }
     }
@@ -259,11 +261,14 @@ impl WorkspaceCheckpointStore {
             "checkpoint belongs to a different session"
         );
 
+        let mut expected_after = open.expected_after;
         let files = open
             .originals
             .into_iter()
             .map(|(path, original)| FileCheckpoint {
-                expected_after: observe_path(&path, self.limits.max_file_bytes),
+                expected_after: expected_after
+                    .remove(&path)
+                    .unwrap_or_else(|| observe_path(&path, self.limits.max_file_bytes)),
                 path,
                 original,
             })
@@ -348,7 +353,7 @@ impl WorkspaceCheckpointStore {
         file.set_len(journal.valid_len)?;
         file.seek(SeekFrom::Start(journal.valid_len))?;
         file.write_all(&encoded)?;
-        file.sync_data()?;
+        file.sync_all()?;
         Ok(())
     }
 }
@@ -381,7 +386,9 @@ impl WorkspaceCheckpointTracker {
         let Some(session) = session else {
             return Ok(());
         };
-        let store = session.workspace_checkpoint_store()?;
+        let Some(store) = session.workspace_checkpoint_store()? else {
+            return Ok(());
+        };
         let open = store.open(NodeId::new());
         let mut active = self
             .active
@@ -446,12 +453,28 @@ impl rho_tools::WorkspaceMutationObserver for WorkspaceCheckpointTracker {
 
     fn after_mutation<'a>(
         &'a self,
-        _paths: &'a [&'a Path],
+        paths: &'a [&'a Path],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
+        let result = {
+            let mut active = self
+                .active
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(active) = active.as_mut() {
+                for path in paths {
+                    let state = active.store.observe_path(path);
+                    active
+                        .open
+                        .expected_after
+                        .insert((*path).to_path_buf(), state);
+                }
+            }
+            Ok(())
+        };
+        Box::pin(std::future::ready(result))
     }
 
-    fn mark_untracked_effect(&self, tool_name: &str) {
+    fn mark_untracked_effect(&self, kind: rho_tools::UntrackedWorkspaceEffect, source: &str) {
         let mut active = self
             .active
             .lock()
@@ -460,16 +483,17 @@ impl rho_tools::WorkspaceMutationObserver for WorkspaceCheckpointTracker {
             return;
         };
         let effect = UntrackedEffect {
-            kind: if matches!(tool_name, "bash" | "powershell") {
-                UntrackedEffectKind::ShellCommand
-            } else {
-                UntrackedEffectKind::UntrackedMutatingTool
+            kind: match kind {
+                rho_tools::UntrackedWorkspaceEffect::ShellCommand => {
+                    UntrackedEffectKind::ShellCommand
+                }
+                rho_tools::UntrackedWorkspaceEffect::MutatingTool => {
+                    UntrackedEffectKind::UntrackedMutatingTool
+                }
             },
-            source: tool_name.to_string(),
+            source: source.to_string(),
         };
-        if !active.open.limitations.contains(&effect) {
-            active.open.record_untracked_effect(effect);
-        }
+        active.open.record_untracked_effect(effect);
     }
 }
 
@@ -482,14 +506,16 @@ impl Session {
         }))
     }
 
-    pub(crate) fn workspace_checkpoint_store(&self) -> anyhow::Result<WorkspaceCheckpointStore> {
+    pub(crate) fn workspace_checkpoint_store(
+        &self,
+    ) -> anyhow::Result<Option<WorkspaceCheckpointStore>> {
         self.workspace_checkpoint_store_with_limits(CheckpointLimits::default())
     }
 
     pub(crate) fn workspace_checkpoint_store_with_limits(
         &self,
         limits: CheckpointLimits,
-    ) -> anyhow::Result<WorkspaceCheckpointStore> {
+    ) -> anyhow::Result<Option<WorkspaceCheckpointStore>> {
         WorkspaceCheckpointStore::for_session(self, limits)
     }
 }
@@ -534,6 +560,12 @@ fn open_journal(path: &Path) -> anyhow::Result<File> {
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     let file = options
         .open(path)
         .with_context(|| format!("failed to open checkpoint journal {}", path.display()))?;
@@ -563,6 +595,12 @@ fn read_journal(path: &Path) -> anyhow::Result<ReadJournal> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     let mut file = options.open(path)?;
     read_locked_journal(&mut file)
 }
@@ -588,19 +626,27 @@ fn read_locked_journal(file: &mut File) -> anyhow::Result<ReadJournal> {
     let mut checkpoints = Vec::new();
     let mut identities = HashSet::new();
     let mut valid_len = 0u64;
-    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+    let mut lines = bytes.split_inclusive(|byte| *byte == b'\n').peekable();
+    while let Some(line) = lines.next() {
         if !line.ends_with(b"\n") {
             break;
         }
-        let Ok(record) = serde_json::from_slice::<StoredCheckpointRecord>(&line[..line.len() - 1])
-        else {
-            break;
-        };
-        if record.version != CHECKPOINT_FORMAT_VERSION
-            || !identities.insert(record.checkpoint.node_id.clone())
+        let record = match serde_json::from_slice::<StoredCheckpointRecord>(&line[..line.len() - 1])
         {
-            break;
-        }
+            Ok(record) => record,
+            Err(_) if lines.peek().is_none() => break,
+            Err(error) => return Err(error).context("invalid checkpoint journal record"),
+        };
+        anyhow::ensure!(
+            record.version == CHECKPOINT_FORMAT_VERSION,
+            "unsupported workspace checkpoint version {}",
+            record.version
+        );
+        anyhow::ensure!(
+            identities.insert(record.checkpoint.node_id.clone()),
+            "duplicate workspace checkpoint node '{}'",
+            record.checkpoint.node_id
+        );
         valid_len += u64::try_from(line.len())?;
         checkpoints.push(record.checkpoint);
     }
@@ -694,6 +740,12 @@ fn open_regular_no_follow(path: &Path) -> std::io::Result<File> {
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
     options.open(path)
 }
