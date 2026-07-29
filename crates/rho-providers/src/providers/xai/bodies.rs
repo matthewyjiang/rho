@@ -4,8 +4,10 @@
 //! channel, tools, stream, and reasoning include; compact only accepts `model`
 //! and a full `input` window (system messages included).
 
-use crate::protocol::openai_responses::{codex_input_items_for_target, to_responses_lite_tool};
+use rho_sdk::model::ToolSpec;
 use serde_json::{json, Value};
+
+use crate::protocol::openai_responses::{codex_input_items_for_target, to_responses_lite_tool};
 
 use super::reasoning;
 use crate::model::{Message, ModelError, ModelIdentity, ModelRequest};
@@ -36,6 +38,23 @@ fn lower_xai_create_request(
     })
 }
 
+/// Maps client tool specs onto the xAI Responses tools array.
+///
+/// `x_search` is an xAI-hosted server-side tool for searching X (x.com). It is
+/// independent of the client `web_search` tool. Every xAI create turn offers
+/// hosted X Search so it appears when the active provider is xAI and disappears
+/// as soon as the session switches away.
+fn xai_responses_tools(tools: &[ToolSpec]) -> Vec<Value> {
+    let mut out = tools
+        .iter()
+        .cloned()
+        .filter(|tool| tool.name != "x_search")
+        .map(to_responses_lite_tool)
+        .collect::<Vec<_>>();
+    out.push(json!({ "type": "x_search" }));
+    out
+}
+
 /// Builds a streaming Responses create body for an xAI model turn.
 ///
 /// Always requests encrypted reasoning content so later server-side compaction
@@ -46,12 +65,7 @@ pub(super) fn build_xai_responses_body(
     reasoning: &reasoning::XaiReasoningProfile,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
-    let tools = request
-        .tools
-        .iter()
-        .cloned()
-        .map(to_responses_lite_tool)
-        .collect::<Vec<_>>();
+    let tools = xai_responses_tools(request.tools);
     let XaiCreateLowered {
         instructions,
         input,
@@ -65,10 +79,9 @@ pub(super) fn build_xai_responses_body(
         "stream": true,
         "include": ["reasoning.encrypted_content"],
     });
-    if !tools.is_empty() {
-        body["tools"] = json!(tools);
-        body["tool_choice"] = json!("auto");
-    }
+    // Hosted x_search is always present on xAI create turns.
+    body["tools"] = json!(tools);
+    body["tool_choice"] = json!("auto");
     if !instructions.is_empty() {
         body["instructions"] = json!(instructions);
     }

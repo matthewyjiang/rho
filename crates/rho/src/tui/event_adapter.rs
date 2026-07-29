@@ -271,13 +271,13 @@ impl SdkEventAdapter {
                     metrics,
                 })]
             }
-            RunEvent::WebSearch { detail } => {
+            RunEvent::WebSearch { name, detail } => {
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id: rho_sdk::ToolCallId::new(),
                     card: ToolCard::new(
                         ToolStatus::Ok,
                         ToolFamily::Web,
-                        ToolHeader::call("web_search", Some(detail)),
+                        ToolHeader::call(name, Some(detail)),
                     ),
                     image_asset: None,
                 })]

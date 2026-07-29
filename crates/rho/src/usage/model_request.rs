@@ -43,7 +43,7 @@ pub(crate) async fn send_recorded_from_attempt(
                     ModelEvent::OutputDelta(_)
                     | ModelEvent::ReasoningDelta(_)
                     | ModelEvent::ReasoningSummaryDelta(_)
-                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::WebSearch { .. }
                     | ModelEvent::ToolCallDelta { .. }
                     | ModelEvent::ProviderContext { .. },
                 ) => {}

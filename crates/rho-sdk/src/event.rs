@@ -276,11 +276,13 @@ pub enum RunEvent {
         call_id: ToolCallId,
         request: crate::HostInputRequest,
     },
-    /// Provider-native web search activity observed during a model turn.
+    /// Provider-native search activity observed during a model turn.
     ///
+    /// `name` is the hosted tool id such as `web_search` or `x_search`.
     /// Appended after existing variants so discriminant values of the 1.0
     /// surface stay stable under a minor release.
     WebSearch {
+        name: String,
         detail: String,
     },
     /// A physical provider request failed and will be retried.

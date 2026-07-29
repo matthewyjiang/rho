@@ -83,14 +83,14 @@ impl ModelProvider for QueuedUsageBeforeCancellationProvider {
             events.send(ModelEvent::Usage(usage)).await.unwrap();
             for index in 0..14 {
                 events
-                    .send(ModelEvent::WebSearch(format!("queued {index}")))
+                    .send(ModelEvent::web_search(format!("queued {index}")))
                     .await
                     .unwrap();
             }
             // The channel is full. This send can finish only after orchestration
             // has received OutputDelta and blocked publishing it to the host.
             events
-                .send(ModelEvent::WebSearch("capacity probe".into()))
+                .send(ModelEvent::web_search("capacity probe"))
                 .await
                 .unwrap();
             let _ = queue_observed.send(());

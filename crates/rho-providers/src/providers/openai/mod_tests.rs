@@ -295,7 +295,7 @@ fn completed_tool_call_arguments_are_published_exactly_once() {
             ModelEvent::OutputDelta(_)
             | ModelEvent::ReasoningDelta(_)
             | ModelEvent::ReasoningSummaryDelta(_)
-            | ModelEvent::WebSearch(_)
+            | ModelEvent::WebSearch { .. }
             | ModelEvent::ProviderContext { .. }
             | ModelEvent::Usage(_) => None,
         })
@@ -330,7 +330,7 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
             ModelEvent::OutputDelta(_)
             | ModelEvent::ReasoningDelta(_)
             | ModelEvent::ReasoningSummaryDelta(_)
-            | ModelEvent::WebSearch(_)
+            | ModelEvent::WebSearch { .. }
             | ModelEvent::ProviderContext { .. }
             | ModelEvent::Usage(_) => None,
         })
@@ -360,7 +360,7 @@ fn chat_stream_usage_normalizes_prompt_cache_tokens() {
                 | ModelEvent::ReasoningDelta(_)
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
-                | ModelEvent::WebSearch(_)
+                | ModelEvent::WebSearch { .. }
                 | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
@@ -391,7 +391,7 @@ fn codex_response_usage_normalizes_input_cache_tokens() {
                 | ModelEvent::ReasoningDelta(_)
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
-                | ModelEvent::WebSearch(_)
+                | ModelEvent::WebSearch { .. }
                 | ModelEvent::ToolCallDelta { .. } => {}
             }
             Ok(())
@@ -421,7 +421,7 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
                 ModelEvent::ReasoningDelta(_) => {}
                 ModelEvent::ReasoningSummaryDelta(delta) => deltas.push(delta),
                 ModelEvent::ProviderContext { .. } => {}
-                ModelEvent::WebSearch(_) => {}
+                ModelEvent::WebSearch { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
             }
@@ -454,7 +454,7 @@ fn codex_sse_line_emits_web_search_detail() {
         &mut state,
         &mut Some(&mut |event| {
             match event {
-                ModelEvent::WebSearch(detail) => searches.push(detail),
+                ModelEvent::WebSearch { name, detail } => searches.push((name, detail)),
                 ModelEvent::OutputDelta(_) => {}
                 ModelEvent::ReasoningDelta(_) => {}
                 ModelEvent::ReasoningSummaryDelta(_) => {}
@@ -467,7 +467,41 @@ fn codex_sse_line_emits_web_search_detail() {
     )
     .unwrap();
 
-    assert_eq!(searches, vec!["for \"latest Rust release\""]);
+    assert_eq!(
+        searches,
+        vec![("web_search".into(), "for \"latest Rust release\"".into())]
+    );
+}
+
+#[test]
+fn codex_sse_line_emits_x_search_detail() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","action":{"type":"search","query":"what people say about xAI"}}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            match event {
+                ModelEvent::WebSearch { name, detail } => searches.push((name, detail)),
+                ModelEvent::OutputDelta(_) => {}
+                ModelEvent::ReasoningDelta(_) => {}
+                ModelEvent::ReasoningSummaryDelta(_) => {}
+                ModelEvent::ProviderContext { .. } => {}
+                ModelEvent::ToolCallDelta { .. } => {}
+                ModelEvent::Usage(_) => {}
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(
+        searches,
+        vec![(
+            "x_search".into(),
+            "for \"what people say about xAI\"".into()
+        )]
+    );
 }
 
 #[test]

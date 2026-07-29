@@ -40,7 +40,7 @@ impl ModelCallTimer {
                 | ModelEvent::ReasoningDelta(text)
                 | ModelEvent::ReasoningSummaryDelta(text) => !text.is_empty(),
                 ModelEvent::ToolCallDelta { .. } => true,
-                ModelEvent::WebSearch(_)
+                ModelEvent::WebSearch { .. }
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::Usage(_) => false,
             }

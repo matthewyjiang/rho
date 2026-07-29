@@ -275,10 +275,20 @@ impl CodexSseState {
     }
 }
 
-fn extract_codex_web_search_detail(item: &serde_json::Value) -> Option<String> {
-    if item.get("type").and_then(|v| v.as_str()) != Some("web_search_call") {
-        return None;
-    }
+fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
+    let name = match item.get("type").and_then(|value| value.as_str()) {
+        Some("web_search_call") => "web_search",
+        Some("x_search_call") => "x_search",
+        _ => return None,
+    };
+    let detail = extract_codex_search_detail(item)?;
+    Some(ModelEvent::WebSearch {
+        name: name.into(),
+        detail,
+    })
+}
+
+fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
     let action = item.get("action")?;
     if let Some(query) = action
         .get("query")
@@ -523,9 +533,9 @@ pub(crate) fn handle_codex_sse_value(
                 })?;
             }
         }
-        if let Some(detail) = extract_codex_web_search_detail(item) {
+        if let Some(event) = extract_codex_search_activity(item) {
             if let Some(on_event) = on_event.as_mut() {
-                on_event(ModelEvent::WebSearch(detail))?;
+                on_event(event)?;
             }
         }
         if let Some(call) = extract_codex_function_call(item)? {
@@ -586,9 +596,9 @@ pub(crate) fn handle_codex_sse_value(
                         })?;
                     }
                 }
-                if let Some(detail) = extract_codex_web_search_detail(item) {
+                if let Some(event) = extract_codex_search_activity(item) {
                     if let Some(on_event) = on_event.as_mut() {
-                        on_event(ModelEvent::WebSearch(detail))?;
+                        on_event(event)?;
                     }
                 }
                 if let Some(call) = extract_codex_function_call(item)? {

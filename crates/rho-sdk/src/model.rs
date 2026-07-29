@@ -340,7 +340,13 @@ pub enum ModelEvent {
     ReasoningDelta(String),
     /// A provider-produced reasoning summary safe to persist and hand off.
     ReasoningSummaryDelta(String),
-    WebSearch(String),
+    /// Provider-native search activity observed during a model turn.
+    ///
+    /// `name` is the hosted tool id such as `web_search` or `x_search`.
+    WebSearch {
+        name: String,
+        detail: String,
+    },
     ToolCallDelta {
         index: usize,
         id: Option<String>,
@@ -353,6 +359,24 @@ pub enum ModelEvent {
         data: Value,
     },
     Usage(ModelUsage),
+}
+
+impl ModelEvent {
+    /// Builds a provider-native web search activity event.
+    pub fn web_search(detail: impl Into<String>) -> Self {
+        Self::WebSearch {
+            name: "web_search".into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// Builds a provider-native X (Twitter) search activity event.
+    pub fn x_search(detail: impl Into<String>) -> Self {
+        Self::WebSearch {
+            name: "x_search".into(),
+            detail: detail.into(),
+        }
+    }
 }
 
 /// Source used to calculate the current context consumption.
