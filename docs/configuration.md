@@ -166,13 +166,18 @@ Model aliases work in these entries. Rho keeps reading the old `[title]` section
 
 ## Web search
 
-Hosted search is on by default. When the active chat provider supports a native `web_search` tool (OpenAI Responses, Codex standard Responses, and xAI), Rho uses that path automatically.
+Hosted search is on by default when both are true:
+
+1. `hosted = true` under `[web_search]`
+2. the active chat path supports a native `web_search` tool (OpenAI Responses, Codex standard Responses, and xAI)
+
+When either condition fails, Rho uses the client backup backend if one is configured.
 
 `hosted` under `[web_search]` turns provider-hosted search on or off. It defaults to `true`. Set `hosted = false` to force the client backup tool even on providers that support hosted search.
 
-`provider` under `[web_search]` chooses only the **backup** client backend used when hosted search is off or the active chat path cannot host search. Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded. Set `provider = "disabled"` to turn the client backup off while keeping hosted search available.
+`provider` under `[web_search]` chooses only the **backup** client backend used when hosted search is off or the active chat path cannot host search. Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded. Set `provider = "disabled"` to turn the client backup off while keeping hosted search available on supported chat paths.
 
-To disable search entirely, set both `hosted = false` and `provider = "disabled"`.
+To disable search entirely, set both `hosted = false` and `provider = "disabled"`. On a chat path that cannot host search, `provider = "disabled"` alone is enough to remove the tool.
 
 Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the configured credential store when loaded. Empty strings are ignored.
 

@@ -188,15 +188,27 @@ impl AgentBinder {
                 tools,
                 model,
                 reasoning,
-            } => BoundRuntime::Rho {
-                config: Box::new(bind_rho_config(
+            } => {
+                let config = Box::new(bind_rho_config(
                     definition.id.as_str(),
                     model,
                     *reasoning,
                     host_config,
-                )?),
-                capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
-            },
+                )?);
+                let available_tools =
+                    available_tools_for_bound_config(&invocation.available_tools, config.as_ref());
+                BoundRuntime::Rho {
+                    capabilities: bind_rho_capabilities(
+                        &definition,
+                        tools,
+                        &AgentInvocation {
+                            role: invocation.role,
+                            available_tools,
+                        },
+                    )?,
+                    config,
+                }
+            }
             AgentRuntimeSpec::ClaudeCli(config) => {
                 bind_claude_runtime(&definition, config, &invocation, host_config)?
             }
@@ -262,6 +274,22 @@ fn bind_rho_capabilities(
             Ok(AgentCapabilities::new(resolved))
         }
     }
+}
+
+/// Drop `web_search` when the bound provider/model cannot use hosted or backup search.
+///
+/// Host available tools are the ceiling. Callers should leave `web_search` in that
+/// set when host tools are enabled; bind removes it if the bound config cannot
+/// run search.
+fn available_tools_for_bound_config(
+    host_tools: &AgentCapabilities,
+    bound_config: &Config,
+) -> AgentCapabilities {
+    let mut tools = host_tools.clone();
+    if !crate::tools::web::web_search_available(bound_config) {
+        tools.remove(&ToolCapability::WebSearch);
+    }
+    tools
 }
 
 fn bind_rho_config(

@@ -112,20 +112,6 @@ pub(crate) fn to_responses_tool(
     to_responses_lite_tool(tool, strictness)
 }
 
-/// Serializes a tool for xAI Responses, optionally rewriting web_search to the hosted type.
-pub(crate) fn to_xai_responses_tool(
-    tool: ToolSpec,
-    strictness: ToolStrictness,
-    hosted_web_search: bool,
-) -> serde_json::Value {
-    if hosted_web_search && tool.name == "web_search" {
-        return json!({
-            "type": "web_search",
-        });
-    }
-    to_responses_lite_tool(tool, strictness)
-}
-
 /// Serializes a tool for a Responses endpoint with no hosted tool types.
 pub(crate) fn to_responses_lite_tool(
     tool: ToolSpec,

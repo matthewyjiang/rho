@@ -8,7 +8,7 @@ use rho_sdk::model::ToolSpec;
 use serde_json::{json, Value};
 
 use crate::protocol::openai_responses::{
-    codex_input_items_for_target, to_xai_responses_tool, ToolStrictness,
+    codex_input_items_for_target, to_responses_lite_tool, ToolStrictness,
 };
 
 use super::reasoning;
@@ -38,6 +38,20 @@ fn lower_xai_create_request(
         prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
         reasoning_effort: reasoning.effort(request.reasoning_level),
     })
+}
+
+/// Serializes one xAI Responses tool, optionally rewriting web_search to the hosted type.
+fn to_xai_responses_tool(
+    tool: ToolSpec,
+    strictness: ToolStrictness,
+    hosted_web_search: bool,
+) -> Value {
+    if hosted_web_search && tool.name == "web_search" {
+        return json!({
+            "type": "web_search",
+        });
+    }
+    to_responses_lite_tool(tool, strictness)
 }
 
 /// Maps client tool specs onto the xAI Responses tools array.

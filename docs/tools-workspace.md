@@ -28,7 +28,7 @@ It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, we
 
 ```text
 rho                 inspect runtime identity, context, prompt sources, tools, or sanitized config
-web_search          use hosted provider search when supported; otherwise search with the configured backup backend and store snippets by default
+web_search          when hosted = true and the chat path supports it, use provider-hosted search; otherwise use the configured backup backend and store snippets by default
 fetch_content       fetch pages, GitHub URLs, local files, PDFs, and video targets
 get_search_content  retrieve stored content from a prior web_search or fetch_content call
 process             start, poll, or stop a managed background shell process

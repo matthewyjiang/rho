@@ -482,8 +482,25 @@ pub(super) fn web_search_config_picker(
 }
 
 fn web_search_summary(config: &Config) -> String {
-    let hosted = if config.web_search_hosted {
-        "hosted on"
+    if !crate::tools::web::web_search_available(config) {
+        return if config.web_search_hosted
+            && !crate::tools::web::supports_hosted_web_search(&config.provider, &config.model)
+        {
+            format!(
+                "unavailable (hosted unsupported, backup {})",
+                config.web_search_provider
+            )
+        } else {
+            format!(
+                "unavailable (hosted off, backup {})",
+                config.web_search_provider
+            )
+        };
+    }
+    let hosted = if crate::tools::web::hosted_web_search_active(config) {
+        "hosted active"
+    } else if config.web_search_hosted {
+        "hosted unsupported"
     } else {
         "hosted off"
     };
