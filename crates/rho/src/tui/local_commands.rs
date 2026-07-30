@@ -89,10 +89,11 @@ impl App {
             self.status = "nothing to rename".into();
             return Ok(());
         };
-        // Manual titles win over in-flight and later auto-title generation.
-        self.pending_session_title = None;
+        // Only cancel pending auto-title after the manual write succeeds so a
+        // failed rename leaves generation in place.
         match Session::set_title(&self.info.runtime.cwd, &session_id, title) {
             Ok(updated) => {
+                self.pending_session_title = None;
                 self.session_title_locked = true;
                 self.insert_entry(&Entry::Notice(format!("session titled: {}", updated.title)));
                 self.status = "session renamed".into();

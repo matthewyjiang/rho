@@ -843,3 +843,47 @@ fn set_title_resolves_across_workspaces() {
         .expect("session summary");
     assert_eq!(summary.title.as_deref(), Some("cross project title"));
 }
+
+// Covers: auto-title must not clobber a manual rename already on disk
+// Owner: session persistence
+#[test]
+fn set_generated_title_does_not_overwrite_manual_title() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let id = session.id().to_string();
+
+    Session::set_title_in_root_for_test(&root, &cwd, &id, "manual name").unwrap();
+    let generated =
+        Session::set_generated_title_in_root_for_test(&root, &cwd, &id, "auto name").unwrap();
+    assert!(generated.is_none());
+
+    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    let summary = listed
+        .into_iter()
+        .find(|summary| summary.id == id)
+        .expect("session summary");
+    assert_eq!(summary.title.as_deref(), Some("manual name"));
+}
+
+// Covers: auto-title still writes when no title is stored yet
+// Owner: session persistence
+#[test]
+fn set_generated_title_sets_when_absent() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let id = session.id().to_string();
+
+    let generated =
+        Session::set_generated_title_in_root_for_test(&root, &cwd, &id, "auto name").unwrap();
+    let updated = generated.expect("generated title applied");
+    assert_eq!(updated.title, "auto name");
+
+    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    let summary = listed
+        .into_iter()
+        .find(|summary| summary.id == id)
+        .expect("session summary");
+    assert_eq!(summary.title.as_deref(), Some("auto name"));
+}

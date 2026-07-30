@@ -318,6 +318,47 @@ pub(super) fn set_title(
     }
 }
 
+/// Returns the stored title for an exact session id in a workspace, if any.
+pub(super) fn title(session_root: &Path, cwd: &Path, id: &str) -> anyhow::Result<Option<String>> {
+    let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    let title = connection
+        .query_row(
+            "select title from sessions where workspace_key = ?1 and id = ?2",
+            params![workspace_key(cwd), id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    Ok(title.flatten().filter(|value| !value.is_empty()))
+}
+
+/// Sets the title only when the index row still has no title.
+///
+/// Used by auto-title so a concurrent manual rename (`/title` or
+/// `rho sessions rename`) always wins. Returns whether the row was updated.
+pub(super) fn set_title_if_absent(
+    session_root: &Path,
+    cwd: &Path,
+    id: &str,
+    title: &str,
+) -> anyhow::Result<bool> {
+    let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    let updated = connection.execute(
+        "update sessions
+         set title = ?3
+         where workspace_key = ?1
+           and id = ?2
+           and (title is null or title = '')",
+        params![workspace_key(cwd), id, title.trim()],
+    )?;
+    Ok(updated > 0)
+}
+
 pub(super) fn record_snapshot(session: &Session) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
     let connection = connection

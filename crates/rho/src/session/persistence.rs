@@ -111,6 +111,14 @@ impl SessionStore {
         index::set_title(&self.root, &self.cwd, id_prefix, title)
     }
 
+    pub(super) fn title(&self, id: &str) -> anyhow::Result<Option<String>> {
+        index::title(&self.root, &self.cwd, id)
+    }
+
+    pub(super) fn set_title_if_absent(&self, id: &str, title: &str) -> anyhow::Result<bool> {
+        index::set_title_if_absent(&self.root, &self.cwd, id, title)
+    }
+
     fn list_by_scan(&self) -> anyhow::Result<Vec<SessionSummary>> {
         list_session_summaries_by_scan(&self.ensure_dir()?, &self.cwd)
     }

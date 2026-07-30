@@ -139,11 +139,12 @@ impl App {
         let Ok(title) = result.title else {
             return Ok(false);
         };
-        // /title clears pending and sets session_title_locked; honor that lock.
+        // In-process /title lock, or CAS so external `sessions rename` wins.
         if self.session_title_locked {
             return Ok(false);
         }
-        let Ok(updated) = Session::set_title(&self.info.runtime.cwd, &result.session_id, &title)
+        let Ok(Some(updated)) =
+            Session::set_generated_title(&self.info.runtime.cwd, &result.session_id, &title)
         else {
             return Ok(false);
         };
@@ -159,7 +160,12 @@ impl App {
         first_assistant_message: &str,
         agent: &InteractiveRuntime,
     ) {
-        if self.info.session.session_id.is_none() || self.session_title_locked {
+        let Some(session_id) = self.info.session.session_id.as_deref() else {
+            return;
+        };
+        if self.session_title_locked
+            || Session::title_is_set(&self.info.runtime.cwd, session_id).unwrap_or(false)
+        {
             return;
         }
         let session_id = agent.session_id().clone();
