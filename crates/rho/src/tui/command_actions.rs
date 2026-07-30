@@ -45,6 +45,7 @@ impl App {
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command_with_probes(terminal).await,
             CommandId::Export => self.execute_export_command(&invocation),
+            CommandId::Title => self.execute_title_command(&invocation),
             CommandId::Limits => self.execute_limits_command(terminal),
             CommandId::Fast => self.execute_fast_command(invocation, agent),
         }

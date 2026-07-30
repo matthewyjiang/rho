@@ -139,6 +139,14 @@ impl App {
         let Ok(title) = result.title else {
             return Ok(false);
         };
+        // Do not overwrite a title the user set while generation was in flight.
+        if Session::title(&self.info.runtime.cwd, &result.session_id)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return Ok(false);
+        }
         if Session::set_title(&self.info.runtime.cwd, &result.session_id, &title).is_err() {
             return Ok(false);
         }
@@ -154,7 +162,15 @@ impl App {
         first_assistant_message: &str,
         agent: &InteractiveRuntime,
     ) {
-        if self.info.session.session_id.is_none() {
+        let Some(session_id) = self.info.session.session_id.as_deref() else {
+            return;
+        };
+        // Keep manual /title renames when the first turn later completes.
+        if Session::title(&self.info.runtime.cwd, session_id)
+            .ok()
+            .flatten()
+            .is_some()
+        {
             return;
         }
         let session_id = agent.session_id().clone();

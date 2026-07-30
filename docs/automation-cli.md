@@ -35,7 +35,8 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho` | Start an interactive TUI session in the current working directory. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
 | `rho sessions list [--all-projects]` | List saved sessions for the current workspace, or every workspace with cwd context. |
-| `rho sessions rm <ID>...` | Delete sessions by UUID or prefix. Cascades parent-linked subagent runs. See [sessions](/sessions#listing-and-deleting-sessions). |
+| `rho sessions rename <ID> <TITLE>...` | Rename a session by UUID or prefix. See [sessions](/sessions#listing-renaming-and-deleting-sessions). |
+| `rho sessions rm <ID>...` | Delete sessions by UUID or prefix. Cascades parent-linked subagent runs. See [sessions](/sessions#listing-renaming-and-deleting-sessions). |
 | `rho login <PROVIDER>` | Authenticate a provider from a browser or device-code flow. Add `--device-auth` for remote or headless sessions. |
 | `rho credential-store probe [os|file]` | Test a credential backend with a temporary secret. Defaults to `os`. |
 | `rho credential-store set <BACKEND>` | Save `os` or `file` as the credential backend in config (`behavior.credential_store`). |

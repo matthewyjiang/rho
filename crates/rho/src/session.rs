@@ -264,6 +264,11 @@ impl Session {
         Self::set_title_in_root(&session_root()?, cwd, id_prefix, title)
     }
 
+    /// Returns the stored title for a session when present.
+    pub fn title(cwd: &Path, id_prefix: &str) -> anyhow::Result<Option<String>> {
+        Self::title_in_root(&session_root()?, cwd, id_prefix)
+    }
+
     /// Deletes a session by UUID or prefix and cascades parent-linked run dirs.
     ///
     /// Removes the transcript unit (folder or legacy flat file), web sidecar,
@@ -290,7 +295,27 @@ impl Session {
         id_prefix: &str,
         title: &str,
     ) -> anyhow::Result<()> {
-        SessionStore::new(session_root, cwd).set_title(id_prefix, title)
+        let title = title.trim();
+        if title.is_empty() {
+            anyhow::bail!("title must not be empty");
+        }
+        // Resolve local-first, then any workspace, so CLI rename matches rm/resume.
+        let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
+        SessionStore::new(session_root, &resolved.cwd).set_title(&resolved.id, title)
+    }
+
+    fn title_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
+        let title = SessionStore::new(session_root, &resolved.cwd)
+            .list()?
+            .into_iter()
+            .find(|summary| summary.id == resolved.id)
+            .and_then(|summary| summary.title);
+        Ok(title)
     }
 
     fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
@@ -303,6 +328,25 @@ impl Session {
         cwd: &Path,
     ) -> anyhow::Result<Vec<SessionSummary>> {
         Self::list_in_root(session_root, cwd)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_title_in_root_for_test(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+        title: &str,
+    ) -> anyhow::Result<()> {
+        Self::set_title_in_root(session_root, cwd, id_prefix, title)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn title_in_root_for_test(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Self::title_in_root(session_root, cwd, id_prefix)
     }
 
     pub(crate) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {

@@ -777,3 +777,67 @@ fn index_self_heals_when_folder_is_gone_but_row_remains() {
     let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
     assert!(listed.is_empty());
 }
+
+// Covers: manual rename must persist on the session index summary
+// Owner: session persistence
+#[test]
+fn set_title_updates_session_summary() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    session
+        .append_message(&Message::user_text("first prompt"))
+        .unwrap();
+    let id = session.id().to_string();
+
+    Session::set_title_in_root_for_test(&root, &cwd, &id[..8], "  Rename me  ").unwrap();
+
+    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    let summary = listed
+        .into_iter()
+        .find(|summary| summary.id == id)
+        .expect("session summary");
+    assert_eq!(summary.title.as_deref(), Some("Rename me"));
+    assert_eq!(
+        Session::title_in_root_for_test(&root, &cwd, &id)
+            .unwrap()
+            .as_deref(),
+        Some("Rename me")
+    );
+}
+
+// Covers: empty titles must fail instead of clearing stored names
+// Owner: session persistence
+#[test]
+fn set_title_rejects_empty_titles() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    let id = session.id().to_string();
+
+    let error = Session::set_title_in_root_for_test(&root, &cwd, &id, "   ").unwrap_err();
+    assert!(error.to_string().contains("empty"), "{error}");
+}
+
+// Covers: rename by id must follow the session's own workspace
+// Owner: session persistence
+#[test]
+fn set_title_resolves_across_workspaces() {
+    let root = temp_session_root();
+    let created_cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &created_cwd).unwrap();
+    session
+        .append_message(&Message::user_text("other workspace"))
+        .unwrap();
+    let id = session.id().to_string();
+    let other_cwd = temp_cwd();
+
+    Session::set_title_in_root_for_test(&root, &other_cwd, &id, "cross project title").unwrap();
+
+    assert_eq!(
+        Session::title_in_root_for_test(&root, &created_cwd, &id)
+            .unwrap()
+            .as_deref(),
+        Some("cross project title")
+    );
+}
