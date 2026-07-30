@@ -15,7 +15,6 @@ async fn priority_service_tier_is_sent_as_fast_mode() {
         Some(ServiceTier::Priority),
         /*hosted_web_search*/ true,
     )
-    .await
     .unwrap();
 
     assert_eq!(body["service_tier"], "priority");
@@ -35,7 +34,6 @@ async fn priority_service_tier_is_omitted_for_unsupported_codex_models() {
         Some(ServiceTier::Priority),
         /*hosted_web_search*/ true,
     )
-    .await
     .unwrap();
 
     assert!(body.get("service_tier").is_none());
@@ -59,83 +57,65 @@ async fn priority_service_tier_is_limited_to_codex_auth() {
         Some(ServiceTier::Priority),
         /*hosted_web_search*/ true,
     )
-    .await
     .unwrap();
 
     assert!(body.get("service_tier").is_none());
 }
 
 #[tokio::test]
-async fn responses_lite_sets_all_turns_reasoning_context() {
-    let body = build_codex_responses_body(
-        "gpt-5.6-terra",
-        ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        },
-    )
-    .await
-    .unwrap();
+async fn gpt56_codex_models_use_standard_wire_contract() {
+    for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+        let profile = ResponsesProfile::from_auth(&codex_test_auth(), model);
+        assert_eq!(profile.contract(), ResponsesWireContract::CodexStandard);
 
-    assert_eq!(
-        body["reasoning"],
-        json!({"effort": "medium", "summary": "auto", "context": "all_turns"})
-    );
-}
+        let body = build_codex_responses_body(
+            model,
+            ModelRequest {
+                messages: &[
+                    Message::System("follow the repository instructions".into()),
+                    Message::user_text("hello"),
+                ],
+                tools: &[ToolSpec {
+                    name: "bash".into(),
+                    description: "run a command".into(),
+                    input_schema: json!({"type": "object"}),
+                }],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+        )
+        .unwrap();
 
-#[tokio::test]
-async fn responses_lite_moves_tools_and_instructions_into_input() {
-    let body = build_codex_responses_body(
-        "gpt-5.6-luna",
-        ModelRequest {
-            messages: &[
-                Message::System("follow the repository instructions".into()),
-                Message::user_text("fix the bug"),
-            ],
-            tools: &[ToolSpec {
-                name: "web_search".into(),
-                description: "search the web".into(),
-                input_schema: json!({"type": "object"}),
-            }],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        },
-    )
-    .await
-    .unwrap();
-
-    assert!(body.get("instructions").is_none());
-    assert!(body.get("tools").is_none());
-    assert_eq!(body["parallel_tool_calls"], false);
-    assert_eq!(
-        body["input"][0],
-        json!({
-            "type": "additional_tools",
-            "role": "developer",
-            "tools": [{
-                "type": "function",
-                "name": "web_search",
-                "description": "search the web",
-                "parameters": {"type": "object"},
-                "strict": null,
-            }],
-        })
-    );
-    assert_eq!(
-        body["input"][1],
-        json!({
-            "type": "message",
-            "role": "developer",
-            "content": [{
-                "type": "input_text",
-                "text": "follow the repository instructions",
-            }],
-        })
-    );
+        assert_eq!(
+            body["instructions"], "follow the repository instructions",
+            "{model} keeps instructions top-level"
+        );
+        assert_eq!(
+            body["parallel_tool_calls"], true,
+            "{model} enables parallel tools"
+        );
+        assert_eq!(
+            body.get("include"),
+            Some(&json!(["reasoning.encrypted_content"])),
+            "{model} includes encrypted reasoning"
+        );
+        assert!(
+            body.get("reasoning")
+                .and_then(|value| value.get("context"))
+                .is_none(),
+            "{model} does not set lite reasoning context"
+        );
+        assert!(body["tools"].is_array(), "{model} keeps tools top-level");
+        assert!(
+            body["input"]
+                .as_array()
+                .expect("standard contract must serialize input as an array")
+                .iter()
+                .all(|item| item.get("type").and_then(Value::as_str) != Some("additional_tools")),
+            "{model} does not nest tools in input"
+        );
+    }
 }
 
 #[tokio::test]
@@ -154,7 +134,6 @@ async fn standard_requests_keep_hosted_web_search_tool() {
             prompt_cache_key: None,
         },
     )
-    .await
     .unwrap();
 
     assert_eq!(
@@ -179,10 +158,9 @@ async fn standard_requests_keep_function_web_search_when_hosted_disabled() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
-        None,
+        /* service_tier */ None,
         /*hosted_web_search*/ false,
     )
-    .await
     .unwrap();
 
     assert_eq!(
@@ -242,10 +220,9 @@ async fn standard_create_wire_contract_is_auth_flavor_specific() {
                 reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
-            None,
+            /* service_tier */ None,
             /*hosted_web_search*/ true,
         )
-        .await
         .unwrap();
 
         assert_eq!(
@@ -293,7 +270,6 @@ async fn compact_body_omits_stream_tools_and_tool_policy_fields() {
         &OpenAiReasoningProfile::unknown(),
         request.clone(),
     )
-    .await
     .unwrap();
     assert_compact_body_omits_tool_fields(&standard_body);
     assert_eq!(standard_body["prompt_cache_key"], "session-1");
@@ -301,22 +277,15 @@ async fn compact_body_omits_stream_tools_and_tool_policy_fields() {
     assert!(standard_body.get("include").is_none());
     assert!(standard_body.get("instructions").is_some());
 
-    let lite = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-5.6-sol");
-    let lite_body =
-        build_responses_compact_body(&lite, &OpenAiReasoningProfile::unknown(), request)
-            .await
-            .unwrap();
-    assert_compact_body_omits_tool_fields(&lite_body);
-    assert!(lite_body
-        .get("input")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .all(|item| item.get("type").and_then(Value::as_str) != Some("additional_tools")));
-    assert_eq!(
-        lite_body["reasoning"],
-        json!({"effort": "medium", "summary": "auto", "context": "all_turns"})
-    );
+    let codex = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-5.6-sol");
+    let codex_body =
+        build_responses_compact_body(&codex, &OpenAiReasoningProfile::unknown(), request).unwrap();
+    assert_compact_body_omits_tool_fields(&codex_body);
+    assert!(codex_body.get("instructions").is_some());
+    assert!(codex_body
+        .get("reasoning")
+        .and_then(|value| value.get("context"))
+        .is_none());
 }
 
 fn assert_compact_body_omits_tool_fields(body: &Value) {

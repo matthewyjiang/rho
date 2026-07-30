@@ -31,7 +31,6 @@ async fn compact_request_body_is_unary_without_trigger() {
             prompt_cache_key: Some("session-1"),
         },
     )
-    .await
     .unwrap();
 
     let input = body["input"].as_array().unwrap();
@@ -48,7 +47,7 @@ async fn compact_request_body_is_unary_without_trigger() {
 }
 
 #[tokio::test]
-async fn compact_request_body_keeps_codex_responses_lite_shape_without_tools() {
+async fn compact_request_body_uses_codex_standard_shape_for_gpt56_models() {
     let profile = codex_profile("gpt-5.6-sol");
     let body = build_responses_compact_body(
         &profile,
@@ -68,23 +67,23 @@ async fn compact_request_body_keeps_codex_responses_lite_shape_without_tools() {
             prompt_cache_key: None,
         },
     )
-    .await
     .unwrap();
 
     assert!(body.get("stream").is_none());
     assert!(body.get("tools").is_none());
     assert!(body.get("tool_choice").is_none());
     assert!(body.get("parallel_tool_calls").is_none());
-    assert!(body
-        .get("input")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+    assert_eq!(body["instructions"], "be careful");
+    let input = body["input"]
+        .as_array()
+        .expect("compact request must serialize input as an array");
+    assert!(input
+        .iter()
         .all(|item| item.get("type").and_then(Value::as_str) != Some("additional_tools")));
-    assert_eq!(
-        body["reasoning"],
-        json!({"effort": "medium", "summary": "auto", "context": "all_turns"})
-    );
+    assert!(body
+        .get("reasoning")
+        .and_then(|value| value.get("context"))
+        .is_none());
 }
 
 #[tokio::test]
@@ -197,7 +196,7 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
     };
     let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = ResponsesHttpTransport::new(&client, &base, &profile, &store, &refreshed)
+    let http = ResponsesHttpTransport::new(&client, &base, &store, &refreshed)
         .with_codex_refresh_url(&refresh_url);
     let codex_ws = CodexWsTransport::new(&base);
     let messages = [

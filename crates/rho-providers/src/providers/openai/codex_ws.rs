@@ -15,7 +15,6 @@ use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, Stre
 use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
-use super::codex_request::ResponsesWireContract;
 use crate::protocol::openai_responses::{handle_codex_sse_value, CodexSseResponse, CodexSseState};
 
 /// WebSocket transport for Codex Responses turns.
@@ -100,21 +99,15 @@ impl CodexWsFrame {
         continuation: &mut CodexContinuationState,
         candidate: &CodexContinuationCandidate,
         body: Value,
-        contract: ResponsesWireContract,
     ) -> Self {
-        let delta = if contract.supports_incremental_websocket() {
-            continuation.continuation_delta(candidate)
-        } else {
-            continuation.reset();
-            None
-        };
+        let delta = continuation.continuation_delta(candidate);
         match delta {
             Some(delta) => Self {
-                frame: response_create_frame(delta, contract),
+                frame: response_create_frame(delta),
                 full_body: Some(body),
             },
             None => Self {
-                frame: response_create_frame(body, contract),
+                frame: response_create_frame(body),
                 full_body: None,
             },
         }
@@ -182,13 +175,12 @@ impl CodexWsTransport {
         &self,
         body: Value,
         tokens: &CodexTokens,
-        contract: ResponsesWireContract,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
         state.open_turn();
-        let turn = CodexWsFrame::new(&mut state.continuation, &candidate, body, contract);
+        let turn = CodexWsFrame::new(&mut state.continuation, &candidate, body);
 
         match state
             .send_frame(
@@ -227,12 +219,11 @@ impl CodexWsTransport {
         &self,
         body: Value,
         tokens: &CodexTokens,
-        contract: ResponsesWireContract,
     ) -> Result<CodexWsTurn, ModelError> {
         let candidate = CodexContinuationCandidate::from_responses_body(&body)?;
         let mut state = self.state.lock().await;
         state.open_turn();
-        let turn = CodexWsFrame::new(&mut state.continuation, &candidate, body, contract);
+        let turn = CodexWsFrame::new(&mut state.continuation, &candidate, body);
 
         match state
             .send_frame_silent(&self.ws_url, tokens, &turn.frame, self.idle_timeout)
@@ -680,14 +671,9 @@ fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {
 ///
 /// Listed once so framing and unframing cannot drift: removing exactly these
 /// keys turns a frame back into the body the caller passed in.
-const FRAME_ONLY_KEYS: [&str; 2] = ["type", "client_metadata"];
+const FRAME_ONLY_KEYS: [&str; 1] = ["type"];
 
-fn response_create_frame(mut body: Value, contract: ResponsesWireContract) -> Value {
-    if contract.uses_lite_transport_header() {
-        body["client_metadata"] = json!({
-            "ws_request_header_x_openai_internal_codex_responses_lite": "true",
-        });
-    }
+fn response_create_frame(mut body: Value) -> Value {
     body["type"] = json!("response.create");
     body
 }

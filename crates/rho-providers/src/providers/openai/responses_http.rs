@@ -10,10 +10,7 @@ use crate::{
     provider_backend::cancel::cancel_aware,
 };
 
-use super::{
-    auth::{refresh_codex_token_at, Auth, CodexAuthSource},
-    codex_request::ResponsesProfile,
-};
+use super::auth::{refresh_codex_token_at, Auth, CodexAuthSource};
 
 const DEFAULT_CODEX_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 
@@ -80,7 +77,6 @@ impl ResponsesHttpResult {
 pub(super) struct ResponsesHttpTransport<'a> {
     client: &'a reqwest::Client,
     api_base: &'a str,
-    profile: &'a ResponsesProfile,
     credential_store: &'a dyn CredentialStore,
     refreshed_codex_tokens: &'a Mutex<Option<CodexTokens>>,
     codex_refresh_url: &'a str,
@@ -90,14 +86,12 @@ impl<'a> ResponsesHttpTransport<'a> {
     pub(super) fn new(
         client: &'a reqwest::Client,
         api_base: &'a str,
-        profile: &'a ResponsesProfile,
         credential_store: &'a dyn CredentialStore,
         refreshed_codex_tokens: &'a Mutex<Option<CodexTokens>>,
     ) -> Self {
         Self {
             client,
             api_base,
-            profile,
             credential_store,
             refreshed_codex_tokens,
             codex_refresh_url: DEFAULT_CODEX_REFRESH_URL,
@@ -253,9 +247,6 @@ impl<'a> ResponsesHttpTransport<'a> {
                     .header("User-Agent", "codex-cli")
                     .header("originator", "codex_cli_rs")
                     .header("OpenAI-Beta", "responses=experimental");
-                if self.profile.contract().uses_lite_transport_header() {
-                    request = request.header("x-openai-internal-codex-responses-lite", "true");
-                }
                 if let Some(account_id) = account_id {
                     request = request.header("ChatGPT-Account-ID", account_id);
                 }

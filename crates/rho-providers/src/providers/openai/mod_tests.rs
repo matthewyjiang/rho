@@ -156,7 +156,6 @@ async fn codex_responses_body_includes_prompt_cache_key_when_present() {
             prompt_cache_key: Some("rho:session-1"),
         },
     )
-    .await
     .unwrap();
 
     assert_eq!(body["prompt_cache_key"], "rho:session-1");
@@ -181,7 +180,6 @@ async fn codex_responses_body_uses_hosted_web_search_tool() {
             prompt_cache_key: None,
         },
     )
-    .await
     .unwrap();
 
     assert_eq!(

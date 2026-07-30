@@ -114,11 +114,10 @@ async fn spawn_sequential_server(
 fn transport<'a>(
     client: &'a reqwest::Client,
     api_base: &'a str,
-    profile: &'a ResponsesProfile,
     store: &'a MemoryCredentialStore,
     refreshed: &'a std::sync::Mutex<Option<CodexTokens>>,
 ) -> ResponsesHttpTransport<'a> {
-    ResponsesHttpTransport::new(client, api_base, profile, store, refreshed)
+    ResponsesHttpTransport::new(client, api_base, store, refreshed)
 }
 
 #[tokio::test]
@@ -131,8 +130,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
     let client = reqwest::Client::new();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
-    let profile = ResponsesProfile::from_auth(&Auth::ApiKey("sk-test".into()), "gpt-5.4");
-    let http = transport(&client, &base, &profile, &store, &refreshed);
+    let http = transport(&client, &base, &store, &refreshed);
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
@@ -190,8 +188,7 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
         },
         source: CodexAuthSource::Env,
     };
-    let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
-    let http = transport(&client, &base, &profile, &store, &refreshed);
+    let http = transport(&client, &base, &store, &refreshed);
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
@@ -278,10 +275,8 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
         },
         source: CodexAuthSource::Env,
     };
-    let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &profile, &store, &refreshed)
-        .with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
 
     let result = http
         .post_json(
@@ -338,8 +333,7 @@ async fn cancellation_during_send_returns_interrupted() {
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let auth = Auth::ApiKey("sk-test".into());
-    let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
-    let http = transport(&client, &base, &profile, &store, &refreshed);
+    let http = transport(&client, &base, &store, &refreshed);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
@@ -394,10 +388,8 @@ async fn cancellation_during_refresh_returns_interrupted() {
         },
         source: CodexAuthSource::Env,
     };
-    let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &profile, &store, &refreshed)
-        .with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
@@ -458,10 +450,8 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
         },
         source: CodexAuthSource::Env,
     };
-    let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &profile, &store, &refreshed)
-        .with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
 
     let result = http
         .post_json(
@@ -532,10 +522,8 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
         },
         source: CodexAuthSource::Env,
     };
-    let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &profile, &store, &refreshed)
-        .with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
 
     let result = http
         .post_json(
@@ -574,11 +562,9 @@ async fn create_and_compact_body_builders_diverge_on_tools() {
         None,
         /*hosted_web_search*/ true,
     )
-    .await
     .unwrap();
     let compact =
         build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
-            .await
             .unwrap();
     assert_eq!(create["stream"], true);
     assert!(create.get("tools").is_some());
