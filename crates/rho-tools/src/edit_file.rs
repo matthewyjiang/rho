@@ -153,18 +153,12 @@ fn edit_file_content_locked(
     file.set_len(0).map_err(|error| {
         ToolError::Message(format!("could not rewrite {display_path}: {error}"))
     })?;
-    file.write_all(updated.as_bytes()).map_err(|error| {
-        ToolError::Message(format!("could not write {display_path}: {error}"))
-    })?;
+    file.write_all(updated.as_bytes())
+        .map_err(|error| ToolError::Message(format!("could not write {display_path}: {error}")))?;
     file.flush()
         .map_err(|error| ToolError::Message(format!("could not write {display_path}: {error}")))?;
 
-    let diff = unified_diff(
-        &original,
-        &updated,
-        display_path,
-        /*created*/ false,
-    );
+    let diff = unified_diff(&original, &updated, display_path, /*created*/ false);
     let replaced = spans.len();
     Ok(FileMutationOutcome {
         content: truncate(

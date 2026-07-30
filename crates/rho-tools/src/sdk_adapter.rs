@@ -734,9 +734,7 @@ fn single_path_mutation_output(outcome: FileMutationOutcome) -> ToolOutput {
 
 fn map_invalid_edit_args(error: AppToolError) -> ToolError {
     match error {
-        AppToolError::Message(message) => {
-            ToolError::new(ToolErrorKind::InvalidArguments, message)
-        }
+        AppToolError::Message(message) => ToolError::new(ToolErrorKind::InvalidArguments, message),
         other => map_app_error(other),
     }
 }

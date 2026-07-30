@@ -670,10 +670,12 @@ async fn allowed_policy_edits_with_diff_metadata_and_progress() {
         metadata.affected_paths(),
         [std::path::PathBuf::from("sample.txt")]
     );
-    assert!(metadata.unified_diff().unwrap().contains("+alpha delta gamma"));
+    assert!(metadata
+        .unified_diff()
+        .unwrap()
+        .contains("+alpha delta gamma"));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("sample.txt")).unwrap(),
         "alpha delta gamma"
     );
 }
-
