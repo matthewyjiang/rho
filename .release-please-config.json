@@ -8,6 +8,7 @@
       "component": "rho-coding-agent",
       "changelog-path": "CHANGELOG.md",
       "draft": true,
+      "release-as": "1.23.0",
       "extra-files": [
         {
           "type": "generic",
@@ -20,7 +21,8 @@
       "package-name": "rho-sdk",
       "component": "rho-sdk",
       "changelog-path": "CHANGELOG.md",
-      "draft": true
+      "draft": true,
+      "release-as": "1.13.0"
     },
     "crates/rho-tools": {
       "release-type": "rust",
@@ -34,7 +36,8 @@
       "package-name": "rho-providers",
       "component": "rho-providers",
       "changelog-path": "CHANGELOG.md",
-      "draft": true
+      "draft": true,
+      "release-as": "0.14.0"
     }
   },
   "plugins": ["cargo-workspace"]
