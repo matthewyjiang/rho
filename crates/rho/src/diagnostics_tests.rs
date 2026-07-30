@@ -76,6 +76,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
             "auto_compact": true,
             "compact_threshold_percent": 70,
             "compact_target_percent": 40,
+            "web_search_hosted": true,
             "web_search_provider": "auto",
             "check_for_updates": false,
             "enable_subagents": true,

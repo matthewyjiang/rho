@@ -39,6 +39,7 @@ pub(super) enum ConfigToggle {
     EnableSubagents,
     AutoCompact,
     ShowReasoningOutput,
+    WebSearchHosted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +48,7 @@ pub(super) enum ConfigMutation {
     EnableSubagents(bool),
     AutoCompact(bool),
     ShowReasoningOutput(bool),
+    WebSearchHosted(bool),
     WebSearchProvider(String),
 }
 
@@ -81,6 +83,10 @@ pub(super) fn toggle(
         ConfigToggle::ShowReasoningOutput => {
             config.show_reasoning_output = !config.show_reasoning_output;
             ConfigMutation::ShowReasoningOutput(config.show_reasoning_output)
+        }
+        ConfigToggle::WebSearchHosted => {
+            config.web_search_hosted = !config.web_search_hosted;
+            ConfigMutation::WebSearchHosted(config.web_search_hosted)
         }
     })
 }

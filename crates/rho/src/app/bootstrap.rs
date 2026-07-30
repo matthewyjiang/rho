@@ -472,9 +472,7 @@ fn host_capabilities(
         return crate::agent::AgentCapabilities::default();
     }
     let mut tools = crate::agent::AgentCapabilities::all_host_tools();
-    if !crate::tools::web::access_tools(config).is_available() {
-        tools.remove(&ToolCapability::WebSearch);
-    }
+    // web_search is gated after bind against the resolved provider/model.
     #[cfg(windows)]
     tools.remove(&ToolCapability::Bash);
     #[cfg(not(windows))]

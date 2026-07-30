@@ -74,6 +74,49 @@ fn delegated_role_removes_recursive_capabilities() {
 }
 
 #[test]
+fn bind_drops_web_search_when_bound_path_cannot_search() {
+    let host = Config {
+        provider: "openai".into(),
+        model: "gpt-5.5".into(),
+        web_search_hosted: true,
+        web_search_provider: crate::config::SearchProvider::Disabled,
+        ..Config::default()
+    };
+    let available = capability_set(&["read_file", "web_search"]);
+
+    let openai = AgentBinder::bind(
+        definition(ToolPolicy::All),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: available.clone(),
+        },
+        &host,
+    )
+    .unwrap();
+    assert!(openai
+        .rho_capabilities()
+        .unwrap()
+        .contains(&ToolCapability::WebSearch));
+
+    let anthropic = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Select(ModelSelection {
+            provider: Some("anthropic".into()),
+            model: "claude-opus-4-8".into(),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: available,
+        },
+        &host,
+    )
+    .unwrap();
+    assert!(!anthropic
+        .rho_capabilities()
+        .unwrap()
+        .contains(&ToolCapability::WebSearch));
+}
+
+#[test]
 fn unavailable_explicit_tool_fails_before_execution() {
     let error = AgentBinder::bind(
         definition(ToolPolicy::Allow(

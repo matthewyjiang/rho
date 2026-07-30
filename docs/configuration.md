@@ -38,7 +38,8 @@ compact_target_percent = 50
 # auth = "api-key"
 
 [web_search]
-provider = "auto" # auto, openai, exa, brave, or disabled
+hosted = true # provider-hosted search when the chat path supports it
+provider = "auto" # backup only: auto, openai, exa, brave, or disabled
 
 [providers.ollama]
 base_url = "http://127.0.0.1:11434/v1"
@@ -165,9 +166,20 @@ Model aliases work in these entries. Rho keeps reading the old `[title]` section
 
 ## Web search
 
-`provider` under `[web_search]` controls the built-in [web search tool](/tools-workspace#built-in-tools). Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded.
+Hosted search is on by default when both are true:
 
-Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the configured credential store when loaded. Empty strings are ignored. Set `provider = "disabled"` under `[web_search]` to remove the web search tool from the tool registry while keeping other workspace tools enabled.
+1. `hosted = true` under `[web_search]`
+2. the active chat path supports a native `web_search` tool (OpenAI Responses, Codex standard Responses, and xAI)
+
+When either condition fails, Rho uses the client backup backend if one is configured.
+
+`hosted` under `[web_search]` turns provider-hosted search on or off. It defaults to `true`. Set `hosted = false` to force the client backup tool even on providers that support hosted search.
+
+`provider` under `[web_search]` chooses only the **backup** client backend used when hosted search is off or the active chat path cannot host search. Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded. Set `provider = "disabled"` to turn the client backup off while keeping hosted search available on supported chat paths.
+
+To disable search entirely, set both `hosted = false` and `provider = "disabled"`. On a chat path that cannot host search, `provider = "disabled"` alone is enough to remove the tool.
+
+Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the configured credential store when loaded. Empty strings are ignored.
 
 `enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
 

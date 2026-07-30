@@ -19,6 +19,7 @@ fn passes_configured_ollama_base_to_provider_build_options() {
     let actual = SdkBootstrapOptions::from_config(&config, Path::new("workspace")).unwrap();
     let expected = ProviderBuildOptions::new("ollama", "local-model", config.reasoning)
         .unwrap()
+        .hosted_web_search(/*enabled*/ false)
         .endpoint(config.providers.ollama.base_url.clone())
         .unwrap();
 

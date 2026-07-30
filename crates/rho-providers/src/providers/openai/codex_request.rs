@@ -89,10 +89,14 @@ impl ResponsesWireContract {
         }
     }
 
-    fn serialize_tool(self, tool: ToolSpec) -> Value {
+    fn serialize_tool(self, tool: ToolSpec, hosted_web_search: bool) -> Value {
         match self {
-            Self::OpenAiStandard => to_responses_tool(tool, ToolStrictness::Explicit(false)),
-            Self::CodexStandard => to_responses_tool(tool, ToolStrictness::Unspecified),
+            Self::OpenAiStandard => {
+                to_responses_tool(tool, ToolStrictness::Explicit(false), hosted_web_search)
+            }
+            Self::CodexStandard => {
+                to_responses_tool(tool, ToolStrictness::Unspecified, hosted_web_search)
+            }
             Self::CodexLite => to_responses_lite_tool(tool, ToolStrictness::Unspecified),
         }
     }
@@ -244,6 +248,7 @@ pub(super) async fn build_responses_create_body(
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
+    hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let contract = profile.contract();
     let request = ResponsesBodyRequest::prepare(request, contract).await?;
@@ -251,7 +256,7 @@ pub(super) async fn build_responses_create_body(
         .tools
         .iter()
         .cloned()
-        .map(|tool| contract.serialize_tool(tool))
+        .map(|tool| contract.serialize_tool(tool, hosted_web_search))
         .collect::<Vec<_>>();
     let ResponsesLowered {
         instructions,
@@ -379,7 +384,7 @@ pub(super) async fn build_codex_responses_body(
     model: &str,
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
-    build_codex_responses_body_with_tier(model, request, None).await
+    build_codex_responses_body_with_tier(model, request, None, /*hosted_web_search*/ true).await
 }
 
 #[cfg(test)]
@@ -387,6 +392,7 @@ async fn build_codex_responses_body_with_tier(
     model: &str,
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
+    hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let profile = ResponsesProfile::from_auth(&codex_test_auth(), model);
     build_responses_create_body(
@@ -394,6 +400,7 @@ async fn build_codex_responses_body_with_tier(
         &OpenAiReasoningProfile::unknown(),
         request,
         service_tier,
+        hosted_web_search,
     )
     .await
 }

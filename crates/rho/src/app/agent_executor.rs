@@ -151,9 +151,7 @@ impl AgentExecutor {
     pub(crate) fn spawn(&self, request: AgentLaunchRequest) -> anyhow::Result<AgentRunHandle> {
         let config = self.config.read().expect("delegated config lock").clone();
         let mut capabilities = AgentCapabilities::all_host_tools();
-        if !crate::tools::web::access_tools(&config).is_available() {
-            capabilities.remove(&ToolCapability::WebSearch);
-        }
+        // web_search is gated after bind against the agent provider/model.
         #[cfg(windows)]
         capabilities.remove(&ToolCapability::Bash);
         #[cfg(not(windows))]

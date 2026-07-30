@@ -28,7 +28,7 @@ It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, we
 
 ```text
 rho                 inspect runtime identity, context, prompt sources, tools, or sanitized config
-web_search          search with optional provider credentials and store snippets by default
+web_search          when hosted = true and the chat path supports it, use provider-hosted search; otherwise use the configured backup backend and store snippets by default
 fetch_content       fetch pages, GitHub URLs, local files, PDFs, and video targets
 get_search_content  retrieve stored content from a prior web_search or fetch_content call
 process             start, poll, or stop a managed background shell process
@@ -36,7 +36,7 @@ bash                macOS and Linux
 powershell          Windows
 ```
 
-When the active model provider is xAI, Rho attaches xAI's hosted `x_search` tool on every model turn as a provider amenity. That tool searches X (x.com) posts, users, and threads server-side. It is separate from the client `web_search` tool, which still searches the open web through configured search backends, and it is not part of the agent tool allowlist: restricted or empty tool sets still receive hosted X Search while the session uses xAI. Switching an existing session to xAI adds it on the next turn, and switching away removes it. Hosted X Search activity appears in the run stream as typed `HostedToolActivity` events with `name: "x_search"`.
+When the active model provider is xAI, Rho attaches xAI's hosted `x_search` tool on every model turn as a provider amenity. That tool searches X (x.com) posts, users, and threads server-side. It is separate from `web_search`, which uses hosted provider web search when enabled and supported, otherwise the configured client backup backends. Hosted X Search is not part of the agent tool allowlist: restricted or empty tool sets still receive it while the session uses xAI. Switching an existing session to xAI adds it on the next turn, and switching away removes it. Hosted X Search activity appears in the run stream as typed `HostedToolActivity` events with `name: "x_search"`.
 
 Built-in skills that ship with the binary include `rho-diagnostics` for harness diagnostics and `rho-agent-creator` for defining new agents. The `rho-agent-creator` skill guides you through a step-by-step questionnaire to produce a valid agent Markdown file with YAML frontmatter and a prompt body. Custom user skills can be added under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to prevent the model from loading it while keeping it available through `/skill:<name>`.
 

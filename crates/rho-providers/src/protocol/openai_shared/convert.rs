@@ -97,8 +97,12 @@ impl ToolStrictness {
 }
 
 /// Serializes a tool for a Responses endpoint that offers hosted tools.
-pub(crate) fn to_responses_tool(tool: ToolSpec, strictness: ToolStrictness) -> serde_json::Value {
-    if tool.name == "web_search" {
+pub(crate) fn to_responses_tool(
+    tool: ToolSpec,
+    strictness: ToolStrictness,
+    hosted_web_search: bool,
+) -> serde_json::Value {
+    if hosted_web_search && tool.name == "web_search" {
         return json!({
             "type": "web_search",
             "external_web_access": true,

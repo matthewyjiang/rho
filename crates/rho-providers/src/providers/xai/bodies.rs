@@ -40,6 +40,20 @@ fn lower_xai_create_request(
     })
 }
 
+/// Serializes one xAI Responses tool, optionally rewriting web_search to the hosted type.
+fn to_xai_responses_tool(
+    tool: ToolSpec,
+    strictness: ToolStrictness,
+    hosted_web_search: bool,
+) -> Value {
+    if hosted_web_search && tool.name == "web_search" {
+        return json!({
+            "type": "web_search",
+        });
+    }
+    to_responses_lite_tool(tool, strictness)
+}
+
 /// Maps client tool specs onto the xAI Responses tools array.
 ///
 /// `x_search` is an xAI-hosted server-side tool for searching X (x.com). It is
@@ -49,12 +63,12 @@ fn lower_xai_create_request(
 /// from xAI. Stock Rho never registers a client tool named `x_search`; any
 /// colliding custom function of that name is dropped so only the hosted form
 /// is advertised.
-fn xai_responses_tools(tools: &[ToolSpec]) -> Vec<Value> {
+fn xai_responses_tools(tools: &[ToolSpec], hosted_web_search: bool) -> Vec<Value> {
     let mut out = tools
         .iter()
         .filter(|tool| tool.name != "x_search")
         .cloned()
-        .map(|tool| to_responses_lite_tool(tool, ToolStrictness::Explicit(false)))
+        .map(|tool| to_xai_responses_tool(tool, ToolStrictness::Explicit(false), hosted_web_search))
         .collect::<Vec<_>>();
     out.push(json!({ "type": "x_search" }));
     out
@@ -69,8 +83,9 @@ pub(super) fn build_xai_responses_body(
     model: &str,
     reasoning: &reasoning::XaiReasoningProfile,
     request: ModelRequest<'_>,
+    hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
-    let tools = xai_responses_tools(request.tools);
+    let tools = xai_responses_tools(request.tools, hosted_web_search);
     let XaiCreateLowered {
         instructions,
         input,

@@ -51,6 +51,7 @@ pub struct OpenAiProvider {
     codex_ws: CodexWsTransport,
     credential_store: Arc<dyn CredentialStore>,
     refreshed_codex_tokens: Mutex<Option<CodexTokens>>,
+    hosted_web_search: bool,
 }
 
 impl OpenAiProvider {
@@ -60,7 +61,14 @@ impl OpenAiProvider {
         auth: Auth,
         credential_store: Arc<dyn CredentialStore>,
     ) -> Self {
-        Self::new_with_transport(model, auth, credential_store, provider_client(), None)
+        Self::new_with_transport(
+            model,
+            auth,
+            credential_store,
+            provider_client(),
+            None,
+            /*hosted_web_search*/ true,
+        )
     }
 
     pub(crate) fn new_with_transport(
@@ -69,6 +77,7 @@ impl OpenAiProvider {
         credential_store: Arc<dyn CredentialStore>,
         client: reqwest::Client,
         api_base_override: Option<String>,
+        hosted_web_search: bool,
     ) -> Self {
         let profile = ResponsesProfile::from_auth(&auth, model);
         let api_base = api_base_override.unwrap_or_else(|| profile.default_api_base().to_string());
@@ -85,6 +94,7 @@ impl OpenAiProvider {
             codex_ws,
             credential_store,
             refreshed_codex_tokens: Mutex::new(None),
+            hosted_web_search,
         }
     }
 
@@ -108,6 +118,7 @@ impl OpenAiProvider {
             &self.reasoning,
             request,
             options.service_tier(),
+            self.hosted_web_search,
         )
         .await
     }

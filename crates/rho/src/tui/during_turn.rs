@@ -632,6 +632,7 @@ impl App {
                 ));
                 self.status = "web search config".into();
             }
+            config_picker::WEB_SEARCH_HOSTED_VALUE => self.toggle_web_search_hosted()?,
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider()?,
             config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
                 self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)?;

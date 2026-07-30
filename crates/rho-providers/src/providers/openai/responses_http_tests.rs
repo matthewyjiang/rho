@@ -572,6 +572,7 @@ async fn create_and_compact_body_builders_diverge_on_tools() {
         &OpenAiReasoningProfile::unknown(),
         request.clone(),
         None,
+        /*hosted_web_search*/ true,
     )
     .await
     .unwrap();

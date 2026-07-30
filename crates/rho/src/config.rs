@@ -63,6 +63,9 @@ pub struct Config {
     /// Optional model selections for reserved internal agents, keyed by stable agent ID.
     pub internal_agents: BTreeMap<String, InternalAgentModelConfig>,
     pub favorite_models: Vec<String>,
+    /// Use the chat provider's hosted web search when the transport supports it.
+    pub web_search_hosted: bool,
+    /// Client-side backup backend used when hosted search is off or unsupported.
     pub web_search_provider: SearchProvider,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
@@ -110,6 +113,7 @@ impl Default for Config {
             compact_target_percent: 50,
             internal_agents: BTreeMap::new(),
             favorite_models: Vec::new(),
+            web_search_hosted: true,
             web_search_provider: SearchProvider::Auto,
             check_for_updates: true,
             enable_subagents: true,
@@ -422,6 +426,9 @@ impl Config {
         cfg.resolve_internal_agent_model_aliases()?;
         cfg.normalize_provider_profiles()?;
         if let Some(group) = file.web_search {
+            if let Some(hosted) = group.hosted {
+                cfg.web_search_hosted = hosted;
+            }
             if let Some(provider) = group.provider {
                 cfg.web_search_provider = SearchProvider::from_config_value(&provider);
             }
@@ -822,12 +829,14 @@ impl PartialConfig {
             || self.web_search.is_some()
         {
             let group = self.web_search.take().unwrap_or(PartialWebSearchConfig {
+                hosted: None,
                 provider: None,
                 openai_api_key: None,
                 exa_api_key: None,
                 brave_api_key: None,
             });
             self.web_search = Some(PartialWebSearchConfig {
+                hosted: group.hosted,
                 provider: group.provider.or(web_search_provider),
                 openai_api_key: group.openai_api_key.or(openai_api_key),
                 exa_api_key: group.exa_api_key.or(exa_api_key),
@@ -936,6 +945,7 @@ struct PartialTitleConfig {
 
 #[derive(Deserialize)]
 struct PartialWebSearchConfig {
+    hosted: Option<bool>,
     provider: Option<String>,
     openai_api_key: Option<String>,
     exa_api_key: Option<String>,

@@ -28,6 +28,7 @@ fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
+        /*hosted_web_search*/ true,
     )
     .unwrap();
 
@@ -65,6 +66,7 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: Some("rho:session"),
         },
+        /*hosted_web_search*/ true,
     )
     .unwrap();
 
@@ -93,7 +95,7 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
 }
 
 #[test]
-fn responses_body_keeps_web_search_as_client_function_and_adds_hosted_x_search() {
+fn responses_body_uses_hosted_web_search_and_adds_hosted_x_search() {
     let tools = [
         ToolSpec {
             name: "web_search".into(),
@@ -118,6 +120,39 @@ fn responses_body_keeps_web_search_as_client_function_and_adds_hosted_x_search()
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
+        /*hosted_web_search*/ true,
+    )
+    .unwrap();
+
+    assert_eq!(
+        body["tools"],
+        json!([
+            { "type": "web_search" },
+            { "type": "x_search" },
+        ])
+    );
+}
+
+#[test]
+fn responses_body_keeps_function_web_search_when_hosted_disabled() {
+    let tools = [ToolSpec {
+        name: "web_search".into(),
+        description: "search the web".into(),
+        input_schema: json!({"type": "object"}),
+    }];
+    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
+    let body = build_xai_responses_body(
+        "xai",
+        "grok-4.5",
+        &profile,
+        ModelRequest {
+            messages: &[Message::user_text("find docs")],
+            tools: &tools,
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Medium,
+            prompt_cache_key: None,
+        },
+        /*hosted_web_search*/ false,
     )
     .unwrap();
 
@@ -150,6 +185,7 @@ fn responses_body_always_includes_hosted_x_search() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
+        /*hosted_web_search*/ true,
     )
     .unwrap();
 

@@ -97,6 +97,50 @@ async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     assert!(retrieved.content.contains("No configured search provider"));
 }
 
+#[test]
+fn web_search_available_with_hosted_only_backup_disabled() {
+    let config = Config {
+        provider: "openai-codex".into(),
+        model: "gpt-5.5".into(),
+        web_search_hosted: true,
+        web_search_provider: crate::config::SearchProvider::Disabled,
+        ..Config::default()
+    };
+    assert!(super::web_search_available(&config));
+    assert!(super::hosted_web_search_active(&config));
+    assert!(!super::backup_web_search_available(&config));
+}
+
+#[test]
+fn web_search_unavailable_when_hosted_and_backup_disabled() {
+    let config = Config {
+        provider: "openai-codex".into(),
+        model: "gpt-5.5".into(),
+        web_search_hosted: false,
+        web_search_provider: crate::config::SearchProvider::Disabled,
+        ..Config::default()
+    };
+    assert!(!super::web_search_available(&config));
+}
+
+#[test]
+fn codex_lite_uses_backup_not_hosted() {
+    let config = Config {
+        provider: "openai-codex".into(),
+        model: "gpt-5.6-luna".into(),
+        web_search_hosted: true,
+        web_search_provider: crate::config::SearchProvider::Disabled,
+        ..Config::default()
+    };
+    assert!(!super::hosted_web_search_active(&config));
+    assert!(!super::web_search_available(&config));
+}
+
+#[test]
+fn xai_supports_hosted_web_search() {
+    assert!(super::supports_hosted_web_search("xai", "grok-4.5"));
+}
+
 #[tokio::test]
 async fn search_item_content_preserves_snippet_when_fetch_fails() {
     let item = SearchItem {

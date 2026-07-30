@@ -13,6 +13,7 @@ async fn priority_service_tier_is_sent_as_fast_mode() {
             prompt_cache_key: None,
         },
         Some(ServiceTier::Priority),
+        /*hosted_web_search*/ true,
     )
     .await
     .unwrap();
@@ -32,6 +33,7 @@ async fn priority_service_tier_is_omitted_for_unsupported_codex_models() {
             prompt_cache_key: None,
         },
         Some(ServiceTier::Priority),
+        /*hosted_web_search*/ true,
     )
     .await
     .unwrap();
@@ -55,6 +57,7 @@ async fn priority_service_tier_is_limited_to_codex_auth() {
         &OpenAiReasoningProfile::unknown(),
         request,
         Some(ServiceTier::Priority),
+        /*hosted_web_search*/ true,
     )
     .await
     .unwrap();
@@ -161,6 +164,39 @@ async fn standard_requests_keep_hosted_web_search_tool() {
     assert_eq!(body["tool_choice"], "auto");
 }
 
+#[tokio::test]
+async fn standard_requests_keep_function_web_search_when_hosted_disabled() {
+    let body = build_codex_responses_body_with_tier(
+        "gpt-5.5",
+        ModelRequest {
+            messages: &[Message::user_text("find current docs")],
+            tools: &[ToolSpec {
+                name: "web_search".into(),
+                description: "search the web".into(),
+                input_schema: json!({"type": "object"}),
+            }],
+            cancellation: Default::default(),
+            reasoning_level: Default::default(),
+            prompt_cache_key: None,
+        },
+        None,
+        /*hosted_web_search*/ false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        body["tools"],
+        json!([{
+            "type": "function",
+            "name": "web_search",
+            "description": "search the web",
+            "parameters": {"type": "object"},
+            "strict": null,
+        }])
+    );
+}
+
 // Covers: Codex and API-key requests must keep their distinct Responses wire contracts.
 // Owner: OpenAI Responses request lowering
 #[tokio::test]
@@ -207,6 +243,7 @@ async fn standard_create_wire_contract_is_auth_flavor_specific() {
                 prompt_cache_key: None,
             },
             None,
+            /*hosted_web_search*/ true,
         )
         .await
         .unwrap();

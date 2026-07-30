@@ -42,7 +42,10 @@ fn applies_runtime_configuration_tools_and_workspace_instructions() {
 model = "grok-fixture"
 auth = "xai-oauth"
 reasoning = "high"
-web_search_provider = "disabled"
+
+[web_search]
+hosted = false
+provider = "disabled"
 "#,
     )
     .unwrap();
