@@ -3,10 +3,6 @@
 ## [0.14.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.13.3...rho-providers-v0.14.0) (2026-07-30)
 
 
-### ⚠ BREAKING CHANGES
-
-* **xai:** ModelEvent::WebSearch and RunEvent::WebSearch now carry a name field so hosts can distinguish web_search from x_search.
-
 ### Features
 
 * **tools:** replace edit_file with codex-style apply_patch ([#653](https://github.com/matthewyjiang/rho/issues/653)) ([eef1555](https://github.com/matthewyjiang/rho/commit/eef155521c5492b9c7f34507e82b6b7f46b896a8))

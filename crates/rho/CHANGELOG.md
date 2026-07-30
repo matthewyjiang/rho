@@ -3,14 +3,9 @@
 ## [1.23.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.22.1...rho-coding-agent-v1.23.0) (2026-07-30)
 
 
-### ⚠ BREAKING CHANGES
-
-* **xai:** ModelEvent::WebSearch and RunEvent::WebSearch now carry a name field so hosts can distinguish web_search from x_search.
-
 ### Features
 
-* **tools:** replace edit_file with codex-style apply_patch ([#653](https://github.com/matthewyjiang/rho/issues/653)) ([eef1555](https://github.com/matthewyjiang/rho/commit/eef155521c5492b9c7f34507e82b6b7f46b896a8))
-* **web:** prefer hosted search with backup provider config ([#649](https://github.com/matthewyjiang/rho/issues/649)) ([2e136e9](https://github.com/matthewyjiang/rho/commit/2e136e9025ebc318f7fac5da8e45a3134d785430))
+* **tools:** replace edit_file with codex-style apply_patch ([#653](https://github.com/matthewyjiang/rho/issues/653)) ([eef1555](https://github.com/matthewyjiang/rho/commit/eef155521c5492b9c7f34507e82b6b7f46b896a8))* **web:** prefer hosted search with backup provider config ([#649](https://github.com/matthewyjiang/rho/issues/649)) ([2e136e9](https://github.com/matthewyjiang/rho/commit/2e136e9025ebc318f7fac5da8e45a3134d785430))
 * **xai:** support hosted x_search tool ([#647](https://github.com/matthewyjiang/rho/issues/647)) ([cd0c897](https://github.com/matthewyjiang/rho/commit/cd0c897570376cf39d2d99b40c58c55b22fc6133))
 
 

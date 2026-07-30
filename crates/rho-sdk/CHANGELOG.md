@@ -3,10 +3,6 @@
 ## [1.13.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.12.2...rho-sdk-v1.13.0) (2026-07-30)
 
 
-### ⚠ BREAKING CHANGES
-
-* **xai:** ModelEvent::WebSearch and RunEvent::WebSearch now carry a name field so hosts can distinguish web_search from x_search.
-
 ### Features
 
 * **xai:** support hosted x_search tool ([#647](https://github.com/matthewyjiang/rho/issues/647)) ([cd0c897](https://github.com/matthewyjiang/rho/commit/cd0c897570376cf39d2d99b40c58c55b22fc6133))
