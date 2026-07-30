@@ -66,6 +66,7 @@ pub(super) async fn generate_session_title(
     model: String,
     auth: String,
     first_user_message: String,
+    first_assistant_message: String,
     session_id: SessionId,
     workspace_path: std::path::PathBuf,
     usage_recording: ProviderRequestUsageRecording,
@@ -78,7 +79,9 @@ pub(super) async fn generate_session_title(
             provider_name: &provider_name,
             model: &model,
             auth: &auth,
-            input: format!("First user message:\n\n{first_user_message}"),
+            input: format!(
+                "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
+            ),
             cancellation: cancellation.clone(),
             session_id: &session_id,
             workspace_path: &workspace_path,
@@ -147,7 +150,8 @@ impl App {
 
     pub(super) fn start_session_title_generation(
         &mut self,
-        first_user_message: String,
+        first_user_message: &str,
+        first_assistant_message: &str,
         agent: &InteractiveRuntime,
     ) {
         if self.info.session.session_id.is_none() {
@@ -161,12 +165,15 @@ impl App {
         let cancellation = rho_sdk::CancellationToken::new();
         let task_cancellation = cancellation.clone();
         let task_session_id = session_id.clone();
+        let first_user_message = first_user_message.to_owned();
+        let first_assistant_message = first_assistant_message.to_owned();
         let handle = tokio::spawn(async move {
             let title = generate_session_title(
                 selection.provider,
                 selection.model,
                 selection.auth,
                 first_user_message,
+                first_assistant_message,
                 task_session_id.clone(),
                 workspace_path,
                 usage_recording,

@@ -17,6 +17,7 @@ fn failed_turn() -> FailedTurn {
         display_user: Some(Message::user_text("continuing active goal")),
         notification_context: None,
         initial_tool_call: None,
+        generate_session_title_after_completion: true,
     }
 }
 
@@ -81,8 +82,10 @@ fn mixed_interactions_preserve_arrival_order() {
     assert!(queue.pop().is_none());
 }
 
+// Covers: retrying the first turn must retain deferred title generation.
+// Owner: TUI turn orchestration
 #[test]
-fn retry_request_reuses_the_failed_turn_input_and_display() {
+fn retry_request_reuses_the_failed_turn_and_deferred_title_state() {
     let failed_turn = failed_turn();
     let PromptTurnRequest::Retry(retry) = PromptTurnRequest::Retry(failed_turn.clone()) else {
         unreachable!("constructed a retry request")
