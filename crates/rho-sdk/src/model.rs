@@ -366,6 +366,14 @@ pub enum ModelEvent {
 /// hosted activity to a dedicated variant.
 pub const HOSTED_TOOL_ACTIVITY_KIND: &str = "hosted_tool_activity";
 
+/// Reserved [`ModelEvent::ProviderContext::kind`] for a completed turn that ran
+/// on a different service tier than requested.
+///
+/// Construct events with [`ModelEvent::service_tier_fallback`]. The runtime maps
+/// this kind to [`crate::RunEvent::ProviderServiceTierFallback`] and does not
+/// retain it as provider-context replay state.
+pub const SERVICE_TIER_FALLBACK_KIND: &str = "service_tier_fallback";
+
 impl ModelEvent {
     /// Builds provider-native hosted tool activity for the stream.
     ///
@@ -389,6 +397,40 @@ impl ModelEvent {
                 let name = data.get("name")?.as_str()?;
                 let detail = data.get("detail")?.as_str()?;
                 Some((name, detail))
+            }
+            _ => None,
+        }
+    }
+
+    /// Builds a service-tier fallback observation for the stream.
+    ///
+    /// Carried as a reserved [`ModelEvent::ProviderContext`] kind so 1.x stays
+    /// minor-compatible, then lowered to
+    /// [`crate::RunEvent::ProviderServiceTierFallback`].
+    pub fn service_tier_fallback(requested: ServiceTier, used: impl Into<String>) -> Self {
+        let requested = match requested {
+            ServiceTier::Priority => "priority",
+        };
+        Self::ProviderContext {
+            kind: SERVICE_TIER_FALLBACK_KIND.into(),
+            position: None,
+            data: json!({
+                "requested": requested,
+                "used": used.into(),
+            }),
+        }
+    }
+
+    /// Returns service-tier fallback details when this event carries that kind.
+    pub fn as_service_tier_fallback(&self) -> Option<(ServiceTier, &str)> {
+        match self {
+            Self::ProviderContext { kind, data, .. } if kind == SERVICE_TIER_FALLBACK_KIND => {
+                let requested = match data.get("requested")?.as_str()? {
+                    "priority" => ServiceTier::Priority,
+                    _ => return None,
+                };
+                let used = data.get("used")?.as_str()?;
+                Some((requested, used))
             }
             _ => None,
         }

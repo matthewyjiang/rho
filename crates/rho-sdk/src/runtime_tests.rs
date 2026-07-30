@@ -18,8 +18,7 @@ use crate::{
         ModelResponse, ToolCall, ToolSpec,
     },
     provider::{
-        ModelProvider, ProviderEventSender, ProviderFuture, ProviderRequestEvent,
-        ProviderStreamEvent, ScriptedProvider, ScriptedTurn,
+        ModelProvider, ProviderEventSender, ProviderFuture, ScriptedProvider, ScriptedTurn,
     },
     tool::{
         ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
@@ -1192,12 +1191,10 @@ async fn service_tier_is_explicit_and_can_change_between_runs() {
 async fn provider_service_tier_fallback_is_emitted_without_marking_a_retry() {
     let provider = ScriptedProvider::new(
         identity(),
-        [ScriptedTurn::streaming_with_request_events(
-            vec![ProviderStreamEvent::Request(
-                ProviderRequestEvent::ServiceTierFallback {
-                    requested: crate::model::ServiceTier::Priority,
-                    used: "default".into(),
-                },
+        [ScriptedTurn::streaming(
+            vec![ModelEvent::service_tier_fallback(
+                crate::model::ServiceTier::Priority,
+                "default",
             )],
             ModelResponse::Assistant(vec![ContentBlock::Text("standard".into())]),
         )],

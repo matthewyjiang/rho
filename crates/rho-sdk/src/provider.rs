@@ -129,11 +129,6 @@ pub enum ProviderRequestEvent {
         kind: ProviderErrorKind,
         usage: crate::model::ModelUsage,
     },
-    /// The provider completed a request on a different service tier.
-    ServiceTierFallback {
-        requested: ServiceTier,
-        used: String,
-    },
 }
 
 /// An item from either provider event path.
@@ -208,26 +203,6 @@ impl ProviderEventSender {
                 event: ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
                     kind,
                     usage,
-                }),
-                observed_at: Some(observed_at),
-            })
-            .await
-            .map_err(|_| ProviderError::interrupted("provider request event consumer was dropped"))
-    }
-
-    /// Reports an observed service-tier fallback without replacing its timestamp.
-    #[doc(hidden)]
-    pub async fn send_service_tier_fallback_observed(
-        &self,
-        requested: ServiceTier,
-        used: String,
-        observed_at: Instant,
-    ) -> Result<(), ProviderError> {
-        self.sender
-            .send(ProviderEventEnvelope {
-                event: ProviderStreamEvent::Request(ProviderRequestEvent::ServiceTierFallback {
-                    requested,
-                    used,
                 }),
                 observed_at: Some(observed_at),
             })
@@ -589,17 +564,6 @@ impl ScriptedProvider {
                             ProviderStreamEvent::Request(
                                 ProviderRequestEvent::RequestAttemptFailed { kind, usage },
                             ) => events.send_request_attempt_failed(kind, usage).await,
-                            ProviderStreamEvent::Request(
-                                ProviderRequestEvent::ServiceTierFallback { requested, used },
-                            ) => {
-                                events
-                                    .send_service_tier_fallback_observed(
-                                        requested,
-                                        used,
-                                        Instant::now(),
-                                    )
-                                    .await
-                            }
                         }
                     } => result?,
                     () = cancellation.cancelled() => {

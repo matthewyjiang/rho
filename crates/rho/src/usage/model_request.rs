@@ -54,9 +54,6 @@ pub(crate) async fn send_recorded_from_attempt(
                     failed_attempts.push((kind, usage.saturating_add(&attempt_usage)));
                     usage = ModelUsage::default();
                 }
-                ProviderStreamEvent::Request(ProviderRequestEvent::ServiceTierFallback {
-                    ..
-                }) => {}
             }
         }
         (usage, failed_attempts)

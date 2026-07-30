@@ -690,12 +690,7 @@ async fn handle_timed_provider_stream_event(
             .await
         }
         crate::provider::ProviderStreamEvent::Request(event) => {
-            if matches!(
-                event,
-                crate::provider::ProviderRequestEvent::RequestAttemptFailed { .. }
-            ) {
-                timer.discard_attempt_output(observed_at);
-            }
+            timer.discard_attempt_output(observed_at);
             handle_provider_request_event(event, capture, events, cancellation).await
         }
     }
@@ -745,33 +740,23 @@ async fn handle_provider_request_event(
     events: &mpsc::Sender<RunEvent>,
     cancellation: &CancellationToken,
 ) -> Result<(), ProviderError> {
-    match event {
-        crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage } => {
-            capture.record_request_attempt_failure(kind, usage);
-            emit(events, cancellation, RunEvent::ProviderRequestRetry)
-                .await
-                .map_err(|error| ProviderError::interrupted(error.to_string()))?;
-            // Preserve the 1.0 activity event while typed consumers migrate.
-            #[allow(deprecated)]
-            emit(
-                events,
-                cancellation,
-                RunEvent::ProviderActivity {
-                    kind: crate::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
-                    detail: "retrying after a failed physical provider request".into(),
-                },
-            )
-            .await
-            .map_err(|error| ProviderError::interrupted(error.to_string()))
-        }
-        crate::provider::ProviderRequestEvent::ServiceTierFallback { requested, used } => emit(
-            events,
-            cancellation,
-            RunEvent::ProviderServiceTierFallback { requested, used },
-        )
+    let crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage } = event;
+    capture.record_request_attempt_failure(kind, usage);
+    emit(events, cancellation, RunEvent::ProviderRequestRetry)
         .await
-        .map_err(|error| ProviderError::interrupted(error.to_string())),
-    }
+        .map_err(|error| ProviderError::interrupted(error.to_string()))?;
+    // Preserve the 1.0 activity event while typed consumers migrate.
+    #[allow(deprecated)]
+    emit(
+        events,
+        cancellation,
+        RunEvent::ProviderActivity {
+            kind: crate::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
+            detail: "retrying after a failed physical provider request".into(),
+        },
+    )
+    .await
+    .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
 async fn handle_provider_event(
@@ -829,9 +814,6 @@ async fn drain_cooperative_provider_on_cancellation(
                     ), _)) => {
                         capture.record_request_attempt_failure(kind, usage);
                     }
-                    Some((crate::provider::ProviderStreamEvent::Request(
-                        crate::provider::ProviderRequestEvent::ServiceTierFallback { .. }
-                    ), _)) => {}
                     None => stream_open = false,
                 }
             }
@@ -857,9 +839,6 @@ fn drain_cancelled_provider_events(
             ) => {
                 capture.record_request_attempt_failure(kind, usage);
             }
-            crate::provider::ProviderStreamEvent::Request(
-                crate::provider::ProviderRequestEvent::ServiceTierFallback { .. },
-            ) => {}
         }
     }
 }

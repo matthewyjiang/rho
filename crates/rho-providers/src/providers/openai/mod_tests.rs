@@ -6,7 +6,7 @@ use crate::model::{
 use crate::protocol::openai_chat::{convert_streamed_response, handle_openai_stream_line};
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
-    CodexSseResponse, CodexSseState,
+    CodexSseState,
 };
 use crate::reasoning::ReasoningLevel;
 use serde_json::json;
@@ -22,20 +22,18 @@ fn reported_service_tier_detects_priority_fallback() {
     ];
 
     for (reported, should_report) in cases {
-        let response = CodexSseResponse {
-            response: ModelResponse::Assistant(vec![ContentBlock::Text("ok".into())]),
-            response_id: Some("response-1".into()),
-            service_tier: reported.map(str::to_owned),
-        };
         let mut events = Vec::new();
+        let mut on_event = |event: ModelEvent| {
+            events.push(event);
+            Ok(())
+        };
+        let mut on_event =
+            Some(&mut on_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send));
 
         report_service_tier_fallback(
             Some(rho_sdk::model::ServiceTier::Priority),
-            &response,
-            &mut |event| {
-                events.push(event);
-                Ok(())
-            },
+            reported,
+            &mut on_event,
         )
         .unwrap();
 
@@ -47,12 +45,10 @@ fn reported_service_tier_detects_priority_fallback() {
         if should_report {
             assert_eq!(
                 events,
-                vec![
-                    rho_sdk::provider::ProviderRequestEvent::ServiceTierFallback {
-                        requested: rho_sdk::model::ServiceTier::Priority,
-                        used: "default".into(),
-                    }
-                ]
+                vec![ModelEvent::service_tier_fallback(
+                    rho_sdk::model::ServiceTier::Priority,
+                    "default",
+                )]
             );
         }
     }
