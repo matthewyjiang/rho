@@ -400,9 +400,24 @@ fn hosted_tool_family(name: &str) -> ToolFamily {
 }
 
 fn provider_native_activity_finished(name: &str, detail: String, family: ToolFamily) -> ViewEvent {
+    // Hosted activity card: verb-only header, optional detail fact, then
+    // "finished". Keeps operator-heavy queries out of `verb(primary)` parens
+    // and gives every hosted lookup the same chrome (not search-only).
+    let mut card = ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, None));
+    let detail = detail.trim();
+    if !detail.is_empty() {
+        card.push_fact(rho_tools::tool_card::ToolFact::Text {
+            text: detail.to_owned(),
+        });
+    }
+    // Hosted lookups have no client result body; keep a finished fact so the
+    // card is not a bare header.
+    card.push_fact(rho_tools::tool_card::ToolFact::Meta {
+        text: "finished".into(),
+    });
     ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: rho_sdk::ToolCallId::new(),
-        card: ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, Some(detail))),
+        card,
         image_asset: None,
     })
 }

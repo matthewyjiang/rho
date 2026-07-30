@@ -286,30 +286,73 @@ impl CodexSseState {
     }
 }
 
+/// Hosted-search item shapes on Responses streams.
+///
+/// - `web_search_call` → [`ModelEvent::WebSearch`]
+/// - `x_search_call` → hosted activity `x_search`
+/// - `custom_tool_call` whose `call_id` is in the `xs_call-` family → hosted
+///   activity `x_search` (xAI emits hosted X subtools this way, e.g.
+///   `x_keyword_search` with `call_id: "xs_call-…"`)
+///
+/// Classification is separate from detail formatting so non-search items never
+/// pay argument JSON probing.
 fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
-    match item.get("type").and_then(|value| value.as_str()) {
-        Some("web_search_call") => Some(ModelEvent::WebSearch(extract_codex_search_detail(item)?)),
-        Some("x_search_call") => Some(ModelEvent::hosted_tool_activity(
-            "x_search",
-            extract_codex_search_detail(item)?,
-        )),
+    let kind = classify_codex_search_item(item)?;
+    let detail = extract_codex_search_detail(item).unwrap_or_default();
+    Some(match kind {
+        CodexSearchKind::Web => ModelEvent::WebSearch(detail),
+        CodexSearchKind::X => ModelEvent::hosted_tool_activity("x_search", detail),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum CodexSearchKind {
+    Web,
+    X,
+}
+
+/// `custom_tool_call.call_id` prefix used by hosted x_search subtool invocations.
+const HOSTED_X_SEARCH_CALL_ID_PREFIX: &str = "xs_call-";
+
+fn classify_codex_search_item(item: &serde_json::Value) -> Option<CodexSearchKind> {
+    match item.get("type").and_then(|value| value.as_str())? {
+        "web_search_call" => Some(CodexSearchKind::Web),
+        "x_search_call" => Some(CodexSearchKind::X),
+        "custom_tool_call" if is_hosted_x_search_custom_call(item) => Some(CodexSearchKind::X),
         _ => None,
     }
 }
 
+fn is_hosted_x_search_custom_call(item: &serde_json::Value) -> bool {
+    item.get("call_id")
+        .and_then(|call_id| call_id.as_str())
+        .is_some_and(|call_id| call_id.starts_with(HOSTED_X_SEARCH_CALL_ID_PREFIX))
+}
+
 /// Stable key for a search output item, used to dedupe stream vs completed paths.
-fn codex_search_activity_key(item: &serde_json::Value) -> Option<String> {
-    extract_codex_search_activity(item)?;
+///
+/// Prefer the wire `id`. Fall back to type+detail only when the item has no id,
+/// using the already-built event so detail is not extracted twice.
+fn codex_search_activity_key(item: &serde_json::Value, event: &ModelEvent) -> String {
     if let Some(id) = item
         .get("id")
         .and_then(|value| value.as_str())
         .filter(|id| !id.is_empty())
     {
-        return Some(id.to_owned());
+        return id.to_owned();
     }
-    let kind = item.get("type").and_then(|value| value.as_str())?;
-    let detail = extract_codex_search_detail(item).unwrap_or_default();
-    Some(format!("{kind}:{detail}"))
+    let kind = item
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("search");
+    let detail = match event {
+        ModelEvent::WebSearch(detail) => detail.as_str(),
+        other => other
+            .as_hosted_tool_activity()
+            .map(|(_, detail)| detail)
+            .unwrap_or(""),
+    };
+    format!("{kind}:{detail}")
 }
 
 fn emit_codex_search_activity(
@@ -317,60 +360,105 @@ fn emit_codex_search_activity(
     state: &mut CodexSseState,
     on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<(), ModelError> {
-    let Some(key) = codex_search_activity_key(item) else {
-        return Ok(());
-    };
-    if !state.emitted_search_keys.insert(key) {
-        return Ok(());
-    }
     let Some(event) = extract_codex_search_activity(item) else {
         return Ok(());
     };
+    let key = codex_search_activity_key(item, &event);
+    if !state.emitted_search_keys.insert(key) {
+        return Ok(());
+    }
     if let Some(on_event) = on_event.as_mut() {
         on_event(event)?;
     }
     Ok(())
 }
 
+/// Bare semantic detail for a hosted search card (shown as a child fact).
+///
+/// Returns payload values only — no English chrome like `for` / `opened` /
+/// `found`. The TUI owns presentation (verb header + optional detail fact +
+/// `finished`).
+///
+/// Codex-style items put fields under `action`. xAI emits hosted X tools as
+/// `custom_tool_call` with JSON in `input`. Older shapes may use `x_search_call`
+/// and `arguments`. Empty detail is fine: the activity still emits.
 fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
-    let action = item.get("action")?;
-    if let Some(query) = action
+    item.get("action")
+        .and_then(detail_from_search_action)
+        .or_else(|| detail_from_search_arguments(item))
+}
+
+fn detail_from_search_action(action: &serde_json::Value) -> Option<String> {
+    detail_from_search_payload(action)
+        .or_else(|| first_nonempty_detail_field(action, &["url", "pattern"]))
+}
+
+fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
+    let arguments = item
+        .get("arguments")
+        .or_else(|| item.get("input"))
+        .and_then(|value| value.as_str())?;
+    let args: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    if let Some(detail) = detail_from_search_payload(&args) {
+        return Some(detail);
+    }
+    first_nonempty_detail_field(&args, &["post_id", "username", "url", "prompt"])
+}
+
+fn first_nonempty_detail_field(payload: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        payload
+            .get(*key)
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .map(|value| truncate_detail(value, 80))
+    })
+}
+
+fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
+    if let Some(query) = payload
         .get("query")
         .and_then(|query| query.as_str())
         .filter(|query| !query.is_empty())
     {
-        return Some(format!("for \"{}\"", truncate_detail(query, 80)));
+        return Some(truncate_detail(query, 80));
     }
-    if let Some(queries) = action.get("queries").and_then(|queries| queries.as_array()) {
-        let mut rendered = queries
-            .iter()
-            .filter_map(|query| query.as_str())
-            .filter(|query| !query.is_empty())
-            .take(3)
-            .map(|query| format!("\"{}\"", truncate_detail(query, 48)))
-            .collect::<Vec<_>>();
-        if queries.len() > rendered.len() {
-            rendered.push(format!("{} more", queries.len() - rendered.len()));
-        }
-        if !rendered.is_empty() {
-            return Some(format!("for {}", rendered.join(", ")));
-        }
+    let queries = payload
+        .get("queries")
+        .and_then(|queries| queries.as_array())?
+        .iter()
+        .filter_map(|query| query.as_str())
+        .filter(|query| !query.is_empty())
+        .collect::<Vec<_>>();
+    if queries.is_empty() {
+        return None;
     }
-    if let Some(url) = action
-        .get("url")
-        .and_then(|url| url.as_str())
-        .filter(|url| !url.is_empty())
-    {
-        return Some(format!("opened {}", truncate_detail(url, 80)));
+    let mut rendered = queries
+        .iter()
+        .take(3)
+        .map(|query| truncate_detail(query, 48))
+        .collect::<Vec<_>>();
+    if queries.len() > rendered.len() {
+        rendered.push(format!("{} more", queries.len() - rendered.len()));
     }
-    if let Some(pattern) = action
-        .get("pattern")
-        .and_then(|pattern| pattern.as_str())
-        .filter(|pattern| !pattern.is_empty())
-    {
-        return Some(format!("found \"{}\"", truncate_detail(pattern, 80)));
-    }
-    Some("finished".into())
+    Some(rendered.join(" · "))
+}
+
+fn codex_output_item_key(item: &serde_json::Value) -> Option<(&str, &str)> {
+    let kind = item.get("type").and_then(|value| value.as_str())?;
+    let id = item
+        .get("id")
+        .or_else(|| item.get("call_id"))
+        .and_then(|value| value.as_str())
+        .filter(|id| !id.is_empty())?;
+    Some((kind, id))
+}
+
+fn codex_output_item_was_processed(state: &CodexSseState, item: &serde_json::Value) -> bool {
+    let key = codex_output_item_key(item);
+    state.output_items.iter().any(|processed| {
+        key.is_some_and(|key| codex_output_item_key(processed) == Some(key)) || processed == item
+    })
 }
 
 fn truncate_detail(value: &str, max_chars: usize) -> String {
@@ -623,15 +711,19 @@ pub(crate) fn handle_codex_sse_value(
                 on_event(ModelEvent::Usage(usage))?;
             }
         }
-        if !state.text.is_empty() || !state.tool_calls.is_empty() {
-            return Ok(true);
-        }
+        // The completed envelope is authoritative, but may restate items already
+        // handled by output_item.done. Reconcile each item independently so one
+        // streamed output does not hide a different completed-only output.
         if let Some(output) = value
             .get("response")
             .and_then(|response| response.get("output"))
             .and_then(|output| output.as_array())
         {
             for item in output {
+                emit_codex_search_activity(item, state, on_event)?;
+                if codex_output_item_was_processed(state, item) {
+                    continue;
+                }
                 state.output_items.push(item.clone());
                 if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
                     if let Some(on_event) = on_event.as_mut() {
@@ -642,13 +734,12 @@ pub(crate) fn handle_codex_sse_value(
                         })?;
                     }
                 }
-                emit_codex_search_activity(item, state, on_event)?;
                 if let Some(call) = extract_codex_function_call(item)? {
                     state.tool_calls.push(call);
                 }
             }
         }
-        if state.tool_calls.is_empty() {
+        if state.text.is_empty() && state.tool_calls.is_empty() {
             if let Ok(response) =
                 serde_json::from_value::<ResponsesResponse>(value["response"].clone())
             {

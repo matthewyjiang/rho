@@ -117,11 +117,18 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
     };
     assert_eq!(card.status, ToolStatus::Ok);
     assert_eq!(card.family, ToolFamily::Web);
+    assert_eq!(card.header, ToolHeader::call("web_search", None));
     assert_eq!(
-        card.header,
-        ToolHeader::call("web_search", Some("rho docs".into()))
+        card.facts,
+        vec![
+            rho_tools::tool_card::ToolFact::Text {
+                text: "rho docs".into(),
+            },
+            rho_tools::tool_card::ToolFact::Meta {
+                text: "finished".into(),
+            },
+        ]
     );
-    assert!(card.facts.is_empty());
 }
 
 #[test]
@@ -131,18 +138,23 @@ fn provider_native_hosted_tool_activity_maps_to_tool_finished_view() {
     let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
         only_event(adapter.translate(RunEvent::HostedToolActivity {
             name: "x_search".into(),
-            detail: "for \"xAI\"".into(),
+            detail: "xAI".into(),
         }))
     else {
         panic!("expected hosted tool activity finished");
     };
     assert_eq!(card.status, ToolStatus::Ok);
     assert_eq!(card.family, ToolFamily::Web);
+    assert_eq!(card.header, ToolHeader::call("x_search", None));
     assert_eq!(
-        card.header,
-        ToolHeader::call("x_search", Some("for \"xAI\"".into()))
+        card.facts,
+        vec![
+            rho_tools::tool_card::ToolFact::Text { text: "xAI".into() },
+            rho_tools::tool_card::ToolFact::Meta {
+                text: "finished".into(),
+            },
+        ]
     );
-    assert!(card.facts.is_empty());
 }
 
 #[test]
@@ -158,9 +170,38 @@ fn unknown_hosted_tool_activity_uses_default_family() {
         panic!("expected hosted tool activity finished");
     };
     assert_eq!(card.family, ToolFamily::Default);
+    assert_eq!(card.header, ToolHeader::call("code_interpreter", None));
     assert_eq!(
-        card.header,
-        ToolHeader::call("code_interpreter", Some("ran analysis".into()))
+        card.facts,
+        vec![
+            rho_tools::tool_card::ToolFact::Text {
+                text: "ran analysis".into(),
+            },
+            rho_tools::tool_card::ToolFact::Meta {
+                text: "finished".into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn hosted_tool_activity_without_detail_uses_only_finished_fact() {
+    let mut adapter = SdkEventAdapter::default();
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
+        only_event(adapter.translate(RunEvent::HostedToolActivity {
+            name: "x_search".into(),
+            detail: String::new(),
+        }))
+    else {
+        panic!("expected hosted tool activity finished");
+    };
+    assert_eq!(card.header, ToolHeader::call("x_search", None));
+    assert_eq!(
+        card.facts,
+        vec![rho_tools::tool_card::ToolFact::Meta {
+            text: "finished".into(),
+        }]
     );
 }
 

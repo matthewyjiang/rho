@@ -512,7 +512,7 @@ fn codex_sse_line_emits_web_search_detail() {
     )
     .unwrap();
 
-    assert_eq!(searches, vec!["for \"latest Rust release\"".to_string()]);
+    assert_eq!(searches, vec!["latest Rust release".to_string()]);
 }
 
 #[test]
@@ -545,7 +545,7 @@ fn codex_sse_line_emits_x_search_detail() {
         searches,
         vec![(
             "x_search".to_string(),
-            "for \"what people say about xAI\"".to_string()
+            "what people say about xAI".to_string()
         )]
     );
 }
@@ -588,14 +588,215 @@ fn codex_sse_search_activity_is_not_duplicated_on_completed() {
     assert_eq!(
         events,
         vec![
-            (
-                "web_search".to_string(),
-                "for \"latest Rust release\"".to_string()
-            ),
+            ("web_search".to_string(), "latest Rust release".to_string()),
             (
                 "x_search".to_string(),
-                "for \"what people say about xAI\"".to_string()
+                "what people say about xAI".to_string()
             ),
+        ]
+    );
+}
+
+// Covers: xAI emits hosted X searches as custom_tool_call items with JSON input.
+// Owner: providers stream parse
+#[test]
+fn codex_sse_line_emits_x_search_from_custom_tool_call() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"call_id":"xs_call-557c03fd-0","input":"{\"query\":\"codex reset\",\"limit\":\"10\",\"mode\":\"Latest\"}","name":"x_keyword_search","type":"custom_tool_call","id":"ctc_response_call-0","status":"completed"},"output_index":1}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            match event {
+                event if event.as_hosted_tool_activity().is_some() => {
+                    let (name, detail) = event.as_hosted_tool_activity().unwrap();
+                    searches.push((name.to_owned(), detail.to_owned()));
+                }
+                ModelEvent::WebSearch(_) => {}
+                ModelEvent::OutputDelta(_) => {}
+                ModelEvent::ReasoningDelta(_) => {}
+                ModelEvent::ReasoningSummaryDelta(_) => {}
+                ModelEvent::ProviderContext { .. } => {}
+                ModelEvent::ToolCallDelta { .. } => {}
+                ModelEvent::Usage(_) => {}
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(
+        searches,
+        vec![("x_search".to_string(), "codex reset".to_string())]
+    );
+}
+
+// Covers: ordinary custom_tool_call items must not be labeled hosted x_search.
+// Owner: providers stream parse
+#[test]
+fn codex_sse_custom_tool_call_without_xs_call_id_is_not_x_search() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"call_id":"call_other-1","input":"{\"query\":\"nope\"}","name":"x_keyword_search","type":"custom_tool_call","id":"ctc_1","status":"completed"}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                searches.push((name.to_owned(), detail.to_owned()));
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert!(
+        searches.is_empty(),
+        "unexpected hosted activity: {searches:?}"
+    );
+}
+
+// Covers: search activity on completed must surface even when the stream already has text
+// Owner: providers stream parse
+#[test]
+fn codex_sse_completed_emits_search_activity_when_stream_has_text() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        match event {
+            ModelEvent::WebSearch(detail) => events.push(("web_search".into(), detail)),
+            ref event => {
+                if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                    events.push((name.to_owned(), detail.to_owned()));
+                }
+            }
+        }
+        Ok(())
+    };
+
+    // Simulate text already streamed before completed (common after hosted search).
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_text.delta","delta":"answer"}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"x_search_call","id":"xs_1","name":"x_keyword_search","arguments":"{\"query\":\"next codex reset\"}"},{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(
+        events,
+        vec![("x_search".to_string(), "next codex reset".to_string())]
+    );
+}
+
+#[test]
+fn codex_sse_completed_processes_unstreamed_items_individually() {
+    let mut state = CodexSseState::default();
+    let mut contexts = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        if let ModelEvent::ProviderContext { data, .. } = event {
+            contexts.push(data);
+        }
+        Ok(())
+    };
+
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_text.delta","delta":"answer"}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"output":[{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"},{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"},{"type":"message","id":"msg_1","content":[{"type":"output_text","text":"answer"}]}]}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["id"], "rs_1");
+    assert_eq!(state.tool_calls.len(), 1);
+    assert_eq!(state.tool_calls[0].id, "call_1");
+}
+
+#[test]
+fn codex_sse_search_without_detail_still_emits_activity() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","status":"completed"}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                searches.push((name.to_owned(), detail.to_owned()));
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(searches, vec![("x_search".to_string(), String::new())]);
+}
+
+#[test]
+fn codex_sse_search_query_count_ignores_invalid_entries() {
+    let mut state = CodexSseState::default();
+    let mut details = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","arguments":"{\"queries\":[\"a\",\"\",7,\"b\",\"c\",\"d\"]}"}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            if let Some((_, detail)) = event.as_hosted_tool_activity() {
+                details.push(detail.to_owned());
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(details, vec!["a · b · c · 1 more"]);
+}
+
+// Covers: action url/pattern details stay bare payload values (no opened/found chrome).
+// Owner: providers stream parse
+#[test]
+fn codex_sse_search_action_url_and_pattern_are_bare_detail() {
+    let mut state = CodexSseState::default();
+    let mut details = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        match event {
+            ModelEvent::WebSearch(detail) => details.push(detail),
+            ref event => {
+                if let Some((_, detail)) = event.as_hosted_tool_activity() {
+                    details.push(detail.to_owned());
+                }
+            }
+        }
+        Ok(())
+    };
+
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"open_page","url":"https://example.com/docs"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_2","action":{"type":"find","pattern":"TODO(foo)"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(
+        details,
+        vec![
+            "https://example.com/docs".to_string(),
+            "TODO(foo)".to_string(),
         ]
     );
 }

@@ -872,50 +872,6 @@ pub(super) fn slice_spans_by_bytes(
     out
 }
 
-/// Hard-wrap multi-span content to `width` display columns, preserving styles.
-pub(super) fn wrap_spans_hard(spans: &[Span<'static>], width: usize) -> Vec<Vec<Span<'static>>> {
-    let width = width.max(1);
-    let mut rows = Vec::new();
-    let mut row = Vec::new();
-    let mut used = 0;
-
-    for span in spans {
-        let mut chunk = String::new();
-        for character in span.content.chars() {
-            if character == '\n' {
-                push_span_chunk(&mut row, &mut chunk, span.style);
-                rows.push(std::mem::take(&mut row));
-                used = 0;
-                continue;
-            }
-            let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-            if used > 0 && used + character_width > width {
-                push_span_chunk(&mut row, &mut chunk, span.style);
-                rows.push(std::mem::take(&mut row));
-                used = 0;
-            }
-            chunk.push(character);
-            used += character_width;
-            if used >= width {
-                push_span_chunk(&mut row, &mut chunk, span.style);
-                rows.push(std::mem::take(&mut row));
-                used = 0;
-            }
-        }
-        push_span_chunk(&mut row, &mut chunk, span.style);
-    }
-    if !row.is_empty() || rows.is_empty() {
-        rows.push(row);
-    }
-    rows
-}
-
-fn push_span_chunk(row: &mut Vec<Span<'static>>, chunk: &mut String, style: Style) {
-    if !chunk.is_empty() {
-        row.push(Span::styled(std::mem::take(chunk), style));
-    }
-}
-
 pub(super) fn labeled_divider_line(
     labels: &[&str],
     style: Style,
