@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.14.0...rho-providers-v0.15.0) (2026-07-30)
+
+
+### Features
+
+* **tui:** stream apply_patch diff cards ([#657](https://github.com/matthewyjiang/rho/issues/657)) ([e2c932e](https://github.com/matthewyjiang/rho/commit/e2c932e377f15ddfaab1e4700aa7d6f4e8ed0417))
+
 ## [0.14.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.13.3...rho-providers-v0.14.0) (2026-07-30)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.24.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.23.0...rho-coding-agent-v1.24.0) (2026-07-30)
+
+
+### Features
+
+* **tools:** restore simple edit_file ([#658](https://github.com/matthewyjiang/rho/issues/658)) ([ffac70f](https://github.com/matthewyjiang/rho/commit/ffac70f6d58d1532a4eedefbdc99463402adbf7b))
+* **tui:** stream apply_patch diff cards ([#657](https://github.com/matthewyjiang/rho/issues/657)) ([e2c932e](https://github.com/matthewyjiang/rho/commit/e2c932e377f15ddfaab1e4700aa7d6f4e8ed0417))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.14.0 to 0.15.0
+
 ## [1.23.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.22.1...rho-coding-agent-v1.23.0) (2026-07-30)
 
 
