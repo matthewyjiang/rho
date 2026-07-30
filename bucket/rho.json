@@ -6,7 +6,7 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/matthewyjiang/rho/releases/download/rho-coding-agent-v1.24.1/rho-x86_64-pc-windows-msvc.zip",
-      "hash": "de10e65aacdb308669e27018e23ea9c8f662d80fe1d534975559ac5c0466614f"
+      "hash": "563b7459589c20a370465936b87232ae7c243512cb1f1d0d61212fedf72d7dc2"
     }
   },
   "bin": "rho.exe",
