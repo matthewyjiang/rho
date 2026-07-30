@@ -6,6 +6,7 @@ pub(super) struct FailedTurn {
     display_user: Option<Message>,
     notification_context: Option<String>,
     initial_tool_call: Option<rho_sdk::model::ToolCall>,
+    generate_session_title_after_completion: bool,
 }
 
 impl FailedTurn {
@@ -26,7 +27,22 @@ impl FailedTurn {
             display_user: Some(Message::User(display_content)),
             notification_context: None,
             initial_tool_call: prompt.initial_tool_call,
+            generate_session_title_after_completion: false,
         })
+    }
+
+    fn session_title_user_message(&self) -> String {
+        let Some(Message::User(blocks)) = &self.display_user else {
+            return String::new();
+        };
+        blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.as_str()),
+                ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn attach_notification_context(&mut self, notification: String) {
@@ -114,18 +130,18 @@ impl App {
                     .herdr
                     .report_session(self.info.session.session_id.as_deref())
                     .await;
-                if !agent
+                let generate_session_title_after_completion = !agent
                     .history()
                     .iter()
-                    .any(|message| matches!(message, Message::User(_)))
-                {
-                    self.start_session_title_generation(prompt.history.clone(), agent);
-                }
+                    .any(|message| matches!(message, Message::User(_)));
                 self.insert_entry(&Entry::User(super::message_history::render_user_entry(
                     &prompt.display,
                     &images,
                 )));
-                FailedTurn::from_prompt(prompt, images)?
+                let mut failed_turn = FailedTurn::from_prompt(prompt, images)?;
+                failed_turn.generate_session_title_after_completion =
+                    generate_session_title_after_completion;
+                failed_turn
             }
             PromptTurnRequest::Retry(failed_turn) => {
                 self.ensure_session(agent)?;
@@ -468,6 +484,13 @@ impl App {
                 self.turn.stop_loading();
                 self.finish_streams();
                 self.insert_final_answer_suffix(outcome.text());
+                if failed_turn.generate_session_title_after_completion {
+                    self.start_session_title_generation(
+                        &failed_turn.session_title_user_message(),
+                        outcome.text(),
+                        agent,
+                    );
+                }
                 self.reset_streams();
                 self.turn.set_current_turn_start(None);
                 self.status = if !self.pending.has_follow_ups() {
