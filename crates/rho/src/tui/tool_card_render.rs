@@ -32,6 +32,25 @@ const TREE_CHILD_HANG: &str = "    ";
 /// Content column after `  ├ ` / `  └ `.
 const CHILD_CONTENT_INDENT: &str = "    ";
 
+/// Role of one terminal row inside a child group.
+///
+/// Fact construction stamps branch vs wrap-stem explicitly so last-child rewrite
+/// does not re-detect glyphs from span text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChildRowKind {
+    /// First fact row: `├` / `└`.
+    Branch,
+    /// Wrapped fact continuation: `│` / space hang.
+    WrapStem,
+    /// Body/diff row with no tree glyph rewrite.
+    Content,
+}
+
+struct ChildRow {
+    kind: ChildRowKind,
+    line: Line<'static>,
+}
+
 pub(super) fn tool_entry_lines(
     tool: &ToolEntry,
     width: usize,
@@ -98,7 +117,7 @@ pub(super) fn push_tool_card(
     for (index, mut group) in emitted.into_iter().enumerate() {
         let is_last_child = index == last_child && !has_prompt;
         rewrite_child_group_branches(&mut group, is_last_child);
-        lines.extend(group);
+        lines.extend(group.into_iter().map(|row| row.line));
     }
 
     if show_expand_prompt {
@@ -128,13 +147,13 @@ pub(super) fn card_is_toggleable(
 }
 
 /// Render each fact/body item into its full terminal-row group at `width`.
-fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<Line<'static>>> {
+fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<ChildRow>> {
     let mut groups = Vec::new();
     for fact in &card.facts {
         // Always mid trunk here; last-child └ / hang is rewritten after clip.
-        let mut lines = Vec::new();
-        push_fact_line(&mut lines, fact, width);
-        groups.push(lines);
+        let mut rows = Vec::new();
+        push_fact_line(&mut rows, fact, width);
+        groups.push(rows);
     }
     match &card.body {
         ToolBody::None => {}
@@ -142,7 +161,7 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<Line<'static>>>
             for line in tool_diff::logical_lines(body) {
                 let mut lines = Vec::new();
                 push_body_line(&mut lines, &line, width, Theme::text());
-                groups.push(lines);
+                groups.push(content_child_rows(lines));
             }
         }
         ToolBody::Diff(rows) => {
@@ -150,67 +169,62 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<Line<'static>>>
             for row in rows {
                 let mut lines = Vec::new();
                 push_diff_row(&mut lines, row, gutter, width);
-                groups.push(lines);
+                groups.push(content_child_rows(lines));
             }
         }
     }
     groups
 }
 
+fn content_child_rows(lines: Vec<Line<'static>>) -> Vec<ChildRow> {
+    lines
+        .into_iter()
+        .map(|line| ChildRow {
+            kind: ChildRowKind::Content,
+            line,
+        })
+        .collect()
+}
+
 /// Tree-fact groups draw ├ / │ by default; the final visible fact becomes └
 /// with a space hang on wrap so the trunk does not continue past the end.
-/// Body/diff groups have no branch glyphs and are left alone.
-fn rewrite_child_group_branches(group: &mut [Line<'static>], is_last: bool) {
-    let Some(first_line) = group.first_mut() else {
-        return;
-    };
-    if !line_starts_with_tree_branch(first_line) {
+/// Body/diff groups carry [`ChildRowKind::Content`] and are left alone.
+fn rewrite_child_group_branches(group: &mut [ChildRow], is_last: bool) {
+    if !matches!(
+        group.first().map(|row| row.kind),
+        Some(ChildRowKind::Branch)
+    ) {
         return;
     }
-    rewrite_fact_branch(first_line, is_last);
-    for line in group.iter_mut().skip(1) {
-        rewrite_wrap_stem(line, is_last);
+    for row in group.iter_mut() {
+        match row.kind {
+            ChildRowKind::Branch => set_tree_prefix(
+                &mut row.line,
+                if is_last {
+                    TREE_CHILD_END
+                } else {
+                    TREE_CHILD_MID
+                },
+            ),
+            ChildRowKind::WrapStem => set_tree_prefix(
+                &mut row.line,
+                if is_last {
+                    TREE_CHILD_HANG
+                } else {
+                    TREE_WRAP_STEM
+                },
+            ),
+            ChildRowKind::Content => {}
+        }
     }
 }
 
-fn line_starts_with_tree_branch(line: &Line<'static>) -> bool {
-    let Some(first) = line.spans.first() else {
-        return false;
-    };
-    let content = first.content.as_ref();
-    content.starts_with(TREE_CHILD_MID) || content.starts_with(TREE_CHILD_END)
-}
-
-fn rewrite_fact_branch(line: &mut Line<'static>, is_last: bool) {
+/// Fact rows keep the tree glyph in the first span; replace that span only.
+fn set_tree_prefix(line: &mut Line<'static>, prefix: &str) {
     let Some(first) = line.spans.first_mut() else {
         return;
     };
-    let content = first.content.as_ref();
-    if !(content.starts_with(TREE_CHILD_MID) || content.starts_with(TREE_CHILD_END)) {
-        return;
-    }
-    let suffix = &content[TREE_CHILD_MID.len().min(content.len())..];
-    let branch = if is_last {
-        TREE_CHILD_END
-    } else {
-        TREE_CHILD_MID
-    };
-    first.content = format!("{branch}{suffix}").into();
-}
-
-fn rewrite_wrap_stem(line: &mut Line<'static>, is_last: bool) {
-    let Some(first) = line.spans.first_mut() else {
-        return;
-    };
-    let content = first.content.as_ref();
-    if content != TREE_WRAP_STEM && content != TREE_CHILD_HANG {
-        return;
-    }
-    first.content = if is_last {
-        TREE_CHILD_HANG.into()
-    } else {
-        TREE_WRAP_STEM.into()
-    };
+    first.content = prefix.to_string().into();
 }
 
 fn push_header_line(
@@ -377,12 +391,29 @@ fn header_wrap_continuation_prefix(hang: usize) -> Vec<Span<'static>> {
     spans
 }
 
-fn push_fact_line(lines: &mut Vec<Line<'static>>, fact: &ToolFact, width: usize) {
+fn push_fact_line(rows: &mut Vec<ChildRow>, fact: &ToolFact, width: usize) {
     // Always mid trunk; last-child └ / space hang is rewritten after budget clip.
+    push_wrapped_child(rows, fact_spans(fact), width);
+}
+
+/// Wrap a fact under `├` / `│`, tagging each terminal row for later rewrite.
+fn push_wrapped_child(rows: &mut Vec<ChildRow>, wrappable: Vec<Span<'static>>, width: usize) {
+    let mut lines = Vec::new();
     let prefix = vec![Span::styled(TREE_CHILD_MID.to_string(), Theme::tool_tree())];
-    push_wrapped_prefixed(lines, prefix, fact_spans(fact), width, |_| {
+    push_wrapped_prefixed(&mut lines, prefix, wrappable, width, |_| {
         vec![Span::styled(TREE_WRAP_STEM.to_string(), Theme::tool_tree())]
     });
+    let mut lines = lines.into_iter();
+    if let Some(first) = lines.next() {
+        rows.push(ChildRow {
+            kind: ChildRowKind::Branch,
+            line: first,
+        });
+    }
+    rows.extend(lines.map(|line| ChildRow {
+        kind: ChildRowKind::WrapStem,
+        line,
+    }));
 }
 
 fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
