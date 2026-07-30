@@ -47,10 +47,10 @@ use crate::{
 
 use super::{
     apply_patch::{apply_hunks, parse_patch, patch_paths_lenient, ApplyPatch, Hunk},
-    edit_file::{edit_file_content, EditFile},
+    edit_file::{edit_file_content, EditFile, EditFileArgs},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
-    write_file::{write_file_content, WriteFile},
+    write_file::{write_file_content, FileMutationOutcome, WriteFile},
 };
 
 /// Options for coding tools registered on an SDK runtime.
@@ -202,16 +202,6 @@ struct ReadArgs {
 struct WriteArgs {
     path: String,
     content: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EditArgs {
-    path: String,
-    old_string: String,
-    new_string: String,
-    #[serde(default)]
-    replace_all: bool,
 }
 
 #[derive(Deserialize)]
@@ -419,7 +409,8 @@ impl Tool for EditFileTool {
     ) -> ToolPrepareFuture<'a> {
         Box::pin(async move {
             check_preparation_cancelled(&context)?;
-            let args: EditArgs = parse_args(invocation.into_arguments())?;
+            let args: EditFileArgs = parse_args(invocation.into_arguments())?;
+            args.validate().map_err(map_invalid_edit_args)?;
             let workspace = preparation_workspace(&context)?.clone();
             let resolved = workspace
                 .resolve_for_read(&args.path)
@@ -589,41 +580,13 @@ fn execute_prepared_write(
             .await;
         workspace.revalidate(&resolved).map_err(map_path_error)?;
         let mutation_paths = [resolved.path()];
-        if let Some(observer) = mutation_observer.as_ref() {
-            observer
-                .before_mutation(&mutation_paths)
-                .await
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
-        }
-        let write_result =
-            write_file_content(resolved.path(), &display, &args.content, max_output_bytes)
-                .await
-                .map_err(map_app_error);
-        let capture_result = match mutation_observer.as_ref() {
-            Some(observer) => observer
-                .after_mutation(&mutation_paths)
-                .await
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
-            None => Ok(()),
-        };
-        let outcome = match (write_result, capture_result) {
-            (Ok(outcome), Ok(())) => outcome,
-            (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
-            (Err(write_error), Err(capture_error)) => {
-                return Err(ToolError::new(
-                    ToolErrorKind::Execution,
-                    format!(
-                        "{write_error}; failed to capture resulting workspace state: {capture_error}"
-                    ),
-                ));
-            }
-        };
-        Ok(ToolOutput::text(outcome.content).metadata(
-            ToolMetadata::new()
-                .operation(OperationKind::Write)
-                .affected_path(outcome.display_path)
-                .diff(outcome.diff),
-        ))
+        let outcome = run_observed_mutation(
+            mutation_observer.as_ref(),
+            &mutation_paths,
+            write_file_content(resolved.path(), &display, &args.content, max_output_bytes),
+        )
+        .await?;
+        Ok(single_path_mutation_output(outcome))
     })
 }
 
@@ -632,7 +595,7 @@ fn execute_prepared_edit(
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
-    args: EditArgs,
+    args: EditFileArgs,
     context: AuthorizedToolContext,
 ) -> ToolFuture<'static> {
     Box::pin(async move {
@@ -646,47 +609,20 @@ fn execute_prepared_edit(
             .await;
         workspace.revalidate(&resolved).map_err(map_path_error)?;
         let mutation_paths = [resolved.path()];
-        if let Some(observer) = mutation_observer.as_ref() {
-            observer
-                .before_mutation(&mutation_paths)
-                .await
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
-        }
-        let edit_result = edit_file_content(
-            resolved.path(),
-            &display,
-            &args.old_string,
-            &args.new_string,
-            args.replace_all,
-            max_output_bytes,
+        let outcome = run_observed_mutation(
+            mutation_observer.as_ref(),
+            &mutation_paths,
+            edit_file_content(
+                resolved.path(),
+                &display,
+                &args.old_string,
+                &args.new_string,
+                args.replace_all,
+                max_output_bytes,
+            ),
         )
-        .await
-        .map_err(map_app_error);
-        let capture_result = match mutation_observer.as_ref() {
-            Some(observer) => observer
-                .after_mutation(&mutation_paths)
-                .await
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
-            None => Ok(()),
-        };
-        let outcome = match (edit_result, capture_result) {
-            (Ok(outcome), Ok(())) => outcome,
-            (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
-            (Err(edit_error), Err(capture_error)) => {
-                return Err(ToolError::new(
-                    ToolErrorKind::Execution,
-                    format!(
-                        "{edit_error}; failed to capture resulting workspace state: {capture_error}"
-                    ),
-                ));
-            }
-        };
-        Ok(ToolOutput::text(outcome.content).metadata(
-            ToolMetadata::new()
-                .operation(OperationKind::Write)
-                .affected_path(outcome.display_path)
-                .diff(outcome.diff),
-        ))
+        .await?;
+        Ok(single_path_mutation_output(outcome))
     })
 }
 
@@ -705,7 +641,6 @@ fn execute_prepared_patch(
             .progress()
             .send(
                 ToolProgress::message(format!("applying patch ({total} file op(s))"))
-                    .units(0, total.max(1))
                     .metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
@@ -716,55 +651,33 @@ fn execute_prepared_patch(
         for prepared in resolved.values() {
             workspace.revalidate(prepared).map_err(map_path_error)?;
         }
-        if let Some(observer) = mutation_observer.as_ref() {
-            observer
-                .before_mutation(&mutation_paths)
-                .await
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
-        }
-        let patch_result = apply_hunks(
-            hunks,
-            |requested| {
-                let path = requested_paths.get(requested).ok_or_else(|| {
-                    AppToolError::Message(format!(
-                        "patch path '{requested}' was not prepared for this invocation"
-                    ))
-                })?;
-                let prepared = resolved.get(path).ok_or_else(|| {
-                    AppToolError::Message(format!(
-                        "patch target '{}' was not prepared for this invocation",
-                        path.display()
-                    ))
-                })?;
-                workspace
-                    .revalidate(prepared)
-                    .map_err(|error| AppToolError::Message(error.to_string()))?;
-                Ok(path.clone())
-            },
-            |path| compact_display_path(workspace.root(), path),
-            max_output_bytes,
+        let outcome = run_observed_mutation(
+            mutation_observer.as_ref(),
+            &mutation_paths,
+            apply_hunks(
+                hunks,
+                |requested| {
+                    let path = requested_paths.get(requested).ok_or_else(|| {
+                        AppToolError::Message(format!(
+                            "patch path '{requested}' was not prepared for this invocation"
+                        ))
+                    })?;
+                    let prepared = resolved.get(path).ok_or_else(|| {
+                        AppToolError::Message(format!(
+                            "patch target '{}' was not prepared for this invocation",
+                            path.display()
+                        ))
+                    })?;
+                    workspace
+                        .revalidate(prepared)
+                        .map_err(|error| AppToolError::Message(error.to_string()))?;
+                    Ok(path.clone())
+                },
+                |path| compact_display_path(workspace.root(), path),
+                max_output_bytes,
+            ),
         )
-        .await
-        .map_err(map_app_error);
-        let capture_result = match mutation_observer.as_ref() {
-            Some(observer) => observer
-                .after_mutation(&mutation_paths)
-                .await
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
-            None => Ok(()),
-        };
-        let outcome = match (patch_result, capture_result) {
-            (Ok(outcome), Ok(())) => outcome,
-            (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
-            (Err(patch_error), Err(capture_error)) => {
-                return Err(ToolError::new(
-                    ToolErrorKind::Execution,
-                    format!(
-                        "{patch_error}; failed to capture resulting workspace state: {capture_error}"
-                    ),
-                ));
-            }
-        };
+        .await?;
         let _ = context
             .progress()
             .send(
@@ -779,6 +692,53 @@ fn execute_prepared_patch(
         }
         Ok(ToolOutput::text(outcome.content).metadata(metadata.diff(outcome.diffs)))
     })
+}
+
+async fn run_observed_mutation<T>(
+    observer: Option<&Arc<dyn crate::WorkspaceMutationObserver>>,
+    paths: &[&std::path::Path],
+    op: impl std::future::Future<Output = Result<T, AppToolError>>,
+) -> Result<T, ToolError> {
+    if let Some(observer) = observer {
+        observer
+            .before_mutation(paths)
+            .await
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
+    }
+    let op_result = op.await.map_err(map_app_error);
+    let capture_result = match observer {
+        Some(observer) => observer
+            .after_mutation(paths)
+            .await
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
+        None => Ok(()),
+    };
+    match (op_result, capture_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(op_error), Err(capture_error)) => Err(ToolError::new(
+            ToolErrorKind::Execution,
+            format!("{op_error}; failed to capture resulting workspace state: {capture_error}"),
+        )),
+    }
+}
+
+fn single_path_mutation_output(outcome: FileMutationOutcome) -> ToolOutput {
+    ToolOutput::text(outcome.content).metadata(
+        ToolMetadata::new()
+            .operation(OperationKind::Write)
+            .affected_path(outcome.display_path)
+            .diff(outcome.diff),
+    )
+}
+
+fn map_invalid_edit_args(error: AppToolError) -> ToolError {
+    match error {
+        AppToolError::Message(message) => {
+            ToolError::new(ToolErrorKind::InvalidArguments, message)
+        }
+        other => map_app_error(other),
+    }
 }
 
 fn write_accesses(path: &ResolvedWorkspacePath) -> Vec<ToolResourceAccess> {

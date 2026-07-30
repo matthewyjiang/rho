@@ -574,3 +574,106 @@ async fn edit_file_prepare_rejects_missing_target() {
     };
     assert_eq!(error.kind(), ToolErrorKind::Execution);
 }
+
+// Covers: edit_file prepare must reject empty old_string before path I/O
+// Owner: SDK contract
+#[tokio::test]
+async fn edit_file_prepare_rejects_invalid_args() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sample.txt"), "old").unwrap();
+    let tool = coding_tool(CodingToolKind::EditFile, CodingToolOptions::default());
+    let error = match tool
+        .prepare(
+            invocation(json!({
+                "path": "sample.txt",
+                "old_string": "",
+                "new_string": "new"
+            })),
+            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
+        )
+        .await
+    {
+        Ok(_) => panic!("empty old_string must fail prepare"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
+    assert!(error.to_string().contains("old_string must not be empty"));
+}
+
+// Covers: edit_file success path emits diff metadata and progress
+// Owner: SDK contract
+#[tokio::test]
+async fn allowed_policy_edits_with_diff_metadata_and_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sample.txt"), "alpha beta gamma").unwrap();
+    let runtime = build_runtime_with_coding_tools(
+        ScriptedProvider::new(
+            ModelIdentity::new("scripted", "test", "model"),
+            [
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: "call-1".into(),
+                        name: "edit_file".into(),
+                        arguments: json!({
+                            "path": "sample.txt",
+                            "old_string": "beta",
+                            "new_string": "delta"
+                        }),
+                    },
+                )])),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "edited".into(),
+                )])),
+            ],
+        ),
+        workspace(&dir),
+        ScopedWorkspacePolicy::new()
+            .allow_read_paths()
+            .allow_write_paths(),
+        CodingToolOptions::default(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session
+        .start(UserInput::text("edit the sample"))
+        .await
+        .unwrap();
+
+    let mut saw_progress = false;
+    let mut edit_metadata = None;
+    while let Some(event) = run.next_event().await {
+        match event {
+            RunEvent::ToolUpdated { progress, .. } => {
+                saw_progress = true;
+                assert!(progress.text().contains("editing"));
+                assert_eq!(
+                    progress.presentation().operation_kind(),
+                    Some(&OperationKind::Write)
+                );
+            }
+            RunEvent::ToolFinished { result, .. } => match result {
+                ToolCompletion::Success(output) => {
+                    edit_metadata = Some(output.presentation().clone());
+                    assert!(output.content().contains("edited sample.txt"));
+                    assert!(output.content().contains("+alpha delta gamma"));
+                }
+                other => panic!("unexpected tool result: {other:?}"),
+            },
+            RunEvent::Completed { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert!(saw_progress);
+    let metadata = edit_metadata.expect("edit metadata");
+    assert_eq!(metadata.operation_kind(), Some(&OperationKind::Write));
+    assert_eq!(
+        metadata.affected_paths(),
+        [std::path::PathBuf::from("sample.txt")]
+    );
+    assert!(metadata.unified_diff().unwrap().contains("+alpha delta gamma"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("sample.txt")).unwrap(),
+        "alpha delta gamma"
+    );
+}
+

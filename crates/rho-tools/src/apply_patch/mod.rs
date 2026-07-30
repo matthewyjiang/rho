@@ -19,8 +19,9 @@ pub(crate) use parser::{parse_patch, Hunk};
 
 pub struct ApplyPatch;
 
-const TOOL_DESCRIPTION: &str = r#"Use the `apply_patch` tool to edit files with a Codex-style patch.
-Your patch language is a stripped-down, file-oriented diff format designed to be easy to parse and safe to apply:
+const TOOL_DESCRIPTION: &str = r#"Use `apply_patch` for multi-hunk or multi-file edits with a Codex-style patch. Prefer `edit_file` for one exact string replacement in an existing file, and `write_file` to create or fully rewrite a file.
+
+Patch language:
 
 *** Begin Patch
 [ one or more file sections ]
@@ -50,7 +51,8 @@ Rules:
 - Prefix new file lines with + even when creating a file
 - Prefer relative paths
 - Prefer about 3 lines of context around each change
-- Use @@ headers when context alone is not unique"#;
+- Use @@ headers when context alone is not unique
+- Prefer edit_file when changing one exact string in one existing file"#;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

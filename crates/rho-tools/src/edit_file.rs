@@ -8,24 +8,24 @@ use std::{ops::Range, path::Path};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{diff::unified_diff, tool::*};
+use crate::{diff::unified_diff, tool::*, write_file::FileMutationOutcome};
 
 pub struct EditFile;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Args {
-    path: String,
-    old_string: String,
-    new_string: String,
+pub(crate) struct EditFileArgs {
+    pub path: String,
+    pub old_string: String,
+    pub new_string: String,
     #[serde(default)]
-    replace_all: bool,
+    pub replace_all: bool,
 }
 
-pub(super) struct EditFileOutcome {
-    pub content: String,
-    pub display_path: String,
-    pub diff: String,
+impl EditFileArgs {
+    pub(crate) fn validate(&self) -> Result<(), ToolError> {
+        validate_edit_args(&self.old_string, &self.new_string)
+    }
 }
 
 #[async_trait::async_trait]
@@ -33,7 +33,7 @@ impl Tool for EditFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "edit_file".into(),
-            description: "Edits an existing UTF-8 text file by exact string replacement. By default old_string must match exactly once; set replace_all to replace every match. Use write_file to create or fully rewrite a file, and apply_patch for multi-hunk or multi-file edits.".into(),
+            description: "Edits an existing UTF-8 text file by exact string replacement. By default old_string must match exactly once; set replace_all to replace every match. Prefer this for one surgical replace. Use write_file to create or fully rewrite a file, and apply_patch for multi-hunk or multi-file edits.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -66,7 +66,7 @@ impl Tool for EditFile {
         ctx: ToolContext,
         id: String,
     ) -> Result<ToolResult, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
+        let args: EditFileArgs = serde_json::from_value(args)?;
         let path = resolve_path(&ctx.cwd, &args.path);
         let outcome = edit_file_content(
             &path,
@@ -93,7 +93,7 @@ pub(super) async fn edit_file_content(
     new_string: &str,
     replace_all: bool,
     max_output_bytes: usize,
-) -> Result<EditFileOutcome, ToolError> {
+) -> Result<FileMutationOutcome, ToolError> {
     validate_edit_args(old_string, new_string)?;
 
     let original = tokio::fs::read_to_string(path)
@@ -120,7 +120,7 @@ pub(super) async fn edit_file_content(
 
     let diff = unified_diff(&original, &updated, display_path, false);
     let replaced = spans.len();
-    Ok(EditFileOutcome {
+    Ok(FileMutationOutcome {
         content: truncate(
             format!("edited {display_path}; replaced {replaced} occurrence(s)\n\n{diff}"),
             max_output_bytes,
