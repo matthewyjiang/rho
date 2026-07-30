@@ -718,6 +718,46 @@ fn codex_sse_search_query_count_ignores_invalid_entries() {
     assert_eq!(details, vec!["a · b · c · 1 more"]);
 }
 
+// Covers: action url/pattern details stay bare payload values (no opened/found chrome).
+// Owner: providers stream parse
+#[test]
+fn codex_sse_search_action_url_and_pattern_are_bare_detail() {
+    let mut state = CodexSseState::default();
+    let mut details = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        match event {
+            ModelEvent::WebSearch(detail) => details.push(detail),
+            ref event => {
+                if let Some((_, detail)) = event.as_hosted_tool_activity() {
+                    details.push(detail.to_owned());
+                }
+            }
+        }
+        Ok(())
+    };
+
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"open_page","url":"https://example.com/docs"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_2","action":{"type":"find","pattern":"TODO(foo)"}}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(
+        details,
+        vec![
+            "https://example.com/docs".to_string(),
+            "TODO(foo)".to_string(),
+        ]
+    );
+}
+
 #[test]
 fn accumulates_streamed_tool_call_deltas() {
     let mut text = String::new();

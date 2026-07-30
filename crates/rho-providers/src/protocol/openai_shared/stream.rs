@@ -325,18 +325,29 @@ fn is_hosted_x_search_custom_call(item: &serde_json::Value) -> bool {
 }
 
 /// Stable key for a search output item, used to dedupe stream vs completed paths.
-fn codex_search_activity_key(item: &serde_json::Value) -> Option<String> {
-    extract_codex_search_activity(item)?;
+///
+/// Prefer the wire `id`. Fall back to type+detail only when the item has no id,
+/// using the already-built event so detail is not extracted twice.
+fn codex_search_activity_key(item: &serde_json::Value, event: &ModelEvent) -> String {
     if let Some(id) = item
         .get("id")
         .and_then(|value| value.as_str())
         .filter(|id| !id.is_empty())
     {
-        return Some(id.to_owned());
+        return id.to_owned();
     }
-    let kind = item.get("type").and_then(|value| value.as_str())?;
-    let detail = extract_codex_search_detail(item).unwrap_or_default();
-    Some(format!("{kind}:{detail}"))
+    let kind = item
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("search");
+    let detail = match event {
+        ModelEvent::WebSearch(detail) => detail.as_str(),
+        other => other
+            .as_hosted_tool_activity()
+            .map(|(_, detail)| detail)
+            .unwrap_or(""),
+    };
+    format!("{kind}:{detail}")
 }
 
 fn emit_codex_search_activity(
@@ -344,27 +355,28 @@ fn emit_codex_search_activity(
     state: &mut CodexSseState,
     on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<(), ModelError> {
-    let Some(key) = codex_search_activity_key(item) else {
-        return Ok(());
-    };
-    if !state.emitted_search_keys.insert(key) {
-        return Ok(());
-    }
     let Some(event) = extract_codex_search_activity(item) else {
         return Ok(());
     };
+    let key = codex_search_activity_key(item, &event);
+    if !state.emitted_search_keys.insert(key) {
+        return Ok(());
+    }
     if let Some(on_event) = on_event.as_mut() {
         on_event(event)?;
     }
     Ok(())
 }
 
-/// User-facing detail for a hosted search card (shown as a child fact).
+/// Bare semantic detail for a hosted search card (shown as a child fact).
 ///
-/// Codex-style items put the query under `action`. xAI emits its hosted X tools
-/// as `custom_tool_call` items with a `name` plus JSON in `input`. Older shapes
-/// may instead use `x_search_call` and `arguments`.
-/// The activity itself is emitted even when neither shape has displayable detail.
+/// Returns payload values only — no English chrome like `for` / `opened` /
+/// `found`. The TUI owns presentation (verb header + optional detail fact +
+/// `finished`).
+///
+/// Codex-style items put fields under `action`. xAI emits hosted X tools as
+/// `custom_tool_call` with JSON in `input`. Older shapes may use `x_search_call`
+/// and `arguments`. Empty detail is fine: the activity still emits.
 fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
     item.get("action")
         .and_then(detail_from_search_action)
@@ -372,24 +384,8 @@ fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
 }
 
 fn detail_from_search_action(action: &serde_json::Value) -> Option<String> {
-    if let Some(detail) = detail_from_search_payload(action) {
-        return Some(detail);
-    }
-    if let Some(url) = action
-        .get("url")
-        .and_then(|url| url.as_str())
-        .filter(|url| !url.is_empty())
-    {
-        return Some(format!("opened {}", truncate_detail(url, 80)));
-    }
-    if let Some(pattern) = action
-        .get("pattern")
-        .and_then(|pattern| pattern.as_str())
-        .filter(|pattern| !pattern.is_empty())
-    {
-        return Some(format!("found \"{}\"", truncate_detail(pattern, 80)));
-    }
-    None
+    detail_from_search_payload(action)
+        .or_else(|| first_nonempty_detail_field(action, &["url", "pattern"]))
 }
 
 fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
@@ -401,17 +397,17 @@ fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
     if let Some(detail) = detail_from_search_payload(&args) {
         return Some(detail);
     }
-    for key in ["post_id", "username", "url", "prompt"] {
-        if let Some(value) = args
-            .get(key)
+    first_nonempty_detail_field(&args, &["post_id", "username", "url", "prompt"])
+}
+
+fn first_nonempty_detail_field(payload: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        payload
+            .get(*key)
             .and_then(|value| value.as_str())
             .filter(|value| !value.is_empty())
-        {
-            return Some(truncate_detail(value, 80));
-        }
-    }
-    // No displayable argument fields: empty detail is fine (TUI shows finished).
-    None
+            .map(|value| truncate_detail(value, 80))
+    })
 }
 
 fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
@@ -420,8 +416,6 @@ fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
         .and_then(|query| query.as_str())
         .filter(|query| !query.is_empty())
     {
-        // Bare query text: the TUI puts this on a child line under the verb, so
-        // wrapping it as `for "..."` only adds nested quotes around operators.
         return Some(truncate_detail(query, 80));
     }
     let queries = payload

@@ -27,28 +27,44 @@ const TREE_CHILD_END: &str = "  └ ";
 /// Vertical stem on wrapped header/child rows; same box-drawing family as ├ / └.
 /// Display width matches `  ├ ` / `  └ ` so wrapped content stays in one column.
 const TREE_WRAP_STEM: &str = "  │ ";
-/// Space hang under `└ ` when a last child wraps (trunk ends at └).
-const TREE_CHILD_HANG: &str = "    ";
 /// Content column after `  ├ ` / `  └ `.
 const CHILD_CONTENT_INDENT: &str = "    ";
+/// Space hang under `└ ` when a last child wraps (trunk ends at └).
+const TREE_CHILD_HANG: &str = CHILD_CONTENT_INDENT;
 
-/// Role of one terminal row inside a child group.
+/// One fact or body/diff block rendered to terminal rows.
 ///
-/// Fact construction stamps branch vs wrap-stem explicitly so last-child rewrite
-/// does not re-detect glyphs from span text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChildRowKind {
-    /// First fact row: `├` / `└`.
-    Branch,
-    /// Wrapped fact continuation: `│` / space hang.
-    WrapStem,
-    /// Body/diff row with no tree glyph rewrite.
-    Content,
+/// Tree facts always render mid trunk (`├` / `│`); last-child `└` / hang is
+/// applied after budget clipping. Body/diff groups never take tree glyphs.
+enum ChildGroup {
+    /// Fact rows: `[0]` is the branch, `[1..]` are wrap stems.
+    TreeFact(Vec<Line<'static>>),
+    /// Body/diff rows with fixed content indent only.
+    Plain(Vec<Line<'static>>),
 }
 
-struct ChildRow {
-    kind: ChildRowKind,
-    line: Line<'static>,
+impl ChildGroup {
+    fn len(&self) -> usize {
+        match self {
+            Self::TreeFact(lines) | Self::Plain(lines) => lines.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn truncate(&mut self, len: usize) {
+        match self {
+            Self::TreeFact(lines) | Self::Plain(lines) => lines.truncate(len),
+        }
+    }
+
+    fn into_lines(self) -> Vec<Line<'static>> {
+        match self {
+            Self::TreeFact(lines) | Self::Plain(lines) => lines,
+        }
+    }
 }
 
 pub(super) fn tool_entry_lines(
@@ -85,7 +101,7 @@ pub(super) fn push_tool_card(
 
     let budget = max_tool_output_lines.max(1);
     let children = render_child_groups(card, width);
-    let total_rows: usize = children.iter().map(Vec::len).sum();
+    let total_rows: usize = children.iter().map(ChildGroup::len).sum();
     let show_collapse_prompt = expanded && total_rows > budget;
     let mut remaining = if expanded { usize::MAX } else { budget };
     let mut hidden_rows = 0usize;
@@ -116,8 +132,10 @@ pub(super) fn push_tool_card(
     let last_child = emitted.len().saturating_sub(1);
     for (index, mut group) in emitted.into_iter().enumerate() {
         let is_last_child = index == last_child && !has_prompt;
-        rewrite_child_group_branches(&mut group, is_last_child);
-        lines.extend(group.into_iter().map(|row| row.line));
+        if let ChildGroup::TreeFact(ref mut fact_lines) = group {
+            rewrite_tree_fact(fact_lines, is_last_child);
+        }
+        lines.extend(group.into_lines());
     }
 
     if show_expand_prompt {
@@ -142,18 +160,22 @@ pub(super) fn card_is_toggleable(
     _expanded: bool,
 ) -> bool {
     let budget = max_tool_output_lines.max(1);
-    let total_rows: usize = render_child_groups(card, width).iter().map(Vec::len).sum();
+    let total_rows: usize = render_child_groups(card, width)
+        .iter()
+        .map(ChildGroup::len)
+        .sum();
     total_rows > budget
 }
 
 /// Render each fact/body item into its full terminal-row group at `width`.
-fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<ChildRow>> {
+fn render_child_groups(card: &ToolCard, width: usize) -> Vec<ChildGroup> {
     let mut groups = Vec::new();
     for fact in &card.facts {
         // Always mid trunk here; last-child └ / hang is rewritten after clip.
-        let mut rows = Vec::new();
-        push_fact_line(&mut rows, fact, width);
-        groups.push(rows);
+        groups.push(ChildGroup::TreeFact(push_wrapped_tree_fact(
+            fact_spans(fact),
+            width,
+        )));
     }
     match &card.body {
         ToolBody::None => {}
@@ -161,7 +183,7 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<ChildRow>> {
             for line in tool_diff::logical_lines(body) {
                 let mut lines = Vec::new();
                 push_body_line(&mut lines, &line, width, Theme::text());
-                groups.push(content_child_rows(lines));
+                groups.push(ChildGroup::Plain(lines));
             }
         }
         ToolBody::Diff(rows) => {
@@ -169,53 +191,34 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<ChildRow>> {
             for row in rows {
                 let mut lines = Vec::new();
                 push_diff_row(&mut lines, row, gutter, width);
-                groups.push(content_child_rows(lines));
+                groups.push(ChildGroup::Plain(lines));
             }
         }
     }
     groups
 }
 
-fn content_child_rows(lines: Vec<Line<'static>>) -> Vec<ChildRow> {
-    lines
-        .into_iter()
-        .map(|line| ChildRow {
-            kind: ChildRowKind::Content,
-            line,
-        })
-        .collect()
-}
-
-/// Tree-fact groups draw ├ / │ by default; the final visible fact becomes └
-/// with a space hang on wrap so the trunk does not continue past the end.
-/// Body/diff groups carry [`ChildRowKind::Content`] and are left alone.
-fn rewrite_child_group_branches(group: &mut [ChildRow], is_last: bool) {
-    if !matches!(
-        group.first().map(|row| row.kind),
-        Some(ChildRowKind::Branch)
-    ) {
+/// Final visible tree fact becomes └ with a space hang on wrap so the trunk
+/// does not continue past the end. `[0]` is the branch; `[1..]` are wrap stems.
+fn rewrite_tree_fact(lines: &mut [Line<'static>], is_last: bool) {
+    let Some((first, rest)) = lines.split_first_mut() else {
         return;
-    }
-    for row in group.iter_mut() {
-        match row.kind {
-            ChildRowKind::Branch => set_tree_prefix(
-                &mut row.line,
-                if is_last {
-                    TREE_CHILD_END
-                } else {
-                    TREE_CHILD_MID
-                },
-            ),
-            ChildRowKind::WrapStem => set_tree_prefix(
-                &mut row.line,
-                if is_last {
-                    TREE_CHILD_HANG
-                } else {
-                    TREE_WRAP_STEM
-                },
-            ),
-            ChildRowKind::Content => {}
-        }
+    };
+    set_tree_prefix(
+        first,
+        if is_last {
+            TREE_CHILD_END
+        } else {
+            TREE_CHILD_MID
+        },
+    );
+    let continuation = if is_last {
+        TREE_CHILD_HANG
+    } else {
+        TREE_WRAP_STEM
+    };
+    for line in rest {
+        set_tree_prefix(line, continuation);
     }
 }
 
@@ -306,8 +309,8 @@ fn push_header_line(
 /// Wrap styled text under a fixed first-line prefix.
 ///
 /// Continuations are supplied by `continuation_prefix(hang)`. Headers pad a
-/// `│` stem out to the primary hang; facts use a plain `│` trunk (last-child
-/// hang is applied later by [`rewrite_child_group_branches`]).
+/// `│` stem out to the primary hang; tree facts use a plain `│` trunk
+/// (last-child hang is applied later by [`rewrite_tree_fact`]).
 ///
 /// Intentional newlines in the wrappable text (multi-line bash, heredocs) are
 /// hard breaks. Soft width-wrap still applies within each logical line. Without
@@ -391,29 +394,14 @@ fn header_wrap_continuation_prefix(hang: usize) -> Vec<Span<'static>> {
     spans
 }
 
-fn push_fact_line(rows: &mut Vec<ChildRow>, fact: &ToolFact, width: usize) {
-    // Always mid trunk; last-child └ / space hang is rewritten after budget clip.
-    push_wrapped_child(rows, fact_spans(fact), width);
-}
-
-/// Wrap a fact under `├` / `│`, tagging each terminal row for later rewrite.
-fn push_wrapped_child(rows: &mut Vec<ChildRow>, wrappable: Vec<Span<'static>>, width: usize) {
+/// Wrap a fact under provisional `├` / `│`. Last-child rewrite owns `└` / hang.
+fn push_wrapped_tree_fact(wrappable: Vec<Span<'static>>, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let prefix = vec![Span::styled(TREE_CHILD_MID.to_string(), Theme::tool_tree())];
     push_wrapped_prefixed(&mut lines, prefix, wrappable, width, |_| {
         vec![Span::styled(TREE_WRAP_STEM.to_string(), Theme::tool_tree())]
     });
-    let mut lines = lines.into_iter();
-    if let Some(first) = lines.next() {
-        rows.push(ChildRow {
-            kind: ChildRowKind::Branch,
-            line: first,
-        });
-    }
-    rows.extend(lines.map(|line| ChildRow {
-        kind: ChildRowKind::WrapStem,
-        line,
-    }));
+    lines
 }
 
 fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
