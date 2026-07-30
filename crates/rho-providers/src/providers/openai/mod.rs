@@ -10,7 +10,6 @@ mod codex_ws;
 mod reasoning;
 mod remote_compaction;
 mod responses_http;
-mod responses_lite_image;
 
 pub use cache::prompt_cache_key_from_session_id;
 
@@ -102,13 +101,12 @@ impl OpenAiProvider {
         ResponsesHttpTransport::new(
             &self.client,
             &self.api_base,
-            &self.profile,
             self.credential_store.as_ref(),
             &self.refreshed_codex_tokens,
         )
     }
 
-    async fn create_body(
+    fn create_body(
         &self,
         request: ModelRequest<'_>,
         options: ModelRequestOptions,
@@ -120,7 +118,6 @@ impl OpenAiProvider {
             options.service_tier(),
             self.hosted_web_search,
         )
-        .await
     }
 
     #[cfg(test)]
@@ -129,7 +126,6 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<Value, ModelError> {
         self.create_body(request, ModelRequestOptions::default())
-            .await
     }
 }
 
@@ -192,13 +188,11 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = self
-            .create_body(request, ModelRequestOptions::default())
-            .await?;
+        let body = self.create_body(request, ModelRequestOptions::default())?;
         let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
         let body = match self
             .codex_ws
-            .send_responses_turn_silent(body, &tokens, self.profile.contract())
+            .send_responses_turn_silent(body, &tokens)
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
@@ -249,11 +243,11 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.create_body(request, options).await?;
+        let body = self.create_body(request, options)?;
         let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
         let body = match self
             .codex_ws
-            .send_responses_turn(body, &tokens, self.profile.contract(), &mut on_event)
+            .send_responses_turn(body, &tokens, &mut on_event)
             .await?
         {
             CodexWsTurn::Completed(response) => return Ok(response),
@@ -371,9 +365,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self
-            .create_body(request, ModelRequestOptions::default())
-            .await?;
+        let body = self.create_body(request, ModelRequestOptions::default())?;
         let http_result = self
             .http()
             .post_json(
@@ -397,7 +389,7 @@ impl OpenAiProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self.create_body(request, options).await?;
+        let body = self.create_body(request, options)?;
         let http_result = self
             .http()
             .post_json(

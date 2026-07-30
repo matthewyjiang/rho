@@ -366,9 +366,8 @@ pub(crate) const ASSISTANT_IMAGE_OMITTED_TEXT: &str =
 /// Joins assistant text, replacing images with [`ASSISTANT_IMAGE_OMITTED_TEXT`].
 ///
 /// Neither OpenAI wire protocol has an assistant image slot. Images degrade to
-/// text, matching how the Responses Lite input path handles an image it cannot
-/// send, so history keeps a trace of the content instead of dropping it
-/// silently or failing the whole turn.
+/// text so history keeps a trace of the content instead of dropping it silently
+/// or failing the whole turn.
 fn assistant_text(blocks: &[ContentBlock]) -> String {
     blocks
         .iter()

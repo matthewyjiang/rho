@@ -58,7 +58,7 @@ pub(super) async fn compact_with_http(
     // Only system messages are preserved from the source history; capture those
     // alone so the full conversation is not cloned across the HTTP round-trip.
     let retained_system_messages = retained_system_messages(request.messages);
-    let body = match build_responses_compact_body(profile, reasoning_profile, request).await {
+    let body = match build_responses_compact_body(profile, reasoning_profile, request) {
         Ok(body) => body,
         Err(error) => return native_compact_failure(error, Vec::new()),
     };
