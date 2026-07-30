@@ -168,7 +168,8 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
         .assistant_stream
         .push_delta("partial assistant before stream failure");
 
-    let outcome = app.finalize_failed_turn("provider stream failed".into(), failed_turn());
+    let outcome =
+        app.finalize_failed_turn("provider stream failed".into(), failed_turn(), Vec::new());
 
     assert_eq!(outcome.kind(), TurnOutcomeKind::Failed);
     assert!(matches!(

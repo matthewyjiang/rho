@@ -1,5 +1,6 @@
 //! Built-in Rho TUI PTY scenarios.
 
+mod apply_patch_diff;
 mod config;
 mod conversation_tree;
 mod goal;
@@ -12,6 +13,7 @@ mod subagent_rail;
 mod text_selection;
 mod workspace_rewind;
 
+use apply_patch_diff::APPLY_PATCH_DIFF_SCENARIO;
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use goal::{
@@ -773,6 +775,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         PROGRESS_TOOL_STEPS,
         false,
     ),
+    APPLY_PATCH_DIFF_SCENARIO,
     Scenario::new(
         "concurrent_progress",
         "Keep concurrent progress visible through out-of-order completion",

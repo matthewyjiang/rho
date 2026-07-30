@@ -5,6 +5,7 @@
 
 mod apply;
 mod parser;
+mod proposed_diff;
 mod seek_sequence;
 
 use serde::Deserialize;
@@ -16,6 +17,10 @@ pub(crate) use apply::apply_hunks;
 #[cfg(test)]
 pub(crate) use parser::ParseError;
 pub(crate) use parser::{parse_patch, Hunk};
+pub use proposed_diff::{
+    proposed_diff_lenient, ProposedDiff, ProposedDiffFile, ProposedDiffOperation,
+    ProposedDiffTrailingLine,
+};
 
 pub struct ApplyPatch;
 
