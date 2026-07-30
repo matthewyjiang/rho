@@ -99,13 +99,29 @@ const PREVIEW_FULL_PARSE_LIMIT: usize = 4096;
 /// Argument bytes accumulated between parses past [`PREVIEW_FULL_PARSE_LIMIT`].
 const PREVIEW_LARGE_PARSE_STRIDE: usize = 4096;
 
+/// Stop rebuilding large apply_patch previews after this many argument bytes.
+///
+/// The final proposal still parses the complete patch once. Freezing only the
+/// streamed card avoids repeated full-buffer scans for unusually large calls.
+const APPLY_PATCH_STREAM_PREVIEW_LIMIT: usize = 256 * 1024;
+
 #[derive(Clone, Debug, Default)]
 struct StreamedPreview {
     name: Option<String>,
     arguments: String,
+    frozen: bool,
     next_parse_length: usize,
     last_args: Option<serde_json::Value>,
     last_card: Option<ToolCard>,
+}
+
+impl StreamedPreview {
+    fn freeze(&mut self) {
+        self.arguments = String::new();
+        self.frozen = true;
+        self.next_parse_length = usize::MAX;
+        self.last_args = None;
+    }
 }
 
 pub(crate) struct InteractiveToolPresenter {
@@ -130,6 +146,10 @@ impl InteractiveToolPresenter {
         self.streamed.clear();
     }
 
+    pub(crate) fn streamed_card(&self, index: usize) -> Option<ToolCard> {
+        self.streamed.get(&index)?.last_card.clone()
+    }
+
     pub(crate) fn preview(
         &mut self,
         index: usize,
@@ -139,15 +159,19 @@ impl InteractiveToolPresenter {
         let preview = self.streamed.entry(index).or_default();
         let name_changed = name
             .as_ref()
-            .is_some_and(|name| preview.name.as_ref() != Some(name));
-        if let Some(name) = name {
-            preview.name = Some(name);
-        }
+            .is_some_and(|name| preview.name.as_ref().is_some_and(|current| current != name));
         if name_changed {
             preview.arguments.clear();
+            preview.frozen = false;
             preview.next_parse_length = 0;
             preview.last_args = None;
             preview.last_card = None;
+        }
+        if let Some(name) = name {
+            preview.name = Some(name);
+        }
+        if preview.frozen {
+            return None;
         }
         preview.arguments.push_str(arguments_delta);
         // A provider commonly announces a call's identity before sending any
@@ -158,6 +182,13 @@ impl InteractiveToolPresenter {
         }
         let name = preview.name.as_deref()?;
         let kind = ToolKind::from_name(name);
+        if kind == ToolKind::ApplyPatch
+            && preview.arguments.len() > APPLY_PATCH_STREAM_PREVIEW_LIMIT
+            && preview.last_card.is_some()
+        {
+            preview.freeze();
+            return None;
+        }
         if !name_changed && preview.arguments.len() < preview.next_parse_length {
             return None;
         }
@@ -179,10 +210,16 @@ impl InteractiveToolPresenter {
             .arguments
             .len()
             .saturating_add(kind.preview_parse_stride(preview.arguments.len()));
-        if preview.last_card.as_ref() == Some(&card) {
+        let unchanged = preview.last_card.as_ref() == Some(&card);
+        preview.last_card = Some(card.clone());
+        if kind == ToolKind::ApplyPatch
+            && preview.arguments.len() > APPLY_PATCH_STREAM_PREVIEW_LIMIT
+        {
+            preview.freeze();
+        }
+        if unchanged {
             return None;
         }
-        preview.last_card = Some(card.clone());
         // Streaming previews carry no notices or image assets; skip a second
         // argument parse just to assemble ToolPresentation.
         Some(ToolPresentation {

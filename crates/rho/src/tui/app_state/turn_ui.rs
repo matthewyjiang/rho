@@ -140,6 +140,10 @@ impl TurnUi {
         self.tool_calls.clear();
     }
 
+    pub(in crate::tui) fn interrupted_tool_entries(&self) -> Vec<ToolEntry> {
+        self.tool_calls.interrupted_entries()
+    }
+
     pub(in crate::tui) fn tool_started(&mut self, call_id: ToolCallId, card: ToolCard) {
         self.tool_calls.started(call_id, card);
     }

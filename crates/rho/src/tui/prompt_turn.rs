@@ -91,6 +91,12 @@ async fn questionnaire_reply(
 }
 
 impl App {
+    fn retain_interrupted_tools(&mut self, entries: Vec<ToolEntry>) {
+        for entry in entries {
+            self.insert_entry(&Entry::Tool(entry));
+        }
+    }
+
     pub(super) async fn run_prompt_turn(
         &mut self,
         prompt: TurnPrompt,
@@ -457,6 +463,7 @@ impl App {
         }
 
         self.cancel_approval();
+        let interrupted_tool_entries = self.turn.interrupted_tool_entries();
         self.turn.clear_tool_calls();
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
@@ -513,6 +520,7 @@ impl App {
                 } else {
                     "questionnaire cancelled"
                 };
+                self.retain_interrupted_tools(interrupted_tool_entries);
                 self.insert_entry(&Entry::Notice(notice.into()));
                 self.reset_streams();
                 self.turn.set_current_turn_start(None);
@@ -530,6 +538,7 @@ impl App {
                 self.debug_assert_provider_turn_sync(agent);
                 self.turn.stop_loading();
                 self.finish_streams();
+                self.retain_interrupted_tools(interrupted_tool_entries);
                 self.insert_entry(&Entry::Notice("model interrupted".into()));
                 self.reset_streams();
                 self.turn.set_current_turn_start(None);

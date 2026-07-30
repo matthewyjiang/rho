@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use rho_sdk::ToolCallId;
 
-use rho_tools::tool_card::ToolCard;
+use rho_tools::tool_card::{ToolCard, ToolStatus};
 
 use super::ToolEntry;
 
@@ -47,6 +47,16 @@ impl ToolCallBatch {
                     .iter()
                     .filter_map(|call_id| self.running.get(call_id)),
             )
+    }
+
+    pub(super) fn interrupted_entries(&self) -> Vec<ToolEntry> {
+        self.live_entries()
+            .cloned()
+            .map(|mut entry| {
+                entry.card.status = ToolStatus::Interrupted;
+                entry
+            })
+            .collect()
     }
 
     pub(super) fn latest_mut(&mut self) -> Option<&mut ToolEntry> {

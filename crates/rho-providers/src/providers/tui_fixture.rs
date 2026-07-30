@@ -6,6 +6,8 @@ use std::{
     time::Duration,
 };
 
+mod apply_patch;
+
 use rho_sdk::{
     model::{
         ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
@@ -241,6 +243,10 @@ async fn fixture_stream(
                 .await?;
             completed_tool_call(TOOL_CALL_ID, "write_file", arguments)
         }
+        apply_patch::PROMPT if apply_patch::is_pending(&request) => {
+            apply_patch::stream(&request, &events).await
+        }
+        apply_patch::CANCEL_PROMPT => apply_patch::stream_until_cancelled(&request, &events).await,
         "fixture questionnaire" if tool_result(&request, QUESTIONNAIRE_CALL_ID).is_none() => {
             completed_tool_call(
                 QUESTIONNAIRE_CALL_ID,
@@ -578,6 +584,9 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
             "tool lifecycle complete with one result: {}",
             result.content.lines().next().unwrap_or_default()
         ));
+    }
+    if let Some(text) = apply_patch::completion_text(request) {
+        return completed(text);
     }
     if let (Some(slow), Some(fast)) = (
         tool_result(request, CONCURRENT_SLOW_CALL_ID),

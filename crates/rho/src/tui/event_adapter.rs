@@ -103,6 +103,8 @@ pub(super) enum ViewEvent {
 pub(crate) struct SdkEventAdapter {
     presenter: Option<InteractiveToolPresenter>,
     compaction_open: bool,
+    /// Provider output_index -> call id already emitted for a streamed preview.
+    streamed_call_ids: std::collections::BTreeMap<usize, String>,
     /// Provider output_index -> attachment journal key for live tool previews.
     attachment_preview_keys: std::collections::BTreeMap<usize, String>,
     /// call_id -> attachment journal key so later events reuse the preview slot.
@@ -114,6 +116,7 @@ impl SdkEventAdapter {
         Self {
             presenter: Some(InteractiveToolPresenter::new(cwd)),
             compaction_open: false,
+            streamed_call_ids: std::collections::BTreeMap::new(),
             attachment_preview_keys: std::collections::BTreeMap::new(),
             attachment_call_keys: std::collections::BTreeMap::new(),
         }
@@ -181,6 +184,7 @@ impl SdkEventAdapter {
     }
 
     pub(crate) fn clear_attachment_preview_keys(&mut self) {
+        self.streamed_call_ids.clear();
         self.attachment_preview_keys.clear();
         self.attachment_call_keys.clear();
     }
@@ -196,6 +200,7 @@ impl SdkEventAdapter {
             }
             RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
+                self.streamed_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
             }
             RunEvent::SteeringApplied { ids } => {
@@ -216,15 +221,32 @@ impl SdkEventAdapter {
                 // StreamCapture re-emits known identity on later deltas, so the
                 // first rendered preview can bind the call-id slot.
                 let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
-                self.presenter()
+                let newly_bound = call_id.as_ref().is_some_and(|call_id| {
+                    self.streamed_call_ids
+                        .insert(index, call_id.to_string())
+                        .as_deref()
+                        != Some(call_id.as_str())
+                });
+                let card = self
+                    .presenter()
                     .preview(index, name, &arguments_delta)
-                    .map_or_else(Vec::new, |presented| {
-                        vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-                            index,
-                            call_id,
-                            card: presented.card,
-                        })]
-                    })
+                    .map(|presented| presented.card)
+                    .or_else(|| {
+                        // A late identity must bind the existing slot even when
+                        // visual deduplication or preview freezing skips a rebuild.
+                        newly_bound
+                            .then_some(call_id.as_ref())
+                            .flatten()
+                            .as_ref()
+                            .and_then(|_| self.presenter().streamed_card(index))
+                    });
+                card.map_or_else(Vec::new, |card| {
+                    vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                        index,
+                        call_id,
+                        card,
+                    })]
+                })
             }
             RunEvent::ToolProposed { call } => {
                 let Ok(call_id) = rho_sdk::ToolCallId::from_string(call.id.clone()) else {

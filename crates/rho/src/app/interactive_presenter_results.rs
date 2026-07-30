@@ -3,8 +3,8 @@
 use rho_tools::{
     parse_shell_content,
     tool_card::{
-        compact_diff_rows, compact_diff_rows_from_files, parse_unified_diff, ToolBody, ToolCard,
-        ToolFact, ToolFamily, ToolHeader, ToolStatus,
+        compact_diff_rows, parse_unified_diff, DiffRow, DiffRowKind, ParsedDiffFile, ToolBody,
+        ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
     },
 };
 
@@ -13,6 +13,28 @@ use super::{
     apply_patch_paths, display_path, draft_card, first_url, metadata_paths, quoted, search_terms,
     start_card, string_arg, truncate,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EmptyDiffState {
+    Silent,
+    NoChanges,
+}
+
+pub(super) struct DiffCardFile {
+    pub(super) path: String,
+    pub(super) stats: Option<(u64, u64)>,
+    pub(super) rows: Vec<DiffRow>,
+}
+
+impl From<ParsedDiffFile> for DiffCardFile {
+    fn from(file: ParsedDiffFile) -> Self {
+        Self {
+            path: file.path,
+            stats: Some((file.added, file.removed)),
+            rows: file.rows,
+        }
+    }
+}
 
 pub(super) fn shell_card(
     prompt: &str,
@@ -113,56 +135,108 @@ pub(super) fn file_diff_card(
         }
     };
     let paths = if paths.is_empty() { arg_paths } else { paths };
+    if ok {
+        let diff = view.metadata.unified_diff().unwrap_or(content);
+        let omitted_diff_notices = diff
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| line.starts_with("Diff omitted:"))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let files = parse_unified_diff(diff)
+            .into_iter()
+            .map(DiffCardFile::from)
+            .collect::<Vec<_>>();
+        let has_no_changes =
+            files.is_empty() && omitted_diff_notices.is_empty() && diff_reports_no_changes(diff);
+        let mut card = diff_card(
+            status,
+            view.name.as_str(),
+            paths,
+            files,
+            if has_no_changes {
+                EmptyDiffState::NoChanges
+            } else {
+                EmptyDiffState::Silent
+            },
+        );
+        for text in omitted_diff_notices {
+            card.push_fact(ToolFact::Meta { text });
+        }
+        return card;
+    }
+
+    let mut card = diff_card(
+        status,
+        view.name.as_str(),
+        paths,
+        Vec::new(),
+        EmptyDiffState::Silent,
+    );
+    if !content.trim().is_empty() {
+        push_error_output(&mut card, content);
+    }
+    card
+}
+
+fn diff_reports_no_changes(diff: &str) -> bool {
+    diff.lines().any(|line| line.trim_end() == "No changes.")
+}
+
+pub(super) fn diff_card(
+    status: ToolStatus,
+    name: &str,
+    fallback_paths: Vec<String>,
+    files: Vec<DiffCardFile>,
+    empty_state: EmptyDiffState,
+) -> ToolCard {
+    // Prefer paths from parsed content so deleted files keep their old path and
+    // multi-file bodies get headings even when metadata is thin.
+    let mut header_paths = files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    for path in fallback_paths {
+        if !header_paths.contains(&path) {
+            header_paths.push(path);
+        }
+    }
+    let primary = match header_paths.as_slice() {
+        [] => None,
+        [path] => Some(path.clone()),
+        paths => Some(format!("{} files", paths.len())),
+    };
     let mut card = draft_card(
         status,
         ToolFamily::FileDiff,
-        ToolHeader::call(view.name.as_str(), None),
+        ToolHeader::call(name, primary),
     );
-    if ok {
-        let diff = view.metadata.unified_diff().unwrap_or(content);
-        let files = parse_unified_diff(diff);
-        // Prefer paths from the parsed diff so deleted files keep their old path
-        // and multi-file bodies get headers even when metadata is thin.
-        let header_paths = if files.is_empty() {
-            paths
-        } else {
-            files.iter().map(|file| file.path.clone()).collect()
-        };
-        let primary = match header_paths.as_slice() {
-            [] => None,
-            [path] => Some(path.clone()),
-            paths => Some(format!("{} files", paths.len())),
-        };
-        card.header = ToolHeader::call(view.name.as_str(), primary);
-        if files.is_empty() {
-            if header_paths.len() == 1 {
-                card.push_fact(ToolFact::Meta {
-                    text: "no changes".into(),
-                });
-            }
-        } else {
-            for file in &files {
-                card.push_fact(ToolFact::DiffStat {
-                    added: file.added,
-                    removed: file.removed,
-                    path: Some(file.path.clone()),
-                });
-            }
-            let rows = compact_diff_rows_from_files(&files, files.len() > 1);
-            if !rows.is_empty() {
-                card.body = ToolBody::Diff(rows);
-            }
+    if files.is_empty() {
+        if empty_state == EmptyDiffState::NoChanges && !header_paths.is_empty() {
+            card.push_fact(ToolFact::Meta {
+                text: "no changes".into(),
+            });
         }
-    } else {
-        let primary = match paths.as_slice() {
-            [] => None,
-            [path] => Some(path.clone()),
-            paths => Some(format!("{} files", paths.len())),
-        };
-        card.header = ToolHeader::call(view.name.as_str(), primary);
-        if !content.trim().is_empty() {
-            push_error_output(&mut card, content);
+        return card;
+    }
+
+    let include_file_headers = files.len() > 1;
+    let mut rows = Vec::new();
+    for file in files {
+        if let Some((added, removed)) = file.stats {
+            card.push_fact(ToolFact::DiffStat {
+                added,
+                removed,
+                path: Some(file.path.clone()),
+            });
         }
+        if include_file_headers {
+            rows.push(DiffRow::new(DiffRowKind::File, None, file.path));
+        }
+        rows.extend(file.rows);
+    }
+    if !rows.is_empty() {
+        card.body = ToolBody::Diff(rows);
     }
     card
 }
