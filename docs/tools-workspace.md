@@ -52,7 +52,7 @@ These tools can read and modify files inside or outside the workspace, run shell
 
 `apply_patch` edits existing files and can also add or delete files with a Codex-style patch document. Pass the full patch text in `input`, including the `*** Begin Patch` and `*** End Patch` markers. Operations use `*** Add File:`, `*** Delete File:`, and `*** Update File:` headers. Update hunks use `@@` context markers and lines prefixed with ` ` (context), `-` (remove), or `+` (add). An update may include `*** Move to:` to rename a file while patching it.
 
-Rho parses the whole patch, validates every hunk against current file contents, then writes. A validation failure leaves all targeted files unchanged. Successful results include a unified diff of the committed changes.
+Rho parses the whole patch, plans every file operation against current contents, rejects overlapping path claims, re-reads those files immediately before writing, and fails closed if any changed mid-flight. A planning or revalidation failure leaves all targeted files unchanged. If a later write fails after earlier writes succeeded, Rho rolls back the applied ops. Successful results include a unified diff of the committed changes.
 
 ```json
 {

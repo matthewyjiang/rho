@@ -20,6 +20,13 @@ async fn call(input: &str, ctx: ToolContext) -> Result<ToolResult, ToolError> {
         .await
 }
 
+fn message(error: ToolError) -> String {
+    let ToolError::Message(message) = error else {
+        panic!("expected ToolError::Message, got {error:?}");
+    };
+    message
+}
+
 #[test]
 fn schema_requires_input_string() {
     let schema = ApplyPatch.spec().input_schema;
@@ -109,11 +116,8 @@ async fn rejects_missing_context_without_mutating() {
     .await
     .unwrap_err();
 
-    let ToolError::Message(message) = error else {
-        panic!("expected ToolError::Message, got {error:?}");
-    };
     assert_eq!(
-        message,
+        message(error),
         "Failed to find expected lines in modify.txt:\nmissing"
     );
     assert_eq!(
@@ -144,12 +148,9 @@ async fn rejects_missing_update_target() {
     )
     .await
     .unwrap_err();
-    let ToolError::Message(message) = error else {
-        panic!("expected ToolError::Message, got {error:?}");
-    };
     assert!(
-        message.starts_with("Failed to read file to update missing.txt:"),
-        "unexpected message: {message}"
+        message(error).starts_with("Failed to read file to update missing.txt:"),
+        "unexpected message"
     );
 }
 
@@ -162,10 +163,10 @@ async fn rejects_absolute_and_parent_paths() {
     )
     .await
     .unwrap_err();
-    let ToolError::Message(message) = absolute else {
-        panic!("expected ToolError::Message, got {absolute:?}");
-    };
-    assert_eq!(message, "patch path must be relative: /tmp/evil.txt");
+    assert_eq!(
+        message(absolute),
+        "patch path must be relative: /tmp/evil.txt"
+    );
 
     let parent = call(
         "*** Begin Patch\n*** Add File: ../escape.txt\n+nope\n*** End Patch",
@@ -173,10 +174,10 @@ async fn rejects_absolute_and_parent_paths() {
     )
     .await
     .unwrap_err();
-    let ToolError::Message(message) = parent else {
-        panic!("expected ToolError::Message, got {parent:?}");
-    };
-    assert_eq!(message, "patch path must not contain '..': ../escape.txt");
+    assert_eq!(
+        message(parent),
+        "patch path must not contain '..': ../escape.txt"
+    );
 }
 
 #[tokio::test]
@@ -198,8 +199,8 @@ async fn pure_addition_inserts_at_context_cursor() {
 }
 
 #[test]
-fn patch_paths_extracts_add_update_move_and_delete() {
-    let paths = patch_paths(
+fn patch_paths_lenient_extracts_add_update_move_and_delete() {
+    let paths = patch_paths_lenient(
         "*** Begin Patch\n*** Add File: a.txt\n+hi\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** Delete File: gone.txt\n*** End Patch",
     );
     assert_eq!(
@@ -211,4 +212,105 @@ fn patch_paths_extracts_add_update_move_and_delete() {
             "gone.txt".to_string()
         ]
     );
+}
+
+#[test]
+fn patch_paths_lenient_returns_empty_for_invalid_input() {
+    assert!(patch_paths_lenient("not a patch").is_empty());
+}
+
+#[tokio::test]
+async fn rejects_delete_and_move_of_same_source() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("a.txt"), "body\n").unwrap();
+
+    let error = call(
+        "*** Begin Patch\n*** Delete File: a.txt\n*** Update File: a.txt\n*** Move to: b.txt\n@@\n-body\n+body\n*** End Patch",
+        ctx.clone(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(message(error).contains("deletes"), "expected path conflict");
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("a.txt")).unwrap(),
+        "body\n"
+    );
+    assert!(!ctx.cwd.join("b.txt").exists());
+}
+
+#[tokio::test]
+async fn fails_closed_when_file_changes_after_plan() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("a.txt"), "alpha\n").unwrap();
+    std::fs::write(ctx.cwd.join("b.txt"), "beta\n").unwrap();
+    let cwd = ctx.cwd.clone();
+    let hunks = parse_patch(
+        "*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+ALPHA\n*** Update File: b.txt\n@@\n-beta\n+BETA\n*** End Patch",
+    )
+    .unwrap();
+
+    // While planning the second file, mutate the first after its snapshot was taken.
+    let error = apply_hunks(
+        hunks,
+        {
+            let cwd = cwd.clone();
+            move |requested| {
+                if requested == "b.txt" {
+                    std::fs::write(cwd.join("a.txt"), "tampered\n").unwrap();
+                }
+                Ok(cwd.join(requested))
+            }
+        },
+        |requested| requested.to_string(),
+        12_000,
+    )
+    .await
+    .unwrap_err();
+
+    let msg = message(error);
+    assert!(
+        msg.contains("changed while the patch was being validated"),
+        "unexpected message: {msg}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cwd.join("a.txt")).unwrap(),
+        "tampered\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cwd.join("b.txt")).unwrap(),
+        "beta\n"
+    );
+}
+
+#[tokio::test]
+async fn preserves_missing_trailing_newline() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("nonewline.txt"), "alpha\nbeta").unwrap();
+
+    call(
+        "*** Begin Patch\n*** Update File: nonewline.txt\n@@\n-beta\n+beta2\n*** End Patch",
+        ctx.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("nonewline.txt")).unwrap(),
+        "alpha\nbeta2"
+    );
+}
+
+#[test]
+fn rejects_environment_id_and_heredoc_wrappers() {
+    let env = parse_patch(
+        "*** Begin Patch\n*** Environment ID: abc\n*** Add File: a.txt\n+hi\n*** End Patch",
+    )
+    .unwrap_err();
+    assert!(matches!(env, ParseError::InvalidHunk { .. }));
+
+    let heredoc =
+        parse_patch("<<EOF\n*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch\nEOF")
+            .unwrap_err();
+    assert!(matches!(heredoc, ParseError::InvalidPatch(_)));
 }

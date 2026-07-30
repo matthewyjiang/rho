@@ -423,3 +423,86 @@ fn build_runtime_with_coding_tools(
     }
     builder.build().unwrap()
 }
+
+#[tokio::test]
+async fn apply_patch_prepare_reserves_add_update_and_move_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("old.txt"), "old\n").unwrap();
+    let workspace = workspace(&dir);
+    let tool = coding_tool(CodingToolKind::ApplyPatch, CodingToolOptions::default());
+    let input = "\
+*** Begin Patch
+*** Add File: nested/new.txt
++created
+*** Update File: old.txt
+*** Move to: moved.txt
+@@
+-old
++new
+*** End Patch";
+
+    let prepared = tool
+        .prepare(
+            invocation(json!({"input": input})),
+            ToolPreparationContext::new(Some(workspace.clone()), CancellationToken::new()),
+        )
+        .await
+        .unwrap();
+
+    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy().clone()
+    else {
+        panic!("apply_patch must opt in to resource-aware execution");
+    };
+
+    let expected_paths = [
+        workspace.root().join("nested/new.txt"),
+        workspace.root().join("old.txt"),
+        workspace.root().join("moved.txt"),
+    ];
+    for path in &expected_paths {
+        assert!(
+            accesses.contains(&ToolResourceAccess::exclusive(
+                ToolResource::workspace_path(path)
+            )),
+            "missing exclusive access for {}",
+            path.display()
+        );
+    }
+    assert!(accesses.contains(&ToolResourceAccess::exclusive(
+        ToolResource::directory_membership(workspace.root().join("nested"))
+    )));
+
+    let capability_paths = prepared
+        .capabilities()
+        .iter()
+        .filter_map(|capability| match capability.operation() {
+            rho_sdk::CapabilityOperation::ReadPath { path, .. }
+            | rho_sdk::CapabilityOperation::WritePath { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    for path in &expected_paths {
+        assert!(
+            capability_paths.contains(path),
+            "missing capability for {}",
+            path.display()
+        );
+    }
+}
+
+#[tokio::test]
+async fn apply_patch_prepare_rejects_invalid_patch_before_io() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = coding_tool(CodingToolKind::ApplyPatch, CodingToolOptions::default());
+    let error = match tool
+        .prepare(
+            invocation(json!({"input": "not a patch"})),
+            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
+        )
+        .await
+    {
+        Ok(_) => panic!("invalid patch must fail prepare"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
+}

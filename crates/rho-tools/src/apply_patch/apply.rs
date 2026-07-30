@@ -1,7 +1,12 @@
 //! Apply parsed Codex-style patch hunks to the filesystem.
 //!
 //! Chunk matching is adapted from the Apache-2.0 codex-rs apply-patch crate.
-//! Writes validate fully, then commit with best-effort rollback.
+//!
+//! Pipeline:
+//! 1. resolve paths and read inputs
+//! 2. build a path-keyed [`FileChange`] plan (conflicts fail here)
+//! 3. re-read sources immediately before commit and fail closed if they changed
+//! 4. commit in patch order with enum-driven rollback on failure
 
 use std::{
     collections::BTreeMap,
@@ -18,39 +23,118 @@ use super::{
     seek_sequence::seek_sequence,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChangeKind {
-    Add,
-    Delete,
-    Update,
-}
-
-struct PlannedChange {
-    kind: ChangeKind,
-    /// Path written or deleted by this change.
-    target: PathBuf,
+#[derive(Debug, Clone)]
+struct MoveSource {
+    path: PathBuf,
     display_path: String,
-    /// Optional source path removed after a move.
-    remove_source: Option<PathBuf>,
-    remove_source_display: Option<String>,
-    original_target: Option<String>,
-    original_source: Option<String>,
-    new_content: Option<String>,
+    content: String,
 }
 
-impl PlannedChange {
-    fn source_display(&self) -> String {
-        self.remove_source_display
-            .clone()
-            .or_else(|| {
-                self.remove_source
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-            })
-            .unwrap_or_else(|| self.display_path.clone())
+/// One committed filesystem operation. Impossible states are unrepresentable.
+#[derive(Debug, Clone)]
+enum FileChange {
+    Add {
+        target: PathBuf,
+        display_path: String,
+        new_content: String,
+        /// Prior contents when the add overwrites an existing file.
+        previous_content: Option<String>,
+    },
+    Delete {
+        target: PathBuf,
+        display_path: String,
+        previous_content: String,
+    },
+    Update {
+        target: PathBuf,
+        display_path: String,
+        old_content: String,
+        new_content: String,
+        move_from: Option<MoveSource>,
+        /// Prior contents at the move destination, if it already existed.
+        previous_dest_content: Option<String>,
+    },
+}
+
+impl FileChange {
+    fn summary_line(&self) -> String {
+        match self {
+            Self::Add { display_path, .. } => format!("A {display_path}"),
+            Self::Delete { display_path, .. } => format!("D {display_path}"),
+            Self::Update { display_path, .. } => format!("M {display_path}"),
+        }
+    }
+
+    fn display_path(&self) -> &str {
+        match self {
+            Self::Add { display_path, .. }
+            | Self::Delete { display_path, .. }
+            | Self::Update { display_path, .. } => display_path,
+        }
+    }
+
+    fn diff(&self) -> String {
+        match self {
+            Self::Add {
+                display_path,
+                new_content,
+                ..
+            } => unified_diff("", new_content, display_path, /*created*/ true),
+            Self::Delete {
+                display_path,
+                previous_content,
+                ..
+            } => unified_diff(previous_content, "", display_path, /*created*/ false),
+            Self::Update {
+                display_path,
+                old_content,
+                new_content,
+                ..
+            } => unified_diff(
+                old_content,
+                new_content,
+                display_path,
+                /*created*/ false,
+            ),
+        }
+    }
+
+    fn write_target(&self) -> Option<(&PathBuf, &str)> {
+        match self {
+            Self::Add {
+                target,
+                display_path,
+                ..
+            }
+            | Self::Update {
+                target,
+                display_path,
+                ..
+            } => Some((target, display_path)),
+            Self::Delete { .. } => None,
+        }
+    }
+
+    fn delete_target(&self) -> Option<(&PathBuf, &str)> {
+        match self {
+            Self::Delete {
+                target,
+                display_path,
+                ..
+            } => Some((target, display_path)),
+            Self::Update {
+                move_from: Some(source),
+                ..
+            } => Some((&source.path, &source.display_path)),
+            Self::Add { .. }
+            | Self::Update {
+                move_from: None, ..
+            } => None,
+        }
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ApplyPatchOutcome {
     pub content: String,
     pub display_paths: Vec<String>,
@@ -68,74 +152,20 @@ pub(crate) async fn apply_hunks(
     for hunk in &hunks {
         planned.push(plan_hunk(hunk, &resolve_path, &display_path).await?);
     }
-
-    // Detect overlapping write targets before mutating the workspace.
-    let mut seen_targets = BTreeMap::<PathBuf, String>::new();
-    for change in &planned {
-        if let Some(previous) =
-            seen_targets.insert(change.target.clone(), change.display_path.clone())
-        {
-            return Err(ToolError::Message(format!(
-                "patch targets '{}' more than once (also as '{previous}')",
-                change.display_path
-            )));
-        }
-    }
-    for change in &planned {
-        if let Some(source) = &change.remove_source {
-            if seen_targets.contains_key(source) {
-                return Err(ToolError::Message(format!(
-                    "patch both writes and deletes '{}'",
-                    change.source_display()
-                )));
-            }
-        }
-    }
+    check_path_conflicts(&planned)?;
 
     let summary_lines = planned
         .iter()
-        .map(|change| {
-            let prefix = match change.kind {
-                ChangeKind::Add => 'A',
-                ChangeKind::Delete => 'D',
-                ChangeKind::Update => 'M',
-            };
-            format!("{prefix} {}", change.display_path)
-        })
+        .map(FileChange::summary_line)
         .collect::<Vec<_>>();
-
     let diffs = planned
         .iter()
-        .map(|change| match change.kind {
-            ChangeKind::Add => unified_diff(
-                "",
-                change.new_content.as_deref().unwrap_or(""),
-                &change.display_path,
-                /*created*/ true,
-            ),
-            ChangeKind::Delete => unified_diff(
-                change.original_target.as_deref().unwrap_or(""),
-                "",
-                &change.display_path,
-                /*created*/ false,
-            ),
-            ChangeKind::Update => unified_diff(
-                change
-                    .original_source
-                    .as_deref()
-                    .or(change.original_target.as_deref())
-                    .unwrap_or(""),
-                change.new_content.as_deref().unwrap_or(""),
-                &change.display_path,
-                /*created*/ false,
-            ),
-        })
+        .map(FileChange::diff)
         .collect::<Vec<_>>()
         .join("\n\n");
-
     let display_paths = planned
         .iter()
-        .map(|change| change.display_path.clone())
+        .map(|change| change.display_path().to_string())
         .collect::<Vec<_>>();
     let file_count = display_paths.len();
 
@@ -155,54 +185,65 @@ pub(crate) async fn apply_hunks(
     })
 }
 
+/// Fail when two ops write the same path, delete the same path, or both write and
+/// delete the same path (for example delete A + move A → B).
+fn check_path_conflicts(changes: &[FileChange]) -> Result<(), ToolError> {
+    let mut writes = BTreeMap::<PathBuf, String>::new();
+    let mut deletes = BTreeMap::<PathBuf, String>::new();
+
+    for change in changes {
+        if let Some((path, display)) = change.write_target() {
+            if let Some(previous) = writes.insert(path.clone(), display.to_string()) {
+                return Err(ToolError::Message(format!(
+                    "patch targets '{display}' more than once (also as '{previous}')"
+                )));
+            }
+        }
+        if let Some((path, display)) = change.delete_target() {
+            if let Some(previous) = deletes.insert(path.clone(), display.to_string()) {
+                return Err(ToolError::Message(format!(
+                    "patch deletes '{display}' more than once (also as '{previous}')"
+                )));
+            }
+        }
+    }
+
+    for (path, write_display) in &writes {
+        if let Some(delete_display) = deletes.get(path) {
+            return Err(ToolError::Message(format!(
+                "patch both writes and deletes '{write_display}' (also deleted as '{delete_display}')"
+            )));
+        }
+    }
+    Ok(())
+}
+
 async fn plan_hunk(
     hunk: &Hunk,
     resolve_path: &impl Fn(&str) -> Result<PathBuf, ToolError>,
     display_path: &impl Fn(&str) -> String,
-) -> Result<PlannedChange, ToolError> {
+) -> Result<FileChange, ToolError> {
     match hunk {
         Hunk::Add { path, contents } => {
-            let requested = path_string(path)?;
+            let requested = validated_path(path)?;
             let target = resolve_path(&requested)?;
-            let original_target = match tokio::fs::read_to_string(&target).await {
-                Ok(content) => Some(content),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => {
-                    return Err(ToolError::Message(format!(
-                        "Failed to read file {}: {error}",
-                        display_path(&requested)
-                    )))
-                }
-            };
-            Ok(PlannedChange {
-                kind: ChangeKind::Add,
+            let previous_content = read_optional(&target, &display_path(&requested)).await?;
+            Ok(FileChange::Add {
                 target,
                 display_path: display_path(&requested),
-                remove_source: None,
-                remove_source_display: None,
-                original_target,
-                original_source: None,
-                new_content: Some(contents.clone()),
+                new_content: contents.clone(),
+                previous_content,
             })
         }
         Hunk::Delete { path } => {
-            let requested = path_string(path)?;
+            let requested = validated_path(path)?;
             let target = resolve_path(&requested)?;
-            let original_target = tokio::fs::read_to_string(&target).await.map_err(|error| {
-                ToolError::Message(format!(
-                    "Failed to delete file {}: {error}",
-                    display_path(&requested)
-                ))
-            })?;
-            Ok(PlannedChange {
-                kind: ChangeKind::Delete,
+            let previous_content =
+                read_required(&target, &display_path(&requested), "delete").await?;
+            Ok(FileChange::Delete {
                 target,
                 display_path: display_path(&requested),
-                remove_source: None,
-                remove_source_display: None,
-                original_target: Some(original_target),
-                original_source: None,
-                new_content: None,
+                previous_content,
             })
         }
         Hunk::Update {
@@ -210,60 +251,44 @@ async fn plan_hunk(
             move_path,
             chunks,
         } => {
-            let requested = path_string(path)?;
+            let requested = validated_path(path)?;
             let source = resolve_path(&requested)?;
-            let original = tokio::fs::read_to_string(&source).await.map_err(|error| {
-                ToolError::Message(format!(
-                    "Failed to read file to update {}: {error}",
-                    display_path(&requested)
-                ))
-            })?;
-            let new_content = derive_new_contents(&original, &display_path(&requested), chunks)?;
+            let old_content = read_required(&source, &display_path(&requested), "update").await?;
+            let new_content = derive_new_contents(&old_content, &display_path(&requested), chunks)?;
             if let Some(dest) = move_path {
-                let dest_requested = path_string(dest)?;
+                let dest_requested = validated_path(dest)?;
                 let target = resolve_path(&dest_requested)?;
-                let original_target = match tokio::fs::read_to_string(&target).await {
-                    Ok(content) => Some(content),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => {
-                        return Err(ToolError::Message(format!(
-                            "Failed to read move destination {}: {error}",
-                            display_path(&dest_requested)
-                        )))
-                    }
-                };
-                Ok(PlannedChange {
-                    kind: ChangeKind::Update,
+                let previous_dest_content =
+                    read_optional(&target, &display_path(&dest_requested)).await?;
+                Ok(FileChange::Update {
                     target,
                     display_path: display_path(&dest_requested),
-                    remove_source: Some(source),
-                    remove_source_display: Some(display_path(&requested)),
-                    original_target,
-                    original_source: Some(original),
-                    new_content: Some(new_content),
+                    old_content: old_content.clone(),
+                    new_content,
+                    move_from: Some(MoveSource {
+                        path: source,
+                        display_path: display_path(&requested),
+                        content: old_content,
+                    }),
+                    previous_dest_content,
                 })
             } else {
-                Ok(PlannedChange {
-                    kind: ChangeKind::Update,
+                Ok(FileChange::Update {
                     target: source,
                     display_path: display_path(&requested),
-                    remove_source: None,
-                    remove_source_display: None,
-                    original_target: Some(original),
-                    original_source: None,
-                    new_content: Some(new_content),
+                    old_content,
+                    new_content,
+                    move_from: None,
+                    previous_dest_content: None,
                 })
             }
         }
     }
 }
 
-fn path_string(path: &Path) -> Result<String, ToolError> {
-    let requested = path.to_str().map(str::to_owned).ok_or_else(|| {
-        ToolError::Message(format!("path is not valid UTF-8: {}", path.display()))
-    })?;
-    validate_patch_path(&requested)?;
-    Ok(requested)
+fn validated_path(path: &str) -> Result<String, ToolError> {
+    validate_patch_path(path)?;
+    Ok(path.to_string())
 }
 
 /// Patch paths must stay workspace-relative: no absolute paths and no `..`.
@@ -285,21 +310,57 @@ fn validate_patch_path(path: &str) -> Result<(), ToolError> {
     Ok(())
 }
 
+async fn read_optional(path: &Path, display: &str) -> Result<Option<String>, ToolError> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(ToolError::Message(format!(
+            "Failed to read file {display}: {error}"
+        ))),
+    }
+}
+
+async fn read_required(path: &Path, display: &str, action: &str) -> Result<String, ToolError> {
+    tokio::fs::read_to_string(path).await.map_err(|error| {
+        let verb = match action {
+            "delete" => "Failed to delete file",
+            "update" => "Failed to read file to update",
+            _ => "Failed to read file",
+        };
+        ToolError::Message(format!("{verb} {display}: {error}"))
+    })
+}
+
 fn derive_new_contents(
     original_contents: &str,
     path: &str,
     chunks: &[UpdateFileChunk],
 ) -> Result<String, ToolError> {
-    let mut original_lines: Vec<String> = original_contents.split('\n').map(String::from).collect();
-    if original_lines.last().is_some_and(String::is_empty) {
-        original_lines.pop();
-    }
+    let had_trailing_newline = original_contents.ends_with('\n');
+    let original_lines = split_lines(original_contents);
     let replacements = compute_replacements(&original_lines, path, chunks)?;
-    let mut new_lines = apply_replacements(original_lines, &replacements);
-    if !new_lines.last().is_some_and(String::is_empty) {
-        new_lines.push(String::new());
+    let new_lines = apply_replacements(original_lines, &replacements);
+    Ok(join_lines(&new_lines, had_trailing_newline))
+}
+
+fn split_lines(contents: &str) -> Vec<String> {
+    if contents.is_empty() {
+        return Vec::new();
     }
-    Ok(new_lines.join("\n"))
+    let body = contents.strip_suffix('\n').unwrap_or(contents);
+    if body.is_empty() {
+        // File was a single trailing newline.
+        return vec![String::new()];
+    }
+    body.split('\n').map(String::from).collect()
+}
+
+fn join_lines(lines: &[String], trailing_newline: bool) -> String {
+    let mut out = lines.join("\n");
+    if trailing_newline {
+        out.push('\n');
+    }
+    out
 }
 
 fn compute_replacements(
@@ -309,6 +370,7 @@ fn compute_replacements(
 ) -> Result<Vec<(usize, usize, Vec<String>)>, ToolError> {
     let mut replacements = Vec::new();
     let mut line_index = 0usize;
+    let mut min_next_start = 0usize;
 
     for chunk in chunks {
         if let Some(ctx_line) = &chunk.change_context {
@@ -328,7 +390,13 @@ fn compute_replacements(
 
         if chunk.old_lines.is_empty() {
             // Pure addition inserts at the current context cursor, not EOF.
+            if line_index < min_next_start {
+                return Err(ToolError::Message(format!(
+                    "patch chunks overlap or apply out of order in {path}"
+                )));
+            }
             replacements.push((line_index, 0, chunk.new_lines.clone()));
+            min_next_start = line_index;
             line_index = line_index.saturating_add(chunk.new_lines.len());
             continue;
         }
@@ -346,8 +414,14 @@ fn compute_replacements(
         }
 
         if let Some(start_idx) = found {
+            if start_idx < min_next_start {
+                return Err(ToolError::Message(format!(
+                    "patch chunks overlap or apply out of order in {path}"
+                )));
+            }
             replacements.push((start_idx, pattern.len(), new_slice.to_vec()));
-            line_index = start_idx + pattern.len();
+            min_next_start = start_idx + pattern.len();
+            line_index = min_next_start;
         } else {
             return Err(ToolError::Message(format!(
                 "Failed to find expected lines in {path}:\n{}",
@@ -356,7 +430,6 @@ fn compute_replacements(
         }
     }
 
-    replacements.sort_by_key(|(index, _, _)| *index);
     Ok(replacements)
 }
 
@@ -367,23 +440,23 @@ fn apply_replacements(
     for (start_idx, old_len, new_segment) in replacements.iter().rev() {
         let start_idx = *start_idx;
         let old_len = *old_len;
-        for _ in 0..old_len {
-            if start_idx < lines.len() {
-                lines.remove(start_idx);
-            }
-        }
-        for (offset, new_line) in new_segment.iter().enumerate() {
-            lines.insert(start_idx + offset, new_line.clone());
+        let end = (start_idx + old_len).min(lines.len());
+        if start_idx <= lines.len() {
+            lines.splice(start_idx..end, new_segment.iter().cloned());
         }
     }
     lines
 }
 
-async fn commit_changes(planned: &[PlannedChange]) -> Result<(), ToolError> {
+async fn commit_changes(planned: &[FileChange]) -> Result<(), ToolError> {
+    // Fail closed if the workspace changed after planning.
+    for change in planned {
+        revalidate_change(change).await?;
+    }
+
     let mut applied = Vec::new();
     for change in planned {
-        let result = apply_one(change).await;
-        match result {
+        match apply_one(change).await {
             Ok(()) => applied.push(change),
             Err(error) => {
                 let mut message = error.to_string();
@@ -399,44 +472,145 @@ async fn commit_changes(planned: &[PlannedChange]) -> Result<(), ToolError> {
     Ok(())
 }
 
-async fn apply_one(change: &PlannedChange) -> Result<(), ToolError> {
-    match change.kind {
-        ChangeKind::Add | ChangeKind::Update => {
-            if let Some(parent) = change.target.parent() {
-                tokio::fs::create_dir_all(parent).await.map_err(|error| {
-                    ToolError::Message(format!(
-                        "failed to create parent directories for {}: {error}",
-                        change.display_path
-                    ))
-                })?;
+async fn revalidate_change(change: &FileChange) -> Result<(), ToolError> {
+    match change {
+        FileChange::Add {
+            target,
+            display_path,
+            previous_content,
+            ..
+        } => match (previous_content, tokio::fs::read_to_string(target).await) {
+            (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            (Some(expected), Ok(actual)) if actual == *expected => Ok(()),
+            (None, Ok(_)) | (Some(_), Err(_)) | (Some(_), Ok(_)) => {
+                Err(changed_error(display_path))
             }
-            let content = change.new_content.as_deref().unwrap_or("");
-            tokio::fs::write(&change.target, content)
-                .await
-                .map_err(|error| {
-                    ToolError::Message(format!("failed to write {}: {error}", change.display_path))
+            (_, Err(error)) => Err(ToolError::Message(format!(
+                "Failed to revalidate {display_path}: {error}"
+            ))),
+        },
+        FileChange::Delete {
+            target,
+            display_path,
+            previous_content,
+        } => {
+            let actual = tokio::fs::read_to_string(target).await.map_err(|error| {
+                ToolError::Message(format!("Failed to revalidate {display_path}: {error}"))
+            })?;
+            if actual == *previous_content {
+                Ok(())
+            } else {
+                Err(changed_error(display_path))
+            }
+        }
+        FileChange::Update {
+            target,
+            display_path,
+            old_content,
+            move_from,
+            previous_dest_content,
+            ..
+        } => {
+            if let Some(source) = move_from {
+                let source_actual =
+                    tokio::fs::read_to_string(&source.path)
+                        .await
+                        .map_err(|error| {
+                            ToolError::Message(format!(
+                                "Failed to revalidate {}: {error}",
+                                source.display_path
+                            ))
+                        })?;
+                if source_actual != source.content {
+                    return Err(changed_error(&source.display_path));
+                }
+                match (
+                    previous_dest_content,
+                    tokio::fs::read_to_string(target).await,
+                ) {
+                    (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    (Some(expected), Ok(actual)) if actual == *expected => Ok(()),
+                    (None, Ok(_)) | (Some(_), Err(_)) | (Some(_), Ok(_)) => {
+                        Err(changed_error(display_path))
+                    }
+                    (_, Err(error)) => Err(ToolError::Message(format!(
+                        "Failed to revalidate {display_path}: {error}"
+                    ))),
+                }
+            } else {
+                let actual = tokio::fs::read_to_string(target).await.map_err(|error| {
+                    ToolError::Message(format!("Failed to revalidate {display_path}: {error}"))
                 })?;
-            if let Some(source) = &change.remove_source {
-                if source != &change.target {
-                    tokio::fs::remove_file(source).await.map_err(|error| {
-                        ToolError::Message(format!(
-                            "failed to remove moved source {}: {error}",
-                            change.source_display()
-                        ))
-                    })?;
+                if actual == *old_content {
+                    Ok(())
+                } else {
+                    Err(changed_error(display_path))
+                }
+            }
+        }
+    }
+}
+
+fn changed_error(display_path: &str) -> ToolError {
+    ToolError::Message(format!(
+        "{display_path} changed while the patch was being validated; no files were modified"
+    ))
+}
+
+async fn apply_one(change: &FileChange) -> Result<(), ToolError> {
+    match change {
+        FileChange::Add {
+            target,
+            display_path,
+            new_content,
+            ..
+        } => write_file(target, display_path, new_content).await,
+        FileChange::Delete {
+            target,
+            display_path,
+            ..
+        } => tokio::fs::remove_file(target).await.map_err(|error| {
+            ToolError::Message(format!("failed to delete {display_path}: {error}"))
+        }),
+        FileChange::Update {
+            target,
+            display_path,
+            new_content,
+            move_from,
+            ..
+        } => {
+            write_file(target, display_path, new_content).await?;
+            if let Some(source) = move_from {
+                if source.path != *target {
+                    tokio::fs::remove_file(&source.path)
+                        .await
+                        .map_err(|error| {
+                            ToolError::Message(format!(
+                                "failed to remove moved source {}: {error}",
+                                source.display_path
+                            ))
+                        })?;
                 }
             }
             Ok(())
         }
-        ChangeKind::Delete => tokio::fs::remove_file(&change.target)
-            .await
-            .map_err(|error| {
-                ToolError::Message(format!("failed to delete {}: {error}", change.display_path))
-            }),
     }
 }
 
-async fn rollback_applied(applied: &[&PlannedChange]) -> Result<(), ToolError> {
+async fn write_file(path: &Path, display_path: &str, content: &str) -> Result<(), ToolError> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|error| {
+            ToolError::Message(format!(
+                "failed to create parent directories for {display_path}: {error}"
+            ))
+        })?;
+    }
+    tokio::fs::write(path, content)
+        .await
+        .map_err(|error| ToolError::Message(format!("failed to write {display_path}: {error}")))
+}
+
+async fn rollback_applied(applied: &[&FileChange]) -> Result<(), ToolError> {
     let mut failures = Vec::new();
     for change in applied.iter().rev() {
         if let Err(error) = rollback_one(change).await {
@@ -450,71 +624,44 @@ async fn rollback_applied(applied: &[&PlannedChange]) -> Result<(), ToolError> {
     }
 }
 
-async fn rollback_one(change: &PlannedChange) -> Result<(), ToolError> {
-    match change.kind {
-        ChangeKind::Add => {
-            if change.original_target.is_none() {
-                let _ = tokio::fs::remove_file(&change.target).await;
-                Ok(())
-            } else if let Some(content) = &change.original_target {
-                tokio::fs::write(&change.target, content)
-                    .await
-                    .map_err(|error| {
-                        ToolError::Message(format!("{}: {error}", change.display_path))
-                    })
-            } else {
+async fn rollback_one(change: &FileChange) -> Result<(), ToolError> {
+    match change {
+        FileChange::Add {
+            target,
+            display_path,
+            previous_content,
+            ..
+        } => match previous_content {
+            None => {
+                let _ = tokio::fs::remove_file(target).await;
                 Ok(())
             }
-        }
-        ChangeKind::Delete => {
-            if let Some(content) = &change.original_target {
-                if let Some(parent) = change.target.parent() {
-                    tokio::fs::create_dir_all(parent).await.map_err(|error| {
-                        ToolError::Message(format!("{}: {error}", change.display_path))
-                    })?;
-                }
-                tokio::fs::write(&change.target, content)
-                    .await
-                    .map_err(|error| {
-                        ToolError::Message(format!("{}: {error}", change.display_path))
-                    })
-            } else {
-                Ok(())
-            }
-        }
-        ChangeKind::Update => {
-            if let Some(source) = &change.remove_source {
-                if let Some(content) = &change.original_source {
-                    if let Some(parent) = source.parent() {
-                        tokio::fs::create_dir_all(parent).await.map_err(|error| {
-                            ToolError::Message(format!("{}: {error}", change.source_display()))
-                        })?;
-                    }
-                    tokio::fs::write(source, content).await.map_err(|error| {
-                        ToolError::Message(format!("{}: {error}", change.source_display()))
-                    })?;
-                }
-                match &change.original_target {
-                    Some(content) => {
-                        tokio::fs::write(&change.target, content)
-                            .await
-                            .map_err(|error| {
-                                ToolError::Message(format!("{}: {error}", change.display_path))
-                            })
-                    }
+            Some(content) => write_file(target, display_path, content).await,
+        },
+        FileChange::Delete {
+            target,
+            display_path,
+            previous_content,
+        } => write_file(target, display_path, previous_content).await,
+        FileChange::Update {
+            target,
+            display_path,
+            old_content,
+            move_from,
+            previous_dest_content,
+            ..
+        } => {
+            if let Some(source) = move_from {
+                write_file(&source.path, &source.display_path, &source.content).await?;
+                match previous_dest_content {
+                    Some(content) => write_file(target, display_path, content).await,
                     None => {
-                        let _ = tokio::fs::remove_file(&change.target).await;
+                        let _ = tokio::fs::remove_file(target).await;
                         Ok(())
                     }
                 }
-            } else if let Some(content) = &change.original_target {
-                tokio::fs::write(&change.target, content)
-                    .await
-                    .map_err(|error| {
-                        ToolError::Message(format!("{}: {error}", change.display_path))
-                    })
             } else {
-                Ok(())
+                write_file(target, display_path, old_content).await
             }
         }
     }

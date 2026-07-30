@@ -103,13 +103,16 @@ impl Tool for ApplyPatch {
     }
 }
 
-/// Extract path strings referenced by a patch input for presentation/prep.
-pub fn patch_paths(input: &str) -> Vec<String> {
+/// Best-effort path extraction for presentation cards and start metadata.
+///
+/// Invalid patch input yields an empty list rather than an error so callers can
+/// still render a generic tool card while the real invocation fails later.
+pub fn patch_paths_lenient(input: &str) -> Vec<String> {
     match parse_patch(input) {
         Ok(hunks) => hunks
             .iter()
             .flat_map(Hunk::affected_paths)
-            .filter_map(|path| path.to_str().map(str::to_owned))
+            .map(str::to_owned)
             .collect(),
         Err(_) => Vec::new(),
     }

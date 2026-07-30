@@ -46,7 +46,7 @@ use crate::{
 };
 
 use super::{
-    apply_patch::{apply_hunks, parse_patch, patch_paths, ApplyPatch, Hunk},
+    apply_patch::{apply_hunks, parse_patch, patch_paths_lenient, ApplyPatch, Hunk},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     write_file::{write_file_content, WriteFile},
@@ -416,7 +416,7 @@ impl Tool for ApplyPatchTool {
                     ..
                 } = hunk
                 {
-                    path_set.collect(&workspace, dest, /*require_existing*/ false)?;
+                    path_set.collect(&workspace, dest.as_str(), /*require_existing*/ false)?;
                 }
             }
             let PatchPathSet {
@@ -458,32 +458,23 @@ impl PatchPathSet {
     fn collect(
         &mut self,
         workspace: &Workspace,
-        requested_path: &std::path::Path,
+        requested_path: &str,
         require_existing: bool,
     ) -> Result<(), ToolError> {
-        let requested = requested_path
-            .to_str()
-            .ok_or_else(|| {
-                ToolError::new(
-                    ToolErrorKind::InvalidArguments,
-                    format!("path is not valid UTF-8: {}", requested_path.display()),
-                )
-            })?
-            .to_string();
-        if self.resolved_by_request.contains_key(&requested) {
+        if self.resolved_by_request.contains_key(requested_path) {
             return Ok(());
         }
         let resolved = if require_existing {
             workspace
-                .resolve_for_read(&requested)
+                .resolve_for_read(requested_path)
                 .map_err(map_path_error)?
         } else {
             workspace
-                .resolve_for_write(&requested)
+                .resolve_for_write(requested_path)
                 .map_err(map_path_error)?
         };
         self.resolved_by_request
-            .insert(requested, resolved.path().to_path_buf());
+            .insert(requested_path.to_string(), resolved.path().to_path_buf());
         if self.resolved_by_canonical.contains_key(resolved.path()) {
             return Ok(());
         }
@@ -682,7 +673,7 @@ fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetad
 fn patch_start_metadata(arguments: &Value) -> ToolMetadata {
     let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
     if let Some(input) = arguments.get("input").and_then(Value::as_str) {
-        for path in patch_paths(input) {
+        for path in patch_paths_lenient(input) {
             metadata = metadata.affected_path(path);
         }
     }

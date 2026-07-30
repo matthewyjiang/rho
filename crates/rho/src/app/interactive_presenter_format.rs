@@ -421,7 +421,7 @@ pub(super) fn apply_patch_paths(
     arguments
         .get("input")
         .and_then(|value| value.as_str())
-        .map(rho_tools::apply_patch::patch_paths)
+        .map(rho_tools::apply_patch::patch_paths_lenient)
         .unwrap_or_default()
         .into_iter()
         .map(|path| compact_display_path(cwd, &path))
