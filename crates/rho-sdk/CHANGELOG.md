@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.13.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.13.0...rho-sdk-v1.13.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **tui:** show codex fast mode and report tier fallback ([#663](https://github.com/matthewyjiang/rho/issues/663)) ([177043f](https://github.com/matthewyjiang/rho/commit/177043f5022a1798ae45b0d987e6c6ceaf470d1c))
+* **tui:** show hosted x_search tool cards ([#662](https://github.com/matthewyjiang/rho/issues/662)) ([4381667](https://github.com/matthewyjiang/rho/commit/438166754b79645d31b4fcefd92b3ea665567c94))
+
 ## [1.13.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.12.2...rho-sdk-v1.13.0) (2026-07-30)
 
 
