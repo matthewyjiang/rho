@@ -183,7 +183,7 @@ Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_sear
 
 `enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
 
-`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart Rho after changing it. Checkpoints cover `write_file` and `apply_patch` only. Rho warns when a turn ran a shell command because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only, `/rewind` branches conversation state and restores captured files, and Git commands remain separate operations.
+`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart Rho after changing it. Checkpoints cover `write_file`, `edit_file`, and `apply_patch` only. Rho warns when a turn ran a shell command because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only, `/rewind` branches conversation state and restores captured files, and Git commands remain separate operations.
 
 ## Permission modes
 

@@ -8,6 +8,14 @@ use serde::Deserialize;
 use serde_json::json;
 
 pub struct WriteFile;
+
+/// Shared result for single-path file mutations that return a unified diff.
+pub(crate) struct FileMutationOutcome {
+    pub content: String,
+    pub display_path: String,
+    pub diff: String,
+}
+
 #[derive(Deserialize)]
 struct Args {
     path: String,
@@ -19,7 +27,7 @@ impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write_file".into(),
-            description: "Writes a UTF-8 text file, creating or overwriting it.".into(),
+            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer edit_file for one surgical string replacement in an existing file, and apply_patch for multi-hunk or multi-file edits.".into(),
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         }
     }
@@ -47,18 +55,12 @@ impl Tool for WriteFile {
     }
 }
 
-pub(super) struct WriteFileOutcome {
-    pub content: String,
-    pub display_path: String,
-    pub diff: String,
-}
-
 pub(super) async fn write_file_content(
     path: &Path,
     display_path: &str,
     content: &str,
     max_output_bytes: usize,
-) -> Result<WriteFileOutcome, ToolError> {
+) -> Result<FileMutationOutcome, ToolError> {
     let (old_content, existing_file_is_unreadable) = match tokio::fs::read_to_string(path).await {
         Ok(content) => (Some(content), false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, false),
@@ -83,7 +85,7 @@ pub(super) async fn write_file_content(
 
     let created = old_content.is_none() && !existing_file_is_unreadable;
     let action = if created { "created" } else { "wrote" };
-    Ok(WriteFileOutcome {
+    Ok(FileMutationOutcome {
         content: truncate(
             format!("{action} {}\n\n{diff}", path.display()),
             max_output_bytes,

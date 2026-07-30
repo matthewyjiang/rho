@@ -124,8 +124,9 @@ Built-in Rho capability names:
 ```text
 agent
 agents
-bash
 apply_patch
+bash
+edit_file
 fetch_content
 get_search_content
 glob

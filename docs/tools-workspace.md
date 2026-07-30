@@ -10,6 +10,7 @@ Rho currently ships these compiled-in workspace tools on all platforms:
 list_dir
 read_file
 write_file
+edit_file
 apply_patch
 grep
 glob
@@ -48,6 +49,20 @@ These tools can read and modify files inside or outside the workspace, run shell
 
 `read_file` accepts PNG, JPEG, GIF, and WebP files in addition to UTF-8 text. Image files are decoded under strict byte, dimension, and allocation limits on a blocking worker, then reduced to a bounded PNG thumbnail. The immutable thumbnail is attached to the completed tool result, so later workspace changes cannot alter the preview. In the interactive TUI, the thumbnail renders directly in the feed on Kitty and Ghostty. Under Herdr, Rho probes whether the active client can paint Kitty placements; if host cell metrics are unavailable, it falls back to halfblock previews so reserved feed rows are not left blank. Conservative capability detection avoids probing terminal input and keeps persistent tmux sessions on the text fallback because their terminal-specific environment can describe a stale client. Other terminals keep the normal text tool result without emitting graphics escape sequences. Image previews are presentation-only and are not restored when resuming a saved transcript.
 
+## File edits
+
+`edit_file` performs one string replacement in an existing UTF-8 file. Pass `path`, `old_string`, and `new_string`. Matching normalizes CRLF and LF line endings rather than requiring byte-exact newline matches, and the replacement is rewritten to preserve the file's existing newline style. By default `old_string` must match exactly once; set `replace_all` to replace every match. The tool opens the target under an exclusive lock for plan and write so concurrent modifications cannot be overwritten after validation. It fails closed when the match count is wrong, the file is missing, or the lock/write cannot complete. Successful results include a unified diff.
+
+```json
+{
+  "path": "src/app.py",
+  "old_string": "print(\"Hi\")",
+  "new_string": "print(\"Hello, world!\")"
+}
+```
+
+Use `edit_file` for a single surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits. Use `write_file` to create or fully rewrite a file.
+
 ## File patches
 
 `apply_patch` edits existing files and can also add or delete files with a Codex-style patch document. Pass the full patch text in `input`, including the `*** Begin Patch` and `*** End Patch` markers. Operations use `*** Add File:`, `*** Delete File:`, and `*** Update File:` headers. Update hunks use `@@` context markers and lines prefixed with ` ` (context), `-` (remove), or `+` (add). An update may include `*** Move to:` to rename a file while patching it.
@@ -60,7 +75,7 @@ Rho parses the whole patch, plans every file operation against current contents,
 }
 ```
 
-Use `write_file` when you need to create or fully replace a file with complete contents. Use `apply_patch` for surgical or multi-file edits.
+Use `write_file` when you need to create or fully replace a file with complete contents. Prefer `edit_file` for one surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits.
 
 ## Managed background processes
 

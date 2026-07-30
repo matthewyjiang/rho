@@ -40,6 +40,7 @@ enum ToolKind {
     Glob,
     ReadFile,
     WriteFile,
+    EditFile,
     ApplyPatch,
     Skill,
     WebSearch,
@@ -62,6 +63,7 @@ impl ToolKind {
             "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
             "write_file" => Self::WriteFile,
+            "edit_file" => Self::EditFile,
             "apply_patch" => Self::ApplyPatch,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
@@ -97,6 +99,7 @@ impl ToolKind {
             | Self::Glob
             | Self::ReadFile
             | Self::WriteFile
+            | Self::EditFile
             | Self::ApplyPatch
             | Self::Skill
             | Self::WebSearch

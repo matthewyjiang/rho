@@ -147,6 +147,14 @@ pub(super) fn preview_card(
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
+        ToolKind::EditFile => kind_card(
+            status,
+            kind,
+            ToolHeader::call(
+                "edit_file",
+                Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
+            ),
+        ),
         ToolKind::ApplyPatch => apply_patch_start_card(
             arguments,
             cwd,
@@ -319,7 +327,9 @@ pub(super) fn finished_card(
             }
             card
         }
-        ToolKind::WriteFile | ToolKind::ApplyPatch => file_diff_card(view, content, ok, cwd),
+        ToolKind::WriteFile | ToolKind::EditFile | ToolKind::ApplyPatch => {
+            file_diff_card(view, content, ok, cwd)
+        }
         ToolKind::Skill => preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status),
         ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
@@ -418,7 +428,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
         | ToolKind::Grep
         | ToolKind::Glob
         | ToolKind::ReadFile => ToolFamily::FileCommand,
-        ToolKind::WriteFile | ToolKind::ApplyPatch => ToolFamily::FileDiff,
+        ToolKind::WriteFile | ToolKind::EditFile | ToolKind::ApplyPatch => ToolFamily::FileDiff,
         ToolKind::Skill => ToolFamily::Skill,
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
