@@ -19,7 +19,7 @@ pub(super) fn sdk_bundle(
         (ToolCapability::ListDir, CodingToolKind::ListDir),
         (ToolCapability::ReadFile, CodingToolKind::ReadFile),
         (ToolCapability::WriteFile, CodingToolKind::WriteFile),
-        (ToolCapability::EditFile, CodingToolKind::EditFile),
+        (ToolCapability::ApplyPatch, CodingToolKind::ApplyPatch),
         (ToolCapability::Grep, CodingToolKind::Grep),
         (ToolCapability::Glob, CodingToolKind::Glob),
     ] {

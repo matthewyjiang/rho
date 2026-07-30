@@ -17,7 +17,7 @@ use crate::model::ToolSpec;
 
 fn sample_tool() -> ToolSpec {
     ToolSpec {
-        name: "edit_file".into(),
+        name: "apply_patch".into(),
         description: "test tool".into(),
         input_schema: json!({"type":"object","properties":{}}),
     }

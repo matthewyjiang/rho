@@ -10,7 +10,7 @@ Rho currently ships these compiled-in workspace tools on all platforms:
 list_dir
 read_file
 write_file
-edit_file
+apply_patch
 grep
 glob
 ```
@@ -48,27 +48,19 @@ These tools can read and modify files inside or outside the workspace, run shell
 
 `read_file` accepts PNG, JPEG, GIF, and WebP files in addition to UTF-8 text. Image files are decoded under strict byte, dimension, and allocation limits on a blocking worker, then reduced to a bounded PNG thumbnail. The immutable thumbnail is attached to the completed tool result, so later workspace changes cannot alter the preview. In the interactive TUI, the thumbnail renders directly in the feed on Kitty and Ghostty. Under Herdr, Rho probes whether the active client can paint Kitty placements; if host cell metrics are unavailable, it falls back to halfblock previews so reserved feed rows are not left blank. Conservative capability detection avoids probing terminal input and keeps persistent tmux sessions on the text fallback because their terminal-specific environment can describe a stale client. Other terminals keep the normal text tool result without emitting graphics escape sequences. Image previews are presentation-only and are not restored when resuming a saved transcript.
 
-## Atomic file edits
+## File patches
 
-`edit_file` accepts either the existing single-edit arguments or an `edits` array for several exact replacements across one or more files. Array edits run in order, including when several edits target the same file. Each edit may set `expected_match_count` (default `1`); the edit fails as missing when fewer matches are found or ambiguous when more matches are found. Rho validates every replacement against in-memory file contents before writing any file, so a validation failure leaves all targeted files unchanged.
+`apply_patch` edits existing files and can also add or delete files with a Codex-style patch document. Pass the full patch text in `input`, including the `*** Begin Patch` and `*** End Patch` markers. Operations use `*** Add File:`, `*** Delete File:`, and `*** Update File:` headers. Update hunks use `@@` context markers and lines prefixed with ` ` (context), `-` (remove), or `+` (add). An update may include `*** Move to:` to rename a file while patching it.
+
+Rho parses the whole patch, plans every file operation against current contents, rejects overlapping path claims, re-reads those files immediately before writing, and fails closed if any changed mid-flight. A planning or revalidation failure leaves all targeted files unchanged. If a later write fails after earlier writes succeeded, Rho rolls back the applied ops. Successful results include a unified diff of the committed changes.
 
 ```json
 {
-  "edits": [
-    {
-      "path": "src/first.rs",
-      "old_string": "old_name",
-      "new_string": "new_name",
-      "expected_match_count": 2
-    },
-    {
-      "path": "src/second.rs",
-      "old_string": "old call",
-      "new_string": "new call"
-    }
-  ]
+  "input": "*** Begin Patch\n*** Add File: hello.txt\n+Hello world\n*** Update File: src/app.py\n@@ def greet():\n-print(\"Hi\")\n+print(\"Hello, world!\")\n*** Delete File: obsolete.txt\n*** End Patch\n"
 }
 ```
+
+Use `write_file` when you need to create or fully replace a file with complete contents. Use `apply_patch` for surgical or multi-file edits.
 
 ## Managed background processes
 

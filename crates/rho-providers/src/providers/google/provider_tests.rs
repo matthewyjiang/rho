@@ -8,7 +8,7 @@ use crate::{
 
 fn sample_tool() -> ToolSpec {
     ToolSpec {
-        name: "edit_file".into(),
+        name: "apply_patch".into(),
         description: "test tool".into(),
         input_schema: serde_json::json!({
             "type": "object",
