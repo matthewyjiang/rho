@@ -633,6 +633,74 @@ fn codex_sse_completed_emits_search_activity_when_stream_has_text() {
 }
 
 #[test]
+fn codex_sse_completed_processes_unstreamed_items_individually() {
+    let mut state = CodexSseState::default();
+    let mut contexts = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        if let ModelEvent::ProviderContext { data, .. } = event {
+            contexts.push(data);
+        }
+        Ok(())
+    };
+
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_text.delta","delta":"answer"}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"output":[{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"},{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"},{"type":"message","id":"msg_1","content":[{"type":"output_text","text":"answer"}]}]}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["id"], "rs_1");
+    assert_eq!(state.tool_calls.len(), 1);
+    assert_eq!(state.tool_calls[0].id, "call_1");
+}
+
+#[test]
+fn codex_sse_search_without_detail_still_emits_activity() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","status":"completed"}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                searches.push((name.to_owned(), detail.to_owned()));
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(searches, vec![("x_search".to_string(), String::new())]);
+}
+
+#[test]
+fn codex_sse_search_query_count_ignores_invalid_entries() {
+    let mut state = CodexSseState::default();
+    let mut details = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","arguments":"{\"queries\":[\"a\",\"\",7,\"b\",\"c\",\"d\"]}"}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            if let Some((_, detail)) = event.as_hosted_tool_activity() {
+                details.push(detail.to_owned());
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(details, vec!["for \"a\", \"b\", \"c\", 1 more"]);
+}
+
+#[test]
 fn accumulates_streamed_tool_call_deltas() {
     let mut text = String::new();
     let mut tool_calls = Vec::new();

@@ -181,6 +181,27 @@ fn unknown_hosted_tool_activity_uses_default_family() {
 }
 
 #[test]
+fn hosted_tool_activity_without_detail_uses_only_finished_fact() {
+    let mut adapter = SdkEventAdapter::default();
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
+        only_event(adapter.translate(RunEvent::HostedToolActivity {
+            name: "x_search".into(),
+            detail: String::new(),
+        }))
+    else {
+        panic!("expected hosted tool activity finished");
+    };
+    assert_eq!(card.header, ToolHeader::call("x_search", None));
+    assert_eq!(
+        card.facts,
+        vec![rho_tools::tool_card::ToolFact::Meta {
+            text: "finished".into(),
+        }]
+    );
+}
+
+#[test]
 fn legacy_provider_activity_is_ignored_by_tui() {
     let mut adapter = SdkEventAdapter::default();
 
