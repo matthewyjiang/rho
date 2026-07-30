@@ -175,24 +175,22 @@ impl StreamingPatchParser {
         let Some(Hunk::Update { path, chunks, .. }) = self.hunks.last() else {
             return Ok(());
         };
-        if chunks.is_empty() {
-            if let Mode::UpdateFile { hunk_line_number } = self.mode {
-                return Err(ParseError::InvalidHunk {
-                    message: format!("Update file hunk for path '{}' is empty", path.display()),
-                    line_number: hunk_line_number,
-                });
-            }
+        if let (true, Mode::UpdateFile { hunk_line_number }) = (chunks.is_empty(), self.mode) {
+            return Err(ParseError::InvalidHunk {
+                message: format!("Update file hunk for path '{}' is empty", path.display()),
+                line_number: hunk_line_number,
+            });
         }
-        if chunks
+        let empty_chunk = chunks
             .last()
-            .is_some_and(|chunk| chunk.old_lines.is_empty() && chunk.new_lines.is_empty())
-        {
-            if line == END_PATCH_MARKER {
-                return Err(ParseError::InvalidHunk {
-                    message: "Update hunk does not contain any lines".into(),
-                    line_number: self.line_number,
-                });
-            }
+            .is_some_and(|chunk| chunk.old_lines.is_empty() && chunk.new_lines.is_empty());
+        if empty_chunk && line == END_PATCH_MARKER {
+            return Err(ParseError::InvalidHunk {
+                message: "Update hunk does not contain any lines".into(),
+                line_number: self.line_number,
+            });
+        }
+        if empty_chunk {
             return Err(ParseError::InvalidHunk {
                 message: format!(
                     "Unexpected line found in update hunk: '{line}'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)"

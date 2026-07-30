@@ -5,7 +5,7 @@
 
 use std::{
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use crate::{
@@ -38,6 +38,19 @@ struct PlannedChange {
     new_content: Option<String>,
 }
 
+impl PlannedChange {
+    fn source_display(&self) -> String {
+        self.remove_source_display
+            .clone()
+            .or_else(|| {
+                self.remove_source
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+            })
+            .unwrap_or_else(|| self.display_path.clone())
+    }
+}
+
 pub(crate) struct ApplyPatchOutcome {
     pub content: String,
     pub display_paths: Vec<String>,
@@ -67,14 +80,13 @@ pub(crate) async fn apply_hunks(
                 change.display_path
             )));
         }
+    }
+    for change in &planned {
         if let Some(source) = &change.remove_source {
             if seen_targets.contains_key(source) {
                 return Err(ToolError::Message(format!(
                     "patch both writes and deletes '{}'",
-                    change
-                        .remove_source_display
-                        .clone()
-                        .unwrap_or_else(|| source.display().to_string())
+                    change.source_display()
                 )));
             }
         }
@@ -247,9 +259,30 @@ async fn plan_hunk(
 }
 
 fn path_string(path: &Path) -> Result<String, ToolError> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| ToolError::Message(format!("path is not valid UTF-8: {}", path.display())))
+    let requested = path.to_str().map(str::to_owned).ok_or_else(|| {
+        ToolError::Message(format!("path is not valid UTF-8: {}", path.display()))
+    })?;
+    validate_patch_path(&requested)?;
+    Ok(requested)
+}
+
+/// Patch paths must stay workspace-relative: no absolute paths and no `..`.
+fn validate_patch_path(path: &str) -> Result<(), ToolError> {
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Err(ToolError::Message(format!(
+            "patch path must be relative: {path}"
+        )));
+    }
+    if candidate
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(ToolError::Message(format!(
+            "patch path must not contain '..': {path}"
+        )));
+    }
+    Ok(())
 }
 
 fn derive_new_contents(
@@ -294,12 +327,9 @@ fn compute_replacements(
         }
 
         if chunk.old_lines.is_empty() {
-            let insertion_idx = if original_lines.last().is_some_and(String::is_empty) {
-                original_lines.len() - 1
-            } else {
-                original_lines.len()
-            };
-            replacements.push((insertion_idx, 0, chunk.new_lines.clone()));
+            // Pure addition inserts at the current context cursor, not EOF.
+            replacements.push((line_index, 0, chunk.new_lines.clone()));
+            line_index = line_index.saturating_add(chunk.new_lines.len());
             continue;
         }
 
@@ -391,10 +421,7 @@ async fn apply_one(change: &PlannedChange) -> Result<(), ToolError> {
                     tokio::fs::remove_file(source).await.map_err(|error| {
                         ToolError::Message(format!(
                             "failed to remove moved source {}: {error}",
-                            change
-                                .remove_source_display
-                                .clone()
-                                .unwrap_or_else(|| source.display().to_string())
+                            change.source_display()
                         ))
                     })?;
                 }
@@ -410,78 +437,85 @@ async fn apply_one(change: &PlannedChange) -> Result<(), ToolError> {
 }
 
 async fn rollback_applied(applied: &[&PlannedChange]) -> Result<(), ToolError> {
+    let mut failures = Vec::new();
     for change in applied.iter().rev() {
-        match change.kind {
-            ChangeKind::Add => {
-                if change.original_target.is_none() {
-                    let _ = tokio::fs::remove_file(&change.target).await;
-                } else if let Some(content) = &change.original_target {
-                    tokio::fs::write(&change.target, content)
-                        .await
-                        .map_err(|error| {
-                            ToolError::Message(format!("{}: {error}", change.display_path))
-                        })?;
-                }
+        if let Err(error) = rollback_one(change).await {
+            failures.push(error.to_string());
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(ToolError::Message(failures.join("; ")))
+    }
+}
+
+async fn rollback_one(change: &PlannedChange) -> Result<(), ToolError> {
+    match change.kind {
+        ChangeKind::Add => {
+            if change.original_target.is_none() {
+                let _ = tokio::fs::remove_file(&change.target).await;
+                Ok(())
+            } else if let Some(content) = &change.original_target {
+                tokio::fs::write(&change.target, content)
+                    .await
+                    .map_err(|error| {
+                        ToolError::Message(format!("{}: {error}", change.display_path))
+                    })
+            } else {
+                Ok(())
             }
-            ChangeKind::Delete => {
-                if let Some(content) = &change.original_target {
-                    if let Some(parent) = change.target.parent() {
+        }
+        ChangeKind::Delete => {
+            if let Some(content) = &change.original_target {
+                if let Some(parent) = change.target.parent() {
+                    tokio::fs::create_dir_all(parent).await.map_err(|error| {
+                        ToolError::Message(format!("{}: {error}", change.display_path))
+                    })?;
+                }
+                tokio::fs::write(&change.target, content)
+                    .await
+                    .map_err(|error| {
+                        ToolError::Message(format!("{}: {error}", change.display_path))
+                    })
+            } else {
+                Ok(())
+            }
+        }
+        ChangeKind::Update => {
+            if let Some(source) = &change.remove_source {
+                if let Some(content) = &change.original_source {
+                    if let Some(parent) = source.parent() {
                         tokio::fs::create_dir_all(parent).await.map_err(|error| {
-                            ToolError::Message(format!("{}: {error}", change.display_path))
+                            ToolError::Message(format!("{}: {error}", change.source_display()))
                         })?;
                     }
-                    tokio::fs::write(&change.target, content)
-                        .await
-                        .map_err(|error| {
-                            ToolError::Message(format!("{}: {error}", change.display_path))
-                        })?;
+                    tokio::fs::write(source, content).await.map_err(|error| {
+                        ToolError::Message(format!("{}: {error}", change.source_display()))
+                    })?;
                 }
-            }
-            ChangeKind::Update => {
-                if let Some(source) = &change.remove_source {
-                    if let Some(content) = &change.original_source {
-                        if let Some(parent) = source.parent() {
-                            tokio::fs::create_dir_all(parent).await.map_err(|error| {
-                                ToolError::Message(format!(
-                                    "{}: {error}",
-                                    change
-                                        .remove_source_display
-                                        .clone()
-                                        .unwrap_or_else(|| source.display().to_string())
-                                ))
-                            })?;
-                        }
-                        tokio::fs::write(source, content).await.map_err(|error| {
-                            ToolError::Message(format!(
-                                "{}: {error}",
-                                change
-                                    .remove_source_display
-                                    .clone()
-                                    .unwrap_or_else(|| source.display().to_string())
-                            ))
-                        })?;
+                match &change.original_target {
+                    Some(content) => {
+                        tokio::fs::write(&change.target, content)
+                            .await
+                            .map_err(|error| {
+                                ToolError::Message(format!("{}: {error}", change.display_path))
+                            })
                     }
-                    match &change.original_target {
-                        Some(content) => {
-                            tokio::fs::write(&change.target, content)
-                                .await
-                                .map_err(|error| {
-                                    ToolError::Message(format!("{}: {error}", change.display_path))
-                                })?;
-                        }
-                        None => {
-                            let _ = tokio::fs::remove_file(&change.target).await;
-                        }
+                    None => {
+                        let _ = tokio::fs::remove_file(&change.target).await;
+                        Ok(())
                     }
-                } else if let Some(content) = &change.original_target {
-                    tokio::fs::write(&change.target, content)
-                        .await
-                        .map_err(|error| {
-                            ToolError::Message(format!("{}: {error}", change.display_path))
-                        })?;
                 }
+            } else if let Some(content) = &change.original_target {
+                tokio::fs::write(&change.target, content)
+                    .await
+                    .map_err(|error| {
+                        ToolError::Message(format!("{}: {error}", change.display_path))
+                    })
+            } else {
+                Ok(())
             }
         }
     }
-    Ok(())
 }

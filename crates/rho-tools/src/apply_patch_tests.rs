@@ -109,23 +109,30 @@ async fn rejects_missing_context_without_mutating() {
     .await
     .unwrap_err();
 
-    assert!(error.to_string().contains("Failed to find expected lines"));
+    let ToolError::Message(message) = error else {
+        panic!("expected ToolError::Message, got {error:?}");
+    };
+    assert_eq!(
+        message,
+        "Failed to find expected lines in modify.txt:\nmissing"
+    );
     assert_eq!(
         std::fs::read_to_string(ctx.cwd.join("modify.txt")).unwrap(),
         "line1\nline2\n"
     );
 }
 
-#[tokio::test]
-async fn rejects_empty_update_hunk() {
-    let (_dir, ctx) = test_context();
-    let error = call(
-        "*** Begin Patch\n*** Update File: foo.txt\n*** End Patch",
-        ctx,
-    )
-    .await
-    .unwrap_err();
-    assert!(error.to_string().contains("empty"));
+#[test]
+fn rejects_empty_update_hunk() {
+    let error = parse_patch("*** Begin Patch\n*** Update File: foo.txt\n*** End Patch")
+        .expect_err("empty update must fail parse");
+    assert_eq!(
+        error,
+        ParseError::InvalidHunk {
+            message: "Update file hunk for path 'foo.txt' is empty".into(),
+            line_number: 2,
+        }
+    );
 }
 
 #[tokio::test]
@@ -137,7 +144,57 @@ async fn rejects_missing_update_target() {
     )
     .await
     .unwrap_err();
-    assert!(error.to_string().contains("Failed to read file to update"));
+    let ToolError::Message(message) = error else {
+        panic!("expected ToolError::Message, got {error:?}");
+    };
+    assert!(
+        message.starts_with("Failed to read file to update missing.txt:"),
+        "unexpected message: {message}"
+    );
+}
+
+#[tokio::test]
+async fn rejects_absolute_and_parent_paths() {
+    let (_dir, ctx) = test_context();
+    let absolute = call(
+        "*** Begin Patch\n*** Add File: /tmp/evil.txt\n+nope\n*** End Patch",
+        ctx.clone(),
+    )
+    .await
+    .unwrap_err();
+    let ToolError::Message(message) = absolute else {
+        panic!("expected ToolError::Message, got {absolute:?}");
+    };
+    assert_eq!(message, "patch path must be relative: /tmp/evil.txt");
+
+    let parent = call(
+        "*** Begin Patch\n*** Add File: ../escape.txt\n+nope\n*** End Patch",
+        ctx,
+    )
+    .await
+    .unwrap_err();
+    let ToolError::Message(message) = parent else {
+        panic!("expected ToolError::Message, got {parent:?}");
+    };
+    assert_eq!(message, "patch path must not contain '..': ../escape.txt");
+}
+
+#[tokio::test]
+async fn pure_addition_inserts_at_context_cursor() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("sample.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+    call(
+        "*** Begin Patch\n*** Update File: sample.txt\n@@ alpha\n+inserted\n*** End Patch",
+        ctx.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("sample.txt")).unwrap(),
+        "alpha\ninserted\nbeta\ngamma\n"
+    );
 }
 
 #[test]

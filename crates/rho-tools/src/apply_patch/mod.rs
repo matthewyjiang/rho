@@ -13,6 +13,8 @@ use serde_json::json;
 use crate::tool::*;
 
 pub(crate) use apply::apply_hunks;
+#[cfg(test)]
+pub(crate) use parser::ParseError;
 pub(crate) use parser::{parse_patch, Hunk};
 
 pub struct ApplyPatch;
@@ -51,6 +53,7 @@ Rules:
 - Use @@ headers when context alone is not unique"#;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Args {
     input: String,
 }

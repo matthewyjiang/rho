@@ -5,7 +5,8 @@
 /// Find `pattern` in `lines` at or after `start`.
 ///
 /// Match strictness decreases: exact, trailing-whitespace, trim, then Unicode
-/// punctuation normalisation. When `eof` is true, search prefers the file end.
+/// punctuation normalisation. When `eof` is true, try the final window first,
+/// then fall back to scanning from `start`.
 pub(super) fn seek_sequence(
     lines: &[String],
     pattern: &[String],
@@ -18,41 +19,46 @@ pub(super) fn seek_sequence(
     if pattern.len() > lines.len() {
         return None;
     }
-    let search_start = if eof && lines.len() >= pattern.len() {
-        lines.len() - pattern.len()
-    } else {
-        start
-    };
 
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
-        if lines[i..i + pattern.len()] == *pattern {
-            return Some(i);
+    if eof {
+        let end_start = lines.len() - pattern.len();
+        if let Some(idx) = search_from(lines, pattern, end_start) {
+            return Some(idx);
         }
     }
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
-        if pattern
-            .iter()
-            .enumerate()
-            .all(|(p_idx, pat)| lines[i + p_idx].trim_end() == pat.trim_end())
-        {
-            return Some(i);
-        }
-    }
-    for i in search_start..=lines.len().saturating_sub(pattern.len()) {
-        if pattern
-            .iter()
-            .enumerate()
-            .all(|(p_idx, pat)| lines[i + p_idx].trim() == pat.trim())
-        {
-            return Some(i);
-        }
-    }
+    search_from(lines, pattern, start)
+}
 
-    (search_start..=lines.len().saturating_sub(pattern.len())).find(|&i| {
+fn search_from(lines: &[String], pattern: &[String], start: usize) -> Option<usize> {
+    find_with(lines, pattern, start, |left, right| left == right)
+        .or_else(|| {
+            find_with(lines, pattern, start, |left, right| {
+                left.trim_end() == right.trim_end()
+            })
+        })
+        .or_else(|| {
+            find_with(lines, pattern, start, |left, right| {
+                left.trim() == right.trim()
+            })
+        })
+        .or_else(|| {
+            find_with(lines, pattern, start, |left, right| {
+                normalise(left) == normalise(right)
+            })
+        })
+}
+
+fn find_with(
+    lines: &[String],
+    pattern: &[String],
+    start: usize,
+    eq: impl Fn(&str, &str) -> bool,
+) -> Option<usize> {
+    (start..=lines.len().saturating_sub(pattern.len())).find(|&index| {
         pattern
             .iter()
             .enumerate()
-            .all(|(p_idx, pat)| normalise(&lines[i + p_idx]) == normalise(pat))
+            .all(|(offset, pat)| eq(&lines[index + offset], pat))
     })
 }
 
@@ -73,30 +79,5 @@ fn normalise(s: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::seek_sequence;
-
-    fn to_vec(strings: &[&str]) -> Vec<String> {
-        strings.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    #[test]
-    fn exact_match_finds_sequence() {
-        let lines = to_vec(&["foo", "bar", "baz"]);
-        let pattern = to_vec(&["bar", "baz"]);
-        assert_eq!(
-            seek_sequence(&lines, &pattern, /*start*/ 0, /*eof*/ false),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn rstrip_match_ignores_trailing_whitespace() {
-        let lines = to_vec(&["foo   ", "bar\t\t"]);
-        let pattern = to_vec(&["foo", "bar"]);
-        assert_eq!(
-            seek_sequence(&lines, &pattern, /*start*/ 0, /*eof*/ false),
-            Some(0)
-        );
-    }
-}
+#[path = "seek_sequence_tests.rs"]
+mod tests;

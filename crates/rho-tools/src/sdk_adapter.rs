@@ -193,6 +193,7 @@ struct WriteArgs {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ApplyPatchArgs {
     input: String,
 }
