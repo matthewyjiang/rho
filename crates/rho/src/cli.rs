@@ -110,7 +110,7 @@ pub enum Command {
     },
     /// Update rho using the detected installation method.
     Update,
-    /// List or delete saved sessions.
+    /// List, rename, or delete saved sessions.
     Sessions {
         #[command(subcommand)]
         command: SessionsCommand,
@@ -138,6 +138,15 @@ pub enum SessionsCommand {
         /// Skip the confirmation prompt for cross-project deletes.
         #[arg(short = 'y', long)]
         yes: bool,
+    },
+    /// Rename a session by UUID or UUID prefix.
+    Rename {
+        /// Session UUID or unique prefix.
+        #[arg(value_name = "ID")]
+        id_prefix: String,
+        /// New session title. Multiple words are joined with spaces.
+        #[arg(value_name = "TITLE", required = true, num_args = 1.., trailing_var_arg = true)]
+        title: Vec<String>,
     },
 }
 

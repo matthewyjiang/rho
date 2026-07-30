@@ -350,6 +350,8 @@ struct App {
     internal_agent_model_target: Option<String>,
     agent_editor_session: Option<agent_editor::AgentEditSession>,
     pending_session_title: Option<PendingSessionTitle>,
+    /// Set by `/title` so auto-title generation cannot overwrite a manual name.
+    session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,

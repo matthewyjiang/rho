@@ -9,7 +9,7 @@ use {
     rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
-use super::{doctor, local_diff, App, Entry, ToolEntry};
+use super::{doctor, local_diff, App, Entry, Session, ToolEntry};
 use crate::claude_runtime::auth::ClaudeProbeSnapshot;
 
 impl App {
@@ -67,6 +67,40 @@ impl App {
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("unable to export session: {error}")));
                 self.status = "export failed".into();
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn execute_title_command(
+        &mut self,
+        invocation: &CommandInvocation,
+    ) -> anyhow::Result<()> {
+        let title = invocation.args.trim();
+        if title.is_empty() {
+            self.insert_entry(&Entry::Notice("usage: /title <name>".into()));
+            self.status = "title required".into();
+            return Ok(());
+        }
+        let Some(session_id) = self.info.session.session_id.clone() else {
+            self.insert_entry(&Entry::Notice(
+                "no active session to rename; send a message first".into(),
+            ));
+            self.status = "nothing to rename".into();
+            return Ok(());
+        };
+        // Only cancel pending auto-title after the manual write succeeds so a
+        // failed rename leaves generation in place.
+        match Session::set_title(&self.info.runtime.cwd, &session_id, title) {
+            Ok(updated) => {
+                self.pending_session_title = None;
+                self.session_title_locked = true;
+                self.insert_entry(&Entry::Notice(format!("session titled: {}", updated.title)));
+                self.status = "session renamed".into();
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("unable to rename session: {error}")));
+                self.status = "rename failed".into();
             }
         }
         Ok(())

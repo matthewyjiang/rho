@@ -20,6 +20,7 @@ pub enum CommandId {
     Doctor,
     Limits,
     Export,
+    Title,
     Fast,
     Exit,
 }
@@ -221,6 +222,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: &[],
     },
     CommandSpec {
+        id: CommandId::Title,
+        name: "title",
+        usage: "/title <name>",
+        description: "rename the current session",
+        argument_choices: &[],
+    },
+    CommandSpec {
         id: CommandId::Tree,
         name: "tree",
         usage: "/tree",
@@ -419,6 +427,16 @@ mod tests {
         let err = parse_command("/nope").unwrap_err();
 
         assert_eq!(err, CommandParseError::Unknown("nope".into()));
+    }
+
+    #[test]
+    fn parses_title_command_with_arguments() {
+        let invocation = parse_command("/title My Session").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Title);
+        assert_eq!(invocation.name, "title");
+        assert_eq!(invocation.raw_args, " My Session");
+        assert_eq!(invocation.args, "My Session");
     }
 
     #[test]

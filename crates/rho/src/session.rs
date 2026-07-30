@@ -80,6 +80,14 @@ pub struct SessionSummary {
     pub last_user_message: Option<String>,
 }
 
+/// Result of a successful session title update.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitleUpdate {
+    pub id: String,
+    pub cwd: PathBuf,
+    pub title: String,
+}
+
 /// A display-history message paired with the unix timestamp it was recorded at.
 #[derive(Clone, Debug)]
 pub struct ExportedMessage {
@@ -260,8 +268,29 @@ impl Session {
         Self::list_all_in_root(&session_root()?)
     }
 
-    pub fn set_title(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<()> {
+    /// Sets a session title after local-then-global id resolution.
+    ///
+    /// Returns the resolved session identity and the stored title so callers
+    /// (CLI rename, notices) do not need a second lookup.
+    pub fn set_title(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<TitleUpdate> {
         Self::set_title_in_root(&session_root()?, cwd, id_prefix, title)
+    }
+
+    /// Auto-title write: sets the title only if the session still has none.
+    ///
+    /// Returns `Ok(None)` when a manual title already exists (in-process lock or
+    /// external `sessions rename`), so generated titles never overwrite it.
+    pub(crate) fn set_generated_title(
+        cwd: &Path,
+        id_prefix: &str,
+        title: &str,
+    ) -> anyhow::Result<Option<TitleUpdate>> {
+        Self::set_generated_title_in_root(&session_root()?, cwd, id_prefix, title)
+    }
+
+    /// Whether the resolved session already has a stored title.
+    pub(crate) fn title_is_set(cwd: &Path, id_prefix: &str) -> anyhow::Result<bool> {
+        Self::title_is_set_in_root(&session_root()?, cwd, id_prefix)
     }
 
     /// Deletes a session by UUID or prefix and cascades parent-linked run dirs.
@@ -289,8 +318,52 @@ impl Session {
         cwd: &Path,
         id_prefix: &str,
         title: &str,
-    ) -> anyhow::Result<()> {
-        SessionStore::new(session_root, cwd).set_title(id_prefix, title)
+    ) -> anyhow::Result<TitleUpdate> {
+        let title = title.trim();
+        if title.is_empty() {
+            anyhow::bail!("title must not be empty");
+        }
+        // Resolve local-first, then any workspace, so CLI rename matches rm/resume.
+        let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
+        SessionStore::new(session_root, &resolved.cwd).set_title(&resolved.id, title)?;
+        Ok(TitleUpdate {
+            id: resolved.id,
+            cwd: resolved.cwd,
+            title: title.to_string(),
+        })
+    }
+
+    fn set_generated_title_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+        title: &str,
+    ) -> anyhow::Result<Option<TitleUpdate>> {
+        let title = title.trim();
+        if title.is_empty() {
+            anyhow::bail!("title must not be empty");
+        }
+        let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
+        let store = SessionStore::new(session_root, &resolved.cwd);
+        if !store.set_title_if_absent(&resolved.id, title)? {
+            return Ok(None);
+        }
+        Ok(Some(TitleUpdate {
+            id: resolved.id,
+            cwd: resolved.cwd,
+            title: title.to_string(),
+        }))
+    }
+
+    fn title_is_set_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<bool> {
+        let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
+        Ok(SessionStore::new(session_root, &resolved.cwd)
+            .title(&resolved.id)?
+            .is_some())
     }
 
     fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
@@ -303,6 +376,26 @@ impl Session {
         cwd: &Path,
     ) -> anyhow::Result<Vec<SessionSummary>> {
         Self::list_in_root(session_root, cwd)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_title_in_root_for_test(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+        title: &str,
+    ) -> anyhow::Result<TitleUpdate> {
+        Self::set_title_in_root(session_root, cwd, id_prefix, title)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_generated_title_in_root_for_test(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+        title: &str,
+    ) -> anyhow::Result<Option<TitleUpdate>> {
+        Self::set_generated_title_in_root(session_root, cwd, id_prefix, title)
     }
 
     pub(crate) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {

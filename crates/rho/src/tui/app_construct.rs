@@ -86,6 +86,7 @@ impl App {
             internal_agent_model_target: None,
             agent_editor_session: None,
             pending_session_title: None,
+            session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,

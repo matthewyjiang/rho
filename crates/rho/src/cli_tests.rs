@@ -67,6 +67,17 @@ fn parses_sessions_list_and_rm() {
             }
         }) if ids == ["abc", "def"]
     ));
+
+    let rename = Cli::try_parse_from([
+        "rho", "sessions", "rename", "abc123", "new", "session", "title",
+    ])
+    .unwrap();
+    assert!(matches!(
+        rename.command,
+        Some(Command::Sessions {
+            command: SessionsCommand::Rename { id_prefix, title }
+        }) if id_prefix == "abc123" && title == ["new", "session", "title"]
+    ));
 }
 
 #[test]

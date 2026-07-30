@@ -1,4 +1,4 @@
-//! CLI handlers for `rho sessions list` and `rho sessions rm`.
+//! CLI handlers for `rho sessions list`, `rho sessions rename`, and `rho sessions rm`.
 
 use std::{
     io::{self, IsTerminal, Write},
@@ -25,6 +25,9 @@ pub(super) fn run(command: &SessionsCommand) -> anyhow::Result<()> {
             for id in ids {
                 delete_one(&cwd, id, *force, *yes)?;
             }
+        }
+        SessionsCommand::Rename { id_prefix, title } => {
+            rename_one(&cwd, id_prefix, &title.join(" "))?;
         }
     }
     Ok(())
@@ -67,46 +70,25 @@ fn print_session_list(sessions: &[SessionSummary], all_projects: bool) -> anyhow
     Ok(())
 }
 
+fn rename_one(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<()> {
+    let updated = Session::set_title(cwd, id_prefix, title)?;
+    println!(
+        "renamed session {} ({}) to {}",
+        short_id(&updated.id),
+        crate::paths::display(&updated.cwd),
+        one_line(&updated.title),
+    );
+    Ok(())
+}
+
 fn delete_one(cwd: &Path, id_prefix: &str, force: bool, yes: bool) -> anyhow::Result<()> {
     // Resolve first so cross-project confirmation can show the real cwd before
     // any destructive work. delete_by_id resolves again; that is intentional so
     // the confirmation path stays a pure preview.
-    let preview = Session::list_all()?
-        .into_iter()
-        .filter(|session| session.id.starts_with(id_prefix))
-        .collect::<Vec<_>>();
-    // Prefer the same resolution rules as delete (local workspace first).
-    let local = Session::list(cwd)?
-        .into_iter()
-        .filter(|session| session.id.starts_with(id_prefix))
-        .collect::<Vec<_>>();
-    let candidates = if local.is_empty() { preview } else { local };
-    let session = match candidates.as_slice() {
-        [] => anyhow::bail!("no session found matching '{id_prefix}'"),
-        [only] => only,
-        many => {
-            let mut detail = many
-                .iter()
-                .map(|session| {
-                    format!(
-                        "  {}  {}",
-                        short_id(&session.id),
-                        crate::paths::display(&session.cwd)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            if detail.is_empty() {
-                detail = "(no details)".into();
-            }
-            anyhow::bail!(
-                "multiple sessions match '{id_prefix}'; use a longer UUID prefix\n{detail}"
-            );
-        }
-    };
+    let session = resolve_candidate(cwd, id_prefix)?;
 
     if is_cross_project(&session.cwd, cwd) && !yes {
-        confirm_cross_project(session)?;
+        confirm_cross_project(&session)?;
     }
 
     let outcome = Session::delete_by_id(
@@ -144,6 +126,42 @@ fn delete_one(cwd: &Path, id_prefix: &str, force: bool, yes: bool) -> anyhow::Re
         }
     );
     Ok(())
+}
+
+fn resolve_candidate(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionSummary> {
+    let preview = Session::list_all()?
+        .into_iter()
+        .filter(|session| session.id.starts_with(id_prefix))
+        .collect::<Vec<_>>();
+    // Prefer the same resolution rules as delete (local workspace first).
+    let local = Session::list(cwd)?
+        .into_iter()
+        .filter(|session| session.id.starts_with(id_prefix))
+        .collect::<Vec<_>>();
+    let candidates = if local.is_empty() { preview } else { local };
+    match candidates.as_slice() {
+        [] => anyhow::bail!("no session found matching '{id_prefix}'"),
+        [only] => Ok(only.clone()),
+        many => {
+            let mut detail = many
+                .iter()
+                .map(|session| {
+                    format!(
+                        "  {}  {}",
+                        short_id(&session.id),
+                        crate::paths::display(&session.cwd)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if detail.is_empty() {
+                detail = "(no details)".into();
+            }
+            anyhow::bail!(
+                "multiple sessions match '{id_prefix}'; use a longer UUID prefix\n{detail}"
+            );
+        }
+    }
 }
 
 fn confirm_cross_project(session: &SessionSummary) -> anyhow::Result<()> {

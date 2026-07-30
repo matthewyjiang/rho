@@ -95,6 +95,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, Herdr integration, and Claude Code binary/auth health without displaying secrets. |
 | `/limits` | Fetch and show the usage windows reported by connected OAuth providers. Codex OAuth, Kimi Code OAuth, and xAI OAuth are supported when logged in; absent windows are omitted. Also shows the last Claude Code rate-limit observation from a prior `claude-cli` run (window, status, reset, age) without percentages or a probe. |
 | `/export [path]` | Export the current session to a self-contained HTML transcript. Assistant Markdown, including inline `$...$` or `\(...\)` and display `$$...$$` or `\[...\]` LaTeX math, is rendered in the exported file. |
+| `/title <name>` | Rename the current session. Replaces any auto-generated title. |
 | `/help` | Show keyboard shortcuts and composer controls in a searchable overlay. |
 | `/exit` | Quit the TUI. |
 

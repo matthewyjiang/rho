@@ -78,6 +78,8 @@ impl App {
                 )));
             } else {
                 self.info.session.session_id = None;
+                self.pending_session_title = None;
+                self.session_title_locked = false;
                 self.reset_usage();
                 self.usage.current_context = None;
                 self.insert_entry(&Entry::Notice(

@@ -55,19 +55,22 @@ rho -R
 
 The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker. In the picker, press `d` or `Delete` to remove the selected session after a confirmation prompt; `escape` cancels.
 
-## Listing and deleting sessions
+## Listing, renaming, and deleting sessions
 
-Use the `sessions` CLI to inspect and remove saved history:
+Use the `sessions` CLI to inspect, rename, and remove saved history:
 
 ```bash
 rho sessions list
 rho sessions list --all-projects
+rho sessions rename <session-uuid-or-prefix> <title>
 rho sessions rm <session-uuid-or-prefix>
 rho sessions rm <id> --force   # only for stale non-terminal related runs
 rho sessions rm <id> --yes     # skip cross-project confirmation
 ```
 
 `list` shows sessions for the current workspace. `--all-projects` includes every workspace and prints each session's working directory.
+
+`rename` sets the stored session title by UUID or unique prefix. Multi-word titles work without quotes (`rho sessions rename abc123 my new title`). Inside the TUI, `/title <name>` renames the current session.
 
 `rm` deletes the session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and the session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
 
