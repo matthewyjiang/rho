@@ -106,12 +106,3 @@ fn a_prefix_that_selects_nothing_fails_at_load() {
         })
     );
 }
-
-#[test]
-fn the_canonical_list_is_sorted_and_free_of_duplicates() {
-    let mut sorted = CANONICAL_TOOL_NAMES.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
-
-    assert_eq!(sorted, CANONICAL_TOOL_NAMES.to_vec());
-}

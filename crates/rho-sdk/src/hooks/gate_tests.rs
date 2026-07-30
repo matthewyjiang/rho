@@ -18,20 +18,20 @@ fn request(policy: HookPolicyOutcome) -> PreToolUseRequest {
 }
 
 #[test]
-fn a_denial_carries_its_reason() {
-    let decision = HookDecision::deny("hook `user:no-force-push` denied the command");
+fn only_a_denial_carries_a_reason() {
+    let cases = [
+        (HookDecision::Continue, false, None),
+        (
+            HookDecision::deny("hook `user:no-force-push` denied the command"),
+            true,
+            Some("hook `user:no-force-push` denied the command"),
+        ),
+    ];
 
-    assert!(decision.is_deny());
-    assert_eq!(
-        decision.denial_reason(),
-        Some("hook `user:no-force-push` denied the command")
-    );
-}
-
-#[test]
-fn continue_carries_no_reason() {
-    assert!(!HookDecision::Continue.is_deny());
-    assert_eq!(HookDecision::Continue.denial_reason(), None);
+    for (decision, is_deny, reason) in cases {
+        assert_eq!(decision.is_deny(), is_deny, "{decision:?}");
+        assert_eq!(decision.denial_reason(), reason, "{decision:?}");
+    }
 }
 
 #[tokio::test]

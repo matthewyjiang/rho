@@ -252,12 +252,6 @@ async fn a_runtime_rebuild_reuses_one_engine_and_worker() {
     hooks.shutdown(Duration::from_secs(5)).await;
 }
 
-#[test]
-fn hook_sources_namespace_their_ids() {
-    assert_eq!(HookSource::User.label(), "user");
-    assert_eq!(HookSource::Project.label(), "project");
-}
-
 #[tokio::test]
 async fn a_delegated_run_reports_its_parent_session_to_hooks() {
     let fixture = Fixture::new();

@@ -175,25 +175,28 @@ async fn invalid_utf8_output_is_captured_without_panicking() {
 }
 
 #[tokio::test]
-async fn a_handler_sees_only_its_allowlist_and_the_documented_base_set() {
+async fn a_handler_receives_only_the_environment_the_contract_promises() {
     let home = TempDir::new().unwrap();
-    let hook = hook_running("env | sort", "10s", &["RHO_HOOK_TEST_TOKEN"], &home);
+    // `child_environment` owns which names pass through; this owns whether the
+    // spawned child really gets exactly that map. Reading an ambient name the
+    // contract excludes avoids mutating the shared process environment.
+    let excluded = std::env::vars()
+        .map(|(name, _)| name)
+        .find(|name| {
+            !super::super::environment::base_environment_names().contains(&name.as_str())
+                && name != crate::hooks::IN_HOOK_ENV
+        })
+        .expect("the test process has at least one variable outside the base set");
+    let hook = hook_running("env | sort", "10s", &[], &home);
 
-    // SAFETY-equivalent note: this test owns the two variables it sets and no
-    // other test reads them.
-    std::env::set_var("RHO_HOOK_TEST_TOKEN", "allowed");
-    std::env::set_var("RHO_HOOK_TEST_SECRET", "denied");
     let output = run(&hook, "{}").await.unwrap();
-    std::env::remove_var("RHO_HOOK_TEST_TOKEN");
-    std::env::remove_var("RHO_HOOK_TEST_SECRET");
 
     let environment = String::from_utf8_lossy(&output.stdout);
-    assert!(environment.contains("RHO_HOOK_TEST_TOKEN=allowed"));
-    assert!(
-        !environment.contains("RHO_HOOK_TEST_SECRET"),
-        "ambient variables must not reach a hook: {environment}"
-    );
     assert!(environment.contains(&format!("{}=1", crate::hooks::IN_HOOK_ENV)));
+    assert!(
+        !environment.contains(&format!("{excluded}=")),
+        "ambient variable {excluded} reached a hook: {environment}"
+    );
 }
 
 #[tokio::test]

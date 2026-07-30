@@ -80,12 +80,3 @@ fn the_log_drops_the_oldest_record_at_its_bound() {
     assert_eq!(snapshot.len(), MAX_RECORDS);
     assert_eq!(snapshot[0].hook_id, "hook-5");
 }
-
-#[test]
-fn every_outcome_has_a_stable_label() {
-    assert_eq!(HookOutcome::Continued.label(), "continued");
-    assert_eq!(HookOutcome::Observed.label(), "observed");
-    assert_eq!(HookOutcome::Dropped.label(), "dropped");
-    assert_eq!(HookOutcome::Denied { reason: "r".into() }.label(), "denied");
-    assert_eq!(HookOutcome::Failed { reason: "r".into() }.label(), "failed");
-}

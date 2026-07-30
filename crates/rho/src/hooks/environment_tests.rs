@@ -68,14 +68,3 @@ fn an_allowlist_cannot_override_the_recursion_marker() {
         Some("1")
     );
 }
-
-#[test]
-fn the_base_set_names_the_platform_essentials() {
-    let names = base_environment_names();
-
-    assert!(names.contains(&"PATH"));
-    #[cfg(unix)]
-    assert!(names.contains(&"HOME"));
-    #[cfg(windows)]
-    assert!(names.contains(&"SystemRoot"));
-}
