@@ -83,6 +83,7 @@ provider = "disabled"
         "list_dir",
         "read_file",
         "write_file",
+        "edit_file",
         "apply_patch",
         "grep",
         "glob",
@@ -98,10 +99,6 @@ provider = "disabled"
             "missing tool {expected}: {names:?}"
         );
     }
-    assert!(
-        !names.contains(&"edit_file"),
-        "removed tool edit_file still present: {names:?}"
-    );
     assert!(!names.contains(&"web_search"));
 
     let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap();

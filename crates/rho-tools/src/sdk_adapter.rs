@@ -47,6 +47,7 @@ use crate::{
 
 use super::{
     apply_patch::{apply_hunks, parse_patch, patch_paths_lenient, ApplyPatch, Hunk},
+    edit_file::{edit_file_content, EditFile},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     write_file::{write_file_content, WriteFile},
@@ -114,6 +115,7 @@ pub enum CodingToolKind {
     ListDir,
     ReadFile,
     WriteFile,
+    EditFile,
     ApplyPatch,
     Grep,
     Glob,
@@ -132,6 +134,10 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
         }),
+        CodingToolKind::EditFile => Arc::new(EditFileTool {
+            max_output_bytes: options.max_output_bytes,
+            mutation_observer: options.mutation_observer.clone(),
+        }),
         CodingToolKind::ApplyPatch => Arc::new(ApplyPatchTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
@@ -147,6 +153,7 @@ pub fn coding_tools(options: CodingToolOptions) -> Vec<Arc<dyn Tool>> {
         CodingToolKind::ListDir,
         CodingToolKind::ReadFile,
         CodingToolKind::WriteFile,
+        CodingToolKind::EditFile,
         CodingToolKind::ApplyPatch,
         CodingToolKind::Grep,
         CodingToolKind::Glob,
@@ -165,6 +172,11 @@ struct ReadFileTool {
 }
 
 struct WriteFileTool {
+    max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+}
+
+struct EditFileTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
@@ -190,6 +202,16 @@ struct ReadArgs {
 struct WriteArgs {
     path: String,
     content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditArgs {
+    path: String,
+    old_string: String,
+    new_string: String,
+    #[serde(default)]
+    replace_all: bool,
 }
 
 #[derive(Deserialize)]
@@ -376,6 +398,60 @@ impl Tool for WriteFileTool {
     }
 }
 
+impl Tool for EditFileTool {
+    fn spec(&self) -> rho_sdk::model::ToolSpec {
+        EditFile.spec()
+    }
+
+    fn security(&self) -> ToolSecurity {
+        // Edits always read current file contents before applying replacements.
+        ToolSecurity::built_in([CapabilityKind::Write, CapabilityKind::Read])
+    }
+
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        path_start_metadata(arguments, OperationKind::Write)
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            check_preparation_cancelled(&context)?;
+            let args: EditArgs = parse_args(invocation.into_arguments())?;
+            let workspace = preparation_workspace(&context)?.clone();
+            let resolved = workspace
+                .resolve_for_read(&args.path)
+                .map_err(map_path_error)?;
+            let metadata = path_start_metadata(
+                &serde_json::json!({"path": args.path}),
+                OperationKind::Write,
+            );
+            Ok(PreparedToolInvocation::resource_aware(
+                [ToolResourceAccess::exclusive(ToolResource::workspace_path(
+                    resolved.path(),
+                ))],
+                [
+                    path_request(&resolved, PathCapability::Write, "edit_file"),
+                    path_request(&resolved, PathCapability::Read, "edit_file"),
+                ],
+                metadata,
+                move |context| {
+                    execute_prepared_edit(
+                        self.max_output_bytes,
+                        self.mutation_observer.clone(),
+                        workspace,
+                        resolved,
+                        args,
+                        context,
+                    )
+                },
+            ))
+        })
+    }
+}
+
 impl Tool for ApplyPatchTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         ApplyPatch.spec()
@@ -538,6 +614,69 @@ fn execute_prepared_write(
                     ToolErrorKind::Execution,
                     format!(
                         "{write_error}; failed to capture resulting workspace state: {capture_error}"
+                    ),
+                ));
+            }
+        };
+        Ok(ToolOutput::text(outcome.content).metadata(
+            ToolMetadata::new()
+                .operation(OperationKind::Write)
+                .affected_path(outcome.display_path)
+                .diff(outcome.diff),
+        ))
+    })
+}
+
+fn execute_prepared_edit(
+    max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    workspace: Workspace,
+    resolved: ResolvedWorkspacePath,
+    args: EditArgs,
+    context: AuthorizedToolContext,
+) -> ToolFuture<'static> {
+    Box::pin(async move {
+        let display = compact_display_path(workspace.root(), &args.path);
+        let _ = context
+            .progress()
+            .send(
+                ToolProgress::message(format!("editing {display}"))
+                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+            )
+            .await;
+        workspace.revalidate(&resolved).map_err(map_path_error)?;
+        let mutation_paths = [resolved.path()];
+        if let Some(observer) = mutation_observer.as_ref() {
+            observer
+                .before_mutation(&mutation_paths)
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
+        }
+        let edit_result = edit_file_content(
+            resolved.path(),
+            &display,
+            &args.old_string,
+            &args.new_string,
+            args.replace_all,
+            max_output_bytes,
+        )
+        .await
+        .map_err(map_app_error);
+        let capture_result = match mutation_observer.as_ref() {
+            Some(observer) => observer
+                .after_mutation(&mutation_paths)
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
+            None => Ok(()),
+        };
+        let outcome = match (edit_result, capture_result) {
+            (Ok(outcome), Ok(())) => outcome,
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
+            (Err(edit_error), Err(capture_error)) => {
+                return Err(ToolError::new(
+                    ToolErrorKind::Execution,
+                    format!(
+                        "{edit_error}; failed to capture resulting workspace state: {capture_error}"
                     ),
                 ));
             }

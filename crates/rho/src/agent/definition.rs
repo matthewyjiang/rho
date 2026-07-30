@@ -45,6 +45,7 @@ define_tool_capabilities! {
     Agents => "agents",
     ApplyPatch => "apply_patch",
     Bash => "bash",
+    EditFile => "edit_file",
     FetchContent => "fetch_content",
     GetSearchContent => "get_search_content",
     Glob => "glob",

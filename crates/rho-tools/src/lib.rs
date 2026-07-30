@@ -3,8 +3,8 @@
 //! The crate has two layers:
 //!
 //! - Application tools ([`tool::Tool`]) implement the user-facing built-ins
-//!   (`bash`, `read_file`, `write_file`, `apply_patch`, `list_dir`) with output
-//!   truncation, diffs, and display formatting.
+//!   (`bash`, `read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir`)
+//!   with output truncation, diffs, and display formatting.
 //! - Workspace searches implement `grep` and `glob` over the shared
 //!   [`workspace_walk`] walker.
 //! - SDK adapters ([`sdk_adapter`], [`sdk_shell`], [`sdk_search`]) wrap those
@@ -29,6 +29,7 @@ pub mod apply_patch;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod bash;
 pub mod diff;
+pub mod edit_file;
 mod glob;
 mod grep;
 mod grep_format;

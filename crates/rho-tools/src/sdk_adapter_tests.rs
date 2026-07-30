@@ -506,3 +506,71 @@ async fn apply_patch_prepare_rejects_invalid_patch_before_io() {
     };
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
 }
+
+// Covers: edit_file prepare must lock an existing target for read+write
+// Owner: SDK contract
+#[tokio::test]
+async fn edit_file_prepare_reserves_existing_target() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sample.txt"), "old").unwrap();
+    let workspace = workspace(&dir);
+    let tool = coding_tool(CodingToolKind::EditFile, CodingToolOptions::default());
+
+    let prepared = tool
+        .prepare(
+            invocation(json!({
+                "path": "sample.txt",
+                "old_string": "old",
+                "new_string": "new"
+            })),
+            ToolPreparationContext::new(Some(workspace.clone()), CancellationToken::new()),
+        )
+        .await
+        .unwrap();
+
+    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy().clone()
+    else {
+        panic!("edit_file must opt in to resource-aware execution");
+    };
+    assert_eq!(
+        accesses,
+        vec![ToolResourceAccess::exclusive(ToolResource::workspace_path(
+            workspace.root().join("sample.txt")
+        ))]
+    );
+
+    let capability_paths = prepared
+        .capabilities()
+        .iter()
+        .filter_map(|capability| match capability.operation() {
+            rho_sdk::CapabilityOperation::ReadPath { path, .. }
+            | rho_sdk::CapabilityOperation::WritePath { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(capability_paths.contains(&workspace.root().join("sample.txt")));
+    assert_eq!(prepared.capabilities().len(), 2);
+}
+
+// Covers: edit_file prepare must reject a missing target before execution
+// Owner: SDK contract
+#[tokio::test]
+async fn edit_file_prepare_rejects_missing_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = coding_tool(CodingToolKind::EditFile, CodingToolOptions::default());
+    let error = match tool
+        .prepare(
+            invocation(json!({
+                "path": "missing.txt",
+                "old_string": "old",
+                "new_string": "new"
+            })),
+            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
+        )
+        .await
+    {
+        Ok(_) => panic!("missing edit target must fail prepare"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), ToolErrorKind::Execution);
+}
