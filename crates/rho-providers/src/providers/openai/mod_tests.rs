@@ -557,14 +557,14 @@ fn codex_sse_search_activity_is_not_duplicated_on_completed() {
     );
 }
 
-// Covers: xAI x_search_call items use name+arguments without action
+// Covers: xAI emits hosted X searches as custom_tool_call items with JSON input.
 // Owner: providers stream parse
 #[test]
-fn codex_sse_line_emits_x_search_from_name_and_arguments() {
+fn codex_sse_line_emits_x_search_from_custom_tool_call() {
     let mut state = CodexSseState::default();
     let mut searches = Vec::new();
     handle_codex_sse_line(
-        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","name":"x_keyword_search","status":"completed","arguments":"{\"query\":\"codex reset\",\"limit\":10,\"mode\":\"Latest\"}"}}"#,
+        r#"data: {"type":"response.output_item.done","item":{"call_id":"xs_call-557c03fd-0","input":"{\"query\":\"codex reset\",\"limit\":\"10\",\"mode\":\"Latest\"}","name":"x_keyword_search","type":"custom_tool_call","id":"ctc_response_call-0","status":"completed"},"output_index":1}"#,
         &mut state,
         &mut Some(&mut |event| {
             match event {

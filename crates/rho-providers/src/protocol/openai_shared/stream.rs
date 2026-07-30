@@ -286,8 +286,23 @@ fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent>
     match item.get("type").and_then(|value| value.as_str()) {
         Some("web_search_call") => Some(ModelEvent::WebSearch(detail)),
         Some("x_search_call") => Some(ModelEvent::hosted_tool_activity("x_search", detail)),
+        Some("custom_tool_call") if is_x_search_custom_call(item) => {
+            Some(ModelEvent::hosted_tool_activity("x_search", detail))
+        }
         _ => None,
     }
+}
+
+fn is_x_search_custom_call(item: &serde_json::Value) -> bool {
+    let is_x_search_name = item
+        .get("name")
+        .and_then(|name| name.as_str())
+        .is_some_and(|name| name.starts_with("x_"));
+    let has_x_search_call_id = item
+        .get("call_id")
+        .and_then(|call_id| call_id.as_str())
+        .is_some_and(|call_id| call_id.starts_with("xs_call-"));
+    is_x_search_name && has_x_search_call_id
 }
 
 /// Stable key for a search output item, used to dedupe stream vs completed paths.
@@ -327,8 +342,9 @@ fn emit_codex_search_activity(
 
 /// User-facing primary for a hosted search card.
 ///
-/// Codex-style items put the query under `action`. xAI also emits `name` plus a
-/// JSON `arguments` string (for example `x_keyword_search` with `{"query":...}`).
+/// Codex-style items put the query under `action`. xAI emits its hosted X tools
+/// as `custom_tool_call` items with a `name` plus JSON in `input`. Older shapes
+/// may instead use `x_search_call` and `arguments`.
 /// The activity itself is emitted even when neither shape has displayable detail.
 fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
     item.get("action")
@@ -358,7 +374,10 @@ fn detail_from_search_action(action: &serde_json::Value) -> Option<String> {
 }
 
 fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
-    let arguments = item.get("arguments").and_then(|value| value.as_str())?;
+    let arguments = item
+        .get("arguments")
+        .or_else(|| item.get("input"))
+        .and_then(|value| value.as_str())?;
     let args: serde_json::Value = serde_json::from_str(arguments).ok()?;
     if let Some(detail) = detail_from_search_payload(&args) {
         return Some(detail);
