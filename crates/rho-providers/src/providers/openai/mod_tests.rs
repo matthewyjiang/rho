@@ -6,10 +6,57 @@ use crate::model::{
 use crate::protocol::openai_chat::{convert_streamed_response, handle_openai_stream_line};
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
-    CodexSseState,
+    CodexSseResponse, CodexSseState,
 };
 use crate::reasoning::ReasoningLevel;
 use serde_json::json;
+
+// Covers: Codex must warn only when the server declines a requested priority tier.
+// Owner: OpenAI provider request policy
+#[test]
+fn reported_service_tier_detects_priority_fallback() {
+    let cases = [
+        (Some("priority"), false),
+        (Some("default"), true),
+        (None, false),
+    ];
+
+    for (reported, should_report) in cases {
+        let response = CodexSseResponse {
+            response: ModelResponse::Assistant(vec![ContentBlock::Text("ok".into())]),
+            response_id: Some("response-1".into()),
+            service_tier: reported.map(str::to_owned),
+        };
+        let mut events = Vec::new();
+
+        report_service_tier_fallback(
+            Some(rho_sdk::model::ServiceTier::Priority),
+            &response,
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            events.len(),
+            usize::from(should_report),
+            "reported={reported:?}"
+        );
+        if should_report {
+            assert_eq!(
+                events,
+                vec![
+                    rho_sdk::provider::ProviderRequestEvent::ServiceTierFallback {
+                        requested: rho_sdk::model::ServiceTier::Priority,
+                        used: "default".into(),
+                    }
+                ]
+            );
+        }
+    }
+}
 
 #[test]
 fn codex_reasoning_param_preserves_none_effort() {

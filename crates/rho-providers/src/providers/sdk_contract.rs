@@ -298,6 +298,14 @@ where
                         .send_request_attempt_failed_observed(kind, usage, observed_at)
                         .await?;
                 }
+                CallbackEventKind::Request(ProviderRequestEvent::ServiceTierFallback {
+                    requested,
+                    used,
+                }) => {
+                    events
+                        .send_service_tier_fallback_observed(requested, used, observed_at)
+                        .await?;
+                }
             }
         }
 

@@ -37,12 +37,8 @@ impl App {
             "" => !current,
             "on" => true,
             "off" => false,
-            "status" => {
-                self.report_fast_mode(current, supported);
-                return Ok(());
-            }
             _ => {
-                self.insert_entry(&Entry::Error("usage: /fast [on|off|status]".into()));
+                self.insert_entry(&Entry::Error("usage: /fast [on|off]".into()));
                 self.status = "invalid fast mode".into();
                 return Ok(());
             }

@@ -72,6 +72,48 @@ fn apply_patch_diff_streams_and_survives_cancellation() {
     assert_pass("apply_patch_diff");
 }
 
+// Covers: enabling fast mode must update the persistent model indicator without a restart.
+// Owner: interactive TUI
+#[test]
+fn fast_mode_appears_beside_the_active_model() {
+    let home = IsolatedHome::new().unwrap();
+    fs::write(
+        &home.config_path,
+        r#"provider = "openai-codex"
+model = "gpt-5.5"
+auth = "codex"
+check_for_updates = false
+web_search_provider = "disabled"
+
+[behavior]
+credential_store = "file"
+"#,
+    )
+    .unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    );
+    let mut harness = PtyHarness::spawn_named(&plan, "fast_mode_statusline").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness.submit_text("/fast on").unwrap();
+    harness
+        .wait_for_text(
+            "gpt-5.5 (fast)",
+            WaitTimeout::secs(10, "fast mode statusline"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
 #[test]
 fn claude_code_login_hands_terminal_to_fake_claude() {
     let home = IsolatedHome::new().unwrap();

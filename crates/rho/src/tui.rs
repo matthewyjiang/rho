@@ -243,6 +243,11 @@ impl RuntimeModelView {
             service_tier: self.service_tier,
         }
     }
+
+    fn fast_mode_active(&self) -> bool {
+        self.service_tier == Some(rho_sdk::model::ServiceTier::Priority)
+            && rho_providers::providers::openai::supports_fast_mode(&self.provider, &self.model)
+    }
 }
 
 pub struct SessionBootstrap {
