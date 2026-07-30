@@ -26,8 +26,8 @@ fn promotion_preserves_model_order_instead_of_call_id_order() {
     let mut batch = ToolCallBatch::default();
     let first = call_id("z-model-first");
     let second = call_id("a-model-second");
-    batch.preview(0, Some(first.clone()), card("first preview"));
-    batch.preview(1, Some(second.clone()), card("second preview"));
+    batch.preview(0, Some(first.clone()), Some(card("first preview")));
+    batch.preview(1, Some(second.clone()), Some(card("second preview")));
 
     batch.started(second, card("second running"));
     assert_eq!(live_labels(&batch), ["● first preview", "● second running"]);
@@ -41,7 +41,7 @@ fn proposal_reuses_stream_preview_slot_when_call_id_matches() {
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-agent");
     // Responses output_index can land past non-tool items (reasoning, etc.).
-    batch.preview(3, Some(call.clone()), card("reviewer starting"));
+    batch.preview(3, Some(call.clone()), Some(card("reviewer starting")));
     // Proposal is call-id keyed and must not mint a second card.
     batch.preview_call(call.clone(), card("reviewer proposed"));
     batch.started(call, card("reviewer running"));
@@ -68,10 +68,10 @@ fn proposal_without_stream_appends_in_arrival_order() {
 fn late_stream_preview_is_ignored_after_start() {
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-agent");
-    batch.preview(3, Some(call.clone()), card("starting"));
+    batch.preview(3, Some(call.clone()), Some(card("starting")));
     batch.started(call.clone(), card("running"));
-    batch.preview(3, Some(call), card("stale starting"));
-    batch.preview(3, None, card("index only stale"));
+    batch.preview(3, Some(call), Some(card("stale starting")));
+    batch.preview(3, None, Some(card("index only stale")));
 
     assert_eq!(live_labels(&batch), ["● running"]);
     assert!(batch.previews.is_empty());
@@ -82,8 +82,8 @@ fn latest_is_last_model_order_entry_when_later_entry_is_still_a_preview() {
     let mut batch = ToolCallBatch::default();
     let first = call_id("z-model-first");
     let second = call_id("a-model-second");
-    batch.preview(0, Some(first.clone()), card("first"));
-    batch.preview(1, Some(second), card("second"));
+    batch.preview(0, Some(first.clone()), Some(card("first")));
+    batch.preview(1, Some(second), Some(card("second")));
     batch.started(first.clone(), card("first running"));
 
     batch.latest_mut().unwrap().expanded = true;
@@ -97,8 +97,8 @@ fn latest_is_last_model_order_entry_after_promotion() {
     let mut batch = ToolCallBatch::default();
     let first = call_id("z-model-first");
     let second = call_id("a-model-second");
-    batch.preview(0, Some(first.clone()), card("first"));
-    batch.preview(1, Some(second.clone()), card("second"));
+    batch.preview(0, Some(first.clone()), Some(card("first")));
+    batch.preview(1, Some(second.clone()), Some(card("second")));
     batch.started(first, card("first running"));
     batch.started(second.clone(), card("second running"));
 
@@ -125,7 +125,7 @@ fn unbound_index_preview_is_a_separate_slot_from_call_id_proposal() {
     // a later proposal for a different address space.
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-dup");
-    batch.preview(0, None, card("streamed without id"));
+    batch.preview(0, None, Some(card("streamed without id")));
     batch.preview_call(call.clone(), card("proposed"));
 
     assert_eq!(batch.live_entries().count(), 2);
@@ -134,4 +134,18 @@ fn unbound_index_preview_is_a_separate_slot_from_call_id_proposal() {
     batch.started(call, card("running"));
     assert_eq!(batch.live_entries().count(), 2);
     assert_eq!(live_labels(&batch), ["● streamed without id", "● running"]);
+}
+
+#[test]
+fn identity_only_preview_binds_call_id_without_replacing_card() {
+    let mut batch = ToolCallBatch::default();
+    let call = call_id("call-late-id");
+    batch.preview(0, None, Some(card("streamed")));
+    batch.preview(0, Some(call.clone()), None);
+
+    assert_eq!(live_labels(&batch), ["● streamed"]);
+    batch.preview_call(call.clone(), card("proposed"));
+    batch.started(call, card("running"));
+    assert_eq!(live_labels(&batch), ["● running"]);
+    assert!(batch.previews.is_empty());
 }

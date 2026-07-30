@@ -105,7 +105,12 @@ impl ToolCallBatch {
     ///
     /// When `call_id` is known it owns the slot: later stream or proposal traffic
     /// for that id updates the same card even if indexes differ.
-    pub(super) fn preview(&mut self, index: usize, call_id: Option<ToolCallId>, card: ToolCard) {
+    pub(super) fn preview(
+        &mut self,
+        index: usize,
+        call_id: Option<ToolCallId>,
+        card: Option<ToolCard>,
+    ) {
         if call_id
             .as_ref()
             .is_some_and(|id| self.running.contains_key(id))
@@ -122,7 +127,12 @@ impl ToolCallBatch {
         if let Some(call_id) = call_id {
             self.bind_call_id(call_id, slot);
         }
-        self.write_preview(slot, card);
+        if let Some(card) = card {
+            self.write_preview(slot, card);
+        } else if self.previews.contains_key(&slot) {
+            // Identity-only bind: keep the existing card and model order slot.
+            self.model_order.insert(slot, LiveToolKey::Preview(slot));
+        }
     }
 
     /// Proposal preview addressed only by call id.

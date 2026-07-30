@@ -3,7 +3,7 @@
 use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::{
     tool::compact_display_path,
-    tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
+    tool_card::{DiffCardFile, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
 };
 
 #[path = "interactive_presenter_results.rs"]
@@ -11,7 +11,7 @@ mod results;
 use results::{
     count_nonempty_lines, diff_card, fetch_content_card, file_diff_card, generic_card,
     get_search_content_card, process_result_card, push_error_output, search_result_card,
-    shell_card, shell_result_card, split_body_lines, web_search_card, DiffCardFile, EmptyDiffState,
+    shell_card, shell_result_card, split_body_lines, web_search_card, EmptyDiffState,
 };
 
 use super::{agent_format, ToolKind, ToolPresentation, ToolView};
@@ -218,7 +218,16 @@ fn apply_patch_start_card(
         .files
         .into_iter()
         .map(|file| DiffCardFile {
-            path: compact_display_path(cwd, &file.display_path),
+            path: match (&file.source_path, &file.destination_path) {
+                (Some(source), Some(destination)) if source != destination => {
+                    format!(
+                        "{} → {}",
+                        compact_display_path(cwd, source),
+                        compact_display_path(cwd, destination)
+                    )
+                }
+                _ => compact_display_path(cwd, &file.display_path),
+            },
             stats: file
                 .added_lines
                 .zip(file.removed_lines)
@@ -232,6 +241,7 @@ fn apply_patch_start_card(
         Vec::new(),
         files,
         EmptyDiffState::Silent,
+        proposed.truncated,
     )
 }
 
@@ -341,15 +351,15 @@ pub(super) fn progress_card(
         },
         |(view, cwd)| start_card(view, cwd),
     );
-    if !progress.text().trim().is_empty()
-        && view.is_some_and(|(view, _)| view.kind == ToolKind::ApplyPatch)
-        && card.body.is_diff()
-    {
-        card.push_fact(ToolFact::Meta {
-            text: progress.text().to_string(),
-        });
-    } else if !progress.text().trim().is_empty() {
-        card.body = ToolBody::Lines(split_body_lines(progress.text()));
+    if !progress.text().trim().is_empty() {
+        if card.body.is_diff() {
+            // Keep an existing proposed/result diff visible; progress is metadata.
+            card.push_fact(ToolFact::Meta {
+                text: progress.text().to_string(),
+            });
+        } else {
+            card.body = ToolBody::Lines(split_body_lines(progress.text()));
+        }
     }
     if let (Some(completed), total) = (progress.completed_units(), progress.total_units()) {
         card.push_fact(ToolFact::Progress { completed, total });

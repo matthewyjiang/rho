@@ -81,10 +81,15 @@ impl ToolKind {
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
-        if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
-            0
-        } else {
-            PREVIEW_LARGE_PARSE_STRIDE
+        match self {
+            // Large apply_patch streams are display-only until ToolProposed.
+            // Coarse strides avoid repeated full-buffer scans without a separate
+            // freeze lifecycle that couples the presenter to identity binding.
+            Self::ApplyPatch if arguments_len >= APPLY_PATCH_STREAM_PREVIEW_LIMIT => {
+                APPLY_PATCH_STREAM_PREVIEW_STRIDE
+            }
+            _ if arguments_len < PREVIEW_FULL_PARSE_LIMIT => 0,
+            _ => PREVIEW_LARGE_PARSE_STRIDE,
         }
     }
 }
@@ -99,29 +104,21 @@ const PREVIEW_FULL_PARSE_LIMIT: usize = 4096;
 /// Argument bytes accumulated between parses past [`PREVIEW_FULL_PARSE_LIMIT`].
 const PREVIEW_LARGE_PARSE_STRIDE: usize = 4096;
 
-/// Stop rebuilding large apply_patch previews after this many argument bytes.
+/// Apply_patch argument size above which streaming previews use a coarse stride.
 ///
-/// The final proposal still parses the complete patch once. Freezing only the
-/// streamed card avoids repeated full-buffer scans for unusually large calls.
+/// The final proposal still parses the complete patch once.
 const APPLY_PATCH_STREAM_PREVIEW_LIMIT: usize = 256 * 1024;
+
+/// Bytes between apply_patch preview rebuilds past [`APPLY_PATCH_STREAM_PREVIEW_LIMIT`].
+const APPLY_PATCH_STREAM_PREVIEW_STRIDE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Default)]
 struct StreamedPreview {
     name: Option<String>,
     arguments: String,
-    frozen: bool,
     next_parse_length: usize,
     last_args: Option<serde_json::Value>,
     last_card: Option<ToolCard>,
-}
-
-impl StreamedPreview {
-    fn freeze(&mut self) {
-        self.arguments = String::new();
-        self.frozen = true;
-        self.next_parse_length = usize::MAX;
-        self.last_args = None;
-    }
 }
 
 pub(crate) struct InteractiveToolPresenter {
@@ -146,10 +143,6 @@ impl InteractiveToolPresenter {
         self.streamed.clear();
     }
 
-    pub(crate) fn streamed_card(&self, index: usize) -> Option<ToolCard> {
-        self.streamed.get(&index)?.last_card.clone()
-    }
-
     pub(crate) fn preview(
         &mut self,
         index: usize,
@@ -162,16 +155,12 @@ impl InteractiveToolPresenter {
             .is_some_and(|name| preview.name.as_ref().is_some_and(|current| current != name));
         if name_changed {
             preview.arguments.clear();
-            preview.frozen = false;
             preview.next_parse_length = 0;
             preview.last_args = None;
             preview.last_card = None;
         }
         if let Some(name) = name {
             preview.name = Some(name);
-        }
-        if preview.frozen {
-            return None;
         }
         preview.arguments.push_str(arguments_delta);
         // A provider commonly announces a call's identity before sending any
@@ -182,13 +171,6 @@ impl InteractiveToolPresenter {
         }
         let name = preview.name.as_deref()?;
         let kind = ToolKind::from_name(name);
-        if kind == ToolKind::ApplyPatch
-            && preview.arguments.len() > APPLY_PATCH_STREAM_PREVIEW_LIMIT
-            && preview.last_card.is_some()
-        {
-            preview.freeze();
-            return None;
-        }
         if !name_changed && preview.arguments.len() < preview.next_parse_length {
             return None;
         }
@@ -210,16 +192,10 @@ impl InteractiveToolPresenter {
             .arguments
             .len()
             .saturating_add(kind.preview_parse_stride(preview.arguments.len()));
-        let unchanged = preview.last_card.as_ref() == Some(&card);
-        preview.last_card = Some(card.clone());
-        if kind == ToolKind::ApplyPatch
-            && preview.arguments.len() > APPLY_PATCH_STREAM_PREVIEW_LIMIT
-        {
-            preview.freeze();
-        }
-        if unchanged {
+        if preview.last_card.as_ref() == Some(&card) {
             return None;
         }
+        preview.last_card = Some(card.clone());
         // Streaming previews carry no notices or image assets; skip a second
         // argument parse just to assemble ToolPresentation.
         Some(ToolPresentation {

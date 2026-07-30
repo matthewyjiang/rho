@@ -93,7 +93,7 @@ fn attachment_update(
             card,
         } => {
             let key = adapter.attachment_key_for_preview(index, call_id.as_ref());
-            Some(AttachmentEvent::ToolStarted {
+            card.map(|card| AttachmentEvent::ToolStarted {
                 key: Some(key),
                 card,
             })

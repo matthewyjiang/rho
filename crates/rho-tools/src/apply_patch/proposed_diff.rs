@@ -7,7 +7,8 @@ use super::parser::{
     MOVE_TO_MARKER, UPDATE_FILE_MARKER,
 };
 
-/// Maximum proposed body rows, including file headings and one truncation row.
+/// Maximum rendered rows for a proposed card, including multi-file headings and
+/// one card-level truncation footer.
 const MAX_PROPOSED_DIFF_ROWS: usize = 1_000;
 /// Maximum file operations retained for a proposed card.
 const MAX_PROPOSED_DIFF_FILES: usize = 100;
@@ -16,6 +17,8 @@ const MAX_PROPOSED_DIFF_FILES: usize = 100;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProposedDiff {
     pub files: Vec<ProposedDiffFile>,
+    /// True when file ops or body rows were dropped to stay within the card budget.
+    pub truncated: bool,
 }
 
 /// The patch operation represented by a proposed diff file.
@@ -57,13 +60,14 @@ pub enum ProposedDiffTrailingLine {
 ///
 /// This parser is intentionally lenient so it can show an in-progress patch. It
 /// ignores markers and invalid lines, accepts open file sections and a missing
-/// end marker, and never assigns line numbers.
+/// end marker, and never assigns line numbers. Truncation is reported on
+/// [`ProposedDiff::truncated`]; callers append a card-level footer when set.
 pub fn proposed_diff_lenient(input: &str, trailing_line: ProposedDiffTrailingLine) -> ProposedDiff {
     let mut proposed = ProposedDiff::default();
     let mut current = None;
     let mut in_patch = false;
-    let mut retained_rows = 0usize;
-    let mut body_truncated = false;
+    let mut retained_body_rows = 0usize;
+    let mut body_overflow = false;
     let mut files_truncated = false;
     let mut move_allowed = false;
 
@@ -163,12 +167,15 @@ pub fn proposed_diff_lenient(input: &str, trailing_line: ProposedDiffTrailingLin
             ProposedDiffOperation::Delete => None,
         };
         if let Some((kind, text)) = row {
-            file.push_row(kind, text, &mut retained_rows, &mut body_truncated);
+            // Soft-cap retained body rows during the scan so huge patches do not
+            // allocate unbounded row vectors. finalize() then applies the single
+            // card budget once headings are known.
+            file.record_row(kind, text, &mut retained_body_rows, &mut body_overflow);
         }
     }
 
     finish_file(&mut proposed.files, &mut current);
-    bound_rendered_rows(&mut proposed.files, body_truncated || files_truncated);
+    proposed.finalize(body_overflow || files_truncated);
     proposed
 }
 
@@ -197,27 +204,34 @@ fn start_file(
     }
 }
 
-fn bound_rendered_rows(files: &mut [ProposedDiffFile], truncated: bool) {
-    let heading_rows = if files.len() > 1 { files.len() } else { 0 };
-    let current_rows = files.iter().map(|file| file.rows.len()).sum::<usize>();
-    let content_budget = MAX_PROPOSED_DIFF_ROWS.saturating_sub(heading_rows);
-    let needs_truncation = truncated || current_rows > content_budget;
-    let retained_budget = content_budget.saturating_sub(usize::from(needs_truncation));
-    let mut remaining = retained_budget;
-    for file in files.iter_mut() {
-        if file.rows.len() > remaining {
-            file.rows.truncate(remaining);
-            remaining = 0;
+impl ProposedDiff {
+    /// Apply one card-level row budget shared by multi-file headings, body rows,
+    /// and an optional truncation footer reserved by the presenter.
+    fn finalize(&mut self, already_truncated: bool) {
+        let heading_rows = if self.files.len() > 1 {
+            self.files.len()
         } else {
-            remaining -= file.rows.len();
+            0
+        };
+        let body_rows = self.files.iter().map(|file| file.rows.len()).sum::<usize>();
+        let fits_without_footer = heading_rows + body_rows <= MAX_PROPOSED_DIFF_ROWS;
+        let truncated = already_truncated || !fits_without_footer;
+        // Reserve one slot for the card-level footer whenever truncation is
+        // reported and headings leave room for it.
+        let footer_rows = usize::from(truncated && heading_rows < MAX_PROPOSED_DIFF_ROWS);
+        let body_budget = MAX_PROPOSED_DIFF_ROWS
+            .saturating_sub(heading_rows)
+            .saturating_sub(footer_rows);
+        let mut remaining = body_budget;
+        for file in &mut self.files {
+            if file.rows.len() > remaining {
+                file.rows.truncate(remaining);
+                remaining = 0;
+            } else {
+                remaining -= file.rows.len();
+            }
         }
-    }
-    if !needs_truncation || content_budget == 0 {
-        return;
-    }
-    if let Some(last) = files.last_mut() {
-        last.rows
-            .push(DiffRow::new(DiffRowKind::Skip, None, "⋯ more changes"));
+        self.truncated = truncated;
     }
 }
 
@@ -258,12 +272,12 @@ impl ProposedDiffFile {
         }
     }
 
-    fn push_row(
+    fn record_row(
         &mut self,
         kind: DiffRowKind,
         text: &str,
-        retained_rows: &mut usize,
-        body_truncated: &mut bool,
+        retained_body_rows: &mut usize,
+        body_overflow: &mut bool,
     ) {
         match kind {
             DiffRowKind::Added => {
@@ -274,11 +288,13 @@ impl ProposedDiffFile {
             }
             DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip => {}
         }
-        if *retained_rows < MAX_PROPOSED_DIFF_ROWS {
+        // Retain up to the full card budget of body rows; finalize may shrink
+        // further once multi-file headings claim part of the budget.
+        if *retained_body_rows < MAX_PROPOSED_DIFF_ROWS {
             self.rows.push(DiffRow::new(kind, None, text));
-            *retained_rows += 1;
+            *retained_body_rows += 1;
         } else {
-            *body_truncated = true;
+            *body_overflow = true;
         }
     }
 }

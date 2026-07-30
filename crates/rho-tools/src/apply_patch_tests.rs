@@ -301,6 +301,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Add File: new.txt\n+first\n+part",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Add,
                     display_path: "new.txt".into(),
@@ -317,6 +318,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Update File: edit.txt\n@@ section\n context\n @@ body\n-old\n+new\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Update,
                     display_path: "edit.txt".into(),
@@ -338,6 +340,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Add File: one.txt\n+one\n  *** Update File: two.txt\n@@\n-two\n+TWO\n  *** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![
                     ProposedDiffFile {
                         operation: ProposedDiffOperation::Add,
@@ -368,6 +371,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Update,
                     display_path: "new.txt".into(),
@@ -387,6 +391,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Add File: added.txt\n+kept\n-ignored\n ignored\n*** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Add,
                     display_path: "added.txt".into(),
@@ -403,6 +408,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Update File: blank.txt\n@@\n\n-old\n+new\n*** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Update,
                     display_path: "blank.txt".into(),
@@ -423,6 +429,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: first.txt\n*** Move to: second.txt\n@@\n-old\n+new\n*** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Update,
                     display_path: "first.txt".into(),
@@ -442,6 +449,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Update File: old.txt\n@@\n-old\n+new\n*** Move to: late.txt\n*** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Update,
                     display_path: "old.txt".into(),
@@ -461,6 +469,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Delete,
                     display_path: "gone.txt".into(),
@@ -477,6 +486,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Update File: open.txt\n@@\n-before\n+after\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Update,
                     display_path: "open.txt".into(),
@@ -496,6 +506,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Add File: final.txt\n+last",
             trailing_line: ProposedDiffTrailingLine::Include,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Add,
                     display_path: "final.txt".into(),
@@ -512,6 +523,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             input: "*** Begin Patch\n*** Add File: valid.txt\n+kept\n*** Upda",
             trailing_line: ProposedDiffTrailingLine::Include,
             expected: ProposedDiff {
+                truncated: false,
                 files: vec![ProposedDiffFile {
                     operation: ProposedDiffOperation::Add,
                     display_path: "valid.txt".into(),
@@ -540,11 +552,12 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
     );
     let large = proposed_diff_lenient(&large_input, ProposedDiffTrailingLine::CompleteLinesOnly);
     assert_eq!(large.files[0].added_lines, Some(1_005));
-    assert_eq!(large.files[0].rows.len(), 1_000);
-    assert_eq!(
-        large.files[0].rows.last(),
-        Some(&DiffRow::new(DiffRowKind::Skip, None, "⋯ more changes"))
-    );
+    assert!(large.truncated);
+    assert_eq!(large.files[0].rows.len(), 999);
+    assert!(large.files[0]
+        .rows
+        .iter()
+        .all(|row| row.kind != DiffRowKind::Skip));
 
     let many_files = format!(
         "*** Begin Patch\n{}*** End Patch\n",
@@ -554,19 +567,8 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
     );
     let bounded = proposed_diff_lenient(&many_files, ProposedDiffTrailingLine::CompleteLinesOnly);
     assert_eq!(bounded.files.len(), 100);
-    assert_eq!(
-        bounded.files[99].rows,
-        vec![DiffRow::new(DiffRowKind::Skip, None, "⋯ more changes")]
-    );
-    assert!(
-        bounded.files.len()
-            + bounded
-                .files
-                .iter()
-                .map(|file| file.rows.len())
-                .sum::<usize>()
-            <= 1_000
-    );
+    assert!(bounded.truncated);
+    assert!(bounded.files.iter().all(|file| file.rows.is_empty()));
 
     let many_rows = format!(
         "*** Begin Patch\n{}*** End Patch\n",
@@ -576,19 +578,18 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
     );
     let bounded = proposed_diff_lenient(&many_rows, ProposedDiffTrailingLine::CompleteLinesOnly);
     assert_eq!(bounded.files.len(), 100);
-    assert_eq!(
-        bounded.files.len()
-            + bounded
-                .files
-                .iter()
-                .map(|file| file.rows.len())
-                .sum::<usize>(),
-        1_000
-    );
-    assert_eq!(
-        bounded.files[99].rows,
-        vec![DiffRow::new(DiffRowKind::Skip, None, "⋯ more changes")]
-    );
+    assert!(bounded.truncated);
+    let body_rows = bounded
+        .files
+        .iter()
+        .map(|file| file.rows.len())
+        .sum::<usize>();
+    // 100 file headings + body + 1 card footer slot = 1000
+    assert_eq!(bounded.files.len() + body_rows + 1, 1_000);
+    assert!(bounded
+        .files
+        .iter()
+        .all(|file| file.rows.iter().all(|row| row.kind != DiffRowKind::Skip)));
 }
 
 #[tokio::test]

@@ -3,8 +3,8 @@
 use rho_tools::{
     parse_shell_content,
     tool_card::{
-        compact_diff_rows, parse_unified_diff, DiffRow, DiffRowKind, ParsedDiffFile, ToolBody,
-        ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+        compact_diff_rows, compact_diff_rows_from_card_files, parse_unified_diff, DiffCardFile,
+        DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
     },
 };
 
@@ -18,22 +18,6 @@ use super::{
 pub(super) enum EmptyDiffState {
     Silent,
     NoChanges,
-}
-
-pub(super) struct DiffCardFile {
-    pub(super) path: String,
-    pub(super) stats: Option<(u64, u64)>,
-    pub(super) rows: Vec<DiffRow>,
-}
-
-impl From<ParsedDiffFile> for DiffCardFile {
-    fn from(file: ParsedDiffFile) -> Self {
-        Self {
-            path: file.path,
-            stats: Some((file.added, file.removed)),
-            rows: file.rows,
-        }
-    }
 }
 
 pub(super) fn shell_card(
@@ -159,6 +143,7 @@ pub(super) fn file_diff_card(
             } else {
                 EmptyDiffState::Silent
             },
+            /*truncated*/ false,
         );
         for text in omitted_diff_notices {
             card.push_fact(ToolFact::Meta { text });
@@ -172,6 +157,7 @@ pub(super) fn file_diff_card(
         paths,
         Vec::new(),
         EmptyDiffState::Silent,
+        /*truncated*/ false,
     );
     if !content.trim().is_empty() {
         push_error_output(&mut card, content);
@@ -189,6 +175,7 @@ pub(super) fn diff_card(
     fallback_paths: Vec<String>,
     files: Vec<DiffCardFile>,
     empty_state: EmptyDiffState,
+    truncated: bool,
 ) -> ToolCard {
     // Prefer paths from parsed content so deleted files keep their old path and
     // multi-file bodies get headings even when metadata is thin.
@@ -217,12 +204,18 @@ pub(super) fn diff_card(
                 text: "no changes".into(),
             });
         }
+        if truncated {
+            card.body = ToolBody::Diff(vec![DiffRow::new(
+                DiffRowKind::Skip,
+                None,
+                "⋯ more changes",
+            )]);
+        }
         return card;
     }
 
     let include_file_headers = files.len() > 1;
-    let mut rows = Vec::new();
-    for file in files {
+    for file in &files {
         if let Some((added, removed)) = file.stats {
             card.push_fact(ToolFact::DiffStat {
                 added,
@@ -230,10 +223,10 @@ pub(super) fn diff_card(
                 path: Some(file.path.clone()),
             });
         }
-        if include_file_headers {
-            rows.push(DiffRow::new(DiffRowKind::File, None, file.path));
-        }
-        rows.extend(file.rows);
+    }
+    let mut rows = compact_diff_rows_from_card_files(&files, include_file_headers);
+    if truncated {
+        rows.push(DiffRow::new(DiffRowKind::Skip, None, "⋯ more changes"));
     }
     if !rows.is_empty() {
         card.body = ToolBody::Diff(rows);

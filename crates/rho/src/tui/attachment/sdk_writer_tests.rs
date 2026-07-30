@@ -151,7 +151,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         ViewModelEvent::ToolCallUpdated {
             index: 0,
             call_id: None,
-            card: preview.clone(),
+            card: Some(preview.clone()),
         },
     );
     let second = attachment_update(
@@ -159,7 +159,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         ViewModelEvent::ToolCallUpdated {
             index: 0,
             call_id: Some(call_id.clone()),
-            card: with_id.clone(),
+            card: Some(with_id.clone()),
         },
     );
     let finished = attachment_update(

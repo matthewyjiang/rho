@@ -418,6 +418,25 @@ pub struct ParsedDiffFile {
     pub rows: Vec<DiffRow>,
 }
 
+/// One file section ready for a FileDiff tool card body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffCardFile {
+    pub path: String,
+    /// Present when the section has known addition/removal counts.
+    pub stats: Option<(u64, u64)>,
+    pub rows: Vec<DiffRow>,
+}
+
+impl From<ParsedDiffFile> for DiffCardFile {
+    fn from(file: ParsedDiffFile) -> Self {
+        Self {
+            path: file.path,
+            stats: Some((file.added, file.removed)),
+            rows: file.rows,
+        }
+    }
+}
+
 /// Parse a unified diff once; callers derive stats, body rows, and path counts.
 pub fn parse_unified_diff(diff: &str) -> Vec<ParsedDiffFile> {
     let mut files = Vec::new();
@@ -536,6 +555,21 @@ pub fn compact_diff_rows(diff: &str, include_file_headers: bool) -> Vec<DiffRow>
 /// Build compact body rows from an already-parsed unified diff.
 pub fn compact_diff_rows_from_files(
     files: &[ParsedDiffFile],
+    include_file_headers: bool,
+) -> Vec<DiffRow> {
+    let mut rows = Vec::new();
+    for file in files {
+        if include_file_headers {
+            rows.push(DiffRow::new(DiffRowKind::File, None, file.path.clone()));
+        }
+        rows.extend(file.rows.iter().cloned());
+    }
+    rows
+}
+
+/// Build compact body rows from card-facing file sections.
+pub fn compact_diff_rows_from_card_files(
+    files: &[DiffCardFile],
     include_file_headers: bool,
 ) -> Vec<DiffRow> {
     let mut rows = Vec::new();

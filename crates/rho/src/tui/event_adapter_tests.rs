@@ -217,7 +217,7 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
         DiffRow::new(DiffRowKind::Removed, None, "old"),
         DiffRow::new(DiffRowKind::Added, None, "new"),
     ]));
-    assert_eq!(card, proposed_card);
+    assert_eq!(card, Some(proposed_card.clone()));
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,
@@ -227,9 +227,9 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
         })),
         ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
             call_id: Some(bound_id),
-            card,
+            card: None,
             ..
-        }) if bound_id == call_id && card == proposed_card
+        }) if bound_id == call_id
     ));
     let mut interrupted_card = proposed_card.clone();
     interrupted_card.status = ToolStatus::Interrupted;
@@ -320,7 +320,7 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
 }
 
 #[test]
-fn apply_patch_binds_a_late_call_id_after_the_large_preview_freezes() {
+fn apply_patch_binds_a_late_call_id_after_a_large_preview_stride() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-large-preview").unwrap();
     let input = format!(
@@ -335,9 +335,14 @@ fn apply_patch_binds_a_late_call_id_after_the_large_preview_freezes() {
             name: Some("apply_patch".into()),
             arguments_delta: arguments,
         })),
-        ViewEvent::Update(ViewModelEvent::ToolCallUpdated { call_id: None, .. })
+        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+            call_id: None,
+            card: Some(_),
+            ..
+        })
     ));
 
+    // Identity-only delta after a coarse stride: bind without re-rendering.
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,
@@ -347,6 +352,7 @@ fn apply_patch_binds_a_late_call_id_after_the_large_preview_freezes() {
         })),
         ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
             call_id: Some(bound_id),
+            card: None,
             ..
         }) if bound_id == call_id
     ));

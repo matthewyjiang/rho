@@ -156,7 +156,7 @@ impl TurnUi {
         &mut self,
         index: usize,
         call_id: Option<ToolCallId>,
-        card: ToolCard,
+        card: Option<ToolCard>,
     ) {
         self.tool_calls.preview(index, call_id, card);
     }
