@@ -131,6 +131,20 @@ impl HookObserver for RecordingObserver {
     }
 }
 
+/// Sorted call IDs named by a batch of tool envelopes.
+fn call_ids<'a>(envelopes: impl Iterator<Item = &'a HookEnvelope>) -> Vec<String> {
+    let mut ids: Vec<_> = envelopes
+        .map(|envelope| {
+            serde_json::to_value(envelope.payload()).unwrap()["tool"]["call_id"]
+                .as_str()
+                .expect("tool events name their call")
+                .to_owned()
+        })
+        .collect();
+    ids.sort();
+    ids
+}
+
 fn tool_then_text() -> ScriptedProvider {
     ScriptedProvider::new(
         identity(),
@@ -466,4 +480,62 @@ async fn a_runtime_without_hooks_runs_unchanged() {
     assert_eq!(outcome.text(), "plain");
     assert!(!runtime.hooks().is_enabled());
     assert_eq!(outcome.usage(), &ModelUsage::default());
+}
+
+#[tokio::test]
+async fn parallel_tool_calls_keep_per_call_hook_identity() {
+    let gate = ScriptedGate::new(HookDecision::Continue);
+    let observer = Arc::new(RecordingObserver::default());
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                ContentBlock::ToolCall(ToolCall {
+                    id: "call-a".into(),
+                    name: "read_file".into(),
+                    arguments: json!({}),
+                }),
+                ContentBlock::ToolCall(ToolCall {
+                    id: "call-b".into(),
+                    name: "read_file".into(),
+                    arguments: json!({}),
+                }),
+            ])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )])),
+        ],
+    );
+    let runtime = Rho::builder()
+        .provider(provider)
+        .tool(ReadingTool)
+        .workspace(Workspace::new(std::env::temp_dir()).unwrap())
+        .workspace_policy(FixedPolicy(PolicyDecision::Allow))
+        .max_parallel_tools(std::num::NonZeroUsize::new(2).unwrap())
+        .pre_tool_gate_shared(gate.clone())
+        .hook_observer_shared(observer.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    session.complete("go").await.unwrap();
+
+    // Each call is gated on its own and reported on its own; neither event
+    // borrows the other call's identity.
+    assert_eq!(
+        call_ids(gate.envelopes.lock().unwrap().iter()),
+        vec!["call-a", "call-b"]
+    );
+
+    assert_eq!(
+        call_ids(
+            observer
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|envelope| envelope.event() == HookEventKind::AfterToolUse)
+        ),
+        vec!["call-a", "call-b"]
+    );
 }
