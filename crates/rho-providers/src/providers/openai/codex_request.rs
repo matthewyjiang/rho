@@ -21,10 +21,11 @@ pub(super) enum ResponsesWireContract {
 }
 
 impl ResponsesWireContract {
-    fn for_auth(auth: &Auth, model: &str) -> Self {
+    fn for_auth(auth: &Auth) -> Self {
         match auth {
             Auth::ApiKey(_) => Self::OpenAiStandard,
-            Auth::Codex { .. } if is_responses_lite_model(model) => Self::CodexLite,
+            // gpt-5.6-sol/terra/luna originally required Responses Lite on launch
+            // day; the standard Codex Responses contract works for them again.
             Auth::Codex { .. } => Self::CodexStandard,
         }
     }
@@ -102,10 +103,6 @@ impl ResponsesWireContract {
     }
 }
 
-fn is_responses_lite_model(model: &str) -> bool {
-    matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna")
-}
-
 /// Credential-derived Responses identity and wire contract.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ResponsesProfile {
@@ -117,13 +114,24 @@ pub(super) struct ResponsesProfile {
 impl ResponsesProfile {
     pub(super) fn from_auth(auth: &Auth, model: impl Into<String>) -> Self {
         let model = model.into();
-        let contract = ResponsesWireContract::for_auth(auth, &model);
+        let contract = ResponsesWireContract::for_auth(auth);
+        Self::from_parts(model, contract)
+    }
+
+    fn from_parts(model: impl Into<String>, contract: ResponsesWireContract) -> Self {
+        let model = model.into();
         let provider = contract.provider();
         Self {
             identity: ModelIdentity::new(provider, "openai-responses", &model),
             model,
             contract,
         }
+    }
+
+    /// Test-only constructor that pins a wire contract independent of auth/model.
+    #[cfg(test)]
+    pub(super) fn from_contract(model: impl Into<String>, contract: ResponsesWireContract) -> Self {
+        Self::from_parts(model, contract)
     }
 
     pub(super) fn provider(&self) -> &'static str {

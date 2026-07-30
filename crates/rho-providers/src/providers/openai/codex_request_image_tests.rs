@@ -21,10 +21,18 @@ async fn responses_lite_applies_image_safety_policy() {
         mime_type: "image/png".into(),
     })])];
 
-    let lite = build_codex_responses_body("gpt-5.6-sol", request_with_invalid_image(&messages))
-        .await
-        .unwrap();
-    let standard = build_codex_responses_body("gpt-5.5", request_with_invalid_image(&messages))
+    let lite_profile =
+        ResponsesProfile::from_contract("gpt-5.6-sol", ResponsesWireContract::CodexLite);
+    let lite = build_responses_create_body(
+        &lite_profile,
+        &OpenAiReasoningProfile::unknown(),
+        request_with_invalid_image(&messages),
+        None,
+        /*hosted_web_search*/ true,
+    )
+    .await
+    .unwrap();
+    let standard = build_codex_responses_body("gpt-5.6-sol", request_with_invalid_image(&messages))
         .await
         .unwrap();
 

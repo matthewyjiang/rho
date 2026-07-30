@@ -66,9 +66,69 @@ async fn priority_service_tier_is_limited_to_codex_auth() {
 }
 
 #[tokio::test]
+async fn gpt56_codex_models_use_standard_wire_contract() {
+    for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+        let profile = ResponsesProfile::from_auth(&codex_test_auth(), model);
+        assert_eq!(profile.contract(), ResponsesWireContract::CodexStandard);
+
+        let body = build_codex_responses_body(
+            model,
+            ModelRequest {
+                messages: &[
+                    Message::System("follow the repository instructions".into()),
+                    Message::user_text("hello"),
+                ],
+                tools: &[ToolSpec {
+                    name: "bash".into(),
+                    description: "run a command".into(),
+                    input_schema: json!({"type": "object"}),
+                }],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            body["instructions"], "follow the repository instructions",
+            "{model} keeps instructions top-level"
+        );
+        assert_eq!(
+            body["parallel_tool_calls"], true,
+            "{model} enables parallel tools"
+        );
+        assert_eq!(
+            body.get("include"),
+            Some(&json!(["reasoning.encrypted_content"])),
+            "{model} includes encrypted reasoning"
+        );
+        assert!(
+            body.get("reasoning")
+                .and_then(|value| value.get("context"))
+                .is_none(),
+            "{model} does not set lite reasoning context"
+        );
+        assert!(body["tools"].is_array(), "{model} keeps tools top-level");
+        assert!(
+            body["input"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .all(|item| item.get("type").and_then(Value::as_str) != Some("additional_tools")),
+            "{model} does not nest tools in input"
+        );
+    }
+}
+
+#[tokio::test]
 async fn responses_lite_sets_all_turns_reasoning_context() {
-    let body = build_codex_responses_body(
-        "gpt-5.6-terra",
+    let profile =
+        ResponsesProfile::from_contract("gpt-5.6-terra", ResponsesWireContract::CodexLite);
+    let body = build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
         ModelRequest {
             messages: &[Message::user_text("hello")],
             tools: &[],
@@ -76,6 +136,8 @@ async fn responses_lite_sets_all_turns_reasoning_context() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
+        None,
+        /*hosted_web_search*/ true,
     )
     .await
     .unwrap();
@@ -88,8 +150,10 @@ async fn responses_lite_sets_all_turns_reasoning_context() {
 
 #[tokio::test]
 async fn responses_lite_moves_tools_and_instructions_into_input() {
-    let body = build_codex_responses_body(
-        "gpt-5.6-luna",
+    let profile = ResponsesProfile::from_contract("gpt-5.6-luna", ResponsesWireContract::CodexLite);
+    let body = build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
         ModelRequest {
             messages: &[
                 Message::System("follow the repository instructions".into()),
@@ -104,6 +168,8 @@ async fn responses_lite_moves_tools_and_instructions_into_input() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
+        None,
+        /*hosted_web_search*/ true,
     )
     .await
     .unwrap();
@@ -301,7 +367,19 @@ async fn compact_body_omits_stream_tools_and_tool_policy_fields() {
     assert!(standard_body.get("include").is_none());
     assert!(standard_body.get("instructions").is_some());
 
-    let lite = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-5.6-sol");
+    let codex = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-5.6-sol");
+    let codex_body =
+        build_responses_compact_body(&codex, &OpenAiReasoningProfile::unknown(), request.clone())
+            .await
+            .unwrap();
+    assert_compact_body_omits_tool_fields(&codex_body);
+    assert!(codex_body.get("instructions").is_some());
+    assert!(codex_body
+        .get("reasoning")
+        .and_then(|value| value.get("context"))
+        .is_none());
+
+    let lite = ResponsesProfile::from_contract("gpt-5.6-sol", ResponsesWireContract::CodexLite);
     let lite_body =
         build_responses_compact_body(&lite, &OpenAiReasoningProfile::unknown(), request)
             .await

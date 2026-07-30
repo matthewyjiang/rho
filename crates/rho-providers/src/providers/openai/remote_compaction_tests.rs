@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::super::auth::Auth;
-use super::super::codex_request::{codex_test_auth, ResponsesProfile};
+use super::super::codex_request::{codex_test_auth, ResponsesProfile, ResponsesWireContract};
 
 fn api_key_profile(model: &str) -> ResponsesProfile {
     ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), model)
@@ -48,8 +48,49 @@ async fn compact_request_body_is_unary_without_trigger() {
 }
 
 #[tokio::test]
-async fn compact_request_body_keeps_codex_responses_lite_shape_without_tools() {
+async fn compact_request_body_uses_codex_standard_shape_for_gpt56_models() {
     let profile = codex_profile("gpt-5.6-sol");
+    let body = build_responses_compact_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        ModelRequest {
+            messages: &[
+                Message::System("be careful".into()),
+                Message::user_text("hello"),
+            ],
+            tools: &[ToolSpec {
+                name: "bash".into(),
+                description: "run a command".into(),
+                input_schema: json!({"type": "object"}),
+            }],
+            cancellation: Default::default(),
+            reasoning_level: Default::default(),
+            prompt_cache_key: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(body.get("stream").is_none());
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+    assert!(body.get("parallel_tool_calls").is_none());
+    assert_eq!(body["instructions"], "be careful");
+    assert!(body
+        .get("input")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .all(|item| item.get("type").and_then(Value::as_str) != Some("additional_tools")));
+    assert!(body
+        .get("reasoning")
+        .and_then(|value| value.get("context"))
+        .is_none());
+}
+
+#[tokio::test]
+async fn compact_request_body_keeps_codex_responses_lite_shape_without_tools() {
+    let profile = ResponsesProfile::from_contract("gpt-5.6-sol", ResponsesWireContract::CodexLite);
     let body = build_responses_compact_body(
         &profile,
         &OpenAiReasoningProfile::unknown(),
