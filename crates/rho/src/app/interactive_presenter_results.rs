@@ -3,8 +3,9 @@
 use rho_tools::{
     parse_shell_content,
     tool_card::{
-        compact_diff_rows, compact_diff_rows_from_card_files, parse_unified_diff, DiffCardFile,
-        DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+        compact_diff_rows, compact_diff_rows_from_card_files, parse_unified_diff, DiffCardChange,
+        DiffCardFile, DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
+        ToolStatus,
     },
 };
 
@@ -181,7 +182,7 @@ pub(super) fn diff_card(
     // multi-file bodies get headings even when metadata is thin.
     let mut header_paths = files
         .iter()
-        .map(|file| file.path.clone())
+        .map(DiffCardFile::display_path)
         .collect::<Vec<_>>();
     for path in fallback_paths {
         if !header_paths.contains(&path) {
@@ -216,12 +217,24 @@ pub(super) fn diff_card(
 
     let include_file_headers = files.len() > 1;
     for file in &files {
-        if let Some((added, removed)) = file.stats {
-            card.push_fact(ToolFact::DiffStat {
-                added,
-                removed,
-                path: Some(file.path.clone()),
-            });
+        match file.change {
+            DiffCardChange::Delete => {
+                let text = if include_file_headers {
+                    format!("delete {}", file.path)
+                } else {
+                    "delete".into()
+                };
+                card.push_fact(ToolFact::Meta { text });
+            }
+            DiffCardChange::Content => {
+                if let Some((added, removed)) = file.stats {
+                    card.push_fact(ToolFact::DiffStat {
+                        added,
+                        removed,
+                        path: Some(file.display_path()),
+                    });
+                }
+            }
         }
     }
     let mut rows = compact_diff_rows_from_card_files(&files, include_file_headers);

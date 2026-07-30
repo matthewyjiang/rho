@@ -366,6 +366,58 @@ fn apply_patch_binds_a_late_call_id_after_a_large_preview_stride() {
         .is_empty());
 }
 
+// Covers: delete and move-only apply_patch previews keep explicit identity
+// Owner: interactive presenter format
+#[test]
+fn apply_patch_preview_preserves_delete_and_move_identity() {
+    struct Case {
+        name: &'static str,
+        input: &'static str,
+        expected: rho_tools::tool_card::ToolCard,
+    }
+
+    let cases = [
+        Case {
+            name: "delete",
+            input: "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch",
+            expected: rho_tools::tool_card::ToolCard::new(
+                ToolStatus::Running,
+                ToolFamily::FileDiff,
+                ToolHeader::call("apply_patch", Some("gone.txt".into())),
+            )
+            .with_facts(vec![ToolFact::Meta {
+                text: "delete".into(),
+            }]),
+        },
+        Case {
+            name: "move-only",
+            input: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n*** End Patch",
+            expected: rho_tools::tool_card::ToolCard::new(
+                ToolStatus::Running,
+                ToolFamily::FileDiff,
+                ToolHeader::call("apply_patch", Some("old.txt → new.txt".into())),
+            ),
+        },
+    ];
+
+    for case in cases {
+        let mut adapter = SdkEventAdapter::default();
+        let arguments = serde_json::to_string(&serde_json::json!({"input": case.input})).unwrap();
+        let ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+            card: Some(card), ..
+        }) = only_event(adapter.translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: None,
+            name: Some("apply_patch".into()),
+            arguments_delta: arguments,
+        }))
+        else {
+            panic!("{}: expected streamed apply_patch card", case.name);
+        };
+        assert_eq!(card, case.expected, "{}", case.name);
+    }
+}
+
 #[test]
 fn write_file_does_not_label_a_mixed_omitted_diff_as_no_changes() {
     let mut adapter = SdkEventAdapter::default();

@@ -336,7 +336,7 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
             },
         },
         Case {
-            name: "multi-file patch keeps row boundaries and trims outer markers",
+            name: "multi-file patch keeps row boundaries and accepts multi-space markers",
             input: "*** Begin Patch\n*** Add File: one.txt\n+one\n  *** Update File: two.txt\n@@\n-two\n+TWO\n  *** End Patch\n",
             trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
             expected: ProposedDiff {
@@ -364,6 +364,27 @@ fn proposed_diff_lenient_projects_streamed_file_operations() {
                         removed_lines: Some(1),
                     },
                 ],
+            },
+        },
+        Case {
+            name: "single-space delete marker remains update context",
+            input: "*** Begin Patch\n*** Update File: note.txt\n@@\n *** Delete File: note.txt\n-keep\n+kept\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "note.txt".into(),
+                    source_path: Some("note.txt".into()),
+                    destination_path: None,
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Context, None, "*** Delete File: note.txt"),
+                        DiffRow::new(DiffRowKind::Removed, None, "keep"),
+                        DiffRow::new(DiffRowKind::Added, None, "kept"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
             },
         },
         Case {

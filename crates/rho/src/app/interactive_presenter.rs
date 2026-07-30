@@ -81,15 +81,35 @@ impl ToolKind {
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
+        if matches!(self, Self::ApplyPatch) && arguments_len >= APPLY_PATCH_STREAM_PREVIEW_LIMIT {
+            // Grow with buffer size so total parse work stays linear for long
+            // streams instead of rescanning on a fixed byte interval.
+            return arguments_len.max(APPLY_PATCH_STREAM_PREVIEW_STRIDE);
+        }
         match self {
-            // Large apply_patch streams are display-only until ToolProposed.
-            // Coarse strides avoid repeated full-buffer scans without a separate
-            // freeze lifecycle that couples the presenter to identity binding.
-            Self::ApplyPatch if arguments_len >= APPLY_PATCH_STREAM_PREVIEW_LIMIT => {
-                APPLY_PATCH_STREAM_PREVIEW_STRIDE
+            Self::Agent
+            | Self::Agents
+            | Self::Bash
+            | Self::PowerShell
+            | Self::Process
+            | Self::ListDir
+            | Self::Grep
+            | Self::Glob
+            | Self::ReadFile
+            | Self::WriteFile
+            | Self::ApplyPatch
+            | Self::Skill
+            | Self::WebSearch
+            | Self::FetchContent
+            | Self::GetSearchContent
+            | Self::Questionnaire
+            | Self::Other => {
+                if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
+                    0
+                } else {
+                    PREVIEW_LARGE_PARSE_STRIDE
+                }
             }
-            _ if arguments_len < PREVIEW_FULL_PARSE_LIMIT => 0,
-            _ => PREVIEW_LARGE_PARSE_STRIDE,
         }
     }
 }
@@ -109,7 +129,8 @@ const PREVIEW_LARGE_PARSE_STRIDE: usize = 4096;
 /// The final proposal still parses the complete patch once.
 const APPLY_PATCH_STREAM_PREVIEW_LIMIT: usize = 256 * 1024;
 
-/// Bytes between apply_patch preview rebuilds past [`APPLY_PATCH_STREAM_PREVIEW_LIMIT`].
+/// Minimum bytes between apply_patch preview rebuilds past
+/// [`APPLY_PATCH_STREAM_PREVIEW_LIMIT`]. Actual intervals grow with buffer size.
 const APPLY_PATCH_STREAM_PREVIEW_STRIDE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Default)]
@@ -315,3 +336,7 @@ impl InteractiveToolPresenter {
         (ok, presentation(&view, card))
     }
 }
+
+#[cfg(test)]
+#[path = "interactive_presenter_tests.rs"]
+mod tests;

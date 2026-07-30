@@ -3,7 +3,10 @@
 use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::{
     tool::compact_display_path,
-    tool_card::{DiffCardFile, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
+    tool_card::{
+        DiffCardChange, DiffCardFile, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
+        ToolStatus,
+    },
 };
 
 #[path = "interactive_presenter_results.rs"]
@@ -217,22 +220,31 @@ fn apply_patch_start_card(
     let files = proposed
         .files
         .into_iter()
-        .map(|file| DiffCardFile {
-            path: match (&file.source_path, &file.destination_path) {
-                (Some(source), Some(destination)) if source != destination => {
-                    format!(
-                        "{} → {}",
-                        compact_display_path(cwd, source),
-                        compact_display_path(cwd, destination)
-                    )
+        .map(|file| {
+            use rho_tools::apply_patch::ProposedDiffOperation;
+            let change = match file.operation {
+                ProposedDiffOperation::Delete => DiffCardChange::Delete,
+                ProposedDiffOperation::Add | ProposedDiffOperation::Update => {
+                    DiffCardChange::Content
                 }
-                _ => compact_display_path(cwd, &file.display_path),
-            },
-            stats: file
-                .added_lines
-                .zip(file.removed_lines)
-                .filter(|(added, removed)| *added > 0 || *removed > 0),
-            rows: file.rows,
+            };
+            let path = compact_display_path(cwd, &file.display_path);
+            let source_path = match (&file.source_path, &file.destination_path) {
+                (Some(source), Some(destination)) if source != destination => {
+                    Some(compact_display_path(cwd, source))
+                }
+                _ => None,
+            };
+            DiffCardFile {
+                path,
+                source_path,
+                change,
+                stats: file
+                    .added_lines
+                    .zip(file.removed_lines)
+                    .filter(|(added, removed)| *added > 0 || *removed > 0),
+                rows: file.rows,
+            }
         })
         .collect::<Vec<_>>();
     diff_card(

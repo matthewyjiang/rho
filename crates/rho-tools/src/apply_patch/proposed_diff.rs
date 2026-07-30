@@ -87,12 +87,14 @@ pub fn proposed_diff_lenient(input: &str, trailing_line: ProposedDiffTrailingLin
             continue;
         }
         let marker = line.trim_end();
-        let outer_marker = marker.trim_start();
-        if outer_marker == END_PATCH_MARKER {
+        // One leading space is the update context prefix, so keep it. Zero or
+        // two-plus spaces still allow section-marker detection.
+        let section_marker = section_marker_line(marker);
+        if section_marker == END_PATCH_MARKER {
             finish_file(&mut proposed.files, &mut current);
             break;
         }
-        if let Some(path) = nonempty_marker_value(outer_marker, ADD_FILE_MARKER) {
+        if let Some(path) = nonempty_marker_value(section_marker, ADD_FILE_MARKER) {
             finish_file(&mut proposed.files, &mut current);
             start_file(
                 &mut proposed.files,
@@ -103,7 +105,7 @@ pub fn proposed_diff_lenient(input: &str, trailing_line: ProposedDiffTrailingLin
             move_allowed = false;
             continue;
         }
-        if let Some(path) = nonempty_marker_value(outer_marker, DELETE_FILE_MARKER) {
+        if let Some(path) = nonempty_marker_value(section_marker, DELETE_FILE_MARKER) {
             finish_file(&mut proposed.files, &mut current);
             start_file(
                 &mut proposed.files,
@@ -114,7 +116,7 @@ pub fn proposed_diff_lenient(input: &str, trailing_line: ProposedDiffTrailingLin
             move_allowed = false;
             continue;
         }
-        if let Some(path) = nonempty_marker_value(outer_marker, UPDATE_FILE_MARKER) {
+        if let Some(path) = nonempty_marker_value(section_marker, UPDATE_FILE_MARKER) {
             finish_file(&mut proposed.files, &mut current);
             move_allowed = start_file(
                 &mut proposed.files,
@@ -124,7 +126,7 @@ pub fn proposed_diff_lenient(input: &str, trailing_line: ProposedDiffTrailingLin
             );
             continue;
         }
-        if let Some(destination) = nonempty_marker_value(marker, MOVE_TO_MARKER) {
+        if let Some(destination) = nonempty_marker_value(section_marker, MOVE_TO_MARKER) {
             if move_allowed {
                 if let Some(
                     file @ ProposedDiffFile {
@@ -181,6 +183,21 @@ pub fn proposed_diff_lenient(input: &str, trailing_line: ProposedDiffTrailingLin
 
 fn nonempty_marker_value<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
     line.strip_prefix(marker).filter(|value| !value.is_empty())
+}
+
+/// Normalize a line for section-marker matching.
+///
+/// A single leading space is the update-hunk context prefix, so those lines stay
+/// intact and cannot match `*** …` markers. Unindented markers and markers with
+/// two or more leading spaces remain detectable.
+fn section_marker_line(marker: &str) -> &str {
+    let stripped = marker.trim_start();
+    let leading = marker.len() - stripped.len();
+    if leading == 1 {
+        marker
+    } else {
+        stripped
+    }
 }
 
 fn finish_file(files: &mut Vec<ProposedDiffFile>, current: &mut Option<ProposedDiffFile>) {

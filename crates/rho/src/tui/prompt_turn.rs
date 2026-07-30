@@ -481,6 +481,7 @@ impl App {
                         .expect("inline shell error checked above")
                         .to_string(),
                     failed_turn,
+                    interrupted_tool_entries,
                 );
                 self.debug_assert_provider_turn_sync(agent);
                 outcome
@@ -550,7 +551,8 @@ impl App {
                     Ok(_) => "model run failed".into(),
                     Err(error) => error.to_string(),
                 });
-                let outcome = self.finalize_failed_turn(message, failed_turn);
+                let outcome =
+                    self.finalize_failed_turn(message, failed_turn, interrupted_tool_entries);
                 self.debug_assert_provider_turn_sync(agent);
                 outcome
             }
@@ -603,8 +605,14 @@ impl App {
         Ok((call_id, request_id, reply_rx))
     }
 
-    fn finalize_failed_turn(&mut self, message: String, failed_turn: FailedTurn) -> TurnOutcome {
+    fn finalize_failed_turn(
+        &mut self,
+        message: String,
+        failed_turn: FailedTurn,
+        interrupted_tool_entries: Vec<ToolEntry>,
+    ) -> TurnOutcome {
         self.finish_streams();
+        self.retain_interrupted_tools(interrupted_tool_entries);
         self.reset_streams();
         self.turn.set_current_turn_start(None);
         self.end_busy_ui();

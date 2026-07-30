@@ -313,6 +313,7 @@ impl SdkEventAdapter {
             RunEvent::ProviderActivity { .. } => Vec::new(),
             RunEvent::ProviderStreamReset { .. } => {
                 self.presenter().step_started();
+                self.bound_stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset)]
             }
             RunEvent::ProviderContextUpdated { .. } => Vec::new(),
