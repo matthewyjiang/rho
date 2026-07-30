@@ -29,7 +29,7 @@ use rho_sdk::{
         ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
         ToolSecurity,
     },
-    CapabilityKind, ResolvedWorkspacePath, Workspace, WorkspacePathState,
+    CapabilityKind, CapabilityRequest, ResolvedWorkspacePath, Workspace, WorkspacePathState,
 };
 
 #[cfg(test)]
@@ -46,8 +46,7 @@ use crate::{
 };
 
 use super::{
-    edit_file::{apply_edits, EditFile},
-    edit_file_args::{Args as EditArgs, Edit},
+    apply_patch::{apply_hunks, parse_patch, patch_paths, ApplyPatch, Hunk},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     write_file::{write_file_content, WriteFile},
@@ -115,7 +114,7 @@ pub enum CodingToolKind {
     ListDir,
     ReadFile,
     WriteFile,
-    EditFile,
+    ApplyPatch,
     Grep,
     Glob,
 }
@@ -133,7 +132,7 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
         }),
-        CodingToolKind::EditFile => Arc::new(EditFileTool {
+        CodingToolKind::ApplyPatch => Arc::new(ApplyPatchTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
         }),
@@ -148,7 +147,7 @@ pub fn coding_tools(options: CodingToolOptions) -> Vec<Arc<dyn Tool>> {
         CodingToolKind::ListDir,
         CodingToolKind::ReadFile,
         CodingToolKind::WriteFile,
-        CodingToolKind::EditFile,
+        CodingToolKind::ApplyPatch,
         CodingToolKind::Grep,
         CodingToolKind::Glob,
     ]
@@ -170,7 +169,7 @@ struct WriteFileTool {
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
-struct EditFileTool {
+struct ApplyPatchTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
@@ -191,6 +190,11 @@ struct ReadArgs {
 struct WriteArgs {
     path: String,
     content: String,
+}
+
+#[derive(Deserialize)]
+struct ApplyPatchArgs {
+    input: String,
 }
 
 impl Tool for ListDirTool {
@@ -371,18 +375,18 @@ impl Tool for WriteFileTool {
     }
 }
 
-impl Tool for EditFileTool {
+impl Tool for ApplyPatchTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
-        EditFile.spec()
+        ApplyPatch.spec()
     }
 
     fn security(&self) -> ToolSecurity {
-        // Edits always read current file contents before applying replacements.
+        // Patches read current file contents before writing replacements.
         ToolSecurity::built_in([CapabilityKind::Write, CapabilityKind::Read])
     }
 
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
-        path_start_metadata(arguments, OperationKind::Write)
+        patch_start_metadata(arguments)
     }
 
     fn prepare<'a>(
@@ -392,51 +396,109 @@ impl Tool for EditFileTool {
     ) -> ToolPrepareFuture<'a> {
         Box::pin(async move {
             check_preparation_cancelled(&context)?;
-            let metadata = path_start_metadata(invocation.arguments(), OperationKind::Write);
-            let args: EditArgs = parse_args(invocation.into_arguments())?;
-            let edits = args.into_edits().map_err(map_app_error)?;
+            let metadata = patch_start_metadata(invocation.arguments());
+            let args: ApplyPatchArgs = parse_args(invocation.into_arguments())?;
+            let hunks = parse_patch(&args.input).map_err(|error| {
+                ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+            })?;
             let workspace = preparation_workspace(&context)?.clone();
-            let mut resolved_by_request = std::collections::HashMap::new();
-            let mut resolved_by_canonical = std::collections::BTreeMap::new();
-            for edit in &edits {
-                let resolved = workspace
-                    .resolve_for_read(&edit.path)
-                    .map_err(map_path_error)?;
-                resolved_by_request.insert(edit.path.clone(), resolved.path().to_path_buf());
-                resolved_by_canonical
-                    .entry(resolved.path().to_path_buf())
-                    .or_insert(resolved);
+            let mut path_set = PatchPathSet::default();
+
+            for hunk in &hunks {
+                path_set.collect(
+                    &workspace,
+                    hunk.source_path(),
+                    /*require_existing*/ !matches!(hunk, Hunk::Add { .. }),
+                )?;
+                if let Hunk::Update {
+                    move_path: Some(dest),
+                    ..
+                } = hunk
+                {
+                    path_set.collect(&workspace, dest, /*require_existing*/ false)?;
+                }
             }
-            let accesses = resolved_by_canonical
-                .keys()
-                .map(|path| ToolResourceAccess::exclusive(ToolResource::workspace_path(path)))
-                .collect::<Vec<_>>();
-            let capabilities = resolved_by_canonical
-                .values()
-                .flat_map(|resolved| {
-                    [
-                        path_request(resolved, PathCapability::Write, "edit_file"),
-                        path_request(resolved, PathCapability::Read, "edit_file"),
-                    ]
-                })
-                .collect::<Vec<_>>();
+            let PatchPathSet {
+                resolved_by_request,
+                resolved_by_canonical,
+                accesses,
+                capabilities,
+            } = path_set;
+
             Ok(PreparedToolInvocation::resource_aware(
                 accesses,
                 capabilities,
                 metadata,
                 move |context| {
-                    execute_prepared_edits(
+                    execute_prepared_patch(
                         self.max_output_bytes,
                         self.mutation_observer.clone(),
                         workspace,
                         resolved_by_canonical,
                         resolved_by_request,
-                        edits,
+                        hunks,
                         context,
                     )
                 },
             ))
         })
+    }
+}
+
+#[derive(Default)]
+struct PatchPathSet {
+    resolved_by_request: std::collections::HashMap<String, PathBuf>,
+    resolved_by_canonical: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
+    accesses: Vec<ToolResourceAccess>,
+    capabilities: Vec<CapabilityRequest>,
+}
+
+impl PatchPathSet {
+    fn collect(
+        &mut self,
+        workspace: &Workspace,
+        requested_path: &std::path::Path,
+        require_existing: bool,
+    ) -> Result<(), ToolError> {
+        let requested = requested_path
+            .to_str()
+            .ok_or_else(|| {
+                ToolError::new(
+                    ToolErrorKind::InvalidArguments,
+                    format!("path is not valid UTF-8: {}", requested_path.display()),
+                )
+            })?
+            .to_string();
+        if self.resolved_by_request.contains_key(&requested) {
+            return Ok(());
+        }
+        let resolved = if require_existing {
+            workspace
+                .resolve_for_read(&requested)
+                .map_err(map_path_error)?
+        } else {
+            workspace
+                .resolve_for_write(&requested)
+                .map_err(map_path_error)?
+        };
+        self.resolved_by_request
+            .insert(requested, resolved.path().to_path_buf());
+        if self.resolved_by_canonical.contains_key(resolved.path()) {
+            return Ok(());
+        }
+        self.accesses.extend(write_accesses(&resolved));
+        self.capabilities.push(path_request(
+            &resolved,
+            PathCapability::Write,
+            "apply_patch",
+        ));
+        if require_existing || resolved.state() == WorkspacePathState::Existing {
+            self.capabilities
+                .push(path_request(&resolved, PathCapability::Read, "apply_patch"));
+        }
+        self.resolved_by_canonical
+            .insert(resolved.path().to_path_buf(), resolved);
+        Ok(())
     }
 }
 
@@ -497,21 +559,21 @@ fn execute_prepared_write(
     })
 }
 
-fn execute_prepared_edits(
+fn execute_prepared_patch(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     workspace: Workspace,
     resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
     requested_paths: std::collections::HashMap<String, PathBuf>,
-    edits: Vec<Edit>,
+    hunks: Vec<Hunk>,
     context: AuthorizedToolContext,
 ) -> ToolFuture<'static> {
     Box::pin(async move {
-        let total = edits.len() as u64;
+        let total = hunks.len() as u64;
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("editing {total} change(s)"))
+                ToolProgress::message(format!("applying patch ({total} file op(s))"))
                     .units(0, total.max(1))
                     .metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
@@ -529,17 +591,17 @@ fn execute_prepared_edits(
                 .await
                 .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
         }
-        let edit_result = apply_edits(
-            edits,
+        let patch_result = apply_hunks(
+            hunks,
             |requested| {
                 let path = requested_paths.get(requested).ok_or_else(|| {
                     AppToolError::Message(format!(
-                        "edit path '{requested}' was not prepared for this invocation"
+                        "patch path '{requested}' was not prepared for this invocation"
                     ))
                 })?;
                 let prepared = resolved.get(path).ok_or_else(|| {
                     AppToolError::Message(format!(
-                        "edit target '{}' was not prepared for this invocation",
+                        "patch target '{}' was not prepared for this invocation",
                         path.display()
                     ))
                 })?;
@@ -560,14 +622,14 @@ fn execute_prepared_edits(
                 .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
             None => Ok(()),
         };
-        let outcome = match (edit_result, capture_result) {
+        let outcome = match (patch_result, capture_result) {
             (Ok(outcome), Ok(())) => outcome,
             (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
-            (Err(edit_error), Err(capture_error)) => {
+            (Err(patch_error), Err(capture_error)) => {
                 return Err(ToolError::new(
                     ToolErrorKind::Execution,
                     format!(
-                        "{edit_error}; failed to capture resulting workspace state: {capture_error}"
+                        "{patch_error}; failed to capture resulting workspace state: {capture_error}"
                     ),
                 ));
             }
@@ -575,7 +637,7 @@ fn execute_prepared_edits(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("edited {} file(s)", outcome.file_count))
+                ToolProgress::message(format!("updated {} file(s)", outcome.file_count))
                     .units(total.max(1), total.max(1))
                     .metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
@@ -613,14 +675,15 @@ fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetad
     if let Some(path) = arguments.get("path").and_then(Value::as_str) {
         metadata = metadata.affected_path(path);
     }
-    for path in arguments
-        .get("edits")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|edit| edit.get("path").and_then(Value::as_str))
-    {
-        metadata = metadata.affected_path(path);
+    metadata
+}
+
+fn patch_start_metadata(arguments: &Value) -> ToolMetadata {
+    let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
+    if let Some(input) = arguments.get("input").and_then(Value::as_str) {
+        for path in patch_paths(input) {
+            metadata = metadata.affected_path(path);
+        }
     }
     metadata
 }

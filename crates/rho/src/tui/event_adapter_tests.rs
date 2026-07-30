@@ -182,13 +182,13 @@ fn retains_structured_tool_metadata_until_completion() {
     let call_id = ToolCallId::from_string("call-1").unwrap();
     let call = ToolCall {
         id: call_id.to_string(),
-        name: "edit_file".into(),
+        name: "apply_patch".into(),
         arguments: serde_json::json!({"path": "src/lib.rs"}),
     };
     let _ = only_event(adapter.translate(RunEvent::ToolProposed { call }));
     let _ = only_event(adapter.translate(RunEvent::ToolStarted {
         call_id: call_id.clone(),
-        name: "edit_file".into(),
+        name: "apply_patch".into(),
         metadata: ToolMetadata::new().operation(OperationKind::Write),
     }));
     let output = ToolOutput::text("updated").metadata(
@@ -213,7 +213,7 @@ fn retains_structured_tool_metadata_until_completion() {
     assert_eq!(card.status, ToolStatus::Ok);
     assert_eq!(
         card.header,
-        ToolHeader::call("edit_file", Some("src/lib.rs".into()))
+        ToolHeader::call("apply_patch", Some("src/lib.rs".into()))
     );
     assert_eq!(
         card.facts,

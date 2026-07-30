@@ -83,7 +83,7 @@ provider = "disabled"
         "list_dir",
         "read_file",
         "write_file",
-        "edit_file",
+        "apply_patch",
         "grep",
         "glob",
         "process",

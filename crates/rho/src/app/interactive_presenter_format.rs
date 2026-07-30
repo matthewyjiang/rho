@@ -133,7 +133,7 @@ pub(super) fn preview_card(
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::EditFile => edit_start_card(arguments, cwd, status),
+        ToolKind::ApplyPatch => apply_patch_start_card(arguments, cwd, status),
         ToolKind::Skill => kind_card(
             status,
             kind,
@@ -184,12 +184,12 @@ pub(super) fn preview_card(
     }
 }
 
-fn edit_start_card(
+fn apply_patch_start_card(
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
     status: ToolStatus,
 ) -> ToolCard {
-    let paths = edit_paths(arguments, cwd);
+    let paths = apply_patch_paths(arguments, cwd);
     let primary = match paths.as_slice() {
         [] => None,
         [path] => Some(path.clone()),
@@ -197,8 +197,8 @@ fn edit_start_card(
     };
     kind_card(
         status,
-        ToolKind::EditFile,
-        ToolHeader::call("edit_file", primary),
+        ToolKind::ApplyPatch,
+        ToolHeader::call("apply_patch", primary),
     )
 }
 
@@ -264,7 +264,7 @@ pub(super) fn finished_card(
             }
             card
         }
-        ToolKind::WriteFile | ToolKind::EditFile => file_diff_card(view, content, ok, cwd),
+        ToolKind::WriteFile | ToolKind::ApplyPatch => file_diff_card(view, content, ok, cwd),
         ToolKind::Skill => preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status),
         ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
@@ -350,7 +350,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
         | ToolKind::Grep
         | ToolKind::Glob
         | ToolKind::ReadFile => ToolFamily::FileCommand,
-        ToolKind::WriteFile | ToolKind::EditFile => ToolFamily::FileDiff,
+        ToolKind::WriteFile | ToolKind::ApplyPatch => ToolFamily::FileDiff,
         ToolKind::Skill => ToolFamily::Skill,
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
@@ -414,14 +414,17 @@ pub(super) fn read_path(arguments: &serde_json::Value, cwd: &std::path::Path) ->
     format!("{path}:{start}-{end}")
 }
 
-pub(super) fn edit_paths(arguments: &serde_json::Value, cwd: &std::path::Path) -> Vec<String> {
+pub(super) fn apply_patch_paths(
+    arguments: &serde_json::Value,
+    cwd: &std::path::Path,
+) -> Vec<String> {
     arguments
-        .get("edits")
-        .and_then(|value| value.as_array())
+        .get("input")
+        .and_then(|value| value.as_str())
+        .map(rho_tools::apply_patch::patch_paths)
+        .unwrap_or_default()
         .into_iter()
-        .flatten()
-        .filter_map(|edit| edit.get("path").and_then(|path| path.as_str()))
-        .map(|path| compact_display_path(cwd, path))
+        .map(|path| compact_display_path(cwd, &path))
         .collect()
 }
 
