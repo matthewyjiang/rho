@@ -139,19 +139,16 @@ impl App {
         let Ok(title) = result.title else {
             return Ok(false);
         };
-        // Do not overwrite a title the user set while generation was in flight.
-        if Session::title(&self.info.runtime.cwd, &result.session_id)
-            .ok()
-            .flatten()
-            .is_some()
-        {
+        // /title clears pending and sets session_title_locked; honor that lock.
+        if self.session_title_locked {
             return Ok(false);
         }
-        if Session::set_title(&self.info.runtime.cwd, &result.session_id, &title).is_err() {
+        let Ok(updated) = Session::set_title(&self.info.runtime.cwd, &result.session_id, &title)
+        else {
             return Ok(false);
-        }
+        };
         if self.info.session.session_id.as_deref() == Some(result.session_id.as_str()) {
-            self.insert_entry(&Entry::Notice(format!("session titled: {title}")));
+            self.insert_entry(&Entry::Notice(format!("session titled: {}", updated.title)));
         }
         Ok(true)
     }
@@ -162,15 +159,7 @@ impl App {
         first_assistant_message: &str,
         agent: &InteractiveRuntime,
     ) {
-        let Some(session_id) = self.info.session.session_id.as_deref() else {
-            return;
-        };
-        // Keep manual /title renames when the first turn later completes.
-        if Session::title(&self.info.runtime.cwd, session_id)
-            .ok()
-            .flatten()
-            .is_some()
-        {
+        if self.info.session.session_id.is_none() || self.session_title_locked {
             return;
         }
         let session_id = agent.session_id().clone();

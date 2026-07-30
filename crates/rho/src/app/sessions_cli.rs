@@ -71,13 +71,12 @@ fn print_session_list(sessions: &[SessionSummary], all_projects: bool) -> anyhow
 }
 
 fn rename_one(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<()> {
-    let session = resolve_candidate(cwd, id_prefix)?;
-    Session::set_title(&session.cwd, &session.id, title)?;
+    let updated = Session::set_title(cwd, id_prefix, title)?;
     println!(
         "renamed session {} ({}) to {}",
-        short_id(&session.id),
-        crate::paths::display(&session.cwd),
-        one_line(title.trim()),
+        short_id(&updated.id),
+        crate::paths::display(&updated.cwd),
+        one_line(&updated.title),
     );
     Ok(())
 }

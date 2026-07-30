@@ -790,7 +790,11 @@ fn set_title_updates_session_summary() {
         .unwrap();
     let id = session.id().to_string();
 
-    Session::set_title_in_root_for_test(&root, &cwd, &id[..8], "  Rename me  ").unwrap();
+    let updated =
+        Session::set_title_in_root_for_test(&root, &cwd, &id[..8], "  Rename me  ").unwrap();
+    assert_eq!(updated.id, id);
+    assert_eq!(updated.cwd.as_path(), cwd.as_ref());
+    assert_eq!(updated.title, "Rename me");
 
     let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
     let summary = listed
@@ -798,12 +802,6 @@ fn set_title_updates_session_summary() {
         .find(|summary| summary.id == id)
         .expect("session summary");
     assert_eq!(summary.title.as_deref(), Some("Rename me"));
-    assert_eq!(
-        Session::title_in_root_for_test(&root, &cwd, &id)
-            .unwrap()
-            .as_deref(),
-        Some("Rename me")
-    );
 }
 
 // Covers: empty titles must fail instead of clearing stored names
@@ -832,12 +830,16 @@ fn set_title_resolves_across_workspaces() {
     let id = session.id().to_string();
     let other_cwd = temp_cwd();
 
-    Session::set_title_in_root_for_test(&root, &other_cwd, &id, "cross project title").unwrap();
+    let updated =
+        Session::set_title_in_root_for_test(&root, &other_cwd, &id, "cross project title").unwrap();
+    assert_eq!(updated.id, id);
+    assert_eq!(updated.cwd.as_path(), created_cwd.as_ref());
+    assert_eq!(updated.title, "cross project title");
 
-    assert_eq!(
-        Session::title_in_root_for_test(&root, &created_cwd, &id)
-            .unwrap()
-            .as_deref(),
-        Some("cross project title")
-    );
+    let listed = Session::list_in_root_for_test(&root, &created_cwd).unwrap();
+    let summary = listed
+        .into_iter()
+        .find(|summary| summary.id == id)
+        .expect("session summary");
+    assert_eq!(summary.title.as_deref(), Some("cross project title"));
 }

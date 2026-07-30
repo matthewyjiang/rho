@@ -595,6 +595,8 @@ impl App {
         let _ = agent.take_pending_omission();
         self.info.session.session_id = Some(full_id);
         self.info.session.recovered_messages = display_history.clone();
+        self.pending_session_title = None;
+        self.session_title_locked = false;
         self.input_ui.set_composer(ComposerMode::Input);
         self.input_ui.clear_text();
         self.input_ui.clear_paste_segments();

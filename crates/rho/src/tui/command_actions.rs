@@ -189,6 +189,7 @@ impl App {
         self.reset_usage();
         self.usage.current_context = None;
         self.pending_session_title = None;
+        self.session_title_locked = false;
         self.turn.set_current_turn_start(None);
         self.history.clear_entries();
         self.history.images_mut().clear();
