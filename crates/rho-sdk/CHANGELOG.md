@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.12.2...rho-sdk-v1.13.0) (2026-07-30)
+
+
+### Features
+
+* **xai:** support hosted x_search tool ([#647](https://github.com/matthewyjiang/rho/issues/647)) ([cd0c897](https://github.com/matthewyjiang/rho/commit/cd0c897570376cf39d2d99b40c58c55b22fc6133))
+
+
+### Bug Fixes
+
+* **openai:** align Codex Responses wire contracts ([#644](https://github.com/matthewyjiang/rho/issues/644)) ([76cf855](https://github.com/matthewyjiang/rho/commit/76cf8554c390dfa112801016f2c05bd929c35eee))
+
 ## [1.12.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.12.1...rho-sdk-v1.12.2) (2026-07-29)
 
 
