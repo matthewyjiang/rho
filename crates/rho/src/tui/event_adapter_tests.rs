@@ -121,7 +121,12 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
         card.header,
         ToolHeader::call("web_search", Some("rho docs".into()))
     );
-    assert!(card.facts.is_empty());
+    assert_eq!(
+        card.facts,
+        vec![rho_tools::tool_card::ToolFact::Meta {
+            text: "finished".into(),
+        }]
+    );
 }
 
 #[test]
@@ -142,7 +147,12 @@ fn provider_native_hosted_tool_activity_maps_to_tool_finished_view() {
         card.header,
         ToolHeader::call("x_search", Some("for \"xAI\"".into()))
     );
-    assert!(card.facts.is_empty());
+    assert_eq!(
+        card.facts,
+        vec![rho_tools::tool_card::ToolFact::Meta {
+            text: "finished".into(),
+        }]
+    );
 }
 
 #[test]
@@ -161,6 +171,12 @@ fn unknown_hosted_tool_activity_uses_default_family() {
     assert_eq!(
         card.header,
         ToolHeader::call("code_interpreter", Some("ran analysis".into()))
+    );
+    assert_eq!(
+        card.facts,
+        vec![rho_tools::tool_card::ToolFact::Meta {
+            text: "finished".into(),
+        }]
     );
 }
 

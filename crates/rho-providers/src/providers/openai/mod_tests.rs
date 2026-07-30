@@ -557,6 +557,81 @@ fn codex_sse_search_activity_is_not_duplicated_on_completed() {
     );
 }
 
+// Covers: xAI x_search_call items use name+arguments without action
+// Owner: providers stream parse
+#[test]
+fn codex_sse_line_emits_x_search_from_name_and_arguments() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","name":"x_keyword_search","status":"completed","arguments":"{\"query\":\"codex reset\",\"limit\":10,\"mode\":\"Latest\"}"}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            match event {
+                event if event.as_hosted_tool_activity().is_some() => {
+                    let (name, detail) = event.as_hosted_tool_activity().unwrap();
+                    searches.push((name.to_owned(), detail.to_owned()));
+                }
+                ModelEvent::WebSearch(_) => {}
+                ModelEvent::OutputDelta(_) => {}
+                ModelEvent::ReasoningDelta(_) => {}
+                ModelEvent::ReasoningSummaryDelta(_) => {}
+                ModelEvent::ProviderContext { .. } => {}
+                ModelEvent::ToolCallDelta { .. } => {}
+                ModelEvent::Usage(_) => {}
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(
+        searches,
+        vec![("x_search".to_string(), "for \"codex reset\"".to_string())]
+    );
+}
+
+// Covers: search activity on completed must surface even when the stream already has text
+// Owner: providers stream parse
+#[test]
+fn codex_sse_completed_emits_search_activity_when_stream_has_text() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let mut collect = |event: ModelEvent| {
+        match event {
+            ModelEvent::WebSearch(detail) => events.push(("web_search".into(), detail)),
+            ref event => {
+                if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                    events.push((name.to_owned(), detail.to_owned()));
+                }
+            }
+        }
+        Ok(())
+    };
+
+    // Simulate text already streamed before completed (common after hosted search).
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_text.delta","delta":"answer"}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"x_search_call","id":"xs_1","name":"x_keyword_search","arguments":"{\"query\":\"next codex reset\"}"},{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}}"#,
+        &mut state,
+        &mut Some(&mut collect),
+    )
+    .unwrap();
+
+    assert_eq!(
+        events,
+        vec![(
+            "x_search".to_string(),
+            "for \"next codex reset\"".to_string()
+        )]
+    );
+}
+
 #[test]
 fn accumulates_streamed_tool_call_deltas() {
     let mut text = String::new();

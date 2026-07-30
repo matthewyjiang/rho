@@ -283,10 +283,10 @@ impl CodexSseState {
 
 fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
     match item.get("type").and_then(|value| value.as_str()) {
-        Some("web_search_call") => Some(ModelEvent::WebSearch(extract_codex_search_detail(item)?)),
+        Some("web_search_call") => Some(ModelEvent::WebSearch(extract_codex_search_detail(item))),
         Some("x_search_call") => Some(ModelEvent::hosted_tool_activity(
             "x_search",
-            extract_codex_search_detail(item)?,
+            extract_codex_search_detail(item),
         )),
         _ => None,
     }
@@ -303,7 +303,7 @@ fn codex_search_activity_key(item: &serde_json::Value) -> Option<String> {
         return Some(id.to_owned());
     }
     let kind = item.get("type").and_then(|value| value.as_str())?;
-    let detail = extract_codex_search_detail(item).unwrap_or_default();
+    let detail = extract_codex_search_detail(item);
     Some(format!("{kind}:{detail}"))
 }
 
@@ -327,8 +327,24 @@ fn emit_codex_search_activity(
     Ok(())
 }
 
-fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
-    let action = item.get("action")?;
+/// User-facing primary for a hosted search card.
+///
+/// Codex-style items put the query under `action`. xAI also emits `name` plus a
+/// JSON `arguments` string (for example `x_keyword_search` with `{"query":...}`).
+/// Always returns a label so search items are never dropped for missing action.
+fn extract_codex_search_detail(item: &serde_json::Value) -> String {
+    if let Some(action) = item.get("action") {
+        if let Some(detail) = detail_from_search_action(action) {
+            return detail;
+        }
+    }
+    if let Some(detail) = detail_from_search_arguments(item) {
+        return detail;
+    }
+    "finished".into()
+}
+
+fn detail_from_search_action(action: &serde_json::Value) -> Option<String> {
     if let Some(query) = action
         .get("query")
         .and_then(|query| query.as_str())
@@ -365,7 +381,48 @@ fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
     {
         return Some(format!("found \"{}\"", truncate_detail(pattern, 80)));
     }
-    Some("finished".into())
+    None
+}
+
+fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
+    let arguments = item.get("arguments").and_then(|value| value.as_str())?;
+    let args: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    if let Some(query) = args
+        .get("query")
+        .and_then(|query| query.as_str())
+        .filter(|query| !query.is_empty())
+    {
+        return Some(format!("for \"{}\"", truncate_detail(query, 80)));
+    }
+    if let Some(queries) = args.get("queries").and_then(|queries| queries.as_array()) {
+        let mut rendered = queries
+            .iter()
+            .filter_map(|query| query.as_str())
+            .filter(|query| !query.is_empty())
+            .take(3)
+            .map(|query| format!("\"{}\"", truncate_detail(query, 48)))
+            .collect::<Vec<_>>();
+        if queries.len() > rendered.len() {
+            rendered.push(format!("{} more", queries.len() - rendered.len()));
+        }
+        if !rendered.is_empty() {
+            return Some(format!("for {}", rendered.join(", ")));
+        }
+    }
+    for key in ["post_id", "username", "url", "prompt"] {
+        if let Some(value) = args
+            .get(key)
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        {
+            return Some(format!("for \"{}\"", truncate_detail(value, 80)));
+        }
+    }
+    let name = item
+        .get("name")
+        .and_then(|name| name.as_str())
+        .filter(|name| !name.is_empty())?;
+    Some(name.to_owned())
 }
 
 fn truncate_detail(value: &str, max_chars: usize) -> String {
@@ -612,15 +669,20 @@ pub(crate) fn handle_codex_sse_value(
                 on_event(ModelEvent::Usage(usage))?;
             }
         }
-        if !state.text.is_empty() || !state.tool_calls.is_empty() {
-            return Ok(true);
-        }
+        // Search activity may only appear on the completed envelope when the
+        // stream never emitted output_item.done for those items. Always harvest
+        // with dedupe so text-bearing answers still surface web/x search cards.
+        let stream_already_populated = !state.text.is_empty() || !state.tool_calls.is_empty();
         if let Some(output) = value
             .get("response")
             .and_then(|response| response.get("output"))
             .and_then(|output| output.as_array())
         {
             for item in output {
+                emit_codex_search_activity(item, state, on_event)?;
+                if stream_already_populated {
+                    continue;
+                }
                 state.output_items.push(item.clone());
                 if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
                     if let Some(on_event) = on_event.as_mut() {
@@ -631,13 +693,12 @@ pub(crate) fn handle_codex_sse_value(
                         })?;
                     }
                 }
-                emit_codex_search_activity(item, state, on_event)?;
                 if let Some(call) = extract_codex_function_call(item)? {
                     state.tool_calls.push(call);
                 }
             }
         }
-        if state.tool_calls.is_empty() {
+        if !stream_already_populated && state.tool_calls.is_empty() {
             if let Ok(response) =
                 serde_json::from_value::<ResponsesResponse>(value["response"].clone())
             {

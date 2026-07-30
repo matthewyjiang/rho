@@ -391,9 +391,16 @@ fn hosted_tool_family(name: &str) -> ToolFamily {
 }
 
 fn provider_native_activity_finished(name: &str, detail: String, family: ToolFamily) -> ViewEvent {
+    let primary = (!detail.trim().is_empty()).then_some(detail);
+    let mut card = ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, primary));
+    // Hosted lookups have no client result body; keep a single finished fact so
+    // the card matches the web_search finished shape instead of a bare header.
+    card.push_fact(rho_tools::tool_card::ToolFact::Meta {
+        text: "finished".into(),
+    });
     ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: rho_sdk::ToolCallId::new(),
-        card: ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, Some(detail))),
+        card,
         image_asset: None,
     })
 }
