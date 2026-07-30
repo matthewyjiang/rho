@@ -340,7 +340,7 @@ fn emit_codex_search_activity(
     Ok(())
 }
 
-/// User-facing primary for a hosted search card.
+/// User-facing detail for a hosted search card (shown as a child fact).
 ///
 /// Codex-style items put the query under `action`. xAI emits its hosted X tools
 /// as `custom_tool_call` items with a `name` plus JSON in `input`. Older shapes
@@ -388,7 +388,7 @@ fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
             .and_then(|value| value.as_str())
             .filter(|value| !value.is_empty())
         {
-            return Some(format!("for \"{}\"", truncate_detail(value, 80)));
+            return Some(truncate_detail(value, 80));
         }
     }
     let name = item
@@ -404,7 +404,9 @@ fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
         .and_then(|query| query.as_str())
         .filter(|query| !query.is_empty())
     {
-        return Some(format!("for \"{}\"", truncate_detail(query, 80)));
+        // Bare query text: the TUI puts this on a child line under the verb, so
+        // wrapping it as `for "..."` only adds nested quotes around operators.
+        return Some(truncate_detail(query, 80));
     }
     let queries = payload
         .get("queries")
@@ -419,12 +421,12 @@ fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
     let mut rendered = queries
         .iter()
         .take(3)
-        .map(|query| format!("\"{}\"", truncate_detail(query, 48)))
+        .map(|query| truncate_detail(query, 48))
         .collect::<Vec<_>>();
     if queries.len() > rendered.len() {
         rendered.push(format!("{} more", queries.len() - rendered.len()));
     }
-    Some(format!("for {}", rendered.join(", ")))
+    Some(rendered.join(" · "))
 }
 
 fn codex_output_item_key(item: &serde_json::Value) -> Option<(&str, &str)> {

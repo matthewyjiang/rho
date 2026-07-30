@@ -391,10 +391,18 @@ fn hosted_tool_family(name: &str) -> ToolFamily {
 }
 
 fn provider_native_activity_finished(name: &str, detail: String, family: ToolFamily) -> ViewEvent {
-    let primary = (!detail.trim().is_empty()).then_some(detail);
-    let mut card = ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, primary));
-    // Hosted lookups have no client result body; keep a single finished fact so
-    // the card matches the web_search finished shape instead of a bare header.
+    // Layout D: bare verb in the header, query/detail on a child line, then
+    // finished. Avoids `verb(for "query with (parens)")` nesting from hosted
+    // search strings that already carry operators and quotes.
+    let mut card = ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, None));
+    let detail = detail.trim();
+    if !detail.is_empty() {
+        card.push_fact(rho_tools::tool_card::ToolFact::Text {
+            text: detail.to_owned(),
+        });
+    }
+    // Hosted lookups have no client result body; keep a finished fact so the
+    // card is not a bare header.
     card.push_fact(rho_tools::tool_card::ToolFact::Meta {
         text: "finished".into(),
     });

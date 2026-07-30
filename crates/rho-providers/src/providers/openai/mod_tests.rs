@@ -469,7 +469,7 @@ fn codex_sse_line_emits_web_search_detail() {
     )
     .unwrap();
 
-    assert_eq!(searches, vec!["for \"latest Rust release\"".to_string()]);
+    assert_eq!(searches, vec!["latest Rust release".to_string()]);
 }
 
 #[test]
@@ -502,7 +502,7 @@ fn codex_sse_line_emits_x_search_detail() {
         searches,
         vec![(
             "x_search".to_string(),
-            "for \"what people say about xAI\"".to_string()
+            "what people say about xAI".to_string()
         )]
     );
 }
@@ -545,13 +545,10 @@ fn codex_sse_search_activity_is_not_duplicated_on_completed() {
     assert_eq!(
         events,
         vec![
-            (
-                "web_search".to_string(),
-                "for \"latest Rust release\"".to_string()
-            ),
+            ("web_search".to_string(), "latest Rust release".to_string()),
             (
                 "x_search".to_string(),
-                "for \"what people say about xAI\"".to_string()
+                "what people say about xAI".to_string()
             ),
         ]
     );
@@ -587,7 +584,7 @@ fn codex_sse_line_emits_x_search_from_custom_tool_call() {
 
     assert_eq!(
         searches,
-        vec![("x_search".to_string(), "for \"codex reset\"".to_string())]
+        vec![("x_search".to_string(), "codex reset".to_string())]
     );
 }
 
@@ -625,10 +622,7 @@ fn codex_sse_completed_emits_search_activity_when_stream_has_text() {
 
     assert_eq!(
         events,
-        vec![(
-            "x_search".to_string(),
-            "for \"next codex reset\"".to_string()
-        )]
+        vec![("x_search".to_string(), "next codex reset".to_string())]
     );
 }
 
@@ -697,7 +691,7 @@ fn codex_sse_search_query_count_ignores_invalid_entries() {
     )
     .unwrap();
 
-    assert_eq!(details, vec!["for \"a\", \"b\", \"c\", 1 more"]);
+    assert_eq!(details, vec!["a · b · c · 1 more"]);
 }
 
 #[test]
