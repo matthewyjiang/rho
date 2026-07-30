@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.8.0...rho-agent-tools-v0.9.0) (2026-07-30)
+
+
+### Features
+
+* **tools:** replace edit_file with codex-style apply_patch ([#653](https://github.com/matthewyjiang/rho/issues/653)) ([eef1555](https://github.com/matthewyjiang/rho/commit/eef155521c5492b9c7f34507e82b6b7f46b896a8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.12.2 to 1.13.0
+
 ## [0.8.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.7.4...rho-agent-tools-v0.8.0) (2026-07-29)
 
 
