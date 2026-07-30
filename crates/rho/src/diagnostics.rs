@@ -83,6 +83,9 @@ struct RuntimeState {
     prompt_sources: Vec<crate::prompt::PromptSource>,
     tools: Vec<String>,
     config: SanitizedConfig,
+    /// Live hook state, absent until a session installs a hook runtime.
+    #[serde(skip)]
+    hooks: Option<crate::hooks::HookInspector>,
 }
 
 #[derive(Clone, Debug)]
@@ -99,6 +102,7 @@ impl RuntimeDiagnostics {
                 prompt_sources: Vec::new(),
                 tools: Vec::new(),
                 config: config.into(),
+                hooks: None,
             })),
         }
     }
@@ -146,6 +150,11 @@ impl RuntimeDiagnostics {
         self.write().prompt_sources = sources;
     }
 
+    /// Publishes the hook runtime so `rho(action="hooks")` can read live state.
+    pub fn attach_hooks(&self, hooks: &crate::hooks::HookRuntime) {
+        self.write().hooks = Some(crate::hooks::HookInspector::new(hooks));
+    }
+
     pub fn update_tools(&self, tools: &[rho_tools::tool::ToolSpec]) {
         let mut tools = tools
             .iter()
@@ -163,6 +172,13 @@ impl RuntimeDiagnostics {
             "prompt_sources" => serde_json::to_value(&state.prompt_sources),
             "tools" => serde_json::to_value(&state.tools),
             "config" => serde_json::to_value(&state.config),
+            "hooks" => serde_json::to_value(
+                state
+                    .hooks
+                    .as_ref()
+                    .map(crate::hooks::HookInspector::report)
+                    .unwrap_or_else(crate::hooks::HookReport::disabled),
+            ),
             _ => {
                 return Err(format!(
                     "unknown rho diagnostics action '{action}'; load the rho-diagnostics skill for usage"

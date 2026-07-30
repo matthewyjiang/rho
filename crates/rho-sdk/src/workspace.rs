@@ -12,7 +12,10 @@ pub use approval::{
     AuthorizationError, AuthorizationOutcome, ChannelApprovalHandler, DenyApprovals,
     PendingApproval,
 };
-pub(crate) use approval::{authorize_for_call, ApprovalAuditLog, SessionApprovals};
+pub(crate) use approval::{
+    authorize_for_call, ApprovalAuditLog, AuthorizationScope, AuthorizationServices,
+    SessionApprovals,
+};
 pub use capability::{
     CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection,
     NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution, ProcessInvocation,

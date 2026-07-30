@@ -449,6 +449,10 @@ async fn run_session_with_output(
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
+    let hooks = crate::hooks::start_for_cwd(&workspace_root);
+    if let Some(hooks) = hooks.as_ref() {
+        startup.diagnostics.attach_hooks(hooks);
+    }
     let runtime = build_runtime_with_max_steps(
         RuntimeBuildOptions {
             provider,
@@ -464,6 +468,7 @@ async fn run_session_with_output(
             usage_purpose: startup.usage_purpose,
             usage_parent_session_id: startup.parent_session_id.clone(),
             usage_recording,
+            hooks: hooks.as_ref(),
         },
         startup.max_steps,
     )?;
@@ -487,7 +492,22 @@ async fn run_session_with_output(
     )
     .await;
 
+    let session_hooks = runtime.hooks();
+    let session_id = session.id().clone();
+    match &result {
+        Ok(_) => session_hooks.session_completed(&session_id, 1).await,
+        Err(error) => {
+            session_hooks
+                .session_failed(&session_id, "run_failed", &error.to_string())
+                .await
+        }
+    }
     runtime.shutdown();
+    drop(session);
+    drop(runtime);
+    if let Some(hooks) = hooks {
+        hooks.shutdown(crate::hooks::DRAIN_GRACE).await;
+    }
     tool_set.shutdown().await;
     startup
         .herdr

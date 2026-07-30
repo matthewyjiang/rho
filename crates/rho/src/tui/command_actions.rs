@@ -40,6 +40,7 @@ impl App {
                 .await
                 .map(|_| ()),
             CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
+            CommandId::Hooks => self.execute_hooks_command(agent),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
             CommandId::Diff => self.execute_diff_command(),

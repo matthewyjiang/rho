@@ -385,7 +385,8 @@ impl App {
                 self.start_limits_command();
                 Ok(())
             }
-            CommandId::New
+            CommandId::Hooks
+            | CommandId::New
             | CommandId::Fast
             | CommandId::Compact
             | CommandId::Login

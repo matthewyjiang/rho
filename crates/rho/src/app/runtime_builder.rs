@@ -31,6 +31,11 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) usage_purpose: &'static str,
     pub(crate) usage_parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) usage_recording: ProviderRequestUsageRecording,
+    /// Shared hook pipeline, or `None` when no hooks are configured.
+    ///
+    /// Borrowed rather than owned because the interactive host rebuilds its
+    /// runtime on permission or provider changes and must reuse one pipeline.
+    pub(crate) hooks: Option<&'a crate::hooks::HookRuntime>,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
@@ -65,6 +70,7 @@ where
         usage_purpose,
         usage_parent_session_id,
         usage_recording,
+        hooks,
     } = options;
     let (compactor, policy) = build_compaction(
         Arc::clone(&provider),
@@ -89,7 +95,14 @@ where
         builder = builder.service_tier(service_tier);
     }
     if let Some(parent_session_id) = usage_parent_session_id {
-        builder = builder.usage_parent_session_id(parent_session_id);
+        // A delegated run reports the same parentage to accounting and to hooks,
+        // so a hook can attribute nested subagent work to the session that asked
+        // for it.
+        builder = builder
+            .hook_delegation(rho_sdk::hooks::HookDelegation::new(
+                parent_session_id.clone(),
+            ))
+            .usage_parent_session_id(parent_session_id);
     }
     if let Some(handler) = approval_handler {
         builder = builder.approval_handler_shared(handler);
@@ -99,6 +112,9 @@ where
     }
     for tool in tools {
         builder = builder.tool_shared(tool.clone());
+    }
+    if let Some(hooks) = hooks {
+        builder = hooks.attach(builder);
     }
     builder.build()
 }

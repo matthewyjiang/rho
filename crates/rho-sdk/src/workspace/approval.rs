@@ -4,11 +4,17 @@ use std::{
     future::Future,
     num::NonZeroUsize,
     panic::AssertUnwindSafe,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
 };
 
 use tokio::sync::{mpsc, oneshot};
+
+use crate::hooks::{
+    capability_label, summarize_capability, BeforeToolUsePayload, HookDecision, HookEventKind,
+    HookPayload, HookPolicyOutcome, HookRuntime, HookTool, PreToolUseRequest,
+};
 
 use super::{CapabilityKind, CapabilityRequest, PolicyDecision, WorkspacePolicy};
 
@@ -218,6 +224,8 @@ pub enum AuthorizationDenialKind {
     Policy,
     Host,
     Cancelled,
+    /// A trusted pre-action hook narrowed the decision to a denial.
+    Hook,
 }
 
 /// Typed authorization failure available to tool implementations and hosts.
@@ -303,6 +311,8 @@ pub enum ApprovalAuditDecision {
     DeniedByPolicy,
     DeniedByHost,
     Cancelled,
+    /// A trusted pre-action hook denied the request before any prompt.
+    DeniedByHook,
 }
 
 const MAX_AUDIT_RECORDS: usize = 1024;
@@ -386,85 +396,213 @@ impl SessionApprovals {
     }
 }
 
-#[cfg(test)]
-pub(crate) async fn authorize(
-    policy: &Arc<dyn WorkspacePolicy>,
-    approvals: &Arc<dyn ApprovalHandler>,
-    remembered: &Arc<SessionApprovals>,
-    audit: &Arc<ApprovalAuditLog>,
-    request: CapabilityRequest,
-) -> Result<AuthorizationOutcome, AuthorizationError> {
-    authorize_for_call(policy, approvals, remembered, audit, request, None).await
+/// Where one authorization happened, for hook envelope identity.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AuthorizationScope {
+    pub(crate) session_id: Option<crate::SessionId>,
+    pub(crate) run_id: Option<crate::RunId>,
+    pub(crate) workspace_root: Option<PathBuf>,
 }
 
+impl AuthorizationScope {
+    fn workspace_root(&self) -> Option<&Path> {
+        self.workspace_root.as_deref()
+    }
+}
+
+/// Everything one tool invocation needs to authorize a capability.
+///
+/// Bundled so the authorization call site names one collaborator instead of six
+/// positional handles, and so adding the hook gate did not widen every caller.
+pub(crate) struct AuthorizationServices {
+    policy: Arc<dyn WorkspacePolicy>,
+    approvals: Arc<dyn ApprovalHandler>,
+    remembered: Arc<SessionApprovals>,
+    audit: Arc<ApprovalAuditLog>,
+    hooks: HookRuntime,
+    scope: AuthorizationScope,
+}
+
+impl AuthorizationServices {
+    pub(crate) fn new(
+        policy: Arc<dyn WorkspacePolicy>,
+        approvals: Arc<dyn ApprovalHandler>,
+        remembered: Arc<SessionApprovals>,
+        audit: Arc<ApprovalAuditLog>,
+        hooks: HookRuntime,
+        scope: AuthorizationScope,
+    ) -> Self {
+        Self {
+            policy,
+            approvals,
+            remembered,
+            audit,
+            hooks,
+            scope,
+        }
+    }
+
+    /// Denies every capability and consults no hook. Used by hosts that build a
+    /// bare [`ToolContext`](crate::tool::ToolContext).
+    pub(crate) fn denied() -> Self {
+        Self::new(
+            Arc::new(super::DenyAllPolicy),
+            Arc::new(DenyApprovals),
+            Arc::default(),
+            Arc::default(),
+            HookRuntime::default(),
+            AuthorizationScope::default(),
+        )
+    }
+
+    pub(crate) fn audit(&self) -> &Arc<ApprovalAuditLog> {
+        &self.audit
+    }
+}
+
+impl fmt::Debug for AuthorizationServices {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationServices")
+            .field("policy", &self.policy)
+            .field("approvals", &self.approvals)
+            .field("hooks", &self.hooks)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn authorize(
+    services: &AuthorizationServices,
+    request: CapabilityRequest,
+) -> Result<AuthorizationOutcome, AuthorizationError> {
+    authorize_for_call(services, request, None).await
+}
+
+/// Resolves one capability request through policy, hooks, and host approval.
+///
+/// Order is fixed and observable: host policy decides first, a trusted deny-only
+/// hook may then narrow an `Allow` or `RequireApproval` to a denial, and only
+/// after that does the host get prompted. A hook therefore never sees a request
+/// policy already denied, and a denial never reaches an approval prompt.
 pub(crate) async fn authorize_for_call(
-    policy: &Arc<dyn WorkspacePolicy>,
-    approvals: &Arc<dyn ApprovalHandler>,
-    remembered: &Arc<SessionApprovals>,
-    audit: &Arc<ApprovalAuditLog>,
+    services: &AuthorizationServices,
     request: CapabilityRequest,
     tool_call_id: Option<&crate::ToolCallId>,
 ) -> Result<AuthorizationOutcome, AuthorizationError> {
     let capability = request.kind();
-    match policy.evaluate(&request) {
-        PolicyDecision::Allow => Ok(AuthorizationOutcome::AllowedByPolicy),
-        PolicyDecision::Deny { reason } => {
-            audit.record(capability, ApprovalAuditDecision::DeniedByPolicy);
+    let audit = &services.audit;
+    let decision = services.policy.evaluate(&request);
+    let Some(policy_outcome) = HookPolicyOutcome::from_policy(&decision) else {
+        let PolicyDecision::Deny { reason } = decision else {
+            unreachable!("only a policy denial has no hook outcome")
+        };
+        audit.record(capability, ApprovalAuditDecision::DeniedByPolicy);
+        return Err(AuthorizationError::denied(
+            AuthorizationDenialKind::Policy,
+            capability,
+            reason,
+        ));
+    };
+
+    if let HookDecision::Deny { reason } =
+        consult_pre_tool_gate(services, &request, policy_outcome, tool_call_id).await
+    {
+        audit.record(capability, ApprovalAuditDecision::DeniedByHook);
+        return Err(AuthorizationError::denied(
+            AuthorizationDenialKind::Hook,
+            capability,
+            reason,
+        ));
+    }
+
+    let reason = match decision {
+        PolicyDecision::Allow => return Ok(AuthorizationOutcome::AllowedByPolicy),
+        PolicyDecision::RequireApproval { reason } => reason,
+        PolicyDecision::Deny { .. } => unreachable!("policy denial returned above"),
+    };
+
+    let remembered = &services.remembered;
+    if remembered.contains(&request) {
+        audit.record(
+            capability,
+            ApprovalAuditDecision::AllowedByRememberedApproval,
+        );
+        return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
+    }
+
+    // Serialize only the miss path so a concurrent identical waiter
+    // observes AllowForSession recorded by the first prompt. Remembered
+    // hits above stay concurrent. AllowOnce/Deny still re-prompt after
+    // the holder finishes because nothing is remembered for them.
+    let _gate = remembered.approval_gate.lock().await;
+    if remembered.contains(&request) {
+        audit.record(
+            capability,
+            ApprovalAuditDecision::AllowedByRememberedApproval,
+        );
+        return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
+    }
+    match services
+        .approvals
+        .request(ApprovalRequest {
+            capability: request.clone(),
+            reason,
+            tool_call_id: tool_call_id.cloned(),
+        })
+        .await
+    {
+        ApprovalDecision::AllowOnce => {
+            audit.record(capability, ApprovalAuditDecision::AllowedOnce);
+            Ok(AuthorizationOutcome::AllowedOnce)
+        }
+        ApprovalDecision::AllowForSession => {
+            remembered.remember(request);
+            audit.record(capability, ApprovalAuditDecision::AllowedForSession);
+            Ok(AuthorizationOutcome::AllowedForSession)
+        }
+        ApprovalDecision::Deny { reason } => {
+            audit.record(capability, ApprovalAuditDecision::DeniedByHost);
             Err(AuthorizationError::denied(
-                AuthorizationDenialKind::Policy,
+                AuthorizationDenialKind::Host,
                 capability,
                 reason,
             ))
         }
-        PolicyDecision::RequireApproval { reason } => {
-            if remembered.contains(&request) {
-                audit.record(
-                    capability,
-                    ApprovalAuditDecision::AllowedByRememberedApproval,
-                );
-                return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
-            }
-
-            // Serialize only the miss path so a concurrent identical waiter
-            // observes AllowForSession recorded by the first prompt. Remembered
-            // hits above stay concurrent. AllowOnce/Deny still re-prompt after
-            // the holder finishes because nothing is remembered for them.
-            let _gate = remembered.approval_gate.lock().await;
-            if remembered.contains(&request) {
-                audit.record(
-                    capability,
-                    ApprovalAuditDecision::AllowedByRememberedApproval,
-                );
-                return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
-            }
-            match approvals
-                .request(ApprovalRequest {
-                    capability: request.clone(),
-                    reason,
-                    tool_call_id: tool_call_id.cloned(),
-                })
-                .await
-            {
-                ApprovalDecision::AllowOnce => {
-                    audit.record(capability, ApprovalAuditDecision::AllowedOnce);
-                    Ok(AuthorizationOutcome::AllowedOnce)
-                }
-                ApprovalDecision::AllowForSession => {
-                    remembered.remember(request);
-                    audit.record(capability, ApprovalAuditDecision::AllowedForSession);
-                    Ok(AuthorizationOutcome::AllowedForSession)
-                }
-                ApprovalDecision::Deny { reason } => {
-                    audit.record(capability, ApprovalAuditDecision::DeniedByHost);
-                    Err(AuthorizationError::denied(
-                        AuthorizationDenialKind::Host,
-                        capability,
-                        reason,
-                    ))
-                }
-            }
-        }
     }
+}
+
+async fn consult_pre_tool_gate(
+    services: &AuthorizationServices,
+    request: &CapabilityRequest,
+    policy: HookPolicyOutcome,
+    tool_call_id: Option<&crate::ToolCallId>,
+) -> HookDecision {
+    let hooks = &services.hooks;
+    if hooks.gate().is_none() {
+        return HookDecision::Continue;
+    }
+    let scope = &services.scope;
+    let mut builder = hooks.builder(
+        HookEventKind::BeforeToolUse,
+        scope.session_id.as_ref(),
+        scope.run_id.as_ref(),
+        scope.workspace_root(),
+    );
+    let bounds = hooks.bounds();
+    let capability = summarize_capability(request, bounds, builder.truncation());
+    let payload = HookPayload::BeforeToolUse(BeforeToolUsePayload {
+        tool: HookTool::from_source(
+            request.source(),
+            tool_call_id.map(|id| id.as_str().to_owned()),
+        ),
+        capability_kind: capability_label(request.kind()).to_owned(),
+        capability,
+        policy,
+    });
+    hooks
+        .evaluate_pre_tool_use(PreToolUseRequest::new(builder.finish(payload), policy))
+        .await
 }
 
 impl fmt::Debug for dyn ApprovalHandler {

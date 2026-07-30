@@ -20,8 +20,8 @@ type PreparationFuture<'tool, 'batch> =
     Pin<Box<dyn Future<Output = BatchCall<'tool>> + Send + 'batch>>;
 
 struct PreparationScope<'a> {
-    core: &'a Arc<SessionCore>,
     runtime: &'a Rho,
+    authorization: Arc<crate::workspace::AuthorizationServices>,
     cancellation: &'a CancellationToken,
     limit: NonZeroUsize,
 }
@@ -29,6 +29,7 @@ struct PreparationScope<'a> {
 pub(super) async fn prepare_batch<'a>(
     core: &Arc<SessionCore>,
     runtime: &Rho,
+    run_id: &crate::RunId,
     tools: &'a [Option<Arc<dyn Tool>>],
     calls: Vec<(ToolCall, ToolCallId, ToolInvocationSource)>,
     cancellation: &CancellationToken,
@@ -39,8 +40,24 @@ pub(super) async fn prepare_batch<'a>(
         .map(|(call, id, _)| (call.clone(), id.clone()))
         .collect::<Vec<_>>();
     let scope = PreparationScope {
-        core,
         runtime,
+        // One shared bundle per batch: policy, approvals, hooks, and the
+        // identity every hook envelope from this run reports.
+        authorization: Arc::new(crate::workspace::AuthorizationServices::new(
+            Arc::clone(&runtime.workspace_policy),
+            Arc::clone(&runtime.approval_handler),
+            core.approvals(),
+            Arc::clone(&runtime.approval_audit),
+            runtime.hooks.clone(),
+            crate::workspace::AuthorizationScope {
+                session_id: Some(core.id().clone()),
+                run_id: Some(run_id.clone()),
+                workspace_root: runtime
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root().to_path_buf()),
+            },
+        )),
         cancellation,
         limit,
     };
@@ -120,13 +137,7 @@ async fn prepare_call<'a>(
             result: None,
         };
     };
-    let (context, progress, host_input) = execution_context(
-        scope.core,
-        scope.runtime,
-        &id,
-        scope.cancellation,
-        scope.limit,
-    );
+    let (context, progress, host_input) = execution_context(scope, &id);
     let invocation = match source {
         ToolInvocationSource::Model => ToolInvocation::new(id.clone(), call.arguments.clone()),
         ToolInvocationSource::Host => ToolInvocation::from_host(id.clone(), call.arguments.clone()),
@@ -175,26 +186,20 @@ fn interrupted_entry<'a>(call: ToolCall, id: ToolCallId) -> BatchCall<'a> {
 }
 
 fn execution_context(
-    core: &Arc<SessionCore>,
-    runtime: &Rho,
+    scope: &PreparationScope<'_>,
     call_id: &ToolCallId,
-    cancellation: &CancellationToken,
-    limit: NonZeroUsize,
 ) -> (
     ToolContext,
     crate::tool::ToolProgressReceiver,
     mpsc::Receiver<HostInputEnvelope>,
 ) {
-    let (progress, progress_receiver) = tool_progress_channel(limit);
+    let (progress, progress_receiver) = tool_progress_channel(scope.limit);
     let (host_input, host_input_receiver) =
-        crate::host_input::channel(limit.get(), cancellation.clone());
+        crate::host_input::channel(scope.limit.get(), scope.cancellation.clone());
     let context = ToolContext::with_security(
-        runtime.workspace.clone(),
-        Arc::clone(&runtime.workspace_policy),
-        Arc::clone(&runtime.approval_handler),
-        core.approvals(),
-        Arc::clone(&runtime.approval_audit),
-        cancellation.clone(),
+        scope.runtime.workspace.clone(),
+        Arc::clone(&scope.authorization),
+        scope.cancellation.clone(),
         progress,
     )
     .with_call_id(call_id.clone())

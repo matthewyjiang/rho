@@ -176,6 +176,10 @@ pub struct RhoBuilder {
     usage_recording: Option<crate::ProviderRequestUsageRecording>,
     usage_purpose: Option<String>,
     usage_parent_session_id: Option<crate::SessionId>,
+    hook_observer: Option<Arc<dyn crate::hooks::HookObserver>>,
+    pre_tool_gate: Option<Arc<dyn crate::hooks::PreToolUseGate>>,
+    hook_payload_bounds: crate::hooks::HookPayloadBounds,
+    hook_delegation: crate::hooks::HookDelegation,
 }
 
 impl RhoBuilder {
@@ -314,6 +318,30 @@ impl RhoBuilder {
         self
     }
 
+    /// Receives observational lifecycle events. See [`crate::hooks`].
+    pub fn hook_observer_shared(mut self, observer: Arc<dyn crate::hooks::HookObserver>) -> Self {
+        self.hook_observer = Some(observer);
+        self
+    }
+
+    /// Installs the deny-only gate consulted before a capability is authorized.
+    pub fn pre_tool_gate_shared(mut self, gate: Arc<dyn crate::hooks::PreToolUseGate>) -> Self {
+        self.pre_tool_gate = Some(gate);
+        self
+    }
+
+    /// Overrides the field and envelope size limits applied to hook payloads.
+    pub fn hook_payload_bounds(mut self, bounds: crate::hooks::HookPayloadBounds) -> Self {
+        self.hook_payload_bounds = bounds;
+        self
+    }
+
+    /// Records the parent identity a delegated runtime reports in hook envelopes.
+    pub fn hook_delegation(mut self, delegation: crate::hooks::HookDelegation) -> Self {
+        self.hook_delegation = delegation;
+        self
+    }
+
     pub fn build(self) -> Result<Rho, Error> {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
@@ -365,6 +393,12 @@ impl RhoBuilder {
             usage_purpose,
             usage_parent_session_id: self.usage_parent_session_id,
             approval_audit: Arc::default(),
+            hooks: crate::hooks::HookRuntime::new(
+                self.hook_observer,
+                self.pre_tool_gate,
+                self.hook_payload_bounds,
+                self.hook_delegation,
+            ),
             lifecycle: Arc::new(RuntimeLifecycle::default()),
         })
     }
@@ -390,6 +424,7 @@ pub struct Rho {
     pub(crate) usage_purpose: String,
     pub(crate) usage_parent_session_id: Option<crate::SessionId>,
     pub(crate) approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
+    pub(crate) hooks: crate::hooks::HookRuntime,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }
 
@@ -460,6 +495,20 @@ impl Rho {
         self.usage_recording.clone()
     }
 
+    /// Handle for the session-boundary events only the host can observe.
+    ///
+    /// The runtime dispatches everything inside a session's lifetime. An
+    /// interactive session ends when the host says so, which can be long after
+    /// its last run, so `session_completed` and `session_failed` are host calls.
+    pub fn hooks(&self) -> crate::hooks::HookDispatcher {
+        crate::hooks::HookDispatcher::new(
+            self.hooks.clone(),
+            self.workspace
+                .as_ref()
+                .map(|workspace| workspace.root().to_path_buf()),
+        )
+    }
+
     pub async fn session(&self, options: SessionOptions) -> Result<Session, Error> {
         if self.lifecycle.is_shutdown() {
             return Err(Error::RuntimeShutdown);
@@ -470,7 +519,7 @@ impl Rho {
                 history.insert(0, Message::System(prompt.clone()));
             }
         }
-        Ok(Session::from_core(SessionCore::new(
+        let session = Session::from_core(SessionCore::new(
             options.id,
             history,
             options.revision,
@@ -478,7 +527,22 @@ impl Rho {
             options.metadata,
             options.prompt_cache_key,
             self.clone(),
-        )))
+        ));
+        self.hooks
+            .observe(
+                crate::hooks::HookEventKind::SessionStarted,
+                Some(session.id()),
+                None,
+                self.workspace.as_ref().map(crate::Workspace::root),
+                |_| {
+                    let identity = self.provider.identity();
+                    crate::hooks::HookPayload::SessionStarted(crate::hooks::SessionStartedPayload {
+                        model: format!("{}/{}", identity.provider, identity.model),
+                    })
+                },
+            )
+            .await;
+        Ok(session)
     }
 }
 

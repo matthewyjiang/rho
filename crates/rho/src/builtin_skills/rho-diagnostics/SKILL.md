@@ -1,6 +1,6 @@
 ---
 name: rho-diagnostics
-description: Diagnose the running Rho harness, including runtime identity, context, prompt sources, tools, and sanitized configuration.
+description: Diagnose the running Rho harness, including runtime identity, context, prompt sources, tools, hooks, and sanitized configuration.
 ---
 
 # Rho diagnostics
@@ -13,6 +13,7 @@ Available actions:
 - `context`: Latest known token usage, context window, and whether usage was estimated, provider-reported, or unknown after compaction. A null result means no turn has reported context yet.
 - `prompt_sources`: Prompt source kinds, paths, and rendered byte contributions to the exact system prompt. It never returns prompt or instruction contents.
 - `tools`: Names of tools available to the current or most recent model request.
+- `hooks`: Loaded hooks files, any project file skipped for lack of trust, the resolved spawn contract for each hook (argv, working directory, timeout, environment names), and recent hook activity. It never returns hook program output or environment values.
 - `config`: Sanitized live operational configuration. Restart-only settings continue to show the values used at startup. It excludes credentials, authentication values, model favorites, keybindings, prompt templates, and other user content.
 
 Request only the action needed. Do not collect all diagnostics by default. Treat values as a live snapshot that may change after model switches, applicable configuration updates, or turns.
