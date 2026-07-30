@@ -51,8 +51,6 @@ enum FileChange {
         old_content: String,
         new_content: String,
         move_from: Option<MoveSource>,
-        /// Prior contents at the move destination, if it already existed.
-        previous_dest_content: Option<String>,
     },
 }
 
@@ -239,7 +237,7 @@ async fn plan_hunk(
             let requested = validated_path(path)?;
             let target = resolve_path(&requested)?;
             let previous_content =
-                read_required(&target, &display_path(&requested), "delete").await?;
+                read_required(&target, &display_path(&requested), RequiredRead::Delete).await?;
             Ok(FileChange::Delete {
                 target,
                 display_path: display_path(&requested),
@@ -253,16 +251,22 @@ async fn plan_hunk(
         } => {
             let requested = validated_path(path)?;
             let source = resolve_path(&requested)?;
-            let old_content = read_required(&source, &display_path(&requested), "update").await?;
+            let old_content =
+                read_required(&source, &display_path(&requested), RequiredRead::Update).await?;
             let new_content = derive_new_contents(&old_content, &display_path(&requested), chunks)?;
             if let Some(dest) = move_path {
                 let dest_requested = validated_path(dest)?;
                 let target = resolve_path(&dest_requested)?;
-                let previous_dest_content =
-                    read_optional(&target, &display_path(&dest_requested)).await?;
+                let dest_display = display_path(&dest_requested);
+                // Moves must not silently clobber an existing destination.
+                if read_optional(&target, &dest_display).await?.is_some() {
+                    return Err(ToolError::Message(format!(
+                        "Refusing to move to '{dest_display}': destination already exists"
+                    )));
+                }
                 Ok(FileChange::Update {
                     target,
-                    display_path: display_path(&dest_requested),
+                    display_path: dest_display,
                     old_content: old_content.clone(),
                     new_content,
                     move_from: Some(MoveSource {
@@ -270,7 +274,6 @@ async fn plan_hunk(
                         display_path: display_path(&requested),
                         content: old_content,
                     }),
-                    previous_dest_content,
                 })
             } else {
                 Ok(FileChange::Update {
@@ -279,7 +282,6 @@ async fn plan_hunk(
                     old_content,
                     new_content,
                     move_from: None,
-                    previous_dest_content: None,
                 })
             }
         }
@@ -294,7 +296,13 @@ fn validated_path(path: &str) -> Result<String, ToolError> {
 /// Patch paths must stay workspace-relative: no absolute paths and no `..`.
 fn validate_patch_path(path: &str) -> Result<(), ToolError> {
     let candidate = Path::new(path);
-    if candidate.is_absolute() {
+    // Reject Unix-root and Windows-prefix forms even when `is_absolute` is false
+    // (for example `/tmp/x` on Windows).
+    if candidate.is_absolute()
+        || candidate
+            .components()
+            .any(|component| matches!(component, Component::RootDir | Component::Prefix(_)))
+    {
         return Err(ToolError::Message(format!(
             "patch path must be relative: {path}"
         )));
@@ -320,12 +328,21 @@ async fn read_optional(path: &Path, display: &str) -> Result<Option<String>, Too
     }
 }
 
-async fn read_required(path: &Path, display: &str, action: &str) -> Result<String, ToolError> {
+#[derive(Debug, Clone, Copy)]
+enum RequiredRead {
+    Delete,
+    Update,
+}
+
+async fn read_required(
+    path: &Path,
+    display: &str,
+    action: RequiredRead,
+) -> Result<String, ToolError> {
     tokio::fs::read_to_string(path).await.map_err(|error| {
         let verb = match action {
-            "delete" => "Failed to delete file",
-            "update" => "Failed to read file to update",
-            _ => "Failed to read file",
+            RequiredRead::Delete => "Failed to delete file",
+            RequiredRead::Update => "Failed to read file to update",
         };
         ToolError::Message(format!("{verb} {display}: {error}"))
     })
@@ -390,6 +407,8 @@ fn compute_replacements(
 
         if chunk.old_lines.is_empty() {
             // Pure addition inserts at the current context cursor, not EOF.
+            // Keep line_index as an index into original_lines so later chunks
+            // still search the original file coordinates.
             if line_index < min_next_start {
                 return Err(ToolError::Message(format!(
                     "patch chunks overlap or apply out of order in {path}"
@@ -397,7 +416,6 @@ fn compute_replacements(
             }
             replacements.push((line_index, 0, chunk.new_lines.clone()));
             min_next_start = line_index;
-            line_index = line_index.saturating_add(chunk.new_lines.len());
             continue;
         }
 
@@ -479,75 +497,58 @@ async fn revalidate_change(change: &FileChange) -> Result<(), ToolError> {
             display_path,
             previous_content,
             ..
-        } => match (previous_content, tokio::fs::read_to_string(target).await) {
-            (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            (Some(expected), Ok(actual)) if actual == *expected => Ok(()),
-            (None, Ok(_)) | (Some(_), Err(_)) | (Some(_), Ok(_)) => {
-                Err(changed_error(display_path))
-            }
-            (_, Err(error)) => Err(ToolError::Message(format!(
-                "Failed to revalidate {display_path}: {error}"
-            ))),
-        },
+        } => revalidate_optional_snapshot(target, display_path, previous_content).await,
         FileChange::Delete {
             target,
             display_path,
             previous_content,
-        } => {
-            let actual = tokio::fs::read_to_string(target).await.map_err(|error| {
-                ToolError::Message(format!("Failed to revalidate {display_path}: {error}"))
-            })?;
-            if actual == *previous_content {
-                Ok(())
-            } else {
-                Err(changed_error(display_path))
-            }
-        }
+        } => revalidate_exact_snapshot(target, display_path, previous_content).await,
         FileChange::Update {
             target,
             display_path,
             old_content,
             move_from,
-            previous_dest_content,
             ..
         } => {
             if let Some(source) = move_from {
-                let source_actual =
-                    tokio::fs::read_to_string(&source.path)
-                        .await
-                        .map_err(|error| {
-                            ToolError::Message(format!(
-                                "Failed to revalidate {}: {error}",
-                                source.display_path
-                            ))
-                        })?;
-                if source_actual != source.content {
-                    return Err(changed_error(&source.display_path));
-                }
-                match (
-                    previous_dest_content,
-                    tokio::fs::read_to_string(target).await,
-                ) {
-                    (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    (Some(expected), Ok(actual)) if actual == *expected => Ok(()),
-                    (None, Ok(_)) | (Some(_), Err(_)) | (Some(_), Ok(_)) => {
-                        Err(changed_error(display_path))
-                    }
-                    (_, Err(error)) => Err(ToolError::Message(format!(
-                        "Failed to revalidate {display_path}: {error}"
-                    ))),
-                }
+                revalidate_exact_snapshot(&source.path, &source.display_path, &source.content)
+                    .await?;
+                // Move destinations are required to be absent at plan time.
+                revalidate_optional_snapshot(target, display_path, &None).await
             } else {
-                let actual = tokio::fs::read_to_string(target).await.map_err(|error| {
-                    ToolError::Message(format!("Failed to revalidate {display_path}: {error}"))
-                })?;
-                if actual == *old_content {
-                    Ok(())
-                } else {
-                    Err(changed_error(display_path))
-                }
+                revalidate_exact_snapshot(target, display_path, old_content).await
             }
         }
+    }
+}
+
+async fn revalidate_exact_snapshot(
+    path: &Path,
+    display_path: &str,
+    expected: &str,
+) -> Result<(), ToolError> {
+    let actual = tokio::fs::read_to_string(path).await.map_err(|error| {
+        ToolError::Message(format!("Failed to revalidate {display_path}: {error}"))
+    })?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(changed_error(display_path))
+    }
+}
+
+async fn revalidate_optional_snapshot(
+    path: &Path,
+    display_path: &str,
+    expected: &Option<String>,
+) -> Result<(), ToolError> {
+    match (expected.as_ref(), tokio::fs::read_to_string(path).await) {
+        (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        (Some(expected), Ok(actual)) if actual == *expected => Ok(()),
+        (Some(_), Ok(_)) | (None, Ok(_)) => Err(changed_error(display_path)),
+        (_, Err(error)) => Err(ToolError::Message(format!(
+            "Failed to revalidate {display_path}: {error}"
+        ))),
     }
 }
 
@@ -632,10 +633,7 @@ async fn rollback_one(change: &FileChange) -> Result<(), ToolError> {
             previous_content,
             ..
         } => match previous_content {
-            None => {
-                let _ = tokio::fs::remove_file(target).await;
-                Ok(())
-            }
+            None => remove_file_if_present(target, display_path).await,
             Some(content) => write_file(target, display_path, content).await,
         },
         FileChange::Delete {
@@ -648,21 +646,24 @@ async fn rollback_one(change: &FileChange) -> Result<(), ToolError> {
             display_path,
             old_content,
             move_from,
-            previous_dest_content,
             ..
         } => {
             if let Some(source) = move_from {
                 write_file(&source.path, &source.display_path, &source.content).await?;
-                match previous_dest_content {
-                    Some(content) => write_file(target, display_path, content).await,
-                    None => {
-                        let _ = tokio::fs::remove_file(target).await;
-                        Ok(())
-                    }
-                }
+                remove_file_if_present(target, display_path).await
             } else {
                 write_file(target, display_path, old_content).await
             }
         }
+    }
+}
+
+async fn remove_file_if_present(path: &Path, display_path: &str) -> Result<(), ToolError> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ToolError::Message(format!(
+            "failed to remove {display_path}: {error}"
+        ))),
     }
 }

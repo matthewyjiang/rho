@@ -148,23 +148,42 @@ async fn rejects_missing_update_target() {
     )
     .await
     .unwrap_err();
+    let msg = message(error);
     assert!(
-        message(error).starts_with("Failed to read file to update missing.txt:"),
-        "unexpected message"
+        msg.starts_with("Failed to read file to update missing.txt:"),
+        "unexpected message: {msg}"
     );
 }
 
 #[tokio::test]
 async fn rejects_absolute_and_parent_paths() {
     let (_dir, ctx) = test_context();
+    let absolute_path = if cfg!(windows) {
+        r"C:\tmp\evil.txt"
+    } else {
+        "/tmp/evil.txt"
+    };
     let absolute = call(
-        "*** Begin Patch\n*** Add File: /tmp/evil.txt\n+nope\n*** End Patch",
+        &format!("*** Begin Patch\n*** Add File: {absolute_path}\n+nope\n*** End Patch"),
         ctx.clone(),
     )
     .await
     .unwrap_err();
     assert_eq!(
         message(absolute),
+        format!("patch path must be relative: {absolute_path}")
+    );
+
+    // Also reject Unix-root form on every platform (Windows treats `/tmp/...`
+    // as relative under `Path::is_absolute`, but RootDir must still be blocked).
+    let unix_root = call(
+        "*** Begin Patch\n*** Add File: /tmp/evil.txt\n+nope\n*** End Patch",
+        ctx.clone(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        message(unix_root),
         "patch path must be relative: /tmp/evil.txt"
     );
 
@@ -177,6 +196,33 @@ async fn rejects_absolute_and_parent_paths() {
     assert_eq!(
         message(parent),
         "patch path must not contain '..': ../escape.txt"
+    );
+}
+
+#[tokio::test]
+async fn rejects_move_to_existing_destination() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("src.txt"), "source\n").unwrap();
+    std::fs::write(ctx.cwd.join("dst.txt"), "existing\n").unwrap();
+
+    let error = call(
+        "*** Begin Patch\n*** Update File: src.txt\n*** Move to: dst.txt\n@@\n-source\n+moved\n*** End Patch",
+        ctx.clone(),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "Refusing to move to 'dst.txt': destination already exists"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("src.txt")).unwrap(),
+        "source\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("dst.txt")).unwrap(),
+        "existing\n"
     );
 }
 
@@ -195,6 +241,26 @@ async fn pure_addition_inserts_at_context_cursor() {
     assert_eq!(
         std::fs::read_to_string(ctx.cwd.join("sample.txt")).unwrap(),
         "alpha\ninserted\nbeta\ngamma\n"
+    );
+}
+
+#[tokio::test]
+async fn pure_addition_keeps_later_context_on_original_coordinates() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("sample.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+    // Inserting multiple lines must not advance the original-line cursor past
+    // later chunks; otherwise gamma would be skipped after a 3-line insert.
+    call(
+        "*** Begin Patch\n*** Update File: sample.txt\n@@ alpha\n+i1\n+i2\n+i3\n@@\n-gamma\n+GAMMA\n*** End Patch",
+        ctx.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("sample.txt")).unwrap(),
+        "alpha\ni1\ni2\ni3\nbeta\nGAMMA\n"
     );
 }
 
@@ -250,7 +316,8 @@ async fn fails_closed_when_file_changes_after_plan() {
     )
     .unwrap();
 
-    // While planning the second file, mutate the first after its snapshot was taken.
+    // While resolving b.txt, mutate a.txt. This relies on plan_hunk resolving
+    // and snapshotting a.txt before b.txt so the race is observable at commit.
     let error = apply_hunks(
         hunks,
         {

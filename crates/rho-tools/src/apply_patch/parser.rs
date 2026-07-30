@@ -93,12 +93,10 @@ impl std::error::Error for ParseError {}
 /// Parse a complete Codex-style apply_patch document into file operations.
 pub(crate) fn parse_patch(patch: &str) -> Result<Vec<Hunk>, ParseError> {
     let lines = patch_lines(patch.trim());
-    if lines.is_empty() {
-        return Err(ParseError::InvalidPatch(
-            "The first line of the patch must be '*** Begin Patch'".into(),
-        ));
-    }
-    if lines[0].trim() != BEGIN_PATCH_MARKER {
+    if lines
+        .first()
+        .is_none_or(|line| line.trim() != BEGIN_PATCH_MARKER)
+    {
         return Err(ParseError::InvalidPatch(
             "The first line of the patch must be '*** Begin Patch'".into(),
         ));
@@ -180,7 +178,10 @@ fn parse_add_body(lines: &[&str], mut index: usize) -> Result<(String, usize), P
             break;
         }
         let Some(added) = raw.strip_prefix('+') else {
-            return Err(invalid_header(trimmed, index + 1));
+            return Err(ParseError::InvalidHunk {
+                message: format!("Add File lines must start with '+', got: '{raw}'"),
+                line_number: index + 1,
+            });
         };
         contents.push_str(added);
         contents.push('\n');
@@ -221,12 +222,6 @@ fn parse_update_body(
         return Err(ParseError::InvalidHunk {
             message: format!("Update file hunk for path '{path}' is empty"),
             line_number: header_line,
-        });
-    }
-    if chunks.last().is_some_and(UpdateFileChunk::is_empty) {
-        return Err(ParseError::InvalidHunk {
-            message: "Update hunk does not contain any lines".into(),
-            line_number: index.saturating_sub(1).max(1) + 1,
         });
     }
     Ok((move_path, chunks, index))
