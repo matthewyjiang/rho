@@ -158,7 +158,7 @@ async fn standard_requests_keep_function_web_search_when_hosted_disabled() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
-        None,
+        /* service_tier */ None,
         /*hosted_web_search*/ false,
     )
     .unwrap();
@@ -220,7 +220,7 @@ async fn standard_create_wire_contract_is_auth_flavor_specific() {
                 reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
-            None,
+            /* service_tier */ None,
             /*hosted_web_search*/ true,
         )
         .unwrap();
