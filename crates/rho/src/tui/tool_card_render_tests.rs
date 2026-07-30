@@ -108,7 +108,9 @@ fn fact_wrap_breaks_on_whitespace() {
         lines
     );
     assert!(
-        lines.iter().any(|line| line.contains("three four") || line.ends_with("three")),
+        lines
+            .iter()
+            .any(|line| line.contains("three four") || line.ends_with("three")),
         "expected whitespace-bounded wrap rows: {:?}",
         lines
     );

@@ -588,6 +588,30 @@ fn codex_sse_line_emits_x_search_from_custom_tool_call() {
     );
 }
 
+// Covers: ordinary custom_tool_call items must not be labeled hosted x_search.
+// Owner: providers stream parse
+#[test]
+fn codex_sse_custom_tool_call_without_xs_call_id_is_not_x_search() {
+    let mut state = CodexSseState::default();
+    let mut searches = Vec::new();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"call_id":"call_other-1","input":"{\"query\":\"nope\"}","name":"x_keyword_search","type":"custom_tool_call","id":"ctc_1","status":"completed"}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            if let Some((name, detail)) = event.as_hosted_tool_activity() {
+                searches.push((name.to_owned(), detail.to_owned()));
+            }
+            Ok(())
+        }),
+    )
+    .unwrap();
+
+    assert!(
+        searches.is_empty(),
+        "unexpected hosted activity: {searches:?}"
+    );
+}
+
 // Covers: search activity on completed must surface even when the stream already has text
 // Owner: providers stream parse
 #[test]

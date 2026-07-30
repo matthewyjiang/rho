@@ -20,14 +20,15 @@ use super::{
     tool_diff, ToolEntry,
 };
 
-const TREE_INDENT: &str = "  ";
-const TREE_BRANCH_MID: &str = "├ ";
-const TREE_BRANCH_END: &str = "└ ";
-/// Space hang under `└ ` when a last child wraps (trunk ends at └).
-const TREE_CONTINUE: &str = "  ";
+/// First-line mid branch: `  ├ `.
+const TREE_CHILD_MID: &str = "  ├ ";
+/// First-line end branch: `  └ `.
+const TREE_CHILD_END: &str = "  └ ";
 /// Vertical stem on wrapped header/child rows; same box-drawing family as ├ / └.
 /// Display width matches `  ├ ` / `  └ ` so wrapped content stays in one column.
 const TREE_WRAP_STEM: &str = "  │ ";
+/// Space hang under `└ ` when a last child wraps (trunk ends at └).
+const TREE_CHILD_HANG: &str = "    ";
 /// Content column after `  ├ ` / `  └ `.
 const CHILD_CONTENT_INDENT: &str = "    ";
 
@@ -130,9 +131,9 @@ pub(super) fn card_is_toggleable(
 fn render_child_groups(card: &ToolCard, width: usize) -> Vec<Vec<Line<'static>>> {
     let mut groups = Vec::new();
     for fact in &card.facts {
-        // Branch glyph is rewritten after budget clipping once last-child is known.
+        // Always mid trunk here; last-child └ / hang is rewritten after clip.
         let mut lines = Vec::new();
-        push_fact_line(&mut lines, fact, /*is_last*/ false, width);
+        push_fact_line(&mut lines, fact, width);
         groups.push(lines);
     }
     match &card.body {
@@ -177,9 +178,7 @@ fn line_starts_with_tree_branch(line: &Line<'static>) -> bool {
         return false;
     };
     let content = first.content.as_ref();
-    let mid = format!("{TREE_INDENT}{TREE_BRANCH_MID}");
-    let end = format!("{TREE_INDENT}{TREE_BRANCH_END}");
-    content.starts_with(&mid) || content.starts_with(&end)
+    content.starts_with(TREE_CHILD_MID) || content.starts_with(TREE_CHILD_END)
 }
 
 fn rewrite_fact_branch(line: &mut Line<'static>, is_last: bool) {
@@ -187,20 +186,16 @@ fn rewrite_fact_branch(line: &mut Line<'static>, is_last: bool) {
         return;
     };
     let content = first.content.as_ref();
-    let mid = format!("{TREE_INDENT}{TREE_BRANCH_MID}");
-    let end = format!("{TREE_INDENT}{TREE_BRANCH_END}");
-    if content.starts_with(&mid) || content.starts_with(&end) {
-        let suffix = &content[mid.len().min(content.len())..];
-        first.content = format!(
-            "{}{suffix}",
-            if is_last {
-                format!("{TREE_INDENT}{TREE_BRANCH_END}")
-            } else {
-                format!("{TREE_INDENT}{TREE_BRANCH_MID}")
-            }
-        )
-        .into();
+    if !(content.starts_with(TREE_CHILD_MID) || content.starts_with(TREE_CHILD_END)) {
+        return;
     }
+    let suffix = &content[TREE_CHILD_MID.len().min(content.len())..];
+    let branch = if is_last {
+        TREE_CHILD_END
+    } else {
+        TREE_CHILD_MID
+    };
+    first.content = format!("{branch}{suffix}").into();
 }
 
 fn rewrite_wrap_stem(line: &mut Line<'static>, is_last: bool) {
@@ -208,12 +203,14 @@ fn rewrite_wrap_stem(line: &mut Line<'static>, is_last: bool) {
         return;
     };
     let content = first.content.as_ref();
-    let mid = TREE_WRAP_STEM;
-    let end = format!("{TREE_INDENT}{TREE_CONTINUE}");
-    if content != mid && content != end.as_str() {
+    if content != TREE_WRAP_STEM && content != TREE_CHILD_HANG {
         return;
     }
-    first.content = if is_last { end.into() } else { mid.into() };
+    first.content = if is_last {
+        TREE_CHILD_HANG.into()
+    } else {
+        TREE_WRAP_STEM.into()
+    };
 }
 
 fn push_header_line(
@@ -239,7 +236,13 @@ fn push_header_line(
                         Span::styled(primary.clone(), Theme::tool_primary()),
                         Span::styled(")", Theme::tool_primary()),
                     ];
-                    push_wrapped_header(lines, prefix, wrappable, width);
+                    push_wrapped_prefixed(
+                        lines,
+                        prefix,
+                        wrappable,
+                        width,
+                        header_wrap_continuation_prefix,
+                    );
                 }
                 None => lines.push(pad_spans_line(prefix, width)),
             }
@@ -253,7 +256,13 @@ fn push_header_line(
                 Some(command) => {
                     prefix.push(Span::raw(" "));
                     let wrappable = vec![Span::styled(command.clone(), Theme::tool_primary())];
-                    push_wrapped_header(lines, prefix, wrappable, width);
+                    push_wrapped_prefixed(
+                        lines,
+                        prefix,
+                        wrappable,
+                        width,
+                        header_wrap_continuation_prefix,
+                    );
                 }
                 None => lines.push(pad_spans_line(prefix, width)),
             }
@@ -268,26 +277,34 @@ fn push_header_line(
             } else {
                 prefix.push(Span::raw("  "));
                 let wrappable = vec![Span::styled(detail.clone(), Theme::text())];
-                push_wrapped_header(lines, prefix, wrappable, width);
+                push_wrapped_prefixed(
+                    lines,
+                    prefix,
+                    wrappable,
+                    width,
+                    header_wrap_continuation_prefix,
+                );
             }
         }
     }
 }
 
-/// Wrap header primary/command under a fixed first-line prefix.
+/// Wrap styled text under a fixed first-line prefix.
 ///
-/// Continuations draw a tree-column `│` stem, then pad to the primary hang so
-/// children (`├` / `└`) still read as a connected trunk under the call.
+/// Continuations are supplied by `continuation_prefix(hang)`. Headers pad a
+/// `│` stem out to the primary hang; facts use a plain `│` trunk (last-child
+/// hang is applied later by [`rewrite_child_group_branches`]).
 ///
 /// Intentional newlines in the wrappable text (multi-line bash, heredocs) are
 /// hard breaks. Soft width-wrap still applies within each logical line. Without
 /// this, `\n` has zero display width and ratatui drops the control char, so
 /// `check\ngit` renders as `checkgit`.
-fn push_wrapped_header(
+fn push_wrapped_prefixed(
     lines: &mut Vec<Line<'static>>,
     prefix: Vec<Span<'static>>,
     wrappable: Vec<Span<'static>>,
     width: usize,
+    continuation_prefix: impl Fn(usize) -> Vec<Span<'static>>,
 ) {
     let hang = spans_display_width(&prefix);
     if hang >= width {
@@ -333,7 +350,7 @@ fn push_wrapped_header(
             let mut row = if row_index == 0 {
                 prefix.clone()
             } else {
-                header_wrap_continuation_prefix(hang)
+                continuation_prefix(hang)
             };
             row.extend(chunk_spans);
             lines.push(pad_spans_line(row, width));
@@ -360,94 +377,12 @@ fn header_wrap_continuation_prefix(hang: usize) -> Vec<Span<'static>> {
     spans
 }
 
-fn push_fact_line(lines: &mut Vec<Line<'static>>, fact: &ToolFact, is_last: bool, width: usize) {
-    let branch = if is_last {
-        TREE_BRANCH_END
-    } else {
-        TREE_BRANCH_MID
-    };
-    let prefix = vec![Span::styled(
-        format!("{TREE_INDENT}{branch}"),
-        Theme::tool_tree(),
-    )];
-    // Soft-wrap like headers and keep a `│` trunk on continuations so long
-    // search queries and other fact text stay readable on every tool card.
-    push_wrapped_child(
-        lines,
-        prefix,
-        fact_spans(fact),
-        /*is_last*/ is_last,
-        width,
-    );
-}
-
-/// Wrap child content under a fixed first-line tree prefix.
-///
-/// Continuations use `│` while more siblings follow, or a space hang after `└`
-/// so the trunk ends with the last child. Matches header wrap grammar.
-fn push_wrapped_child(
-    lines: &mut Vec<Line<'static>>,
-    prefix: Vec<Span<'static>>,
-    wrappable: Vec<Span<'static>>,
-    is_last: bool,
-    width: usize,
-) {
-    let hang = spans_display_width(&prefix);
-    if hang >= width {
-        let mut spans = prefix;
-        spans.extend(wrappable);
-        lines.push(pad_spans_line(spans, width));
-        return;
-    }
-    let content_width = (width - hang).max(1);
-    let text: String = wrappable.iter().map(|span| span.content.as_ref()).collect();
-    if text.is_empty() {
-        lines.push(pad_spans_line(prefix, width));
-        return;
-    }
-
-    let mut row_index = 0usize;
-    for logical_line in text.lines() {
-        let line_start = subslice_start(&text, logical_line);
-        for (wrap_index, range) in wrap_line_at_whitespace_ranges(logical_line, content_width)
-            .into_iter()
-            .enumerate()
-        {
-            let mut start = range.start;
-            let end = range.end;
-            if wrap_index > 0 {
-                while start < end {
-                    let ch = logical_line[start..].chars().next().expect("start < end");
-                    if !ch.is_whitespace() {
-                        break;
-                    }
-                    start += ch.len_utf8();
-                }
-                if start >= end {
-                    continue;
-                }
-            }
-            let chunk_spans =
-                slice_spans_by_bytes(&wrappable, line_start + start, line_start + end);
-            let mut row = if row_index == 0 {
-                prefix.clone()
-            } else {
-                child_wrap_continuation_prefix(is_last)
-            };
-            row.extend(chunk_spans);
-            lines.push(pad_spans_line(row, width));
-            row_index += 1;
-        }
-    }
-}
-
-fn child_wrap_continuation_prefix(is_last: bool) -> Vec<Span<'static>> {
-    let stem = if is_last {
-        format!("{TREE_INDENT}{TREE_CONTINUE}")
-    } else {
-        TREE_WRAP_STEM.to_string()
-    };
-    vec![Span::styled(stem, Theme::tool_tree())]
+fn push_fact_line(lines: &mut Vec<Line<'static>>, fact: &ToolFact, width: usize) {
+    // Always mid trunk; last-child └ / space hang is rewritten after budget clip.
+    let prefix = vec![Span::styled(TREE_CHILD_MID.to_string(), Theme::tool_tree())];
+    push_wrapped_prefixed(lines, prefix, fact_spans(fact), width, |_| {
+        vec![Span::styled(TREE_WRAP_STEM.to_string(), Theme::tool_tree())]
+    });
 }
 
 fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {

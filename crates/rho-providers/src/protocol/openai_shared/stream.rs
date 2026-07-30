@@ -281,28 +281,47 @@ impl CodexSseState {
     }
 }
 
+/// Hosted-search item shapes on Responses streams.
+///
+/// - `web_search_call` → [`ModelEvent::WebSearch`]
+/// - `x_search_call` → hosted activity `x_search`
+/// - `custom_tool_call` whose `call_id` is in the `xs_call-` family → hosted
+///   activity `x_search` (xAI emits hosted X subtools this way, e.g.
+///   `x_keyword_search` with `call_id: "xs_call-…"`)
+///
+/// Classification is separate from detail formatting so non-search items never
+/// pay argument JSON probing.
 fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent> {
+    let kind = classify_codex_search_item(item)?;
     let detail = extract_codex_search_detail(item).unwrap_or_default();
-    match item.get("type").and_then(|value| value.as_str()) {
-        Some("web_search_call") => Some(ModelEvent::WebSearch(detail)),
-        Some("x_search_call") => Some(ModelEvent::hosted_tool_activity("x_search", detail)),
-        Some("custom_tool_call") if is_x_search_custom_call(item) => {
-            Some(ModelEvent::hosted_tool_activity("x_search", detail))
-        }
+    Some(match kind {
+        CodexSearchKind::Web => ModelEvent::WebSearch(detail),
+        CodexSearchKind::X => ModelEvent::hosted_tool_activity("x_search", detail),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum CodexSearchKind {
+    Web,
+    X,
+}
+
+/// `custom_tool_call.call_id` prefix used by hosted x_search subtool invocations.
+const HOSTED_X_SEARCH_CALL_ID_PREFIX: &str = "xs_call-";
+
+fn classify_codex_search_item(item: &serde_json::Value) -> Option<CodexSearchKind> {
+    match item.get("type").and_then(|value| value.as_str())? {
+        "web_search_call" => Some(CodexSearchKind::Web),
+        "x_search_call" => Some(CodexSearchKind::X),
+        "custom_tool_call" if is_hosted_x_search_custom_call(item) => Some(CodexSearchKind::X),
         _ => None,
     }
 }
 
-fn is_x_search_custom_call(item: &serde_json::Value) -> bool {
-    let is_x_search_name = item
-        .get("name")
-        .and_then(|name| name.as_str())
-        .is_some_and(|name| name.starts_with("x_"));
-    let has_x_search_call_id = item
-        .get("call_id")
+fn is_hosted_x_search_custom_call(item: &serde_json::Value) -> bool {
+    item.get("call_id")
         .and_then(|call_id| call_id.as_str())
-        .is_some_and(|call_id| call_id.starts_with("xs_call-"));
-    is_x_search_name && has_x_search_call_id
+        .is_some_and(|call_id| call_id.starts_with(HOSTED_X_SEARCH_CALL_ID_PREFIX))
 }
 
 /// Stable key for a search output item, used to dedupe stream vs completed paths.
@@ -391,11 +410,8 @@ fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
             return Some(truncate_detail(value, 80));
         }
     }
-    let name = item
-        .get("name")
-        .and_then(|name| name.as_str())
-        .filter(|name| !name.is_empty())?;
-    Some(name.to_owned())
+    // No displayable argument fields: empty detail is fine (TUI shows finished).
+    None
 }
 
 fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
