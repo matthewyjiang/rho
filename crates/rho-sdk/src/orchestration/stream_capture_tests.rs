@@ -219,3 +219,24 @@ fn web_search_activity_keeps_stable_run_event_shape() {
         }
     );
 }
+
+// Covers: service-tier fallback must lower to a typed run event without replay state.
+// Owner: SDK stream capture
+#[test]
+fn service_tier_fallback_maps_to_typed_run_event() {
+    let mut capture = StreamCapture::default();
+    let event = capture_provider_event(
+        ModelEvent::service_tier_fallback(crate::model::ServiceTier::Priority, "default"),
+        &identity(),
+        &ModelUsage::default(),
+        &mut capture,
+    );
+    assert_eq!(
+        event,
+        RunEvent::ProviderServiceTierFallback {
+            requested: crate::model::ServiceTier::Priority,
+            used: "default".into(),
+        }
+    );
+    assert!(capture.provider_context.is_empty());
+}

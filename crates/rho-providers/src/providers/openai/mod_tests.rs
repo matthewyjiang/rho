@@ -11,6 +11,49 @@ use crate::protocol::openai_responses::{
 use crate::reasoning::ReasoningLevel;
 use serde_json::json;
 
+// Covers: Codex must warn only when the server declines a requested priority tier.
+// Owner: OpenAI provider request policy
+#[test]
+fn reported_service_tier_detects_priority_fallback() {
+    let cases = [
+        (Some("priority"), false),
+        (Some("default"), true),
+        (None, false),
+    ];
+
+    for (reported, should_report) in cases {
+        let mut events = Vec::new();
+        let mut on_event = |event: ModelEvent| {
+            events.push(event);
+            Ok(())
+        };
+        let mut on_event =
+            Some(&mut on_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send));
+
+        report_service_tier_fallback(
+            Some(rho_sdk::model::ServiceTier::Priority),
+            reported,
+            &mut on_event,
+        )
+        .unwrap();
+
+        assert_eq!(
+            events.len(),
+            usize::from(should_report),
+            "reported={reported:?}"
+        );
+        if should_report {
+            assert_eq!(
+                events,
+                vec![ModelEvent::service_tier_fallback(
+                    rho_sdk::model::ServiceTier::Priority,
+                    "default",
+                )]
+            );
+        }
+    }
+}
+
 #[test]
 fn codex_reasoning_param_preserves_none_effort() {
     assert_eq!(

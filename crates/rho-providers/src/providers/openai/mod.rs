@@ -195,7 +195,7 @@ impl OpenAiProvider {
             .send_responses_turn_silent(body, &tokens)
             .await?
         {
-            CodexWsTurn::Completed(response) => return Ok(response),
+            CodexWsTurn::Completed(response) => return Ok(response.response),
             CodexWsTurn::FullSseFallback { body, .. } => body,
         };
 
@@ -250,7 +250,14 @@ impl OpenAiProvider {
             .send_responses_turn(body, &tokens, &mut on_event)
             .await?
         {
-            CodexWsTurn::Completed(response) => return Ok(response),
+            CodexWsTurn::Completed(response) => {
+                report_service_tier_fallback(
+                    options.service_tier(),
+                    response.service_tier.as_deref(),
+                    &mut on_event,
+                )?;
+                return Ok(response.response);
+            }
             CodexWsTurn::FullSseFallback {
                 request_submitted,
                 body,
@@ -302,18 +309,24 @@ impl OpenAiProvider {
             self.codex_ws.reset().await;
             return Err(crate::provider_backend::http_error::from_response(response).await);
         }
-        self.collect_codex_sse_response(response, &mut on_event, &body)
+        self.collect_codex_sse_response(response, options.service_tier(), &mut on_event, &body)
             .await
     }
 
     async fn collect_codex_sse_response(
         &self,
         response: reqwest::Response,
+        requested_service_tier: Option<rho_sdk::model::ServiceTier>,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         body: &Value,
     ) -> Result<ModelResponse, ModelError> {
         match collect_codex_sse_response(response, on_event).await {
             Ok(output) => {
+                report_service_tier_fallback(
+                    requested_service_tier,
+                    output.service_tier.as_deref(),
+                    on_event,
+                )?;
                 self.codex_ws
                     .record_full_request_success(body, &output)
                     .await?;
@@ -408,6 +421,26 @@ impl OpenAiProvider {
             .await
             .map(|output| output.response)
     }
+}
+
+fn report_service_tier_fallback(
+    requested: Option<rho_sdk::model::ServiceTier>,
+    reported: Option<&str>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    let (Some(rho_sdk::model::ServiceTier::Priority), Some(used)) = (requested, reported) else {
+        return Ok(());
+    };
+    if used == "priority" {
+        return Ok(());
+    }
+    let Some(on_event) = on_event.as_mut() else {
+        return Ok(());
+    };
+    on_event(ModelEvent::service_tier_fallback(
+        rho_sdk::model::ServiceTier::Priority,
+        used,
+    ))
 }
 
 #[cfg(test)]

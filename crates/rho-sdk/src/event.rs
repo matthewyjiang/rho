@@ -308,6 +308,11 @@ pub enum RunEvent {
         name: String,
         detail: String,
     },
+    /// The provider completed a request on a different service tier.
+    ProviderServiceTierFallback {
+        requested: crate::model::ServiceTier,
+        used: String,
+    },
 }
 
 #[cfg(test)]

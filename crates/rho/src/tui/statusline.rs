@@ -35,6 +35,7 @@ pub(super) struct StatusLineState {
     context_usage: Option<ContextUsage>,
     provider: String,
     model: String,
+    fast_mode_active: bool,
     reasoning: ReasoningLevel,
     reasoning_configurable: bool,
     permission_mode: PermissionMode,
@@ -74,6 +75,7 @@ impl Default for StatusLineState {
             context_usage: None,
             provider: String::new(),
             model: String::new(),
+            fast_mode_active: false,
             reasoning: ReasoningLevel::default(),
             reasoning_configurable: true,
             permission_mode: PermissionMode::default(),
@@ -93,6 +95,7 @@ impl StatusLineState {
             context_usage: None,
             provider: info.provider.clone(),
             model: info.model.clone(),
+            fast_mode_active: info.fast_mode_active(),
             reasoning: info.reasoning,
             reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
             permission_mode: info.permission_mode,
@@ -121,14 +124,17 @@ impl StatusLine {
 
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
         let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
+        let fast_mode_active = info.fast_mode_active();
         if self.state.provider != info.provider
             || self.state.model != info.model
+            || self.state.fast_mode_active != fast_mode_active
             || self.state.reasoning != info.reasoning
             || self.state.reasoning_configurable != reasoning_configurable
             || self.state.permission_mode != info.permission_mode
         {
             self.state.provider.clone_from(&info.provider);
             self.state.model.clone_from(&info.model);
+            self.state.fast_mode_active = fast_mode_active;
             self.state.reasoning = info.reasoning;
             self.state.reasoning_configurable = reasoning_configurable;
             self.state.permission_mode = info.permission_mode;
@@ -246,7 +252,12 @@ fn bottom_status(state: &StatusLineState, width: usize) -> (String, String) {
         left = context;
     }
 
-    let with_model = format!("{right} · {}", state.model);
+    let model = if state.fast_mode_active {
+        format!("{} (fast)", state.model)
+    } else {
+        state.model.clone()
+    };
+    let with_model = format!("{right} · {model}");
     if !row_fits(&left, &with_model, width) {
         return (left, right);
     }

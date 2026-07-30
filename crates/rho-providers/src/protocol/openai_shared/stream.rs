@@ -162,9 +162,11 @@ pub(crate) fn convert_streamed_response(
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct CodexSseResponse {
     pub(crate) response: ModelResponse,
     pub(crate) response_id: Option<String>,
+    pub(crate) service_tier: Option<String>,
 }
 
 pub(crate) async fn collect_codex_sse_response(
@@ -238,6 +240,7 @@ pub(crate) struct CodexSseState {
     pub(crate) completed_text: Option<String>,
     pub(crate) tool_calls: Vec<ToolCall>,
     pub(crate) response_id: Option<String>,
+    pub(crate) service_tier: Option<String>,
     pub(crate) output_items: Vec<serde_json::Value>,
     /// Tool-call argument text already published as [`ModelEvent::ToolCallDelta`],
     /// keyed by provider output index.
@@ -258,6 +261,7 @@ pub(crate) struct CodexSseState {
 impl CodexSseState {
     pub(crate) fn into_response(self) -> Result<CodexSseResponse, ModelError> {
         let response_id = self.response_id;
+        let service_tier = self.service_tier;
         let mut blocks = Vec::new();
         let text = if self.text.is_empty() {
             self.completed_text.unwrap_or_default()
@@ -276,6 +280,7 @@ impl CodexSseState {
             Ok(CodexSseResponse {
                 response: ModelResponse::Assistant(blocks),
                 response_id,
+                service_tier,
             })
         }
     }
@@ -595,6 +600,12 @@ pub(crate) fn handle_codex_sse_value(
             state.tool_calls.push(call);
         }
     } else if event_type == "response.completed" {
+        state.service_tier = value
+            .get("response")
+            .and_then(|response| response.get("service_tier"))
+            .or_else(|| value.get("service_tier"))
+            .and_then(|tier| tier.as_str())
+            .map(str::to_owned);
         if let Some(response_id) = value
             .get("response")
             .and_then(|response| response.get("id"))

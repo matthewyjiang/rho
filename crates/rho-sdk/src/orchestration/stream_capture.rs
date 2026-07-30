@@ -264,8 +264,7 @@ pub(super) fn capture_provider_event(
             position,
             data,
         } => {
-            // Hosted-tool activity reuses ProviderContext as a 1.x-compatible
-            // carrier; do not seal text or retain replay state for it.
+            // Reserved ProviderContext carriers stay off the replay path.
             if kind == crate::model::HOSTED_TOOL_ACTIVITY_KIND {
                 let name = data
                     .get("name")
@@ -278,6 +277,18 @@ pub(super) fn capture_provider_event(
                     .unwrap_or_default()
                     .to_owned();
                 return RunEvent::HostedToolActivity { name, detail };
+            }
+            if kind == crate::model::SERVICE_TIER_FALLBACK_KIND {
+                let requested = match data.get("requested").and_then(|value| value.as_str()) {
+                    Some("priority") => crate::model::ServiceTier::Priority,
+                    _ => crate::model::ServiceTier::Priority,
+                };
+                let used = data
+                    .get("used")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown")
+                    .to_owned();
+                return RunEvent::ProviderServiceTierFallback { requested, used };
             }
             // Provider-native boundaries (for example Gemini thought signatures)
             // must not be collapsed into a single cancelled text block.

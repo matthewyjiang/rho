@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::credentials::CodexTokens;
-use crate::model::{ModelError, ModelEvent, ModelResponse, ProviderReportedErrorKind};
+use crate::model::{ModelError, ModelEvent, ProviderReportedErrorKind};
 use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, StreamIdleDeadline};
 
 use super::codex_continuation::{
@@ -65,7 +65,7 @@ type CodexSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum CodexWsTurn {
-    Completed(ModelResponse),
+    Completed(CodexSseResponse),
     /// The WebSocket transport could not complete the turn before emitting any
     /// caller-visible stream events. Continuation state has already been reset,
     /// so the caller can safely retry `body` over SSE.
@@ -206,7 +206,7 @@ impl CodexWsTransport {
                     .continuation
                     .record_success(&candidate, continuation_response);
                 state.turn_open = false;
-                Ok(CodexWsTurn::Completed(response.response))
+                Ok(CodexWsTurn::Completed(response))
             }
             Err(failure) => {
                 state.discard();
@@ -243,7 +243,7 @@ impl CodexWsTransport {
                     .continuation
                     .record_success(&candidate, continuation_response);
                 state.turn_open = false;
-                Ok(CodexWsTurn::Completed(response.response))
+                Ok(CodexWsTurn::Completed(response))
             }
             Err(failure) => {
                 state.discard();

@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::ContentBlock;
+use crate::model::{ContentBlock, ModelResponse};
 use serde_json::json;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::TcpListener;
@@ -93,6 +93,7 @@ async fn send_completion(socket: &mut WebSocketStream<TcpStream>, response_index
                 "type":"response.completed",
                 "response":{
                     "id": format!("resp_{response_index}"),
+                    "service_tier":"default",
                     "output_text": format!("ok{response_index}"),
                     "output":[],
                     "usage":{"input_tokens": 10, "output_tokens": 2}
@@ -270,7 +271,10 @@ async fn first_websocket_request_sends_full_input_without_previous_response_id()
         .await
         .unwrap();
 
-    assert!(matches!(turn, CodexWsTurn::Completed(_)));
+    let CodexWsTurn::Completed(response) = turn else {
+        panic!("expected websocket completion");
+    };
+    assert_eq!(response.service_tier.as_deref(), Some("default"));
     let frames = frames.lock().unwrap();
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0]["type"], "response.create");
@@ -305,7 +309,11 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
         .await
         .unwrap();
 
-    let CodexWsTurn::Completed(ModelResponse::Assistant(blocks)) = turn else {
+    let CodexWsTurn::Completed(CodexSseResponse {
+        response: ModelResponse::Assistant(blocks),
+        ..
+    }) = turn
+    else {
         panic!("expected websocket completion");
     };
     assert!(matches!(
@@ -362,7 +370,11 @@ async fn abandoned_turn_does_not_leave_continuation_state_for_the_next_turn() {
     .await
     .unwrap();
 
-    let CodexWsTurn::Completed(ModelResponse::Assistant(blocks)) = turn else {
+    let CodexWsTurn::Completed(CodexSseResponse {
+        response: ModelResponse::Assistant(blocks),
+        ..
+    }) = turn
+    else {
         panic!("expected websocket completion");
     };
     assert!(matches!(
@@ -718,7 +730,10 @@ async fn empty_websocket_completion_after_output_uses_streamed_output() {
 
     assert!(matches!(
         outcome,
-        CodexWsTurn::Completed(ModelResponse::Assistant(blocks))
+        CodexWsTurn::Completed(CodexSseResponse {
+            response: ModelResponse::Assistant(blocks),
+            ..
+        })
             if blocks == vec![ContentBlock::Text("partial".into())]
     ));
 }

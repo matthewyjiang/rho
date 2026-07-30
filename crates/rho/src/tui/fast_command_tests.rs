@@ -100,25 +100,3 @@ fn failed_config_save_rolls_back_the_runtime() {
     assert_eq!(app.info.runtime.service_tier, None);
     assert_eq!(app.status, "config save failed");
 }
-
-#[test]
-fn status_does_not_mutate_runtime_or_config() {
-    let mut app = supported_app();
-    let runtime = FakeRuntime::default();
-    runtime.enabled.set(true);
-
-    app.execute_fast_command_with_runtime(invocation("/fast status"), &runtime)
-        .unwrap();
-
-    assert!(runtime.fast_mode());
-    assert_eq!(runtime.set_calls.get(), 0);
-    assert!(
-        !app.info
-            .services
-            .config_repository
-            .load()
-            .unwrap()
-            .fast_mode
-    );
-    assert_eq!(app.status, "fast mode on");
-}

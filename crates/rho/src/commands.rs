@@ -79,11 +79,6 @@ const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
         usage: "/fast off",
         description: "use standard Codex response speed",
     },
-    CommandArgumentChoice {
-        completion: "/fast status",
-        usage: "/fast status",
-        description: "show the current Codex speed mode",
-    },
 ];
 
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
@@ -140,7 +135,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Fast,
         name: "fast",
-        usage: "/fast [on|off|status]",
+        usage: "/fast [on|off]",
         description: "toggle faster Codex responses at higher credit cost",
         argument_choices: FAST_ARGUMENT_CHOICES,
     },

@@ -1185,6 +1185,43 @@ async fn service_tier_is_explicit_and_can_change_between_runs() {
     );
 }
 
+// Covers: a provider service-tier fallback must reach hosts as a typed run event.
+// Owner: SDK orchestration
+#[tokio::test]
+async fn provider_service_tier_fallback_is_emitted_without_marking_a_retry() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::streaming(
+            vec![ModelEvent::service_tier_fallback(
+                crate::model::ServiceTier::Priority,
+                "default",
+            )],
+            ModelResponse::Assistant(vec![ContentBlock::Text("standard".into())]),
+        )],
+    );
+    let runtime = Rho::builder().provider(provider).build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("hello")).await.unwrap();
+    let mut fallback = None;
+    let mut saw_retry = false;
+
+    while let Some(event) = run.next_event().await {
+        match event {
+            RunEvent::ProviderServiceTierFallback { requested, used } => {
+                fallback = Some((requested, used));
+            }
+            RunEvent::ProviderRequestRetry => saw_retry = true,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        fallback,
+        Some((crate::model::ServiceTier::Priority, "default".into()))
+    );
+    assert!(!saw_retry);
+}
+
 #[test]
 fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() {
     let runtime = Rho::builder()
