@@ -1,9 +1,15 @@
-//! Single-file exact string replacement tool.
+//! Single-file string replacement tool.
 //!
 //! One call edits one existing UTF-8 file. By default the old string must match
-//! exactly once. Set `replace_all` to replace every occurrence.
+//! exactly once after newline normalization. Set `replace_all` to replace every
+//! occurrence.
 
-use std::{ops::Range, path::Path};
+use std::{
+    fs::OpenOptions,
+    io::{Read, Seek, SeekFrom, Write},
+    ops::Range,
+    path::Path,
+};
 
 use serde::Deserialize;
 use serde_json::json;
@@ -33,7 +39,7 @@ impl Tool for EditFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "edit_file".into(),
-            description: "Edits an existing UTF-8 text file by exact string replacement. By default old_string must match exactly once; set replace_all to replace every match. Prefer this for one surgical replace. Use write_file to create or fully rewrite a file, and apply_patch for multi-hunk or multi-file edits.".into(),
+            description: "Edits an existing UTF-8 text file by string replacement. Matching normalizes CRLF/LF newlines while preserving the file's newline style on write. By default old_string must match exactly once; set replace_all to replace every match. Prefer this for one surgical replace. Use write_file to create or fully rewrite a file, and apply_patch for multi-hunk or multi-file edits.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -43,11 +49,11 @@ impl Tool for EditFile {
                     },
                     "old_string": {
                         "type": "string",
-                        "description": "Exact text to find. Must be non-empty and must differ from new_string."
+                        "description": "Text to find. Must be non-empty and must differ from new_string. CRLF and LF newlines are treated equivalently when matching."
                     },
                     "new_string": {
                         "type": "string",
-                        "description": "Replacement text."
+                        "description": "Replacement text. Newlines are rewritten to match the file's existing style."
                     },
                     "replace_all": {
                         "type": "boolean",
@@ -85,7 +91,7 @@ impl Tool for EditFile {
     }
 }
 
-/// Apply one exact string replacement to an existing file.
+/// Apply one string replacement to an existing file under an exclusive lock.
 pub(super) async fn edit_file_content(
     path: &Path,
     display_path: &str,
@@ -96,29 +102,69 @@ pub(super) async fn edit_file_content(
 ) -> Result<FileMutationOutcome, ToolError> {
     validate_edit_args(old_string, new_string)?;
 
-    let original = tokio::fs::read_to_string(path)
-        .await
+    let path = path.to_path_buf();
+    let display_path = display_path.to_string();
+    let old_string = old_string.to_string();
+    let new_string = new_string.to_string();
+    tokio::task::spawn_blocking(move || {
+        edit_file_content_locked(
+            &path,
+            &display_path,
+            &old_string,
+            &new_string,
+            replace_all,
+            max_output_bytes,
+        )
+    })
+    .await
+    .map_err(|error| ToolError::Message(format!("edit task failed: {error}")))?
+}
+
+fn edit_file_content_locked(
+    path: &Path,
+    display_path: &str,
+    old_string: &str,
+    new_string: &str,
+    replace_all: bool,
+    max_output_bytes: usize,
+) -> Result<FileMutationOutcome, ToolError> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| ToolError::Message(format!("could not open {display_path}: {error}")))?;
+    // Hold an exclusive lock across plan + write so concurrent cooperators cannot
+    // change the source after validation and before commit.
+    file.lock()
+        .map_err(|error| ToolError::Message(format!("could not lock {display_path}: {error}")))?;
+
+    let mut original = String::new();
+    file.read_to_string(&mut original)
         .map_err(|error| ToolError::Message(format!("could not read {display_path}: {error}")))?;
+
     let spans = replacement_spans(&original, old_string);
     validate_match_count(display_path, spans.len(), replace_all)?;
     let replacement = match_file_eol(&original, new_string);
     let updated = replace_spans(&original, &spans, &replacement);
 
-    // Fail closed if the file changed after the read used to plan the edit.
-    let current = tokio::fs::read_to_string(path).await.map_err(|error| {
-        ToolError::Message(format!("could not re-read {display_path}: {error}"))
+    file.seek(SeekFrom::Start(0)).map_err(|error| {
+        ToolError::Message(format!("could not rewrite {display_path}: {error}"))
     })?;
-    if current != original {
-        return Err(ToolError::Message(format!(
-            "{display_path} changed while the edit was being validated; no files were modified"
-        )));
-    }
-
-    tokio::fs::write(path, &updated)
-        .await
+    file.set_len(0).map_err(|error| {
+        ToolError::Message(format!("could not rewrite {display_path}: {error}"))
+    })?;
+    file.write_all(updated.as_bytes()).map_err(|error| {
+        ToolError::Message(format!("could not write {display_path}: {error}"))
+    })?;
+    file.flush()
         .map_err(|error| ToolError::Message(format!("could not write {display_path}: {error}")))?;
 
-    let diff = unified_diff(&original, &updated, display_path, false);
+    let diff = unified_diff(
+        &original,
+        &updated,
+        display_path,
+        /*created*/ false,
+    );
     let replaced = spans.len();
     Ok(FileMutationOutcome {
         content: truncate(

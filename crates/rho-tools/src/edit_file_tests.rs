@@ -43,10 +43,19 @@ async fn replaces_unique_occurrence() {
         std::fs::read_to_string(ctx.cwd.join("sample.txt")).unwrap(),
         "alpha delta gamma"
     );
-    assert!(result.content.contains("--- a/sample.txt"));
-    assert!(result.content.contains("+++ b/sample.txt"));
-    assert!(result.content.contains("-alpha beta gamma"));
-    assert!(result.content.contains("+alpha delta gamma"));
+    assert_eq!(
+        result.content,
+        concat!(
+            "edited sample.txt; replaced 1 occurrence(s)\n\n",
+            "--- a/sample.txt\n",
+            "+++ b/sample.txt\n",
+            "@@ -1 +1 @@\n",
+            "-alpha beta gamma\n",
+            "\\ No newline at end of file\n",
+            "+alpha delta gamma\n",
+            "\\ No newline at end of file\n",
+        )
+    );
 }
 
 // Covers: replace_all must change every occurrence when the caller opts in
@@ -202,7 +211,7 @@ async fn rejects_missing_file() {
 
     let msg = message(error);
     assert!(
-        msg.starts_with("could not read missing.txt:"),
+        msg.starts_with("could not open missing.txt:"),
         "unexpected message: {msg}"
     );
     assert!(!ctx.cwd.join("missing.txt").exists());

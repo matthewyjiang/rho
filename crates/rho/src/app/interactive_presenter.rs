@@ -83,10 +83,36 @@ impl ToolKind {
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
-        if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
-            0
-        } else {
-            PREVIEW_LARGE_PARSE_STRIDE
+        if matches!(self, Self::ApplyPatch) && arguments_len >= APPLY_PATCH_STREAM_PREVIEW_LIMIT {
+            // Grow with buffer size so total parse work stays linear for long
+            // streams instead of rescanning on a fixed byte interval.
+            return arguments_len.max(APPLY_PATCH_STREAM_PREVIEW_STRIDE);
+        }
+        match self {
+            Self::Agent
+            | Self::Agents
+            | Self::Bash
+            | Self::PowerShell
+            | Self::Process
+            | Self::ListDir
+            | Self::Grep
+            | Self::Glob
+            | Self::ReadFile
+            | Self::WriteFile
+            | Self::EditFile
+            | Self::ApplyPatch
+            | Self::Skill
+            | Self::WebSearch
+            | Self::FetchContent
+            | Self::GetSearchContent
+            | Self::Questionnaire
+            | Self::Other => {
+                if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
+                    0
+                } else {
+                    PREVIEW_LARGE_PARSE_STRIDE
+                }
+            }
         }
     }
 }
@@ -100,6 +126,15 @@ const PREVIEW_FULL_PARSE_LIMIT: usize = 4096;
 
 /// Argument bytes accumulated between parses past [`PREVIEW_FULL_PARSE_LIMIT`].
 const PREVIEW_LARGE_PARSE_STRIDE: usize = 4096;
+
+/// Apply_patch argument size above which streaming previews use a coarse stride.
+///
+/// The final proposal still parses the complete patch once.
+const APPLY_PATCH_STREAM_PREVIEW_LIMIT: usize = 256 * 1024;
+
+/// Minimum bytes between apply_patch preview rebuilds past
+/// [`APPLY_PATCH_STREAM_PREVIEW_LIMIT`]. Actual intervals grow with buffer size.
+const APPLY_PATCH_STREAM_PREVIEW_STRIDE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Default)]
 struct StreamedPreview {
@@ -141,15 +176,15 @@ impl InteractiveToolPresenter {
         let preview = self.streamed.entry(index).or_default();
         let name_changed = name
             .as_ref()
-            .is_some_and(|name| preview.name.as_ref() != Some(name));
-        if let Some(name) = name {
-            preview.name = Some(name);
-        }
+            .is_some_and(|name| preview.name.as_ref().is_some_and(|current| current != name));
         if name_changed {
             preview.arguments.clear();
             preview.next_parse_length = 0;
             preview.last_args = None;
             preview.last_card = None;
+        }
+        if let Some(name) = name {
+            preview.name = Some(name);
         }
         preview.arguments.push_str(arguments_delta);
         // A provider commonly announces a call's identity before sending any
@@ -304,3 +339,7 @@ impl InteractiveToolPresenter {
         (ok, presentation(&view, card))
     }
 }
+
+#[cfg(test)]
+#[path = "interactive_presenter_tests.rs"]
+mod tests;

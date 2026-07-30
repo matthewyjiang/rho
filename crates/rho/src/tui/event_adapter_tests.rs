@@ -3,7 +3,7 @@ use std::time::Duration;
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
-    tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput},
+    tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput, ToolProgress},
     HostChoice, HostInputRequest, HostQuestion, ProviderStreamResetReason, Revision, RunEvent,
     RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
@@ -177,19 +177,106 @@ fn legacy_provider_activity_is_ignored_by_tui() {
 }
 
 #[test]
-fn retains_structured_tool_metadata_until_completion() {
+fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-1").unwrap();
+    let input = "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch";
+    let partial_arguments = concat!(
+        r#"{"input":"*** Begin Patch\n"#,
+        r#"*** Update File: src/lib.rs\n@@\n-old\n+new\n"#,
+    );
+    assert!(adapter
+        .translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: None,
+            name: None,
+            arguments_delta: partial_arguments.into(),
+        })
+        .is_empty());
+    let ViewEvent::Update(ViewModelEvent::ToolCallUpdated { card, .. }) =
+        only_event(adapter.translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: None,
+            name: Some("apply_patch".into()),
+            arguments_delta: String::new(),
+        }))
+    else {
+        panic!("expected streamed tool call");
+    };
+    let proposed_card = rho_tools::tool_card::ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::FileDiff,
+        ToolHeader::call("apply_patch", Some("src/lib.rs".into())),
+    )
+    .with_facts(vec![ToolFact::DiffStat {
+        added: 1,
+        removed: 1,
+        path: Some("src/lib.rs".into()),
+    }])
+    .with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::Removed, None, "old"),
+        DiffRow::new(DiffRowKind::Added, None, "new"),
+    ]));
+    assert_eq!(card, Some(proposed_card.clone()));
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: Some(call_id.to_string()),
+            name: None,
+            arguments_delta: String::new(),
+        })),
+        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+            call_id: Some(bound_id),
+            card: None,
+            ..
+        }) if bound_id == call_id
+    ));
+    let mut interrupted_card = proposed_card.clone();
+    interrupted_card.status = ToolStatus::Interrupted;
+    assert_eq!(
+        crate::app::interactive_presenter::InteractiveToolPresenter::new(
+            std::path::PathBuf::new(),
+        )
+        .interrupted(Some("apply_patch"), partial_arguments)
+        .card,
+        interrupted_card
+    );
+
     let call = ToolCall {
         id: call_id.to_string(),
         name: "apply_patch".into(),
-        arguments: serde_json::json!({"path": "src/lib.rs"}),
+        arguments: serde_json::json!({"input": input}),
     };
-    let _ = only_event(adapter.translate(RunEvent::ToolProposed { call }));
-    let _ = only_event(adapter.translate(RunEvent::ToolStarted {
-        call_id: call_id.clone(),
-        name: "apply_patch".into(),
-        metadata: ToolMetadata::new().operation(OperationKind::Write),
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ToolProposed { call })),
+        ViewEvent::Update(ViewModelEvent::ToolCallProposed { card, .. })
+            if card == proposed_card
+    ));
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ToolStarted {
+            call_id: call_id.clone(),
+            name: "apply_patch".into(),
+            metadata: ToolMetadata::new().operation(OperationKind::Write),
+        })),
+        ViewEvent::Update(ViewModelEvent::ToolStarted { card, .. })
+            if card == proposed_card
+    ));
+    let progress = ToolProgress::message("applying").units(1, 2);
+    let ViewEvent::Update(ViewModelEvent::ToolUpdated { card, .. }) =
+        only_event(adapter.translate(RunEvent::ToolUpdated {
+            call_id: call_id.clone(),
+            progress,
+        }))
+    else {
+        panic!("expected tool progress");
+    };
+    assert!(card.body.is_diff());
+    assert!(card.facts.contains(&ToolFact::Meta {
+        text: "applying".into(),
+    }));
+    assert!(card.facts.contains(&ToolFact::Progress {
+        completed: 1,
+        total: Some(2),
     }));
     let output = ToolOutput::text("updated").metadata(
         ToolMetadata::new()
@@ -230,6 +317,143 @@ fn retains_structured_tool_metadata_until_completion() {
             DiffRow::new(DiffRowKind::Added, Some(1), "new"),
         ])
     );
+}
+
+#[test]
+fn apply_patch_binds_a_late_call_id_after_a_large_preview_stride() {
+    let mut adapter = SdkEventAdapter::default();
+    let call_id = ToolCallId::from_string("call-large-preview").unwrap();
+    let input = format!(
+        "*** Begin Patch\n*** Add File: large.txt\n{}*** End Patch",
+        "+line\n".repeat(45_000)
+    );
+    let arguments = serde_json::to_string(&serde_json::json!({"input": input})).unwrap();
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: None,
+            name: Some("apply_patch".into()),
+            arguments_delta: arguments,
+        })),
+        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+            call_id: None,
+            card: Some(_),
+            ..
+        })
+    ));
+
+    // Identity-only delta after a coarse stride: bind without re-rendering.
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: Some(call_id.to_string()),
+            name: None,
+            arguments_delta: String::new(),
+        })),
+        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+            call_id: Some(bound_id),
+            card: None,
+            ..
+        }) if bound_id == call_id
+    ));
+    assert!(adapter
+        .translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: Some(call_id.to_string()),
+            name: None,
+            arguments_delta: String::new(),
+        })
+        .is_empty());
+}
+
+// Covers: delete and move-only apply_patch previews keep explicit identity
+// Owner: interactive presenter format
+#[test]
+fn apply_patch_preview_preserves_delete_and_move_identity() {
+    struct Case {
+        name: &'static str,
+        input: &'static str,
+        expected: rho_tools::tool_card::ToolCard,
+    }
+
+    let cases = [
+        Case {
+            name: "delete",
+            input: "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch",
+            expected: rho_tools::tool_card::ToolCard::new(
+                ToolStatus::Running,
+                ToolFamily::FileDiff,
+                ToolHeader::call("apply_patch", Some("gone.txt".into())),
+            )
+            .with_facts(vec![ToolFact::Meta {
+                text: "delete".into(),
+            }]),
+        },
+        Case {
+            name: "move-only",
+            input: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n*** End Patch",
+            expected: rho_tools::tool_card::ToolCard::new(
+                ToolStatus::Running,
+                ToolFamily::FileDiff,
+                ToolHeader::call("apply_patch", Some("old.txt → new.txt".into())),
+            ),
+        },
+    ];
+
+    for case in cases {
+        let mut adapter = SdkEventAdapter::default();
+        let arguments = serde_json::to_string(&serde_json::json!({"input": case.input})).unwrap();
+        let ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+            card: Some(card), ..
+        }) = only_event(adapter.translate(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: None,
+            name: Some("apply_patch".into()),
+            arguments_delta: arguments,
+        }))
+        else {
+            panic!("{}: expected streamed apply_patch card", case.name);
+        };
+        assert_eq!(card, case.expected, "{}", case.name);
+    }
+}
+
+#[test]
+fn write_file_does_not_label_a_mixed_omitted_diff_as_no_changes() {
+    let mut adapter = SdkEventAdapter::default();
+    let call_id = ToolCallId::from_string("call-omitted-diff").unwrap();
+    let _ = only_event(adapter.translate(RunEvent::ToolStarted {
+        call_id: call_id.clone(),
+        name: "write_file".into(),
+        metadata: ToolMetadata::new().operation(OperationKind::Write),
+    }));
+    let output = ToolOutput::text("updated").metadata(
+        ToolMetadata::new()
+            .operation(OperationKind::Write)
+            .affected_path("large.txt")
+            .diff("No changes.\n\nDiff omitted: test reason."),
+    );
+
+    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
+        only_event(adapter.translate(RunEvent::ToolFinished {
+            call_id,
+            result: ToolCompletion::Success(output),
+        }))
+    else {
+        panic!("expected translated tool completion");
+    };
+
+    assert_eq!(
+        card.header,
+        ToolHeader::call("write_file", Some("large.txt".into()))
+    );
+    assert_eq!(
+        card.facts,
+        vec![ToolFact::Meta {
+            text: "Diff omitted: test reason.".into(),
+        }]
+    );
+    assert!(card.body.is_empty());
 }
 
 #[test]

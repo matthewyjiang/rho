@@ -5,6 +5,7 @@
 
 mod apply;
 mod parser;
+mod proposed_diff;
 mod seek_sequence;
 
 use serde::Deserialize;
@@ -16,10 +17,14 @@ pub(crate) use apply::apply_hunks;
 #[cfg(test)]
 pub(crate) use parser::ParseError;
 pub(crate) use parser::{parse_patch, Hunk};
+pub use proposed_diff::{
+    proposed_diff_lenient, ProposedDiff, ProposedDiffFile, ProposedDiffOperation,
+    ProposedDiffTrailingLine,
+};
 
 pub struct ApplyPatch;
 
-const TOOL_DESCRIPTION: &str = r#"Use `apply_patch` for multi-hunk or multi-file edits with a Codex-style patch. Prefer `edit_file` for one exact string replacement in an existing file, and `write_file` to create or fully rewrite a file.
+const TOOL_DESCRIPTION: &str = r#"Use `apply_patch` for multi-hunk or multi-file edits with a Codex-style patch. Prefer `edit_file` for one surgical string replacement in an existing file, and `write_file` to create or fully rewrite a file.
 
 Patch language:
 
@@ -52,7 +57,7 @@ Rules:
 - Prefer relative paths
 - Prefer about 3 lines of context around each change
 - Use @@ headers when context alone is not unique
-- Prefer edit_file when changing one exact string in one existing file"#;
+- Prefer edit_file when changing one string in one existing file"#;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

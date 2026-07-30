@@ -68,6 +68,11 @@ fn smoke_terminal_restoration() {
 }
 
 #[test]
+fn apply_patch_diff_streams_and_survives_cancellation() {
+    assert_pass("apply_patch_diff");
+}
+
+#[test]
 fn claude_code_login_hands_terminal_to_fake_claude() {
     let home = IsolatedHome::new().unwrap();
     // Ensure /login claude-code does not stop at credential-store choice.

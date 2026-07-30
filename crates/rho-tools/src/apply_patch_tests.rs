@@ -4,6 +4,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::tool::{Tool, ToolContext, ToolError, ToolResult};
+use crate::tool_card::{DiffRow, DiffRowKind};
 
 fn test_context() -> (TempDir, ToolContext) {
     let dir = tempfile::tempdir().unwrap();
@@ -283,6 +284,333 @@ fn patch_paths_lenient_extracts_add_update_move_and_delete() {
 #[test]
 fn patch_paths_lenient_returns_empty_for_invalid_input() {
     assert!(patch_paths_lenient("not a patch").is_empty());
+}
+
+#[test]
+fn proposed_diff_lenient_projects_streamed_file_operations() {
+    struct Case {
+        name: &'static str,
+        input: &'static str,
+        trailing_line: ProposedDiffTrailingLine,
+        expected: ProposedDiff,
+    }
+
+    let cases = vec![
+        Case {
+            name: "partial add excludes an incomplete content line",
+            input: "*** Begin Patch\n*** Add File: new.txt\n+first\n+part",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Add,
+                    display_path: "new.txt".into(),
+                    source_path: None,
+                    destination_path: Some("new.txt".into()),
+                    rows: vec![DiffRow::new(DiffRowKind::Added, None, "first")],
+                    added_lines: Some(1),
+                    removed_lines: Some(0),
+                }],
+            },
+        },
+        Case {
+            name: "partial update maps rows and ignores hunk markers",
+            input: "*** Begin Patch\n*** Update File: edit.txt\n@@ section\n context\n @@ body\n-old\n+new\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "edit.txt".into(),
+                    source_path: Some("edit.txt".into()),
+                    destination_path: None,
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Context, None, "context"),
+                        DiffRow::new(DiffRowKind::Context, None, "@@ body"),
+                        DiffRow::new(DiffRowKind::Removed, None, "old"),
+                        DiffRow::new(DiffRowKind::Added, None, "new"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
+            },
+        },
+        Case {
+            name: "multi-file patch keeps row boundaries and accepts multi-space markers",
+            input: "*** Begin Patch\n*** Add File: one.txt\n+one\n  *** Update File: two.txt\n@@\n-two\n+TWO\n  *** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![
+                    ProposedDiffFile {
+                        operation: ProposedDiffOperation::Add,
+                        display_path: "one.txt".into(),
+                        source_path: None,
+                        destination_path: Some("one.txt".into()),
+                        rows: vec![DiffRow::new(DiffRowKind::Added, None, "one")],
+                        added_lines: Some(1),
+                        removed_lines: Some(0),
+                    },
+                    ProposedDiffFile {
+                        operation: ProposedDiffOperation::Update,
+                        display_path: "two.txt".into(),
+                        source_path: Some("two.txt".into()),
+                        destination_path: None,
+                        rows: vec![
+                            DiffRow::new(DiffRowKind::Removed, None, "two"),
+                            DiffRow::new(DiffRowKind::Added, None, "TWO"),
+                        ],
+                        added_lines: Some(1),
+                        removed_lines: Some(1),
+                    },
+                ],
+            },
+        },
+        Case {
+            name: "single-space delete marker remains update context",
+            input: "*** Begin Patch\n*** Update File: note.txt\n@@\n *** Delete File: note.txt\n-keep\n+kept\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "note.txt".into(),
+                    source_path: Some("note.txt".into()),
+                    destination_path: None,
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Context, None, "*** Delete File: note.txt"),
+                        DiffRow::new(DiffRowKind::Removed, None, "keep"),
+                        DiffRow::new(DiffRowKind::Added, None, "kept"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
+            },
+        },
+        Case {
+            name: "move keeps source and destination paths",
+            input: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "new.txt".into(),
+                    source_path: Some("old.txt".into()),
+                    destination_path: Some("new.txt".into()),
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Removed, None, "old"),
+                        DiffRow::new(DiffRowKind::Added, None, "new"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
+            },
+        },
+        Case {
+            name: "add projection ignores prefixes rejected by the strict parser",
+            input: "*** Begin Patch\n*** Add File: added.txt\n+kept\n-ignored\n ignored\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Add,
+                    display_path: "added.txt".into(),
+                    source_path: None,
+                    destination_path: Some("added.txt".into()),
+                    rows: vec![DiffRow::new(DiffRowKind::Added, None, "kept")],
+                    added_lines: Some(1),
+                    removed_lines: Some(0),
+                }],
+            },
+        },
+        Case {
+            name: "update projection keeps valid blank context",
+            input: "*** Begin Patch\n*** Update File: blank.txt\n@@\n\n-old\n+new\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "blank.txt".into(),
+                    source_path: Some("blank.txt".into()),
+                    destination_path: None,
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Context, None, ""),
+                        DiffRow::new(DiffRowKind::Removed, None, "old"),
+                        DiffRow::new(DiffRowKind::Added, None, "new"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
+            },
+        },
+        Case {
+            name: "only the first direct move marker sets the destination",
+            input: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: first.txt\n*** Move to: second.txt\n@@\n-old\n+new\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "first.txt".into(),
+                    source_path: Some("old.txt".into()),
+                    destination_path: Some("first.txt".into()),
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Removed, None, "old"),
+                        DiffRow::new(DiffRowKind::Added, None, "new"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
+            },
+        },
+        Case {
+            name: "late move marker does not change the destination",
+            input: "*** Begin Patch\n*** Update File: old.txt\n@@\n-old\n+new\n*** Move to: late.txt\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "old.txt".into(),
+                    source_path: Some("old.txt".into()),
+                    destination_path: None,
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Removed, None, "old"),
+                        DiffRow::new(DiffRowKind::Added, None, "new"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
+            },
+        },
+        Case {
+            name: "delete does not invent a removed line count",
+            input: "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Delete,
+                    display_path: "gone.txt".into(),
+                    source_path: Some("gone.txt".into()),
+                    destination_path: None,
+                    rows: Vec::new(),
+                    added_lines: Some(0),
+                    removed_lines: None,
+                }],
+            },
+        },
+        Case {
+            name: "missing end marker keeps complete lines",
+            input: "*** Begin Patch\n*** Update File: open.txt\n@@\n-before\n+after\n",
+            trailing_line: ProposedDiffTrailingLine::CompleteLinesOnly,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Update,
+                    display_path: "open.txt".into(),
+                    source_path: Some("open.txt".into()),
+                    destination_path: None,
+                    rows: vec![
+                        DiffRow::new(DiffRowKind::Removed, None, "before"),
+                        DiffRow::new(DiffRowKind::Added, None, "after"),
+                    ],
+                    added_lines: Some(1),
+                    removed_lines: Some(1),
+                }],
+            },
+        },
+        Case {
+            name: "full call includes a final no-newline content line",
+            input: "*** Begin Patch\n*** Add File: final.txt\n+last",
+            trailing_line: ProposedDiffTrailingLine::Include,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Add,
+                    display_path: "final.txt".into(),
+                    source_path: None,
+                    destination_path: Some("final.txt".into()),
+                    rows: vec![DiffRow::new(DiffRowKind::Added, None, "last")],
+                    added_lines: Some(1),
+                    removed_lines: Some(0),
+                }],
+            },
+        },
+        Case {
+            name: "invalid trailing line is ignored",
+            input: "*** Begin Patch\n*** Add File: valid.txt\n+kept\n*** Upda",
+            trailing_line: ProposedDiffTrailingLine::Include,
+            expected: ProposedDiff {
+                truncated: false,
+                files: vec![ProposedDiffFile {
+                    operation: ProposedDiffOperation::Add,
+                    display_path: "valid.txt".into(),
+                    source_path: None,
+                    destination_path: Some("valid.txt".into()),
+                    rows: vec![DiffRow::new(DiffRowKind::Added, None, "kept")],
+                    added_lines: Some(1),
+                    removed_lines: Some(0),
+                }],
+            },
+        },
+    ];
+
+    for case in cases {
+        assert_eq!(
+            proposed_diff_lenient(case.input, case.trailing_line),
+            case.expected,
+            "case: {}",
+            case.name
+        );
+    }
+
+    let large_input = format!(
+        "*** Begin Patch\n*** Add File: large.txt\n{}*** End Patch\n",
+        "+line\n".repeat(1_005)
+    );
+    let large = proposed_diff_lenient(&large_input, ProposedDiffTrailingLine::CompleteLinesOnly);
+    assert_eq!(large.files[0].added_lines, Some(1_005));
+    assert!(large.truncated);
+    assert_eq!(large.files[0].rows.len(), 999);
+    assert!(large.files[0]
+        .rows
+        .iter()
+        .all(|row| row.kind != DiffRowKind::Skip));
+
+    let many_files = format!(
+        "*** Begin Patch\n{}*** End Patch\n",
+        (0..105)
+            .map(|index| format!("*** Delete File: file-{index}.txt\n"))
+            .collect::<String>()
+    );
+    let bounded = proposed_diff_lenient(&many_files, ProposedDiffTrailingLine::CompleteLinesOnly);
+    assert_eq!(bounded.files.len(), 100);
+    assert!(bounded.truncated);
+    assert!(bounded.files.iter().all(|file| file.rows.is_empty()));
+
+    let many_rows = format!(
+        "*** Begin Patch\n{}*** End Patch\n",
+        (0..100)
+            .map(|index| format!("*** Add File: file-{index}.txt\n{}", "+line\n".repeat(20)))
+            .collect::<String>()
+    );
+    let bounded = proposed_diff_lenient(&many_rows, ProposedDiffTrailingLine::CompleteLinesOnly);
+    assert_eq!(bounded.files.len(), 100);
+    assert!(bounded.truncated);
+    let body_rows = bounded
+        .files
+        .iter()
+        .map(|file| file.rows.len())
+        .sum::<usize>();
+    // 100 file headings + body + 1 card footer slot = 1000
+    assert_eq!(bounded.files.len() + body_rows + 1, 1_000);
+    assert!(bounded
+        .files
+        .iter()
+        .all(|file| file.rows.iter().all(|row| row.kind != DiffRowKind::Skip)));
 }
 
 #[tokio::test]

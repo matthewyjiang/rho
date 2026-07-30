@@ -51,7 +51,7 @@ These tools can read and modify files inside or outside the workspace, run shell
 
 ## File edits
 
-`edit_file` performs one exact string replacement in an existing UTF-8 file. Pass `path`, `old_string`, and `new_string`. By default `old_string` must match exactly once; set `replace_all` to replace every match. The tool fails closed when the match count is wrong, the file is missing, or the file changes during validation. Successful results include a unified diff.
+`edit_file` performs one string replacement in an existing UTF-8 file. Pass `path`, `old_string`, and `new_string`. Matching normalizes CRLF and LF line endings rather than requiring byte-exact newline matches, and the replacement is rewritten to preserve the file's existing newline style. By default `old_string` must match exactly once; set `replace_all` to replace every match. The tool opens the target under an exclusive lock for plan and write so concurrent modifications cannot be overwritten after validation. It fails closed when the match count is wrong, the file is missing, or the lock/write cannot complete. Successful results include a unified diff.
 
 ```json
 {
@@ -61,7 +61,7 @@ These tools can read and modify files inside or outside the workspace, run shell
 }
 ```
 
-Use `edit_file` for a single surgical replace. Use `apply_patch` for multi-hunk or multi-file edits. Use `write_file` to create or fully rewrite a file.
+Use `edit_file` for a single surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits. Use `write_file` to create or fully rewrite a file.
 
 ## File patches
 
@@ -75,7 +75,7 @@ Rho parses the whole patch, plans every file operation against current contents,
 }
 ```
 
-Use `write_file` when you need to create or fully replace a file with complete contents. Prefer `edit_file` for one exact replace. Use `apply_patch` for multi-hunk or multi-file edits.
+Use `write_file` when you need to create or fully replace a file with complete contents. Prefer `edit_file` for one surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits.
 
 ## Managed background processes
 
