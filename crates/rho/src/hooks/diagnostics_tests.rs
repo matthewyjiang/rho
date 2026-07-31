@@ -163,7 +163,9 @@ fn a_loaded_hook_renders_its_full_spawn_contract() {
         enabled: true,
         files: vec!["/home/rho/.rho/hooks.toml".into()],
         skipped_untrusted: None,
+        skipped_untrusted_error: None,
         hooks: vec![HookContractView {
+            active: true,
             id: "user:deny-force-push".into(),
             event: "before_tool_use".into(),
             tools: "bash".into(),

@@ -12,12 +12,15 @@ use std::{
 
 use rho_sdk::{
     hooks::{
-        HookDecision, HookEnvelope, HookEventKind, HookGateFuture, HookObserveFuture, HookObserver,
-        HookPayloadBounds, PreToolUseGate, PreToolUseRequest,
+        HookDecision, HookEnvelope, HookEventKind, HookGateFuture, HookObserver, HookPayloadBounds,
+        PreToolUseGate, PreToolUseRequest,
     },
     CancellationToken,
 };
-use tokio::sync::mpsc;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+};
 
 use super::{
     activity::{HookActivity, HookActivityLog, HookOutcome},
@@ -39,6 +42,12 @@ pub const MAX_BLOCKING_DISPATCH: Duration = Duration::from_secs(30);
 /// behavior because the alternative, waiting, would make an observational hook
 /// block the turn it was supposed to only watch.
 pub const OBSERVATIONAL_QUEUE_CAPACITY: usize = 256;
+
+/// Maximum number of independent observational handlers running at once.
+///
+/// This isolates healthy hooks from a slow peer without turning queue pressure
+/// into unbounded child-process creation.
+pub const OBSERVATIONAL_MAX_IN_FLIGHT: usize = 32;
 
 /// Shared hook state, swappable on config reload.
 ///
@@ -308,32 +317,56 @@ pub struct QueuedHookObserver {
 }
 
 impl HookObserver for QueuedHookObserver {
-    fn observe(&self, envelope: HookEnvelope) -> HookObserveFuture<'_> {
-        Box::pin(async move {
-            if self.sender.try_send(envelope).is_err() {
-                // Full queue or a stopped worker. Dropping keeps the turn free;
-                // the drop is recorded so it is never silent.
-                self.engine.record(HookActivity {
-                    hook_id: "<queue>".into(),
-                    event: "observational",
-                    outcome: HookOutcome::Dropped,
-                    duration: None,
-                    truncated: false,
-                });
-            }
-        })
+    fn observe(&self, envelope: HookEnvelope) {
+        if self.sender.try_send(envelope).is_err() {
+            // Full queue or a stopped worker. Dropping keeps the turn free;
+            // the drop is recorded so it is never silent.
+            self.engine.record(HookActivity {
+                hook_id: "<queue>".into(),
+                event: "observational",
+                outcome: HookOutcome::Dropped,
+                duration: None,
+                truncated: false,
+            });
+        }
     }
 }
 
 /// Background worker that runs observational hooks off the agent's path.
 pub struct ObservationalWorker {
-    handle: tokio::task::JoinHandle<()>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+    shutdown: Option<oneshot::Sender<()>>,
+    cancellation: CancellationToken,
+    finished: bool,
 }
 
 impl ObservationalWorker {
     /// Waits a bounded time for queued events to finish, then stops.
-    pub async fn drain(self, grace: Duration) {
-        let _ = tokio::time::timeout(grace, self.handle).await;
+    pub async fn drain(mut self, grace: Duration) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        let mut handle = self.handle.take().expect("worker handle is present");
+        if tokio::time::timeout(grace, &mut handle).await.is_ok() {
+            self.finished = true;
+            return;
+        }
+        self.cancellation.cancel();
+        handle.abort();
+        let _ = handle.await;
+        self.finished = true;
+    }
+}
+
+impl Drop for ObservationalWorker {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.cancellation.cancel();
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
     }
 }
 
@@ -343,25 +376,67 @@ pub fn observational_channel(
     cancellation: CancellationToken,
 ) -> (QueuedHookObserver, ObservationalWorker) {
     let (sender, mut receiver) = mpsc::channel(OBSERVATIONAL_QUEUE_CAPACITY);
+    let (shutdown, mut shutdown_requested) = oneshot::channel();
     let worker_engine = Arc::clone(&engine);
+    let worker_cancellation = cancellation.clone();
     let handle = tokio::spawn(async move {
-        while let Some(envelope) = receiver.recv().await {
-            run_observational(&worker_engine, envelope, &cancellation).await;
+        let mut tasks = JoinSet::new();
+        loop {
+            tokio::select! {
+                biased;
+                () = cancellation.cancelled() => break,
+                _ = &mut shutdown_requested => {
+                    receiver.close();
+                    while let Some(envelope) = receiver.recv().await {
+                        dispatch_observational(
+                            &worker_engine,
+                            envelope,
+                            &cancellation,
+                            &mut tasks,
+                        ).await;
+                    }
+                    while tasks.join_next().await.is_some() {}
+                    break;
+                }
+                envelope = receiver.recv() => {
+                    let Some(envelope) = envelope else {
+                        while tasks.join_next().await.is_some() {}
+                        break;
+                    };
+                    dispatch_observational(
+                        &worker_engine,
+                        envelope,
+                        &cancellation,
+                        &mut tasks,
+                    ).await;
+                }
+                _ = tasks.join_next(), if !tasks.is_empty() => {}
+            }
         }
     });
     (
         QueuedHookObserver { engine, sender },
-        ObservationalWorker { handle },
+        ObservationalWorker {
+            handle: Some(handle),
+            shutdown: Some(shutdown),
+            cancellation: worker_cancellation,
+            finished: false,
+        },
     )
 }
 
-async fn run_observational(
-    engine: &HookEngine,
+async fn dispatch_observational(
+    engine: &Arc<HookEngine>,
     envelope: HookEnvelope,
     cancellation: &CancellationToken,
+    tasks: &mut JoinSet<()>,
 ) {
     let catalog = engine.catalog();
-    let hooks = catalog.matching(envelope.event(), envelope.payload().tool_name());
+    let hooks = catalog
+        .matching(envelope.event(), envelope.payload().tool_name())
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
     if hooks.is_empty() {
         return;
     }
@@ -377,32 +452,50 @@ async fn run_observational(
         });
         return;
     };
+    let encoded = Arc::new(encoded);
     for hook in hooks {
-        let id = hook.qualified_id();
-        // An observational failure is visible but never fails the run.
-        let outcome = match run_hook(hook, &encoded, cancellation.clone()).await {
-            Ok(output) if output.succeeded() => (HookOutcome::Observed, Some(output)),
-            Ok(output) => (
-                HookOutcome::Failed {
-                    reason: exit_detail(&output),
-                },
-                Some(output),
-            ),
-            Err(error) => (
-                HookOutcome::Failed {
-                    reason: error.to_string(),
-                },
-                None,
-            ),
-        };
-        engine.record(HookActivity {
-            hook_id: id,
-            event: hook.event().wire_name(),
-            outcome: outcome.0,
-            duration: outcome.1.as_ref().map(|output| output.duration),
-            truncated: outcome.1.is_some_and(|output| output.truncated),
+        while tasks.len() >= OBSERVATIONAL_MAX_IN_FLIGHT {
+            let _ = tasks.join_next().await;
+        }
+        let engine = Arc::clone(engine);
+        let encoded = Arc::clone(&encoded);
+        let cancellation = cancellation.clone();
+        tasks.spawn(async move {
+            run_observational_hook(engine, hook, encoded, cancellation).await;
         });
     }
+}
+
+async fn run_observational_hook(
+    engine: Arc<HookEngine>,
+    hook: HookDefinition,
+    encoded: Arc<String>,
+    cancellation: CancellationToken,
+) {
+    let id = hook.qualified_id();
+    // An observational failure is visible but never fails the run.
+    let outcome = match run_hook(&hook, &encoded, cancellation).await {
+        Ok(output) if output.succeeded() => (HookOutcome::Observed, Some(output)),
+        Ok(output) => (
+            HookOutcome::Failed {
+                reason: exit_detail(&output),
+            },
+            Some(output),
+        ),
+        Err(error) => (
+            HookOutcome::Failed {
+                reason: error.to_string(),
+            },
+            None,
+        ),
+    };
+    engine.record(HookActivity {
+        hook_id: id,
+        event: hook.event().wire_name(),
+        outcome: outcome.0,
+        duration: outcome.1.as_ref().map(|output| output.duration),
+        truncated: outcome.1.is_some_and(|output| output.truncated),
+    });
 }
 
 #[cfg(test)]

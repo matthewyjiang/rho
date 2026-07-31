@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::{HookEventId, RunId, SessionId};
 
 use super::{
-    bounds::{HookPayloadBounds, HookTruncation},
+    bounds::{bounded_string, HookPayloadBounds, HookTruncation},
     event::HookEventKind,
     payload::{HookPayload, HookWorkspace},
 };
@@ -161,24 +161,27 @@ impl std::error::Error for HookEnvelopeTooLarge {}
 
 /// Assembles one envelope with its identity, clock reading, and bounds report.
 pub struct HookEnvelopeBuilder {
-    event: HookEventKind,
     identity: HookIdentity,
     workspace: HookWorkspace,
     truncation: HookTruncation,
+    bounds: HookPayloadBounds,
     timestamp_unix_ms: u64,
 }
 
 impl HookEnvelopeBuilder {
     pub(crate) fn new(
-        event: HookEventKind,
         identity: HookIdentity,
         workspace_root: Option<&Path>,
+        bounds: HookPayloadBounds,
     ) -> Self {
+        let mut truncation = HookTruncation::default();
+        let identity = bounded_identity(identity, bounds, &mut truncation);
+        let workspace = HookWorkspace::from_root(workspace_root, bounds, &mut truncation);
         Self {
-            event,
             identity,
-            workspace: HookWorkspace::from_root(workspace_root),
-            truncation: HookTruncation::default(),
+            workspace,
+            truncation,
+            bounds,
             timestamp_unix_ms: now_unix_ms(),
         }
     }
@@ -187,10 +190,14 @@ impl HookEnvelopeBuilder {
         &mut self.truncation
     }
 
+    pub(crate) fn bounded_string(&mut self, value: impl Into<String>, field: &str) -> String {
+        bounded_string(value, field, self.bounds, &mut self.truncation)
+    }
+
     pub(crate) fn finish(self, payload: HookPayload) -> HookEnvelope {
         HookEnvelope {
             schema_version: HOOK_SCHEMA_VERSION,
-            event: self.event,
+            event: payload.event(),
             event_id: HookEventId::new(),
             timestamp_unix_ms: self.timestamp_unix_ms,
             identity: self.identity,
@@ -198,6 +205,42 @@ impl HookEnvelopeBuilder {
             truncation: self.truncation,
             payload,
         }
+    }
+}
+
+fn bounded_identity(
+    identity: HookIdentity,
+    bounds: HookPayloadBounds,
+    truncation: &mut HookTruncation,
+) -> HookIdentity {
+    HookIdentity {
+        session_id: identity.session_id.map(|id| {
+            SessionId::from_string(bounded_string(
+                id.as_str(),
+                "identity.session_id",
+                bounds,
+                truncation,
+            ))
+            .expect("a bounded nonempty session ID remains nonempty")
+        }),
+        parent_session_id: identity.parent_session_id.map(|id| {
+            SessionId::from_string(bounded_string(
+                id.as_str(),
+                "identity.parent_session_id",
+                bounds,
+                truncation,
+            ))
+            .expect("a bounded nonempty session ID remains nonempty")
+        }),
+        run_id: identity.run_id.map(|id| {
+            RunId::from_string(bounded_string(
+                id.as_str(),
+                "identity.run_id",
+                bounds,
+                truncation,
+            ))
+            .expect("a bounded nonempty run ID remains nonempty")
+        }),
     }
 }
 

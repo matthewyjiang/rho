@@ -12,8 +12,8 @@ use std::{
 };
 
 use crate::hooks::{
-    summarize_capability, BeforeToolUsePayload, HookDecision, HookEventKind, HookPayload,
-    HookPolicyOutcome, HookTool, HookWiring, PreToolUseRequest,
+    summarize_capability, BeforeToolUsePayload, HookDecision, HookPayload, HookPolicyOutcome,
+    HookTool, HookWiring, PreToolUseRequest,
 };
 
 use super::{
@@ -239,20 +239,22 @@ async fn consult_pre_tool_gate(
         return HookDecision::Continue;
     };
 
-    let tool = HookTool::from_source(
-        request.source(),
-        tool_call_id.map(|id| id.as_str().to_owned()),
-    );
-    if !gate.applies_to_tool(&tool.name) {
+    let tool_name = HookTool::source_name(request.source());
+    if !gate.applies_to_tool(tool_name) {
         return HookDecision::Continue;
     }
 
     let scope = &services.scope;
     let mut builder = hooks.builder(
-        HookEventKind::BeforeToolUse,
         scope.session_id.as_ref(),
         scope.run_id.as_ref(),
         scope.workspace_root(),
+    );
+    let tool = HookTool::from_source(
+        request.source(),
+        tool_call_id.map(|id| id.as_str().to_owned()),
+        hooks.bounds(),
+        builder.truncation(),
     );
     let capability = summarize_capability(request, hooks.bounds(), builder.truncation());
     let payload = HookPayload::BeforeToolUse(BeforeToolUsePayload {

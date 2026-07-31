@@ -6,8 +6,8 @@ use std::{
 use crate::{
     event::{RunOutcome, ToolCompletion},
     hooks::{
-        bounded_failure, error_label, AfterToolUsePayload, BoundedFailure, HookEventKind,
-        HookPayload, HookStopReason, HookTool, HookToolStatus, HookWiring, RunCompletedPayload,
+        bounded_failure, error_label, AfterToolUsePayload, BoundedFailure, HookPayload,
+        HookStopReason, HookTool, HookToolStatus, HookWiring, RunCompletedPayload,
         RunFailedPayload,
     },
     tool::ToolErrorKind,
@@ -60,7 +60,7 @@ impl RunHooks {
     ///
     /// Fired after the call's `ToolFinished` run event so hook order matches the
     /// order a host observes.
-    pub(super) async fn after_tool_use(
+    pub(super) fn after_tool_use(
         &self,
         tool_name: &str,
         call_id: &ToolCallId,
@@ -68,83 +68,76 @@ impl RunHooks {
         duration: Option<Duration>,
     ) {
         let bounds = self.hooks.bounds();
-        self.hooks
-            .observe(
-                HookEventKind::AfterToolUse,
+        self.hooks.observe(
+            Some(&self.session_id),
+            Some(&self.run_id),
+            self.workspace_root(),
+            |builder| {
+                let tool = HookTool::new(
+                    tool_name,
+                    Some(call_id.as_str().to_owned()),
+                    bounds,
+                    builder.truncation(),
+                );
+                let (status, failure) = match completion {
+                    ToolCompletion::Success(_) => (HookToolStatus::Succeeded, None),
+                    ToolCompletion::Failure(failure) => (
+                        HookToolStatus::Failed,
+                        Some(bounded_failure(
+                            BoundedFailure {
+                                kind: tool_error_label(failure.kind()),
+                                message: failure.message(),
+                                field: "payload.failure",
+                            },
+                            bounds,
+                            builder.truncation(),
+                        )),
+                    ),
+                    ToolCompletion::Unavailable => (HookToolStatus::Unavailable, None),
+                };
+                HookPayload::AfterToolUse(AfterToolUsePayload {
+                    tool,
+                    status,
+                    failure,
+                    duration_ms: duration.map(|elapsed| elapsed.as_millis() as u64),
+                })
+            },
+        );
+    }
+
+    /// Reports the terminal result of the whole run exactly once.
+    pub(super) fn run_finished(&self, result: &Result<RunOutcome, Error>) {
+        let bounds = self.hooks.bounds();
+        match result {
+            Ok(outcome) => self.hooks.observe(
+                Some(&self.session_id),
+                Some(&self.run_id),
+                self.workspace_root(),
+                |_| {
+                    HookPayload::RunCompleted(RunCompletedPayload {
+                        stop_reason: HookStopReason::from(outcome.stop_reason()),
+                        revision: outcome.revision().get(),
+                    })
+                },
+            ),
+            Err(error) => self.hooks.observe(
                 Some(&self.session_id),
                 Some(&self.run_id),
                 self.workspace_root(),
                 |builder| {
-                    let (status, failure) = match completion {
-                        ToolCompletion::Success(_) => (HookToolStatus::Succeeded, None),
-                        ToolCompletion::Failure(failure) => (
-                            HookToolStatus::Failed,
-                            Some(bounded_failure(
-                                BoundedFailure {
-                                    kind: tool_error_label(failure.kind()),
-                                    message: failure.message(),
-                                    field: "payload.failure.message",
-                                },
-                                bounds,
-                                builder.truncation(),
-                            )),
+                    HookPayload::RunFailed(RunFailedPayload {
+                        failure: bounded_failure(
+                            BoundedFailure {
+                                kind: error_label(error),
+                                message: &error.to_string(),
+                                field: "payload.failure",
+                            },
+                            bounds,
+                            builder.truncation(),
                         ),
-                        ToolCompletion::Unavailable => (HookToolStatus::Unavailable, None),
-                    };
-                    HookPayload::AfterToolUse(AfterToolUsePayload {
-                        tool: HookTool::new(tool_name, Some(call_id.as_str().to_owned())),
-                        status,
-                        failure,
-                        duration_ms: duration.map(|elapsed| elapsed.as_millis() as u64),
                     })
                 },
-            )
-            .await;
-    }
-
-    /// Reports the terminal result of the whole run exactly once.
-    pub(super) async fn run_finished(&self, result: &Result<RunOutcome, Error>) {
-        let bounds = self.hooks.bounds();
-        match result {
-            Ok(outcome) => {
-                self.hooks
-                    .observe(
-                        HookEventKind::RunCompleted,
-                        Some(&self.session_id),
-                        Some(&self.run_id),
-                        self.workspace_root(),
-                        |_| {
-                            HookPayload::RunCompleted(RunCompletedPayload {
-                                stop_reason: HookStopReason::from(outcome.stop_reason()),
-                                revision: outcome.revision().get(),
-                            })
-                        },
-                    )
-                    .await
-            }
-            Err(error) => {
-                self.hooks
-                    .observe(
-                        HookEventKind::RunFailed,
-                        Some(&self.session_id),
-                        Some(&self.run_id),
-                        self.workspace_root(),
-                        |builder| {
-                            HookPayload::RunFailed(RunFailedPayload {
-                                failure: bounded_failure(
-                                    BoundedFailure {
-                                        kind: error_label(error),
-                                        message: &error.to_string(),
-                                        field: "payload.failure.message",
-                                    },
-                                    bounds,
-                                    builder.truncation(),
-                                ),
-                            })
-                        },
-                    )
-                    .await
-            }
+            ),
         }
     }
 }

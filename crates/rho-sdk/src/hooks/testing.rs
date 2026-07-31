@@ -8,7 +8,6 @@
 use super::{
     bounds::HookPayloadBounds,
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookIdentity},
-    event::HookEventKind,
     gate::PreToolUseRequest,
     payload::{
         summarize_capability, AfterToolUsePayload, BeforeToolUsePayload, HookPayload,
@@ -42,11 +41,12 @@ pub fn before_tool_use_envelope(tool: &str, command: &str) -> HookEnvelope {
         ),
         CapabilitySource::built_in_tool(tool),
     );
-    let mut builder = HookEnvelopeBuilder::new(HookEventKind::BeforeToolUse, identity(), None);
-    let capability =
-        summarize_capability(&request, HookPayloadBounds::default(), builder.truncation());
+    let bounds = HookPayloadBounds::default();
+    let mut builder = HookEnvelopeBuilder::new(identity(), None, bounds);
+    let capability = summarize_capability(&request, bounds, builder.truncation());
+    let tool = HookTool::new(tool, Some("test-call".into()), bounds, builder.truncation());
     builder.finish(HookPayload::BeforeToolUse(BeforeToolUsePayload {
-        tool: HookTool::new(tool, Some("test-call".into())),
+        tool,
         capability,
         policy: HookPolicyOutcome::Allow,
     }))
@@ -59,19 +59,20 @@ pub fn before_tool_use_request(tool: &str, policy: HookPolicyOutcome) -> PreTool
 
 /// An `after_tool_use` envelope reporting a successful call of `tool`.
 pub fn after_tool_use_envelope(tool: &str) -> HookEnvelope {
-    HookEnvelopeBuilder::new(HookEventKind::AfterToolUse, identity(), None).finish(
-        HookPayload::AfterToolUse(AfterToolUsePayload {
-            tool: HookTool::new(tool, Some("test-call".into())),
-            status: HookToolStatus::Succeeded,
-            failure: None,
-            duration_ms: Some(1),
-        }),
-    )
+    let bounds = HookPayloadBounds::default();
+    let mut builder = HookEnvelopeBuilder::new(identity(), None, bounds);
+    let tool = HookTool::new(tool, Some("test-call".into()), bounds, builder.truncation());
+    builder.finish(HookPayload::AfterToolUse(AfterToolUsePayload {
+        tool,
+        status: HookToolStatus::Succeeded,
+        failure: None,
+        duration_ms: Some(1),
+    }))
 }
 
 /// A `run_completed` envelope for an end-turn run.
 pub fn run_completed_envelope() -> HookEnvelope {
-    HookEnvelopeBuilder::new(HookEventKind::RunCompleted, identity(), None).finish(
+    HookEnvelopeBuilder::new(identity(), None, HookPayloadBounds::default()).finish(
         HookPayload::RunCompleted(RunCompletedPayload {
             stop_reason: HookStopReason::EndTurn,
             revision: 1,

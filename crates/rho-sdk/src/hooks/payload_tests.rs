@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::workspace::{
-    CapabilityRequest, CapabilitySource, NetworkTarget, PathScope, ProcessEnvironment,
-    ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope,
+    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
 };
 
 use super::*;
@@ -16,6 +16,15 @@ fn summarize(request: &CapabilityRequest) -> (HookCapability, HookTruncation) {
     let mut truncation = HookTruncation::default();
     let capability = summarize_capability(request, bounds(), &mut truncation);
     (capability, truncation)
+}
+
+fn tool(name: &str, call_id: Option<&str>) -> HookTool {
+    HookTool::new(
+        name,
+        call_id.map(str::to_owned),
+        bounds(),
+        &mut HookTruncation::default(),
+    )
 }
 
 fn shell(command: &str) -> CapabilityRequest {
@@ -161,7 +170,10 @@ fn a_long_argument_is_cut_and_named_by_index() {
 
     assert_eq!(
         truncation.fields().collect::<Vec<_>>(),
-        vec!["payload.capability.arguments[1]"]
+        vec![
+            "payload.capability.arguments[1]",
+            "payload.capability.executable",
+        ]
     );
 }
 
@@ -194,7 +206,10 @@ fn total_arguments_are_bounded_and_reported() {
     assert_eq!(arguments, vec!["1234", "1234", "1234"]);
     assert_eq!(
         truncation.fields().collect::<Vec<_>>(),
-        vec!["payload.capability.arguments"]
+        vec![
+            "payload.capability.arguments",
+            "payload.capability.executable",
+        ]
     );
 }
 
@@ -241,24 +256,130 @@ fn a_tool_managed_destination_reports_no_url() {
     );
 }
 
+// Covers: every host-controlled capability scalar must honor the field budget.
+// Owner: SDK hook payload construction.
+#[test]
+fn externally_supplied_capability_fields_are_bounded() {
+    let long = "x".repeat(64);
+    let cases = [
+        (
+            CapabilityRequest::read_path(
+                &long,
+                PathScope::PrimaryWorkspace,
+                CapabilitySource::built_in_tool("read_file"),
+            ),
+            vec!["payload.capability.path"],
+        ),
+        (
+            CapabilityRequest::network(
+                NetworkTarget::Url(format!("https://example.com/{long}")),
+                CapabilitySource::built_in_tool("fetch_content"),
+            ),
+            vec!["payload.capability.host", "payload.capability.url"],
+        ),
+        (
+            CapabilityRequest::new(
+                CapabilityOperation::LoadSkill {
+                    name: long.clone(),
+                    path: Some(long.clone().into()),
+                },
+                CapabilitySource::built_in_tool("skill"),
+            ),
+            vec!["payload.capability.name", "payload.capability.path"],
+        ),
+    ];
+
+    for (request, expected_fields) in cases {
+        let mut truncation = HookTruncation::default();
+        let capability =
+            summarize_capability(&request, HookPayloadBounds::new(8, 4096), &mut truncation);
+
+        assert!(serde_json::to_vec(&capability).unwrap().len() < 4096);
+        assert_eq!(truncation.fields().collect::<Vec<_>>(), expected_fields);
+    }
+}
+
+#[test]
+fn tool_identity_fields_are_bounded() {
+    let mut truncation = HookTruncation::default();
+    let tool = HookTool::new(
+        "tool-name-is-long",
+        Some("call-id-is-long".into()),
+        HookPayloadBounds::new(8, 4096),
+        &mut truncation,
+    );
+
+    assert_eq!(
+        (tool.name, tool.call_id),
+        ("tool-nam".into(), Some("call-id-".into()))
+    );
+    assert_eq!(
+        truncation.fields().collect::<Vec<_>>(),
+        vec!["payload.tool.call_id", "payload.tool.name"]
+    );
+}
+
+#[test]
+fn failure_kind_and_message_are_bounded() {
+    let mut truncation = HookTruncation::default();
+    let failure = bounded_failure(
+        BoundedFailure {
+            kind: "failure-kind-is-long",
+            message: "failure-message-is-long",
+            field: "payload.failure",
+        },
+        HookPayloadBounds::new(8, 4096),
+        &mut truncation,
+    );
+
+    assert_eq!(
+        failure,
+        HookFailure {
+            kind: "failure-".into(),
+            message: "failure-".into(),
+        }
+    );
+    assert_eq!(
+        truncation.fields().collect::<Vec<_>>(),
+        vec!["payload.failure.kind", "payload.failure.message"]
+    );
+}
+
 #[test]
 fn tool_identity_comes_from_the_capability_source() {
+    let mut truncation = HookTruncation::default();
     assert_eq!(
-        HookTool::from_source(&CapabilitySource::built_in_tool("bash"), Some("c1".into())),
+        HookTool::from_source(
+            &CapabilitySource::built_in_tool("bash"),
+            Some("c1".into()),
+            bounds(),
+            &mut truncation,
+        ),
         HookTool {
             name: "bash".into(),
             call_id: Some("c1".into()),
         }
     );
     assert_eq!(
-        HookTool::from_source(&CapabilitySource::host_tool("deploy"), None),
+        HookTool::from_source(
+            &CapabilitySource::host_tool("deploy"),
+            None,
+            bounds(),
+            &mut truncation,
+        ),
         HookTool {
             name: "deploy".into(),
             call_id: None,
         }
     );
     assert_eq!(
-        HookTool::from_source(&CapabilitySource::PromptConstruction, None).name,
+        HookTool::from_source(
+            &CapabilitySource::PromptConstruction,
+            None,
+            bounds(),
+            &mut truncation,
+        )
+        .name,
         PROMPT_CONSTRUCTION_TOOL
     );
 }
@@ -266,7 +387,7 @@ fn tool_identity_comes_from_the_capability_source() {
 #[test]
 fn matchers_read_tool_name_and_status_from_the_payload() {
     let after = HookPayload::AfterToolUse(AfterToolUsePayload {
-        tool: HookTool::new("bash", Some("c1".into())),
+        tool: tool("bash", Some("c1")),
         status: HookToolStatus::Failed,
         failure: None,
         duration_ms: Some(12),

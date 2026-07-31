@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -87,6 +88,33 @@ pub(super) fn truncate_field(value: &mut String, bounds: HookPayloadBounds) -> b
     }
     value.truncate(boundary);
     true
+}
+
+pub(super) fn bounded_string(
+    value: impl Into<String>,
+    field: &str,
+    bounds: HookPayloadBounds,
+    truncation: &mut HookTruncation,
+) -> String {
+    let mut value = value.into();
+    if truncate_field(&mut value, bounds) {
+        truncation.record(field);
+    }
+    value
+}
+
+pub(super) fn bounded_path(
+    value: &Path,
+    field: &str,
+    bounds: HookPayloadBounds,
+    truncation: &mut HookTruncation,
+) -> PathBuf {
+    let mut rendered = value.to_string_lossy().into_owned();
+    let was_lossy = value.to_str().is_none();
+    if was_lossy || truncate_field(&mut rendered, bounds) {
+        truncation.record(field);
+    }
+    PathBuf::from(rendered)
 }
 
 #[cfg(test)]

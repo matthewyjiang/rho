@@ -109,6 +109,12 @@ enum TurnPrelude {
     ToolCall(ToolCall),
 }
 
+#[derive(Clone, Copy)]
+enum ReplacementLifecycle {
+    Started,
+    Rebound,
+}
+
 impl InteractiveRuntime {
     pub(crate) async fn new(options: InteractiveRuntimeOptions<'_>) -> anyhow::Result<Self> {
         let InteractiveRuntimeOptions {
@@ -259,7 +265,7 @@ impl InteractiveRuntime {
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
-            .session(SessionOptions::from_snapshot(snapshot))
+            .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
 
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
@@ -409,7 +415,7 @@ impl InteractiveRuntime {
             return Err(Error::SessionBusy);
         }
         if let Some(source) = self.sessions.pending_replacement() {
-            self.rebuild_session(source)
+            self.rebuild_session(source, ReplacementLifecycle::Started)
                 .await
                 .map_err(|error| Error::Persistence {
                     message: error.to_string(),
@@ -620,8 +626,7 @@ impl InteractiveRuntime {
         }
         self.runtime
             .hooks()
-            .session_completed(self.sessions.session().id(), self.completed_runs)
-            .await;
+            .session_completed(self.sessions.session().id(), self.completed_runs);
         self.completed_runs = 0;
         let session_id = self.sessions.reset()?;
         bind_subagent_parent(&self.tools, &session_id, None);
@@ -643,14 +648,16 @@ impl InteractiveRuntime {
         }
         self.runtime
             .hooks()
-            .session_completed(self.sessions.session().id(), self.completed_runs)
-            .await;
+            .session_completed(self.sessions.session().id(), self.completed_runs);
         self.completed_runs = 0;
         let id = storage.id().to_string();
-        self.rebuild_session(ReplacementSessionSource::Snapshot {
-            storage: storage.clone(),
-            id,
-        })
+        self.rebuild_session(
+            ReplacementSessionSource::Snapshot {
+                storage: storage.clone(),
+                id,
+            },
+            ReplacementLifecycle::Started,
+        )
         .await?;
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
@@ -692,7 +699,7 @@ impl InteractiveRuntime {
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
-            .session(SessionOptions::from_snapshot(snapshot))
+            .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
 
         // Do not change the live runtime until the selected leaf is durable.
@@ -846,8 +853,11 @@ impl InteractiveRuntime {
         checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     ) -> anyhow::Result<()> {
         if let Some((storage, snapshot)) = checkpoint {
-            self.rebuild_session(ReplacementSessionSource::DurableSnapshot { snapshot })
-                .await?;
+            self.rebuild_session(
+                ReplacementSessionSource::DurableSnapshot { snapshot },
+                ReplacementLifecycle::Rebound,
+            )
+            .await?;
             self.sessions.set_resumed_storage(storage);
             return Ok(());
         }
@@ -857,16 +867,23 @@ impl InteractiveRuntime {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("durable session storage is unavailable"))?;
         let id = storage.id().to_string();
-        self.rebuild_session(ReplacementSessionSource::Snapshot {
-            storage: storage.clone(),
-            id,
-        })
+        self.rebuild_session(
+            ReplacementSessionSource::Snapshot {
+                storage: storage.clone(),
+                id,
+            },
+            ReplacementLifecycle::Rebound,
+        )
         .await?;
         self.sessions.set_resumed_storage(storage);
         Ok(())
     }
 
-    async fn rebuild_session(&mut self, source: ReplacementSessionSource) -> anyhow::Result<()> {
+    async fn rebuild_session(
+        &mut self,
+        source: ReplacementSessionSource,
+        lifecycle: ReplacementLifecycle,
+    ) -> anyhow::Result<()> {
         let identity = self.provider.provider().identity();
         let (options, resume_omission) = match source {
             ReplacementSessionSource::DurableSnapshot { snapshot } => {
@@ -905,7 +922,10 @@ impl InteractiveRuntime {
             usage_recording: self.usage_recording.clone(),
             hooks: self.hooks.as_ref(),
         })?;
-        let replacement_session = replacement_runtime.session(options).await?;
+        let replacement_session = match lifecycle {
+            ReplacementLifecycle::Started => replacement_runtime.session(options).await?,
+            ReplacementLifecycle::Rebound => replacement_runtime.rebind_session(options).await?,
+        };
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);

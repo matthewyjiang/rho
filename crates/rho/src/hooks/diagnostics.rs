@@ -13,6 +13,7 @@ use super::{activity::HookActivity, catalog::HookCatalog, dispatch::HookEngine, 
 /// What a hook will execute, ready to show before trust is granted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct HookContractView {
+    pub active: bool,
     pub id: String,
     pub event: String,
     pub tools: String,
@@ -26,7 +27,8 @@ impl std::fmt::Display for HookContractView {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "{} on {} (tools: {})\n  argv: {}\n  cwd: {}\n  timeout: {}\n  env: {}",
+            "{}{} on {} (tools: {})\n  argv: {}\n  cwd: {}\n  timeout: {}\n  env: {}",
+            if self.active { "" } else { "[inactive] " },
             self.id,
             self.event,
             self.tools,
@@ -73,6 +75,8 @@ pub struct HookReport {
     pub files: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_untrusted: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped_untrusted_error: Option<String>,
     pub hooks: Vec<HookContractView>,
     pub recent_activity: Vec<HookActivityView>,
 }
@@ -84,6 +88,7 @@ impl HookReport {
             enabled: false,
             files: Vec::new(),
             skipped_untrusted: None,
+            skipped_untrusted_error: None,
             hooks: Vec::new(),
             recent_activity: Vec::new(),
         }
@@ -105,6 +110,9 @@ impl HookReport {
                 "ignoring {skipped} because this workspace is not trusted; set {}=1 to load it",
                 super::TRUST_PROJECT_HOOKS_ENV
             ));
+        }
+        if let Some(error) = &self.skipped_untrusted_error {
+            lines.push(format!("could not inspect untrusted hooks: {error}"));
         }
         if self.hooks.is_empty() {
             lines.push("no hooks are configured".to_owned());
@@ -142,6 +150,10 @@ impl HookInspector {
             skipped_untrusted: catalog
                 .skipped_untrusted()
                 .map(|skipped| crate::paths::display(&skipped.path)),
+            skipped_untrusted_error: catalog
+                .skipped_untrusted()
+                .and_then(|skipped| skipped.error())
+                .map(ToString::to_string),
             hooks: contract_views(&catalog),
             recent_activity: self
                 .engine
@@ -168,6 +180,7 @@ pub fn contract_views(catalog: &HookCatalog) -> Vec<HookContractView> {
         .spawn_contract()
         .into_iter()
         .map(|contract| HookContractView {
+            active: contract.active,
             id: contract.id,
             event: contract.event.to_owned(),
             tools: contract.tools,

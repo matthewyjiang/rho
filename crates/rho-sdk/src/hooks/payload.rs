@@ -12,7 +12,7 @@ use crate::{
 
 use crate::workspace::PolicyDecision;
 
-use super::bounds::{truncate_field, HookPayloadBounds, HookTruncation};
+use super::bounds::{bounded_path, bounded_string, HookPayloadBounds, HookTruncation};
 
 /// Which configured tool the event is about.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -216,6 +216,18 @@ pub struct SessionFailedPayload {
 }
 
 impl HookPayload {
+    pub(crate) const fn event(&self) -> super::HookEventKind {
+        match self {
+            Self::SessionStarted(_) => super::HookEventKind::SessionStarted,
+            Self::BeforeToolUse(_) => super::HookEventKind::BeforeToolUse,
+            Self::AfterToolUse(_) => super::HookEventKind::AfterToolUse,
+            Self::RunCompleted(_) => super::HookEventKind::RunCompleted,
+            Self::RunFailed(_) => super::HookEventKind::RunFailed,
+            Self::SessionCompleted(_) => super::HookEventKind::SessionCompleted,
+            Self::SessionFailed(_) => super::HookEventKind::SessionFailed,
+        }
+    }
+
     /// Tool name a `tools` matcher compares against, when the event has one.
     pub fn tool_name(&self) -> Option<&str> {
         match self {
@@ -245,20 +257,34 @@ impl HookPayload {
 }
 
 impl HookTool {
-    pub(crate) fn new(name: impl Into<String>, call_id: Option<String>) -> Self {
+    pub(crate) fn new(
+        name: impl Into<String>,
+        call_id: Option<String>,
+        bounds: HookPayloadBounds,
+        truncation: &mut HookTruncation,
+    ) -> Self {
         Self {
-            name: name.into(),
-            call_id,
+            name: bounded_string(name, "payload.tool.name", bounds, truncation),
+            call_id: call_id
+                .map(|call_id| bounded_string(call_id, "payload.tool.call_id", bounds, truncation)),
         }
     }
 
-    pub(crate) fn from_source(source: &CapabilitySource, call_id: Option<String>) -> Self {
-        let name = match source {
+    pub(crate) fn source_name(source: &CapabilitySource) -> &str {
+        match source {
             CapabilitySource::BuiltInTool { name }
             | CapabilitySource::HostProvidedTool { name } => name.as_str(),
             CapabilitySource::PromptConstruction => PROMPT_CONSTRUCTION_TOOL,
-        };
-        Self::new(name, call_id)
+        }
+    }
+
+    pub(crate) fn from_source(
+        source: &CapabilitySource,
+        call_id: Option<String>,
+        bounds: HookPayloadBounds,
+        truncation: &mut HookTruncation,
+    ) -> Self {
+        Self::new(Self::source_name(source), call_id, bounds, truncation)
     }
 }
 
@@ -290,26 +316,28 @@ pub(crate) fn summarize_capability(
 ) -> HookCapability {
     match request.operation() {
         CapabilityOperation::ReadPath { path, scope } => HookCapability::ReadPath {
-            path: path.clone(),
+            path: bounded_path(path, "payload.capability.path", bounds, truncation),
             scope: scope.into(),
         },
         CapabilityOperation::WritePath { path, scope } => HookCapability::WritePath {
-            path: path.clone(),
+            path: bounded_path(path, "payload.capability.path", bounds, truncation),
             scope: scope.into(),
         },
         CapabilityOperation::DiscoverInstructions { path, scope } => {
             HookCapability::DiscoverInstructions {
-                path: path.clone(),
+                path: bounded_path(path, "payload.capability.path", bounds, truncation),
                 scope: scope.into(),
             }
         }
         CapabilityOperation::ExecuteProcess(execution) => {
             summarize_process(execution, bounds, truncation)
         }
-        CapabilityOperation::NetworkAccess(target) => summarize_network(target),
+        CapabilityOperation::NetworkAccess(target) => summarize_network(target, bounds, truncation),
         CapabilityOperation::LoadSkill { name, path } => HookCapability::LoadSkill {
-            name: name.clone(),
-            path: path.clone(),
+            name: bounded_string(name.clone(), "payload.capability.name", bounds, truncation),
+            path: path
+                .as_deref()
+                .map(|path| bounded_path(path, "payload.capability.path", bounds, truncation)),
         },
     }
 }
@@ -323,10 +351,12 @@ fn summarize_process(
     let mut arguments = Vec::new();
     let mut argument_bytes = 0usize;
     for argument in invocation.arguments() {
-        let mut argument = argument.clone();
-        if truncate_field(&mut argument, bounds) {
-            truncation.record(format!("payload.capability.arguments[{}]", arguments.len()));
-        }
+        let argument = bounded_string(
+            argument.clone(),
+            &format!("payload.capability.arguments[{}]", arguments.len()),
+            bounds,
+            truncation,
+        );
         if argument_bytes.saturating_add(argument.len()) > bounds.max_envelope_bytes() {
             truncation.record("payload.capability.arguments");
             break;
@@ -335,25 +365,38 @@ fn summarize_process(
         arguments.push(argument);
     }
     let shell_command = match invocation {
-        ProcessInvocation::Shell { command, .. } => {
-            let mut command = command.clone();
-            if truncate_field(&mut command, bounds) {
-                truncation.record("payload.capability.shell_command");
-            }
-            Some(command)
-        }
+        ProcessInvocation::Shell { command, .. } => Some(bounded_string(
+            command.clone(),
+            "payload.capability.shell_command",
+            bounds,
+            truncation,
+        )),
         ProcessInvocation::Executable { .. } => None,
     };
     HookCapability::ExecuteProcess {
-        working_directory: execution.working_directory().to_path_buf(),
-        executable: invocation.executable_path().to_path_buf(),
+        working_directory: bounded_path(
+            execution.working_directory(),
+            "payload.capability.working_directory",
+            bounds,
+            truncation,
+        ),
+        executable: bounded_path(
+            invocation.executable_path(),
+            "payload.capability.executable",
+            bounds,
+            truncation,
+        ),
         arguments,
         shell_command,
         environment: execution.environment().into(),
     }
 }
 
-fn summarize_network(target: &NetworkTarget) -> HookCapability {
+fn summarize_network(
+    target: &NetworkTarget,
+    bounds: HookPayloadBounds,
+    truncation: &mut HookTruncation,
+) -> HookCapability {
     let Some(raw) = target.url() else {
         return HookCapability::NetworkAccess {
             url: None,
@@ -376,8 +419,15 @@ fn summarize_network(target: &NetworkTarget) -> HookCapability {
     let _ = parsed.set_username("");
     let _ = parsed.set_password(None);
     HookCapability::NetworkAccess {
-        host: parsed.host_str().map(str::to_owned),
-        url: Some(parsed.to_string()),
+        host: parsed
+            .host_str()
+            .map(|host| bounded_string(host, "payload.capability.host", bounds, truncation)),
+        url: Some(bounded_string(
+            parsed.to_string(),
+            "payload.capability.url",
+            bounds,
+            truncation,
+        )),
         query_present,
     }
 }
@@ -407,13 +457,19 @@ pub(crate) fn bounded_failure(
     bounds: HookPayloadBounds,
     truncation: &mut HookTruncation,
 ) -> HookFailure {
-    let mut message = failure.message.to_owned();
-    if truncate_field(&mut message, bounds) {
-        truncation.record(failure.field);
-    }
     HookFailure {
-        kind: failure.kind.into(),
-        message,
+        kind: bounded_string(
+            failure.kind,
+            &format!("{}.kind", failure.field),
+            bounds,
+            truncation,
+        ),
+        message: bounded_string(
+            failure.message,
+            &format!("{}.message", failure.field),
+            bounds,
+            truncation,
+        ),
     }
 }
 
@@ -424,9 +480,13 @@ pub struct HookWorkspace {
 }
 
 impl HookWorkspace {
-    pub(crate) fn from_root(root: Option<&Path>) -> Self {
+    pub(crate) fn from_root(
+        root: Option<&Path>,
+        bounds: HookPayloadBounds,
+        truncation: &mut HookTruncation,
+    ) -> Self {
         Self {
-            root: root.map(Path::to_path_buf),
+            root: root.map(|root| bounded_path(root, "workspace.root", bounds, truncation)),
         }
     }
 }

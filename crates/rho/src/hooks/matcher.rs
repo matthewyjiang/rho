@@ -4,32 +4,6 @@
 //! trailing `*`. There is no expression language, so what a hook selects is
 //! obvious from the file and cannot depend on internal or display names.
 
-/// Every tool name a `tools` matcher may reference.
-///
-/// This is the public hook contract. A name is listed here whether or not the
-/// current run enables the tool, so a matcher does not silently stop matching
-/// when a capability is turned off.
-pub const CANONICAL_TOOL_NAMES: &[&str] = &[
-    "agent",
-    "agents",
-    "apply_patch",
-    "bash",
-    "edit_file",
-    "fetch_content",
-    "get_search_content",
-    "glob",
-    "grep",
-    "list_dir",
-    "powershell",
-    "process",
-    "questionnaire",
-    "read_file",
-    "rho",
-    "skill",
-    "web_search",
-    "write_file",
-];
-
 /// Why a `tools` list was rejected.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolMatcherError {

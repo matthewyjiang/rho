@@ -510,6 +510,23 @@ impl Rho {
     }
 
     pub async fn session(&self, options: SessionOptions) -> Result<Session, Error> {
+        self.create_session(options, SessionLifecycle::Started)
+    }
+
+    /// Reconstructs the SDK object for an already-live logical session.
+    ///
+    /// Hosts use this while replacing runtime infrastructure around a session,
+    /// for example after a policy change. Unlike [`Rho::session`], this does not
+    /// emit `session_started`; the logical session has already started.
+    pub async fn rebind_session(&self, options: SessionOptions) -> Result<Session, Error> {
+        self.create_session(options, SessionLifecycle::Rebound)
+    }
+
+    fn create_session(
+        &self,
+        options: SessionOptions,
+        lifecycle: SessionLifecycle,
+    ) -> Result<Session, Error> {
         if self.lifecycle.is_shutdown() {
             return Err(Error::RuntimeShutdown);
         }
@@ -528,22 +545,31 @@ impl Rho {
             options.prompt_cache_key,
             self.clone(),
         ));
-        self.hooks
-            .observe(
-                crate::hooks::HookEventKind::SessionStarted,
+        if lifecycle == SessionLifecycle::Started {
+            self.hooks.observe(
                 Some(session.id()),
                 None,
                 self.workspace.as_ref().map(crate::Workspace::root),
-                |_| {
+                |builder| {
                     let identity = self.provider.identity();
+                    let model = builder.bounded_string(
+                        format!("{}/{}", identity.provider, identity.model),
+                        "payload.model",
+                    );
                     crate::hooks::HookPayload::SessionStarted(crate::hooks::SessionStartedPayload {
-                        model: format!("{}/{}", identity.provider, identity.model),
+                        model,
                     })
                 },
-            )
-            .await;
+            );
+        }
         Ok(session)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionLifecycle {
+    Started,
+    Rebound,
 }
 
 impl std::fmt::Debug for Rho {

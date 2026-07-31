@@ -264,9 +264,7 @@ async fn an_observational_failure_is_recorded_but_never_denies() {
     let (observer, worker) =
         observational_channel(Arc::clone(&engine), rho_sdk::CancellationToken::new());
 
-    observer
-        .observe(rho_sdk::hooks::testing::after_tool_use_envelope("bash"))
-        .await;
+    observer.observe(rho_sdk::hooks::testing::after_tool_use_envelope("bash"));
     drop(observer);
     worker.drain(Duration::from_secs(10)).await;
 
@@ -283,13 +281,58 @@ async fn an_observational_success_is_recorded() {
     let (observer, worker) =
         observational_channel(Arc::clone(&engine), rho_sdk::CancellationToken::new());
 
-    observer
-        .observe(rho_sdk::hooks::testing::after_tool_use_envelope("bash"))
-        .await;
+    observer.observe(rho_sdk::hooks::testing::after_tool_use_envelope("bash"));
     drop(observer);
     worker.drain(Duration::from_secs(10)).await;
 
     assert_eq!(engine.activity()[0].outcome.label(), "observed");
+}
+
+// Covers: one waiting observer must not prevent an independent observer from running.
+// Owner: host observational dispatcher.
+#[tokio::test]
+async fn observational_handlers_are_isolated_from_each_other() {
+    let fixture = Fixture::new();
+    let signal = fixture.home.path().join("observer-signal");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&signal)
+        .status()
+        .unwrap()
+        .success());
+    let signal = signal.display();
+    let engine = fixture
+        .hook(
+            "waiting",
+            "after_tool_use",
+            "2s",
+            &format!("read ready < '{signal}'"),
+        )
+        .hook(
+            "signalling",
+            "after_tool_use",
+            "2s",
+            &format!("printf 'ready\\n' > '{signal}'"),
+        )
+        .engine();
+    let (observer, worker) =
+        observational_channel(Arc::clone(&engine), rho_sdk::CancellationToken::new());
+
+    observer.observe(rho_sdk::hooks::testing::after_tool_use_envelope("bash"));
+    drop(observer);
+    worker.drain(Duration::from_secs(3)).await;
+
+    let mut activity = engine.activity();
+    activity.sort_by(|left, right| left.hook_id.cmp(&right.hook_id));
+    assert_eq!(
+        activity
+            .into_iter()
+            .map(|record| (record.hook_id, record.outcome.label()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("user:signalling".into(), "observed"),
+            ("user:waiting".into(), "observed"),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -300,11 +343,44 @@ async fn an_event_no_hook_matches_records_nothing() {
     let (observer, worker) =
         observational_channel(Arc::clone(&engine), rho_sdk::CancellationToken::new());
 
-    observer
-        .observe(rho_sdk::hooks::testing::run_completed_envelope())
-        .await;
+    observer.observe(rho_sdk::hooks::testing::run_completed_envelope());
     drop(observer);
     worker.drain(Duration::from_secs(10)).await;
 
     assert!(engine.activity().is_empty());
+}
+
+// Covers: shutdown grace expiry must cancel the owned worker instead of detaching it.
+// Owner: host observational dispatcher.
+#[tokio::test]
+async fn drain_cancels_the_worker_after_its_grace_expires() {
+    let engine = Fixture::new()
+        .hook("post", "after_tool_use", "10s", "sleep 10")
+        .engine();
+    let cancellation = rho_sdk::CancellationToken::new();
+    let (observer, worker) = observational_channel(Arc::clone(&engine), cancellation.clone());
+
+    observer.observe(rho_sdk::hooks::testing::after_tool_use_envelope("bash"));
+    drop(observer);
+    worker.drain(Duration::ZERO).await;
+
+    assert!(cancellation.is_cancelled());
+}
+
+// Covers: pipeline shutdown must close its queue without waiting for SDK observer clones.
+// Owner: host observational dispatcher.
+#[tokio::test]
+async fn drain_owns_queue_closure_even_while_an_observer_is_attached() {
+    let engine = Arc::new(HookEngine::new(
+        HookCatalog::default(),
+        HookPayloadBounds::default(),
+    ));
+    let cancellation = rho_sdk::CancellationToken::new();
+    let (observer, worker) = observational_channel(Arc::clone(&engine), cancellation.clone());
+
+    worker.drain(Duration::from_secs(1)).await;
+
+    assert!(!cancellation.is_cancelled());
+    observer.observe(rho_sdk::hooks::testing::run_completed_envelope());
+    assert_eq!(engine.activity()[0].outcome.label(), "dropped");
 }

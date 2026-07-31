@@ -1,7 +1,5 @@
 use std::{
-    future::Future,
     path::{Path, PathBuf},
-    pin::Pin,
     sync::Arc,
 };
 
@@ -10,7 +8,6 @@ use crate::{RunId, SessionId};
 use super::{
     bounds::HookPayloadBounds,
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookIdentity},
-    event::HookEventKind,
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
     payload::{
         bounded_failure, BoundedFailure, HookFailure, HookPayload, SessionCompletedPayload,
@@ -18,17 +15,14 @@ use super::{
     },
 };
 
-/// Future returned by a [`HookObserver`].
-pub type HookObserveFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
-
 /// Sink for observational lifecycle events.
 ///
-/// The runtime awaits this future on the path that produced the event, so an
-/// implementation must hand the envelope to its own bounded queue and return.
-/// Doing real work here makes an observational event blocking, which the hook
-/// contract does not allow.
+/// This call runs on the path that produced the event. Implementations must
+/// perform only a non-blocking enqueue into their own bounded queue. The
+/// synchronous boundary deliberately makes it impossible to await hook work on
+/// the agent's path.
 pub trait HookObserver: Send + Sync {
-    fn observe(&self, envelope: HookEnvelope) -> HookObserveFuture<'_>;
+    fn observe(&self, envelope: HookEnvelope);
 }
 
 impl std::fmt::Debug for dyn HookObserver {
@@ -104,21 +98,23 @@ impl HookWiring {
 
     pub(crate) fn builder(
         &self,
-        event: HookEventKind,
         session_id: Option<&SessionId>,
         run_id: Option<&RunId>,
         workspace_root: Option<&Path>,
     ) -> HookEnvelopeBuilder {
-        HookEnvelopeBuilder::new(event, self.identity(session_id, run_id), workspace_root)
+        HookEnvelopeBuilder::new(
+            self.identity(session_id, run_id),
+            workspace_root,
+            self.bounds,
+        )
     }
 
     /// Builds and delivers one observational event.
     ///
     /// `build` runs only when an observer is installed, so runtimes without
     /// hooks pay nothing beyond an `Option` check.
-    pub(crate) async fn observe<F>(
+    pub(crate) fn observe<F>(
         &self,
-        event: HookEventKind,
         session_id: Option<&SessionId>,
         run_id: Option<&RunId>,
         workspace_root: Option<&Path>,
@@ -129,9 +125,9 @@ impl HookWiring {
         let Some(observer) = self.observer.as_ref() else {
             return;
         };
-        let mut builder = self.builder(event, session_id, run_id, workspace_root);
+        let mut builder = self.builder(session_id, run_id, workspace_root);
         let payload = build(&mut builder);
-        observer.observe(builder.finish(payload)).await;
+        observer.observe(builder.finish(payload));
     }
 
     pub(crate) async fn evaluate_pre_tool_use(&self, request: PreToolUseRequest) -> HookDecision {
@@ -207,20 +203,17 @@ impl HookDispatcher {
     }
 
     /// Reports that a session ended normally after `runs` completed runs.
-    pub async fn session_completed(&self, session_id: &SessionId, runs: u64) {
-        self.hooks
-            .observe(
-                HookEventKind::SessionCompleted,
-                Some(session_id),
-                None,
-                self.workspace_root.as_deref(),
-                |_| HookPayload::SessionCompleted(SessionCompletedPayload { runs }),
-            )
-            .await;
+    pub fn session_completed(&self, session_id: &SessionId, runs: u64) {
+        self.hooks.observe(
+            Some(session_id),
+            None,
+            self.workspace_root.as_deref(),
+            |_| HookPayload::SessionCompleted(SessionCompletedPayload { runs }),
+        );
     }
 
     /// Reports that a session ended because of `reason`.
-    pub async fn session_failed(
+    pub fn session_failed(
         &self,
         session_id: &SessionId,
         kind: impl Into<HookSessionFailureKind>,
@@ -228,26 +221,23 @@ impl HookDispatcher {
     ) {
         let kind = kind.into();
         let bounds = self.hooks.bounds();
-        self.hooks
-            .observe(
-                HookEventKind::SessionFailed,
-                Some(session_id),
-                None,
-                self.workspace_root.as_deref(),
-                |builder| {
-                    let failure: HookFailure = bounded_failure(
-                        BoundedFailure {
-                            kind: kind.wire_name(),
-                            message: reason,
-                            field: "payload.failure.message",
-                        },
-                        bounds,
-                        builder.truncation(),
-                    );
-                    HookPayload::SessionFailed(SessionFailedPayload { failure })
-                },
-            )
-            .await;
+        self.hooks.observe(
+            Some(session_id),
+            None,
+            self.workspace_root.as_deref(),
+            |builder| {
+                let failure: HookFailure = bounded_failure(
+                    BoundedFailure {
+                        kind: kind.wire_name(),
+                        message: reason,
+                        field: "payload.failure",
+                    },
+                    bounds,
+                    builder.truncation(),
+                );
+                HookPayload::SessionFailed(SessionFailedPayload { failure })
+            },
+        );
     }
 }
 

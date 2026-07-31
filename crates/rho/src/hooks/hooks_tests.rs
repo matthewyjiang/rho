@@ -343,7 +343,7 @@ timeout = "10s"
     let session = rho.session(SessionOptions::default()).await.unwrap();
     session.complete("go").await.unwrap();
 
-    rho.hooks().session_completed(session.id(), 1).await;
+    rho.hooks().session_completed(session.id(), 1);
     drop(session);
     drop(rho);
     hooks.shutdown(Duration::from_secs(10)).await;

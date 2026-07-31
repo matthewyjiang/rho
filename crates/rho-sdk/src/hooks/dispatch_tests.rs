@@ -6,6 +6,7 @@ use crate::{
     hooks::{
         gate::{HookDecision, HookGateFuture, PreToolUseGate, PreToolUseRequest},
         payload::{HookPayload, SessionStartedPayload},
+        HookEventKind,
     },
     RunId, SessionId,
 };
@@ -29,10 +30,8 @@ impl RecordingObserver {
 }
 
 impl HookObserver for RecordingObserver {
-    fn observe(&self, envelope: HookEnvelope) -> HookObserveFuture<'_> {
-        Box::pin(async move {
-            self.seen.lock().unwrap().push(envelope);
-        })
+    fn observe(&self, envelope: HookEnvelope) {
+        self.seen.lock().unwrap().push(envelope);
     }
 }
 
@@ -53,19 +52,17 @@ fn runtime_with(observer: Option<Arc<dyn HookObserver>>) -> HookWiring {
     )
 }
 
-#[tokio::test]
-async fn a_runtime_without_an_observer_never_builds_a_payload() {
+#[test]
+fn a_runtime_without_an_observer_never_builds_a_payload() {
     let hooks = runtime_with(None);
     let built = Mutex::new(false);
 
-    hooks
-        .observe(HookEventKind::SessionStarted, None, None, None, |_| {
-            *built.lock().unwrap() = true;
-            HookPayload::SessionStarted(SessionStartedPayload {
-                model: "scripted/test".into(),
-            })
+    hooks.observe(None, None, None, |_| {
+        *built.lock().unwrap() = true;
+        HookPayload::SessionStarted(SessionStartedPayload {
+            model: "scripted/test".into(),
         })
-        .await;
+    });
 
     assert!(
         !*built.lock().unwrap(),
@@ -74,26 +71,23 @@ async fn a_runtime_without_an_observer_never_builds_a_payload() {
     assert!(!hooks.observes());
 }
 
-#[tokio::test]
-async fn an_observed_event_reaches_the_sink_with_its_identity() {
+#[test]
+fn an_observed_event_reaches_the_sink_with_its_identity() {
     let observer = Arc::new(RecordingObserver::default());
     let hooks = runtime_with(Some(observer.clone()));
     let session = SessionId::from_string("session-1").unwrap();
     let run = RunId::from_string("run-1").unwrap();
 
-    hooks
-        .observe(
-            HookEventKind::SessionStarted,
-            Some(&session),
-            Some(&run),
-            Some(std::path::Path::new("/work")),
-            |_| {
-                HookPayload::SessionStarted(SessionStartedPayload {
-                    model: "scripted/test".into(),
-                })
-            },
-        )
-        .await;
+    hooks.observe(
+        Some(&session),
+        Some(&run),
+        Some(std::path::Path::new("/work")),
+        |_| {
+            HookPayload::SessionStarted(SessionStartedPayload {
+                model: "scripted/test".into(),
+            })
+        },
+    );
 
     let seen = observer.seen.lock().unwrap();
     let envelope = seen.first().expect("one envelope was delivered");
@@ -106,8 +100,8 @@ async fn an_observed_event_reaches_the_sink_with_its_identity() {
     );
 }
 
-#[tokio::test]
-async fn a_delegated_runtime_reports_its_parent_identity() {
+#[test]
+fn a_delegated_runtime_reports_its_parent_identity() {
     let observer = Arc::new(RecordingObserver::default());
     let parent_session = SessionId::from_string("parent-session").unwrap();
     let hooks = HookWiring::new(
@@ -118,19 +112,11 @@ async fn a_delegated_runtime_reports_its_parent_identity() {
     );
     let child = SessionId::from_string("child-session").unwrap();
 
-    hooks
-        .observe(
-            HookEventKind::SessionStarted,
-            Some(&child),
-            None,
-            None,
-            |_| {
-                HookPayload::SessionStarted(SessionStartedPayload {
-                    model: "scripted/test".into(),
-                })
-            },
-        )
-        .await;
+    hooks.observe(Some(&child), None, None, |_| {
+        HookPayload::SessionStarted(SessionStartedPayload {
+            model: "scripted/test".into(),
+        })
+    });
 
     let seen = observer.seen.lock().unwrap();
     assert_eq!(
@@ -146,41 +132,30 @@ async fn a_delegated_runtime_reports_its_parent_identity() {
 #[tokio::test]
 async fn a_runtime_without_a_gate_lets_every_request_continue() {
     let hooks = runtime_with(None);
-    let envelope = crate::hooks::envelope::HookEnvelopeBuilder::new(
-        HookEventKind::BeforeToolUse,
-        HookIdentity::default(),
-        None,
-    )
-    .finish(HookPayload::SessionStarted(SessionStartedPayload {
-        model: "scripted/test".into(),
-    }));
+    let request = crate::hooks::testing::before_tool_use_request(
+        "bash",
+        crate::hooks::HookPolicyOutcome::Allow,
+    );
 
-    let decision = hooks
-        .evaluate_pre_tool_use(PreToolUseRequest::new(
-            envelope,
-            crate::hooks::HookPolicyOutcome::Allow,
-        ))
-        .await;
+    let decision = hooks.evaluate_pre_tool_use(request).await;
 
     assert_eq!(decision, HookDecision::Continue);
 }
 
-#[tokio::test]
-async fn the_host_dispatcher_reports_both_session_boundaries() {
+#[test]
+fn the_host_dispatcher_reports_both_session_boundaries() {
     let observer = Arc::new(RecordingObserver::default());
     let dispatcher =
         HookDispatcher::new(runtime_with(Some(observer.clone())), Some("/work".into()));
     let session = SessionId::from_string("session-1").unwrap();
 
     assert!(dispatcher.is_enabled());
-    dispatcher.session_completed(&session, 4).await;
-    dispatcher
-        .session_failed(
-            &session,
-            HookSessionFailureKind::Provider,
-            "provider failed: overloaded",
-        )
-        .await;
+    dispatcher.session_completed(&session, 4);
+    dispatcher.session_failed(
+        &session,
+        HookSessionFailureKind::Provider,
+        "provider failed: overloaded",
+    );
 
     assert_eq!(
         observer.events(),

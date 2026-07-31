@@ -1,3 +1,4 @@
+use crate::tools::CANONICAL_TOOL_NAMES;
 use pretty_assertions::assert_eq;
 
 use super::*;

@@ -344,8 +344,7 @@ async fn resolve_without_work(
         entry.state = CallState::Resolved;
         control
             .hooks
-            .after_tool_use(&entry.call.name, &entry.id, &completion, None)
-            .await;
+            .after_tool_use(&entry.call.name, &entry.id, &completion, None);
         emit(
             control.events,
             control.cancellation,
@@ -721,8 +720,7 @@ async fn finish_call(
     entry.state = CallState::Resolved;
     control
         .hooks
-        .after_tool_use(&entry.call.name, &entry.id, &completion, duration)
-        .await;
+        .after_tool_use(&entry.call.name, &entry.id, &completion, duration);
     emit(
         control.events,
         control.cancellation,

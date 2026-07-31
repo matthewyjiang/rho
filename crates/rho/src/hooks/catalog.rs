@@ -2,12 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::tools::CANONICAL_TOOL_NAMES;
 use rho_sdk::hooks::HookEventKind;
 
 use super::{
     config::{parse_hooks_file, HookConfigError, HookDefinition},
     environment::base_environment_names,
-    matcher::CANONICAL_TOOL_NAMES,
     HookSource,
 };
 
@@ -38,6 +38,14 @@ impl ProjectTrust {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkippedProjectHooks {
     pub path: PathBuf,
+    definitions: Vec<HookDefinition>,
+    error: Option<HookConfigError>,
+}
+
+impl SkippedProjectHooks {
+    pub fn error(&self) -> Option<&HookConfigError> {
+        self.error.as_ref()
+    }
 }
 
 /// Loaded hooks plus what discovery decided along the way.
@@ -68,8 +76,22 @@ impl HookCatalog {
         };
         let project_file = root.join(".rho/hooks.toml");
         if trust == ProjectTrust::Untrusted {
-            if project_file.is_file() {
-                catalog.skipped_untrusted = Some(SkippedProjectHooks { path: project_file });
+            match read_definitions(&project_file, HookSource::Project, Some(root)) {
+                Ok(Some(definitions)) => {
+                    catalog.skipped_untrusted = Some(SkippedProjectHooks {
+                        path: project_file,
+                        definitions,
+                        error: None,
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    catalog.skipped_untrusted = Some(SkippedProjectHooks {
+                        path: project_file,
+                        definitions: Vec::new(),
+                        error: Some(error),
+                    });
+                }
             }
             return Ok(catalog);
         }
@@ -83,20 +105,10 @@ impl HookCatalog {
         source: HookSource,
         project_root: Option<&Path>,
     ) -> Result<(), HookConfigError> {
-        let contents = match std::fs::read_to_string(path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => {
-                return Err(HookConfigError::at_file(
-                    path,
-                    format!("cannot read hooks file: {error}"),
-                ))
-            }
+        let Some(hooks) = read_definitions(path, source, project_root)? else {
+            return Ok(());
         };
-        let hooks = parse_hooks_file(path, &contents, source, project_root, CANONICAL_TOOL_NAMES)?;
-        if !hooks.is_empty() || path.is_file() {
-            self.files.push(path.to_path_buf());
-        }
+        self.files.push(path.to_path_buf());
         self.hooks.extend(hooks);
         Ok(())
     }
@@ -157,20 +169,13 @@ impl HookCatalog {
     pub fn spawn_contract(&self) -> Vec<HookSpawnContract> {
         self.hooks
             .iter()
-            .map(|hook| HookSpawnContract {
-                id: hook.qualified_id(),
-                event: hook.event().wire_name(),
-                tools: hook.tools().describe(),
-                command: hook.command().to_vec(),
-                working_directory: hook.working_directory().to_path_buf(),
-                timeout: hook.timeout(),
-                environment: base_environment_names()
+            .map(|hook| spawn_contract(hook, true))
+            .chain(
+                self.skipped_untrusted
                     .iter()
-                    .map(|name| (*name).to_owned())
-                    .chain(std::iter::once(super::IN_HOOK_ENV.to_owned()))
-                    .chain(hook.env().iter().cloned())
-                    .collect(),
-            })
+                    .flat_map(|skipped| skipped.definitions.iter())
+                    .map(|hook| spawn_contract(hook, false)),
+            )
             .collect()
     }
 }
@@ -178,6 +183,7 @@ impl HookCatalog {
 /// What one hook will execute, rendered for the user before trust is granted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookSpawnContract {
+    pub active: bool,
     pub id: String,
     pub event: &'static str,
     pub tools: String,
@@ -185,6 +191,42 @@ pub struct HookSpawnContract {
     pub working_directory: PathBuf,
     pub timeout: std::time::Duration,
     pub environment: Vec<String>,
+}
+
+fn read_definitions(
+    path: &Path,
+    source: HookSource,
+    project_root: Option<&Path>,
+) -> Result<Option<Vec<HookDefinition>>, HookConfigError> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(HookConfigError::at_file(
+                path,
+                format!("cannot read hooks file: {error}"),
+            ))
+        }
+    };
+    parse_hooks_file(path, &contents, source, project_root, CANONICAL_TOOL_NAMES).map(Some)
+}
+
+fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {
+    HookSpawnContract {
+        active,
+        id: hook.qualified_id(),
+        event: hook.event().wire_name(),
+        tools: hook.tools().describe(),
+        command: hook.command().to_vec(),
+        working_directory: hook.working_directory().to_path_buf(),
+        timeout: hook.timeout(),
+        environment: base_environment_names()
+            .iter()
+            .map(|name| (*name).to_owned())
+            .chain(std::iter::once(super::IN_HOOK_ENV.to_owned()))
+            .chain(hook.env().iter().cloned())
+            .collect(),
+    }
 }
 
 #[cfg(test)]

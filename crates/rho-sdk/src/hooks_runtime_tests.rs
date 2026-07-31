@@ -11,8 +11,8 @@ use serde_json::json;
 
 use crate::{
     hooks::{
-        HookDecision, HookEnvelope, HookEventKind, HookGateFuture, HookObserveFuture, HookObserver,
-        HookPolicyOutcome, PreToolUseGate, PreToolUseRequest,
+        HookDecision, HookEnvelope, HookEventKind, HookGateFuture, HookObserver, HookPolicyOutcome,
+        PreToolUseGate, PreToolUseRequest,
     },
     model::{ContentBlock, ModelIdentity, ModelResponse, ModelUsage, ToolCall, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
@@ -124,10 +124,8 @@ impl RecordingObserver {
 }
 
 impl HookObserver for RecordingObserver {
-    fn observe(&self, envelope: HookEnvelope) -> HookObserveFuture<'_> {
-        Box::pin(async move {
-            self.seen.lock().unwrap().push(envelope);
-        })
+    fn observe(&self, envelope: HookEnvelope) {
+        self.seen.lock().unwrap().push(envelope);
     }
 }
 
@@ -450,8 +448,7 @@ async fn run_events_fire_per_run_while_session_events_fire_once() {
     session.complete("second").await.unwrap();
     runtime
         .hooks()
-        .session_completed(session.id(), /* runs */ 2)
-        .await;
+        .session_completed(session.id(), /* runs */ 2);
 
     assert_eq!(
         observer.events(),
@@ -462,6 +459,27 @@ async fn run_events_fire_per_run_while_session_events_fire_once() {
             HookEventKind::SessionCompleted,
         ]
     );
+}
+
+// Covers: replacing SDK infrastructure must not restart one logical session.
+// Owner: SDK session lifecycle.
+#[tokio::test]
+async fn rebinding_a_live_session_does_not_emit_another_start() {
+    let observer = Arc::new(RecordingObserver::default());
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(identity(), []))
+        .hook_observer_shared(observer.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    let rebound = runtime
+        .rebind_session(SessionOptions::from_snapshot(session.snapshot()))
+        .await
+        .unwrap();
+
+    assert_eq!(rebound.id(), session.id());
+    assert_eq!(observer.events(), vec![HookEventKind::SessionStarted]);
 }
 
 #[tokio::test]

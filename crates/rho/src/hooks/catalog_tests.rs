@@ -42,8 +42,10 @@ fn user_hooks_load_without_any_trust_grant() {
     assert_eq!(catalog.hooks()[0].qualified_id(), "user:log");
 }
 
+// Covers: project commands must be inspectable before they become executable.
+// Owner: host hook discovery.
 #[test]
-fn an_untrusted_project_file_is_ignored_and_reported_once() {
+fn an_untrusted_project_file_is_inactive_but_inspectable() {
     let home = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     write(&home.path().join("hooks.toml"), &user_hooks(&["log"]));
@@ -51,6 +53,7 @@ fn an_untrusted_project_file_is_ignored_and_reported_once() {
         &project.path().join(".rho/hooks.toml"),
         "version = 1\n\n[[hook]]\nid = \"p\"\non = \"after_tool_use\"\ncommand = [\"./x\"]\ntimeout = \"1s\"\n",
     );
+    write(&project.path().join("x"), "#!/bin/sh\n");
 
     let catalog = HookCatalog::discover(
         Some(home.path()),
@@ -60,6 +63,14 @@ fn an_untrusted_project_file_is_ignored_and_reported_once() {
     .unwrap();
 
     assert_eq!(catalog.len(), 1);
+    assert_eq!(
+        catalog
+            .spawn_contract()
+            .into_iter()
+            .map(|contract| (contract.id, contract.active))
+            .collect::<Vec<_>>(),
+        vec![("user:log".into(), true), ("project:p".into(), false)]
+    );
     assert_eq!(
         catalog
             .skipped_untrusted()

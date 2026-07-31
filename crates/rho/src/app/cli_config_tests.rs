@@ -148,26 +148,30 @@ fn cli_model_override_with_provider_selects_matching_auth() {
 
 #[test]
 fn cli_anthropic_provider_override_without_cache_uses_builtin_default() {
-    let mut cfg = Config::default();
-    let cli = Cli {
-        provider: Some("anthropic".into()),
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        resume: None,
-        command: None,
-    };
+    let cache_dir = unique_cache_dir("anthropic-empty");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        let mut cfg = Config::default();
+        let cli = Cli {
+            provider: Some("anthropic".into()),
+            model: None,
+            config: None,
+            auth: None,
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent: None,
+            reasoning: None,
+            resume: None,
+            command: None,
+        };
 
-    apply_overrides(&mut cfg, &cli).unwrap();
+        apply_overrides(&mut cfg, &cli).unwrap();
 
-    assert_eq!(cfg.provider, "anthropic");
-    assert_eq!(cfg.model, "claude-sonnet-4-5");
-    assert_eq!(cfg.auth, "anthropic-api-key");
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude-sonnet-4-5");
+        assert_eq!(cfg.auth, "anthropic-api-key");
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]

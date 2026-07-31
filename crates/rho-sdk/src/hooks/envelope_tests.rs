@@ -19,8 +19,22 @@ fn identity() -> HookIdentity {
     }
 }
 
-fn envelope(event: HookEventKind, payload: HookPayload) -> HookEnvelope {
-    HookEnvelopeBuilder::new(event, identity(), Some(std::path::Path::new("/work"))).finish(payload)
+fn envelope(payload: HookPayload) -> HookEnvelope {
+    HookEnvelopeBuilder::new(
+        identity(),
+        Some(std::path::Path::new("/work")),
+        HookPayloadBounds::default(),
+    )
+    .finish(payload)
+}
+
+fn tool(name: &str, call_id: Option<&str>) -> HookTool {
+    HookTool::new(
+        name,
+        call_id.map(str::to_owned),
+        HookPayloadBounds::default(),
+        &mut HookTruncation::default(),
+    )
 }
 
 /// Normalizes the two fields a golden comparison cannot pin: the generated
@@ -38,7 +52,7 @@ fn wire_shape(envelope: &HookEnvelope) -> serde_json::Value {
 #[test]
 fn before_tool_use_wire_shape_is_stable() {
     let payload = HookPayload::BeforeToolUse(BeforeToolUsePayload {
-        tool: HookTool::new("bash", Some("call-1".into())),
+        tool: tool("bash", Some("call-1")),
         capability: HookCapability::ExecuteProcess {
             working_directory: "/work".into(),
             executable: "bash".into(),
@@ -50,7 +64,7 @@ fn before_tool_use_wire_shape_is_stable() {
     });
 
     assert_eq!(
-        wire_shape(&envelope(HookEventKind::BeforeToolUse, payload)),
+        wire_shape(&envelope(payload)),
         json!({
             "schema_version": 1,
             "event": "before_tool_use",
@@ -82,14 +96,14 @@ fn before_tool_use_wire_shape_is_stable() {
 #[test]
 fn after_tool_use_wire_shape_is_stable() {
     let payload = HookPayload::AfterToolUse(AfterToolUsePayload {
-        tool: HookTool::new("edit_file", Some("call-2".into())),
+        tool: tool("edit_file", Some("call-2")),
         status: HookToolStatus::Succeeded,
         failure: None,
         duration_ms: Some(42),
     });
 
     assert_eq!(
-        wire_shape(&envelope(HookEventKind::AfterToolUse, payload))["payload"],
+        wire_shape(&envelope(payload))["payload"],
         json!({
             "tool": { "name": "edit_file", "call_id": "call-2" },
             "status": "succeeded",
@@ -109,7 +123,7 @@ fn run_failed_wire_shape_carries_a_typed_kind() {
     });
 
     assert_eq!(
-        wire_shape(&envelope(HookEventKind::RunFailed, payload))["payload"],
+        wire_shape(&envelope(payload))["payload"],
         json!({
             "failure": { "kind": "provider", "message": "provider failed: overloaded" },
         })
@@ -119,7 +133,7 @@ fn run_failed_wire_shape_carries_a_typed_kind() {
 #[test]
 fn a_workspaceless_runtime_reports_a_null_root() {
     let envelope =
-        HookEnvelopeBuilder::new(HookEventKind::SessionStarted, HookIdentity::default(), None)
+        HookEnvelopeBuilder::new(HookIdentity::default(), None, HookPayloadBounds::default())
             .finish(HookPayload::SessionStarted(
                 crate::hooks::SessionStartedPayload {
                     model: "scripted/test".into(),
@@ -141,7 +155,7 @@ fn a_workspaceless_runtime_reports_a_null_root() {
 #[test]
 fn truncated_fields_reach_the_handler_in_the_bounds_report() {
     let mut builder =
-        HookEnvelopeBuilder::new(HookEventKind::RunFailed, HookIdentity::default(), None);
+        HookEnvelopeBuilder::new(HookIdentity::default(), None, HookPayloadBounds::default());
     builder.truncation().record("payload.failure.message");
     let envelope = builder.finish(HookPayload::RunFailed(crate::hooks::RunFailedPayload {
         failure: crate::hooks::HookFailure {
@@ -156,12 +170,39 @@ fn truncated_fields_reach_the_handler_in_the_bounds_report() {
     );
 }
 
+// Covers: envelope metadata and model identity must not bypass field bounds.
+// Owner: SDK hook envelope construction.
+#[test]
+fn metadata_fields_are_bounded_before_serialization() {
+    let long = "x".repeat(64);
+    let mut builder = HookEnvelopeBuilder::new(
+        HookIdentity {
+            session_id: Some(SessionId::from_string(&long).unwrap()),
+            parent_session_id: None,
+            run_id: None,
+        },
+        Some(std::path::Path::new(&long)),
+        HookPayloadBounds::new(8, 4096),
+    );
+    let model = builder.bounded_string(&long, "payload.model");
+    let envelope = builder.finish(HookPayload::SessionStarted(
+        crate::hooks::SessionStartedPayload { model },
+    ));
+
+    assert!(envelope
+        .to_bounded_json(HookPayloadBounds::new(8, 4096))
+        .is_ok());
+    assert_eq!(
+        envelope.truncation().fields().collect::<Vec<_>>(),
+        vec!["identity.session_id", "payload.model", "workspace.root"]
+    );
+}
+
 #[test]
 fn an_envelope_within_bounds_serializes() {
-    let envelope = envelope(
-        HookEventKind::SessionCompleted,
-        HookPayload::SessionCompleted(crate::hooks::SessionCompletedPayload { runs: 3 }),
-    );
+    let envelope = envelope(HookPayload::SessionCompleted(
+        crate::hooks::SessionCompletedPayload { runs: 3 },
+    ));
 
     let encoded = envelope
         .to_bounded_json(HookPayloadBounds::default())
@@ -173,10 +214,9 @@ fn an_envelope_within_bounds_serializes() {
 
 #[test]
 fn an_oversized_envelope_is_refused_rather_than_silently_shortened() {
-    let envelope = envelope(
-        HookEventKind::SessionCompleted,
-        HookPayload::SessionCompleted(crate::hooks::SessionCompletedPayload { runs: 3 }),
-    );
+    let envelope = envelope(HookPayload::SessionCompleted(
+        crate::hooks::SessionCompletedPayload { runs: 3 },
+    ));
 
     let error = envelope
         .to_bounded_json(HookPayloadBounds::new(16, 16))
@@ -193,15 +233,12 @@ fn an_oversized_envelope_is_refused_rather_than_silently_shortened() {
 
 #[test]
 fn accessors_report_what_was_built() {
-    let envelope = envelope(
-        HookEventKind::AfterToolUse,
-        HookPayload::AfterToolUse(AfterToolUsePayload {
-            tool: HookTool::new("grep", None),
-            status: HookToolStatus::Unavailable,
-            failure: None,
-            duration_ms: None,
-        }),
-    );
+    let envelope = envelope(HookPayload::AfterToolUse(AfterToolUsePayload {
+        tool: tool("grep", None),
+        status: HookToolStatus::Unavailable,
+        failure: None,
+        duration_ms: None,
+    }));
 
     assert_eq!(envelope.schema_version(), HOOK_SCHEMA_VERSION);
     assert_eq!(envelope.event(), HookEventKind::AfterToolUse);

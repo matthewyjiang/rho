@@ -216,8 +216,10 @@ This is the same family as `RHO_TRUST_PROJECT_AGENTS`. Until then Rho ignores
 `<project>/.rho/hooks.toml` and says so once.
 
 Before you grant trust, read the spawn contract with `/hooks` or
-`rho(action="hooks")`. It shows the resolved argv, working directory, timeout,
-and the exact environment for every hook.
+`rho(action="hooks")`. Rho parses valid project definitions for inspection but
+keeps them inactive. Diagnostics show the resolved argv, working directory,
+timeout, and exact environment for every hook, with `active: false` on project
+hooks that have not been trusted.
 
 Project hooks must name their program by path (`./relative` or absolute), never
 a bare `PATH` name, so trusting a workspace cannot silently bind whatever `PATH`
@@ -263,6 +265,9 @@ outlive the hook.
 - Observational events go through a 256-slot queue. When it is full the newest
   event is dropped and the drop is recorded, because waiting would make an
   observational hook block the turn it was only supposed to watch.
+- Up to 32 observational handlers run concurrently, so one slow handler does
+  not stall unrelated handlers or later events. The cap keeps child-process
+  creation bounded.
 
 Full hook stdout and stderr stay out of normal session scrollback.
 
@@ -277,6 +282,7 @@ skipped, the resolved spawn contract for each hook, and recent activity:
   "files": ["/home/you/.rho/hooks.toml"],
   "hooks": [
     {
+      "active": true,
       "id": "user:deny-force-push",
       "event": "before_tool_use",
       "tools": "bash, powershell",

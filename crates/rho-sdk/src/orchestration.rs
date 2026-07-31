@@ -65,7 +65,7 @@ pub(crate) async fn execute_run(
     // Cancellation is an ordinary user-controlled stop in schema v1, which
     // has no cancellation event. Do not misreport it as `run_failed`.
     if !matches!(result, Err(Error::Cancelled)) {
-        hooks.run_finished(&result).await;
+        hooks.run_finished(&result);
     }
     result
 }

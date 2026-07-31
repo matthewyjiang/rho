@@ -19,15 +19,19 @@ impl InteractiveRuntime {
         let Some(hooks) = self.hooks.as_ref() else {
             let mut discard = |_message: String| {};
             let catalog = crate::hooks::discover_for_cwd(cwd, &mut discard)?;
+            anyhow::ensure!(
+                catalog.is_empty(),
+                "hooks were added since this session started; restart Rho to load them"
+            );
             let mut report = crate::hooks::HookReport::disabled();
             report.skipped_untrusted = catalog
                 .skipped_untrusted()
                 .map(|skipped| crate::paths::display(&skipped.path));
+            report.skipped_untrusted_error = catalog
+                .skipped_untrusted()
+                .and_then(|skipped| skipped.error())
+                .map(ToString::to_string);
             report.hooks = crate::hooks::contract_views(&catalog);
-            anyhow::ensure!(
-                report.hooks.is_empty(),
-                "hooks were added since this session started; restart Rho to load them"
-            );
             return Ok(report);
         };
         hooks.reload_for_cwd(cwd)?;
@@ -44,8 +48,7 @@ impl InteractiveRuntime {
         };
         self.runtime
             .hooks()
-            .session_completed(self.sessions.session().id(), self.completed_runs)
-            .await;
+            .session_completed(self.sessions.session().id(), self.completed_runs);
         hooks.shutdown(crate::hooks::DRAIN_GRACE).await;
     }
 }

@@ -57,9 +57,7 @@ pub(crate) use payload::{bounded_failure, error_label, summarize_capability, Bou
 pub use bounds::{
     HookPayloadBounds, HookTruncation, DEFAULT_MAX_ENVELOPE_BYTES, DEFAULT_MAX_FIELD_BYTES,
 };
-pub use dispatch::{
-    HookDelegation, HookDispatcher, HookObserveFuture, HookObserver, HookSessionFailureKind,
-};
+pub use dispatch::{HookDelegation, HookDispatcher, HookObserver, HookSessionFailureKind};
 pub use envelope::{
     HookEnvelope, HookEnvelopeError, HookEnvelopeTooLarge, HookIdentity, HOOK_SCHEMA_VERSION,
 };
