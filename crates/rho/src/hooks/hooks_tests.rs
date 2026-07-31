@@ -32,13 +32,7 @@ impl Fixture {
             "deny-bash",
             r#"cat > /dev/null; echo '{"version":1,"decision":"deny","reason":"bash is off limits here"}'"#,
         );
-        fixture.write_program(
-            "record-edit",
-            &format!(
-                "cat >> {}\n",
-                fixture.project.path().join("edits.log").display()
-            ),
-        );
+        fixture.write_program("record-edit", &fixture.recorder_script("edits.log"));
         std::fs::write(
             fixture.project.path().join(".rho/hooks.toml"),
             r#"
@@ -68,6 +62,11 @@ timeout = "10s"
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join(name);
         std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    }
+
+    fn recorder_script(&self, file_name: &str) -> String {
+        let path = self.project.path().join(file_name);
+        format!("cat >> {}\n", shell_words::quote(&path.to_string_lossy()))
     }
 
     fn catalog(&self, trust: ProjectTrust) -> HookCatalog {
@@ -255,13 +254,7 @@ async fn a_runtime_rebuild_reuses_one_engine_and_worker() {
 #[tokio::test]
 async fn a_delegated_run_reports_its_parent_session_to_hooks() {
     let fixture = Fixture::new();
-    fixture.write_program(
-        "record-run",
-        &format!(
-            "cat >> {}\n",
-            fixture.project.path().join("runs.log").display()
-        ),
-    );
+    fixture.write_program("record-run", &fixture.recorder_script("runs.log"));
     std::fs::write(
         fixture.project.path().join(".rho/hooks.toml"),
         r#"
@@ -315,13 +308,7 @@ timeout = "10s"
 #[tokio::test]
 async fn the_host_reports_the_session_boundary_after_its_runs() {
     let fixture = Fixture::new();
-    fixture.write_program(
-        "record-session",
-        &format!(
-            "cat >> {}\n",
-            fixture.project.path().join("session.log").display()
-        ),
-    );
+    fixture.write_program("record-session", &fixture.recorder_script("session.log"));
     std::fs::write(
         fixture.project.path().join(".rho/hooks.toml"),
         r#"

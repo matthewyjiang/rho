@@ -121,19 +121,12 @@ impl HookReport {
 #[derive(Clone)]
 pub struct HookInspector {
     engine: Arc<HookEngine>,
-    skipped_untrusted: Option<String>,
 }
 
 impl HookInspector {
     pub fn new(runtime: &HookPipeline) -> Self {
-        let engine = Arc::clone(runtime.engine());
-        let skipped_untrusted = engine
-            .catalog()
-            .skipped_untrusted()
-            .map(|skipped| crate::paths::display(&skipped.path));
         Self {
-            engine,
-            skipped_untrusted,
+            engine: Arc::clone(runtime.engine()),
         }
     }
 
@@ -146,7 +139,9 @@ impl HookInspector {
                 .iter()
                 .map(|path| crate::paths::display(path))
                 .collect(),
-            skipped_untrusted: self.skipped_untrusted.clone(),
+            skipped_untrusted: catalog
+                .skipped_untrusted()
+                .map(|skipped| crate::paths::display(&skipped.path)),
             hooks: contract_views(&catalog),
             recent_activity: self
                 .engine

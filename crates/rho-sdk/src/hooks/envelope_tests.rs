@@ -167,7 +167,8 @@ fn an_envelope_within_bounds_serializes() {
         .to_bounded_json(HookPayloadBounds::default())
         .expect("small envelope fits the default bound");
 
-    assert!(encoded.contains("\"session_completed\""));
+    let encoded: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(encoded["event"], json!("session_completed"));
 }
 
 #[test]
@@ -181,10 +182,13 @@ fn an_oversized_envelope_is_refused_rather_than_silently_shortened() {
         .to_bounded_json(HookPayloadBounds::new(16, 16))
         .expect_err("a 16-byte bound cannot hold an envelope");
 
-    assert_eq!(error.event(), HookEventKind::SessionCompleted);
-    assert_eq!(error.limit(), 16);
-    assert!(error.size() > 16);
-    assert!(error.to_string().contains("session_completed"));
+    let HookEnvelopeError::TooLarge(error) = error else {
+        panic!("a serializable envelope should fail only because of its size")
+    };
+    assert_eq!(
+        (error.event(), error.limit(), error.size() > 16),
+        (HookEventKind::SessionCompleted, 16, true)
+    );
 }
 
 #[test]

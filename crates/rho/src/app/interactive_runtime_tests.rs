@@ -346,7 +346,7 @@ async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_po
 async fn permission_mode_switch_preserves_a_pending_new_session() {
     let mut interactive = pending_compaction_runtime("done").await;
     let previous_id = interactive.session_id().clone();
-    interactive.reset().unwrap();
+    interactive.reset().await.unwrap();
     let pending_id = interactive.session_id().clone();
     assert_ne!(pending_id, previous_id);
 

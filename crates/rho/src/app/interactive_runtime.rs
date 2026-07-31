@@ -614,10 +614,15 @@ impl InteractiveRuntime {
         }
     }
 
-    pub(crate) fn reset(&mut self) -> anyhow::Result<()> {
+    pub(crate) async fn reset(&mut self) -> anyhow::Result<()> {
         if self.runs.is_active() {
             anyhow::bail!("cannot reset while a run is active");
         }
+        self.runtime
+            .hooks()
+            .session_completed(self.sessions.session().id(), self.completed_runs)
+            .await;
+        self.completed_runs = 0;
         let session_id = self.sessions.reset()?;
         bind_subagent_parent(&self.tools, &session_id, None);
         self.invalidate_live_context();
@@ -636,6 +641,11 @@ impl InteractiveRuntime {
             );
             anyhow::bail!("cannot switch sessions while a run is active");
         }
+        self.runtime
+            .hooks()
+            .session_completed(self.sessions.session().id(), self.completed_runs)
+            .await;
+        self.completed_runs = 0;
         let id = storage.id().to_string();
         self.rebuild_session(ReplacementSessionSource::Snapshot {
             storage: storage.clone(),

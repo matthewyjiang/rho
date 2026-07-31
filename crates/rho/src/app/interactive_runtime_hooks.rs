@@ -20,6 +20,9 @@ impl InteractiveRuntime {
             let mut discard = |_message: String| {};
             let catalog = crate::hooks::discover_for_cwd(cwd, &mut discard)?;
             let mut report = crate::hooks::HookReport::disabled();
+            report.skipped_untrusted = catalog
+                .skipped_untrusted()
+                .map(|skipped| crate::paths::display(&skipped.path));
             report.hooks = crate::hooks::contract_views(&catalog);
             anyhow::ensure!(
                 report.hooks.is_empty(),

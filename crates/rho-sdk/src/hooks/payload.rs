@@ -10,7 +10,6 @@ use crate::{
     StopReason,
 };
 
-#[cfg(test)]
 use crate::workspace::PolicyDecision;
 
 use super::bounds::{truncate_field, HookPayloadBounds, HookTruncation};
@@ -107,7 +106,6 @@ pub enum HookPolicyOutcome {
 
 impl HookPolicyOutcome {
     /// Returns the outcome a hook may observe, or `None` when policy already denied.
-    #[cfg(test)]
     pub(crate) fn from_policy(decision: &PolicyDecision) -> Option<Self> {
         match decision {
             PolicyDecision::Allow => Some(Self::Allow),
@@ -132,6 +130,12 @@ pub enum HookToolStatus {
 pub struct HookFailure {
     pub kind: String,
     pub message: String,
+}
+
+pub(crate) struct BoundedFailure<'a> {
+    pub(crate) kind: &'a str,
+    pub(crate) message: &'a str,
+    pub(crate) field: &'a str,
 }
 
 /// Why a successful run stopped.
@@ -316,11 +320,19 @@ fn summarize_process(
     truncation: &mut HookTruncation,
 ) -> HookCapability {
     let invocation = execution.invocation();
-    let mut arguments = invocation.arguments().to_vec();
-    for (index, argument) in arguments.iter_mut().enumerate() {
-        if truncate_field(argument, bounds) {
-            truncation.record(format!("payload.capability.arguments[{index}]"));
+    let mut arguments = Vec::new();
+    let mut argument_bytes = 0usize;
+    for argument in invocation.arguments() {
+        let mut argument = argument.clone();
+        if truncate_field(&mut argument, bounds) {
+            truncation.record(format!("payload.capability.arguments[{}]", arguments.len()));
         }
+        if argument_bytes.saturating_add(argument.len()) > bounds.max_envelope_bytes() {
+            truncation.record("payload.capability.arguments");
+            break;
+        }
+        argument_bytes += argument.len();
+        arguments.push(argument);
     }
     let shell_command = match invocation {
         ProcessInvocation::Shell { command, .. } => {
@@ -391,18 +403,16 @@ pub(crate) fn error_label(error: &crate::Error) -> &'static str {
 
 /// Shortens a failure message so a long tool error cannot inflate an envelope.
 pub(crate) fn bounded_failure(
-    kind: impl Into<String>,
-    message: &str,
+    failure: BoundedFailure<'_>,
     bounds: HookPayloadBounds,
     truncation: &mut HookTruncation,
-    field: &str,
 ) -> HookFailure {
-    let mut message = message.to_owned();
+    let mut message = failure.message.to_owned();
     if truncate_field(&mut message, bounds) {
-        truncation.record(field);
+        truncation.record(failure.field);
     }
     HookFailure {
-        kind: kind.into(),
+        kind: failure.kind.into(),
         message,
     }
 }

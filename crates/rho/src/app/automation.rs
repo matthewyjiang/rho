@@ -495,7 +495,11 @@ async fn run_session_with_output(
     let session_hooks = runtime.hooks();
     let session_id = session.id().clone();
     match &result {
-        Ok(_) => session_hooks.session_completed(&session_id, 1).await,
+        Ok(_) => {
+            session_hooks
+                .session_completed(&session_id, /* completed_runs */ 1)
+                .await
+        }
         Err(error) => {
             session_hooks
                 .session_failed(&session_id, "run_failed", &error.to_string())

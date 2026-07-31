@@ -111,9 +111,7 @@ impl HookCatalog {
 
     /// Whether any blocking `before_tool_use` hook is configured.
     pub fn has_blocking_hooks(&self) -> bool {
-        self.hooks
-            .iter()
-            .any(|hook| hook.event() == HookEventKind::BeforeToolUse)
+        self.hooks.iter().any(|hook| hook.event().is_blocking())
     }
 
     /// Whether any observational hook is configured.
@@ -187,22 +185,6 @@ pub struct HookSpawnContract {
     pub working_directory: PathBuf,
     pub timeout: std::time::Duration,
     pub environment: Vec<String>,
-}
-
-impl std::fmt::Display for HookSpawnContract {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{} on {} (tools: {})\n  argv: {}\n  cwd: {}\n  timeout: {}\n  env: {}",
-            self.id,
-            self.event,
-            self.tools,
-            self.command.join(" "),
-            crate::paths::display(&self.working_directory),
-            humantime::format_duration(self.timeout),
-            self.environment.join(", ")
-        )
-    }
 }
 
 #[cfg(test)]

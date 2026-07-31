@@ -2,7 +2,9 @@
 //!
 //! A hook that forks a background process must not outlive its timeout. Unix
 //! gets a process group, Windows a job object; both are killed on completion,
-//! timeout, cancellation, and drop.
+//! timeout, cancellation, and drop. Windows assigns the job immediately after
+//! spawn because Tokio does not expose suspended process creation, leaving a
+//! narrow window in which a child-created descendant can escape supervision.
 
 use tokio::process::Command;
 

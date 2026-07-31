@@ -342,19 +342,19 @@ async fn resolve_without_work(
         };
         entry.result = Some(result);
         entry.state = CallState::Resolved;
+        control
+            .hooks
+            .after_tool_use(&entry.call.name, &entry.id, &completion, None)
+            .await;
         emit(
             control.events,
             control.cancellation,
             RunEvent::ToolFinished {
                 call_id: entry.id.clone(),
-                result: completion.clone(),
+                result: completion,
             },
         )
         .await?;
-        control
-            .hooks
-            .after_tool_use(&entry.call.name, &entry.id, &completion, None)
-            .await;
     }
     Ok(())
 }
@@ -719,19 +719,19 @@ async fn finish_call(
     };
     entry.result = Some(normalized);
     entry.state = CallState::Resolved;
+    control
+        .hooks
+        .after_tool_use(&entry.call.name, &entry.id, &completion, duration)
+        .await;
     emit(
         control.events,
         control.cancellation,
         RunEvent::ToolFinished {
             call_id: entry.id.clone(),
-            result: completion.clone(),
+            result: completion,
         },
     )
     .await?;
-    control
-        .hooks
-        .after_tool_use(&entry.call.name, &entry.id, &completion, duration)
-        .await;
     Ok(())
 }
 

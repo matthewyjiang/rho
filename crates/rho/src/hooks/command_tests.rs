@@ -139,7 +139,8 @@ async fn cancellation_stops_a_running_handler() {
 async fn a_missing_program_reports_a_spawn_failure() {
     let home = TempDir::new().unwrap();
     let mut hook = hook_running("true", "10s", &[], &home);
-    hook.command = vec![home.path().join("gone").display().to_string()];
+    hook.executable = home.path().join("gone");
+    hook.command = vec![crate::paths::display(&hook.executable)];
 
     let error = run(&hook, "{}").await.unwrap_err();
 

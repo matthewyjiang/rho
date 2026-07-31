@@ -24,7 +24,7 @@ pub(super) const HOOKS_CONTRACT_SCENARIO: Scenario = Scenario::new(
         cols: 120,
     },
     HOOKS_CONTRACT_STEPS,
-    false,
+    /* smoke */ false,
 )
 .with_setup(setup_hooks);
 

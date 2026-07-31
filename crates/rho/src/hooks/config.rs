@@ -55,6 +55,8 @@ pub struct HookDefinition {
     pub(crate) tools: ToolMatcher,
     /// Argv with the program resolved to an absolute path where determinable.
     pub(crate) command: Vec<String>,
+    /// Native executable path retained separately from its diagnostic rendering.
+    pub(crate) executable: PathBuf,
     pub(crate) timeout: Duration,
     pub(crate) env: Vec<String>,
     pub(crate) working_directory: PathBuf,
@@ -75,6 +77,10 @@ impl HookDefinition {
 
     pub fn command(&self) -> &[String] {
         &self.command
+    }
+
+    pub(crate) fn executable(&self) -> &Path {
+        &self.executable
     }
 
     pub fn timeout(&self) -> Duration {
@@ -167,10 +173,13 @@ pub fn parse_hooks_file(
 
     let mut definitions: Vec<HookDefinition> = Vec::with_capacity(raw.hook.len());
     for hook in raw.hook {
-        if definitions.iter().any(|existing| existing.id == hook.id) {
+        if definitions
+            .iter()
+            .any(|existing| existing.id == hook.id.trim())
+        {
             return Err(HookConfigError::at_hook(
                 path,
-                &hook.id,
+                hook.id.trim(),
                 "id",
                 "duplicate hook ID in this file",
             ));
@@ -217,7 +226,7 @@ fn validate(
     })?;
 
     let tools = build_matcher(path, &id, event, raw.tools, canonical_tools)?;
-    let command = resolve_command(path, &id, raw.command, source, project_root)?;
+    let (executable, command) = resolve_command(path, &id, raw.command, source, project_root)?;
     let timeout = parse_timeout(path, &id, &raw.timeout)?;
     let env = validate_env(path, &id, raw.env)?;
 
@@ -227,6 +236,7 @@ fn validate(
         event,
         tools,
         command,
+        executable,
         timeout,
         env,
         working_directory: project_root
@@ -287,7 +297,7 @@ fn resolve_command(
     command: Vec<String>,
     source: HookSource,
     project_root: Option<&Path>,
-) -> Result<Vec<String>, HookConfigError> {
+) -> Result<(PathBuf, Vec<String>), HookConfigError> {
     let Some(program) = command.first() else {
         return Err(HookConfigError::at_hook(
             path,
@@ -320,23 +330,29 @@ fn resolve_command(
         ));
     }
 
-    let mut resolved = command;
-    if let Some(root) = project_root.filter(|_| !program_path.is_absolute() && is_path_form) {
-        // Resolve once at load so diagnostics and the trust prompt show the exact
-        // file that will be executed, not a path relative to whatever cwd applies.
-        resolved[0] = crate::paths::display(&join_relative(root, &program_path));
-    }
+    let executable =
+        if let Some(root) = project_root.filter(|_| !program_path.is_absolute() && is_path_form) {
+            // Resolve once at load so diagnostics and the trust prompt show the exact
+            // file that will be executed, not a path relative to whatever cwd applies.
+            join_relative(root, &program_path)
+        } else {
+            program_path
+        };
 
-    let executable = Path::new(&resolved[0]);
     if executable.is_absolute() && !executable.exists() {
         return Err(HookConfigError::at_hook(
             path,
             id,
             "command",
-            format!("hook program '{}' does not exist", resolved[0]),
+            format!(
+                "hook program '{}' does not exist",
+                crate::paths::display(&executable)
+            ),
         ));
     }
-    Ok(resolved)
+    let mut display_command = command;
+    display_command[0] = crate::paths::display(&executable);
+    Ok((executable, display_command))
 }
 
 /// Joins `relative` onto `root`, dropping `./` segments so the rendered path a

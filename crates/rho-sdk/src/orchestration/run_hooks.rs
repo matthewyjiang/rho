@@ -6,12 +6,22 @@ use std::{
 use crate::{
     event::{RunOutcome, ToolCompletion},
     hooks::{
-        bounded_failure, error_label, AfterToolUsePayload, HookEventKind, HookPayload,
-        HookStopReason, HookTool, HookToolStatus, HookWiring, RunCompletedPayload,
+        bounded_failure, error_label, AfterToolUsePayload, BoundedFailure, HookEventKind,
+        HookPayload, HookStopReason, HookTool, HookToolStatus, HookWiring, RunCompletedPayload,
         RunFailedPayload,
     },
+    tool::ToolErrorKind,
     Error, RunId, SessionId, ToolCallId,
 };
+
+const fn tool_error_label(kind: ToolErrorKind) -> &'static str {
+    match kind {
+        ToolErrorKind::InvalidArguments => "invalid_arguments",
+        ToolErrorKind::Execution => "execution",
+        ToolErrorKind::PolicyDenied => "policy_denied",
+        ToolErrorKind::Cancelled => "cancelled",
+    }
+}
 
 /// Run-scoped hook identity and dispatch.
 ///
@@ -70,11 +80,13 @@ impl RunHooks {
                         ToolCompletion::Failure(failure) => (
                             HookToolStatus::Failed,
                             Some(bounded_failure(
-                                format!("{:?}", failure.kind()).to_lowercase(),
-                                failure.message(),
+                                BoundedFailure {
+                                    kind: tool_error_label(failure.kind()),
+                                    message: failure.message(),
+                                    field: "payload.failure.message",
+                                },
                                 bounds,
                                 builder.truncation(),
-                                "payload.failure.message",
                             )),
                         ),
                         ToolCompletion::Unavailable => (HookToolStatus::Unavailable, None),
@@ -120,11 +132,13 @@ impl RunHooks {
                         |builder| {
                             HookPayload::RunFailed(RunFailedPayload {
                                 failure: bounded_failure(
-                                    error_label(error),
-                                    &error.to_string(),
+                                    BoundedFailure {
+                                        kind: error_label(error),
+                                        message: &error.to_string(),
+                                        field: "payload.failure.message",
+                                    },
                                     bounds,
                                     builder.truncation(),
-                                    "payload.failure.message",
                                 ),
                             })
                         },

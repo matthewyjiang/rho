@@ -132,7 +132,7 @@ pub async fn run_hook(
 
 fn build_command(hook: &HookDefinition) -> tokio::process::Command {
     let argv = hook.command();
-    let mut command = tokio::process::Command::new(&argv[0]);
+    let mut command = tokio::process::Command::new(hook.executable());
     command
         .args(&argv[1..])
         .current_dir(hook.working_directory())

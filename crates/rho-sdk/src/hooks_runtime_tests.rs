@@ -448,7 +448,10 @@ async fn run_events_fire_per_run_while_session_events_fire_once() {
 
     session.complete("first").await.unwrap();
     session.complete("second").await.unwrap();
-    runtime.hooks().session_completed(session.id(), 2).await;
+    runtime
+        .hooks()
+        .session_completed(session.id(), /* runs */ 2)
+        .await;
 
     assert_eq!(
         observer.events(),

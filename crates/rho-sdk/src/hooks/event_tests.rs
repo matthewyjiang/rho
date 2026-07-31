@@ -45,6 +45,26 @@ fn only_before_tool_use_blocks() {
 }
 
 #[test]
+fn every_event_has_an_explicit_post_action_classification() {
+    let classifications = HookEventKind::ALL
+        .iter()
+        .map(|event| (*event, event.is_post_action()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        classifications,
+        vec![
+            (HookEventKind::SessionStarted, false),
+            (HookEventKind::BeforeToolUse, false),
+            (HookEventKind::AfterToolUse, true),
+            (HookEventKind::RunCompleted, true),
+            (HookEventKind::RunFailed, true),
+            (HookEventKind::SessionCompleted, false),
+            (HookEventKind::SessionFailed, true),
+        ]
+    );
+}
+
+#[test]
 fn version_one_delivers_exactly_the_documented_events() {
     let delivered: Vec<_> = HookEventKind::ALL
         .iter()

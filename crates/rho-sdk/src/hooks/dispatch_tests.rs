@@ -47,7 +47,7 @@ impl PreToolUseGate for DenyGate {
 fn runtime_with(observer: Option<Arc<dyn HookObserver>>) -> HookWiring {
     HookWiring::new(
         observer,
-        None,
+        /* gate */ None,
         HookPayloadBounds::default(),
         HookDelegation::default(),
     )
@@ -112,7 +112,7 @@ async fn a_delegated_runtime_reports_its_parent_identity() {
     let parent_session = SessionId::from_string("parent-session").unwrap();
     let hooks = HookWiring::new(
         Some(observer.clone()),
-        None,
+        /* gate */ None,
         HookPayloadBounds::default(),
         HookDelegation::new(parent_session.clone()),
     );
@@ -175,7 +175,11 @@ async fn the_host_dispatcher_reports_both_session_boundaries() {
     assert!(dispatcher.is_enabled());
     dispatcher.session_completed(&session, 4).await;
     dispatcher
-        .session_failed(&session, "provider", "provider failed: overloaded")
+        .session_failed(
+            &session,
+            HookSessionFailureKind::Provider,
+            "provider failed: overloaded",
+        )
         .await;
 
     assert_eq!(
@@ -201,7 +205,7 @@ async fn the_host_dispatcher_reports_both_session_boundaries() {
 #[tokio::test]
 async fn a_dispatcher_with_only_a_gate_is_still_enabled() {
     let hooks = HookWiring::new(
-        None,
+        /* observer */ None,
         Some(Arc::new(DenyGate)),
         HookPayloadBounds::default(),
         HookDelegation::default(),

@@ -120,8 +120,13 @@ fn a_long_shell_command_is_cut_and_named_in_the_report() {
     let mut truncation = HookTruncation::default();
     let request = shell(&"x".repeat(64));
 
-    let capability =
-        summarize_capability(&request, HookPayloadBounds::new(8, 4096), &mut truncation);
+    let capability = summarize_capability(
+        &request,
+        HookPayloadBounds::new(
+            /* max_field_bytes */ 8, /* max_envelope_bytes */ 4096,
+        ),
+        &mut truncation,
+    );
 
     assert_eq!(
         serde_json::to_value(&capability).unwrap()["shell_command"],
@@ -146,11 +151,50 @@ fn a_long_argument_is_cut_and_named_by_index() {
         CapabilitySource::built_in_tool("process"),
     );
 
-    summarize_capability(&request, HookPayloadBounds::new(8, 4096), &mut truncation);
+    summarize_capability(
+        &request,
+        HookPayloadBounds::new(
+            /* max_field_bytes */ 8, /* max_envelope_bytes */ 4096,
+        ),
+        &mut truncation,
+    );
 
     assert_eq!(
         truncation.fields().collect::<Vec<_>>(),
         vec!["payload.capability.arguments[1]"]
+    );
+}
+
+// Covers: wide process argument lists must degrade to a truncated hook payload.
+// Owner: SDK hook payload construction.
+#[test]
+fn total_arguments_are_bounded_and_reported() {
+    let mut truncation = HookTruncation::default();
+    let request = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::executable("/bin/echo", vec!["1234".into(); 8]),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        CapabilitySource::built_in_tool("process"),
+    );
+
+    let capability = summarize_capability(
+        &request,
+        HookPayloadBounds::new(
+            /* max_field_bytes */ 8, /* max_envelope_bytes */ 12,
+        ),
+        &mut truncation,
+    );
+
+    let HookCapability::ExecuteProcess { arguments, .. } = capability else {
+        panic!("expected process capability")
+    };
+    assert_eq!(arguments, vec!["1234", "1234", "1234"]);
+    assert_eq!(
+        truncation.fields().collect::<Vec<_>>(),
+        vec!["payload.capability.arguments"]
     );
 }
 

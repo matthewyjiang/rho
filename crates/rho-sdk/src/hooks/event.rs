@@ -63,17 +63,25 @@ impl HookEventKind {
     /// Only [`HookEventKind::BeforeToolUse`] is blocking. Every other event is
     /// observational: its handler result cannot change what the agent does.
     pub const fn is_blocking(self) -> bool {
-        matches!(self, Self::BeforeToolUse)
+        match self {
+            Self::BeforeToolUse => true,
+            Self::SessionStarted
+            | Self::AfterToolUse
+            | Self::RunCompleted
+            | Self::RunFailed
+            | Self::SessionCompleted
+            | Self::SessionFailed => false,
+        }
     }
 
     /// Whether this event reports the result of an operation.
     ///
     /// Post events carry a status a matcher may filter on.
     pub const fn is_post_action(self) -> bool {
-        matches!(
-            self,
-            Self::AfterToolUse | Self::RunCompleted | Self::RunFailed | Self::SessionFailed
-        )
+        match self {
+            Self::AfterToolUse | Self::RunCompleted | Self::RunFailed | Self::SessionFailed => true,
+            Self::SessionStarted | Self::BeforeToolUse | Self::SessionCompleted => false,
+        }
     }
 }
 

@@ -52,13 +52,17 @@ mod payload;
 pub mod testing;
 
 pub(crate) use dispatch::HookWiring;
-pub(crate) use payload::{bounded_failure, error_label, summarize_capability};
+pub(crate) use payload::{bounded_failure, error_label, summarize_capability, BoundedFailure};
 
 pub use bounds::{
     HookPayloadBounds, HookTruncation, DEFAULT_MAX_ENVELOPE_BYTES, DEFAULT_MAX_FIELD_BYTES,
 };
-pub use dispatch::{HookDelegation, HookDispatcher, HookObserveFuture, HookObserver};
-pub use envelope::{HookEnvelope, HookEnvelopeTooLarge, HookIdentity, HOOK_SCHEMA_VERSION};
+pub use dispatch::{
+    HookDelegation, HookDispatcher, HookObserveFuture, HookObserver, HookSessionFailureKind,
+};
+pub use envelope::{
+    HookEnvelope, HookEnvelopeError, HookEnvelopeTooLarge, HookIdentity, HOOK_SCHEMA_VERSION,
+};
 pub use event::HookEventKind;
 pub use gate::{AllowAllGate, HookDecision, HookGateFuture, PreToolUseGate, PreToolUseRequest};
 pub use payload::{

@@ -40,7 +40,8 @@ pub struct HookEnvelope {
     timestamp_unix_ms: u64,
     identity: HookIdentity,
     workspace: HookWorkspace,
-    bounds: HookTruncation,
+    #[serde(rename = "bounds")]
+    truncation: HookTruncation,
     payload: HookPayload,
 }
 
@@ -70,7 +71,7 @@ impl HookEnvelope {
     }
 
     pub fn truncation(&self) -> &HookTruncation {
-        &self.bounds
+        &self.truncation
     }
 
     pub fn payload(&self) -> &HookPayload {
@@ -82,23 +83,14 @@ impl HookEnvelope {
     /// Field-level truncation happens while the payload is built; this is the
     /// final backstop so a handler's stdin is bounded even when many small
     /// fields add up.
-    pub fn to_bounded_json(
-        &self,
-        bounds: HookPayloadBounds,
-    ) -> Result<String, HookEnvelopeTooLarge> {
-        let encoded = serde_json::to_string(self).map_err(|error| HookEnvelopeTooLarge {
-            event: self.event,
-            size: 0,
-            limit: bounds.max_envelope_bytes(),
-            reason: error.to_string(),
-        })?;
+    pub fn to_bounded_json(&self, bounds: HookPayloadBounds) -> Result<String, HookEnvelopeError> {
+        let encoded = serde_json::to_string(self).map_err(HookEnvelopeError::Serialization)?;
         if encoded.len() > bounds.max_envelope_bytes() {
-            return Err(HookEnvelopeTooLarge {
+            return Err(HookEnvelopeError::TooLarge(HookEnvelopeTooLarge {
                 event: self.event,
                 size: encoded.len(),
                 limit: bounds.max_envelope_bytes(),
-                reason: "serialized event exceeds the configured envelope bound".into(),
-            });
+            }));
         }
         Ok(encoded)
     }
@@ -112,7 +104,33 @@ pub struct HookEnvelopeTooLarge {
     event: HookEventKind,
     size: usize,
     limit: usize,
-    reason: String,
+}
+
+/// Failure to encode an envelope or fit it within its configured bound.
+#[derive(Debug)]
+pub enum HookEnvelopeError {
+    Serialization(serde_json::Error),
+    TooLarge(HookEnvelopeTooLarge),
+}
+
+impl std::fmt::Display for HookEnvelopeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serialization(error) => {
+                write!(formatter, "hook envelope serialization failed: {error}")
+            }
+            Self::TooLarge(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for HookEnvelopeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Serialization(error) => Some(error),
+            Self::TooLarge(error) => Some(error),
+        }
+    }
 }
 
 impl HookEnvelopeTooLarge {
@@ -133,8 +151,8 @@ impl std::fmt::Display for HookEnvelopeTooLarge {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "hook event '{}' was not delivered: {} ({} of {} bytes)",
-            self.event, self.reason, self.size, self.limit
+            "hook event '{}' was not delivered: {} bytes exceeds the {} byte limit",
+            self.event, self.size, self.limit
         )
     }
 }
@@ -177,7 +195,7 @@ impl HookEnvelopeBuilder {
             timestamp_unix_ms: self.timestamp_unix_ms,
             identity: self.identity,
             workspace: self.workspace,
-            bounds: self.truncation,
+            truncation: self.truncation,
             payload,
         }
     }

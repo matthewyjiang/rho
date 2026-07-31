@@ -16,7 +16,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
-            CommandId::New => self.execute_new_command(terminal, agent),
+            CommandId::New => self.execute_new_command(terminal, agent).await,
             CommandId::Model => {
                 self.execute_model_command(invocation, terminal, agent)
                     .await
@@ -164,12 +164,12 @@ impl App {
         Ok(())
     }
 
-    fn execute_new_command(
+    async fn execute_new_command(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        agent.reset()?;
+        agent.reset().await?;
         self.info.session.session_id = None;
         self.input_ui.set_composer(ComposerMode::Input);
         self.input_ui.clear_text();

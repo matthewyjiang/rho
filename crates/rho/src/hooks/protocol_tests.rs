@@ -101,7 +101,7 @@ fn a_long_denial_reason_is_shortened_on_a_character_boundary() {
     let HookDecision::Deny { reason } = decision else {
         panic!("expected a denial");
     };
-    assert!(reason.len() <= 1024);
+    assert!(reason.len() <= MAX_REASON_BYTES);
     assert!(reason.chars().all(|character| character == '\u{00e9}'));
 }
 

@@ -122,27 +122,28 @@ pub(crate) async fn authorize_for_call(
     let capability = request.kind();
     let audit = &services.audit;
 
-    match services.policy.evaluate(&request) {
+    let decision = services.policy.evaluate(&request);
+    let Some(hook_policy) = HookPolicyOutcome::from_policy(&decision) else {
+        let PolicyDecision::Deny { reason } = decision else {
+            unreachable!("only denied policy decisions have no hook outcome")
+        };
+        audit.record(capability, ApprovalAuditDecision::DeniedByPolicy);
+        return Err(AuthorizationError::denied(
+            AuthorizationDenialKind::Policy,
+            capability,
+            reason,
+        ));
+    };
+    match decision {
         PolicyDecision::Deny { reason } => {
-            audit.record(capability, ApprovalAuditDecision::DeniedByPolicy);
-            Err(AuthorizationError::denied(
-                AuthorizationDenialKind::Policy,
-                capability,
-                reason,
-            ))
+            unreachable!("denied policy decision handled before hook dispatch: {reason}")
         }
         PolicyDecision::Allow => {
-            deny_if_hooked(services, &request, HookPolicyOutcome::Allow, tool_call_id).await?;
+            deny_if_hooked(services, &request, hook_policy, tool_call_id).await?;
             Ok(AuthorizationOutcome::AllowedByPolicy)
         }
         PolicyDecision::RequireApproval { reason } => {
-            deny_if_hooked(
-                services,
-                &request,
-                HookPolicyOutcome::RequireApproval,
-                tool_call_id,
-            )
-            .await?;
+            deny_if_hooked(services, &request, hook_policy, tool_call_id).await?;
             prompt_for_approval(services, request, capability, reason, tool_call_id).await
         }
     }

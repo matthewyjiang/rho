@@ -62,7 +62,11 @@ pub(crate) async fn execute_run(
         &hooks,
     )
     .await;
-    hooks.run_finished(&result).await;
+    // Cancellation is an ordinary user-controlled stop in schema v1, which
+    // has no cancellation event. Do not misreport it as `run_failed`.
+    if !matches!(result, Err(Error::Cancelled)) {
+        hooks.run_finished(&result).await;
+    }
     result
 }
 

@@ -241,11 +241,6 @@ fn the_spawn_contract_shows_everything_that_decides_what_runs() {
         .environment
         .contains(&crate::hooks::IN_HOOK_ENV.to_owned()));
     assert!(entry.environment.contains(&"MY_TOKEN".to_owned()));
-
-    let rendered = entry.to_string();
-    assert!(rendered.contains("project:fmt on after_tool_use"));
-    assert!(rendered.contains("--all"));
-    assert!(rendered.contains("timeout: 5s"));
 }
 
 #[test]

@@ -31,8 +31,8 @@ fn services(
         Arc::clone(approvals),
         Arc::clone(remembered),
         Arc::clone(audit),
-        Default::default(),
-        Default::default(),
+        /* hooks */ Default::default(),
+        /* scope */ Default::default(),
     )
 }
 

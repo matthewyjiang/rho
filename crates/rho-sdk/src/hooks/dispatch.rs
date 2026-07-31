@@ -13,7 +13,8 @@ use super::{
     event::HookEventKind,
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
     payload::{
-        bounded_failure, HookFailure, HookPayload, SessionCompletedPayload, SessionFailedPayload,
+        bounded_failure, BoundedFailure, HookFailure, HookPayload, SessionCompletedPayload,
+        SessionFailedPayload,
     },
 };
 
@@ -164,6 +165,34 @@ pub struct HookDispatcher {
     workspace_root: Option<PathBuf>,
 }
 
+/// Stable classification for a host-reported session failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HookSessionFailureKind {
+    RunFailed,
+    Provider,
+    Other(String),
+}
+
+impl HookSessionFailureKind {
+    fn wire_name(&self) -> &str {
+        match self {
+            Self::RunFailed => "run_failed",
+            Self::Provider => "provider",
+            Self::Other(kind) => kind,
+        }
+    }
+}
+
+impl From<&str> for HookSessionFailureKind {
+    fn from(kind: &str) -> Self {
+        match kind {
+            "run_failed" => Self::RunFailed,
+            "provider" => Self::Provider,
+            kind => Self::Other(kind.to_owned()),
+        }
+    }
+}
+
 impl HookDispatcher {
     pub(crate) fn new(hooks: HookWiring, workspace_root: Option<PathBuf>) -> Self {
         Self {
@@ -191,7 +220,13 @@ impl HookDispatcher {
     }
 
     /// Reports that a session ended because of `reason`.
-    pub async fn session_failed(&self, session_id: &SessionId, kind: &str, reason: &str) {
+    pub async fn session_failed(
+        &self,
+        session_id: &SessionId,
+        kind: impl Into<HookSessionFailureKind>,
+        reason: &str,
+    ) {
+        let kind = kind.into();
         let bounds = self.hooks.bounds();
         self.hooks
             .observe(
@@ -201,11 +236,13 @@ impl HookDispatcher {
                 self.workspace_root.as_deref(),
                 |builder| {
                     let failure: HookFailure = bounded_failure(
-                        kind,
-                        reason,
+                        BoundedFailure {
+                            kind: kind.wire_name(),
+                            message: reason,
+                            field: "payload.failure.message",
+                        },
                         bounds,
                         builder.truncation(),
-                        "payload.failure.message",
                     );
                     HookPayload::SessionFailed(SessionFailedPayload { failure })
                 },

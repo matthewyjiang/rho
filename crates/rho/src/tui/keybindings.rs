@@ -42,7 +42,7 @@ impl App {
         Ok(true)
     }
 
-    pub(super) fn handle_configurable_composer_key(
+    pub(super) async fn handle_configurable_composer_key(
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
@@ -70,7 +70,7 @@ impl App {
             .reset_conversation
             .matches(key)
         {
-            if let Err(error) = agent.reset() {
+            if let Err(error) = agent.reset().await {
                 // The conversation is still live, so report the failure instead
                 // of clearing the UI as though a new session had started.
                 self.insert_entry(&Entry::Error(format!(

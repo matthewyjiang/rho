@@ -174,7 +174,7 @@ command = ["{PROGRAM}"]
 timeout = "1s"
 
 [[hook]]
-id = "same"
+id = " same "
 on = "run_completed"
 command = ["{PROGRAM}"]
 timeout = "1s"
@@ -184,6 +184,36 @@ timeout = "1s"
     assert_eq!(error.hook_id.as_deref(), Some("same"));
     assert_eq!(error.field.as_deref(), Some("id"));
     assert!(error.message.contains("duplicate hook ID"));
+}
+
+// Covers: a valid executable under a non-UTF-8 project path must remain executable.
+// Owner: hook config path resolution
+#[cfg(unix)]
+#[test]
+fn a_project_executable_keeps_its_native_path() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    let parent = tempfile::TempDir::new().unwrap();
+    let root = parent
+        .path()
+        .join(OsString::from_vec(b"project-\xff".to_vec()));
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("handler"), "").unwrap();
+    let hooks = parse_project(
+        r#"
+version = 1
+
+[[hook]]
+id = "native-path"
+on = "run_completed"
+command = ["./handler"]
+timeout = "1s"
+"#,
+        &root,
+    )
+    .unwrap();
+
+    assert_eq!(hooks[0].executable(), root.join("handler"));
 }
 
 #[test]

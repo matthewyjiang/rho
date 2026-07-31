@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 use super::{
     activity::{HookActivity, HookActivityLog, HookOutcome},
     catalog::HookCatalog,
-    command::{run_hook, HookRunError, HookRunOutput},
+    command::{run_hook, HookRunOutput},
     config::HookDefinition,
     protocol::parse_decision,
 };
@@ -153,11 +153,22 @@ async fn evaluate_one(
             format!("hook `{id}` was not run: the blocking hook budget was exhausted"),
         );
     }
-    let result = tokio::time::timeout_at(deadline, run_hook(hook, event, CancellationToken::new()))
-        .await
-        .unwrap_or(Err(HookRunError::TimedOut {
-            timeout: hook.timeout(),
-        }));
+    let result =
+        match tokio::time::timeout_at(deadline, run_hook(hook, event, CancellationToken::new()))
+            .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                return record_denial(
+                    engine,
+                    &id,
+                    HookEventKind::BeforeToolUse,
+                    None,
+                    false,
+                    format!("hook `{id}` was stopped: the blocking hook budget was exhausted"),
+                )
+            }
+        };
     let output = match result {
         Ok(output) => output,
         Err(error) => {
