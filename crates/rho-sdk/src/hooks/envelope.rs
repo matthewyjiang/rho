@@ -215,31 +215,23 @@ fn bounded_identity(
 ) -> HookIdentity {
     HookIdentity {
         session_id: identity.session_id.map(|id| {
-            SessionId::from_string(bounded_string(
-                id.as_str(),
-                "identity.session_id",
-                bounds,
-                truncation,
-            ))
-            .expect("a bounded nonempty session ID remains nonempty")
+            let bounded = bounded_string(id.as_str(), "identity.session_id", bounds, truncation);
+            SessionId::from_string(bounded)
+                .unwrap_or_else(|_| SessionId::from_string("_").unwrap_or(id))
         }),
         parent_session_id: identity.parent_session_id.map(|id| {
-            SessionId::from_string(bounded_string(
+            let bounded = bounded_string(
                 id.as_str(),
                 "identity.parent_session_id",
                 bounds,
                 truncation,
-            ))
-            .expect("a bounded nonempty session ID remains nonempty")
+            );
+            SessionId::from_string(bounded)
+                .unwrap_or_else(|_| SessionId::from_string("_").unwrap_or(id))
         }),
         run_id: identity.run_id.map(|id| {
-            RunId::from_string(bounded_string(
-                id.as_str(),
-                "identity.run_id",
-                bounds,
-                truncation,
-            ))
-            .expect("a bounded nonempty run ID remains nonempty")
+            let bounded = bounded_string(id.as_str(), "identity.run_id", bounds, truncation);
+            RunId::from_string(bounded).unwrap_or_else(|_| RunId::from_string("_").unwrap_or(id))
         }),
     }
 }

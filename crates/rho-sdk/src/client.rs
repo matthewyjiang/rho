@@ -545,8 +545,8 @@ impl Rho {
             options.prompt_cache_key,
             self.clone(),
         ));
-        if lifecycle == SessionLifecycle::Started {
-            self.hooks.observe(
+        match lifecycle {
+            SessionLifecycle::Started => self.hooks.observe(
                 Some(session.id()),
                 None,
                 self.workspace.as_ref().map(crate::Workspace::root),
@@ -560,7 +560,8 @@ impl Rho {
                         model,
                     })
                 },
-            );
+            ),
+            SessionLifecycle::Rebound => {}
         }
         Ok(session)
     }

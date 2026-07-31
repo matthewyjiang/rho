@@ -198,6 +198,39 @@ fn metadata_fields_are_bounded_before_serialization() {
     );
 }
 
+// Covers: a byte bound inside a UTF-8 scalar must not invalidate hook IDs.
+// Owner: SDK hook envelope construction.
+#[test]
+fn multibyte_identity_fields_remain_valid_under_a_one_byte_bound() {
+    let identity = HookIdentity {
+        session_id: Some(SessionId::from_string("é").unwrap()),
+        parent_session_id: Some(SessionId::from_string("界").unwrap()),
+        run_id: Some(RunId::from_string("🙂").unwrap()),
+    };
+
+    let envelope =
+        HookEnvelopeBuilder::new(identity.clone(), None, HookPayloadBounds::new(1, 4096)).finish(
+            HookPayload::SessionCompleted(crate::hooks::SessionCompletedPayload { runs: 0 }),
+        );
+
+    assert_eq!(
+        envelope.identity(),
+        &HookIdentity {
+            session_id: Some(SessionId::from_string("_").unwrap()),
+            parent_session_id: Some(SessionId::from_string("_").unwrap()),
+            run_id: Some(RunId::from_string("_").unwrap()),
+        }
+    );
+    assert_eq!(
+        envelope.truncation().fields().collect::<Vec<_>>(),
+        vec![
+            "identity.parent_session_id",
+            "identity.run_id",
+            "identity.session_id"
+        ]
+    );
+}
+
 #[test]
 fn an_envelope_within_bounds_serializes() {
     let envelope = envelope(HookPayload::SessionCompleted(

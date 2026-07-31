@@ -193,8 +193,13 @@ impl AppToolSet {
         self.tools.iter().map(|tool| tool.spec()).collect()
     }
 
+    /// Returns registry names without applying any additional capability filter.
+    pub fn unfiltered_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.tools.iter().map(|tool| tool.spec().name)
+    }
+
     pub fn contains(&self, name: &str) -> bool {
-        self.tools.iter().any(|tool| tool.spec().name == name)
+        self.unfiltered_names().any(|registered| registered == name)
     }
 
     pub fn subagents(&self) -> Option<&SubagentManager> {

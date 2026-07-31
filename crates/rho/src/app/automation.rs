@@ -498,7 +498,11 @@ async fn run_session_with_output(
         Ok(_) => {
             session_hooks.session_completed(&session_id, /* completed_runs */ 1)
         }
-        Err(error) => session_hooks.session_failed(&session_id, "run_failed", &error.to_string()),
+        Err(error) => session_hooks.session_failed(
+            &session_id,
+            rho_sdk::hooks::HookSessionFailureKind::RunFailed,
+            &error.to_string(),
+        ),
     }
     runtime.shutdown();
     drop(session);

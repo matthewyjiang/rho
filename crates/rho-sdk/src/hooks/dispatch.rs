@@ -216,10 +216,9 @@ impl HookDispatcher {
     pub fn session_failed(
         &self,
         session_id: &SessionId,
-        kind: impl Into<HookSessionFailureKind>,
+        kind: HookSessionFailureKind,
         reason: &str,
     ) {
-        let kind = kind.into();
         let bounds = self.hooks.bounds();
         self.hooks.observe(
             Some(session_id),
