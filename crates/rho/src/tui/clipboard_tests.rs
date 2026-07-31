@@ -76,7 +76,17 @@ async fn text_document_path_paste_attaches_document_instead_of_text() {
 
     let mut app = test_app();
     app.info.runtime.cwd = dir.path().to_path_buf();
-    insert_external_paste_and_finish(&mut app, &path.to_string_lossy()).await;
+    app.insert_external_paste(&path.to_string_lossy());
+
+    assert_eq!(
+        app.input_ui.pending_media(),
+        &[ChatMedia::PendingFile {
+            name: "notes.txt".into(),
+        }]
+    );
+
+    let outcome = super::next_pending_media_attach(&mut app.pending_media_attaches).await;
+    app.finish_pasted_media(outcome);
 
     assert_eq!(
         app.input_ui.pending_media(),

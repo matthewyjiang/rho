@@ -66,6 +66,9 @@ impl App {
         for pending in self.pending_media_attaches.drain(..) {
             pending.cancel();
         }
+        self.input_ui
+            .pending_media_mut()
+            .retain(|media| !media.is_pending_file());
     }
 
     pub(super) fn cancel_last_pending_media_attach(&mut self) -> bool {
@@ -73,6 +76,14 @@ impl App {
             return false;
         };
         pending.cancel();
+        if let Some(index) = self
+            .input_ui
+            .pending_media()
+            .iter()
+            .rposition(ChatMedia::is_pending_file)
+        {
+            self.input_ui.pending_media_mut().remove(index);
+        }
         true
     }
 
@@ -109,17 +120,31 @@ impl App {
         let task = tokio::spawn(classify_pasted_path(path, original_text));
         self.pending_media_attaches
             .push_back(PendingMediaAttach { task });
+        self.input_ui
+            .pending_media_mut()
+            .push(ChatMedia::PendingFile { name: name.clone() });
         self.notify_status(format!("extracting {name}"));
         true
     }
 
     pub(super) fn finish_pasted_media(&mut self, outcome: PastedMediaOutcome) {
+        let media_index = self
+            .input_ui
+            .pending_media()
+            .iter()
+            .position(ChatMedia::is_pending_file)
+            .unwrap_or(self.input_ui.pending_media().len());
+        if media_index < self.input_ui.pending_media().len() {
+            self.input_ui.pending_media_mut().remove(media_index);
+        }
         match outcome {
             PastedMediaOutcome::Unsupported { original_text } => {
                 self.insert_pasted_input_text(&original_text);
             }
-            PastedMediaOutcome::Image(image) => self.attach_pending_image(image),
-            PastedMediaOutcome::Document(document) => self.attach_pending_document(document),
+            PastedMediaOutcome::Image(image) => self.attach_pending_image_at(image, media_index),
+            PastedMediaOutcome::Document(document) => {
+                self.attach_pending_document_at(document, media_index);
+            }
             PastedMediaOutcome::Failed { kind, message } => {
                 self.notify_status(format!("{kind} paste failed: {message}"));
             }
@@ -129,22 +154,30 @@ impl App {
         }
     }
 
-    fn attach_pending_document(&mut self, document: rho_tools::document::ExtractedDocument) {
+    fn attach_pending_document_at(
+        &mut self,
+        document: rho_tools::document::ExtractedDocument,
+        index: usize,
+    ) {
         let media = ChatMedia::TextDocument(ChatTextDocument::from(document));
         let label = media.composer_label(self.input_ui.pending_media().len() + 1);
-        self.input_ui.pending_media_mut().push(media);
+        let index = index.min(self.input_ui.pending_media().len());
+        self.input_ui.pending_media_mut().insert(index, media);
         self.notify_status(format!("attached {label}"));
     }
 
     fn attach_pending_image(&mut self, image: ImageContent) {
+        let index = self.input_ui.pending_media().len();
+        self.attach_pending_image_at(image, index);
+    }
+
+    fn attach_pending_image_at(&mut self, image: ImageContent, index: usize) {
         let summary = image_summary(&image);
+        let index = index.min(self.input_ui.pending_media().len());
         self.input_ui
             .pending_media_mut()
-            .push(ChatMedia::Image(image));
-        self.notify_status(format!(
-            "attached image {} ({summary})",
-            self.input_ui.pending_media().len()
-        ));
+            .insert(index, ChatMedia::Image(image));
+        self.notify_status(format!("attached image {} ({summary})", index + 1));
     }
 }
 

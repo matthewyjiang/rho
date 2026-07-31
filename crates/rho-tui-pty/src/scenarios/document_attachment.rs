@@ -15,19 +15,20 @@ use super::{SETTLE, STARTUP};
 const RESPONSE: WaitTimeout = WaitTimeout::secs(20, "document response");
 
 fn setup_document(home: &IsolatedHome) -> Result<()> {
-    let path = home.workspace.join("absolute-path-report.txt");
+    let path = home.workspace.join("dropped path report.txt");
     std::fs::write(&path, "document body from path")?;
     let path = home.workspace.join("must-not-leak.txt");
     std::fs::write(&path, "private follow-up attachment")?;
     Ok(())
 }
 
-fn paste_absolute_document_path(harness: &mut PtyHarness) -> Result<()> {
+fn drop_document_path(harness: &mut PtyHarness) -> Result<()> {
     let path = harness
         .working_directory()
         .context("document scenario has no working directory")?
-        .join("absolute-path-report.txt");
-    harness.paste(&path.to_string_lossy())
+        .join("dropped path report.txt");
+    let shell_escaped_path = path.to_string_lossy().replace(' ', "\\ ");
+    harness.paste(&shell_escaped_path)
 }
 
 fn paste_attachment_that_goal_clear_must_discard(harness: &mut PtyHarness) -> Result<()> {
@@ -62,15 +63,15 @@ const DOCUMENT_ATTACHMENT_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("paste_absolute_document"),
-    Step::Custom(paste_absolute_document_path),
+    Step::Phase("drop_document"),
+    Step::Custom(drop_document_path),
     Step::WaitText {
-        text: "[txt: absolute-path-report.txt · 23 chars]",
+        text: "[txt: dropped path report.txt · 23 chars]",
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "fixture response: Attached file: absolute-path-report.txt (text/plain)",
+        text: "fixture response: Attached file: dropped path report.txt (text/plain)",
         timeout: RESPONSE,
     },
     Step::WaitText {
@@ -102,7 +103,7 @@ const DOCUMENT_ATTACHMENT_STEPS: &[Step] = &[
 
 pub(super) const DOCUMENT_ATTACHMENT_SCENARIO: Scenario = Scenario::new(
     "document_attachment",
-    "Paste an absolute document path and submit its extracted text",
+    "Drop a shell-escaped document path and submit its extracted text",
     PtySize {
         rows: 28,
         cols: 100,

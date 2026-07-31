@@ -5,6 +5,7 @@ use rho_providers::model::{image_summary, ContentBlock, ImageContent};
 pub(super) enum ChatMedia {
     Image(ImageContent),
     TextDocument(ChatTextDocument),
+    PendingFile { name: String },
 }
 
 /// Extracted document content kept as text rather than raw file bytes.
@@ -22,13 +23,19 @@ impl ChatMedia {
         match self {
             Self::Image(image) => format!("[image {index}: {}]", image_summary(image)),
             Self::TextDocument(document) => document.label(),
+            Self::PendingFile { name } => format!("[file: {name} · extracting]"),
         }
+    }
+
+    pub(super) fn is_pending_file(&self) -> bool {
+        matches!(self, Self::PendingFile { .. })
     }
 
     pub(super) fn display_block(&self) -> ContentBlock {
         match self {
             Self::Image(image) => ContentBlock::Image(image.clone()),
             Self::TextDocument(document) => ContentBlock::Text(document.label()),
+            Self::PendingFile { name } => ContentBlock::Text(format!("[file: {name}]")),
         }
     }
 
@@ -36,6 +43,7 @@ impl ChatMedia {
         match self {
             Self::Image(image) => ContentBlock::Image(image),
             Self::TextDocument(document) => ContentBlock::Text(document.model_text()),
+            Self::PendingFile { name } => ContentBlock::Text(format!("Attached file: {name}")),
         }
     }
 }
