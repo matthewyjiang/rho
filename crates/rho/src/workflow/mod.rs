@@ -15,6 +15,8 @@ mod secure_fs;
 mod secure_fs_control;
 mod secure_fs_directory;
 mod secure_fs_opened;
+#[cfg(windows)]
+mod secure_fs_windows;
 mod service;
 mod starlark;
 mod starlark_api;

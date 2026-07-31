@@ -10,6 +10,11 @@ use super::{
     Digest, ExecutableIdentity, FrozenPathIdentity, FrozenPathKind, WorkflowError, WorkflowResult,
 };
 
+#[cfg(windows)]
+use super::secure_fs_windows::opened_windows_path;
+#[cfg(windows)]
+pub(super) use super::secure_fs_windows::validate_opened_windows_path;
+
 pub(crate) struct SecureDirectory {
     pub(super) path: std::path::PathBuf,
     pub(super) file: File,
@@ -844,61 +849,6 @@ fn validate_private_file(path: std::path::PathBuf, file: &File) -> WorkflowResul
         return Err(WorkflowError::UntrustedDirectory(path));
     }
     Ok(())
-}
-
-#[cfg(windows)]
-pub(super) fn validate_opened_windows_path(file: &File, expected: &Path) -> WorkflowResult<()> {
-    let opened = opened_windows_path(file)?;
-    let opened_key = windows_path_compare_key(&opened);
-    let expected_key = windows_path_compare_key(expected);
-    if !opened_key.eq_ignore_ascii_case(&expected_key) {
-        return Err(identity_drift(
-            expected,
-            "opened Windows handle resolves outside the requested path",
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn windows_path_compare_key(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(raw.as_ref());
-    let normalized = if let Some(unc) = stripped.strip_prefix(r"UNC\") {
-        format!(r"\\{unc}")
-    } else {
-        stripped.replace('/', "\\")
-    };
-    normalized.trim_end_matches(['\\', '/']).to_owned()
-}
-
-#[cfg(windows)]
-fn opened_windows_path(file: &File) -> WorkflowResult<PathBuf> {
-    use std::{
-        ffi::OsString,
-        os::windows::{ffi::OsStringExt as _, io::AsRawHandle as _},
-    };
-    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
-
-    let mut buffer = vec![0_u16; 32_768];
-    // SAFETY: file owns a valid handle and buffer is writable for its full length.
-    let length = unsafe {
-        GetFinalPathNameByHandleW(
-            file.as_raw_handle(),
-            buffer.as_mut_ptr(),
-            buffer.len() as u32,
-            0,
-        )
-    };
-    if length == 0 || length as usize >= buffer.len() {
-        return Err(identity_drift(
-            Path::new("<handle>"),
-            "opened Windows path is unavailable",
-        ));
-    }
-    buffer.truncate(length as usize);
-    let opened = OsString::from_wide(&buffer).to_string_lossy().into_owned();
-    Ok(PathBuf::from(windows_path_compare_key(Path::new(&opened))))
 }
 
 #[cfg(all(not(unix), not(windows)))]
