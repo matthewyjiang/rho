@@ -103,7 +103,6 @@ impl App {
                     self.clear_submitted_input();
                     self.input_ui
                         .set_submission_mode(InputSubmissionMode::ParseCommands);
-                    self.input_ui.clear_pending_media();
                     self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {

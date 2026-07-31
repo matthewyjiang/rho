@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, io, path::PathBuf};
+use std::{future::Future, io, path::PathBuf, pin::Pin, task::Poll};
 
 use rho_providers::model::{image_summary, ImageContent};
 
@@ -7,13 +7,14 @@ use crate::clipboard::{
 };
 pub(super) use crate::clipboard::{CopyOutcome, SystemClipboard};
 
-use super::{App, ChatMedia, ChatTextDocument, ComposerMode};
+use super::{App, ChatMedia, ChatTextDocument, ComposerMode, MediaAttachId};
 
-pub(super) struct PendingMediaAttach {
+pub(super) struct MediaAttachTask {
+    id: MediaAttachId,
     task: tokio::task::JoinHandle<PastedMediaOutcome>,
 }
 
-impl PendingMediaAttach {
+impl MediaAttachTask {
     fn cancel(self) {
         self.task.abort();
     }
@@ -27,24 +28,35 @@ pub(super) enum PastedMediaOutcome {
     TaskFailed(String),
 }
 
+pub(super) struct CompletedMediaAttach {
+    id: MediaAttachId,
+    outcome: PastedMediaOutcome,
+}
+
 enum PastedImageOutcome {
     NotImage,
     Image(ImageContent),
     Failed { kind: &'static str, message: String },
 }
 
-pub(super) async fn next_pending_media_attach(
-    pending: &mut VecDeque<PendingMediaAttach>,
-) -> PastedMediaOutcome {
-    let result = {
-        let task = &mut pending
-            .front_mut()
-            .expect("pending media attachment checked before polling")
-            .task;
-        task.await
-    };
-    pending.pop_front();
-    result.unwrap_or_else(|error| PastedMediaOutcome::TaskFailed(error.to_string()))
+pub(super) async fn next_media_attach_completion(
+    pending: &mut Vec<MediaAttachTask>,
+) -> CompletedMediaAttach {
+    let (index, id, result) = std::future::poll_fn(|context| {
+        for (index, pending) in pending.iter_mut().enumerate() {
+            if let Poll::Ready(result) = Pin::new(&mut pending.task).poll(context) {
+                return Poll::Ready((index, pending.id, result));
+            }
+        }
+        Poll::Pending
+    })
+    .await;
+    let completed = pending.remove(index);
+    debug_assert_eq!(completed.id, id);
+    CompletedMediaAttach {
+        id,
+        outcome: result.unwrap_or_else(|error| PastedMediaOutcome::TaskFailed(error.to_string())),
+    }
 }
 
 /// Writes transcript text to the user's clipboard synchronously.
@@ -62,28 +74,32 @@ impl ClipboardWriter for SystemClipboard {
 }
 
 impl App {
-    pub(super) fn cancel_pending_media_attaches(&mut self) {
-        for pending in self.pending_media_attaches.drain(..) {
-            pending.cancel();
+    pub(super) fn cancel_all_pending_attachments(&mut self) {
+        let ids = self
+            .input_ui
+            .attachments()
+            .iter()
+            .filter_map(|attachment| attachment.pending_id())
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.input_ui.remove_pending_attachment(id);
+            self.cancel_pending_attachment(id);
         }
-        self.input_ui
-            .pending_media_mut()
-            .retain(|media| !media.is_pending_file());
+        for orphaned_task in self.media_attach_tasks.drain(..) {
+            orphaned_task.cancel();
+        }
     }
 
-    pub(super) fn cancel_last_pending_media_attach(&mut self) -> bool {
-        let Some(pending) = self.pending_media_attaches.pop_back() else {
+    pub(super) fn cancel_pending_attachment(&mut self, id: MediaAttachId) -> bool {
+        let Some(index) = self
+            .media_attach_tasks
+            .iter()
+            .position(|pending| pending.id == id)
+        else {
             return false;
         };
+        let pending = self.media_attach_tasks.remove(index);
         pending.cancel();
-        if let Some(index) = self
-            .input_ui
-            .pending_media()
-            .iter()
-            .rposition(ChatMedia::is_pending_file)
-        {
-            self.input_ui.pending_media_mut().remove(index);
-        }
         true
     }
 
@@ -97,7 +113,7 @@ impl App {
             return;
         }
         match read_clipboard_image() {
-            Ok(image) => self.attach_pending_image(image),
+            Ok(image) => self.attach_ready_image(image),
             Err(err) => {
                 self.notify_status(format!("image paste failed: {err}"));
             }
@@ -117,67 +133,72 @@ impl App {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
+        let id = MediaAttachId::new();
         let task = tokio::spawn(classify_pasted_path(path, original_text));
-        self.pending_media_attaches
-            .push_back(PendingMediaAttach { task });
-        self.input_ui
-            .pending_media_mut()
-            .push(ChatMedia::PendingFile { name: name.clone() });
+        self.media_attach_tasks.push(MediaAttachTask { id, task });
+        self.input_ui.push_pending_attachment(id, name.clone());
         self.notify_status(format!("extracting {name}"));
         true
     }
 
-    pub(super) fn finish_pasted_media(&mut self, outcome: PastedMediaOutcome) {
-        let media_index = self
-            .input_ui
-            .pending_media()
-            .iter()
-            .position(ChatMedia::is_pending_file)
-            .unwrap_or(self.input_ui.pending_media().len());
-        if media_index < self.input_ui.pending_media().len() {
-            self.input_ui.pending_media_mut().remove(media_index);
-        }
+    pub(super) fn finish_pasted_media(&mut self, completion: CompletedMediaAttach) {
+        let CompletedMediaAttach { id, outcome } = completion;
         match outcome {
             PastedMediaOutcome::Unsupported { original_text } => {
-                self.insert_pasted_input_text(&original_text);
+                if self.input_ui.remove_pending_attachment(id).is_some() {
+                    self.insert_pasted_input_text(&original_text);
+                }
             }
-            PastedMediaOutcome::Image(image) => self.attach_pending_image_at(image, media_index),
+            PastedMediaOutcome::Image(image) => self.finish_pending_image(id, image),
             PastedMediaOutcome::Document(document) => {
-                self.attach_pending_document_at(document, media_index);
+                self.finish_pending_document(id, document);
             }
             PastedMediaOutcome::Failed { kind, message } => {
-                self.notify_status(format!("{kind} paste failed: {message}"));
+                if self.input_ui.remove_pending_attachment(id).is_some() {
+                    self.notify_status(format!("{kind} paste failed: {message}"));
+                }
             }
             PastedMediaOutcome::TaskFailed(message) => {
-                self.notify_status(format!("file paste task failed: {message}"));
+                if self.input_ui.remove_pending_attachment(id).is_some() {
+                    self.notify_status(format!("file paste task failed: {message}"));
+                }
             }
         }
     }
 
-    fn attach_pending_document_at(
+    fn finish_pending_document(
         &mut self,
+        id: MediaAttachId,
         document: rho_tools::document::ExtractedDocument,
-        index: usize,
     ) {
         let media = ChatMedia::TextDocument(ChatTextDocument::from(document));
-        let label = media.composer_label(self.input_ui.pending_media().len() + 1);
-        let index = index.min(self.input_ui.pending_media().len());
-        self.input_ui.pending_media_mut().insert(index, media);
-        self.notify_status(format!("attached {label}"));
+        let label = media.composer_label(1);
+        if self
+            .input_ui
+            .replace_pending_attachment(id, media)
+            .is_some()
+        {
+            self.notify_status(format!("attached {label}"));
+        }
     }
 
-    fn attach_pending_image(&mut self, image: ImageContent) {
-        let index = self.input_ui.pending_media().len();
-        self.attach_pending_image_at(image, index);
-    }
-
-    fn attach_pending_image_at(&mut self, image: ImageContent, index: usize) {
+    fn attach_ready_image(&mut self, image: ImageContent) {
         let summary = image_summary(&image);
-        let index = index.min(self.input_ui.pending_media().len());
-        self.input_ui
-            .pending_media_mut()
-            .insert(index, ChatMedia::Image(image));
-        self.notify_status(format!("attached image {} ({summary})", index + 1));
+        self.input_ui.push_ready_attachment(ChatMedia::Image(image));
+        self.notify_status(format!(
+            "attached image {} ({summary})",
+            self.input_ui.attachments().len()
+        ));
+    }
+
+    fn finish_pending_image(&mut self, id: MediaAttachId, image: ImageContent) {
+        let summary = image_summary(&image);
+        if let Some(index) = self
+            .input_ui
+            .replace_pending_attachment(id, ChatMedia::Image(image))
+        {
+            self.notify_status(format!("attached image {} ({summary})", index + 1));
+        }
     }
 }
 

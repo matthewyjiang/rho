@@ -98,7 +98,7 @@ impl App {
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
             let subagent_host_input_bound = self.subagent_host_input.is_some();
-            let media_attach_pending = !self.pending_media_attaches.is_empty();
+            let media_attach_pending = !self.media_attach_tasks.is_empty();
             tokio::select! {
                 biased;
                 event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
@@ -113,7 +113,7 @@ impl App {
                     }
                     needs_redraw = true;
                 }
-                outcome = clipboard::next_pending_media_attach(&mut self.pending_media_attaches), if media_attach_pending => {
+                outcome = clipboard::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
                     self.finish_pasted_media(outcome);
                     needs_redraw = true;
                 }

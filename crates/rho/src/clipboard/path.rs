@@ -6,7 +6,7 @@ pub(crate) fn paste_text_as_file_path(text: &str, cwd: &Path) -> Option<PathBuf>
     if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
         return None;
     }
-    let unquoted = strip_matching_quotes(trimmed);
+    let (unquoted, _was_quoted) = strip_matching_quotes(trimmed);
     if unquoted.is_empty() {
         return None;
     }
@@ -23,7 +23,7 @@ pub(crate) fn paste_text_as_file_path(text: &str, cwd: &Path) -> Option<PathBuf>
         return Some(path);
     }
     #[cfg(unix)]
-    if unquoted.contains('\\') {
+    if !_was_quoted && unquoted.contains('\\') {
         return supported_file_path(PathBuf::from(unescape_shell_path(unquoted)), cwd);
     }
     None
@@ -75,14 +75,14 @@ fn path_has_supported_attachment_extension(path: &Path) -> bool {
     )
 }
 
-fn strip_matching_quotes(text: &str) -> &str {
+fn strip_matching_quotes(text: &str) -> (&str, bool) {
     let bytes = text.as_bytes();
     if bytes.len() >= 2 {
         let first = bytes[0];
         let last = bytes[bytes.len() - 1];
         if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-            return &text[1..text.len() - 1];
+            return (&text[1..text.len() - 1], true);
         }
     }
-    text
+    (text, false)
 }

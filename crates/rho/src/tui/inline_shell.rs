@@ -604,7 +604,7 @@ impl super::App {
     }
 
     pub(super) fn clear_submitted_input(&mut self) {
-        self.cancel_pending_media_attaches();
+        self.cancel_all_pending_attachments();
         self.input_ui.clear_submitted();
         self.clamp_command_selection();
     }

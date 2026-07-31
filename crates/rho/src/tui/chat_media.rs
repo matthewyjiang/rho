@@ -1,11 +1,27 @@
 use rho_providers::model::{image_summary, ContentBlock, ImageContent};
 
-/// Media queued with the next user turn.
+/// Ready media queued with the next user turn.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum ChatMedia {
     Image(ImageContent),
     TextDocument(ChatTextDocument),
-    PendingFile { name: String },
+}
+
+/// One ordered attachment shown in the composer.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ComposerAttachment {
+    Ready(ChatMedia),
+    Pending { id: MediaAttachId, name: String },
+}
+
+/// Stable identity shared by a pending composer item and its extraction task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MediaAttachId(uuid::Uuid);
+
+impl MediaAttachId {
+    pub(super) fn new() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
 }
 
 /// Extracted document content kept as text rather than raw file bytes.
@@ -23,19 +39,13 @@ impl ChatMedia {
         match self {
             Self::Image(image) => format!("[image {index}: {}]", image_summary(image)),
             Self::TextDocument(document) => document.label(),
-            Self::PendingFile { name } => format!("[file: {name} · extracting]"),
         }
-    }
-
-    pub(super) fn is_pending_file(&self) -> bool {
-        matches!(self, Self::PendingFile { .. })
     }
 
     pub(super) fn display_block(&self) -> ContentBlock {
         match self {
             Self::Image(image) => ContentBlock::Image(image.clone()),
             Self::TextDocument(document) => ContentBlock::Text(document.label()),
-            Self::PendingFile { name } => ContentBlock::Text(format!("[file: {name}]")),
         }
     }
 
@@ -43,7 +53,22 @@ impl ChatMedia {
         match self {
             Self::Image(image) => ContentBlock::Image(image),
             Self::TextDocument(document) => ContentBlock::Text(document.model_text()),
-            Self::PendingFile { name } => ContentBlock::Text(format!("Attached file: {name}")),
+        }
+    }
+}
+
+impl ComposerAttachment {
+    pub(super) fn composer_label(&self, index: usize) -> String {
+        match self {
+            Self::Ready(media) => media.composer_label(index),
+            Self::Pending { name, .. } => format!("[file: {name} · extracting]"),
+        }
+    }
+
+    pub(super) fn pending_id(&self) -> Option<MediaAttachId> {
+        match self {
+            Self::Pending { id, .. } => Some(*id),
+            Self::Ready(_) => None,
         }
     }
 }

@@ -89,17 +89,25 @@ fn paste_text_recognizes_supported_file_path_forms() {
         Some(spaced_path.clone())
     );
     #[cfg(unix)]
-    assert_eq!(
-        paste_text_as_file_path(&spaced_path.to_string_lossy().replace(' ', "\\ "), cwd),
-        Some(spaced_path)
-    );
+    {
+        let shell_escaped = spaced_path.to_string_lossy().replace(' ', "\\ ");
+        assert_eq!(
+            paste_text_as_file_path(&shell_escaped, cwd),
+            Some(spaced_path)
+        );
+        let quoted_shell_escaped = format!("\"{shell_escaped}\"");
+        assert_eq!(paste_text_as_file_path(&quoted_shell_escaped, cwd), None);
+    }
 
-    let colon_dir = cwd.join("drop:");
-    fs::create_dir(&colon_dir).unwrap();
-    let colon_path = colon_dir.join("report.txt");
-    fs::write(&colon_path, "dropped").unwrap();
-    let colon_input = format!("{}/drop://report.txt", cwd.display());
-    assert_eq!(paste_text_as_file_path(&colon_input, cwd), Some(colon_path));
+    #[cfg(unix)]
+    {
+        let colon_dir = cwd.join("drop:");
+        fs::create_dir(&colon_dir).unwrap();
+        let colon_path = colon_dir.join("report.txt");
+        fs::write(&colon_path, "dropped").unwrap();
+        let colon_input = format!("{}/drop://report.txt", cwd.display());
+        assert_eq!(paste_text_as_file_path(&colon_input, cwd), Some(colon_path));
+    }
 }
 
 #[test]
