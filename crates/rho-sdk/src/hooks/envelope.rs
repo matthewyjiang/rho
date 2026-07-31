@@ -16,16 +16,15 @@ use super::{
 /// Wire schema version of [`HookEnvelope`]. Handlers must reject other values.
 pub const HOOK_SCHEMA_VERSION: u32 = 1;
 
-/// Session and run identity, including delegation parentage.
+/// Session and run identity, including delegated parent session.
 ///
-/// A delegated Rho subagent reports its own ids plus the ids of the session and
-/// run that delegated to it, so a hook can attribute nested work.
+/// A delegated Rho subagent reports its own ids plus the session that
+/// delegated to it, so a hook can attribute nested work.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct HookIdentity {
     pub session_id: Option<SessionId>,
     pub parent_session_id: Option<SessionId>,
     pub run_id: Option<RunId>,
-    pub parent_run_id: Option<RunId>,
 }
 
 /// One typed lifecycle event delivered to a hook handler.

@@ -36,37 +36,33 @@ impl std::fmt::Debug for dyn HookObserver {
     }
 }
 
-/// Identity a delegated runtime reports as its parent.
+/// Identity a delegated runtime reports as its parent session.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HookDelegation {
     parent_session_id: Option<SessionId>,
-    parent_run_id: Option<RunId>,
 }
 
 impl HookDelegation {
     pub fn new(parent_session_id: SessionId) -> Self {
         Self {
             parent_session_id: Some(parent_session_id),
-            parent_run_id: None,
         }
-    }
-
-    pub fn parent_run_id(mut self, parent_run_id: RunId) -> Self {
-        self.parent_run_id = Some(parent_run_id);
-        self
     }
 }
 
-/// Hook wiring shared by every session created from one runtime.
+/// Hook ports shared by every session created from one runtime.
+///
+/// This is wiring, not the host pipeline that owns config, workers, and
+/// shutdown. Hosts keep that separately and install the gate/observer here.
 #[derive(Clone, Default)]
-pub(crate) struct HookRuntime {
+pub(crate) struct HookWiring {
     observer: Option<Arc<dyn HookObserver>>,
     gate: Option<Arc<dyn PreToolUseGate>>,
     bounds: HookPayloadBounds,
     delegation: HookDelegation,
 }
 
-impl HookRuntime {
+impl HookWiring {
     pub(crate) fn new(
         observer: Option<Arc<dyn HookObserver>>,
         gate: Option<Arc<dyn PreToolUseGate>>,
@@ -102,7 +98,6 @@ impl HookRuntime {
             session_id: session_id.cloned(),
             parent_session_id: self.delegation.parent_session_id.clone(),
             run_id: run_id.cloned(),
-            parent_run_id: self.delegation.parent_run_id.clone(),
         }
     }
 
@@ -133,10 +128,6 @@ impl HookRuntime {
         let Some(observer) = self.observer.as_ref() else {
             return;
         };
-        debug_assert!(
-            event.is_delivered(),
-            "only delivered events reach observers"
-        );
         let mut builder = self.builder(event, session_id, run_id, workspace_root);
         let payload = build(&mut builder);
         observer.observe(builder.finish(payload)).await;
@@ -150,10 +141,10 @@ impl HookRuntime {
     }
 }
 
-impl std::fmt::Debug for HookRuntime {
+impl std::fmt::Debug for HookWiring {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("HookRuntime")
+            .debug_struct("HookWiring")
             .field("observer", &self.observer.is_some())
             .field("gate", &self.gate.is_some())
             .field("bounds", &self.bounds)
@@ -169,12 +160,12 @@ impl std::fmt::Debug for HookRuntime {
 /// run, so the host reports that boundary through this handle.
 #[derive(Clone, Debug)]
 pub struct HookDispatcher {
-    hooks: HookRuntime,
+    hooks: HookWiring,
     workspace_root: Option<PathBuf>,
 }
 
 impl HookDispatcher {
-    pub(crate) fn new(hooks: HookRuntime, workspace_root: Option<PathBuf>) -> Self {
+    pub(crate) fn new(hooks: HookWiring, workspace_root: Option<PathBuf>) -> Self {
         Self {
             hooks,
             workspace_root,

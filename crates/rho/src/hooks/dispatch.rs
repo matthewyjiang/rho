@@ -24,7 +24,7 @@ use super::{
     catalog::HookCatalog,
     command::{run_hook, HookRunError, HookRunOutput},
     config::HookDefinition,
-    protocol::{parse_decision, HandlerDecision},
+    protocol::parse_decision,
 };
 
 /// Ceiling on the total time one `before_tool_use` dispatch may take.
@@ -97,6 +97,14 @@ impl CommandHookGate {
 }
 
 impl PreToolUseGate for CommandHookGate {
+    fn applies_to_tool(&self, tool_name: &str) -> bool {
+        !self
+            .engine
+            .catalog()
+            .matching(HookEventKind::BeforeToolUse, Some(tool_name))
+            .is_empty()
+    }
+
     fn evaluate(&self, request: PreToolUseRequest) -> HookGateFuture<'_> {
         Box::pin(async move {
             let catalog = self.engine.catalog();
@@ -176,7 +184,7 @@ fn interpret(
     if !output.succeeded() {
         // A nonzero exit may still carry a valid deny; anything else is a
         // failure, and failures deny.
-        if let Ok(HandlerDecision::Deny { reason }) = parse_decision(&output.stdout) {
+        if let Ok(HookDecision::Deny { reason }) = parse_decision(&output.stdout) {
             return record_denial(
                 engine,
                 id,
@@ -197,7 +205,7 @@ fn interpret(
         );
     }
     match parse_decision(&output.stdout) {
-        Ok(HandlerDecision::Continue) => {
+        Ok(HookDecision::Continue) => {
             engine.record(HookActivity {
                 hook_id: id.to_owned(),
                 event: hook.event().wire_name(),
@@ -207,13 +215,21 @@ fn interpret(
             });
             HookDecision::Continue
         }
-        Ok(HandlerDecision::Deny { reason }) => record_denial(
+        Ok(HookDecision::Deny { reason }) => record_denial(
             engine,
             id,
             hook.event(),
             duration,
             output.truncated,
             format!("denied by hook `{id}`: {reason}"),
+        ),
+        Ok(_) => record_denial(
+            engine,
+            id,
+            hook.event(),
+            duration,
+            output.truncated,
+            format!("denied: hook `{id}` returned an unsupported decision"),
         ),
         Err(error) => record_denial(
             engine,

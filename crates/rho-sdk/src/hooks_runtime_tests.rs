@@ -339,7 +339,6 @@ async fn the_gate_receives_a_before_tool_use_envelope_with_the_command_it_must_j
     let payload = serde_json::to_value(envelope.payload()).unwrap();
     assert_eq!(payload["tool"]["name"], json!("read_file"));
     assert_eq!(payload["tool"]["call_id"], json!("call-1"));
-    assert_eq!(payload["capability_kind"], json!("read"));
     assert_eq!(payload["capability"]["operation"], json!("read_path"));
     assert_eq!(payload["policy"], json!("allow"));
 }

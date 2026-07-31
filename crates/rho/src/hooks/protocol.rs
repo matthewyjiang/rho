@@ -6,17 +6,12 @@
 
 use serde::Deserialize;
 
+use rho_sdk::hooks::HookDecision;
+
 use super::config::HOOKS_SCHEMA_VERSION;
 
 /// Largest decision document the runtime will read from a handler.
 pub const MAX_DECISION_BYTES: usize = 8 * 1024;
-
-/// What a `before_tool_use` handler asked for.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HandlerDecision {
-    Continue,
-    Deny { reason: String },
-}
 
 /// Longest denial reason surfaced to the model and the user.
 const MAX_REASON_BYTES: usize = 1024;
@@ -48,12 +43,12 @@ pub enum DecisionError {
     TooLarge,
 }
 
-/// Parses one handler decision.
+/// Parses one handler decision into the SDK decision type.
 ///
 /// Unknown keys are ignored so a newer handler can add fields without breaking
 /// an older Rho. An unknown schema version is not ignored: a handler speaking a
 /// protocol this build does not understand must not be read as consent.
-pub fn parse_decision(stdout: &[u8]) -> Result<HandlerDecision, DecisionError> {
+pub fn parse_decision(stdout: &[u8]) -> Result<HookDecision, DecisionError> {
     if stdout.len() > MAX_DECISION_BYTES {
         return Err(DecisionError::TooLarge);
     }
@@ -67,14 +62,14 @@ pub fn parse_decision(stdout: &[u8]) -> Result<HandlerDecision, DecisionError> {
         return Err(DecisionError::SchemaMismatch { found: raw.version });
     }
     match raw.decision.as_str() {
-        "continue" => Ok(HandlerDecision::Continue),
+        "continue" => Ok(HookDecision::Continue),
         "deny" => {
             let reason = raw
                 .reason
                 .map(|reason| reason.trim().to_owned())
                 .filter(|reason| !reason.is_empty())
                 .ok_or(DecisionError::MissingReason)?;
-            Ok(HandlerDecision::Deny {
+            Ok(HookDecision::Deny {
                 reason: truncate_on_char_boundary(reason, MAX_REASON_BYTES),
             })
         }

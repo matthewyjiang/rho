@@ -51,8 +51,8 @@ mod gate;
 mod payload;
 pub mod testing;
 
-pub(crate) use dispatch::HookRuntime;
-pub(crate) use payload::{bounded_failure, capability_label, error_label, summarize_capability};
+pub(crate) use dispatch::HookWiring;
+pub(crate) use payload::{bounded_failure, error_label, summarize_capability};
 
 pub use bounds::{
     HookPayloadBounds, HookTruncation, DEFAULT_MAX_ENVELOPE_BYTES, DEFAULT_MAX_FIELD_BYTES,

@@ -1,12 +1,14 @@
 use pretty_assertions::assert_eq;
 
+use rho_sdk::hooks::HookDecision;
+
 use super::*;
 
 #[test]
 fn a_versioned_continue_parses() {
     assert_eq!(
         parse_decision(br#"{"version":1,"decision":"continue"}"#),
-        Ok(HandlerDecision::Continue)
+        Ok(HookDecision::Continue)
     );
 }
 
@@ -14,7 +16,7 @@ fn a_versioned_continue_parses() {
 fn a_versioned_deny_carries_its_reason() {
     assert_eq!(
         parse_decision(br#"{"version":1,"decision":"deny","reason":"force push"}"#),
-        Ok(HandlerDecision::Deny {
+        Ok(HookDecision::Deny {
             reason: "force push".into()
         })
     );
@@ -24,7 +26,7 @@ fn a_versioned_deny_carries_its_reason() {
 fn surrounding_whitespace_is_tolerated() {
     assert_eq!(
         parse_decision(b"\n  {\"version\":1,\"decision\":\"continue\"}  \n"),
-        Ok(HandlerDecision::Continue)
+        Ok(HookDecision::Continue)
     );
 }
 
@@ -32,7 +34,7 @@ fn surrounding_whitespace_is_tolerated() {
 fn unknown_fields_are_ignored_so_newer_handlers_keep_working() {
     assert_eq!(
         parse_decision(br#"{"version":1,"decision":"continue","hint":"future"}"#),
-        Ok(HandlerDecision::Continue)
+        Ok(HookDecision::Continue)
     );
 }
 
@@ -96,7 +98,7 @@ fn a_long_denial_reason_is_shortened_on_a_character_boundary() {
 
     let decision = parse_decision(payload.to_string().as_bytes()).unwrap();
 
-    let HandlerDecision::Deny { reason } = decision else {
+    let HookDecision::Deny { reason } = decision else {
         panic!("expected a denial");
     };
     assert!(reason.len() <= 1024);

@@ -132,7 +132,7 @@ timeout = "1s"
 }
 
 #[test]
-fn a_named_but_undelivered_event_is_rejected_with_an_explanation() {
+fn an_unknown_event_name_is_rejected() {
     let error = error(
         r#"
 version = 1
@@ -146,7 +146,9 @@ timeout = "1s"
     );
 
     assert_eq!(error.field.as_deref(), Some("on"));
-    assert!(error.message.contains("not delivered"));
+    assert!(error
+        .message
+        .contains("unknown event 'user_prompt_accepted'"));
 }
 
 #[test]

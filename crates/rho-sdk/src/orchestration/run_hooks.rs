@@ -6,8 +6,9 @@ use std::{
 use crate::{
     event::{RunOutcome, ToolCompletion},
     hooks::{
-        bounded_failure, error_label, AfterToolUsePayload, HookEventKind, HookPayload, HookRuntime,
-        HookStopReason, HookTool, HookToolStatus, RunCompletedPayload, RunFailedPayload,
+        bounded_failure, error_label, AfterToolUsePayload, HookEventKind, HookPayload,
+        HookStopReason, HookTool, HookToolStatus, HookWiring, RunCompletedPayload,
+        RunFailedPayload,
     },
     Error, RunId, SessionId, ToolCallId,
 };
@@ -18,7 +19,7 @@ use crate::{
 /// envelope reports, so call sites deep in the tool batch do not have to rebuild
 /// it or thread the whole runtime.
 pub(super) struct RunHooks {
-    hooks: HookRuntime,
+    hooks: HookWiring,
     session_id: SessionId,
     run_id: RunId,
     workspace_root: Option<PathBuf>,

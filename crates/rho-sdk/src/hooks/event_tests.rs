@@ -30,6 +30,8 @@ fn unknown_event_names_do_not_resolve() {
     assert_eq!(HookEventKind::from_wire_name("before_tool"), None);
     assert_eq!(HookEventKind::from_wire_name(""), None);
     assert_eq!(HookEventKind::from_wire_name("BeforeToolUse"), None);
+    assert_eq!(HookEventKind::from_wire_name("user_prompt_accepted"), None);
+    assert_eq!(HookEventKind::from_wire_name("turn_completed"), None);
 }
 
 #[test]
@@ -47,7 +49,6 @@ fn version_one_delivers_exactly_the_documented_events() {
     let delivered: Vec<_> = HookEventKind::ALL
         .iter()
         .copied()
-        .filter(|event| event.is_delivered())
         .map(HookEventKind::wire_name)
         .collect();
     assert_eq!(
@@ -62,19 +63,6 @@ fn version_one_delivers_exactly_the_documented_events() {
             "session_failed",
         ]
     );
-}
-
-#[test]
-fn message_injecting_events_stay_undelivered() {
-    for event in [
-        HookEventKind::UserPromptAccepted,
-        HookEventKind::BeforeModelRequest,
-        HookEventKind::ModelResponseCompleted,
-        HookEventKind::TurnCompleted,
-    ] {
-        assert!(!event.is_delivered(), "{event} must stay undelivered in v1");
-        assert!(!event.is_blocking(), "{event} must not block");
-    }
 }
 
 #[test]

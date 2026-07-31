@@ -134,7 +134,7 @@ async fn run_tool(fixture: &Fixture, trust: ProjectTrust, tool: &'static str) ->
         .tool(CapabilityTool { name: tool })
         .workspace(Workspace::new(fixture.project.path()).unwrap())
         .workspace_policy(ScopedWorkspacePolicy::new().allow_read_paths());
-    let runtime = HookRuntime::start(fixture.catalog(trust), CancellationToken::new());
+    let runtime = HookPipeline::start(fixture.catalog(trust), CancellationToken::new());
     let builder = match runtime.as_ref() {
         Some(hooks) => hooks.attach(builder),
         None => builder,
@@ -221,13 +221,13 @@ async fn a_hook_that_matches_no_tool_leaves_the_call_alone() {
 
 #[test]
 fn an_empty_catalog_starts_nothing() {
-    assert!(HookRuntime::start(HookCatalog::default(), CancellationToken::new()).is_none());
+    assert!(HookPipeline::start(HookCatalog::default(), CancellationToken::new()).is_none());
 }
 
 #[tokio::test]
 async fn a_runtime_rebuild_reuses_one_engine_and_worker() {
     let fixture = Fixture::new();
-    let hooks = HookRuntime::start(
+    let hooks = HookPipeline::start(
         fixture.catalog(ProjectTrust::Trusted),
         CancellationToken::new(),
     )
@@ -276,7 +276,7 @@ timeout = "10s"
     )
     .unwrap();
     let parent = rho_sdk::SessionId::from_string("parent-session").unwrap();
-    let hooks = HookRuntime::start(
+    let hooks = HookPipeline::start(
         fixture.catalog(ProjectTrust::Trusted),
         CancellationToken::new(),
     )
@@ -335,7 +335,7 @@ timeout = "10s"
 "#,
     )
     .unwrap();
-    let hooks = HookRuntime::start(
+    let hooks = HookPipeline::start(
         fixture.catalog(ProjectTrust::Trusted),
         CancellationToken::new(),
     )

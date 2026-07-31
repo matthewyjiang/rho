@@ -66,7 +66,7 @@ pub(crate) struct InteractiveRuntime {
     runtime: Rho,
     /// One hook pipeline for the whole session. Runtime rebuilds reattach it
     /// rather than starting a second worker.
-    hooks: Option<crate::hooks::HookRuntime>,
+    hooks: Option<crate::hooks::HookPipeline>,
     runs: InteractiveRunController,
     sessions: InteractiveSessionController,
     provider: ProviderController,

@@ -44,8 +44,8 @@ impl PreToolUseGate for DenyGate {
     }
 }
 
-fn runtime_with(observer: Option<Arc<dyn HookObserver>>) -> HookRuntime {
-    HookRuntime::new(
+fn runtime_with(observer: Option<Arc<dyn HookObserver>>) -> HookWiring {
+    HookWiring::new(
         observer,
         None,
         HookPayloadBounds::default(),
@@ -110,12 +110,11 @@ async fn an_observed_event_reaches_the_sink_with_its_identity() {
 async fn a_delegated_runtime_reports_its_parent_identity() {
     let observer = Arc::new(RecordingObserver::default());
     let parent_session = SessionId::from_string("parent-session").unwrap();
-    let parent_run = RunId::from_string("parent-run").unwrap();
-    let hooks = HookRuntime::new(
+    let hooks = HookWiring::new(
         Some(observer.clone()),
         None,
         HookPayloadBounds::default(),
-        HookDelegation::new(parent_session.clone()).parent_run_id(parent_run.clone()),
+        HookDelegation::new(parent_session.clone()),
     );
     let child = SessionId::from_string("child-session").unwrap();
 
@@ -140,7 +139,6 @@ async fn a_delegated_runtime_reports_its_parent_identity() {
             session_id: Some(child),
             parent_session_id: Some(parent_session),
             run_id: None,
-            parent_run_id: Some(parent_run),
         }
     );
 }
@@ -202,7 +200,7 @@ async fn the_host_dispatcher_reports_both_session_boundaries() {
 
 #[tokio::test]
 async fn a_dispatcher_with_only_a_gate_is_still_enabled() {
-    let hooks = HookRuntime::new(
+    let hooks = HookWiring::new(
         None,
         Some(Arc::new(DenyGate)),
         HookPayloadBounds::default(),
@@ -214,5 +212,5 @@ async fn a_dispatcher_with_only_a_gate_is_still_enabled() {
 
 #[test]
 fn a_dispatcher_without_hooks_reports_itself_disabled() {
-    assert!(!HookDispatcher::new(HookRuntime::default(), None).is_enabled());
+    assert!(!HookDispatcher::new(HookWiring::default(), None).is_enabled());
 }

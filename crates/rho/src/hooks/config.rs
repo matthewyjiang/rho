@@ -215,14 +215,6 @@ fn validate(
             ),
         )
     })?;
-    if !event.is_delivered() {
-        return Err(HookConfigError::at_hook(
-            path,
-            &id,
-            "on",
-            format!("event '{event}' is defined but not delivered at hooks schema version {HOOKS_SCHEMA_VERSION}"),
-        ));
-    }
 
     let tools = build_matcher(path, &id, event, raw.tools, canonical_tools)?;
     let command = resolve_command(path, &id, raw.command, source, project_root)?;
@@ -417,7 +409,6 @@ fn validate_env(
 fn known_events() -> String {
     HookEventKind::ALL
         .iter()
-        .filter(|event| event.is_delivered())
         .map(|event| event.wire_name())
         .collect::<Vec<_>>()
         .join(", ")

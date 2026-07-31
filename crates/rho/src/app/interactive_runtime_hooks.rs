@@ -10,10 +10,10 @@ impl InteractiveRuntime {
     /// Re-reads hooks for this workspace and reports what is now configured.
     ///
     /// The swap is atomic, so a blocking decision already in flight keeps the
-    /// hook set it started with. A session that started without hooks stays
-    /// without them until restart: installing a gate means rebuilding the SDK
-    /// runtime, which a diagnostics command should not do behind the user's
-    /// back.
+    /// hook set it started with. A session that started without hooks, or without
+    /// a whole class of hooks (blocking vs observational), stays that way until
+    /// restart: installing a gate or worker means rebuilding the SDK runtime,
+    /// which a diagnostics command should not do behind the user's back.
     pub(crate) fn reload_hooks(&self) -> anyhow::Result<crate::hooks::HookReport> {
         let cwd = self.workspace.root();
         let Some(hooks) = self.hooks.as_ref() else {

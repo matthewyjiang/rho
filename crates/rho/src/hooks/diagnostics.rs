@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use super::{activity::HookActivity, catalog::HookCatalog, dispatch::HookEngine, HookRuntime};
+use super::{activity::HookActivity, catalog::HookCatalog, dispatch::HookEngine, HookPipeline};
 
 /// What a hook will execute, ready to show before trust is granted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -20,6 +20,22 @@ pub struct HookContractView {
     pub working_directory: String,
     pub timeout: String,
     pub environment: Vec<String>,
+}
+
+impl std::fmt::Display for HookContractView {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} on {} (tools: {})\n  argv: {}\n  cwd: {}\n  timeout: {}\n  env: {}",
+            self.id,
+            self.event,
+            self.tools,
+            self.command.join(" "),
+            self.working_directory,
+            self.timeout,
+            self.environment.join(", ")
+        )
+    }
 }
 
 /// One recorded hook invocation.
@@ -95,16 +111,7 @@ impl HookReport {
             return lines.join("\n");
         }
         for hook in &self.hooks {
-            lines.push(format!(
-                "{} on {} (tools: {})\n  argv: {}\n  cwd: {}\n  timeout: {}\n  env: {}",
-                hook.id,
-                hook.event,
-                hook.tools,
-                hook.command.join(" "),
-                hook.working_directory,
-                hook.timeout,
-                hook.environment.join(", ")
-            ));
+            lines.push(hook.to_string());
         }
         lines.join("\n")
     }
@@ -118,7 +125,7 @@ pub struct HookInspector {
 }
 
 impl HookInspector {
-    pub fn new(runtime: &HookRuntime) -> Self {
+    pub fn new(runtime: &HookPipeline) -> Self {
         let engine = Arc::clone(runtime.engine());
         let skipped_untrusted = engine
             .catalog()

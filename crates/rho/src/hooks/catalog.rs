@@ -109,6 +109,18 @@ impl HookCatalog {
         self.hooks.len()
     }
 
+    /// Whether any blocking `before_tool_use` hook is configured.
+    pub fn has_blocking_hooks(&self) -> bool {
+        self.hooks
+            .iter()
+            .any(|hook| hook.event() == HookEventKind::BeforeToolUse)
+    }
+
+    /// Whether any observational hook is configured.
+    pub fn has_observational_hooks(&self) -> bool {
+        self.hooks.iter().any(|hook| !hook.event().is_blocking())
+    }
+
     #[cfg(test)]
     pub fn hooks(&self) -> &[HookDefinition] {
         &self.hooks

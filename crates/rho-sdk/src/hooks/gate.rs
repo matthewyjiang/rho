@@ -77,6 +77,15 @@ pub type HookGateFuture<'a> = Pin<Box<dyn Future<Output = HookDecision> + Send +
 ///
 /// [`WorkspacePolicy::evaluate`]: crate::WorkspacePolicy::evaluate
 pub trait PreToolUseGate: Send + Sync {
+    /// Cheap check used before the runtime builds a full envelope.
+    ///
+    /// Return `false` when no configured handler can match `tool_name`, so
+    /// observational-only installs and unmatched tools skip payload work.
+    /// Defaults to `true`.
+    fn applies_to_tool(&self, _tool_name: &str) -> bool {
+        true
+    }
+
     fn evaluate(&self, request: PreToolUseRequest) -> HookGateFuture<'_>;
 }
 

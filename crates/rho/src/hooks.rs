@@ -76,47 +76,69 @@ impl HookSource {
     }
 }
 
-/// Everything the application holds to keep hooks running.
+/// Host-owned hook pipeline: config engine, optional gate, optional worker.
 ///
 /// One value per process, not per SDK runtime: the interactive host rebuilds its
 /// runtime whenever permission mode or provider changes, and those rebuilds must
 /// reuse the same engine, queue, and worker rather than starting new ones.
-pub struct HookRuntime {
+///
+/// The gate is installed only when blocking hooks exist at start; the observer
+/// only when observational hooks exist. Adding a class of hook that was absent
+/// at session start still requires a restart, matching the empty-catalog case.
+pub struct HookPipeline {
     engine: Arc<HookEngine>,
-    gate: Arc<dispatch::CommandHookGate>,
-    observer: Arc<dispatch::QueuedHookObserver>,
+    gate: Option<Arc<dispatch::CommandHookGate>>,
+    observer: Option<Arc<dispatch::QueuedHookObserver>>,
     worker: Option<dispatch::ObservationalWorker>,
 }
 
-impl HookRuntime {
+impl HookPipeline {
     /// Starts the hook pipeline, or returns `None` when nothing is configured.
     ///
     /// A session without hooks then pays nothing: no gate, no observer, and no
-    /// hook machinery in diagnostics.
+    /// hook machinery in diagnostics. A session with only observational hooks
+    /// does not install a pre-tool gate; a session with only blocking hooks does
+    /// not start an observational worker.
     pub fn start(catalog: HookCatalog, cancellation: rho_sdk::CancellationToken) -> Option<Self> {
         if catalog.is_empty() {
             return None;
         }
+        let has_blocking = catalog.has_blocking_hooks();
+        let has_observational = catalog.has_observational_hooks();
         let engine = Arc::new(HookEngine::new(
             catalog,
             rho_sdk::hooks::HookPayloadBounds::default(),
         ));
-        let (observer, worker) = dispatch::observational_channel(Arc::clone(&engine), cancellation);
+        let (observer, worker) = if has_observational {
+            let (observer, worker) =
+                dispatch::observational_channel(Arc::clone(&engine), cancellation);
+            (Some(Arc::new(observer)), Some(worker))
+        } else {
+            (None, None)
+        };
+        let gate =
+            has_blocking.then(|| Arc::new(dispatch::CommandHookGate::new(Arc::clone(&engine))));
         Some(Self {
-            gate: Arc::new(dispatch::CommandHookGate::new(Arc::clone(&engine))),
-            observer: Arc::new(observer),
+            gate,
+            observer,
             engine,
-            worker: Some(worker),
+            worker,
         })
     }
 
-    /// Installs this runtime's gate and observer on an SDK builder.
-    pub fn attach(&self, builder: rho_sdk::RhoBuilder) -> rho_sdk::RhoBuilder {
+    /// Installs this pipeline's gate and observer on an SDK builder.
+    pub fn attach(&self, mut builder: rho_sdk::RhoBuilder) -> rho_sdk::RhoBuilder {
+        if let Some(gate) = &self.gate {
+            builder = builder
+                .pre_tool_gate_shared(Arc::clone(gate) as Arc<dyn rho_sdk::hooks::PreToolUseGate>);
+        }
+        if let Some(observer) = &self.observer {
+            builder =
+                builder.hook_observer_shared(
+                    Arc::clone(observer) as Arc<dyn rho_sdk::hooks::HookObserver>
+                );
+        }
         builder
-            .pre_tool_gate_shared(Arc::clone(&self.gate) as Arc<dyn rho_sdk::hooks::PreToolUseGate>)
-            .hook_observer_shared(
-                Arc::clone(&self.observer) as Arc<dyn rho_sdk::hooks::HookObserver>
-            )
     }
 
     pub fn engine(&self) -> &Arc<HookEngine> {
@@ -128,9 +150,26 @@ impl HookRuntime {
     /// The swap is atomic and applies to dispatches that have not started, so a
     /// reload can never change the hook set halfway through one decision. On a
     /// validation error the previous hook set stays in force.
+    ///
+    /// Reload cannot install a gate or observer that was absent at start. If the
+    /// new catalog needs a port this session never attached, the caller should
+    /// tell the user to restart.
     pub fn reload_for_cwd(&self, cwd: &std::path::Path) -> Result<(), HookConfigError> {
         let mut discard = |_message: String| {};
-        self.engine.reload(discover_for_cwd(cwd, &mut discard)?);
+        let catalog = discover_for_cwd(cwd, &mut discard)?;
+        if catalog.has_blocking_hooks() && self.gate.is_none() {
+            return Err(HookConfigError::at_file(
+                cwd,
+                "blocking hooks were added since this session started; restart Rho to load them",
+            ));
+        }
+        if catalog.has_observational_hooks() && self.observer.is_none() {
+            return Err(HookConfigError::at_file(
+                cwd,
+                "observational hooks were added since this session started; restart Rho to load them",
+            ));
+        }
+        self.engine.reload(catalog);
         Ok(())
     }
 
@@ -139,7 +178,7 @@ impl HookRuntime {
     /// The caller must release every SDK runtime first; the worker finishes when
     /// the last observer sender is gone.
     pub async fn shutdown(mut self, grace: std::time::Duration) {
-        drop(self.observer);
+        drop(self.observer.take());
         if let Some(worker) = self.worker.take() {
             worker.drain(grace).await;
         }
@@ -162,10 +201,10 @@ pub const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// A hooks file that fails validation must not take the session down. The
 /// failure is logged and the session runs without hooks, which is the same
 /// outcome as having none configured.
-pub fn start_for_cwd(cwd: &std::path::Path) -> Option<HookRuntime> {
+pub fn start_for_cwd(cwd: &std::path::Path) -> Option<HookPipeline> {
     let mut report = |message: String| tracing::info!(target: "rho::hooks", "{message}");
     match discover_for_cwd(cwd, &mut report) {
-        Ok(catalog) => HookRuntime::start(catalog, rho_sdk::CancellationToken::new()),
+        Ok(catalog) => HookPipeline::start(catalog, rho_sdk::CancellationToken::new()),
         Err(error) => {
             tracing::warn!(target: "rho::hooks", "hooks are disabled: {error}");
             None

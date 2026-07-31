@@ -16,7 +16,6 @@ fn identity() -> HookIdentity {
         session_id: Some(SessionId::from_string("session-1").unwrap()),
         parent_session_id: Some(SessionId::from_string("session-parent").unwrap()),
         run_id: Some(RunId::from_string("run-1").unwrap()),
-        parent_run_id: Some(RunId::from_string("run-parent").unwrap()),
     }
 }
 
@@ -40,7 +39,6 @@ fn wire_shape(envelope: &HookEnvelope) -> serde_json::Value {
 fn before_tool_use_wire_shape_is_stable() {
     let payload = HookPayload::BeforeToolUse(BeforeToolUsePayload {
         tool: HookTool::new("bash", Some("call-1".into())),
-        capability_kind: "process".into(),
         capability: HookCapability::ExecuteProcess {
             working_directory: "/work".into(),
             executable: "bash".into(),
@@ -62,13 +60,11 @@ fn before_tool_use_wire_shape_is_stable() {
                 "session_id": "session-1",
                 "parent_session_id": "session-parent",
                 "run_id": "run-1",
-                "parent_run_id": "run-parent",
             },
             "workspace": { "root": "/work" },
             "bounds": { "truncated": false, "fields": [] },
             "payload": {
                 "tool": { "name": "bash", "call_id": "call-1" },
-                "capability_kind": "process",
                 "capability": {
                     "operation": "execute_process",
                     "working_directory": "/work",
@@ -138,7 +134,6 @@ fn a_workspaceless_runtime_reports_a_null_root() {
             "session_id": null,
             "parent_session_id": null,
             "run_id": null,
-            "parent_run_id": null,
         })
     );
 }

@@ -89,10 +89,6 @@ Delivered at schema version 1:
 finishes". In an interactive session, `session_completed` fires at exit, which
 can be hours after the last run.
 
-These names exist and are rejected in configuration, because their timing and
-payload are not settled: `user_prompt_accepted`, `before_model_request`,
-`model_response_completed`, `turn_completed`.
-
 `before_tool_use` fires per capability request, so it sees tool calls that ask
 for filesystem, process, network, skill, or instruction authority. A tool that
 requests no capability has nothing to gate.
@@ -119,14 +115,12 @@ One bounded JSON document on stdin:
   "identity": {
     "session_id": "…",
     "parent_session_id": null,
-    "run_id": "…",
-    "parent_run_id": null
+    "run_id": "…"
   },
   "workspace": { "root": "/home/you/project" },
   "bounds": { "truncated": false, "fields": [] },
   "payload": {
     "tool": { "name": "bash", "call_id": "call_01" },
-    "capability_kind": "process",
     "capability": {
       "operation": "execute_process",
       "working_directory": "/home/you/project",
@@ -140,9 +134,9 @@ One bounded JSON document on stdin:
 }
 ```
 
-`parent_session_id` and `parent_run_id` are filled in for delegated Rho
-subagents. A `runtime: claude-cli` child does not run Rho's tool loop, so it
-produces session-boundary events only.
+`parent_session_id` is filled in for delegated Rho subagents. A
+`runtime: claude-cli` child does not run Rho's tool loop, so it produces
+session-boundary events only.
 
 Read `bounds` before trusting payload text. A shortened field is named there,
 for example `payload.capability.shell_command`.
@@ -307,8 +301,9 @@ skipped, the resolved spawn contract for each hook, and recent activity:
 
 `/hooks` prints the same information and reloads the hooks files first. Reload
 is atomic: a blocking decision already in flight keeps the hook set it started
-with. A session that started with no hooks configured needs a restart to pick
-new ones up, because installing a gate rebuilds the runtime.
+with. A session that started with no hooks, or without a whole class of hooks
+(blocking vs observational), needs a restart to pick new ones up, because
+installing a gate or worker rebuilds the runtime.
 
 ## Not in this release
 

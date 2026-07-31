@@ -393,7 +393,7 @@ impl RhoBuilder {
             usage_purpose,
             usage_parent_session_id: self.usage_parent_session_id,
             approval_audit: Arc::default(),
-            hooks: crate::hooks::HookRuntime::new(
+            hooks: crate::hooks::HookWiring::new(
                 self.hook_observer,
                 self.pre_tool_gate,
                 self.hook_payload_bounds,
@@ -424,7 +424,7 @@ pub struct Rho {
     pub(crate) usage_purpose: String,
     pub(crate) usage_parent_session_id: Option<crate::SessionId>,
     pub(crate) approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
-    pub(crate) hooks: crate::hooks::HookRuntime,
+    pub(crate) hooks: crate::hooks::HookWiring,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }
 

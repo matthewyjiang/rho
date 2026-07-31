@@ -35,7 +35,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     ///
     /// Borrowed rather than owned because the interactive host rebuilds its
     /// runtime on permission or provider changes and must reuse one pipeline.
-    pub(crate) hooks: Option<&'a crate::hooks::HookRuntime>,
+    pub(crate) hooks: Option<&'a crate::hooks::HookPipeline>,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>

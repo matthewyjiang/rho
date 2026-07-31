@@ -151,7 +151,7 @@ impl RuntimeDiagnostics {
     }
 
     /// Publishes the hook runtime so `rho(action="hooks")` can read live state.
-    pub fn attach_hooks(&self, hooks: &crate::hooks::HookRuntime) {
+    pub fn attach_hooks(&self, hooks: &crate::hooks::HookPipeline) {
         self.write().hooks = Some(crate::hooks::HookInspector::new(hooks));
     }
 

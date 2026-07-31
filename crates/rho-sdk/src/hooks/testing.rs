@@ -28,7 +28,6 @@ fn identity() -> HookIdentity {
         session_id: Some(SessionId::from_string("test-session").expect("nonempty")),
         parent_session_id: None,
         run_id: Some(RunId::from_string("test-run").expect("nonempty")),
-        parent_run_id: None,
     }
 }
 
@@ -48,7 +47,6 @@ pub fn before_tool_use_envelope(tool: &str, command: &str) -> HookEnvelope {
         summarize_capability(&request, HookPayloadBounds::default(), builder.truncation());
     builder.finish(HookPayload::BeforeToolUse(BeforeToolUsePayload {
         tool: HookTool::new(tool, Some("test-call".into())),
-        capability_kind: "process".into(),
         capability,
         policy: HookPolicyOutcome::Allow,
     }))

@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::super::{catalog::ProjectTrust, HookRuntime};
+use super::super::{catalog::ProjectTrust, HookPipeline};
 use super::*;
 
 fn project_with_hook() -> TempDir {
@@ -59,7 +59,7 @@ async fn a_report_names_the_files_it_loaded_and_the_untrusted_file_it_skipped() 
     assert!(untrusted.is_empty());
 
     let catalog = HookCatalog::discover(None, Some(project.path()), ProjectTrust::Trusted).unwrap();
-    let runtime = HookRuntime::start(catalog, rho_sdk::CancellationToken::new())
+    let runtime = HookPipeline::start(catalog, rho_sdk::CancellationToken::new())
         .expect("the fixture configures one hook");
 
     let report = HookInspector::new(&runtime).report();
@@ -91,7 +91,7 @@ async fn an_untrusted_project_file_is_named_in_the_report() {
         ProjectTrust::Untrusted,
     )
     .unwrap();
-    let runtime = HookRuntime::start(catalog, rho_sdk::CancellationToken::new()).unwrap();
+    let runtime = HookPipeline::start(catalog, rho_sdk::CancellationToken::new()).unwrap();
 
     let report = HookInspector::new(&runtime).report();
 

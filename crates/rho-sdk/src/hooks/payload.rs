@@ -4,11 +4,14 @@ use serde::Serialize;
 
 use crate::{
     workspace::{
-        CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget,
-        PathScope, PolicyDecision, ProcessEnvironment, ProcessExecution, ProcessInvocation,
+        CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope,
+        ProcessEnvironment, ProcessExecution, ProcessInvocation,
     },
     StopReason,
 };
+
+#[cfg(test)]
+use crate::workspace::PolicyDecision;
 
 use super::bounds::{truncate_field, HookPayloadBounds, HookTruncation};
 
@@ -104,6 +107,7 @@ pub enum HookPolicyOutcome {
 
 impl HookPolicyOutcome {
     /// Returns the outcome a hook may observe, or `None` when policy already denied.
+    #[cfg(test)]
     pub(crate) fn from_policy(decision: &PolicyDecision) -> Option<Self> {
         match decision {
             PolicyDecision::Allow => Some(Self::Allow),
@@ -150,8 +154,8 @@ impl From<StopReason> for HookStopReason {
 
 /// Event-specific body of a [`HookEnvelope`](super::HookEnvelope).
 ///
-/// Variants exist only for delivered events. Named-but-undelivered events in
-/// [`HookEventKind`](super::HookEventKind) have no payload type on purpose.
+/// Variants exist only for delivered events. The event kind on the envelope
+/// selects which shape a handler should read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 #[non_exhaustive]
@@ -174,7 +178,6 @@ pub struct SessionStartedPayload {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct BeforeToolUsePayload {
     pub tool: HookTool,
-    pub capability_kind: String,
     pub capability: HookCapability,
     pub policy: HookPolicyOutcome,
 }
@@ -273,18 +276,6 @@ impl From<&ProcessEnvironment> for HookProcessEnvironment {
             ProcessEnvironment::InheritListed { .. } => Self::InheritListed,
             ProcessEnvironment::InheritExcept { .. } => Self::InheritExcept,
         }
-    }
-}
-
-/// Stable lowercase capability label used in payloads.
-pub(crate) fn capability_label(kind: CapabilityKind) -> &'static str {
-    match kind {
-        CapabilityKind::Read => "read",
-        CapabilityKind::Write => "write",
-        CapabilityKind::Process => "process",
-        CapabilityKind::Network => "network",
-        CapabilityKind::Skill => "skill",
-        CapabilityKind::InstructionDiscovery => "instruction_discovery",
     }
 }
 
