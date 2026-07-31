@@ -333,7 +333,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if command -v gh >/dev/null 2>&1 && gh --version | head -n1 | grep -Fq "gh version ${GH_CLI_VERSION}"; then
+
+          gh_version_line() {
+            # Capture before compare. head|grep -q under pipefail can hit SIGPIPE.
+            gh --version 2>/dev/null | sed -n '1p'
+          }
+
+          if command -v gh >/dev/null 2>&1 && [[ "$(gh_version_line)" == "gh version ${GH_CLI_VERSION}"* ]]; then
             echo "GitHub CLI ${GH_CLI_VERSION} already installed"
             gh --version
             exit 0
@@ -359,7 +365,15 @@ jobs:
 
           base="gh_${GH_CLI_VERSION}_${os}_${arch}"
           asset="${base}.${archive}"
-          install_dir="${RUNNER_TEMP:-/tmp}/gh-${GH_CLI_VERSION}"
+          install_root="${RUNNER_TEMP:-/tmp}"
+          case "$(uname -s)" in
+            MINGW*|MSYS*|CYGWIN*)
+              if command -v cygpath >/dev/null 2>&1; then
+                install_root="$(cygpath -u "$install_root")"
+              fi
+              ;;
+          esac
+          install_dir="${install_root}/gh-${GH_CLI_VERSION}"
           mkdir -p "$install_dir"
           (
             cd "$install_dir"
@@ -385,9 +399,24 @@ jobs:
               unzip -qo "$asset"
             fi
           )
-          echo "${install_dir}/${base}/bin" >> "$GITHUB_PATH"
-          export PATH="${install_dir}/${base}/bin:${PATH}"
-          gh --version | head -n1 | grep -Fq "gh version ${GH_CLI_VERSION}"
+
+          # Linux/macOS archives use ${base}/bin. Windows zip extracts bin/ at the root.
+          if [[ -d "${install_dir}/${base}/bin" ]]; then
+            bin_dir="${install_dir}/${base}/bin"
+          elif [[ -e "${install_dir}/bin/gh" || -e "${install_dir}/bin/gh.exe" ]]; then
+            bin_dir="${install_dir}/bin"
+          else
+            echo "Could not locate extracted gh binary under ${install_dir}" >&2
+            exit 1
+          fi
+
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          export PATH="${bin_dir}:${PATH}"
+          installed="$(gh_version_line)"
+          if [[ "$installed" != "gh version ${GH_CLI_VERSION}"* ]]; then
+            echo "Expected gh ${GH_CLI_VERSION}, found: ${installed}" >&2
+            exit 1
+          fi
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -411,9 +440,36 @@ jobs:
             )
           fi
 
-          asset_present() {
-            local name="$1"
-            gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$name"
+          local_file_size() {
+            wc -c <"$1" | tr -d '[:space:]'
+          }
+
+          # Skip only when the remote asset name, size, and state all match.
+          asset_matches_local() {
+            local file="$1"
+            local name size remote remote_size remote_state
+            name="$(basename -- "$file")"
+            size="$(local_file_size "$file")"
+            remote="$(gh release view "$TAG" --json assets --jq \
+              ".assets[] | select(.name == \"${name}\") | \"\(.size) \(.state)\"")"
+            remote="$(printf '%s\n' "$remote" | sed -n '1p')"
+            [[ -n "$remote" ]] || return 1
+            remote_size="${remote%% *}"
+            remote_state="${remote#* }"
+            [[ "$remote_size" == "$size" && "$remote_state" == "uploaded" ]]
+          }
+
+          asset_name_present() {
+            local file="$1"
+            local name remote_names line
+            name="$(basename -- "$file")"
+            remote_names="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            while IFS= read -r line; do
+              if [[ "$line" == "$name" ]]; then
+                return 0
+              fi
+            done <<< "$remote_names"
+            return 1
           }
 
           upload_with_retry() {
@@ -423,9 +479,14 @@ jobs:
             local delay_seconds=15
 
             while true; do
-              if asset_present "$file"; then
-                echo "Asset ${file} already present; leaving untouched"
+              if asset_matches_local "$file"; then
+                echo "Asset ${file} already present with matching size; leaving untouched"
                 return 0
+              fi
+
+              if asset_name_present "$file"; then
+                echo "Asset ${file} exists on the release with unexpected size or state; refusing to clobber" >&2
+                return 1
               fi
 
               if gh release upload "$TAG" "$file"; then
@@ -433,7 +494,7 @@ jobs:
               fi
 
               # The client can fail after the server accepted the asset.
-              if asset_present "$file"; then
+              if asset_matches_local "$file"; then
                 echo "Asset ${file} present after failed client response; leaving untouched"
                 return 0
               fi
@@ -450,9 +511,16 @@ jobs:
             done
           }
 
+          failed_assets=()
           for asset in "${assets[@]}"; do
-            upload_with_retry "$asset"
+            if ! upload_with_retry "$asset"; then
+              failed_assets+=("$asset")
+            fi
           done
+          if ((${#failed_assets[@]} > 0)); then
+            echo "Failed to upload release assets: ${failed_assets[*]}" >&2
+            exit 1
+          fi
 
   publish-app-release:
     needs: [release, publish-crates, release-binaries]
