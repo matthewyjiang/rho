@@ -325,19 +325,202 @@ jobs:
           Compress-Archive -Path dist/rho.exe -DestinationPath rho-${{ matrix.target }}.zip -Force
           $Hash = (Get-FileHash -Algorithm SHA256 rho-${{ matrix.target }}.zip).Hash.ToLowerInvariant()
           "$Hash  rho-${{ matrix.target }}.zip" | Out-File -Encoding ascii rho-${{ matrix.target }}.zip.sha256
-      - name: Upload Unix release assets
-        if: runner.os != 'Windows'
+      # Pin gh before uploads so every binary runner uses the same tested CLI.
+      # Binary jobs check out the release tag, so keep this inline in the workflow.
+      - name: Pin GitHub CLI
+        env:
+          GH_CLI_VERSION: "2.96.0"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh_version_line() {
+            # Capture before compare. head|grep -q under pipefail can hit SIGPIPE.
+            gh --version 2>/dev/null | sed -n '1p'
+          }
+
+          if command -v gh >/dev/null 2>&1 && [[ "$(gh_version_line)" == "gh version ${GH_CLI_VERSION}"* ]]; then
+            echo "GitHub CLI ${GH_CLI_VERSION} already installed"
+            gh --version
+            exit 0
+          fi
+
+          case "$(uname -s)" in
+            Linux) os=linux; archive=tar.gz ;;
+            Darwin) os=macOS; archive=zip ;;
+            MINGW*|MSYS*|CYGWIN*) os=windows; archive=zip ;;
+            *)
+              echo "Unsupported OS for GitHub CLI pin: $(uname -s)" >&2
+              exit 1
+              ;;
+          esac
+          case "$(uname -m)" in
+            x86_64|amd64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *)
+              echo "Unsupported arch for GitHub CLI pin: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          base="gh_${GH_CLI_VERSION}_${os}_${arch}"
+          asset="${base}.${archive}"
+          install_root="${RUNNER_TEMP:-/tmp}"
+          case "$(uname -s)" in
+            MINGW*|MSYS*|CYGWIN*)
+              if command -v cygpath >/dev/null 2>&1; then
+                install_root="$(cygpath -u "$install_root")"
+              fi
+              ;;
+          esac
+          install_dir="${install_root}/gh-${GH_CLI_VERSION}"
+          mkdir -p "$install_dir"
+          (
+            cd "$install_dir"
+            curl -fsSLO "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${asset}"
+            curl -fsSLO "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_checksums.txt"
+            expected="$(awk -v file="$asset" '$2 == file { print $1; exit }' "gh_${GH_CLI_VERSION}_checksums.txt")"
+            if [[ -z "$expected" ]]; then
+              echo "No checksum entry for ${asset}" >&2
+              exit 1
+            fi
+            if command -v sha256sum >/dev/null 2>&1; then
+              actual="$(sha256sum "$asset" | awk '{ print $1 }')"
+            else
+              actual="$(shasum -a 256 "$asset" | awk '{ print $1 }')"
+            fi
+            if [[ "$expected" != "$actual" ]]; then
+              echo "Checksum mismatch for ${asset}" >&2
+              exit 1
+            fi
+            if [[ "$archive" == "tar.gz" ]]; then
+              tar -xzf "$asset"
+            else
+              unzip -qo "$asset"
+            fi
+          )
+
+          # Linux/macOS archives use ${base}/bin. Windows zip extracts bin/ at the root.
+          if [[ -d "${install_dir}/${base}/bin" ]]; then
+            bin_dir="${install_dir}/${base}/bin"
+          elif [[ -e "${install_dir}/bin/gh" || -e "${install_dir}/bin/gh.exe" ]]; then
+            bin_dir="${install_dir}/bin"
+          else
+            echo "Could not locate extracted gh binary under ${install_dir}" >&2
+            exit 1
+          fi
+
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          export PATH="${bin_dir}:${PATH}"
+          installed="$(gh_version_line)"
+          if [[ "$installed" != "gh version ${GH_CLI_VERSION}"* ]]; then
+            echo "Expected gh ${GH_CLI_VERSION}, found: ${installed}" >&2
+            exit 1
+          fi
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag_name }}
-        run: gh release upload "$TAG" rho-${{ matrix.target }}.tar.gz rho-${{ matrix.target }}.tar.gz.sha256 --clobber
-      - name: Upload Windows release assets
-        if: runner.os == 'Windows'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release.outputs.tag_name }}
-        shell: pwsh
-        run: gh release upload "$env:TAG" rho-${{ matrix.target }}.zip rho-${{ matrix.target }}.zip.sha256 --clobber
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Upload only missing assets, one file at a time, without --clobber.
+          # --clobber deletes an existing asset before replacement, so a partial
+          # multi-file retry can drop a previously successful asset.
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            assets=(
+              "rho-${TARGET}.zip"
+              "rho-${TARGET}.zip.sha256"
+            )
+          else
+            assets=(
+              "rho-${TARGET}.tar.gz"
+              "rho-${TARGET}.tar.gz.sha256"
+            )
+          fi
+
+          local_file_size() {
+            wc -c <"$1" | tr -d '[:space:]'
+          }
+
+          # Skip only when the remote asset name, size, and state all match.
+          asset_matches_local() {
+            local file="$1"
+            local name size remote remote_size remote_state
+            name="$(basename -- "$file")"
+            size="$(local_file_size "$file")"
+            remote="$(gh release view "$TAG" --json assets --jq \
+              ".assets[] | select(.name == \"${name}\") | \"\(.size) \(.state)\"")"
+            remote="$(printf '%s\n' "$remote" | sed -n '1p')"
+            [[ -n "$remote" ]] || return 1
+            remote_size="${remote%% *}"
+            remote_state="${remote#* }"
+            [[ "$remote_size" == "$size" && "$remote_state" == "uploaded" ]]
+          }
+
+          asset_name_present() {
+            local file="$1"
+            local name remote_names line
+            name="$(basename -- "$file")"
+            remote_names="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            while IFS= read -r line; do
+              if [[ "$line" == "$name" ]]; then
+                return 0
+              fi
+            done <<< "$remote_names"
+            return 1
+          }
+
+          upload_with_retry() {
+            local file="$1"
+            local attempt=1
+            local max_attempts=5
+            local delay_seconds=15
+
+            while true; do
+              if asset_matches_local "$file"; then
+                echo "Asset ${file} already present with matching size; leaving untouched"
+                return 0
+              fi
+
+              if asset_name_present "$file"; then
+                echo "Asset ${file} exists on the release with unexpected size or state; refusing to clobber" >&2
+                return 1
+              fi
+
+              if gh release upload "$TAG" "$file"; then
+                return 0
+              fi
+
+              # The client can fail after the server accepted the asset.
+              if asset_matches_local "$file"; then
+                echo "Asset ${file} present after failed client response; leaving untouched"
+                return 0
+              fi
+
+              if (( attempt >= max_attempts )); then
+                echo "Failed to upload ${file} after ${max_attempts} attempts" >&2
+                return 1
+              fi
+
+              echo "Upload attempt ${attempt} for ${file} failed; retrying in ${delay_seconds}s..." >&2
+              sleep "$delay_seconds"
+              attempt=$((attempt + 1))
+              delay_seconds=$((delay_seconds * 2))
+            done
+          }
+
+          failed_assets=()
+          for asset in "${assets[@]}"; do
+            if ! upload_with_retry "$asset"; then
+              failed_assets+=("$asset")
+            fi
+          done
+          if ((${#failed_assets[@]} > 0)); then
+            echo "Failed to upload release assets: ${failed_assets[*]}" >&2
+            exit 1
+          fi
 
   publish-app-release:
     needs: [release, publish-crates, release-binaries]
