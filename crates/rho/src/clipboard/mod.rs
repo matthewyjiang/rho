@@ -1,11 +1,14 @@
 //! Shared clipboard facade for text write, image read, session policy, and doctor probes.
 
 mod image;
+mod path;
 mod process;
 mod session;
 mod write;
 
-pub use image::{image_from_paste_text, read_clipboard_image, PasteImageOutcome};
+pub use image::read_clipboard_image;
+pub(crate) use image::{path_has_supported_image_magic, read_image_file};
+pub(crate) use path::paste_text_as_file_path;
 pub use session::SessionKind;
 pub use write::{CopyOutcome, SystemClipboard};
 

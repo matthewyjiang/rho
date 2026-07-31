@@ -10,7 +10,7 @@ use super::{
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
     config_number_input_lines, display_width, file_picker,
     inline_choice::inline_choice_lines,
-    inline_shell, input_cursor_position, input_image_lines, input_lines, labeled_divider_line,
+    inline_shell, input_cursor_position, input_label_lines, input_lines, labeled_divider_line,
     login::{interactive_pending_lines, secret_input_lines},
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
     text_input::text_input_lines,
@@ -63,7 +63,14 @@ impl App {
                 let focused_paste = self
                     .focused_paste_segment()
                     .map(|segment| segment.start..segment.end());
-                let mut lines = input_image_lines(self.input_ui.pending_images(), width);
+                let media_labels = self
+                    .input_ui
+                    .pending_media()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, media)| media.composer_label(index + 1))
+                    .collect::<Vec<_>>();
+                let mut lines = input_label_lines(&media_labels, width);
                 let mut text_lines =
                     input_lines(self.input_ui.text(), content_width(width), focused_paste);
                 for (index, line) in text_lines.iter_mut().enumerate() {
@@ -110,7 +117,7 @@ impl App {
                     .min(width.saturating_sub(1) as u16);
                 position.y = position
                     .y
-                    .saturating_add(self.input_ui.pending_images().len() as u16);
+                    .saturating_add(self.input_ui.pending_media().len() as u16);
                 position
             }
             ComposerMode::SecretInput(secret) => Position {

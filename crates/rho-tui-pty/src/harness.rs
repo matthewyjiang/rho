@@ -1,7 +1,7 @@
 //! High-level PTY harness combining controller, screen, and waits.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -44,6 +44,7 @@ pub struct PtyHarness {
     raw_output: Vec<u8>,
     action_log: Vec<String>,
     env: Vec<(String, String)>,
+    cwd: Option<PathBuf>,
     scenario: String,
     phase: String,
     timing: TimingSummary,
@@ -78,6 +79,7 @@ impl PtyHarness {
             raw_output: Vec::new(),
             action_log: Vec::new(),
             env: plan.env.clone(),
+            cwd: Some(plan.cwd.clone()),
             scenario: scenario.into(),
             phase: "spawn".into(),
             timing: TimingSummary::default(),
@@ -115,6 +117,7 @@ impl PtyHarness {
             raw_output: Vec::new(),
             action_log: vec![format!("spawn_command {}", binary.display())],
             env: env.to_vec(),
+            cwd: cwd.map(Path::to_path_buf),
             scenario: scenario.into(),
             phase: "spawn".into(),
             timing: TimingSummary::default(),
@@ -147,6 +150,10 @@ impl PtyHarness {
 
     pub fn action_log(&self) -> &[String] {
         &self.action_log
+    }
+
+    pub fn working_directory(&self) -> Option<&Path> {
+        self.cwd.as_deref()
     }
 
     pub fn timing(&self) -> &TimingSummary {

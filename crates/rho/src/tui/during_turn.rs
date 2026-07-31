@@ -103,7 +103,7 @@ impl App {
                     self.clear_submitted_input();
                     self.input_ui
                         .set_submission_mode(InputSubmissionMode::ParseCommands);
-                    self.input_ui.clear_pending_images();
+                    self.input_ui.clear_pending_media();
                     self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -762,7 +762,7 @@ impl App {
                 Event::Paste(text) if input_mode == RunningInputMode::Turn => {
                     let text = normalize_paste(&text);
                     self.flush_pending_paste_burst();
-                    self.insert_paste(&text);
+                    self.insert_external_paste(&text);
                     self.input_ui.clear_paste_burst();
                 }
                 Event::Resize(_, _) => {

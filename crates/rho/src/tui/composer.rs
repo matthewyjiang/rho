@@ -375,9 +375,17 @@ impl App {
             return;
         }
         if self.input_ui.cursor() == 0 {
-            if self.input_ui.text().is_empty() && self.input_ui.pending_images_mut().pop().is_some()
-            {
-                self.status = format!("attached images: {}", self.input_ui.pending_images().len());
+            if self.input_ui.text().is_empty() {
+                if self.cancel_last_pending_media_attach() {
+                    self.status = if self.pending_media_attaches.is_empty() {
+                        "document extraction cancelled".into()
+                    } else {
+                        format!("extracting files: {}", self.pending_media_attaches.len())
+                    };
+                } else if self.input_ui.pending_media_mut().pop().is_some() {
+                    self.status =
+                        format!("attached files: {}", self.input_ui.pending_media().len());
+                }
             }
             return;
         }
@@ -507,9 +515,6 @@ impl App {
     }
 
     pub(super) fn insert_paste(&mut self, text: &str) {
-        if self.try_attach_pasted_image_path(text) {
-            return;
-        }
         match self.input_ui.composer_mut() {
             ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
@@ -522,6 +527,12 @@ impl App {
             | ComposerMode::Picker(_)
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_) => {}
+        }
+    }
+
+    pub(super) fn insert_external_paste(&mut self, text: &str) {
+        if !self.start_pasted_media_path(text) {
+            self.insert_paste(text);
         }
     }
 }

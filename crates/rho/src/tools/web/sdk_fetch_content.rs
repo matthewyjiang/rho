@@ -129,7 +129,6 @@ struct PlaceholderPlan {
 
 enum PlaceholderKind {
     YouTube,
-    RemotePdf,
 }
 
 struct GitHubApiPlan {
@@ -273,15 +272,6 @@ impl TargetPlan {
 
         if let Ok(url) = Url::parse(&requested) {
             if matches!(url.scheme(), "http" | "https") {
-                if fetch::content_type_from_path(url.path()) == "pdf" {
-                    return Ok(Self::Placeholder(PlaceholderPlan {
-                        requested,
-                        kind: PlaceholderKind::RemotePdf,
-                        prompt: None,
-                        timestamp: None,
-                        frames: options.frames,
-                    }));
-                }
                 return Ok(Self::Http(HttpPlan {
                     requested,
                     url,
@@ -372,6 +362,7 @@ impl TargetPlan {
                     plan.timestamp.as_deref(),
                     plan.frames,
                 )
+                .await
                 .map_err(map_app_tool_error)
             }
             Self::Http(plan) => fetch::fetch_http_url(&plan.url, plan.prompt.as_deref())
@@ -384,7 +375,6 @@ impl TargetPlan {
                     plan.timestamp.as_deref(),
                     plan.frames,
                 ),
-                PlaceholderKind::RemotePdf => fetch::remote_pdf_fallback(&plan.requested),
             }),
             Self::GitHubApi(plan) => github::fetch_via_api(github_client, &plan.target)
                 .await

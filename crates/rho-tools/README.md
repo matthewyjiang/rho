@@ -14,6 +14,16 @@ hosts that integrate with Rho's lower-level tool implementations. It is used by
 the `rho` binary and can be used by embedders building their own agents on
 `rho-sdk`.
 
+The `document` module provides bounded extraction from paths or named byte
+buffers. It supports UTF-8 text and source files directly,
+classic-cross-reference PDFs through `pdf-extract`, XLSX, XLS, and ODS through
+`calamine`, and a focused DOCX paragraph and table walk. PDF stream expansion
+is preflighted against a 64 MiB budget; object/xref streams and unbounded stream
+filters are rejected. PDF, spreadsheet, and DOCX support are enabled by default
+and can be controlled with the `document-pdf`, `document-spreadsheets`, and
+`document-docx` features. The facade returns extracted text, MIME type,
+truncation state, and warnings without exposing the format-specific parser APIs.
+
 ## Usage
 
 Tools do not grant filesystem or process access when registered. Attach a

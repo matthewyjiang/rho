@@ -6,6 +6,7 @@ use serde_json::json;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::{
+    document::{extract_document_from_bytes_async, MAX_DOCUMENT_INPUT_BYTES},
     image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES},
     tool::*,
 };
@@ -23,7 +24,7 @@ impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Reads a UTF-8 text file or a PNG, JPEG, GIF, or WebP image.".into(),
+            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. offset and limit select line ranges for UTF-8 text files only.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -162,11 +163,28 @@ pub(super) async fn read_file_content(
             };
         }
 
-        let mut bytes = Vec::with_capacity(source_len.min(usize::MAX as u64) as usize);
+        if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
+            return Err(ToolError::Message(format!(
+                "document '{}' is {source_len} bytes; the input limit is {MAX_DOCUMENT_INPUT_BYTES} bytes",
+                path.display()
+            )));
+        }
+        let mut bytes = Vec::with_capacity(source_len as usize);
         bytes.extend_from_slice(&header[..header_len]);
-        file.read_to_end(&mut bytes).await?;
+        (&mut file)
+            .take(MAX_DOCUMENT_INPUT_BYTES as u64 + 1 - header_len as u64)
+            .read_to_end(&mut bytes)
+            .await?;
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let document = extract_document_from_bytes_async(name, bytes)
+            .await
+            .map_err(|error| ToolError::Message(error.to_string()))?;
+        let content = format_extracted_document(document.text, &document.warnings);
         return Ok(ReadFileContent {
-            content: String::from_utf8(bytes)?,
+            content,
             image: None,
             preview_error: None,
         });
@@ -177,6 +195,18 @@ pub(super) async fn read_file_content(
         image: None,
         preview_error: None,
     })
+}
+
+fn format_extracted_document(mut text: String, warnings: &[String]) -> String {
+    for warning in warnings {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("[document warning: ");
+        text.push_str(warning);
+        text.push(']');
+    }
+    text
 }
 
 fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)> {

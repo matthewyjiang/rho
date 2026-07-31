@@ -3,9 +3,9 @@ use std::{fs, path::PathBuf};
 use pretty_assertions::assert_eq;
 
 use super::{
-    available_image_helpers_with, image_content_from_bytes, image_from_paste_text,
-    paste_text_as_image_path, read_clipboard_image_for_session, read_image_file_with_limit,
-    select_preferred_image_mime_type, ClipboardImageError, PasteImageOutcome,
+    available_image_helpers_with, image_content_from_bytes, paste_text_as_file_path,
+    read_clipboard_image_for_session, read_image_file_with_limit, select_preferred_image_mime_type,
+    ClipboardImageError,
 };
 use crate::clipboard::SessionKind;
 
@@ -57,33 +57,25 @@ fn paste_text_recognizes_absolute_and_relative_image_paths() {
     let cwd = path.parent().unwrap();
 
     assert_eq!(
-        paste_text_as_image_path(&path.to_string_lossy(), cwd),
+        paste_text_as_file_path(&path.to_string_lossy(), cwd),
         Some(path.canonicalize().unwrap())
     );
     assert_eq!(
-        paste_text_as_image_path("shot.png", cwd),
+        paste_text_as_file_path("shot.png", cwd),
         Some(path.canonicalize().unwrap())
     );
     assert_eq!(
-        paste_text_as_image_path(&format!("\"{}\"", path.display()), cwd),
+        paste_text_as_file_path(&format!("\"{}\"", path.display()), cwd),
         Some(path.canonicalize().unwrap())
     );
-    assert_eq!(paste_text_as_image_path("shot.png\nextra", cwd), None);
+    assert_eq!(paste_text_as_file_path("shot.png\nextra", cwd), None);
 
     let text_path = cwd.join("notes.txt");
     fs::write(&text_path, "hello").unwrap();
     assert_eq!(
-        paste_text_as_image_path("notes.txt", cwd),
+        paste_text_as_file_path("notes.txt", cwd),
         Some(text_path.canonicalize().unwrap())
     );
-    assert!(matches!(
-        image_from_paste_text("notes.txt", cwd),
-        PasteImageOutcome::NotImage
-    ));
-    assert!(matches!(
-        image_from_paste_text("shot.png", cwd),
-        PasteImageOutcome::Image(_)
-    ));
 }
 
 #[test]

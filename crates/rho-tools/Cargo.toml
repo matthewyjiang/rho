@@ -8,6 +8,12 @@ license = "MIT AND Apache-2.0"
 repository = "https://github.com/matthewyjiang/rho"
 readme = "README.md"
 
+[features]
+default = ["document-docx", "document-pdf", "document-spreadsheets"]
+document-docx = ["dep:quick-xml", "dep:zip"]
+document-pdf = ["dep:flate2", "dep:pdf-extract"]
+document-spreadsheets = ["dep:calamine", "dep:zip"]
+
 [dependencies]
 rho-sdk = { version = "1.13.1", path = "../rho-sdk" }
 tokio = { version = "1", features = ["full"] }
@@ -22,6 +28,11 @@ image = { version = "0.25.6", default-features = false, features = ["png", "jpeg
 ignore = "0.4"
 globset = "0.4"
 regex = "1"
+calamine = { version = "0.35", optional = true }
+flate2 = { version = "1", optional = true }
+pdf-extract = { version = "0.12", optional = true }
+quick-xml = { version = "0.39", optional = true }
+zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

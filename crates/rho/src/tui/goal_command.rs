@@ -101,6 +101,7 @@ impl App {
     pub(super) async fn execute_goal_command(
         &mut self,
         invocation: CommandInvocation,
+        media: Vec<ChatMedia>,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
@@ -143,11 +144,10 @@ impl App {
             "goal set: {condition}\nrho will keep working until the goal is met. use /goal clear to cancel."
         )));
         self.status = "goal active".into();
-        let images = std::mem::take(self.input_ui.pending_images_mut());
         let outcome = self
             .run_prompt_turn(
                 TurnPrompt::command(initial_goal_prompt(condition), format!("/goal {condition}")),
-                images,
+                media,
                 terminal,
                 agent,
             )

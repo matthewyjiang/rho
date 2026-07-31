@@ -67,6 +67,14 @@ fn smoke_terminal_restoration() {
     assert_pass("terminal_restoration");
 }
 
+// Covers: pasting an absolute document path must attach extracted text instead of parsing it as a
+// slash command.
+// Owner: interactive TUI
+#[test]
+fn absolute_document_path_paste_attaches_and_submits_text() {
+    assert_pass("document_attachment");
+}
+
 #[test]
 fn apply_patch_diff_streams_and_survives_cancellation() {
     assert_pass("apply_patch_diff");

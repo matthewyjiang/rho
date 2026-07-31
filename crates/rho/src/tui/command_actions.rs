@@ -3,17 +3,49 @@ use std::sync::atomic::AtomicBool;
 use ratatui::DefaultTerminal;
 
 use super::{
-    ActivityPhase, App, CommandId, CommandInvocation, ComposerMode, Entry, InteractiveRuntime,
-    LoadingSpinner, RunningInputMode, StreamControl, ToolEntry, ViewModelEvent,
+    command_palette::slash_command_args, ActivityPhase, App, ChatMedia, CommandId,
+    CommandInvocation, ComposerMode, Entry, InteractiveRuntime, LoadingSpinner, RunningInputMode,
+    StreamControl, ToolEntry, ViewModelEvent,
 };
+
+/// Fully-owned composer state transferred to a slash command.
+pub(super) struct CommandSubmission {
+    invocation: CommandInvocation,
+    expanded_input: String,
+    media: Vec<ChatMedia>,
+}
+
+impl CommandSubmission {
+    pub(super) fn new(
+        invocation: CommandInvocation,
+        expanded_input: String,
+        media: Vec<ChatMedia>,
+    ) -> Self {
+        Self {
+            invocation,
+            expanded_input,
+            media,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn media_len(&self) -> usize {
+        self.media.len()
+    }
+}
 
 impl App {
     pub(super) async fn execute_command(
         &mut self,
-        invocation: CommandInvocation,
+        submission: CommandSubmission,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        let CommandSubmission {
+            mut invocation,
+            expanded_input,
+            media,
+        } = submission;
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::New => self.execute_new_command(terminal, agent),
@@ -39,7 +71,12 @@ impl App {
                 .execute_compact_command(terminal, agent)
                 .await
                 .map(|_| ()),
-            CommandId::Goal => self.execute_goal_command(invocation, terminal, agent).await,
+            CommandId::Goal => {
+                invocation.raw_args = slash_command_args(&expanded_input).to_string();
+                invocation.args = invocation.raw_args.trim().to_string();
+                self.execute_goal_command(invocation, media, terminal, agent)
+                    .await
+            }
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
             CommandId::Diff => self.execute_diff_command(),
@@ -175,7 +212,7 @@ impl App {
         self.input_ui.clear_paste_segments();
         self.input_ui.set_shell_mode(None);
         self.input_ui.set_cursor(0);
-        self.input_ui.clear_pending_images();
+        self.input_ui.clear_pending_media();
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
         self.pending.clear_follow_ups();

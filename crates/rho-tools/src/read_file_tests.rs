@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(feature = "document-docx")]
+use std::io::{Cursor, Write};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -62,6 +64,35 @@ async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
         .preview_error
         .as_deref()
         .is_some_and(|error| error.starts_with("image preview unavailable:")));
+}
+
+#[cfg(feature = "document-docx")]
+// Covers: whole-file read_file calls must route supported binary documents through extraction.
+// Owner: read_file tool
+#[tokio::test]
+async fn extracts_supported_binary_documents_for_whole_file_reads() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("sample.docx");
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    writer
+        .start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    writer
+        .write_all(
+            br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Tool document</w:t></w:r></w:p></w:body></w:document>"#,
+        )
+        .unwrap();
+    fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
+
+    let result = ReadFile
+        .call(json!({"path": "sample.docx"}), ctx, "call_docx".into())
+        .await
+        .unwrap();
+
+    assert_eq!(result.content, "Tool document");
 }
 
 #[tokio::test]

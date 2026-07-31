@@ -102,6 +102,7 @@ Before export, decide whether the recipient should receive:
 - user or assistant content
 - file contents, diffs, command output, and URLs in tool records
 - base64 image data
+- extracted document text, filenames, MIME types, truncation notices, and extraction warnings
 - provider-produced summaries and opaque replay blocks
 - custom metadata
 

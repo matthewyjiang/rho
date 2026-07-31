@@ -5,8 +5,8 @@ use crossterm::event::{Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use super::{
-    mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App, ComposerMode,
-    Entry, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
+    clipboard, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
+    ComposerMode, Entry, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
 };
 
 pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
@@ -98,6 +98,7 @@ impl App {
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
             let subagent_host_input_bound = self.subagent_host_input.is_some();
+            let media_attach_pending = !self.pending_media_attaches.is_empty();
             tokio::select! {
                 biased;
                 event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
@@ -110,6 +111,10 @@ impl App {
                         Some(request) => self.queued_subagent_questionnaires.push_back(request),
                         None => self.subagent_host_input = None,
                     }
+                    needs_redraw = true;
+                }
+                outcome = clipboard::next_pending_media_attach(&mut self.pending_media_attaches), if media_attach_pending => {
+                    self.finish_pasted_media(outcome);
                     needs_redraw = true;
                 }
                 _ = tokio::time::sleep(timeout) => {
@@ -144,7 +149,7 @@ impl App {
             Event::Paste(text) => {
                 self.flush_pending_paste_burst();
                 let text = normalize_paste(&text);
-                self.insert_paste(&text);
+                self.insert_external_paste(&text);
                 self.input_ui.clear_paste_burst();
             }
             Event::Resize(_, _) => {

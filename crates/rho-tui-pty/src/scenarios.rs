@@ -3,9 +3,11 @@
 mod apply_patch_diff;
 mod config;
 mod conversation_tree;
+mod document_attachment;
 mod goal;
 mod login;
 mod mermaid;
+mod paste;
 mod pickers;
 mod resume_delete;
 mod runtime_info;
@@ -16,12 +18,14 @@ mod workspace_rewind;
 use apply_patch_diff::APPLY_PATCH_DIFF_SCENARIO;
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
+use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
+use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
     setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS,
 };
@@ -272,42 +276,6 @@ const TERMINAL_RESTORATION_STEPS: &[Step] = &[
     Step::ExitCommand,
     Step::Phase("assert_restore"),
     Step::Custom(assert_terminal_restored),
-];
-
-const PASTE_MULTILINE_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("delete_collapsed_paste"),
-    Step::Paste("discard one\ndiscard two\ndiscard three"),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Backspace),
-    Step::SubmitText("fixture stream"),
-    Step::WaitText {
-        text: "assistant stream part one",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "part two",
-        timeout: STREAM,
-    },
-    Step::Phase("submit_multiline_paste"),
-    Step::Paste("line one\n/not-a-command\nline three"),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "fixture response:",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
 ];
 
 const QUESTIONNAIRE_STEPS: &[Step] = &[
@@ -744,13 +712,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         TERMINAL_RESTORATION_STEPS,
         true,
     ),
-    Scenario::new(
-        "paste_multiline",
-        "Paste multiline text without treating embedded lines as commands",
-        DEFAULT_SIZE,
-        PASTE_MULTILINE_STEPS,
-        false,
-    ),
+    PASTE_MULTILINE_SCENARIO,
+    DOCUMENT_ATTACHMENT_SCENARIO,
     Scenario::new(
         "questionnaire",
         "Exercise questionnaire keyboard selection and submission",
