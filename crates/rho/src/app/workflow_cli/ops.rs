@@ -114,6 +114,28 @@ impl WorkflowOps {
         Ok(self.service.store().load_run(run_id)?)
     }
 
+    pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<Vec<StoredPlan>> {
+        let identity = workspace_identity(&self.workspace)?;
+        Ok(self
+            .service
+            .store()
+            .list_plans()?
+            .into_iter()
+            .filter(|plan| plan.manifest.workspace_identity == identity)
+            .collect())
+    }
+
+    pub(crate) fn list_workspace_runs(&self) -> anyhow::Result<Vec<StoredRun>> {
+        let identity = workspace_identity(&self.workspace)?;
+        Ok(self
+            .service
+            .store()
+            .list_runs()?
+            .into_iter()
+            .filter(|run| run.manifest.workspace_identity == identity)
+            .collect())
+    }
+
     pub(crate) fn recheck_plan(&self, plan: &StoredPlan) -> anyhow::Result<()> {
         let current_workspace = workspace_identity(&self.workspace)?;
         if current_workspace != plan.manifest.workspace_identity {

@@ -34,6 +34,19 @@ The main steps are:
 5. Read status and artifact references by run ID.
 6. Cancel or resume the same frozen run when needed.
 
+## Interactive hub
+
+In the chat TUI, run `/workflow` to open a hub picker:
+
+1. **Sources** lists entry files under `.rho/workflows` (folder `workflow.star` or a flat `.star` file).
+2. **Plans** lists frozen plans for the current workspace.
+3. **Runs** lists durable runs for the current workspace.
+
+From a source you can validate or plan with default inputs only. Supply custom
+inputs with the CLI `--input` flags. From a plan you can inspect the graph or
+start a run (the full-screen workflow screen). From a run you can open status,
+request cancel, or resume.
+
 ## CLI reference
 
 ```text

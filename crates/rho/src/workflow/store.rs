@@ -371,6 +371,42 @@ impl WorkflowStore {
     pub(crate) fn resolve_run(&self, prefix: &str) -> WorkflowResult<RunId> {
         resolve_prefix(&self.root, Path::new("runs"), prefix)
     }
+
+    /// Lists stored plans. Skips unreadable entries so one corrupt plan does not hide the rest.
+    pub(crate) fn list_plans(&self) -> WorkflowResult<Vec<StoredPlan>> {
+        let mut plans = Vec::new();
+        for name in self.root.directory_names(Path::new("plans"))? {
+            let Ok(name) = name.into_string() else {
+                continue;
+            };
+            let Ok(id) = PlanId::from_str(&name) else {
+                continue;
+            };
+            if let Ok(plan) = self.load_plan(id) {
+                plans.push(plan);
+            }
+        }
+        plans.sort_by_key(|plan| std::cmp::Reverse(plan.manifest.plan_id));
+        Ok(plans)
+    }
+
+    /// Lists stored runs. Skips unreadable entries so one corrupt run does not hide the rest.
+    pub(crate) fn list_runs(&self) -> WorkflowResult<Vec<StoredRun>> {
+        let mut runs = Vec::new();
+        for name in self.root.directory_names(Path::new("runs"))? {
+            let Ok(name) = name.into_string() else {
+                continue;
+            };
+            let Ok(id) = RunId::from_str(&name) else {
+                continue;
+            };
+            if let Ok(run) = self.load_run(id) {
+                runs.push(run);
+            }
+        }
+        runs.sort_by_key(|run| std::cmp::Reverse(run.manifest.run_id));
+        Ok(runs)
+    }
 }
 
 pub(crate) struct RunMutationGuard {

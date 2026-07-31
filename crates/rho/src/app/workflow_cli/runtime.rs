@@ -144,7 +144,7 @@ impl CommandHostFactory for WorkflowCommandHosts {
     }
 }
 
-pub(super) async fn execute_run(
+pub(crate) async fn execute_run(
     run: StoredRun,
     recovery: RecoveryDecision,
     output: Option<WorkflowRunFormat>,

@@ -12,17 +12,17 @@ use super::{planner_worker, workflow_service, write_json_document};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(in crate::app) enum CancellationState {
+pub(crate) enum CancellationState {
     Acknowledged,
     Pending,
     AlreadyCompleted,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(in crate::app) struct CancellationOutcome {
-    pub(in crate::app) request_id: Option<String>,
-    pub(in crate::app) state: CancellationState,
-    pub(in crate::app) lifecycle: RunLifecycle,
+pub(crate) struct CancellationOutcome {
+    pub(crate) request_id: Option<String>,
+    pub(crate) state: CancellationState,
+    pub(crate) lifecycle: RunLifecycle,
 }
 
 #[derive(Serialize)]

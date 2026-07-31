@@ -125,6 +125,7 @@ pub(super) enum PickerAction {
     ConfirmRewindCheckpoint,
     Config,
     EditAgent,
+    Workflow,
     Dismiss,
 }
 
@@ -147,7 +148,8 @@ impl PickerAction {
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::EditAgent => false,
+            | PickerAction::EditAgent
+            | PickerAction::Workflow => false,
         }
     }
 
@@ -167,7 +169,8 @@ impl PickerAction {
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
-            | PickerAction::EditAgent => true,
+            | PickerAction::EditAgent
+            | PickerAction::Workflow => true,
             PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => false,
         }
     }
@@ -402,7 +405,8 @@ impl UiPicker {
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::EditAgent => "select",
+            | PickerAction::EditAgent
+            | PickerAction::Workflow => "select",
             PickerAction::RefreshModelList => "refresh",
         }
     }

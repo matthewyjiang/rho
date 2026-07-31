@@ -45,9 +45,10 @@ use cancel::run_cancel;
 #[cfg(test)]
 use cancel::{cancellation_state, wait_for_cancellation_ack};
 pub(super) use cancel::{request_cancellation, CancellationState};
-pub(super) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
+pub(crate) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
 #[cfg(test)]
 pub(super) use plan_host::{resolve_nodes_with_host, AuthorizedPlanHost};
+pub(crate) use runtime::execute_run;
 pub(super) use tool_service::workflow_tool_service;
 
 const PLANNER_WORKER_ENV: &str = "RHO_WORKFLOW_PLANNER_WORKER";
@@ -230,10 +231,10 @@ fn parse_inputs(values: &[String]) -> anyhow::Result<BTreeMap<InputName, Workflo
 
 mod planner_worker;
 
-pub(super) use planner_worker::planning_limits;
+pub(crate) use planner_worker::planning_limits;
 #[cfg(test)]
 use planner_worker::read_frame_sync;
-pub(super) use planner_worker::run_planner_worker;
+pub(crate) use planner_worker::run_planner_worker;
 use planner_worker::valid_planner_token;
 
 async fn run_frozen_plan(

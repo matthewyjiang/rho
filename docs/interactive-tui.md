@@ -86,6 +86,7 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 | `/fast [on\|off]` | Toggle or set the faster priority tier for supported Codex models. Fast mode saves to configuration, appears as `(fast)` after the model name, and uses credits at a higher rate. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. In the picker, press `d` or `Delete` to remove a session after confirmation. If the current model cannot use the session's provider-native context, Rho asks whether to resume with the session model, compact with that model first, or continue on the current model. |
 | `/tree` | Navigate completed turns and compaction states in the current session. Continuing from an older state creates a branch. |
+| `/workflow` | Open the workflow hub. Browse local sources under `.rho/workflows`, frozen plans, and durable runs. Validate or plan a source with default inputs, inspect status, cancel, or hand off to the full-screen workflow run screen. |
 | `/rewind [turn]` | Preview and restore native file-tool changes from a completed turn, then continue from that conversation state on a new branch. This experimental command requires `behavior.experimental_workspace_rewind = true`. It does not reverse shell, Git, process, network, database, or service effects. Conflicting paths stay unchanged. |
 | `/config` | Open the [config](/configuration) category browser for models and reasoning, agent behavior, context limits, tools, providers, and updates. |
 | `/info` | Show the running Rho version, provider, model, reasoning level, permission mode, and external runtime status (including Claude Code ownership). |
@@ -183,4 +184,4 @@ Copied text is sent to the terminal clipboard, and Rho briefly shows how many ch
 When the transcript is scrolled away from the bottom, Rho overlays a right-aligned `↓ jump to bottom  ctrl+end` button on the last transcript row and obscures only the button's own cells. During generation, the spinner is similarly overlaid on the left. At the live bottom, transcript content stops one row above the spinner; while manually scrolled, the complete last row remains visible wherever neither control is drawn. Press `ctrl-end` or click the button to resume following live output.
 
 Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.
-Use [workflows](/workflows) when you need a frozen multi-step graph with durable status, cancellation, and resume.
+Use [workflows](/workflows) when you need a frozen multi-step graph with durable status, cancellation, and resume. In the interactive TUI, run `/workflow` to browse sources, plans, and runs without leaving the session.

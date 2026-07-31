@@ -393,7 +393,8 @@ impl App {
             | CommandId::Logout
             | CommandId::Resume
             | CommandId::Rewind
-            | CommandId::Tree => {
+            | CommandId::Tree
+            | CommandId::Workflow => {
                 self.insert_entry(&Entry::Notice(format!(
                     "/{} is unavailable while a model turn is running",
                     invocation.name
@@ -482,11 +483,13 @@ impl App {
             PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
-            | PickerAction::ConfirmRewindCheckpoint => {
+            | PickerAction::ConfirmRewindCheckpoint
+            | PickerAction::Workflow => {
                 self.insert_entry(&Entry::Notice(
-                    "session navigation is unavailable while a model turn is running".into(),
+                    "workflow and session navigation are unavailable while a model turn is running"
+                        .into(),
                 ));
-                self.status = "session navigation unavailable while running".into();
+                self.status = "navigation unavailable while running".into();
             }
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
             PickerAction::Dismiss | PickerAction::ViewAgent => {

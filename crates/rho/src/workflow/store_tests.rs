@@ -683,3 +683,31 @@ fn cancellation_marker_uses_the_held_workflows_root() {
         None
     );
 }
+
+// Covers: hub and status UIs need a workspace-scoped inventory of plans and runs.
+// Owner: workflow durable store.
+#[test]
+fn lists_plans_and_runs_skipping_unreadable_entries() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let first = plan(&store);
+    let second = plan(&store);
+    let run = run(&store, &first);
+
+    let plans = store.list_plans().unwrap();
+    assert_eq!(plans.len(), 2);
+    assert!(plans
+        .iter()
+        .any(|plan| plan.manifest.plan_id == first.manifest.plan_id));
+    assert!(plans
+        .iter()
+        .any(|plan| plan.manifest.plan_id == second.manifest.plan_id));
+
+    let runs = store.list_runs().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].manifest.run_id, run.manifest.run_id);
+
+    // Corrupt one plan directory name so list skips it.
+    std::fs::create_dir_all(store.layout.plans().join("not-a-uuid")).unwrap();
+    assert_eq!(store.list_plans().unwrap().len(), 2);
+}
