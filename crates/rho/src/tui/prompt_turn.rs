@@ -10,17 +10,17 @@ pub(super) struct FailedTurn {
 }
 
 impl FailedTurn {
-    fn from_prompt(prompt: TurnPrompt, images: Vec<ImageContent>) -> Result<Self, rho_sdk::Error> {
+    fn from_prompt(prompt: TurnPrompt, media: Vec<ChatMedia>) -> Result<Self, rho_sdk::Error> {
         let display = prompt.persisted_display.unwrap_or(prompt.display);
-        let mut display_content = Vec::with_capacity(1 + images.len());
+        let mut display_content = Vec::with_capacity(1 + media.len());
         display_content.push(ContentBlock::Text(display));
-        display_content.extend(images.iter().cloned().map(ContentBlock::Image));
+        display_content.extend(media.iter().map(ChatMedia::display_block));
 
-        let mut model_content = Vec::with_capacity(1 + images.len());
+        let mut model_content = Vec::with_capacity(1 + media.len());
         if !prompt.model.is_empty() {
             model_content.push(ContentBlock::Text(prompt.model));
         }
-        model_content.extend(images.into_iter().map(ContentBlock::Image));
+        model_content.extend(media.into_iter().map(ChatMedia::model_block));
 
         Ok(Self {
             input: rho_sdk::UserInput::content(model_content)?,
@@ -66,7 +66,7 @@ impl FailedTurn {
 enum PromptTurnRequest {
     New {
         prompt: TurnPrompt,
-        images: Vec<ImageContent>,
+        media: Vec<ChatMedia>,
     },
     Retry(FailedTurn),
 }
@@ -100,11 +100,11 @@ impl App {
     pub(super) async fn run_prompt_turn(
         &mut self,
         prompt: TurnPrompt,
-        images: Vec<ImageContent>,
+        media: Vec<ChatMedia>,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
-        self.run_prompt_turn_request(PromptTurnRequest::New { prompt, images }, terminal, agent)
+        self.run_prompt_turn_request(PromptTurnRequest::New { prompt, media }, terminal, agent)
             .await
     }
 
@@ -125,7 +125,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
         let mut failed_turn = match request {
-            PromptTurnRequest::New { prompt, images } => {
+            PromptTurnRequest::New { prompt, media } => {
                 if !prompt.history.is_empty() {
                     self.push_input_history(&prompt.history);
                 }
@@ -142,9 +142,9 @@ impl App {
                     .any(|message| matches!(message, Message::User(_)));
                 self.insert_entry(&Entry::User(super::message_history::render_user_entry(
                     &prompt.display,
-                    &images,
+                    &media,
                 )));
-                let mut failed_turn = FailedTurn::from_prompt(prompt, images)?;
+                let mut failed_turn = FailedTurn::from_prompt(prompt, media)?;
                 failed_turn.generate_session_title_after_completion =
                     generate_session_title_after_completion;
                 failed_turn

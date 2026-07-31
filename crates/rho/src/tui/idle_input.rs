@@ -4,14 +4,26 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
+    command_actions::CommandSubmission,
     command_palette::slash_command_args,
     commands, goal_command,
     paste_burst::{next_word_boundary, previous_word_boundary},
-    skill_actions, App, CommandId, ComposerMode, GoalState, HistoryDirection, InputSubmissionMode,
+    skill_actions, App, ComposerMode, GoalState, HistoryDirection, InputSubmissionMode,
     InteractiveRuntime, TurnOutcome, TurnPrompt,
 };
 
 impl App {
+    fn take_command_submission(
+        &mut self,
+        invocation: super::CommandInvocation,
+        expanded_input: String,
+    ) -> CommandSubmission {
+        let media = std::mem::take(self.input_ui.pending_media_mut());
+        let submission = CommandSubmission::new(invocation, expanded_input, media);
+        self.clear_submitted_input();
+        submission
+    }
+
     /// Route keys owned by modal/overlay composers. Returns true when handled.
     async fn handle_composer_mode_key(
         &mut self,
@@ -92,7 +104,7 @@ impl App {
                     self.clear_submitted_input();
                     self.input_ui
                         .set_submission_mode(InputSubmissionMode::ParseCommands);
-                    self.input_ui.clear_pending_images();
+                    self.input_ui.clear_pending_media();
                     self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -262,12 +274,16 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if !self.pending_media_attaches.is_empty() {
+            self.notify_status("wait for document extraction to finish before submitting");
+            return Ok(());
+        }
         let mut turn = TurnPrompt::standard(
             self.expanded_input().trim().to_string(),
             self.input_ui.text().trim().to_string(),
         );
         if turn.model.is_empty()
-            && self.input_ui.pending_images().is_empty()
+            && self.input_ui.pending_media().is_empty()
             && self.input_ui.shell_mode().is_none()
         {
             self.clear_submitted_input();
@@ -284,13 +300,9 @@ impl App {
         }
 
         match self.parse_input_command() {
-            Ok(Some(mut invocation)) => {
-                if invocation.id == CommandId::Goal {
-                    invocation.raw_args = slash_command_args(&turn.model).to_string();
-                    invocation.args = invocation.raw_args.trim().to_string();
-                }
-                self.clear_submitted_input();
-                self.execute_command(invocation, terminal, agent).await?;
+            Ok(Some(invocation)) => {
+                let submission = self.take_command_submission(invocation, turn.model);
+                self.execute_command(submission, terminal, agent).await?;
                 return Ok(());
             }
             Ok(None) => {}
@@ -328,10 +340,10 @@ impl App {
             }
         }
 
-        let images = std::mem::take(self.input_ui.pending_images_mut());
+        let media = std::mem::take(self.input_ui.pending_media_mut());
         self.clear_submitted_input();
         let turn = self.prepare_goal_resumption_turn(turn);
-        let mut outcome = self.run_prompt_turn(turn, images, terminal, agent).await?;
+        let mut outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());
         let mut pending_goal_retries = VecDeque::new();
         let final_outcome = loop {
@@ -382,3 +394,7 @@ impl App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "idle_input_tests.rs"]
+mod tests;

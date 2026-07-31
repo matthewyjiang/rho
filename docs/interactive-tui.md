@@ -70,7 +70,9 @@ find where the TUI handles paste events
 
 Use a multiline prompt when you need to paste or write a longer request.
 
-Press `ctrl+v` to paste a clipboard image as an attachment when a supported host helper is available (`wl-paste`/`xclip` on Linux, `pngpaste` on macOS, or PowerShell on Windows/WSL). Hosts such as Herdr may paste clipboard images as a single filesystem path; Rho loads that path as an image attachment when it points to a PNG, JPEG, GIF, or WebP file.
+Press `ctrl+v` to paste a clipboard image as an attachment when a supported host helper is available (`wl-paste`/`xclip` on Linux, `pngpaste` on macOS, or PowerShell on Windows/WSL). Hosts such as Herdr may paste clipboard content as a single filesystem path. Rho loads PNG, JPEG, GIF, and WebP paths as image attachments. It also extracts text from UTF-8 text and source files, PDFs, DOCX documents, and XLSX, XLS, or ODS spreadsheets and queues the result as a document attachment. An absolute document path is handled before slash-command parsing, so paths beginning with `/` do not become unknown commands. Press backspace in an empty message box to remove the last queued file.
+
+Document extraction is bounded by input and extracted-character limits. PDFs need a text layer because scanned-image OCR is not included. The model receives extracted text with the filename, MIME type, truncation state, and warnings. Session model history stores that bounded text and metadata, not raw PDF or Office bytes. Images continue to use the provider's multimodal image path.
 
 ## Commands
 

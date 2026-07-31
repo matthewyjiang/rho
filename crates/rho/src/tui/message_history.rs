@@ -2,10 +2,10 @@ use std::collections::VecDeque;
 
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
-    rho_providers::model::{image_summary, ContentBlock, ImageContent, Message, ToolCall},
+    rho_providers::model::{image_summary, ContentBlock, Message, ToolCall},
 };
 
-use super::{render::entry_lines, Entry, ToolEntry};
+use super::{render::entry_lines, ChatMedia, Entry, ToolEntry};
 
 pub(super) fn recovered_history_tail(
     entries: &[Entry],
@@ -51,16 +51,16 @@ pub(super) fn render_message_blocks(blocks: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-pub(super) fn render_user_entry(prompt: &str, images: &[ImageContent]) -> String {
+pub(super) fn render_user_entry(prompt: &str, media: &[ChatMedia]) -> String {
     let mut parts = Vec::new();
     if !prompt.is_empty() {
         parts.push(prompt.to_string());
     }
     parts.extend(
-        images
+        media
             .iter()
             .enumerate()
-            .map(|(index, image)| format!("[image {}: {}]", index + 1, image_summary(image))),
+            .map(|(index, media)| media.composer_label(index + 1)),
     );
     parts.join("\n")
 }

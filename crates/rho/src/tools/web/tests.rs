@@ -334,6 +334,56 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
 }
 
+// Covers: an extensionless PDF truncated at a caller-selected transport limit remains identified
+// as a PDF, so callers can reject partial document extraction.
+// Owner: fetch_content transport
+#[tokio::test]
+async fn byte_limited_fetch_marks_magic_byte_pdf_as_truncated() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        drop(reader);
+        let body = b"%PDF-1.4 truncated fixture";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+    });
+
+    let url = format!("http://{address}/download");
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let downloaded = super::ssrf::with_allow_ranges(loopback, async {
+        super::fetch::fetch_url_bytes(&url, 8).await
+    })
+    .await
+    .unwrap();
+    server.join().unwrap();
+
+    assert_eq!(downloaded.bytes, b"%PDF-1.4");
+    assert!(downloaded.truncated);
+    assert_eq!(
+        downloaded.pdf_detection,
+        super::fetch::PdfDetection::MagicBytes
+    );
+}
+
 #[tokio::test]
 async fn fetch_url_text_blocks_loopback_by_default() {
     let error = super::fetch::fetch_url_text("http://127.0.0.1:9/")
@@ -382,6 +432,90 @@ async fn fetch_url_text_refuses_redirect_responses() {
         error.to_string().contains("refusing to follow redirect"),
         "unexpected error: {error}"
     );
+}
+
+// Covers: local and remote PDF fetches must return extracted text instead of a placeholder or a
+// UTF-8 decode error.
+// Owner: fetch_content transport integration
+#[tokio::test]
+async fn fetch_content_extracts_local_and_remote_pdf_text() {
+    use std::{
+        io::{BufRead, BufReader, Write as _},
+        net::TcpListener,
+        thread,
+    };
+
+    fn pdf_fixture() -> Vec<u8> {
+        let stream = "BT /F1 12 Tf 72 720 Td (Fetched PDF) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_owned(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+        ];
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            write!(pdf, "{} 0 obj\n{}\nendobj\n", index + 1, object).unwrap();
+        }
+        let xref_offset = pdf.len();
+        write!(pdf, "xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).unwrap();
+        for offset in offsets {
+            writeln!(pdf, "{offset:010} 00000 n ").unwrap();
+        }
+        write!(
+            pdf,
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .unwrap();
+        pdf
+    }
+
+    let pdf = pdf_fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let local_path = directory.path().join("local.pdf");
+    std::fs::write(&local_path, &pdf).unwrap();
+    let local = super::fetch::fetch_local_path(&local_path, None, None, 1)
+        .await
+        .unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_pdf = pdf.clone();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        drop(reader);
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            server_pdf.len()
+        )
+        .unwrap();
+        stream.write_all(&server_pdf).unwrap();
+    });
+    let url = url::Url::parse(&format!("http://{address}/download")).unwrap();
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let remote = super::ssrf::with_allow_ranges(loopback, async {
+        super::fetch::fetch_http_url(&url, None).await
+    })
+    .await
+    .unwrap();
+    server.join().unwrap();
+
+    assert_eq!(local.content.trim(), "Fetched PDF");
+    assert_eq!(remote.content.trim(), "Fetched PDF");
+    assert_eq!(local.metadata["mode"], "document_extract");
+    assert_eq!(remote.metadata["mode"], "document_extract");
 }
 
 /// Serves one plain-text response on loopback and reports the `Host` header it

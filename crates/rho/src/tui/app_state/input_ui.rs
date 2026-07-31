@@ -1,11 +1,10 @@
 //! Composer text, paste handling, command/file palettes, and input history.
 
-use rho_providers::model::ImageContent;
-
 use crate::tui::{
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
-    ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode, PasteSegment, SkillMatchCache,
+    ChatMedia, ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode, PasteSegment,
+    SkillMatchCache,
 };
 
 /// Composer text, paste handling, command/file palettes, and input history.
@@ -14,7 +13,7 @@ pub(in crate::tui) struct InputUi {
     text: String,
     cursor: usize,
     shell_mode: Option<InlineShellMode>,
-    pending_images: Vec<ImageContent>,
+    pending_media: Vec<ChatMedia>,
     history: Vec<String>,
     history_cursor: Option<usize>,
     history_draft: Option<InputDraft>,
@@ -39,7 +38,7 @@ impl InputUi {
         self.paste_segments.clear();
         self.shell_mode = None;
         self.cursor = 0;
-        self.pending_images.clear();
+        self.pending_media.clear();
     }
 
     pub(in crate::tui) fn expanded_text(&self) -> String {
@@ -49,7 +48,7 @@ impl InputUi {
     pub(in crate::tui) fn has_pending_draft(&self) -> bool {
         !self.text.is_empty()
             || self.shell_mode.is_some()
-            || !self.pending_images.is_empty()
+            || !self.pending_media.is_empty()
             || self.paste_burst.has_pending()
     }
 
@@ -166,16 +165,16 @@ impl InputUi {
         self.shell_mode.take()
     }
 
-    pub(in crate::tui) fn pending_images(&self) -> &[ImageContent] {
-        &self.pending_images
+    pub(in crate::tui) fn pending_media(&self) -> &[ChatMedia] {
+        &self.pending_media
     }
 
-    pub(in crate::tui) fn pending_images_mut(&mut self) -> &mut Vec<ImageContent> {
-        &mut self.pending_images
+    pub(in crate::tui) fn pending_media_mut(&mut self) -> &mut Vec<ChatMedia> {
+        &mut self.pending_media
     }
 
-    pub(in crate::tui) fn clear_pending_images(&mut self) {
-        self.pending_images.clear();
+    pub(in crate::tui) fn clear_pending_media(&mut self) {
+        self.pending_media.clear();
     }
 
     pub(in crate::tui) fn history(&self) -> &[String] {

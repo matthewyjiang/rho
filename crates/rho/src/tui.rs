@@ -46,6 +46,7 @@ mod line_editor;
 mod subagent_questionnaires;
 mod text_input;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
+mod chat_media;
 mod choice_actions;
 mod claude_login;
 mod composer_layout;
@@ -130,6 +131,7 @@ use types::*;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
+use chat_media::{ChatMedia, ChatTextDocument};
 use clipboard::ClipboardWriter;
 use config_editor::{
     config_number_input_lines, resolve_web_search_editor_value, ConfigMutation, ConfigNumberInput,
@@ -162,7 +164,7 @@ use questionnaire::{
     QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_cursor_position, input_image_lines,
+    char_prefix_display_width, display_width, input_cursor_position, input_label_lines,
     input_lines, labeled_divider_line, picker_lines, session_header_lines, styled_line,
     tool_entry_lines, truncate_one_line, LineFill,
 };
@@ -177,7 +179,7 @@ use theme::Theme;
 use turn_prompt::TurnPrompt;
 
 #[cfg(test)]
-use rho_providers::model::ModelUsage;
+use rho_providers::model::{ImageContent, ModelUsage};
 use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
@@ -191,8 +193,7 @@ use {
         catalog::{self, LoginTarget, ModelSelection},
         favorites,
         provider_models::refresh_provider_models_with_store,
-        ContentBlock, ImageContent, Message, ModelMetadata, ReasoningRequestSource,
-        UnavailableProvider,
+        ContentBlock, Message, ModelMetadata, ReasoningRequestSource, UnavailableProvider,
     },
     rho_providers::provider,
     rho_providers::reasoning::ReasoningLevel,
@@ -359,6 +360,7 @@ struct App {
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
+    pending_media_attaches: VecDeque<clipboard::PendingMediaAttach>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.

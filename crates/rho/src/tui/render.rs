@@ -13,7 +13,6 @@ use super::{
     theme::Theme,
     Entry, FeedImage, PickerBadgeTone, PickerItem, UiPicker,
 };
-use rho_providers::model::{image_summary, ImageContent};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use std::borrow::Cow;
@@ -534,18 +533,10 @@ pub(super) fn input_cursor_index_on_visual_line(
     cursor
 }
 
-pub(super) fn input_image_lines(images: &[ImageContent], width: usize) -> Vec<Line<'static>> {
-    images
+pub(super) fn input_label_lines(labels: &[String], width: usize) -> Vec<Line<'static>> {
+    labels
         .iter()
-        .enumerate()
-        .map(|(index, image)| {
-            styled_line(
-                format!("[image {}: {}]", index + 1, image_summary(image)),
-                width.max(1),
-                Theme::dim(),
-                LineFill::Natural,
-            )
-        })
+        .map(|label| styled_line(label.clone(), width.max(1), Theme::dim(), LineFill::Natural))
         .collect()
 }
 

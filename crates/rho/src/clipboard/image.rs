@@ -8,6 +8,9 @@ use std::{
 use rho_providers::model::ImageContent;
 use rho_tools::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 
+#[cfg(test)]
+use super::path::paste_text_as_file_path;
+
 use super::{
     process::{command_available, command_output},
     session::SessionKind,
@@ -26,17 +29,6 @@ pub enum ClipboardImageError {
     Io(#[from] std::io::Error),
 }
 
-/// Result of interpreting a paste payload as an image attachment.
-#[derive(Debug)]
-pub enum PasteImageOutcome {
-    /// Paste text is not a single-line path to a supported image.
-    NotImage,
-    /// Loaded image content ready to attach.
-    Image(ImageContent),
-    /// Path looked like an image paste, but loading failed.
-    Failed(ClipboardImageError),
-}
-
 const SUPPORTED_IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
@@ -49,6 +41,13 @@ pub fn read_clipboard_image() -> Result<ImageContent, ClipboardImageError> {
 /// single-line paste of an image path as an attachment instead of plain text.
 pub fn read_image_file(path: &Path) -> Result<ImageContent, ClipboardImageError> {
     read_image_file_with_limit(path, MAX_IMAGE_FILE_BYTES)
+}
+
+pub(crate) fn path_has_supported_image_magic(path: &Path) -> Result<bool, std::io::Error> {
+    let mut file = fs::File::open(path)?;
+    let mut header = [0_u8; 12];
+    let header_len = file.read(&mut header)?;
+    Ok(supported_image_mime_type(&header[..header_len]).is_some())
 }
 
 fn read_image_file_with_limit(
@@ -67,48 +66,6 @@ fn read_image_file_with_limit(
         return Err(ClipboardImageError::TooLarge(max_bytes));
     }
     image_content_from_bytes(bytes)
-}
-
-/// When `text` is only a path to an existing supported image, load it.
-pub fn image_from_paste_text(text: &str, cwd: &Path) -> PasteImageOutcome {
-    let Some(path) = paste_text_as_image_path(text, cwd) else {
-        return PasteImageOutcome::NotImage;
-    };
-    match read_image_file(&path) {
-        Ok(image) => PasteImageOutcome::Image(image),
-        Err(ClipboardImageError::NoImage) => PasteImageOutcome::NotImage,
-        Err(error) => PasteImageOutcome::Failed(error),
-    }
-}
-
-pub(super) fn paste_text_as_image_path(text: &str, cwd: &Path) -> Option<PathBuf> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
-        return None;
-    }
-    let unquoted = strip_matching_quotes(trimmed);
-    if unquoted.is_empty() {
-        return None;
-    }
-    let candidate = PathBuf::from(unquoted);
-    let path = if candidate.is_absolute() {
-        candidate
-    } else {
-        cwd.join(candidate)
-    };
-    path.canonicalize().ok().filter(|path| path.is_file())
-}
-
-fn strip_matching_quotes(text: &str) -> &str {
-    let bytes = text.as_bytes();
-    if bytes.len() >= 2 {
-        let first = bytes[0];
-        let last = bytes[bytes.len() - 1];
-        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-            return &text[1..text.len() - 1];
-        }
-    }
-    text
 }
 
 fn image_content_from_bytes(bytes: Vec<u8>) -> Result<ImageContent, ClipboardImageError> {

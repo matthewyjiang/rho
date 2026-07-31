@@ -88,6 +88,7 @@ impl App {
             pending_session_title: None,
             session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),
+            pending_media_attaches: VecDeque::new(),
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
             screen_selection: None,

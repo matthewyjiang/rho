@@ -12,6 +12,7 @@
 //!   can register them on an SDK runtime with explicit workspace policies.
 
 pub mod cancellation;
+pub mod document;
 pub mod image_format;
 mod path_glob;
 mod paths;

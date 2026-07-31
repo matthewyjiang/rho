@@ -222,11 +222,13 @@ mod tests {
         let command = "python3 -c 'import os,time\nif os.fork()==0:\n os.setsid()\n f=open(\"escaped.pid\",\"w\")\n f.write(str(os.getpid()))\n f.flush()\n os.fsync(f.fileno())\n f.close()\n time.sleep(10)'; sleep 10";
 
         let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(8),
             Bash::new(false).call(
                 json!({
                     "command": command,
-                    "timeout_seconds": 1
+                    // Leave enough startup time for Python to fork on loaded
+                    // macOS runners before exercising the timeout cleanup.
+                    "timeout_seconds": 3
                 }),
                 ToolContext {
                     cwd: dir.path().to_path_buf(),
@@ -242,7 +244,7 @@ mod tests {
         let _kill_escaped = KillOnDrop(pid);
 
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("timed out after 1s"));
+        assert!(err.to_string().contains("timed out after 3s"));
     }
 
     #[tokio::test]

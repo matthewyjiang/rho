@@ -159,6 +159,53 @@ fn retry_attachment_keeps_prior_batches_and_adds_each_new_batch_once() {
     );
 }
 
+// Covers: mixed chat media must keep image blocks multimodal while injecting document text only
+// into model context and retaining compact transcript content.
+// Owner: TUI prompt assembly
+#[test]
+fn prompt_assembly_preserves_order_and_separates_document_display_from_model() {
+    let image = ImageContent {
+        data: "aW1hZ2U=".into(),
+        mime_type: "image/png".into(),
+    };
+    let document = ChatTextDocument {
+        name: "report.pdf".into(),
+        mime: "application/pdf".into(),
+        body: "extracted body".into(),
+        truncated: true,
+        warnings: vec!["some pages had no text".into()],
+    };
+
+    let failed_turn = FailedTurn::from_prompt(
+        TurnPrompt::standard("model prompt".into(), "display prompt".into()),
+        vec![
+            ChatMedia::TextDocument(document),
+            ChatMedia::Image(image.clone()),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        failed_turn.input.blocks(),
+        &[
+            ContentBlock::Text("model prompt".into()),
+            ContentBlock::Text(
+                "Attached file: report.pdf (application/pdf)\nExtraction notice: content was truncated to the attachment limit.\nExtraction warnings: some pages had no text\n<<<\nextracted body\n>>>"
+                    .into(),
+            ),
+            ContentBlock::Image(image.clone()),
+        ]
+    );
+    assert_eq!(
+        failed_turn.display_user,
+        Some(Message::User(vec![
+            ContentBlock::Text("display prompt".into()),
+            ContentBlock::Text("[pdf: report.pdf · 14 chars · truncated]".into()),
+            ContentBlock::Image(image),
+        ]))
+    );
+}
+
 #[test]
 fn failed_turn_keeps_live_partial_assistant_text_before_error() {
     let mut app = test_app();
