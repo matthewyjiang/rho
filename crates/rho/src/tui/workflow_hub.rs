@@ -123,9 +123,9 @@ pub(super) fn hub_picker(
 
     if sources.is_empty() {
         items.push(item(
-            Some("Start"),
+            Some("START"),
             "No local workflows yet",
-            "Add .rho/workflows/<name>/workflow.star or .rho/workflows/<name>.star",
+            "Add .rho/workflows/<name>/workflow.star or .rho/workflows/<name>.star, then reopen /workflow.",
             "noop:empty_sources",
             None,
             Some("close"),
@@ -133,11 +133,14 @@ pub(super) fn hub_picker(
     } else {
         for source in sources {
             items.push(item(
-                Some("Start"),
-                &source.label,
-                format!("Start with default inputs · {}", source.relative_path),
+                Some("START"),
+                format!("Start  {}", source.label),
+                format!(
+                    "Create a new run with default inputs.\nFile: {}",
+                    source.relative_path
+                ),
                 format!("{SOURCE_PREFIX}{}", source.relative_path),
-                None,
+                Some(("new run".into(), PickerBadgeTone::Selected)),
                 Some("start"),
             ));
         }
@@ -160,9 +163,9 @@ pub(super) fn hub_picker(
 
     if active.is_empty() && finished.is_empty() {
         items.push(item(
-            Some("Runs"),
+            Some("RUNS"),
             "No runs yet",
-            "Start a workflow above to create one",
+            "Start a workflow above. Finished and active runs show up here.",
             "noop:empty_runs",
             None,
             Some("close"),
@@ -170,11 +173,16 @@ pub(super) fn hub_picker(
     } else {
         for run in active {
             let id = run.manifest.run_id.to_string();
+            let short = short_id(&id);
             let life = lifecycle_label(run.state.state.lifecycle);
+            let name = run.graph.graph.name.as_str();
             items.push(item(
-                Some("Runs"),
-                run.graph.graph.name.to_string(),
-                format!("{life} · {} · id {}", run_progress(run), short_id(&id)),
+                Some("RUNS"),
+                format!("Open  {life}  ·  {short}"),
+                format!(
+                    "{name}\n{life} · {}\nEnter opens the live graph.\nRun id {short}",
+                    run_progress(run)
+                ),
                 format!("{RUN_PREFIX}{id}"),
                 Some((life.into(), lifecycle_tone(run.state.state.lifecycle))),
                 Some("open"),
@@ -182,31 +190,40 @@ pub(super) fn hub_picker(
         }
         for run in finished {
             let id = run.manifest.run_id.to_string();
+            let short = short_id(&id);
             let outcome = outcome_label(derive_workflow_outcome(&run.graph, &run.state.state));
+            let name = run.graph.graph.name.as_str();
+            let tone = outcome_tone(&outcome);
             items.push(item(
-                Some("Runs"),
-                run.graph.graph.name.to_string(),
-                format!("finished · {outcome} · id {}", short_id(&id)),
+                Some("RUNS"),
+                format!("Status  {outcome}  ·  {short}"),
+                format!(
+                    "{name}\nFinished · {outcome} · {}\nEnter shows step status.\nRun id {short}",
+                    run_progress(run)
+                ),
                 format!("{RUN_PREFIX}{id}"),
-                Some((outcome, PickerBadgeTone::Internal)),
-                Some("open"),
+                Some((outcome, tone)),
+                Some("show"),
             ));
         }
     }
 
-    if !plans.is_empty() {
+    if plans.is_empty() {
+        // Keep the list focused; empty plans stay hidden.
+    } else {
         for plan in plans {
             let id = plan.manifest.plan_id.to_string();
+            let short = short_id(&id);
+            let name = plan.graph.graph.name.as_str();
+            let steps = plan.graph.graph.nodes.len();
             items.push(item(
-                Some("Saved plans"),
-                plan.graph.graph.name.to_string(),
+                Some("SAVED PLANS"),
+                format!("Run plan  ·  {short}"),
                 format!(
-                    "{} steps · id {} · enter runs",
-                    plan.graph.graph.nodes.len(),
-                    short_id(&id)
+                    "{name}\n{steps} steps already frozen.\nEnter starts a new run from this plan.\nPlan id {short}"
                 ),
                 format!("{PLAN_PREFIX}{id}"),
-                Some((short_id(&id), PickerBadgeTone::Internal)),
+                Some(("saved".into(), PickerBadgeTone::Internal)),
                 Some("run"),
             ));
         }
@@ -214,11 +231,25 @@ pub(super) fn hub_picker(
 
     UiPicker::new(
         "Workflows",
-        "start a workflow or open a run · type to filter · esc close",
+        "enter acts · type to filter · esc close",
         items,
         PickerAction::Workflow,
     )
+    .with_layout(PickerLayout::Overlay)
+    .with_overlay_chrome(OverlayChrome {
+        nav_label: " WORKFLOWS".into(),
+        detail_label: Some(" DETAILS".into()),
+        nav_keys_hint: "↑↓ items".into(),
+    })
     .with_confirm_verb("open")
+}
+
+fn outcome_tone(outcome: &str) -> PickerBadgeTone {
+    match outcome {
+        "success" => PickerBadgeTone::Healthy,
+        "failed" | "denied" | "blocked" | "cancelled" => PickerBadgeTone::Warning,
+        _ => PickerBadgeTone::Internal,
+    }
 }
 
 fn status_overlay(run: &StoredRun) -> UiPicker {

@@ -38,11 +38,11 @@ The main steps are:
 
 In the chat TUI, run `/workflow` to open one list:
 
-1. **Start** - local workflows. Enter starts with default inputs and opens the graph screen.
-2. **Runs** - active and recent runs. Enter opens the live graph, or step status when finished.
-3. **Saved plans** - shown only when present. Enter runs the plan.
+1. **START** - `Start <name>` begins a new run.
+2. **RUNS** - `Open <status> · <id>` resumes live work; `Status <result> · <id>` opens finished step status.
+3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan.
 
-The live screen shows the step graph and details for the selected step. Custom inputs still need the CLI `--input` flags.
+The right pane explains the highlighted row. Enter runs that action.
 
 ## CLI reference
 
