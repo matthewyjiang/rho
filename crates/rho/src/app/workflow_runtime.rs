@@ -13,6 +13,8 @@ mod cancellation;
 mod checkout_gate;
 #[path = "workflow_runtime/command.rs"]
 mod command;
+#[path = "workflow_runtime/drive_session.rs"]
+mod drive_session;
 #[path = "workflow_runtime/journal.rs"]
 mod journal;
 #[path = "workflow_runtime/recovery.rs"]

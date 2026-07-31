@@ -55,10 +55,10 @@ pub(crate) use secure_fs_opened::{
     open_verified_file, opened_binary, opened_executable_identity, read_opened_utf8,
     read_opened_utf8_bounded,
 };
-pub(crate) use service::{FreezePlan, WorkflowService};
+pub(crate) use service::WorkflowService;
 pub(crate) use starlark::StarlarkPlanner;
 pub(crate) use starlark_diagnostics::Diagnostic;
-pub(crate) use starlark_loader::{CollectedSources, SourceCollector};
+pub(crate) use starlark_loader::{CollectedSources, SourceBytes, SourceCollector};
 pub(crate) use store::{RunMutationGuard, WorkflowStore};
 pub(crate) use transition::{
     derive_workflow_outcome, validate_lifecycle_transition, validate_reset_transition,

@@ -139,7 +139,13 @@ pub enum Command {
         #[command(subcommand)]
         command: WorkflowCommand,
     },
+    /// Internal supervised workflow planner worker. Not a public command.
+    #[command(name = "__workflow_planner_worker", hide = true)]
+    WorkflowPlannerWorker,
 }
+
+/// Argv entry for the internal supervised planner worker process.
+pub const WORKFLOW_PLANNER_WORKER_COMMAND: &str = "__workflow_planner_worker";
 
 #[derive(Subcommand, Debug)]
 pub enum WorkflowCommand {

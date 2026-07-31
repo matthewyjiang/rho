@@ -1,14 +1,16 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    future::Future,
     path::{Component, Path, PathBuf},
+    pin::Pin,
 };
 
 use sha2::{Digest as _, Sha256};
 use starlark::syntax::{AstModule, Dialect};
 
 use super::{
-    read_source_beneath, Digest, PlanningLimits, SourceFile, SourceManifest, WorkflowError,
+    read_source_beneath, Budget, Digest, PlanningLimits, SourceFile, SourceManifest, WorkflowError,
     WorkflowResult,
 };
 
@@ -55,6 +57,47 @@ impl CollectedSources {
     }
 }
 
+/// Opens root-relative workflow modules for collection.
+///
+/// Implementors enforce the trust boundary: the CLI uses a trusted local open,
+/// while the tool path authorizes each path before opening a verified handle.
+pub(crate) trait SourceBytes: Send {
+    fn read_source<'a>(
+        &'a mut self,
+        root_relative: &'a Path,
+        budget: &'a Budget,
+        retained: u64,
+    ) -> Pin<Box<dyn Future<Output = WorkflowResult<String>> + Send + 'a>>;
+}
+
+/// Trusted local reader that rejects symlinks and paths outside `root`.
+pub(crate) struct LocalSourceBytes<'a> {
+    root: &'a Path,
+}
+
+impl<'a> LocalSourceBytes<'a> {
+    pub(crate) fn new(root: &'a Path) -> Self {
+        Self { root }
+    }
+}
+
+impl SourceBytes for LocalSourceBytes<'_> {
+    fn read_source<'a>(
+        &'a mut self,
+        root_relative: &'a Path,
+        budget: &'a Budget,
+        retained: u64,
+    ) -> Pin<Box<dyn Future<Output = WorkflowResult<String>> + Send + 'a>> {
+        Box::pin(async move {
+            let path = checked_path(self.root, &self.root.join(root_relative))?;
+            let opened_relative = path
+                .strip_prefix(self.root)
+                .map_err(|_| WorkflowError::SourceOutsideRoot { path: path.clone() })?;
+            read_source_beneath(self.root, opened_relative, budget, retained)
+        })
+    }
+}
+
 pub(crate) struct SourceCollector<'a> {
     root: PathBuf,
     limits: &'a PlanningLimits,
@@ -69,32 +112,33 @@ impl<'a> SourceCollector<'a> {
         Ok(Self { root, limits })
     }
 
-    pub(crate) fn collect(&self, entry: &Path) -> WorkflowResult<CollectedSources> {
-        let entry = if entry.is_absolute() {
-            entry.to_path_buf()
-        } else {
-            self.root.join(entry)
-        };
-        let entry = self.checked_path(&entry)?;
-        let relative =
-            entry
-                .strip_prefix(&self.root)
-                .map_err(|_| WorkflowError::SourceOutsideRoot {
-                    path: entry.clone(),
-                })?;
-        let entry_label = label_for(relative)?;
+    pub(crate) async fn collect(&self, entry: &Path) -> WorkflowResult<CollectedSources> {
+        let mut reader = LocalSourceBytes::new(&self.root);
+        self.collect_with(&mut reader, entry).await
+    }
+
+    /// Collect the entry module and every loaded dependency through `reader`.
+    pub(crate) async fn collect_with<R: SourceBytes>(
+        &self,
+        reader: &mut R,
+        entry: &Path,
+    ) -> WorkflowResult<CollectedSources> {
+        let relative = entry_relative(&self.root, entry)?;
+        let entry_label = label_for(&relative)?;
         let mut sources = BTreeMap::new();
         let mut stack = Vec::new();
         let mut loaded = BTreeSet::new();
         let mut total_bytes = 0_u64;
         self.collect_label(
+            reader,
             &entry_label,
             1,
             &mut stack,
             &mut loaded,
             &mut sources,
             &mut total_bytes,
-        )?;
+        )
+        .await?;
         let modules = sources
             .iter()
             .map(|(label, source)| {
@@ -118,102 +162,119 @@ impl<'a> SourceCollector<'a> {
         })
     }
 
-    fn collect_label(
-        &self,
-        label: &str,
+    fn collect_label<'b, R: SourceBytes>(
+        &'b self,
+        reader: &'b mut R,
+        label: &'b str,
         depth: u64,
-        stack: &mut Vec<String>,
-        loaded: &mut BTreeSet<String>,
-        sources: &mut BTreeMap<String, String>,
-        total_bytes: &mut u64,
-    ) -> WorkflowResult<()> {
-        self.limits.module_depth.check(depth)?;
-        if loaded.contains(label) {
-            return Ok(());
-        }
-        if let Some(index) = stack.iter().position(|item| item == label) {
-            let mut cycle = stack[index..].to_vec();
-            cycle.push(label.to_owned());
-            return Err(WorkflowError::ImportCycle {
-                chain: cycle.join(" -> "),
-            });
-        }
-        self.limits
-            .module_count
-            .check((loaded.len() + stack.len() + 1) as u64)?;
-        let relative = validate_label(label)?;
-        let path = self.checked_path(&self.root.join(relative))?;
-        let opened_relative = path
-            .strip_prefix(&self.root)
-            .map_err(|_| WorkflowError::SourceOutsideRoot { path: path.clone() })?;
-        let source = read_source_beneath(
-            &self.root,
-            opened_relative,
-            &self.limits.total_source_bytes,
-            *total_bytes,
-        )?;
-        *total_bytes =
-            total_bytes
-                .checked_add(source.len() as u64)
-                .ok_or(WorkflowError::BudgetExceeded {
+        stack: &'b mut Vec<String>,
+        loaded: &'b mut BTreeSet<String>,
+        sources: &'b mut BTreeMap<String, String>,
+        total_bytes: &'b mut u64,
+    ) -> Pin<Box<dyn Future<Output = WorkflowResult<()>> + Send + 'b>> {
+        Box::pin(async move {
+            self.limits.module_depth.check(depth)?;
+            if loaded.contains(label) {
+                return Ok(());
+            }
+            if let Some(index) = stack.iter().position(|item| item == label) {
+                let mut cycle = stack[index..].to_vec();
+                cycle.push(label.to_owned());
+                return Err(WorkflowError::ImportCycle {
+                    chain: cycle.join(" -> "),
+                });
+            }
+            self.limits
+                .module_count
+                .check((loaded.len() + stack.len() + 1) as u64)?;
+            let relative = validate_label(label)?;
+            let source = reader
+                .read_source(relative, &self.limits.total_source_bytes, *total_bytes)
+                .await?;
+            *total_bytes = total_bytes.checked_add(source.len() as u64).ok_or(
+                WorkflowError::BudgetExceeded {
                     budget: self.limits.total_source_bytes.name,
                     limit: self.limits.total_source_bytes.limit,
                     actual: u64::MAX,
-                })?;
-        self.limits.total_source_bytes.check(*total_bytes)?;
-        let ast = AstModule::parse(label, source.clone(), &Dialect::Standard)
-            .map_err(|error| WorkflowError::Starlark(error.to_string()))?;
-        stack.push(label.to_owned());
-        for load in ast.loads() {
-            validate_label(load.module_id)?;
-            self.collect_label(
-                load.module_id,
-                depth + 1,
-                stack,
-                loaded,
-                sources,
-                total_bytes,
+                },
             )?;
-        }
-        stack.pop();
-        loaded.insert(label.to_owned());
-        sources.insert(label.to_owned(), source);
-        Ok(())
-    }
-
-    fn checked_path(&self, path: &Path) -> WorkflowResult<PathBuf> {
-        let relative =
-            path.strip_prefix(&self.root)
-                .map_err(|_| WorkflowError::SourceOutsideRoot {
-                    path: path.to_path_buf(),
-                })?;
-        let mut current = self.root.clone();
-        for component in relative.components() {
-            if !matches!(component, Component::Normal(_)) {
-                return Err(WorkflowError::SourceOutsideRoot {
-                    path: path.to_path_buf(),
-                });
+            self.limits.total_source_bytes.check(*total_bytes)?;
+            let ast = AstModule::parse(label, source.clone(), &Dialect::Standard)
+                .map_err(|error| WorkflowError::Starlark(error.to_string()))?;
+            stack.push(label.to_owned());
+            for load in ast.loads() {
+                validate_label(load.module_id)?;
+                self.collect_label(
+                    reader,
+                    load.module_id,
+                    depth + 1,
+                    stack,
+                    loaded,
+                    sources,
+                    total_bytes,
+                )
+                .await?;
             }
-            current.push(component);
-            if fs::symlink_metadata(&current)?.file_type().is_symlink() {
-                return Err(WorkflowError::SourceSymlink { path: current });
-            }
-        }
-        let canonical = current.canonicalize()?;
-        if !canonical.starts_with(&self.root) {
-            return Err(WorkflowError::SourceOutsideRoot { path: canonical });
-        }
-        if canonical.extension().and_then(|value| value.to_str()) != Some("star") {
-            return Err(WorkflowError::InvalidModuleLabel {
-                label: canonical.display().to_string(),
-                reason: "module must use the .star extension".to_owned(),
-            });
-        }
-        Ok(canonical)
+            stack.pop();
+            loaded.insert(label.to_owned());
+            sources.insert(label.to_owned(), source);
+            Ok(())
+        })
     }
 }
 
-fn validate_label(label: &str) -> WorkflowResult<&Path> {
+fn entry_relative(root: &Path, entry: &Path) -> WorkflowResult<PathBuf> {
+    let entry = if entry.is_absolute() {
+        entry.to_path_buf()
+    } else {
+        root.join(entry)
+    };
+    let relative = entry
+        .strip_prefix(root)
+        .map_err(|_| WorkflowError::SourceOutsideRoot {
+            path: entry.clone(),
+        })?;
+    if relative
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(WorkflowError::SourceOutsideRoot { path: entry });
+    }
+    Ok(relative.to_path_buf())
+}
+
+fn checked_path(root: &Path, path: &Path) -> WorkflowResult<PathBuf> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| WorkflowError::SourceOutsideRoot {
+            path: path.to_path_buf(),
+        })?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(WorkflowError::SourceOutsideRoot {
+                path: path.to_path_buf(),
+            });
+        }
+        current.push(component);
+        if fs::symlink_metadata(&current)?.file_type().is_symlink() {
+            return Err(WorkflowError::SourceSymlink { path: current });
+        }
+    }
+    let canonical = current.canonicalize()?;
+    if !canonical.starts_with(root) {
+        return Err(WorkflowError::SourceOutsideRoot { path: canonical });
+    }
+    if canonical.extension().and_then(|value| value.to_str()) != Some("star") {
+        return Err(WorkflowError::InvalidModuleLabel {
+            label: canonical.display().to_string(),
+            reason: "module must use the .star extension".to_owned(),
+        });
+    }
+    Ok(canonical)
+}
+
+pub(crate) fn validate_label(label: &str) -> WorkflowResult<&Path> {
     let invalid = || WorkflowError::InvalidModuleLabel {
         label: label.to_owned(),
         reason: "expected // followed by non-empty '/'-separated components and a .star suffix"

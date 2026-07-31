@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -22,13 +22,12 @@ use crate::{
         WorkflowToolRequest, WorkflowToolResult, WorkflowToolService,
     },
     workflow::{
-        CollectedSources, Digest, FreezePlan, InputName, NodeState, NodeTerminalState, PlanConsent,
-        PlanningLimits, RunLifecycle, SourceFile, SourceManifest, StoredPlan, StoredRun,
-        WorkflowError, WorkflowStore, WorkflowValue,
+        InputName, NodeState, NodeTerminalState, PlanId, PlanningLimits, RunId, RunLifecycle,
+        SourceBytes, SourceCollector, StoredRun, WorkflowError, WorkflowResult, WorkflowValue,
     },
 };
 
-use super::{diagnostic_for_error, recheck_plan, runtime};
+use super::{diagnostic_for_error, ops::WorkflowOps, plan_host::AuthorizedPlanHost, runtime};
 
 mod capabilities;
 
@@ -205,7 +204,7 @@ impl AppWorkflowToolService {
             &self.cwd,
             ProcessInvocation::executable(
                 executable,
-                vec!["workflow".into(), "validate".into(), "worker.star".into()],
+                vec![crate::cli::WORKFLOW_PLANNER_WORKER_COMMAND.into()],
             ),
             ProcessEnvironment::InheritAll,
             ProcessOutputLimits::new(
@@ -241,21 +240,8 @@ impl AppWorkflowToolService {
                     .prepare(Path::new(&file), inputs, context)
                     .await
                     .map_err(tool_error)?;
-                let stored = super::workflow_service()
-                    .map_err(tool_error)?
-                    .freeze_and_store(FreezePlan {
-                        planner: prepared.workflow.planner,
-                        sources: prepared.sources.manifest,
-                        source_bytes: &prepared.sources.sources,
-                        inputs: prepared.workflow.inputs,
-                        graph: prepared.workflow.graph,
-                        resolved_nodes: prepared.workflow.resolved_nodes,
-                        scheduler: prepared.workflow.scheduler,
-                        runtime_limits: prepared.workflow.runtime_limits,
-                        workspace_identity: super::workspace_identity(&self.cwd)
-                            .map_err(tool_error)?,
-                    })
-                    .map_err(tool_error)?;
+                let ops = self.ops().map_err(tool_error)?;
+                let stored = ops.store_plan(&prepared).map_err(tool_error)?;
                 Ok(WorkflowToolResult::Plan {
                     plan_id: stored.manifest.plan_id.to_string(),
                     graph_digest: stored.manifest.graph_digest.0.clone(),
@@ -264,19 +250,12 @@ impl AppWorkflowToolService {
                 })
             }
             WorkflowToolRequest::Run { plan_id } => {
-                let plan = self.load_plan(&plan_id)?;
-                recheck_plan(&plan, self.config_path.clone()).map_err(tool_error)?;
-                confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
-                let run = super::workflow_service()
-                    .map_err(tool_error)?
-                    .create_run(
-                        &plan,
-                        PlanConsent {
-                            graph_digest: plan.manifest.graph_digest.clone(),
-                            confirmed: true,
-                        },
-                    )
+                let ops = self.ops().map_err(tool_error)?;
+                let plan = ops
+                    .prepare_run_id(parse_plan_id(&plan_id)?)
                     .map_err(tool_error)?;
+                confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
+                let run = ops.create_confirmed_run(&plan).map_err(tool_error)?;
                 let completed = runtime::execute_tool_run(
                     run,
                     RecoveryDecision::NormalResume,
@@ -288,17 +267,22 @@ impl AppWorkflowToolService {
                 run_result(completed, RunResultKind::Run)
             }
             WorkflowToolRequest::Status { run_id } => {
-                run_result(self.load_run(&run_id)?, RunResultKind::Status)
+                let ops = self.ops().map_err(tool_error)?;
+                run_result(
+                    ops.load_run_id(parse_run_id(&run_id)?)
+                        .map_err(tool_error)?,
+                    RunResultKind::Status,
+                )
             }
             WorkflowToolRequest::Cancel { run_id } => {
-                let run = self.load_run(&run_id)?;
-                let outcome = super::request_cancellation(
-                    &crate::paths::rho_dir().map_err(tool_error)?,
-                    run.manifest.run_id,
-                    run.state.state.lifecycle,
-                )
-                .await
-                .map_err(tool_error)?;
+                let ops = self.ops().map_err(tool_error)?;
+                let run = ops
+                    .load_run_id(parse_run_id(&run_id)?)
+                    .map_err(tool_error)?;
+                let outcome = ops
+                    .cancel(run.manifest.run_id, run.state.state.lifecycle)
+                    .await
+                    .map_err(tool_error)?;
                 Ok(WorkflowToolResult::Cancel {
                     run_id: run.manifest.run_id.to_string(),
                     request_id: outcome.request_id,
@@ -320,20 +304,23 @@ impl AppWorkflowToolService {
                 run_id,
                 recover_uncertain,
             } => {
-                let run = self.load_run(&run_id)?;
-                super::recheck_run(&run, self.config_path.clone()).map_err(tool_error)?;
-                if run.state.state.lifecycle == RunLifecycle::NeedsRecovery && !recover_uncertain {
-                    return Err(ToolError::new(
-                        ToolErrorKind::InvalidArguments,
-                        "the run has uncertain attempts; confirm that no prior process remains and set recover_uncertain to true",
-                    ));
-                }
+                let ops = self.ops().map_err(tool_error)?;
+                let run = ops
+                    .load_run_id(parse_run_id(&run_id)?)
+                    .map_err(tool_error)?;
+                let recovery = ops
+                    .prepare_resume(&run, recover_uncertain)
+                    .map_err(|error| {
+                        if error.to_string().contains("uncertain attempts") {
+                            ToolError::new(
+                                ToolErrorKind::InvalidArguments,
+                                "the run has uncertain attempts; confirm that no prior process remains and set recover_uncertain to true",
+                            )
+                        } else {
+                            tool_error(error)
+                        }
+                    })?;
                 confirm_exact_plan(context, "Resume", &run.manifest.graph_digest.0).await?;
-                let recovery = if recover_uncertain {
-                    RecoveryDecision::ConfirmNoProcess
-                } else {
-                    RecoveryDecision::NormalResume
-                };
                 let completed =
                     runtime::execute_tool_run(run, recovery, self.config_path.clone(), context)
                         .await
@@ -341,6 +328,10 @@ impl AppWorkflowToolService {
                 run_result(completed, RunResultKind::Resume)
             }
         }
+    }
+
+    fn ops(&self) -> anyhow::Result<WorkflowOps> {
+        WorkflowOps::open(self.cwd.clone(), self.config_path.clone())
     }
 
     async fn prepare(
@@ -359,18 +350,21 @@ impl AppWorkflowToolService {
             .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
         let limits = super::planning_limits()?;
         let sources = self.collect_sources(file, &limits, context).await?;
-        let planned = super::run_supervised_planner(&sources, supplied_inputs, &limits).await?;
+        let planned =
+            super::planner_worker::run_supervised_planner(&sources, supplied_inputs, &limits)
+                .await?;
         let executable_identities = self
             .authorize_node_resolution_reads(&planned.graph, &catalog, context)
             .await?;
-        let resolved_nodes = super::resolve_nodes_with_authorized_executables(
-            &planned.graph,
-            &config,
+        let available_tools = AgentCapabilities::all_host_tools();
+        let host = AuthorizedPlanHost::new(
             &self.cwd,
-            &AgentCapabilities::all_host_tools(),
+            &config,
             &catalog,
+            &available_tools,
             &executable_identities,
-        )?;
+        );
+        let resolved_nodes = super::plan_host::resolve_nodes_with_host(&planned.graph, &host)?;
         super::freeze_planned_workflow(sources, planned, resolved_nodes, &limits)
     }
 
@@ -379,117 +373,64 @@ impl AppWorkflowToolService {
         entry: &Path,
         limits: &PlanningLimits,
         context: &ToolContext,
-    ) -> anyhow::Result<CollectedSources> {
-        use sha2::Digest as _;
-        use starlark::syntax::{AstModule, Dialect};
-
-        let entry = if entry.is_absolute() {
-            entry.to_path_buf()
-        } else {
-            self.cwd.join(entry)
+    ) -> anyhow::Result<crate::workflow::CollectedSources> {
+        let collector = SourceCollector::new(&self.cwd, limits)?;
+        let mut reader = ToolSourceBytes {
+            service: self,
+            context,
         };
-        let entry = context
-            .workspace()
-            .ok_or_else(|| anyhow::anyhow!("workflow tool requires a workspace"))?
-            .resolve(&entry)?;
-        let relative =
-            entry
-                .strip_prefix(&self.cwd)
-                .map_err(|_| WorkflowError::SourceOutsideRoot {
-                    path: entry.clone(),
-                })?;
-        let entry_label = format!("//{}", crate::paths::display(relative));
-        source_relative_path(&entry_label)?;
+        Ok(collector.collect_with(&mut reader, entry).await?)
+    }
+}
 
-        let mut pending = vec![(entry_label.clone(), 1_u64, Vec::<String>::new())];
-        let mut seen = BTreeSet::new();
-        let mut sources = BTreeMap::new();
-        let mut total_bytes = 0_u64;
-        while let Some((label, depth, ancestors)) = pending.pop() {
-            limits.module_depth.check(depth)?;
-            if let Some(index) = ancestors.iter().position(|ancestor| ancestor == &label) {
-                let mut cycle = ancestors[index..].to_vec();
-                cycle.push(label);
-                return Err(WorkflowError::ImportCycle {
-                    chain: cycle.join(" -> "),
-                }
-                .into());
-            }
-            if seen.contains(&label) {
-                continue;
-            }
-            limits.module_count.check((seen.len() + 1) as u64)?;
-            let relative = source_relative_path(&label)?;
-            let lexical = self.cwd.join(&relative);
-            let opened = self.authorize_path(context, &lexical).await?;
-            let source = crate::workflow::read_opened_utf8_bounded(
-                opened,
-                &limits.total_source_bytes,
-                total_bytes,
-            )?;
-            total_bytes = total_bytes.checked_add(source.len() as u64).ok_or(
-                WorkflowError::BudgetExceeded {
-                    budget: limits.total_source_bytes.name,
-                    limit: limits.total_source_bytes.limit,
-                    actual: u64::MAX,
-                },
-            )?;
-            limits.total_source_bytes.check(total_bytes)?;
-            let ast = AstModule::parse(&label, source.clone(), &Dialect::Standard)
-                .map_err(|error| WorkflowError::Starlark(error.to_string()))?;
-            let mut next_ancestors = ancestors;
-            next_ancestors.push(label.clone());
-            for load in ast.loads().iter().rev() {
-                source_relative_path(load.module_id)?;
-                pending.push((load.module_id.to_owned(), depth + 1, next_ancestors.clone()));
-            }
-            seen.insert(label.clone());
-            sources.insert(label, source);
-        }
-        let modules = sources
-            .iter()
-            .map(|(label, source)| {
-                let digest = sha2::Sha256::digest(source.as_bytes());
-                (
-                    label.clone(),
-                    SourceFile {
-                        digest: Digest(format!("sha256:{digest:x}")),
-                        bytes: source.len() as u64,
-                    },
-                )
-            })
-            .collect();
-        Ok(CollectedSources {
-            entry_label: entry_label.clone(),
-            sources,
-            manifest: SourceManifest {
-                entry_label,
-                modules,
-            },
+/// Tool path reader: authorize each module through `ToolContext`, then open a verified handle.
+struct ToolSourceBytes<'a> {
+    service: &'a AppWorkflowToolService,
+    context: &'a ToolContext,
+}
+
+impl SourceBytes for ToolSourceBytes<'_> {
+    fn read_source<'a>(
+        &'a mut self,
+        root_relative: &'a Path,
+        budget: &'a crate::workflow::Budget,
+        retained: u64,
+    ) -> Pin<Box<dyn Future<Output = WorkflowResult<String>> + Send + 'a>> {
+        Box::pin(async move {
+            let lexical = self.service.cwd.join(root_relative);
+            let opened = self
+                .service
+                .authorize_path(self.context, &lexical)
+                .await
+                .map_err(workflow_error_from_anyhow)?;
+            crate::workflow::read_opened_utf8_bounded(opened, budget, retained)
         })
     }
+}
 
-    fn load_plan(&self, plan_id: &str) -> Result<StoredPlan, ToolError> {
-        let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
-        let store = WorkflowStore::new(&rho_home).map_err(tool_error)?;
-        let parsed = crate::workflow::PlanId::from_str(plan_id)
-            .map_err(|_| invalid_request("plan_id must be a canonical full UUID"))?;
-        if parsed.to_string() != plan_id {
-            return Err(invalid_request("plan_id must be a canonical full UUID"));
-        }
-        store.load_plan(parsed).map_err(tool_error)
+fn workflow_error_from_anyhow(error: anyhow::Error) -> WorkflowError {
+    match error.downcast::<WorkflowError>() {
+        Ok(error) => error,
+        Err(error) => WorkflowError::Starlark(error.to_string()),
     }
+}
 
-    fn load_run(&self, run_id: &str) -> Result<StoredRun, ToolError> {
-        let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
-        let store = WorkflowStore::new(&rho_home).map_err(tool_error)?;
-        let parsed = crate::workflow::RunId::from_str(run_id)
-            .map_err(|_| invalid_request("run_id must be a canonical full UUID"))?;
-        if parsed.to_string() != run_id {
-            return Err(invalid_request("run_id must be a canonical full UUID"));
-        }
-        store.load_run(parsed).map_err(tool_error)
+fn parse_plan_id(plan_id: &str) -> Result<PlanId, ToolError> {
+    let parsed = PlanId::from_str(plan_id)
+        .map_err(|_| invalid_request("plan_id must be a canonical full UUID"))?;
+    if parsed.to_string() != plan_id {
+        return Err(invalid_request("plan_id must be a canonical full UUID"));
     }
+    Ok(parsed)
+}
+
+fn parse_run_id(run_id: &str) -> Result<RunId, ToolError> {
+    let parsed = RunId::from_str(run_id)
+        .map_err(|_| invalid_request("run_id must be a canonical full UUID"))?;
+    if parsed.to_string() != run_id {
+        return Err(invalid_request("run_id must be a canonical full UUID"));
+    }
+    Ok(parsed)
 }
 
 fn agent_catalog_roots(cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
@@ -704,26 +645,6 @@ fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagno
         line: diagnostic.span.as_ref().map(|span| u64::from(span.line)),
         column: diagnostic.span.as_ref().map(|span| u64::from(span.column)),
     }
-}
-
-fn source_relative_path(label: &str) -> Result<PathBuf, WorkflowError> {
-    let invalid = || WorkflowError::InvalidModuleLabel {
-        label: label.to_owned(),
-        reason: "expected // followed by non-empty '/'-separated components and a .star suffix"
-            .into(),
-    };
-    if !label.starts_with("//") || label.contains('\\') || !label.ends_with(".star") {
-        return Err(invalid());
-    }
-    let path = PathBuf::from(&label[2..]);
-    if path.as_os_str().is_empty()
-        || path
-            .components()
-            .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(invalid());
-    }
-    Ok(path)
 }
 
 fn tool_error(error: impl std::fmt::Display) -> ToolError {

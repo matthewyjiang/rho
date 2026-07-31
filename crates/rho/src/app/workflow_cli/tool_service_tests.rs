@@ -140,7 +140,8 @@ fn preparation_keeps_exact_durable_and_process_facts() {
         plan[4].operation(),
         CapabilityOperation::ExecuteProcess(process)
             if process.invocation().executable_path() == Path::new("/bin/rho")
-                && process.invocation().arguments() == ["workflow", "validate", "worker.star"]
+                && process.invocation().arguments()
+                    == [crate::cli::WORKFLOW_PLANNER_WORKER_COMMAND]
     ));
     assert!(matches!(
         plan[5].operation(),
@@ -410,15 +411,17 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
         )]),
     };
     let catalog = crate::agent::AgentCatalog::from_authorized_sources(Default::default()).unwrap();
-    let resolved = super::super::resolve_nodes_with_authorized_executables(
-        &graph,
-        &crate::config::Config::default(),
+    let available_tools = crate::agent::AgentCapabilities::all_host_tools();
+    let config = crate::config::Config::default();
+    let executables = BTreeMap::from([(executable, identity.clone())]);
+    let host = super::super::AuthorizedPlanHost::new(
         directory.path(),
-        &crate::agent::AgentCapabilities::all_host_tools(),
+        &config,
         &catalog,
-        &BTreeMap::from([(executable, identity.clone())]),
-    )
-    .unwrap();
+        &available_tools,
+        &executables,
+    );
+    let resolved = super::super::resolve_nodes_with_host(&graph, &host).unwrap();
 
     let crate::workflow::ResolvedNode::Command(command) = &resolved[&node_id] else {
         panic!("command node resolved as an agent");

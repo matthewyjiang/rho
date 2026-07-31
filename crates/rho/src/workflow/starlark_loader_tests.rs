@@ -3,6 +3,14 @@ use std::fs;
 use super::*;
 use crate::workflow::test_support::limits;
 
+fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime")
+        .block_on(future)
+}
+
 // Covers: module traversal or cycles could escape source digest coverage.
 // Owner: workflow source collector.
 #[test]
@@ -26,7 +34,7 @@ fn rejects_traversal_and_import_cycles() {
     let limits = limits();
     let collector = SourceCollector::new(root.path(), &limits).unwrap();
     assert!(matches!(
-        collector.collect(Path::new("a.star")),
+        block_on(collector.collect(Path::new("a.star"))),
         Err(WorkflowError::ImportCycle { .. })
     ));
 }
@@ -43,10 +51,12 @@ fn collects_each_loaded_source_once_in_sorted_manifest() {
     )
     .unwrap();
     let limits = limits();
-    let collected = SourceCollector::new(root.path(), &limits)
-        .unwrap()
-        .collect(Path::new("entry.star"))
-        .unwrap();
+    let collected = block_on(
+        SourceCollector::new(root.path(), &limits)
+            .unwrap()
+            .collect(Path::new("entry.star")),
+    )
+    .unwrap();
     assert_eq!(
         collected.sources.keys().cloned().collect::<Vec<_>>(),
         vec!["//common.star".to_owned(), "//entry.star".to_owned()]
@@ -66,9 +76,11 @@ fn rejects_source_symlink_substitution() {
     symlink(outside.path(), root.path().join("entry.star")).unwrap();
 
     let limits = limits();
-    let result = SourceCollector::new(root.path(), &limits)
-        .unwrap()
-        .collect(Path::new("entry.star"));
+    let result = block_on(
+        SourceCollector::new(root.path(), &limits)
+            .unwrap()
+            .collect(Path::new("entry.star")),
+    );
 
     assert!(matches!(result, Err(WorkflowError::SourceSymlink { .. })));
 }

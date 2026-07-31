@@ -122,7 +122,7 @@ def run_worker(rho: Path, request: dict[str, Any], home: Path) -> tuple[dict, di
     env.update({"RHO_HOME": str(home), "RHO_WORKFLOW_PLANNER_WORKER": token})
     started = time.monotonic_ns()
     process = subprocess.Popen(
-        [str(rho), "workflow", "validate", "worker.star"],
+        [str(rho), "__workflow_planner_worker"],
         cwd=home,
         env=env,
         stdin=subprocess.PIPE,

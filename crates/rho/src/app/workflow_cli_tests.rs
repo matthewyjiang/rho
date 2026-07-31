@@ -180,7 +180,13 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
     std::fs::remove_file(source.path()).unwrap();
     let config = super::ConfigRepository::temporary_for_tests().unwrap();
 
-    recheck_run(&run, Some(config.configured_path().unwrap())).unwrap();
+    WorkflowOps::open(
+        std::env::current_dir().unwrap(),
+        Some(config.configured_path().unwrap()),
+    )
+    .unwrap()
+    .recheck_run(&run)
+    .unwrap();
     let executor: Arc<dyn crate::app::workflow_runtime::WorkflowNodeExecutor> =
         Arc::new(SuccessfulExecutor);
     let resumed = WorkflowRunner::new(

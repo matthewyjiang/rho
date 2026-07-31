@@ -33,7 +33,7 @@ struct PlannerWorkerRequest {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct PlannerWorkerPlan {
+pub(crate) struct PlannerWorkerPlan {
     pub(super) graph: crate::workflow::WorkflowGraph,
     pub(super) inputs: BTreeMap<InputName, WorkflowValue>,
     pub(super) evaluator_ticks: u64,
@@ -85,7 +85,7 @@ pub(super) async fn run_supervised_planner(
     )?;
     let mut command = tokio::process::Command::new(std::env::current_exe()?);
     command
-        .args(["workflow", "validate", "worker.star"])
+        .args([crate::cli::WORKFLOW_PLANNER_WORKER_COMMAND])
         .env_remove(PLANNER_WORKER_ENV)
         .env(PLANNER_WORKER_ENV, &request.token)
         .stdin(Stdio::piped())

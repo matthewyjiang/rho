@@ -293,3 +293,13 @@ fn workflow_commands_reject_wrong_output_modes() {
         Cli::try_parse_from(["rho", "workflow", "run", "plan-id", "--output", "json"]).is_err()
     );
 }
+
+// Covers: the supervised planner worker needs a dedicated hidden argv entry, not a
+// costume validate path, so public validate stays ordinary and the worker stays reachable.
+// Owner: CLI parser.
+#[test]
+fn parses_hidden_workflow_planner_worker_command() {
+    let cli = Cli::try_parse_from(["rho", WORKFLOW_PLANNER_WORKER_COMMAND]).unwrap();
+    assert!(matches!(cli.command, Some(Command::WorkflowPlannerWorker)));
+    assert!(Cli::try_parse_from(["rho", "workflow", "validate", "worker.star"]).is_ok());
+}

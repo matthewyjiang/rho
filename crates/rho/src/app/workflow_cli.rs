@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
@@ -11,33 +11,28 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
-    agent::{AgentOrigin, PromptPolicy, ToolCapability, BUILTIN_TOOL_CAPABILITIES},
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
-        derive_workflow_outcome, freeze_directory_identity, freeze_executable_identity,
-        normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
-        verify_executable_identity, CollectedSources, Diagnostic, Digest, FreezePlan,
-        FrozenSchedulerSettings, FrozenWorkflow, InputName, NodeExecution, PlanConsent,
-        PlannerIdentity, PlanningLimits, PlanningMeasurements, ResolvedAgent, ResolvedCommand,
-        ResolvedNode, RunLifecycle, SourceCollector, SourceManifest, StarlarkPlanner, StoredPlan,
-        StoredRun, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
-        FROZEN_WORKFLOW_SCHEMA_VERSION,
+        derive_workflow_outcome, CollectedSources, Diagnostic, InputName, PlanningLimits,
+        PlanningMeasurements, SourceManifest, StarlarkPlanner, StoredPlan, StoredRun,
+        WorkflowError, WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
     },
 };
 
+#[cfg(test)]
+use crate::workflow::{PlanConsent, RunLifecycle};
+
 use super::{
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime},
-    automation,
-    automation_protocol::TerminalReason,
-    bootstrap::host_capabilities,
-    cli_config,
-    config_repository::ConfigRepository,
-    sdk_config,
-    workflow_runtime::WorkflowRunner,
+    automation, automation_protocol::TerminalReason, bootstrap::host_capabilities, cli_config,
+    config_repository::ConfigRepository, workflow_runtime::WorkflowRunner,
 };
 
 #[path = "workflow_cli/cancel.rs"]
 mod cancel;
+#[path = "workflow_cli/ops.rs"]
+mod ops;
+#[path = "workflow_cli/plan_host.rs"]
+mod plan_host;
 #[path = "workflow_cli/runtime.rs"]
 mod runtime;
 #[path = "workflow_cli/tool_service.rs"]
@@ -47,6 +42,9 @@ use cancel::run_cancel;
 #[cfg(test)]
 use cancel::{cancellation_state, wait_for_cancellation_ack};
 pub(super) use cancel::{request_cancellation, CancellationState};
+pub(super) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
+#[cfg(test)]
+pub(super) use plan_host::{resolve_nodes_with_host, AuthorizedPlanHost};
 pub(super) use tool_service::workflow_tool_service;
 
 const PLANNER_WORKER_ENV: &str = "RHO_WORKFLOW_PLANNER_WORKER";
@@ -56,24 +54,16 @@ const PLANNER_TOKEN_BYTES: usize = 32;
 // response_frame_bytes, stderr_bytes, and address_space_bytes. Reproduce them
 // with scripts/measure_workflow_limits.py.
 const PLANNER_REQUEST_FRAME_BYTES: u64 = 16 * 1024 * 1024;
-const PLANNER_RESPONSE_FRAME_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const PLANNER_RESPONSE_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 const PLANNER_STDERR_BYTES: usize = 64 * 1024;
 #[cfg(any(unix, windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 16 * 64 * 1024 * 1024;
-const PLANNER_FORMAT_VERSION: u32 = 1;
 const WORKFLOW_WIRE_VERSION: u32 = 1;
-// Receipt: matches agent_executor::DEFAULT_TOTAL_CONCURRENCY. Kind limits
-// use the same ceiling and cannot raise total parallel work.
-const DEFAULT_PARALLEL_NODES: u32 = 4;
-const DEFAULT_PARALLEL_AGENTS: u32 = 4;
-const DEFAULT_PARALLEL_COMMANDS: u32 = 4;
 
 pub(super) fn planner_worker_requested(cli: &Cli) -> bool {
     matches!(
         &cli.command,
-        Some(crate::cli::Command::Workflow {
-            command: WorkflowCommand::Validate { file, input },
-        }) if file == Path::new("worker.star") && input.is_empty()
+        Some(crate::cli::Command::WorkflowPlannerWorker)
     ) && std::env::var(PLANNER_WORKER_ENV).is_ok_and(|token| valid_planner_token(&token))
 }
 
@@ -171,18 +161,8 @@ async fn run_plan(
     cli: &Cli,
 ) -> anyhow::Result<()> {
     let prepared = prepare_plan(file, inputs, cli).await?;
-    let service = workflow_service()?;
-    let stored = service.freeze_and_store(FreezePlan {
-        planner: prepared.workflow.planner,
-        sources: prepared.sources.manifest,
-        source_bytes: &prepared.sources.sources,
-        inputs: prepared.workflow.inputs,
-        graph: prepared.workflow.graph,
-        resolved_nodes: prepared.workflow.resolved_nodes,
-        scheduler: prepared.workflow.scheduler,
-        runtime_limits: prepared.workflow.runtime_limits,
-        workspace_identity: workspace_identity(&std::env::current_dir()?)?,
-    })?;
+    let ops = WorkflowOps::open(std::env::current_dir()?, cli.config.clone())?;
+    let stored = ops.store_plan(&prepared)?;
     write_plan(&stored, output)
 }
 
@@ -201,12 +181,11 @@ fn write_plan(plan: &StoredPlan, output: WorkflowDocumentFormat) -> anyhow::Resu
     }
 }
 
-struct PreparedPlan {
-    sources: CollectedSources,
-    workflow: FrozenWorkflow,
-}
-
-async fn prepare_plan(file: &Path, inputs: &[String], cli: &Cli) -> anyhow::Result<PreparedPlan> {
+async fn prepare_plan(
+    file: &Path,
+    inputs: &[String],
+    cli: &Cli,
+) -> anyhow::Result<ops::PreparedPlan> {
     let workspace = std::env::current_dir()?.canonicalize()?;
     let supplied_inputs = parse_inputs(inputs)?;
     let config_repository = ConfigRepository::new(cli.config.clone());
@@ -220,71 +199,12 @@ async fn prepare_plan(file: &Path, inputs: &[String], cli: &Cli) -> anyhow::Resu
             rho_providers::model::ReasoningRequestSource::PersistedOrDefault
         },
     )?;
-    let available_tools = host_capabilities(cli, &config, AgentRole::Workflow);
-    prepare_plan_with_config(file, supplied_inputs, &config, &workspace, &available_tools).await
-}
-
-async fn prepare_plan_with_config(
-    file: &Path,
-    supplied_inputs: BTreeMap<InputName, WorkflowValue>,
-    config: &crate::config::Config,
-    workspace: &Path,
-    available_tools: &crate::agent::AgentCapabilities,
-) -> anyhow::Result<PreparedPlan> {
+    let available_tools =
+        host_capabilities(cli, &config, super::agent_binding::AgentRole::Workflow);
     let limits = planning_limits()?;
-    let sources = SourceCollector::new(workspace, &limits)?.collect(file)?;
-    prepare_plan_from_sources(
-        sources,
-        supplied_inputs,
-        config,
-        workspace,
-        available_tools,
-        &limits,
-    )
-    .await
-}
-
-async fn prepare_plan_from_sources(
-    sources: CollectedSources,
-    supplied_inputs: BTreeMap<InputName, WorkflowValue>,
-    config: &crate::config::Config,
-    workspace: &Path,
-    available_tools: &crate::agent::AgentCapabilities,
-    limits: &PlanningLimits,
-) -> anyhow::Result<PreparedPlan> {
-    let planned = run_supervised_planner(&sources, supplied_inputs, limits).await?;
-    let resolved_nodes = resolve_nodes(&planned.graph, config, workspace, available_tools)?;
-    freeze_planned_workflow(sources, planned, resolved_nodes, limits)
-}
-
-fn freeze_planned_workflow(
-    sources: CollectedSources,
-    planned: planner_worker::PlannerWorkerPlan,
-    resolved_nodes: BTreeMap<crate::workflow::NodeId, ResolvedNode>,
-    limits: &PlanningLimits,
-) -> anyhow::Result<PreparedPlan> {
-    let workflow = normalize_workflow(FrozenWorkflow {
-        schema_version: FROZEN_WORKFLOW_SCHEMA_VERSION,
-        planner: PlannerIdentity {
-            name: "rho".to_owned(),
-            format_version: PLANNER_FORMAT_VERSION,
-            starlark_version: "0.14.2".to_owned(),
-        },
-        graph_digest: Digest(String::new()),
-        sources: sources.manifest.clone(),
-        inputs: planned.inputs,
-        graph: planned.graph,
-        resolved_nodes,
-        scheduler: FrozenSchedulerSettings {
-            max_parallel_nodes: DEFAULT_PARALLEL_NODES,
-            max_parallel_agents: DEFAULT_PARALLEL_AGENTS,
-            max_parallel_commands: DEFAULT_PARALLEL_COMMANDS,
-        },
-        runtime_limits: limits.frozen_runtime_limits(),
-    })?;
-    validate_workflow(&workflow)?;
-    validate_runtime_budgets(&workflow, limits)?;
-    Ok(PreparedPlan { sources, workflow })
+    let ops = WorkflowOps::open(workspace, cli.config.clone())?;
+    ops.prepare_local(file, supplied_inputs, &config, &available_tools, &limits)
+        .await
 }
 
 fn parse_inputs(values: &[String]) -> anyhow::Result<BTreeMap<InputName, WorkflowValue>> {
@@ -311,280 +231,20 @@ pub(super) use planner_worker::planning_limits;
 #[cfg(test)]
 use planner_worker::read_frame_sync;
 pub(super) use planner_worker::run_planner_worker;
-use planner_worker::{run_supervised_planner, valid_planner_token};
-
-fn resolve_nodes(
-    graph: &crate::workflow::WorkflowGraph,
-    config: &crate::config::Config,
-    workspace: &Path,
-    available_tools: &crate::agent::AgentCapabilities,
-) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
-    let catalog = crate::agent::AgentCatalog::discover(workspace)?;
-    resolve_nodes_with_catalog(graph, config, workspace, available_tools, &catalog)
-}
-
-fn resolve_nodes_with_catalog(
-    graph: &crate::workflow::WorkflowGraph,
-    config: &crate::config::Config,
-    workspace: &Path,
-    available_tools: &crate::agent::AgentCapabilities,
-    catalog: &crate::agent::AgentCatalog,
-) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
-    resolve_nodes_with_catalog_and_executables(
-        graph,
-        config,
-        workspace,
-        available_tools,
-        catalog,
-        None,
-    )
-}
-
-fn resolve_nodes_with_authorized_executables(
-    graph: &crate::workflow::WorkflowGraph,
-    config: &crate::config::Config,
-    workspace: &Path,
-    available_tools: &crate::agent::AgentCapabilities,
-    catalog: &crate::agent::AgentCatalog,
-    executables: &BTreeMap<String, crate::workflow::ExecutableIdentity>,
-) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
-    resolve_nodes_with_catalog_and_executables(
-        graph,
-        config,
-        workspace,
-        available_tools,
-        catalog,
-        Some(executables),
-    )
-}
-
-fn resolve_nodes_with_catalog_and_executables(
-    graph: &crate::workflow::WorkflowGraph,
-    config: &crate::config::Config,
-    workspace: &Path,
-    available_tools: &crate::agent::AgentCapabilities,
-    catalog: &crate::agent::AgentCatalog,
-    authorized_executables: Option<&BTreeMap<String, crate::workflow::ExecutableIdentity>>,
-) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
-    graph
-        .nodes
-        .iter()
-        .map(|(id, node)| {
-            let resolved = match &node.execution {
-                NodeExecution::Agent(agent) => {
-                    let entry = catalog.find(&agent.agent)?;
-                    let bound = AgentBinder::bind(
-                        Arc::new(entry.definition.clone()),
-                        AgentInvocation {
-                            role: AgentRole::Workflow,
-                            available_tools: available_tools.clone(),
-                        },
-                        config,
-                    )?;
-                    ResolvedNode::Agent(Box::new(resolve_agent(
-                        entry,
-                        bound,
-                        workspace,
-                        authorized_executables,
-                    )?))
-                }
-                NodeExecution::Command(command) => {
-                    let (executable, cwd) = match command {
-                        crate::workflow::CommandNode::Direct {
-                            executable, cwd, ..
-                        }
-                        | crate::workflow::CommandNode::Shell {
-                            executable, cwd, ..
-                        } => (executable, cwd),
-                    };
-                    let cwd_path = workspace.join(cwd).canonicalize()?;
-                    if !cwd_path.starts_with(workspace) {
-                        anyhow::bail!("command node '{id}' cwd is outside the workspace");
-                    }
-                    let (executable_path, executable_identity) =
-                        if let Some(identities) = authorized_executables {
-                            let identity = identities.get(executable).ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "authorized executable identity is missing for '{executable}'"
-                                )
-                            })?;
-                            (
-                                PathBuf::from(&identity.file.canonical_path),
-                                identity.clone(),
-                            )
-                        } else {
-                            let path = resolve_executable(executable, workspace)?;
-                            let identity = freeze_executable_identity(&path)?;
-                            (path, identity)
-                        };
-                    ResolvedNode::Command(Box::new(ResolvedCommand {
-                        executable_identity,
-                        executable: crate::paths::display(&executable_path),
-                        exact_path: true,
-                        cwd: crate::paths::display(&cwd_path),
-                        cwd_identity: freeze_directory_identity(&cwd_path)?,
-                        environment_policy: "inherit-current-process".to_owned(),
-                    }))
-                }
-            };
-            Ok((id.clone(), resolved))
-        })
-        .collect()
-}
-
-fn resolve_agent(
-    entry: &crate::agent::AgentCatalogEntry,
-    bound: super::agent_binding::BoundAgent,
-    workspace: &Path,
-    authorized_executables: Option<&BTreeMap<String, crate::workflow::ExecutableIdentity>>,
-) -> anyhow::Result<ResolvedAgent> {
-    let source_origin = match entry.metadata.origin {
-        AgentOrigin::Internal => "internal",
-        AgentOrigin::BuiltIn => "built_in",
-        AgentOrigin::AgentsHome => "agents_home",
-        AgentOrigin::RhoHome => "rho_home",
-        AgentOrigin::Project => "project",
-    };
-    let source_origin = match &entry.metadata.path {
-        Some(path) => format!("{source_origin}:{}", crate::paths::display(path)),
-        None => source_origin.to_owned(),
-    };
-    let prompt_policy = match &entry.definition.prompt {
-        PromptPolicy::Extend(text) => format!("extend:{text}"),
-        PromptPolicy::Replace(text) => format!("replace:{text}"),
-    };
-    let permission_ceiling = match bound.runtime() {
-        BoundRuntime::Rho { config, .. } => config.permission_mode.to_string(),
-        BoundRuntime::ClaudeCli {
-            permission_mode, ..
-        } => permission_mode.to_string(),
-    };
-    let common = ResolvedAgent {
-        agent_id: entry.definition.id.to_string(),
-        fingerprint: entry.fingerprint.to_string(),
-        runtime: match bound.runtime() {
-            BoundRuntime::Rho { .. } => crate::workflow::AgentRuntime::Rho,
-            BoundRuntime::ClaudeCli { .. } => crate::workflow::AgentRuntime::ClaudeCli,
-        },
-        source_origin,
-        trust_required: entry.metadata.origin == AgentOrigin::Project,
-        prompt_policy,
-        provider: None,
-        model: None,
-        reasoning: None,
-        step_limit: sdk_config::run_step_limit().get() as u64,
-        capabilities: BTreeSet::new(),
-        permission_ceiling,
-        auth_profile: None,
-        executable: None,
-        executable_identity: None,
-        arguments: Vec::new(),
-    };
-    Ok(match bound.runtime() {
-        BoundRuntime::Rho {
-            config,
-            capabilities,
-        } => ResolvedAgent {
-            provider: Some(config.provider.clone()),
-            model: Some(config.model.clone()),
-            reasoning: Some(config.reasoning.to_string()),
-            capabilities: frozen_capabilities(capabilities),
-            auth_profile: Some(config.auth.clone()),
-            ..common
-        },
-        BoundRuntime::ClaudeCli {
-            model,
-            tools,
-            inherit_claude_config,
-            permission_mode,
-            max_turns,
-            effort,
-        } => {
-            let (executable, executable_identity) = if let Some(identities) = authorized_executables
-            {
-                let identity = identities.get("claude").ok_or_else(|| {
-                    anyhow::anyhow!("authorized executable identity is missing for 'claude'")
-                })?;
-                (
-                    PathBuf::from(&identity.file.canonical_path),
-                    identity.clone(),
-                )
-            } else {
-                let executable = resolve_executable("claude", workspace)?;
-                let identity = freeze_executable_identity(&executable)?;
-                (executable, identity)
-            };
-            let plan = crate::claude_runtime::spawn::build_spawn_plan(
-                &crate::claude_runtime::spawn::ClaudeSpawnRequest {
-                    system_prompt: entry.definition.prompt.clone(),
-                    model: model.clone(),
-                    tools: tools.clone(),
-                    inherit_claude_config: *inherit_claude_config,
-                    permission_mode: *permission_mode,
-                    cwd: workspace.to_path_buf(),
-                    max_turns: *max_turns,
-                    effort: *effort,
-                },
-            )?;
-            ResolvedAgent {
-                model: model.clone(),
-                reasoning: effort.map(str::to_owned),
-                step_limit: *max_turns,
-                capabilities: tools.iter().cloned().collect(),
-                executable: Some(crate::paths::display(&executable)),
-                executable_identity: Some(executable_identity),
-                arguments: plan.args,
-                ..common
-            }
-        }
-    })
-}
-
-fn frozen_capabilities(capabilities: &crate::agent::AgentCapabilities) -> BTreeSet<String> {
-    BUILTIN_TOOL_CAPABILITIES
-        .iter()
-        .filter(|capability| capabilities.contains(capability))
-        .filter(|capability| {
-            !matches!(
-                capability,
-                ToolCapability::Agent
-                    | ToolCapability::Agents
-                    | ToolCapability::Questionnaire
-                    | ToolCapability::Rho
-                    | ToolCapability::Workflow
-            )
-        })
-        .map(|capability| capability.as_str().to_owned())
-        .collect()
-}
-
-fn resolve_executable(executable: &str, workspace: &Path) -> anyhow::Result<std::path::PathBuf> {
-    let path = Path::new(executable);
-    let resolved = if path.components().count() == 1 {
-        crate::executable::find_on_path(executable)
-            .ok_or_else(|| anyhow::anyhow!("executable '{executable}' was not found on PATH"))?
-    } else if path.is_absolute() {
-        path.canonicalize()?
-    } else {
-        workspace.join(path).canonicalize()?
-    };
-    Ok(resolved)
-}
+use planner_worker::valid_planner_token;
 
 async fn run_frozen_plan(
     prefix: &str,
     yes: bool,
     output: Option<WorkflowRunFormat>,
-    config_path: Option<std::path::PathBuf>,
+    config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     if run_matrix_tui(crate::tui::workflow::MatrixWorkflowStart::Run, output).await? {
         return Ok(());
     }
-    let service = workflow_service()?;
-    let plan_id = service.store().resolve_plan(prefix)?;
-    let plan = service.store().load_plan(plan_id)?;
-    recheck_plan(&plan, config_path.clone())?;
+    let ops = WorkflowOps::open(std::env::current_dir()?, config_path.clone())?;
+    let plan = ops.prepare_run(prefix)?;
     confirm_exact_plan(
         yes,
         &format!(
@@ -592,13 +252,7 @@ async fn run_frozen_plan(
             plan.manifest.plan_id, plan.manifest.graph_digest.0
         ),
     )?;
-    let run = service.create_run(
-        &plan,
-        PlanConsent {
-            graph_digest: plan.manifest.graph_digest.clone(),
-            confirmed: true,
-        },
-    )?;
+    let run = ops.create_confirmed_run(&plan)?;
     runtime::execute_run(
         run,
         super::workflow_runtime::RecoveryDecision::NormalResume,
@@ -606,113 +260,6 @@ async fn run_frozen_plan(
         config_path,
     )
     .await
-}
-
-fn recheck_plan(plan: &StoredPlan, config_path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
-    let current_directory = std::env::current_dir()?;
-    let current_workspace = workspace_identity(&current_directory)?;
-    if current_workspace != plan.manifest.workspace_identity {
-        anyhow::bail!(
-            "workflow plan workspace is '{}', but the current workspace is '{}'",
-            plan.manifest.workspace_identity,
-            current_workspace
-        );
-    }
-    recheck_frozen_graph(&plan.graph, config_path)
-}
-
-fn recheck_frozen_graph(
-    graph: &FrozenWorkflow,
-    config_path: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
-    validate_workflow(graph)?;
-    validate_runtime_budgets(graph, &planning_limits()?)?;
-    let config = ConfigRepository::new(config_path).load()?;
-    for resolved in graph.resolved_nodes.values() {
-        let agent = match resolved {
-            ResolvedNode::Command(command) => {
-                verify_executable_identity(&command.executable_identity)?;
-                verify_directory_identity(&command.cwd_identity)?;
-                continue;
-            }
-            ResolvedNode::Agent(agent) => agent,
-        };
-        match (&agent.executable, &agent.executable_identity) {
-            (Some(_), Some(identity)) => {
-                verify_executable_identity(identity)?;
-            }
-            (Some(path), None) => anyhow::bail!(
-                "frozen agent '{}' records executable '{}' without a frozen identity",
-                agent.agent_id,
-                path
-            ),
-            (None, _) => {}
-        }
-        if agent.trust_required
-            && std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
-                != Some(std::ffi::OsStr::new("1"))
-        {
-            anyhow::bail!(
-                "workflow plan requires trusted project agent '{}'; trust is not active",
-                agent.agent_id
-            );
-        }
-        let current_rank = permission_rank(config.permission_mode.as_str()).ok_or_else(|| {
-            anyhow::anyhow!(
-                "current permission mode '{}' is unsupported",
-                config.permission_mode
-            )
-        })?;
-        let ceiling_rank = permission_rank(&agent.permission_ceiling).ok_or_else(|| {
-            anyhow::anyhow!(
-                "frozen permission ceiling '{}' for agent '{}' is unsupported",
-                agent.permission_ceiling,
-                agent.agent_id
-            )
-        })?;
-        if current_rank > ceiling_rank {
-            anyhow::bail!(
-                "current permission mode '{}' would widen frozen authority '{}' for agent '{}'",
-                config.permission_mode,
-                agent.permission_ceiling,
-                agent.agent_id
-            );
-        }
-    }
-    Ok(())
-}
-
-fn recheck_run(run: &StoredRun, config_path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
-    let current_workspace = workspace_identity(&std::env::current_dir()?)?;
-    if current_workspace != run.manifest.workspace_identity {
-        anyhow::bail!(
-            "workflow run workspace is '{}', but the current workspace is '{}'",
-            run.manifest.workspace_identity,
-            current_workspace
-        );
-    }
-    if crate::workflow::graph_digest(&run.graph)? != run.manifest.graph_digest {
-        anyhow::bail!("workflow run digest does not match its copied frozen graph");
-    }
-    if !run.manifest.consent.confirmed
-        || run.manifest.consent.graph_digest != run.manifest.graph_digest
-    {
-        anyhow::bail!("workflow run consent does not match its copied frozen graph");
-    }
-    recheck_frozen_graph(&run.graph, config_path)
-}
-
-fn permission_rank(value: &str) -> Option<u8> {
-    match value {
-        "plan" => Some(0),
-        "supervised" => Some(1),
-        "auto" => Some(2),
-        _ => None,
-    }
-}
-
-fn workspace_identity(path: &Path) -> anyhow::Result<String> {
-    Ok(crate::paths::display(&path.canonicalize()?))
 }
 
 fn confirm_exact_plan(yes: bool, action: &str) -> anyhow::Result<()> {
@@ -760,9 +307,8 @@ struct StatusDocument<'a> {
 }
 
 fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()> {
-    let service = workflow_service()?;
-    let run_id = service.store().resolve_run(prefix)?;
-    let run = service.store().load_run(run_id)?;
+    let ops = WorkflowOps::open(std::env::current_dir()?, None)?;
+    let run = ops.load_run_prefix(prefix)?;
     let document = StatusDocument {
         outcome: derive_workflow_outcome(&run.graph, &run.state.state),
         run: &run,
@@ -809,16 +355,15 @@ async fn run_resume(
     yes: bool,
     recover_uncertain: bool,
     output: Option<WorkflowRunFormat>,
-    config_path: Option<std::path::PathBuf>,
+    config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     if run_matrix_tui(crate::tui::workflow::MatrixWorkflowStart::Resume, output).await? {
         return Ok(());
     }
-    let service = workflow_service()?;
-    let run_id = service.store().resolve_run(prefix)?;
-    let run = service.store().load_run(run_id)?;
-    recheck_run(&run, config_path.clone())?;
+    let ops = WorkflowOps::open(std::env::current_dir()?, config_path.clone())?;
+    let run = ops.load_run_prefix(prefix)?;
+    let recovery = ops.prepare_resume(&run, recover_uncertain)?;
     confirm_exact_plan(
         yes,
         &format!(
@@ -826,17 +371,6 @@ async fn run_resume(
             run.manifest.run_id, run.manifest.graph_digest.0
         ),
     )?;
-    if run.state.state.lifecycle == RunLifecycle::NeedsRecovery && !recover_uncertain {
-        anyhow::bail!(
-            "workflow run {} has uncertain attempts; confirm that no prior process remains, then use --recover-uncertain",
-            run.manifest.run_id
-        );
-    }
-    let recovery = if recover_uncertain {
-        super::workflow_runtime::RecoveryDecision::ConfirmNoProcess
-    } else {
-        super::workflow_runtime::RecoveryDecision::NormalResume
-    };
     runtime::execute_run(run, recovery, output, config_path).await
 }
 
@@ -854,13 +388,13 @@ async fn run_matrix_tui(
     Ok(false)
 }
 
-fn workflow_service() -> anyhow::Result<WorkflowService> {
+pub(super) fn workflow_service() -> anyhow::Result<WorkflowService> {
     Ok(WorkflowService::new(WorkflowStore::new(
         &crate::paths::rho_dir()?,
     )?))
 }
 
-fn write_json_document(value: &impl Serialize) -> anyhow::Result<()> {
+pub(super) fn write_json_document(value: &impl Serialize) -> anyhow::Result<()> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
     serde_json::to_writer(&mut output, value)?;
@@ -868,7 +402,7 @@ fn write_json_document(value: &impl Serialize) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn diagnostic_for_error(error: &anyhow::Error) -> Diagnostic {
+pub(super) fn diagnostic_for_error(error: &anyhow::Error) -> Diagnostic {
     if let Some(error) = error.downcast_ref::<WorkflowError>() {
         let code = match error {
             WorkflowError::InvalidId { .. } => "invalid_id",

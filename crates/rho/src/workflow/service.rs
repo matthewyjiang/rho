@@ -1,26 +1,11 @@
-use std::collections::BTreeMap;
-
 use super::{
-    normalize_workflow, validate_workflow, Digest, FrozenSchedulerSettings, FrozenWorkflow,
-    InputName, PlanConsent, PlannerIdentity, ResolvedNode, RunLifecycle, RunStateRecord,
-    SourceManifest, StoredPlan, StoredRun, WorkflowResult, WorkflowState, WorkflowStore,
-    WorkflowValue, FROZEN_WORKFLOW_SCHEMA_VERSION, RUN_STATE_VERSION,
+    PlanConsent, RunLifecycle, RunStateRecord, StoredPlan, StoredRun, WorkflowResult,
+    WorkflowState, WorkflowStore, RUN_STATE_VERSION,
 };
+use std::collections::BTreeMap;
 
 pub(crate) struct WorkflowService {
     store: WorkflowStore,
-}
-
-pub(crate) struct FreezePlan<'a> {
-    pub(crate) planner: PlannerIdentity,
-    pub(crate) sources: SourceManifest,
-    pub(crate) source_bytes: &'a BTreeMap<String, String>,
-    pub(crate) inputs: BTreeMap<InputName, WorkflowValue>,
-    pub(crate) graph: super::WorkflowGraph,
-    pub(crate) resolved_nodes: BTreeMap<super::NodeId, ResolvedNode>,
-    pub(crate) scheduler: FrozenSchedulerSettings,
-    pub(crate) runtime_limits: super::FrozenRuntimeLimits,
-    pub(crate) workspace_identity: String,
 }
 
 impl WorkflowService {
@@ -28,22 +13,18 @@ impl WorkflowService {
         Self { store }
     }
 
-    pub(crate) fn freeze_and_store(&self, plan: FreezePlan<'_>) -> WorkflowResult<StoredPlan> {
-        let workflow = FrozenWorkflow {
-            schema_version: FROZEN_WORKFLOW_SCHEMA_VERSION,
-            planner: plan.planner,
-            graph_digest: Digest(String::new()),
-            sources: plan.sources,
-            inputs: plan.inputs,
-            graph: plan.graph,
-            resolved_nodes: plan.resolved_nodes,
-            scheduler: plan.scheduler,
-            runtime_limits: plan.runtime_limits,
-        };
-        let workflow = normalize_workflow(workflow)?;
-        validate_workflow(&workflow)?;
+    /// Persist an already-normalized and validated frozen workflow.
+    ///
+    /// Callers must run the freeze pipeline exactly once before this method.
+    /// The store still validates durable integrity on write.
+    pub(crate) fn store_frozen(
+        &self,
+        workflow: &super::FrozenWorkflow,
+        workspace_identity: String,
+        source_bytes: &BTreeMap<String, String>,
+    ) -> WorkflowResult<StoredPlan> {
         self.store
-            .create_plan(&workflow, plan.workspace_identity, plan.source_bytes)
+            .create_plan(workflow, workspace_identity, source_bytes)
     }
 
     pub(crate) fn create_run(
