@@ -330,14 +330,53 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag_name }}
-        run: gh release upload "$TAG" rho-${{ matrix.target }}.tar.gz rho-${{ matrix.target }}.tar.gz.sha256 --clobber
+        run: |
+          set -euo pipefail
+          # Transient GitHub API connectivity failures should not fail a finished binary build.
+          attempt=1
+          max_attempts=5
+          delay_seconds=15
+          until gh release upload "$TAG" \
+            "rho-${{ matrix.target }}.tar.gz" \
+            "rho-${{ matrix.target }}.tar.gz.sha256" \
+            --clobber
+          do
+            if (( attempt >= max_attempts )); then
+              echo "Failed to upload Unix release assets after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+            echo "Upload attempt ${attempt} failed; retrying in ${delay_seconds}s..." >&2
+            sleep "$delay_seconds"
+            attempt=$((attempt + 1))
+            delay_seconds=$((delay_seconds * 2))
+          done
       - name: Upload Windows release assets
         if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag_name }}
         shell: pwsh
-        run: gh release upload "$env:TAG" rho-${{ matrix.target }}.zip rho-${{ matrix.target }}.zip.sha256 --clobber
+        run: |
+          # Transient GitHub API connectivity failures should not fail a finished binary build.
+          $Attempt = 1
+          $MaxAttempts = 5
+          $DelaySeconds = 15
+          while ($true) {
+            gh release upload $env:TAG `
+              "rho-${{ matrix.target }}.zip" `
+              "rho-${{ matrix.target }}.zip.sha256" `
+              --clobber
+            if ($LASTEXITCODE -eq 0) {
+              break
+            }
+            if ($Attempt -ge $MaxAttempts) {
+              throw "Failed to upload Windows release assets after $MaxAttempts attempts"
+            }
+            Write-Host "Upload attempt $Attempt failed; retrying in ${DelaySeconds}s..."
+            Start-Sleep -Seconds $DelaySeconds
+            $Attempt += 1
+            $DelaySeconds *= 2
+          }
 
   publish-app-release:
     needs: [release, publish-crates, release-binaries]
