@@ -33,12 +33,10 @@ fn assert_changelog_header_has_version(harness: &mut PtyHarness) -> Result<()> {
         trimmed.starts_with("changelog")
     });
     let Some(header) = header else {
-        ensure!(
-            false,
+        anyhow::bail!(
             "changelog header row missing:\n{}",
             harness.screen().debug_dump()
         );
-        unreachable!();
     };
     let has_version = header.split_whitespace().any(|token| {
         let token = token.trim_start_matches('v');

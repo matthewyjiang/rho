@@ -1,4 +1,4 @@
-use ratatui::text::Line;
+use ratatui::{text::Line, DefaultTerminal};
 
 use super::{command_block::CommandBlock, App, Entry};
 use crate::{
@@ -9,10 +9,13 @@ use crate::{
     commands::CommandInvocation,
 };
 
+pub(super) type ChangelogFetchResult = anyhow::Result<ChangelogDisplay>;
+
 impl App {
-    pub(super) async fn execute_changelog_command(
+    pub(super) fn execute_changelog_command(
         &mut self,
         invocation: &CommandInvocation,
+        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let request = match parse_request(&invocation.args) {
             Ok(request) => request,
@@ -32,16 +35,66 @@ impl App {
                 }
             },
             ChangelogRequest::Latest => {
-                self.status = "fetching latest changelog".into();
-                match fetch_latest_display().await {
-                    Ok(display) => self.show_changelog(display),
-                    Err(error) => {
-                        self.insert_entry(&Entry::Error(format!(
-                            "unable to fetch latest changelog: {error}"
-                        )));
-                        self.status = "changelog fetch failed".into();
-                    }
+                if self.start_latest_changelog_command() {
+                    terminal.draw(|frame| self.draw(frame))?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Starts a background fetch for `/changelog latest`. Returns whether a new
+    /// task was spawned so callers can redraw the "fetching" status at once.
+    pub(super) fn start_latest_changelog_command(&mut self) -> bool {
+        if self.pending_changelog.is_some() {
+            self.insert_entry(&Entry::Notice(
+                "a latest changelog fetch is already in progress".into(),
+            ));
+            self.status = "fetching latest changelog".into();
+            return false;
+        }
+
+        self.pending_changelog = Some(tokio::spawn(async move { fetch_latest_display().await }));
+        self.status = "fetching latest changelog".into();
+        true
+    }
+
+    pub(super) async fn cancel_changelog_command(&mut self) {
+        if let Some(handle) = self.pending_changelog.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+
+    pub(super) async fn poll_changelog_command(&mut self) -> anyhow::Result<bool> {
+        if !self
+            .pending_changelog
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+        {
+            return Ok(false);
+        }
+        self.finish_changelog_command().await?;
+        Ok(true)
+    }
+
+    async fn finish_changelog_command(&mut self) -> anyhow::Result<()> {
+        let Some(handle) = self.pending_changelog.take() else {
+            return Ok(());
+        };
+        match handle.await {
+            Ok(Ok(display)) => self.show_changelog(display),
+            Ok(Err(error)) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "unable to fetch latest changelog: {error}"
+                )));
+                self.status = "changelog fetch failed".into();
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "unable to fetch latest changelog: background task failed: {error}"
+                )));
+                self.status = "changelog fetch failed".into();
             }
         }
         Ok(())
