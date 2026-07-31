@@ -9,6 +9,8 @@ use rho_sdk::tool::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::workflow::{PlanId, RunId};
+
 use super::sdk_registry::StaticToolBundle;
 
 pub(crate) const NAME: &str = "workflow";
@@ -35,16 +37,16 @@ pub(crate) enum WorkflowToolRequest {
         inputs: BTreeMap<String, serde_json::Value>,
     },
     Run {
-        plan_id: String,
+        plan_id: PlanId,
     },
     Status {
-        run_id: String,
+        run_id: RunId,
     },
     Cancel {
-        run_id: String,
+        run_id: RunId,
     },
     Resume {
-        run_id: String,
+        run_id: RunId,
         #[serde(default)]
         recover_uncertain: bool,
     },

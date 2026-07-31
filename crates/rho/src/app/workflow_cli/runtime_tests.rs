@@ -1,7 +1,15 @@
 use pretty_assertions::assert_eq;
+use serde_json::json;
 
-use super::{durable_artifacts_for_node, effective_permission_mode_for};
-use crate::permission::PermissionMode;
+use super::{
+    durable_artifacts_for_node, effective_permission_mode_for, runtime_event_json,
+    WORKFLOW_WIRE_VERSION,
+};
+use crate::{
+    app::workflow_runtime::RuntimeEvent,
+    permission::PermissionMode,
+    workflow::{AttemptNumber, NodeId, NodeTerminalState, RunId},
+};
 
 // Covers: every executor in a workflow run must use one mode no broader than
 // either current policy or any frozen agent ceiling.
@@ -76,4 +84,123 @@ fn tui_artifacts_come_from_durable_completions() {
             artifact,
         }]
     );
+}
+
+// Covers: RuntimeEvent wire body comes from Serialize, with envelope fields layered on.
+// Owner: workflow CLI runtime event presentation.
+#[test]
+fn runtime_event_json_matches_wire_shape() {
+    let run_id = "00000000-0000-4000-8000-000000000001"
+        .parse::<RunId>()
+        .unwrap();
+    let node = NodeId::new("build").unwrap();
+    let attempt = AttemptNumber::new(2).unwrap();
+
+    assert_eq!(
+        runtime_event_json(1, run_id, &RuntimeEvent::StateChanged { revision: 7 }),
+        json!({
+            "type": "state_changed",
+            "revision": 7,
+            "version": WORKFLOW_WIRE_VERSION,
+            "sequence": 1,
+            "run_id": run_id.to_string(),
+        })
+    );
+    assert_eq!(
+        runtime_event_json(
+            2,
+            run_id,
+            &RuntimeEvent::NodeStarted {
+                node: node.clone(),
+                attempt
+            }
+        ),
+        json!({
+            "type": "node_started",
+            "node": "build",
+            "attempt": 2,
+            "version": WORKFLOW_WIRE_VERSION,
+            "sequence": 2,
+            "run_id": run_id.to_string(),
+        })
+    );
+    assert_eq!(
+        runtime_event_json(
+            3,
+            run_id,
+            &RuntimeEvent::NodeFinished {
+                node: node.clone(),
+                outcome: NodeTerminalState::Success
+            }
+        ),
+        json!({
+            "type": "node_finished",
+            "node": "build",
+            "outcome": "success",
+            "version": WORKFLOW_WIRE_VERSION,
+            "sequence": 3,
+            "run_id": run_id.to_string(),
+        })
+    );
+    assert_eq!(
+        runtime_event_json(
+            4,
+            run_id,
+            &RuntimeEvent::NeedsRecovery {
+                nodes: vec![node.clone()]
+            }
+        ),
+        json!({
+            "type": "needs_recovery",
+            "nodes": ["build"],
+            "version": WORKFLOW_WIRE_VERSION,
+            "sequence": 4,
+            "run_id": run_id.to_string(),
+        })
+    );
+    assert_eq!(
+        runtime_event_json(5, run_id, &RuntimeEvent::Completed),
+        json!({
+            "type": "completed",
+            "version": WORKFLOW_WIRE_VERSION,
+            "sequence": 5,
+            "run_id": run_id.to_string(),
+        })
+    );
+}
+
+// Covers: tools and CLI text share one RuntimeEvent message path.
+// Owner: workflow CLI runtime event presentation.
+#[test]
+fn runtime_event_message_is_canonical() {
+    let node = NodeId::new("build").unwrap();
+    let attempt = AttemptNumber::new(2).unwrap();
+    assert_eq!(
+        RuntimeEvent::StateChanged { revision: 3 }.message(),
+        "workflow state revision 3"
+    );
+    assert_eq!(
+        RuntimeEvent::NodeStarted {
+            node: node.clone(),
+            attempt
+        }
+        .message(),
+        "workflow node build started attempt 2"
+    );
+    assert_eq!(
+        RuntimeEvent::NodeFinished {
+            node: node.clone(),
+            outcome: NodeTerminalState::Failure
+        }
+        .message(),
+        "workflow node build finished: Failure"
+    );
+    assert_eq!(
+        RuntimeEvent::NeedsRecovery {
+            nodes: vec![node, NodeId::new("test").unwrap()]
+        }
+        .message(),
+        "workflow needs recovery: build, test"
+    );
+    assert_eq!(RuntimeEvent::Completed.message(), "workflow completed");
 }

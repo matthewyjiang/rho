@@ -24,8 +24,11 @@ use crate::workflow::{PlanConsent, RunLifecycle};
 
 use super::{
     automation, automation_protocol::TerminalReason, bootstrap::host_capabilities, cli_config,
-    config_repository::ConfigRepository, workflow_runtime::WorkflowRunner,
+    config_repository::ConfigRepository,
 };
+
+#[cfg(test)]
+use super::workflow_runtime::WorkflowRunner;
 
 #[path = "workflow_cli/cancel.rs"]
 mod cancel;

@@ -69,9 +69,9 @@ pub(crate) struct VerifiedExecutable {
 }
 
 pub(crate) struct OpenedExecutable {
-    pub(super) executable: VerifiedPath,
+    pub(crate) executable: VerifiedPath,
     pub(crate) interpreter_request: Option<ExecutableInterpreterRequest>,
-    pub(super) interpreter_arguments: Vec<String>,
+    pub(crate) interpreter_arguments: Vec<String>,
 }
 
 pub(crate) fn open_executable(path: &Path) -> WorkflowResult<OpenedExecutable> {

@@ -51,10 +51,7 @@ pub(crate) use secure_fs::{
 pub(crate) use secure_fs_directory::{
     open_verified_directory, open_verified_file_in_directory, opened_directory_names,
 };
-pub(crate) use secure_fs_opened::{
-    open_verified_file, opened_binary, opened_executable_identity, read_opened_utf8,
-    read_opened_utf8_bounded,
-};
+
 pub(crate) use service::WorkflowService;
 pub(crate) use starlark::StarlarkPlanner;
 pub(crate) use starlark_diagnostics::Diagnostic;

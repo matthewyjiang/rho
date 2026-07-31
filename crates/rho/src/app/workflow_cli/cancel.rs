@@ -4,7 +4,11 @@ use serde::Serialize;
 
 use crate::workflow::{RunLifecycle, WorkflowStore};
 
-use super::{planner_worker, workflow_service, write_json_document, WorkflowRunner};
+use super::super::workflow_runtime::{
+    cancellation_request_acknowledged, cross_process_cancel_acknowledged,
+    request_cross_process_cancel,
+};
+use super::{planner_worker, workflow_service, write_json_document};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,17 +56,16 @@ pub(in crate::app) async fn request_cancellation(
     if lifecycle == RunLifecycle::Completed {
         // Keep journal corruption detection for completed runs, but never
         // expose a prior request as this command's acknowledgement.
-        let _historical_acknowledgement =
-            WorkflowRunner::cross_process_cancel_acknowledged(rho_home, run_id)?;
+        let _historical_acknowledgement = cross_process_cancel_acknowledged(rho_home, run_id)?;
         return Ok(CancellationOutcome {
             request_id: None,
             state: CancellationState::AlreadyCompleted,
             lifecycle,
         });
     }
-    let receipt = WorkflowRunner::request_cross_process_cancel(rho_home, run_id)?;
+    let receipt = request_cross_process_cancel(rho_home, run_id)?;
     let acknowledged = wait_for_cancellation_ack(
-        || WorkflowRunner::cancellation_request_acknowledged(rho_home, run_id, &receipt),
+        || cancellation_request_acknowledged(rho_home, run_id, &receipt),
         Duration::from_millis(planner_worker::cancellation_acknowledgement_limit_millis()),
         Duration::from_millis(planner_worker::cancellation_acknowledgement_poll_millis()),
     )

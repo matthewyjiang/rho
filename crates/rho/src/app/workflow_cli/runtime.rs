@@ -336,17 +336,19 @@ pub(super) async fn execute_tool_run(
                 }
                 result = &mut drive => {
                     while let Ok(event) = events.try_recv() {
-                        let _ = context.progress().send(
-                            rho_sdk::tool::ToolProgress::message(runtime_event_message(&event))
-                        ).await;
+                        let _ = context
+                            .progress()
+                            .send(rho_sdk::tool::ToolProgress::message(event.message()))
+                            .await;
                     }
                     break result.map_err(anyhow::Error::from);
                 }
                 event = events.recv() => {
                     if let Some(event) = event {
-                        let _ = context.progress().send(
-                            rho_sdk::tool::ToolProgress::message(runtime_event_message(&event))
-                        ).await;
+                        let _ = context
+                            .progress()
+                            .send(rho_sdk::tool::ToolProgress::message(event.message()))
+                            .await;
                     }
                 }
             }
@@ -355,27 +357,6 @@ pub(super) async fn execute_tool_run(
     drop(runner);
     runtime.shutdown().await;
     result
-}
-
-fn runtime_event_message(event: &RuntimeEvent) -> String {
-    match event {
-        RuntimeEvent::StateChanged { revision } => format!("workflow state revision {revision}"),
-        RuntimeEvent::NodeStarted { node, attempt } => {
-            format!("workflow node {node} started attempt {}", attempt.get())
-        }
-        RuntimeEvent::NodeFinished { node, outcome } => {
-            format!("workflow node {node} finished: {outcome:?}")
-        }
-        RuntimeEvent::NeedsRecovery { nodes } => format!(
-            "workflow needs recovery: {}",
-            nodes
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        RuntimeEvent::Completed => "workflow completed".into(),
-    }
 }
 
 async fn drive_with_stream(
@@ -629,7 +610,7 @@ async fn present_runtime_events(
     while let Some(event) = events.recv().await {
         sequence = sequence.saturating_add(1);
         match presentation {
-            RuntimePresentation::Text => write_text_runtime_event(&event),
+            RuntimePresentation::Text => println!("{}", event.message()),
             RuntimePresentation::Jsonl => {
                 let value = runtime_event_json(sequence, run_id, &event);
                 write_json_document(&value)?;
@@ -639,48 +620,15 @@ async fn present_runtime_events(
     Ok(())
 }
 
-fn write_text_runtime_event(event: &RuntimeEvent) {
-    match event {
-        RuntimeEvent::StateChanged { revision } => println!("workflow state revision {revision}"),
-        RuntimeEvent::NodeStarted { node, attempt } => {
-            println!("started {node} (attempt {})", attempt.get())
-        }
-        RuntimeEvent::NodeFinished { node, outcome } => {
-            println!("finished {node}: {outcome:?}")
-        }
-        RuntimeEvent::NeedsRecovery { nodes } => println!(
-            "workflow needs recovery: {}",
-            nodes
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        RuntimeEvent::Completed => println!("workflow completed"),
-    }
-}
-
 fn runtime_event_json(
     sequence: u64,
     run_id: crate::workflow::RunId,
     event: &RuntimeEvent,
 ) -> serde_json::Value {
-    let mut value = match event {
-        RuntimeEvent::StateChanged { revision } => {
-            serde_json::json!({"type": "state_changed", "revision": revision})
-        }
-        RuntimeEvent::NodeStarted { node, attempt } => serde_json::json!({
-            "type": "node_started", "node": node, "attempt": attempt
-        }),
-        RuntimeEvent::NodeFinished { node, outcome } => serde_json::json!({
-            "type": "node_finished", "node": node, "outcome": outcome
-        }),
-        RuntimeEvent::NeedsRecovery { nodes } => {
-            serde_json::json!({"type": "needs_recovery", "nodes": nodes})
-        }
-        RuntimeEvent::Completed => serde_json::json!({"type": "completed"}),
-    };
-    let object = value.as_object_mut().expect("runtime event is an object");
+    let mut value = serde_json::to_value(event).expect("RuntimeEvent serializes");
+    let object = value
+        .as_object_mut()
+        .expect("RuntimeEvent serializes to an object");
     object.insert("version".into(), WORKFLOW_WIRE_VERSION.into());
     object.insert("sequence".into(), sequence.into());
     object.insert("run_id".into(), run_id.to_string().into());

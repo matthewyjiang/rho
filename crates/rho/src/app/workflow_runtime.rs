@@ -25,6 +25,10 @@ mod runner;
 mod types;
 
 pub(crate) use agent::WorkflowAgentExecutor;
+pub(crate) use cancellation::{
+    cancellation_request_acknowledged, cross_process_cancel_acknowledged,
+    request_cross_process_cancel,
+};
 pub(crate) use checkout_gate::CheckoutGate;
 pub(crate) use command::{CommandHostFactory, WorkflowCommandExecutor};
 pub(crate) use runner::{RecoveryDecision, WorkflowRunner};

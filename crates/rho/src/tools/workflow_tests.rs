@@ -5,6 +5,12 @@ use rho_sdk::{ToolHost, ToolHostCall};
 
 use super::*;
 
+const RUN_ID: &str = "00000000-0000-4000-8000-000000000001";
+
+fn run_id() -> RunId {
+    RUN_ID.parse().expect("canonical run id")
+}
+
 #[derive(Default)]
 struct RecordingService {
     requests: Mutex<Vec<WorkflowToolRequest>>,
@@ -19,7 +25,7 @@ impl WorkflowToolService for RecordingService {
         self.requests.lock().unwrap().push(request.clone());
         Box::pin(async move {
             Ok(WorkflowToolResult::Status {
-                run_id: "run-1".into(),
+                run_id: RUN_ID.into(),
                 graph_digest: "sha256:test".into(),
                 state: WorkflowRunStateSummary::Running,
                 nodes: Vec::new(),
@@ -39,22 +45,20 @@ async fn dispatches_a_typed_operation() {
     let mut run = host
         .start(ToolHostCall::new(
             NAME,
-            serde_json::json!({"action": "status", "run_id": "run-1"}),
+            serde_json::json!({"action": "status", "run_id": RUN_ID}),
         ))
         .unwrap();
     let output = run.outcome().await.unwrap();
 
     assert_eq!(
         service.requests.lock().unwrap().as_slice(),
-        &[WorkflowToolRequest::Status {
-            run_id: "run-1".into()
-        }]
+        &[WorkflowToolRequest::Status { run_id: run_id() }]
     );
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(output.content()).unwrap(),
         serde_json::json!({
             "operation": "status",
-            "run_id": "run-1",
+            "run_id": RUN_ID,
             "graph_digest": "sha256:test",
             "state": "running",
             "nodes": []

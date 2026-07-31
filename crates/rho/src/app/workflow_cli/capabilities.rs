@@ -17,7 +17,7 @@ impl AppWorkflowToolService {
     ) -> anyhow::Result<crate::config::Config> {
         self.authorize_read(context, path, PathScope::UnrestrictedFilesystem)
             .await?;
-        let opened = match crate::workflow::open_verified_file(path, false) {
+        let opened = match crate::workflow::VerifiedPath::open(path, false) {
             Ok(opened) => opened,
             Err(crate::workflow::WorkflowError::Io(error))
                 if error.kind() == std::io::ErrorKind::NotFound =>
@@ -28,7 +28,7 @@ impl AppWorkflowToolService {
         };
         self.authorize_opened_identity(context, &opened.identity)
             .await?;
-        let text = crate::workflow::read_opened_utf8(opened)?;
+        let text = opened.read_utf8()?;
         crate::config::Config::parse_settings(&text)
     }
 
@@ -73,7 +73,7 @@ impl AppWorkflowToolService {
         if resolved.path() != lexical {
             return Err(crate::workflow::WorkflowError::SourceSymlink { path: lexical }.into());
         }
-        let opened = crate::workflow::open_verified_file(resolved.path(), false)?;
+        let opened = crate::workflow::VerifiedPath::open(resolved.path(), false)?;
         self.authorize_opened_identity(context, &opened.identity)
             .await?;
         if Path::new(&opened.identity.canonical_path) != resolved.path() {
@@ -148,7 +148,7 @@ impl AppWorkflowToolService {
             )?;
             self.authorize_opened_identity(context, &opened.identity)
                 .await?;
-            let source = crate::workflow::read_opened_utf8(opened)?;
+            let source = opened.read_utf8()?;
             sources.push((path, source));
         }
         Ok(sources)
@@ -208,7 +208,7 @@ impl AppWorkflowToolService {
                 None => None,
             };
             let interpreter = interpreter
-                .map(crate::workflow::opened_binary)
+                .map(crate::workflow::OpenedExecutable::into_binary)
                 .transpose()?;
             identities.insert(
                 executable,
@@ -235,11 +235,8 @@ impl AppWorkflowToolService {
                     Ok(Some(opened)) => {
                         self.authorize_read(context, &candidate, path_scope(&self.cwd, &candidate))
                             .await?;
-                        self.authorize_opened_identity(
-                            context,
-                            crate::workflow::opened_executable_identity(&opened),
-                        )
-                        .await?;
+                        self.authorize_opened_identity(context, opened.identity())
+                            .await?;
                         return Ok(opened);
                     }
                     Ok(None) => {}
@@ -261,11 +258,8 @@ impl AppWorkflowToolService {
             self.authorize_read(context, &lexical, path_scope(&self.cwd, &lexical))
                 .await?;
             let opened = crate::workflow::open_executable(&lexical)?;
-            self.authorize_opened_identity(
-                context,
-                crate::workflow::opened_executable_identity(&opened),
-            )
-            .await?;
+            self.authorize_opened_identity(context, opened.identity())
+                .await?;
             Ok(opened)
         }
     }
@@ -278,11 +272,8 @@ impl AppWorkflowToolService {
         self.authorize_read(context, path, path_scope(&self.cwd, path))
             .await?;
         let opened = crate::workflow::open_executable(path)?;
-        self.authorize_opened_identity(
-            context,
-            crate::workflow::opened_executable_identity(&opened),
-        )
-        .await?;
+        self.authorize_opened_identity(context, opened.identity())
+            .await?;
         Ok(opened)
     }
 

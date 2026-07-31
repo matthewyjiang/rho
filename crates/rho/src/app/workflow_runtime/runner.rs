@@ -6,10 +6,8 @@ use crate::workflow::{
 };
 
 use super::{
-    cancellation::{
-        create_or_read_cancellation_request, CancellationRequest, CancellationRequestReceipt,
-    },
-    RuntimeError, RuntimeEvent, RuntimeSecurity, WorkflowNodeExecutor,
+    cancellation::CancellationRequest, RuntimeError, RuntimeEvent, RuntimeSecurity,
+    WorkflowNodeExecutor,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,55 +56,6 @@ impl WorkflowRunner {
             run_id,
             cancellation: self.cancellation.clone(),
         }
-    }
-
-    pub(crate) fn request_cross_process_cancel(
-        rho_home: &std::path::Path,
-        run_id: RunId,
-    ) -> Result<CancellationRequestReceipt, RuntimeError> {
-        let store = WorkflowStore::new(rho_home)?;
-        create_or_read_cancellation_request(&store, run_id)
-    }
-
-    pub(crate) fn cross_process_cancel_acknowledged(
-        rho_home: &std::path::Path,
-        run_id: RunId,
-    ) -> Result<bool, RuntimeError> {
-        let events = WorkflowStore::new(rho_home)?.read_events(run_id)?;
-        let requested = events
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(position, record)| {
-                if let WorkflowEvent::CancellationRequested { request_id } = &record.event {
-                    Some((position, request_id))
-                } else {
-                    None
-                }
-            });
-        let Some((position, request_id)) = requested else {
-            return Ok(false);
-        };
-        Ok(events[position + 1..].iter().any(|record| {
-            matches!(&record.event, WorkflowEvent::CancellationAcknowledged { request_id: acknowledged } if acknowledged == request_id)
-        }))
-    }
-
-    pub(crate) fn cancellation_request_acknowledged(
-        rho_home: &std::path::Path,
-        run_id: RunId,
-        receipt: &CancellationRequestReceipt,
-    ) -> Result<bool, RuntimeError> {
-        let events = WorkflowStore::new(rho_home)?.read_events(run_id)?;
-        let requested = events.iter().rfind(|record| {
-            matches!(&record.event, WorkflowEvent::CancellationRequested { request_id } if request_id == &receipt.request_id)
-        });
-        let acknowledged = events.iter().rfind(|record| {
-            matches!(&record.event, WorkflowEvent::CancellationAcknowledged { request_id } if request_id == &receipt.request_id)
-        });
-        Ok(
-            matches!((requested, acknowledged), (Some(request), Some(ack)) if ack.sequence > request.sequence),
-        )
     }
 
     pub(crate) async fn drive(
@@ -228,7 +177,7 @@ pub(super) fn recover_completed_transitions(
                 )
             });
             if !recorded {
-                append_event_only(
+                append_event_and_save(
                     store,
                     guard,
                     &mut run.state,
@@ -238,7 +187,6 @@ pub(super) fn recover_completed_transitions(
                         output,
                     },
                 )?;
-                store.save_state(guard, &run.state)?;
             }
         }
         persist_state_event(
@@ -275,6 +223,17 @@ pub(super) fn append_event_only(
         },
     )?;
     record.last_event_sequence = sequence;
+    Ok(())
+}
+
+pub(super) fn append_event_and_save(
+    store: &WorkflowStore,
+    guard: &mut crate::workflow::RunMutationGuard,
+    record: &mut RunStateRecord,
+    event: WorkflowEvent,
+) -> Result<(), RuntimeError> {
+    append_event_only(store, guard, record, event)?;
+    store.save_state(guard, record)?;
     Ok(())
 }
 

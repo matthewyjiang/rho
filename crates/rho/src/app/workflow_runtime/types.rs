@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
+use serde::Serialize;
+
 use crate::workflow::{
     AttemptArtifacts, AttemptNumber, CancellationResumeState, CommandExit, FrozenWorkflow,
     NodeCompletion, NodeId, NodeTerminalState, RunId, ValidatedOutputRef, WorkflowValue,
@@ -62,7 +64,8 @@ pub(crate) struct RuntimeSecurity {
     pub(crate) permission_mode: crate::permission::PermissionMode,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum RuntimeEvent {
     StateChanged {
         revision: u64,
@@ -79,6 +82,30 @@ pub(crate) enum RuntimeEvent {
         nodes: Vec<NodeId>,
     },
     Completed,
+}
+
+impl RuntimeEvent {
+    /// Canonical human-readable progress text for tools and CLI text output.
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::StateChanged { revision } => format!("workflow state revision {revision}"),
+            Self::NodeStarted { node, attempt } => {
+                format!("workflow node {node} started attempt {attempt}")
+            }
+            Self::NodeFinished { node, outcome } => {
+                format!("workflow node {node} finished: {outcome:?}")
+            }
+            Self::NeedsRecovery { nodes } => format!(
+                "workflow needs recovery: {}",
+                nodes
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Completed => "workflow completed".into(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

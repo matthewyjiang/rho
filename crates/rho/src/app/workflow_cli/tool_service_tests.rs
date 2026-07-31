@@ -1,9 +1,11 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{CapabilityKind, CapabilityOperation, PathScope};
 #[cfg(any(unix, windows))]
 use sha2::Digest as _;
+
+use crate::workflow::{PlanId, RunId};
 
 use super::{
     agent_catalog_roots_for, executable_candidates_in, AppWorkflowToolService, WorkflowToolRequest,
@@ -14,6 +16,14 @@ fn service() -> AppWorkflowToolService {
         cwd: "/workspace".into(),
         config_path: None,
     }
+}
+
+fn plan_id(value: &str) -> PlanId {
+    PlanId::from_str(value).expect("canonical plan id")
+}
+
+fn run_id(value: &str) -> RunId {
+    RunId::from_str(value).expect("canonical run id")
 }
 
 // Covers: each model workflow action must declare its durable and process
@@ -51,25 +61,25 @@ fn action_preparation_declares_exact_capabilities() {
         ),
         (
             WorkflowToolRequest::Run {
-                plan_id: "00000000-0000-0000-0000-000000000001".into(),
+                plan_id: plan_id("00000000-0000-0000-0000-000000000001"),
             },
             vec![CapabilityKind::Read, CapabilityKind::Write],
         ),
         (
             WorkflowToolRequest::Status {
-                run_id: "00000000-0000-0000-0000-000000000002".into(),
+                run_id: run_id("00000000-0000-0000-0000-000000000002"),
             },
             vec![CapabilityKind::Read],
         ),
         (
             WorkflowToolRequest::Cancel {
-                run_id: "00000000-0000-0000-0000-000000000002".into(),
+                run_id: run_id("00000000-0000-0000-0000-000000000002"),
             },
             vec![CapabilityKind::Read, CapabilityKind::Write],
         ),
         (
             WorkflowToolRequest::Resume {
-                run_id: "00000000-0000-0000-0000-000000000002".into(),
+                run_id: run_id("00000000-0000-0000-0000-000000000002"),
                 recover_uncertain: true,
             },
             vec![CapabilityKind::Read, CapabilityKind::Write],
@@ -153,7 +163,7 @@ fn preparation_keeps_exact_durable_and_process_facts() {
     let recovery = service()
         .capabilities_for_paths(
             &WorkflowToolRequest::Resume {
-                run_id: "00000000-0000-0000-0000-000000000002".into(),
+                run_id: run_id("00000000-0000-0000-0000-000000000002"),
                 recover_uncertain: true,
             },
             Path::new("/rho"),
@@ -241,10 +251,10 @@ fn config_parse_uses_the_authorized_open_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config.toml");
     std::fs::write(&path, "provider = 'openai'\nmodel = 'authorized'\n").unwrap();
-    let opened = crate::workflow::open_verified_file(&path, false).unwrap();
+    let opened = crate::workflow::VerifiedPath::open(&path, false).unwrap();
 
     replace_opened_file(&path, "provider = 'openai'\nmodel = 'replacement'\n");
-    let text = crate::workflow::read_opened_utf8(opened).unwrap();
+    let text = opened.read_utf8().unwrap();
     let config = crate::config::Config::parse_settings(&text).unwrap();
 
     assert_eq!(config.model, "authorized");
@@ -259,11 +269,11 @@ fn workflow_source_read_uses_the_authorized_open_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("workflow.star");
     std::fs::write(&path, "authorized source").unwrap();
-    let opened = crate::workflow::open_verified_file(&path, false).unwrap();
+    let opened = crate::workflow::VerifiedPath::open(&path, false).unwrap();
     let budget = crate::workflow::Budget::measured("source bytes", 64, "test").unwrap();
 
     replace_opened_file(&path, "replacement source");
-    let source = crate::workflow::read_opened_utf8_bounded(opened, &budget, 0).unwrap();
+    let source = opened.read_utf8_bounded(&budget, 0).unwrap();
 
     assert_eq!(source, "authorized source");
 }
@@ -280,13 +290,13 @@ fn agent_parse_uses_the_authorized_open_file() {
         "---\ndescription: authorized\n---\nauthorized prompt\n",
     )
     .unwrap();
-    let opened = crate::workflow::open_verified_file(&path, false).unwrap();
+    let opened = crate::workflow::VerifiedPath::open(&path, false).unwrap();
 
     replace_opened_file(
         &path,
         "---\ndescription: replacement\n---\nreplacement prompt\n",
     );
-    let source = crate::workflow::read_opened_utf8(opened).unwrap();
+    let source = opened.read_utf8().unwrap();
     let catalog =
         crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
             rho_home: vec![(path, source)],
@@ -332,7 +342,7 @@ fn agent_discovery_stays_on_the_authorized_directory_handle() {
         false,
     )
     .unwrap();
-    let source = crate::workflow::read_opened_utf8(opened).unwrap();
+    let source = opened.read_utf8().unwrap();
     let catalog =
         crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
             rho_home: vec![(root.join("worker.md"), source)],
@@ -446,7 +456,7 @@ fn interpreter_freeze_uses_the_authorized_open_file() {
 
     replace_opened_file(&interpreter_path, "replacement interpreter");
     make_executable(&interpreter_path);
-    let interpreter = crate::workflow::opened_binary(opened_interpreter).unwrap();
+    let interpreter = opened_interpreter.into_binary().unwrap();
     let identity =
         crate::workflow::freeze_opened_executable(opened_script, Some(interpreter)).unwrap();
 

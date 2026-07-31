@@ -3,7 +3,6 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    str::FromStr,
     sync::Arc,
 };
 
@@ -22,8 +21,8 @@ use crate::{
         WorkflowToolRequest, WorkflowToolResult, WorkflowToolService,
     },
     workflow::{
-        InputName, NodeState, NodeTerminalState, PlanId, PlanningLimits, RunId, RunLifecycle,
-        SourceBytes, SourceCollector, StoredRun, WorkflowError, WorkflowResult, WorkflowValue,
+        InputName, NodeState, NodeTerminalState, PlanningLimits, RunLifecycle, SourceBytes,
+        SourceCollector, StoredRun, WorkflowError, WorkflowResult, WorkflowValue,
     },
 };
 
@@ -100,19 +99,19 @@ impl AppWorkflowToolService {
             }
             WorkflowToolRequest::Run { plan_id } => vec![
                 CapabilityRequest::read_path(
-                    durable_id_path(&plans, plan_id)?,
+                    durable_id_path(&plans, plan_id),
                     PathScope::UnrestrictedFilesystem,
                     source(),
                 ),
                 CapabilityRequest::write_path(runs, PathScope::UnrestrictedFilesystem, source()),
             ],
             WorkflowToolRequest::Status { run_id } => vec![CapabilityRequest::read_path(
-                durable_id_path(&runs, run_id)?,
+                durable_id_path(&runs, run_id),
                 PathScope::UnrestrictedFilesystem,
                 source(),
             )],
             WorkflowToolRequest::Cancel { run_id } => {
-                let run = durable_id_path(&runs, run_id)?;
+                let run = durable_id_path(&runs, run_id);
                 vec![
                     CapabilityRequest::read_path(
                         run.clone(),
@@ -127,7 +126,7 @@ impl AppWorkflowToolService {
                 ]
             }
             WorkflowToolRequest::Resume { run_id, .. } => {
-                let run = durable_id_path(&runs, run_id)?;
+                let run = durable_id_path(&runs, run_id);
                 vec![
                     CapabilityRequest::read_path(
                         run.clone(),
@@ -251,9 +250,7 @@ impl AppWorkflowToolService {
             }
             WorkflowToolRequest::Run { plan_id } => {
                 let ops = self.ops().map_err(tool_error)?;
-                let plan = ops
-                    .prepare_run_id(parse_plan_id(&plan_id)?)
-                    .map_err(tool_error)?;
+                let plan = ops.prepare_run_id(plan_id).map_err(tool_error)?;
                 confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
                 let run = ops.create_confirmed_run(&plan).map_err(tool_error)?;
                 let completed = runtime::execute_tool_run(
@@ -269,16 +266,13 @@ impl AppWorkflowToolService {
             WorkflowToolRequest::Status { run_id } => {
                 let ops = self.ops().map_err(tool_error)?;
                 run_result(
-                    ops.load_run_id(parse_run_id(&run_id)?)
-                        .map_err(tool_error)?,
+                    ops.load_run_id(run_id).map_err(tool_error)?,
                     RunResultKind::Status,
                 )
             }
             WorkflowToolRequest::Cancel { run_id } => {
                 let ops = self.ops().map_err(tool_error)?;
-                let run = ops
-                    .load_run_id(parse_run_id(&run_id)?)
-                    .map_err(tool_error)?;
+                let run = ops.load_run_id(run_id).map_err(tool_error)?;
                 let outcome = ops
                     .cancel(run.manifest.run_id, run.state.state.lifecycle)
                     .await
@@ -305,9 +299,7 @@ impl AppWorkflowToolService {
                 recover_uncertain,
             } => {
                 let ops = self.ops().map_err(tool_error)?;
-                let run = ops
-                    .load_run_id(parse_run_id(&run_id)?)
-                    .map_err(tool_error)?;
+                let run = ops.load_run_id(run_id).map_err(tool_error)?;
                 let recovery = ops
                     .prepare_resume(&run, recover_uncertain)
                     .map_err(|error| {
@@ -403,7 +395,7 @@ impl SourceBytes for ToolSourceBytes<'_> {
                 .authorize_path(self.context, &lexical)
                 .await
                 .map_err(workflow_error_from_anyhow)?;
-            crate::workflow::read_opened_utf8_bounded(opened, budget, retained)
+            opened.read_utf8_bounded(budget, retained)
         })
     }
 }
@@ -413,24 +405,6 @@ fn workflow_error_from_anyhow(error: anyhow::Error) -> WorkflowError {
         Ok(error) => error,
         Err(error) => WorkflowError::Starlark(error.to_string()),
     }
-}
-
-fn parse_plan_id(plan_id: &str) -> Result<PlanId, ToolError> {
-    let parsed = PlanId::from_str(plan_id)
-        .map_err(|_| invalid_request("plan_id must be a canonical full UUID"))?;
-    if parsed.to_string() != plan_id {
-        return Err(invalid_request("plan_id must be a canonical full UUID"));
-    }
-    Ok(parsed)
-}
-
-fn parse_run_id(run_id: &str) -> Result<RunId, ToolError> {
-    let parsed = RunId::from_str(run_id)
-        .map_err(|_| invalid_request("run_id must be a canonical full UUID"))?;
-    if parsed.to_string() != run_id {
-        return Err(invalid_request("run_id must be a canonical full UUID"));
-    }
-    Ok(parsed)
 }
 
 fn agent_catalog_roots(cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
@@ -494,13 +468,8 @@ fn executable_candidates_in(
         .collect()
 }
 
-fn durable_id_path(root: &Path, value: &str) -> anyhow::Result<PathBuf> {
-    let parsed = uuid::Uuid::parse_str(value)
-        .map_err(|_| anyhow::anyhow!("workflow durable ID must be a canonical full UUID"))?;
-    if parsed.to_string() != value {
-        anyhow::bail!("workflow durable ID must be a canonical full UUID");
-    }
-    Ok(root.join(value))
+fn durable_id_path(root: &Path, id: impl std::fmt::Display) -> PathBuf {
+    root.join(id.to_string())
 }
 
 #[cfg(test)]
@@ -649,10 +618,6 @@ fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagno
 
 fn tool_error(error: impl std::fmt::Display) -> ToolError {
     ToolError::new(ToolErrorKind::Execution, error.to_string())
-}
-
-fn invalid_request(message: impl Into<String>) -> ToolError {
-    ToolError::new(ToolErrorKind::InvalidArguments, message)
 }
 
 fn host_input_error(error: impl std::fmt::Display) -> ToolError {

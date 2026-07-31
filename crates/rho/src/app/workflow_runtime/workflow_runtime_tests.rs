@@ -727,7 +727,7 @@ async fn cross_process_request_cancels_active_node() {
     });
 
     started_rx.await.unwrap();
-    let receipt = WorkflowRunner::request_cross_process_cancel(home.path(), run_id).unwrap();
+    let receipt = request_cross_process_cancel(home.path(), run_id).unwrap();
     // Receipt: this is a generous tripwire above the measured 87 ms CLI cancellation.
     let completed = tokio::time::timeout(std::time::Duration::from_secs(2), worker)
         .await
@@ -755,10 +755,8 @@ async fn cross_process_request_cancels_active_node() {
         .nodes
         .values()
         .all(|state| state.terminal().is_some()));
-    assert!(WorkflowRunner::cross_process_cancel_acknowledged(home.path(), run_id).unwrap());
-    assert!(
-        WorkflowRunner::cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap()
-    );
+    assert!(cross_process_cancel_acknowledged(home.path(), run_id).unwrap());
+    assert!(cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
 
     let resumed = runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
         .drive(run_id, RecoveryDecision::NormalResume, None)
@@ -786,11 +784,8 @@ async fn cross_process_request_cancels_active_node() {
     super::journal::replay_journal(&store, &run_directory, &mut replayed).unwrap();
     assert_eq!(replayed.state, resumed.state);
 
-    let unobserved = WorkflowRunner::request_cross_process_cancel(home.path(), run_id).unwrap();
-    assert!(
-        !WorkflowRunner::cancellation_request_acknowledged(home.path(), run_id, &unobserved)
-            .unwrap()
-    );
+    let unobserved = request_cross_process_cancel(home.path(), run_id).unwrap();
+    assert!(!cancellation_request_acknowledged(home.path(), run_id, &unobserved).unwrap());
 }
 
 // Covers: concurrent cancellation retries must name one durable request rather
@@ -807,7 +802,7 @@ async fn concurrent_cancellation_requests_share_the_active_receipt() {
         let run_id = run.manifest.run_id;
         tokio::task::spawn_blocking(move || {
             barrier.wait();
-            WorkflowRunner::request_cross_process_cancel(&home, run_id).unwrap()
+            request_cross_process_cancel(&home, run_id).unwrap()
         })
     };
     let first = request(Arc::clone(&barrier));
@@ -873,7 +868,7 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
         .request()
         .unwrap();
     cleanup_started_rx.await.unwrap();
-    let retry = WorkflowRunner::request_cross_process_cancel(home.path(), run_id).unwrap();
+    let retry = request_cross_process_cancel(home.path(), run_id).unwrap();
     assert_eq!(retry, receipt);
     assert!(matches!(
         active_runner
@@ -946,9 +941,7 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
         attempt.state,
         AttemptState::InterruptedUncertain { .. }
     ));
-    assert!(
-        !WorkflowRunner::cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap()
-    );
+    assert!(!cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
     assert!(matches!(
         runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
             .drive(run_id, RecoveryDecision::NormalResume, None)
@@ -961,9 +954,7 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
         .await
         .unwrap();
     assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
-    assert!(
-        WorkflowRunner::cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap()
-    );
+    assert!(cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
 }
 
 // Covers: a timed-out agent with unconfirmed cleanup must require recovery

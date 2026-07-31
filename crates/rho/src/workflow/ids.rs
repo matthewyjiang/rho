@@ -72,9 +72,7 @@ portable_id!(InputName, "input name");
 
 macro_rules! uuid_id {
     ($name:ident, $kind:literal) => {
-        #[derive(
-            Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-        )]
+        #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
         #[serde(transparent)]
         pub(crate) struct $name(Uuid);
 
@@ -87,13 +85,30 @@ macro_rules! uuid_id {
         impl FromStr for $name {
             type Err = WorkflowError;
             fn from_str(value: &str) -> Result<Self, Self::Err> {
-                Uuid::parse_str(value)
-                    .map(Self)
-                    .map_err(|_| WorkflowError::InvalidId {
+                let uuid = Uuid::parse_str(value).map_err(|_| WorkflowError::InvalidId {
+                    kind: $kind,
+                    value: value.to_owned(),
+                    grammar: "a canonical UUID",
+                })?;
+                let id = Self(uuid);
+                if id.to_string() != value {
+                    return Err(WorkflowError::InvalidId {
                         kind: $kind,
                         value: value.to_owned(),
                         grammar: "a canonical UUID",
-                    })
+                    });
+                }
+                Ok(id)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let value = String::deserialize(deserializer)?;
+                Self::from_str(&value).map_err(serde::de::Error::custom)
             }
         }
 
