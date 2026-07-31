@@ -12,16 +12,48 @@ author a workflow, but it is not a security boundary.
 ## Safe authoring flow
 
 1. Put the workflow under the current workspace or project root.
-2. Declare each external value as an explicit input.
-3. Build a finite directed acyclic graph in one `build(inputs)` call.
-4. Use typed output schemas before a later node reads an output.
-5. Use `command` for direct argv. Use `shell` only when shell syntax is needed.
-6. Declare `access = "read_only"` only for a Rho agent whose frozen tools
+2. Keep one workflow and its helper scripts in one folder when the graph needs
+   companion code. Do not drop helper scripts loose next to unrelated workflows.
+3. Declare each external value as an explicit input.
+4. Build a finite directed acyclic graph in one `build(inputs)` call.
+5. Use typed output schemas before a later node reads an output.
+6. Use `command` for direct argv. Use `shell` only when shell syntax is needed.
+7. Declare `access = "read_only"` only for a Rho agent whose frozen tools
    enforce read-only work.
-7. Validate the source.
-8. Create and inspect a frozen plan.
-9. Confirm and run that plan ID.
-10. Inspect status and artifact references. Cancel or resume by run ID.
+8. Validate the source.
+9. Create and inspect a frozen plan.
+10. Confirm and run that plan ID.
+11. Inspect status and artifact references. Cancel or resume by run ID.
+
+## Project layout
+
+Prefer a per-workflow directory under `.rho/workflows/` whenever the graph owns
+helper scripts, fixtures, or shared Starlark modules:
+
+```text
+.rho/workflows/
+  review/
+    workflow.star
+    collect_context.py
+  release/
+    workflow.star
+    common.star
+    prepare_notes.py
+```
+
+Rules of thumb:
+
+- Entry file: `workflow.star` inside the workflow folder.
+- Helper scripts and local modules: same folder as that entry file.
+- Shared pure-Starlark helpers used by many workflows: a sibling module such as
+  `.rho/workflows/common.star`, or a small `shared/` folder with explicit loads.
+- Point `command` / `shell` argv at the helper with a workspace-relative path
+  under that folder, for example
+  `.rho/workflows/review/collect_context.py`.
+
+A single standalone `.star` file is fine when there are no companion files. As
+soon as you add a script or local module, move the graph into a folder and keep
+the set together.
 
 Starlark runs during `validate` and `plan`. It does not run during `run` or
 `resume`. Run and resume use the frozen graph only. Plan approval accepts one

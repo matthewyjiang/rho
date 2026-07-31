@@ -24,7 +24,10 @@ stateDiagram
 
 The main steps are:
 
-1. Write one or more `.star` files under the workspace or project root.
+1. Write one or more `.star` files under the workspace or project root. When a
+   workflow owns helper scripts or local modules, put the entry file and those
+   companions in one folder such as `.rho/workflows/review/` instead of leaving
+   scripts loose under `.rho/workflows/`.
 2. Validate the source and inputs.
 3. Create a frozen plan and inspect its graph digest and authority list.
 4. Confirm that exact digest and start a run by plan ID.
