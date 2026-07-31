@@ -531,7 +531,8 @@ impl App {
     }
 
     pub(super) fn insert_external_paste(&mut self, text: &str) {
-        if !self.start_pasted_media_path(text) {
+        let is_command = matches!(commands::parse_command(text), Ok(Some(_)));
+        if is_command || !self.start_pasted_media_path(text) {
             self.insert_paste(text);
         }
     }
