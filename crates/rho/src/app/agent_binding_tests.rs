@@ -123,6 +123,7 @@ fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
         permission_ceiling: "auto".into(),
         auth_profile: Some("anthropic".into()),
         executable: None,
+        executable_identity: None,
         arguments: Vec::new(),
     };
     let current = Config {

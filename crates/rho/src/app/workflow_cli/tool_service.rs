@@ -3,12 +3,14 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
+    str::FromStr,
     sync::Arc,
 };
 
 use rho_sdk::{
     tool::{ToolContext, ToolError, ToolErrorKind},
-    CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest, HostQuestion, SelectionMode,
+    CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest, HostQuestion, PathScope,
+    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits, SelectionMode,
 };
 
 use crate::{
@@ -44,6 +46,10 @@ struct AppWorkflowToolService {
 }
 
 impl WorkflowToolService for AppWorkflowToolService {
+    fn prepare(&self, request: &WorkflowToolRequest) -> Result<Vec<CapabilityRequest>, ToolError> {
+        self.capabilities_for(request).map_err(tool_error)
+    }
+
     fn execute<'a>(
         &'a self,
         request: WorkflowToolRequest,
@@ -54,6 +60,123 @@ impl WorkflowToolService for AppWorkflowToolService {
 }
 
 impl AppWorkflowToolService {
+    fn capabilities_for(
+        &self,
+        request: &WorkflowToolRequest,
+    ) -> anyhow::Result<Vec<CapabilityRequest>> {
+        let rho_home = crate::paths::rho_dir()?;
+        let executable = std::env::current_exe()?;
+        self.capabilities_for_paths(request, &rho_home, &executable)
+    }
+
+    fn capabilities_for_paths(
+        &self,
+        request: &WorkflowToolRequest,
+        rho_home: &Path,
+        executable: &Path,
+    ) -> anyhow::Result<Vec<CapabilityRequest>> {
+        let source = || CapabilitySource::built_in_tool("workflow");
+        let plans = rho_home.join("workflows/plans");
+        let runs = rho_home.join("workflows/runs");
+        let capabilities = match request {
+            WorkflowToolRequest::Validate { file, .. } => vec![
+                CapabilityRequest::read_path(
+                    self.source_request_path(file)?,
+                    PathScope::PrimaryWorkspace,
+                    source(),
+                ),
+                CapabilityRequest::process(self.planner_process_request(executable)?, source()),
+            ],
+            WorkflowToolRequest::Plan { file, .. } => vec![
+                CapabilityRequest::read_path(
+                    self.source_request_path(file)?,
+                    PathScope::PrimaryWorkspace,
+                    source(),
+                ),
+                CapabilityRequest::process(self.planner_process_request(executable)?, source()),
+                CapabilityRequest::write_path(plans, PathScope::UnrestrictedFilesystem, source()),
+            ],
+            WorkflowToolRequest::Run { plan_id } => vec![
+                CapabilityRequest::read_path(
+                    durable_id_path(&plans, plan_id)?,
+                    PathScope::UnrestrictedFilesystem,
+                    source(),
+                ),
+                CapabilityRequest::write_path(runs, PathScope::UnrestrictedFilesystem, source()),
+            ],
+            WorkflowToolRequest::Status { run_id } => vec![CapabilityRequest::read_path(
+                durable_id_path(&runs, run_id)?,
+                PathScope::UnrestrictedFilesystem,
+                source(),
+            )],
+            WorkflowToolRequest::Cancel { run_id } => {
+                let run = durable_id_path(&runs, run_id)?;
+                vec![
+                    CapabilityRequest::read_path(
+                        run.clone(),
+                        PathScope::UnrestrictedFilesystem,
+                        source(),
+                    ),
+                    CapabilityRequest::write_path(
+                        run.join("cancel.request"),
+                        PathScope::UnrestrictedFilesystem,
+                        source(),
+                    ),
+                ]
+            }
+            WorkflowToolRequest::Resume { run_id, .. } => {
+                let run = durable_id_path(&runs, run_id)?;
+                vec![
+                    CapabilityRequest::read_path(
+                        run.clone(),
+                        PathScope::UnrestrictedFilesystem,
+                        source(),
+                    ),
+                    CapabilityRequest::write_path(run, PathScope::UnrestrictedFilesystem, source()),
+                ]
+            }
+        };
+        Ok(capabilities)
+    }
+
+    fn source_request_path(&self, file: &str) -> anyhow::Result<PathBuf> {
+        let path = Path::new(file);
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            anyhow::bail!("workflow source path must not contain '..'");
+        }
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        };
+        if !path.starts_with(&self.cwd) {
+            anyhow::bail!("workflow source is outside the workspace");
+        }
+        Ok(path)
+    }
+
+    fn planner_process_request(&self, executable: &Path) -> anyhow::Result<ProcessExecution> {
+        let limits = super::planning_limits().map_err(anyhow::Error::from)?;
+        Ok(ProcessExecution::new(
+            &self.cwd,
+            ProcessInvocation::executable(
+                executable,
+                vec!["workflow".into(), "validate".into(), "worker.star".into()],
+            ),
+            ProcessEnvironment::InheritAll,
+            ProcessOutputLimits::new(
+                usize::try_from(super::PLANNER_RESPONSE_FRAME_BYTES + 8)
+                    .map_err(|_| anyhow::anyhow!("planner response limit does not fit platform"))?,
+                Some(std::time::Duration::from_millis(
+                    limits.worker_wall_millis.limit,
+                )),
+            ),
+        ))
+    }
+
     async fn execute_request(
         &self,
         request: WorkflowToolRequest,
@@ -87,6 +210,7 @@ impl AppWorkflowToolService {
                         graph: prepared.workflow.graph,
                         resolved_nodes: prepared.workflow.resolved_nodes,
                         scheduler: prepared.workflow.scheduler,
+                        runtime_limits: prepared.workflow.runtime_limits,
                         workspace_identity: super::workspace_identity(&self.cwd)
                             .map_err(tool_error)?,
                     })
@@ -100,8 +224,6 @@ impl AppWorkflowToolService {
             }
             WorkflowToolRequest::Run { plan_id } => {
                 let plan = self.load_plan(&plan_id)?;
-                self.authorize_manifest_sources(context, &plan.graph.sources)
-                    .await?;
                 recheck_plan(&plan, self.config_path.clone()).map_err(tool_error)?;
                 confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
                 let run = super::workflow_service()
@@ -145,9 +267,6 @@ impl AppWorkflowToolService {
                 recover_uncertain,
             } => {
                 let run = self.load_run(&run_id)?;
-                let plan = self.load_plan(&run.manifest.plan_id.to_string())?;
-                self.authorize_manifest_sources(context, &plan.graph.sources)
-                    .await?;
                 super::recheck_run(&run, self.config_path.clone()).map_err(tool_error)?;
                 if run.state.state.lifecycle == RunLifecycle::NeedsRecovery && !recover_uncertain {
                     return Err(ToolError::new(
@@ -199,19 +318,6 @@ impl AppWorkflowToolService {
             .await
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
         Ok(resolved.path().to_path_buf())
-    }
-
-    async fn authorize_manifest_sources(
-        &self,
-        context: &ToolContext,
-        manifest: &SourceManifest,
-    ) -> Result<(), ToolError> {
-        for label in manifest.modules.keys() {
-            let relative = source_relative_path(label).map_err(tool_error)?;
-            self.authorize_path(context, &self.cwd.join(relative))
-                .await?;
-        }
-        Ok(())
     }
 
     async fn prepare(
@@ -284,7 +390,7 @@ impl AppWorkflowToolService {
             }
             limits.module_count.check((seen.len() + 1) as u64)?;
             let relative = source_relative_path(&label)?;
-            let lexical = self.cwd.join(relative);
+            let lexical = self.cwd.join(&relative);
             let authorized = self
                 .authorize_path(context, &lexical)
                 .await
@@ -292,7 +398,12 @@ impl AppWorkflowToolService {
             if authorized != lexical {
                 return Err(WorkflowError::SourceSymlink { path: lexical }.into());
             }
-            let source = std::fs::read_to_string(&authorized)?;
+            let source = crate::workflow::read_source_beneath(
+                &self.cwd,
+                &relative,
+                &limits.total_source_bytes,
+                total_bytes,
+            )?;
             total_bytes = total_bytes.checked_add(source.len() as u64).ok_or(
                 WorkflowError::BudgetExceeded {
                     budget: limits.total_source_bytes.name,
@@ -338,21 +449,42 @@ impl AppWorkflowToolService {
     fn load_plan(&self, plan_id: &str) -> Result<StoredPlan, ToolError> {
         let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
         let store = WorkflowStore::new(&rho_home).map_err(tool_error)?;
-        let plan_id = store.resolve_plan(plan_id).map_err(tool_error)?;
-        store.load_plan(plan_id).map_err(tool_error)
+        let parsed = crate::workflow::PlanId::from_str(plan_id)
+            .map_err(|_| invalid_request("plan_id must be a canonical full UUID"))?;
+        if parsed.to_string() != plan_id {
+            return Err(invalid_request("plan_id must be a canonical full UUID"));
+        }
+        store.load_plan(parsed).map_err(tool_error)
     }
 
     fn load_config(&self) -> anyhow::Result<crate::config::Config> {
         ConfigRepository::new(self.config_path.clone()).load()
     }
 
-    fn load_run(&self, prefix: &str) -> Result<StoredRun, ToolError> {
+    fn load_run(&self, run_id: &str) -> Result<StoredRun, ToolError> {
         let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
         let store = WorkflowStore::new(&rho_home).map_err(tool_error)?;
-        let run_id = store.resolve_run(prefix).map_err(tool_error)?;
-        store.load_run(run_id).map_err(tool_error)
+        let parsed = crate::workflow::RunId::from_str(run_id)
+            .map_err(|_| invalid_request("run_id must be a canonical full UUID"))?;
+        if parsed.to_string() != run_id {
+            return Err(invalid_request("run_id must be a canonical full UUID"));
+        }
+        store.load_run(parsed).map_err(tool_error)
     }
 }
+
+fn durable_id_path(root: &Path, value: &str) -> anyhow::Result<PathBuf> {
+    let parsed = uuid::Uuid::parse_str(value)
+        .map_err(|_| anyhow::anyhow!("workflow durable ID must be a canonical full UUID"))?;
+    if parsed.to_string() != value {
+        anyhow::bail!("workflow durable ID must be a canonical full UUID");
+    }
+    Ok(root.join(value))
+}
+
+#[cfg(test)]
+#[path = "tool_service_tests.rs"]
+mod tests;
 
 async fn confirm_exact_plan(
     context: &ToolContext,
@@ -407,21 +539,34 @@ fn run_result(run: StoredRun, kind: RunResultKind) -> Result<WorkflowToolResult,
         .map(|(node_id, state)| {
             let attempt = match state {
                 NodeState::Running { attempt } => Some(attempt.get()),
-                _ => latest_attempt(run.manifest.run_id, node_id.as_str())?,
+                NodeState::Pending | NodeState::Ready => None,
+                NodeState::Terminal { .. } => run
+                    .state
+                    .state
+                    .completions
+                    .get(node_id)
+                    .and_then(|completion| completion.attempt)
+                    .map(crate::workflow::AttemptNumber::get),
             };
-            Ok(WorkflowNodeSummary {
+            WorkflowNodeSummary {
                 node_id: node_id.to_string(),
                 state: node_state_summary(state),
                 attempt,
-                artifacts: match attempt {
-                    Some(attempt) => {
-                        artifact_summaries(run.manifest.run_id, node_id.as_str(), attempt)?
-                    }
-                    None => Vec::new(),
-                },
-            })
+                artifacts: run
+                    .state
+                    .state
+                    .completions
+                    .get(node_id)
+                    .into_iter()
+                    .flat_map(|completion| completion.artifacts.iter())
+                    .map(|(kind, artifact)| WorkflowArtifactSummary {
+                        kind,
+                        artifact: artifact.clone(),
+                    })
+                    .collect(),
+            }
         })
-        .collect::<Result<Vec<_>, ToolError>>()?;
+        .collect();
     Ok(match kind {
         RunResultKind::Run => WorkflowToolResult::Run {
             run_id,
@@ -442,79 +587,6 @@ fn run_result(run: StoredRun, kind: RunResultKind) -> Result<WorkflowToolResult,
             nodes,
         },
     })
-}
-
-fn latest_attempt(run_id: crate::workflow::RunId, node: &str) -> Result<Option<u32>, ToolError> {
-    let directory = crate::paths::rho_dir()
-        .map_err(tool_error)?
-        .join("workflows/runs")
-        .join(run_id.to_string())
-        .join("nodes")
-        .join(node)
-        .join("attempts");
-    if !directory.is_dir() {
-        return Ok(None);
-    }
-    let mut latest = None;
-    for entry in std::fs::read_dir(directory).map_err(tool_error)? {
-        let entry = entry.map_err(tool_error)?;
-        if !entry.file_type().map_err(tool_error)?.is_dir() {
-            continue;
-        }
-        if let Some(attempt) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        {
-            latest = Some(latest.map_or(attempt, |current: u32| current.max(attempt)));
-        }
-    }
-    Ok(latest)
-}
-
-fn artifact_summaries(
-    run_id: crate::workflow::RunId,
-    node: &str,
-    attempt: u32,
-) -> Result<Vec<WorkflowArtifactSummary>, ToolError> {
-    use sha2::Digest as _;
-
-    let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
-    let directory = rho_home
-        .join("workflows/runs")
-        .join(run_id.to_string())
-        .join("nodes")
-        .join(node)
-        .join("attempts")
-        .join(attempt.to_string());
-    let mut artifacts = Vec::new();
-    for name in [
-        "stdout",
-        "stderr",
-        "output.json",
-        "command.json",
-        "agent/answer.txt",
-    ] {
-        let path = directory.join(name);
-        let metadata = match std::fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.file_type().is_file() => metadata,
-            Ok(_) => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(tool_error(error)),
-        };
-        let bytes = std::fs::read(&path).map_err(tool_error)?;
-        let relative_path = path
-            .strip_prefix(&rho_home)
-            .map_err(tool_error)
-            .map(crate::paths::display)?;
-        artifacts.push(WorkflowArtifactSummary {
-            kind: name.replace('/', "_"),
-            relative_path,
-            bytes: metadata.len(),
-            digest: format!("sha256:{:x}", sha2::Sha256::digest(bytes)),
-        });
-    }
-    Ok(artifacts)
 }
 
 fn state_summary(lifecycle: RunLifecycle) -> WorkflowRunStateSummary {
@@ -576,6 +648,10 @@ fn source_relative_path(label: &str) -> Result<PathBuf, WorkflowError> {
 
 fn tool_error(error: impl std::fmt::Display) -> ToolError {
     ToolError::new(ToolErrorKind::Execution, error.to_string())
+}
+
+fn invalid_request(message: impl Into<String>) -> ToolError {
+    ToolError::new(ToolErrorKind::InvalidArguments, message)
 }
 
 fn host_input_error(error: impl std::fmt::Display) -> ToolError {

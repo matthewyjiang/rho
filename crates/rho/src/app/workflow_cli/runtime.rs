@@ -1,11 +1,14 @@
 use std::{
     future::Future,
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Write},
     pin::Pin,
     sync::Arc,
 };
 
-use rho_sdk::{ProcessEnvironment, ToolHost, Workspace};
+use rho_sdk::{
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalSession,
+    CapabilityOperation, ProcessEnvironment, ToolHost, Workspace,
+};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
@@ -40,9 +43,83 @@ enum RuntimePresentation {
     Jsonl,
 }
 
+struct TerminalWorkflowApprovals {
+    interactive: bool,
+}
+
+impl ApprovalHandler for TerminalWorkflowApprovals {
+    fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
+        if !self.interactive {
+            return Box::pin(std::future::ready(ApprovalDecision::Deny {
+                reason: "workflow capability approval requires an interactive terminal".into(),
+            }));
+        }
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || prompt_for_capability(request))
+                .await
+                .unwrap_or_else(|error| ApprovalDecision::Deny {
+                    reason: format!("workflow approval prompt failed: {error}"),
+                })
+        })
+    }
+}
+
+fn prompt_for_capability(request: ApprovalRequest) -> ApprovalDecision {
+    eprintln!(
+        "workflow requests {} capability from {:?}",
+        request.capability().kind().label(),
+        request.capability().source()
+    );
+    match request.capability().operation() {
+        CapabilityOperation::ReadPath { path, scope } => {
+            eprintln!("read path: {} ({scope:?})", path.display());
+        }
+        CapabilityOperation::WritePath { path, scope } => {
+            eprintln!("write path: {} ({scope:?})", path.display());
+        }
+        CapabilityOperation::ExecuteProcess(process) => {
+            eprintln!(
+                "working directory: {}",
+                process.working_directory().display()
+            );
+            eprintln!(
+                "executable: {}",
+                process.invocation().executable_path().display()
+            );
+            eprintln!("arguments: {:?}", process.invocation().arguments());
+            eprintln!("environment: {:?}", process.environment());
+            eprintln!("output limits: {:?}", process.output_limits());
+        }
+        operation => eprintln!("capability details: {operation:?}"),
+    }
+    if !request.reason().is_empty() {
+        eprintln!("reason: {}", request.reason());
+    }
+    eprint!("allow [o]nce, allow for [s]ession (exact request), or [d]eny? ");
+    if io::stderr().flush().is_err() {
+        return ApprovalDecision::Deny {
+            reason: "workflow approval prompt could not write to the terminal".into(),
+        };
+    }
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer).is_err() {
+        return ApprovalDecision::Deny {
+            reason: "workflow approval prompt could not read from the terminal".into(),
+        };
+    }
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "o" | "once" => ApprovalDecision::AllowOnce,
+        "s" | "session" => ApprovalDecision::AllowForSession,
+        _ => ApprovalDecision::Deny {
+            reason: "workflow capability denied by user".into(),
+        },
+    }
+}
+
 struct WorkflowCommandHosts {
     workspace: Workspace,
     policy: AppPolicy,
+    approvals: ApprovalSession,
     hooks: Option<crate::hooks::HookPipeline>,
 }
 
@@ -56,6 +133,7 @@ impl CommandHostFactory for WorkflowCommandHosts {
             .tool(tool)
             .workspace(self.workspace.clone())
             .workspace_policy(self.policy)
+            .approval_session(self.approvals.clone())
             .hook_host_labels(labels);
         if let Some(hooks) = &self.hooks {
             builder = hooks.attach_tool_host(builder);
@@ -72,13 +150,22 @@ pub(super) async fn execute_run(
     output: Option<WorkflowRunFormat>,
     config_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    let use_tui = output.is_none() && io::stdin().is_terminal() && io::stdout().is_terminal();
+    let interactive_input = io::stdin().is_terminal();
+    let interactive_terminal = interactive_input && io::stdout().is_terminal();
+    let interactive_display = io::stderr().is_terminal();
     let presentation = match output {
         Some(WorkflowRunFormat::Jsonl) => RuntimePresentation::Jsonl,
         Some(WorkflowRunFormat::Text) | None => RuntimePresentation::Text,
     };
     let rho_home = crate::paths::rho_dir()?;
-    let runtime = WorkflowRuntime::build(&run, config_path)?;
+    let approvals = ApprovalSession::new(TerminalWorkflowApprovals {
+        interactive: interactive_input && interactive_display,
+    });
+    let runtime = WorkflowRuntime::build(&run, config_path, approvals)?;
+    let use_tui = output.is_none()
+        && interactive_terminal
+        && interactive_display
+        && runtime.permission_mode != crate::permission::PermissionMode::Supervised;
     let runner = Arc::clone(&runtime.runner);
     let execution = if use_tui {
         let adapter = RunnerTuiAdapter::start(Arc::clone(&runner), rho_home, run.clone(), recovery);
@@ -104,14 +191,21 @@ struct WorkflowRuntime {
     runner: Arc<WorkflowRunner>,
     command_executor: Arc<dyn WorkflowNodeExecutor>,
     hosts: Arc<WorkflowCommandHosts>,
+    permission_mode: crate::permission::PermissionMode,
 }
 
 impl WorkflowRuntime {
-    fn build(run: &StoredRun, config_path: Option<std::path::PathBuf>) -> anyhow::Result<Self> {
+    fn build(
+        run: &StoredRun,
+        config_path: Option<std::path::PathBuf>,
+        approvals: ApprovalSession,
+    ) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()?.canonicalize()?;
         let repository = ConfigRepository::new(config_path);
         let config_path = absolute_config_path(&repository)?;
         let mut config = repository.load()?;
+        let permission_mode = effective_permission_mode(run, config.permission_mode)?;
+        config.permission_mode = permission_mode;
         let needs_provider_credentials = run.graph.resolved_nodes.values().any(|node| {
             matches!(
                 node,
@@ -127,18 +221,22 @@ impl WorkflowRuntime {
         let hook_engine = hooks.as_ref().map(|pipeline| Arc::clone(pipeline.engine()));
         let hosts = Arc::new(WorkflowCommandHosts {
             workspace,
-            policy: AppPolicy::for_mode(config.permission_mode),
+            policy: AppPolicy::for_mode(permission_mode),
+            approvals: approvals.clone(),
             hooks,
         });
         let process_environment = ProcessEnvironment::inherit_except(
             rho_providers::credential_env_vars().iter().copied(),
         );
-        let app_agent_executor = Arc::new(AgentExecutor::new(
-            config.clone(),
-            config_path,
-            cwd.clone(),
-            SubagentHostInputBridge::new(),
-        ));
+        let app_agent_executor = Arc::new(
+            AgentExecutor::new(
+                config.clone(),
+                config_path,
+                cwd.clone(),
+                SubagentHostInputBridge::new(),
+            )
+            .with_approval_session(approvals),
+        );
         let agent_executor: Arc<dyn WorkflowNodeExecutor> =
             Arc::new(WorkflowAgentExecutor::new(app_agent_executor));
         let command_executor: Arc<dyn WorkflowNodeExecutor> =
@@ -149,7 +247,7 @@ impl WorkflowRuntime {
         let security = RuntimeSecurity {
             project_trusted: std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
                 == Some(std::ffi::OsStr::new("1")),
-            permission_mode: config.permission_mode,
+            permission_mode,
         };
         let mut runner = WorkflowRunner::new(
             crate::paths::rho_dir()?,
@@ -165,6 +263,7 @@ impl WorkflowRuntime {
             runner: Arc::new(runner),
             command_executor,
             hosts,
+            permission_mode,
         })
     }
 
@@ -182,13 +281,43 @@ impl WorkflowRuntime {
     }
 }
 
+fn effective_permission_mode(
+    run: &StoredRun,
+    current: crate::permission::PermissionMode,
+) -> anyhow::Result<crate::permission::PermissionMode> {
+    effective_permission_mode_for(
+        current,
+        run.graph
+            .resolved_nodes
+            .values()
+            .filter_map(|node| match node {
+                ResolvedNode::Agent(agent) => Some(agent.permission_ceiling.as_str()),
+                ResolvedNode::Command(_) => None,
+            }),
+    )
+}
+
+fn effective_permission_mode_for<'a>(
+    current: crate::permission::PermissionMode,
+    frozen_ceilings: impl IntoIterator<Item = &'a str>,
+) -> anyhow::Result<crate::permission::PermissionMode> {
+    let mut effective = current;
+    for frozen in frozen_ceilings {
+        let frozen = frozen.parse().map_err(|error| {
+            anyhow::anyhow!("frozen workflow permission ceiling is invalid: {error}")
+        })?;
+        effective = crate::app::agent_binding::narrower_permission_mode(frozen, effective);
+    }
+    Ok(effective)
+}
+
 pub(super) async fn execute_tool_run(
     run: StoredRun,
     recovery: RecoveryDecision,
     config_path: Option<std::path::PathBuf>,
     context: &rho_sdk::tool::ToolContext,
 ) -> anyhow::Result<StoredRun> {
-    let runtime = WorkflowRuntime::build(&run, config_path)?;
+    let runtime = WorkflowRuntime::build(&run, config_path, context.child_approval_session())?;
     let runner = Arc::clone(&runtime.runner);
     let cancellation = runner.cancellation_request(run.manifest.run_id);
     let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
@@ -414,7 +543,7 @@ fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
                 current_attempt,
                 command_exit: state.command_exits.get(id).cloned(),
                 validated_output: state.outputs.get(id).cloned(),
-                artifacts: Vec::new(),
+                artifacts: durable_artifacts_for_node(state, id),
                 terminal_reason: terminal_reason(&node_state),
             }
         })
@@ -447,6 +576,22 @@ fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
             RunLifecycle::Completed | RunLifecycle::NeedsRecovery
         ),
     }
+}
+
+fn durable_artifacts_for_node(
+    state: &crate::workflow::WorkflowState,
+    id: &crate::workflow::NodeId,
+) -> Vec<crate::tui::workflow::ArtifactReference> {
+    state
+        .completions
+        .get(id)
+        .into_iter()
+        .flat_map(|completion| completion.artifacts.iter())
+        .map(|(kind, artifact)| crate::tui::workflow::ArtifactReference {
+            kind,
+            artifact: artifact.clone(),
+        })
+        .collect()
 }
 
 fn source_digest(run: &StoredRun) -> Digest {
@@ -558,3 +703,7 @@ async fn workflow_shutdown_signal() -> io::Result<()> {
 async fn workflow_shutdown_signal() -> io::Result<()> {
     tokio::signal::ctrl_c().await
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

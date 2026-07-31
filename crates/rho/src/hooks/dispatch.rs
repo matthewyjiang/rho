@@ -208,7 +208,7 @@ impl HookEngine {
         workflow_run_id: &str,
         plan_digest: &str,
         duration: Duration,
-        artifacts: &[String],
+        artifacts: &[crate::workflow::DurableArtifactReference],
     ) {
         self.enqueue_workflow(
             WorkflowHookEventKind::Completed,
@@ -229,7 +229,7 @@ impl HookEngine {
         plan_digest: &str,
         outcome: &O,
         duration: Duration,
-        artifacts: &[String],
+        artifacts: &[crate::workflow::DurableArtifactReference],
     ) {
         let Some(outcome) = self.workflow_outcome(
             WorkflowHookEventKind::Failed,
@@ -256,7 +256,7 @@ impl HookEngine {
         workflow_run_id: &str,
         plan_digest: &str,
         duration: Duration,
-        artifacts: &[String],
+        artifacts: &[crate::workflow::DurableArtifactReference],
     ) {
         self.enqueue_workflow(
             WorkflowHookEventKind::Cancelled,
@@ -323,7 +323,7 @@ pub(crate) struct WorkflowNodeFinished<'a, O> {
     pub attempt: u32,
     pub outcome: &'a O,
     pub duration: Duration,
-    pub artifacts: &'a [String],
+    pub artifacts: &'a [crate::workflow::DurableArtifactReference],
 }
 
 const NODE_OUTCOMES: &[&str] = &[

@@ -7,13 +7,52 @@ use std::{
 use sha2::{Digest as _, Sha256};
 use starlark::syntax::{AstModule, Dialect};
 
-use super::{Digest, PlanningLimits, SourceFile, SourceManifest, WorkflowError, WorkflowResult};
+use super::{
+    read_source_beneath, Digest, PlanningLimits, SourceFile, SourceManifest, WorkflowError,
+    WorkflowResult,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CollectedSources {
     pub(crate) entry_label: String,
     pub(crate) sources: BTreeMap<String, String>,
     pub(crate) manifest: SourceManifest,
+}
+
+impl CollectedSources {
+    pub(crate) fn validate(&self, limits: &PlanningLimits) -> WorkflowResult<()> {
+        limits.module_count.check(self.sources.len() as u64)?;
+        if self.sources.keys().ne(self.manifest.modules.keys())
+            || !self.sources.contains_key(&self.entry_label)
+            || self.entry_label != self.manifest.entry_label
+        {
+            return Err(WorkflowError::Starlark(
+                "collected source bytes do not match the source manifest".to_owned(),
+            ));
+        }
+        let mut total = 0_u64;
+        for (label, source) in &self.sources {
+            total =
+                total
+                    .checked_add(source.len() as u64)
+                    .ok_or(WorkflowError::BudgetExceeded {
+                        budget: limits.total_source_bytes.name,
+                        limit: limits.total_source_bytes.limit,
+                        actual: u64::MAX,
+                    })?;
+            limits.total_source_bytes.check(total)?;
+            let digest = Sha256::digest(source.as_bytes());
+            let manifest = &self.manifest.modules[label];
+            if manifest.bytes != source.len() as u64
+                || manifest.digest.0 != format!("sha256:{digest:x}")
+            {
+                return Err(WorkflowError::Starlark(format!(
+                    "collected source '{label}' does not match its authorized identity"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct SourceCollector<'a> {
@@ -104,7 +143,15 @@ impl<'a> SourceCollector<'a> {
             .check((loaded.len() + stack.len() + 1) as u64)?;
         let relative = validate_label(label)?;
         let path = self.checked_path(&self.root.join(relative))?;
-        let source = fs::read_to_string(&path)?;
+        let opened_relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| WorkflowError::SourceOutsideRoot { path: path.clone() })?;
+        let source = read_source_beneath(
+            &self.root,
+            opened_relative,
+            &self.limits.total_source_bytes,
+            *total_bytes,
+        )?;
         *total_bytes =
             total_bytes
                 .checked_add(source.len() as u64)

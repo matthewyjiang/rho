@@ -58,3 +58,102 @@ fn confirmation_policy_requires_yes_only_when_not_interactive() {
         ConfirmationRequirement::FlagRequired
     );
 }
+
+// Covers: an oversized worker frame must fail before allocating or deserializing its body.
+// Owner: supervised planner IPC framing.
+#[test]
+fn planner_frame_rejects_zero_and_oversized_lengths() {
+    for requested in [0, PLANNER_REQUEST_FRAME_BYTES + 1] {
+        let error = read_frame_sync(
+            std::io::Cursor::new(requested.to_be_bytes()),
+            PLANNER_REQUEST_FRAME_BYTES,
+        )
+        .unwrap_err();
+        assert!(error.downcast_ref::<WorkflowError>().is_some());
+    }
+}
+
+// Covers: resume must use the run's copied graph when its plan and source no longer exist.
+// Owner: workflow CLI resume preflight.
+#[tokio::test]
+async fn resume_preflight_is_self_contained_after_plan_deletion() {
+    struct SuccessfulExecutor;
+    impl crate::app::workflow_runtime::WorkflowNodeExecutor for SuccessfulExecutor {
+        fn execute<'a>(
+            &'a self,
+            _request: crate::app::workflow_runtime::NodeExecutionRequest,
+        ) -> crate::app::workflow_runtime::WorkflowExecutionFuture<'a> {
+            Box::pin(async {
+                Ok(crate::app::workflow_runtime::NodeExecutionResult::terminal(
+                    crate::workflow::NodeTerminalState::Success,
+                ))
+            })
+        }
+    }
+
+    let home = tempfile::tempdir().unwrap();
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), "WORKFLOW = None").unwrap();
+    let workspace = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let graph =
+        crate::workflow::test_support::workflow(vec![crate::workflow::test_support::agent_node(
+            "inspect",
+            &[],
+            crate::workflow::WorkspaceAccess::Mutating,
+        )]);
+    let plan = store
+        .create_plan(
+            &graph,
+            crate::paths::display(&workspace),
+            &BTreeMap::from([("//workflow.star".to_owned(), "WORKFLOW = None".to_owned())]),
+        )
+        .unwrap();
+    let run = store
+        .create_run(
+            &plan,
+            PlanConsent {
+                graph_digest: plan.manifest.graph_digest.clone(),
+                confirmed: true,
+            },
+            crate::workflow::RunStateRecord {
+                schema_version: crate::workflow::RUN_STATE_VERSION,
+                last_event_sequence: 0,
+                state: crate::workflow::test_support::state(&graph),
+            },
+        )
+        .unwrap();
+    std::fs::remove_dir_all(
+        home.path()
+            .join("workflows/plans")
+            .join(plan.manifest.plan_id.to_string()),
+    )
+    .unwrap();
+    std::fs::remove_file(source.path()).unwrap();
+    let config = super::ConfigRepository::temporary_for_tests().unwrap();
+
+    recheck_run(&run, Some(config.configured_path().unwrap())).unwrap();
+    let executor: Arc<dyn crate::app::workflow_runtime::WorkflowNodeExecutor> =
+        Arc::new(SuccessfulExecutor);
+    let resumed = WorkflowRunner::new(
+        home.path().to_owned(),
+        workspace,
+        crate::app::workflow_runtime::RuntimeSecurity {
+            project_trusted: true,
+            permission_mode: crate::permission::PermissionMode::Auto,
+        },
+        Arc::clone(&executor),
+        executor,
+    )
+    .drive(
+        run.manifest.run_id,
+        crate::app::workflow_runtime::RecoveryDecision::NormalResume,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        resumed.state.state.lifecycle,
+        crate::workflow::RunLifecycle::Completed
+    );
+}

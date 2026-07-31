@@ -158,6 +158,7 @@ impl SessionCore {
         prompt_cache_key: Option<String>,
         runtime: Rho,
     ) -> Arc<Self> {
+        let approvals = runtime.approvals.clone().unwrap_or_default();
         Arc::new(Self {
             id,
             data: Mutex::new(SessionData {
@@ -168,7 +169,7 @@ impl SessionCore {
                 prompt_cache_key,
             }),
             runtime: RwLock::new(runtime),
-            approvals: Arc::default(),
+            approvals,
             active_run: Mutex::new(None),
             state: AtomicU8::new(SessionState::Idle.code()),
         })

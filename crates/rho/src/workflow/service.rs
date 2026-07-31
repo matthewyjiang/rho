@@ -19,6 +19,7 @@ pub(crate) struct FreezePlan<'a> {
     pub(crate) graph: super::WorkflowGraph,
     pub(crate) resolved_nodes: BTreeMap<super::NodeId, ResolvedNode>,
     pub(crate) scheduler: FrozenSchedulerSettings,
+    pub(crate) runtime_limits: super::FrozenRuntimeLimits,
     pub(crate) workspace_identity: String,
 }
 
@@ -37,6 +38,7 @@ impl WorkflowService {
             graph: plan.graph,
             resolved_nodes: plan.resolved_nodes,
             scheduler: plan.scheduler,
+            runtime_limits: plan.runtime_limits,
         };
         let workflow = normalize_workflow(workflow)?;
         validate_workflow(&workflow)?;
@@ -52,6 +54,7 @@ impl WorkflowService {
         let state = WorkflowState {
             revision: 0,
             lifecycle: RunLifecycle::Planned,
+            outcome: None,
             cancellation_requested: false,
             nodes: plan
                 .graph
@@ -63,6 +66,7 @@ impl WorkflowService {
                 .collect(),
             command_exits: BTreeMap::new(),
             outputs: BTreeMap::new(),
+            completions: BTreeMap::new(),
         };
         self.store.create_run(
             plan,

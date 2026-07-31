@@ -340,6 +340,28 @@ impl<'a> PreparedToolInvocation<'a> {
         }
     }
 
+    /// Builds an exclusive plan with capabilities known during preparation.
+    ///
+    /// The executor keeps a full [`ToolContext`] so it can request host input
+    /// or authorize facts that cannot be known until execution, such as a
+    /// source module discovered from already-authorized input.
+    pub fn exclusive_with_capabilities<F>(
+        capabilities: impl IntoIterator<Item = CapabilityRequest>,
+        metadata: ToolMetadata,
+        executor: F,
+    ) -> Self
+    where
+        F: FnOnce(ToolContext) -> ToolFuture<'a> + Send + 'a,
+    {
+        Self {
+            execution: ToolExecutionPolicy::Exclusive,
+            capabilities: capabilities.into_iter().collect(),
+            metadata,
+            executor: ToolExecutor::Exclusive(Box::new(executor)),
+            from_default_prepare: false,
+        }
+    }
+
     /// Builds the plan returned by the default [`Tool::prepare`].
     ///
     /// Rust cannot ask which trait methods a type overrode, so the plan records

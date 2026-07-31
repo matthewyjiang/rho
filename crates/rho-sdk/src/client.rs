@@ -169,6 +169,7 @@ pub struct RhoBuilder {
     workspace: Option<crate::Workspace>,
     workspace_policy: Option<Arc<dyn crate::WorkspacePolicy>>,
     approval_handler: Option<Arc<dyn crate::ApprovalHandler>>,
+    approval_session: Option<crate::ApprovalSession>,
     compactor: Option<Arc<dyn crate::Compactor>>,
     compaction_policy: Option<crate::CompactionPolicy>,
     reasoning_level: crate::ReasoningLevel,
@@ -254,11 +255,21 @@ impl RhoBuilder {
         A: crate::ApprovalHandler + 'static,
     {
         self.approval_handler = Some(Arc::new(handler));
+        self.approval_session = None;
         self
     }
 
     pub fn approval_handler_shared(mut self, handler: Arc<dyn crate::ApprovalHandler>) -> Self {
         self.approval_handler = Some(handler);
+        self.approval_session = None;
+        self
+    }
+
+    /// Shares one exact-request approval session across every SDK session
+    /// created by this runtime and any other host given the same value.
+    pub fn approval_session(mut self, session: crate::ApprovalSession) -> Self {
+        self.approval_session = Some(session);
+        self.approval_handler = None;
         self
     }
 
@@ -372,6 +383,19 @@ impl RhoBuilder {
                 message: "usage purpose must not be empty".into(),
             });
         }
+        let (approval_handler, approvals, approval_audit) = match self.approval_session {
+            Some(session) => (
+                session.handler(),
+                Some(session.remembered()),
+                session.audit_log(),
+            ),
+            None => (
+                self.approval_handler
+                    .unwrap_or_else(|| Arc::new(crate::DenyApprovals)),
+                None,
+                Arc::default(),
+            ),
+        };
         Ok(Rho {
             provider,
             tools,
@@ -389,9 +413,8 @@ impl RhoBuilder {
             workspace_policy: self
                 .workspace_policy
                 .unwrap_or_else(|| Arc::new(crate::DenyAllPolicy)),
-            approval_handler: self
-                .approval_handler
-                .unwrap_or_else(|| Arc::new(crate::DenyApprovals)),
+            approval_handler,
+            approvals,
             compactor: self.compactor,
             compaction_policy: self.compaction_policy,
             reasoning_level: self.reasoning_level,
@@ -399,7 +422,7 @@ impl RhoBuilder {
             usage_recording: self.usage_recording.unwrap_or_default(),
             usage_purpose,
             usage_parent_session_id: self.usage_parent_session_id,
-            approval_audit: Arc::default(),
+            approval_audit,
             hooks: crate::hooks::HookWiring::new(
                 self.hook_observer,
                 self.pre_tool_gate,
@@ -424,6 +447,7 @@ pub struct Rho {
     pub(crate) workspace: Option<crate::Workspace>,
     pub(crate) workspace_policy: Arc<dyn crate::WorkspacePolicy>,
     pub(crate) approval_handler: Arc<dyn crate::ApprovalHandler>,
+    pub(crate) approvals: Option<Arc<crate::workspace::SessionApprovals>>,
     pub(crate) compactor: Option<Arc<dyn crate::Compactor>>,
     pub(crate) compaction_policy: Option<crate::CompactionPolicy>,
     pub(crate) reasoning_level: crate::ReasoningLevel,

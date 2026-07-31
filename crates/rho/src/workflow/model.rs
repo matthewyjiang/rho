@@ -2,9 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
-use super::{AttemptNumber, InputName, NodeId, OutputSchema, WorkflowName, WorkflowValue};
+use super::{
+    AttemptNumber, InputName, NodeCompletion, NodeId, OutputSchema, WorkflowName, WorkflowValue,
+};
 
-pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 1;
+pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -39,6 +41,7 @@ pub(crate) struct FrozenWorkflow {
     pub(crate) graph: WorkflowGraph,
     pub(crate) resolved_nodes: BTreeMap<NodeId, ResolvedNode>,
     pub(crate) scheduler: FrozenSchedulerSettings,
+    pub(crate) runtime_limits: super::FrozenRuntimeLimits,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,7 +315,7 @@ pub(crate) enum ValuePredicate {
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub(crate) enum ResolvedNode {
     Agent(Box<ResolvedAgent>),
-    Command(ResolvedCommand),
+    Command(Box<ResolvedCommand>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,6 +334,7 @@ pub(crate) struct ResolvedAgent {
     pub(crate) permission_ceiling: String,
     pub(crate) auth_profile: Option<String>,
     pub(crate) executable: Option<String>,
+    pub(crate) executable_identity: Option<ExecutableIdentity>,
     pub(crate) arguments: Vec<String>,
 }
 
@@ -344,9 +348,34 @@ pub(crate) enum AgentRuntime {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ResolvedCommand {
     pub(crate) executable: String,
+    pub(crate) executable_identity: ExecutableIdentity,
     pub(crate) exact_path: bool,
     pub(crate) cwd: String,
+    pub(crate) cwd_identity: FrozenPathIdentity,
     pub(crate) environment_policy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ExecutableIdentity {
+    pub(crate) file: FrozenPathIdentity,
+    pub(crate) interpreter: Option<FrozenPathIdentity>,
+    pub(crate) interpreter_arguments: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FrozenPathIdentity {
+    pub(crate) canonical_path: String,
+    pub(crate) kind: FrozenPathKind,
+    pub(crate) byte_len: u64,
+    pub(crate) content_digest: Option<Digest>,
+    pub(crate) platform_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FrozenPathKind {
+    File,
+    Directory,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,10 +448,12 @@ pub(crate) enum RunLifecycle {
 pub(crate) struct WorkflowState {
     pub(crate) revision: u64,
     pub(crate) lifecycle: RunLifecycle,
+    pub(crate) outcome: Option<WorkflowOutcome>,
     pub(crate) cancellation_requested: bool,
     pub(crate) nodes: BTreeMap<NodeId, NodeState>,
     pub(crate) command_exits: BTreeMap<NodeId, CommandExit>,
     pub(crate) outputs: BTreeMap<NodeId, WorkflowValue>,
+    pub(crate) completions: BTreeMap<NodeId, NodeCompletion>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -458,11 +489,20 @@ pub(crate) enum SchedulerEvent {
     },
     Finished {
         node: NodeId,
-        outcome: NodeTerminalState,
-        command_exit: Option<CommandExit>,
-        output: Option<WorkflowValue>,
+        completion: Box<NodeCompletion>,
     },
     CancellationRequested,
+    ResetNode {
+        node: NodeId,
+        reason: NodeResetReason,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum NodeResetReason {
+    InterruptedRecovery,
+    CleanCancellation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

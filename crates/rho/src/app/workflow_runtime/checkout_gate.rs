@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, Weak},
 };
@@ -22,7 +22,8 @@ fn local_gates() -> &'static Mutex<BTreeMap<PathBuf, Weak<LocalGate>>> {
 #[derive(Clone)]
 pub(crate) struct CheckoutGate {
     local: Arc<LocalGate>,
-    lock_path: PathBuf,
+    lock_path: Arc<PathBuf>,
+    _lock_anchor: Arc<File>,
 }
 
 impl CheckoutGate {
@@ -46,15 +47,12 @@ impl CheckoutGate {
             Sha256::digest(workspace.to_string_lossy().as_bytes())
         );
         let lock_path = locks.join(format!("{key}.lock"));
-        if !lock_path.exists() {
-            fs::write(&lock_path, [])?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))?;
-            }
-        }
-        Ok(Self { local, lock_path })
+        let lock_file = open_lock_no_follow(&lock_path)?;
+        Ok(Self {
+            local,
+            lock_path: Arc::new(lock_path),
+            _lock_anchor: Arc::new(lock_file),
+        })
     }
 
     pub(crate) async fn acquire(
@@ -69,8 +67,8 @@ impl CheckoutGate {
                 _guard: self.local.clone().write_owned().await,
             },
         };
-        let path = self.lock_path.clone();
-        let file = tokio::task::spawn_blocking(move || lock_file(&path, access))
+        let lock_path = Arc::clone(&self.lock_path);
+        let file = tokio::task::spawn_blocking(move || lock_file(&lock_path, access))
             .await
             .map_err(|error| {
                 RuntimeError::Executor(format!("checkout lock task failed: {error}"))
@@ -103,10 +101,39 @@ impl Drop for CheckoutPermit {
 }
 
 fn lock_file(path: &Path, access: WorkspaceAccess) -> Result<File, RuntimeError> {
-    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    let file = open_lock_no_follow(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(RuntimeError::Data(
+            "checkout lock descriptor is not a regular file".to_owned(),
+        ));
+    }
     match access {
         WorkspaceAccess::ReadOnly => file.lock_shared()?,
         WorkspaceAccess::Mutating => file.lock_exclusive()?,
+    }
+    Ok(file)
+}
+
+fn open_lock_no_follow(path: &Path) -> Result<File, RuntimeError> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Receipt: FILE_FLAG_OPEN_REPARSE_POINT from the Windows file API.
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(RuntimeError::Data(format!(
+            "checkout lock '{}' is not a regular file",
+            path.display()
+        )));
     }
     Ok(file)
 }

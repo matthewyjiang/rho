@@ -164,7 +164,9 @@ impl InteractiveRuntime {
             tools: tools.tools(),
             workspace: workspace.clone(),
             workspace_policy: AppPolicy::for_mode(permission_mode),
-            approval_handler: approval_handler.clone(),
+            approval_session: approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: system_prompt.clone(),
             reasoning: sdk_options.runtime.reasoning,
             service_tier: sdk_options.runtime.service_tier,
@@ -254,7 +256,9 @@ impl InteractiveRuntime {
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(mode),
-            approval_handler: approval_handler.clone(),
+            approval_session: approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -689,7 +693,10 @@ impl InteractiveRuntime {
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(self.permission_mode),
-            approval_handler: self.approval_handler.clone(),
+            approval_session: self
+                .approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -914,7 +921,10 @@ impl InteractiveRuntime {
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(self.permission_mode),
-            approval_handler: self.approval_handler.clone(),
+            approval_session: self
+                .approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),

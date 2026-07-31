@@ -105,6 +105,7 @@ async fn run_with_fake(
             frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
+            before_spawn: None,
         },
     })
     .await
@@ -146,6 +147,7 @@ async fn run_with_fake_prompt(
             frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
+            before_spawn: None,
         },
     })
     .await

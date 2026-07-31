@@ -321,7 +321,15 @@ async fn workflow_hook_failure_and_output_do_not_return_to_the_caller() {
         attempt: 2,
         outcome: &NodeOutcome::Success,
         duration: Duration::from_millis(41),
-        artifacts: &["artifacts/stdout".into()],
+        artifacts: &[crate::workflow::DurableArtifactReference {
+            kind: crate::workflow::ArtifactKind::Stdout,
+            artifact: crate::workflow::ArtifactRef {
+                relative_path: "artifacts/stdout".into(),
+                retained_bytes: 4,
+                observed: crate::workflow::ArtifactObservation::Complete { observed_bytes: 4 },
+                digest: crate::workflow::Digest("sha256:test".into()),
+            },
+        }],
     });
     worker.drain(Duration::from_secs(10)).await;
 
@@ -337,7 +345,13 @@ async fn workflow_hook_failure_and_output_do_not_return_to_the_caller() {
             "attempt": 2,
             "outcome": "success",
             "duration_ms": 41,
-            "artifact_references": ["artifacts/stdout"]
+            "artifact_references": [{
+                "kind": "stdout",
+                "relative_path": "artifacts/stdout",
+                "retained_bytes": 4,
+                "observed": {"kind": "complete", "observed_bytes": 4},
+                "digest": "sha256:test"
+            }]
         })
     );
     assert_eq!(engine.activity()[0].outcome.label(), "failed");

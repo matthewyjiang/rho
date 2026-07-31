@@ -13,8 +13,9 @@ use crate::{
         tool_progress_channel, Tool, ToolContext, ToolError, ToolErrorKind, ToolInvocation,
         ToolOutput, ToolPreparationContext, ToolProgress, ToolRegistry,
     },
-    ApprovalAuditRecord, ApprovalHandler, CancellationToken, DenyAllPolicy, DenyApprovals, Error,
-    HostInputRequest, HostInputResponse, RunId, SessionId, ToolCallId, Workspace, WorkspacePolicy,
+    ApprovalAuditRecord, ApprovalHandler, ApprovalSession, CancellationToken, DenyAllPolicy,
+    DenyApprovals, Error, HostInputRequest, HostInputResponse, RunId, SessionId, ToolCallId,
+    Workspace, WorkspacePolicy,
 };
 
 /// Future returned by [`ToolHost::invoke`].
@@ -218,6 +219,7 @@ pub struct ToolHostBuilder {
     workspace: Option<Workspace>,
     workspace_policy: Option<Arc<dyn WorkspacePolicy>>,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
+    approval_session: Option<ApprovalSession>,
     event_capacity: Option<NonZeroUsize>,
     hook_observer: Option<Arc<dyn crate::hooks::HookObserver>>,
     pre_tool_gate: Option<Arc<dyn crate::hooks::PreToolUseGate>>,
@@ -259,11 +261,20 @@ impl ToolHostBuilder {
         A: ApprovalHandler + 'static,
     {
         self.approval_handler = Some(Arc::new(handler));
+        self.approval_session = None;
         self
     }
 
     pub fn approval_handler_shared(mut self, handler: Arc<dyn ApprovalHandler>) -> Self {
         self.approval_handler = Some(handler);
+        self.approval_session = None;
+        self
+    }
+
+    /// Shares one exact-request approval session with other runtimes or hosts.
+    pub fn approval_session(mut self, session: ApprovalSession) -> Self {
+        self.approval_session = Some(session);
+        self.approval_handler = None;
         self
     }
 
@@ -311,6 +322,12 @@ impl ToolHostBuilder {
                     message: error.to_string(),
                 })?;
         }
+        let approval_session = self.approval_session.unwrap_or_else(|| {
+            ApprovalSession::from_shared(
+                self.approval_handler
+                    .unwrap_or_else(|| Arc::new(DenyApprovals)),
+            )
+        });
         Ok(ToolHost {
             core: Arc::new(ToolHostCore {
                 tools,
@@ -318,11 +335,9 @@ impl ToolHostBuilder {
                 workspace_policy: self
                     .workspace_policy
                     .unwrap_or_else(|| Arc::new(DenyAllPolicy)),
-                approval_handler: self
-                    .approval_handler
-                    .unwrap_or_else(|| Arc::new(DenyApprovals)),
-                approvals: Arc::default(),
-                approval_audit: Arc::default(),
+                approval_handler: approval_session.handler(),
+                approvals: approval_session.remembered(),
+                approval_audit: approval_session.audit_log(),
                 hooks: HookWiring::new(
                     self.hook_observer,
                     self.pre_tool_gate,

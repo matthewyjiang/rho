@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
 use crate::workflow::{
-    AttemptNumber, CommandExit, FrozenWorkflow, NodeId, NodeTerminalState, RunId, WorkflowValue,
+    AttemptArtifacts, AttemptNumber, CancellationResumeState, CommandExit, FrozenWorkflow,
+    NodeCompletion, NodeId, NodeTerminalState, RunId, ValidatedOutputRef, WorkflowValue,
 };
 
 pub(crate) type WorkflowExecutionFuture<'a> =
@@ -28,7 +29,8 @@ pub(crate) struct NodeExecutionRequest {
 pub(crate) struct NodeExecutionResult {
     pub(crate) outcome: NodeTerminalState,
     pub(crate) command_exit: Option<CommandExit>,
-    pub(crate) output: Option<WorkflowValue>,
+    pub(crate) structured_output: Option<ValidatedOutputRef>,
+    pub(crate) artifacts: AttemptArtifacts,
 }
 
 impl NodeExecutionResult {
@@ -36,7 +38,20 @@ impl NodeExecutionResult {
         Self {
             outcome,
             command_exit: None,
-            output: None,
+            structured_output: None,
+            artifacts: AttemptArtifacts::default(),
+        }
+    }
+
+    pub(crate) fn completion(self, attempt: AttemptNumber) -> NodeCompletion {
+        NodeCompletion {
+            attempt: Some(attempt),
+            outcome: self.outcome,
+            cancellation_resume: (self.outcome == NodeTerminalState::Cancellation)
+                .then_some(CancellationResumeState::Ready),
+            command_exit: self.command_exit,
+            structured_output: self.structured_output,
+            artifacts: self.artifacts,
         }
     }
 }

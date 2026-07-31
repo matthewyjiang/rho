@@ -8,13 +8,14 @@ use rho_sdk::{
 use crate::{
     tools::process::{ExactProcessExit, WorkflowCommandTool},
     workflow::{
-        CommandExit, CommandNode, CommandOutcome, NodeExecution, NodeTerminalState, ResolvedNode,
-        Template, TemplatePart, ValidatedOutputRef, WorkflowValue,
+        ArtifactObservation, AttemptArtifacts, CommandExit, CommandNode, CommandOutcome,
+        NodeExecution, NodeTerminalState, ResolvedNode, Template, TemplatePart, ValidatedOutputRef,
+        WorkflowValue,
     },
 };
 
 use super::{
-    artifacts::{write_artifact, write_json},
+    artifacts::{write_artifact, write_artifact_with_observation, write_json},
     NodeExecutionRequest, NodeExecutionResult, RuntimeError, WorkflowExecutionFuture,
     WorkflowNodeExecutor,
 };
@@ -81,7 +82,12 @@ impl WorkflowCommandExecutor {
                 request.node
             )));
         }
-        let invocation = invocation(command, &executable, &request.outputs)?;
+        let invocation = invocation(
+            command,
+            &executable,
+            &request.outputs,
+            &request.workflow.runtime_limits,
+        )?;
         let max_output_bytes = usize::try_from(node.max_output_bytes).map_err(|_| {
             RuntimeError::Data(format!(
                 "node '{}' output limit does not fit this platform",
@@ -97,7 +103,11 @@ impl WorkflowCommandExecutor {
                 Some(Duration::from_secs(node.timeout_seconds)),
             ),
         );
-        let tool = WorkflowCommandTool::new(execution);
+        let tool = WorkflowCommandTool::new(
+            execution,
+            resolved.executable_identity.clone(),
+            resolved.cwd_identity.clone(),
+        );
         let labels = rho_sdk::hooks::HookHostLabels::new()
             .label("workflow_run_id", request.run_id.to_string())
             .label("plan_digest", request.workflow.graph_digest.0.clone())
@@ -116,7 +126,8 @@ impl WorkflowCommandExecutor {
                 return Ok(NodeExecutionResult {
                     outcome: NodeTerminalState::Cancellation,
                     command_exit: Some(CommandExit::Cancellation),
-                    output: None,
+                    structured_output: None,
+                    artifacts: AttemptArtifacts::default(),
                 });
             }
             result = run.outcome() => result,
@@ -130,19 +141,20 @@ impl WorkflowCommandExecutor {
             .ancestors()
             .nth(4)
             .ok_or_else(|| RuntimeError::UnsafeArtifact(request.attempt_directory.clone()))?;
-        let stdout = write_artifact(
+        let stdout = write_artifact_with_observation(
             run_directory,
             &request.attempt_directory.join("stdout"),
             &output.stdout,
+            stream_observation(output.stdout_observed_bytes, output.stdout_truncated),
         )?;
-        let stderr = write_artifact(
+        let stderr = write_artifact_with_observation(
             run_directory,
             &request.attempt_directory.join("stderr"),
             &output.stderr,
+            stream_observation(output.stderr_observed_bytes, output.stderr_truncated),
         )?;
         let exit = map_exit(output.exit);
         let mut structured_output = None;
-        let mut value = None;
         let mut outcome = exit_outcome(&exit);
         if let Some(schema) = command.output() {
             if output.stdout_truncated {
@@ -165,7 +177,6 @@ impl WorkflowCommandExecutor {
                             artifact,
                             value: parsed.clone(),
                         });
-                        value = Some(parsed);
                     }
                     Err(_) => outcome = NodeTerminalState::Failure,
                 }
@@ -177,7 +188,7 @@ impl WorkflowCommandExecutor {
             stderr,
             structured_output,
         };
-        write_json(
+        let command_artifact = write_json(
             run_directory,
             &request.attempt_directory.join("command.json"),
             &command_outcome,
@@ -185,8 +196,28 @@ impl WorkflowCommandExecutor {
         Ok(NodeExecutionResult {
             outcome,
             command_exit: Some(exit),
-            output: value,
+            structured_output: command_outcome.structured_output.clone(),
+            artifacts: AttemptArtifacts {
+                stdout: Some(command_outcome.stdout),
+                stderr: Some(command_outcome.stderr),
+                answer: None,
+                structured_output: command_outcome
+                    .structured_output
+                    .as_ref()
+                    .map(|output| output.artifact.clone()),
+                command_outcome: Some(command_artifact),
+            },
         })
+    }
+}
+
+fn stream_observation(observed_bytes: u64, truncated: bool) -> ArtifactObservation {
+    if truncated {
+        ArtifactObservation::Truncated {
+            observed_bytes_at_least: observed_bytes,
+        }
+    } else {
+        ArtifactObservation::Complete { observed_bytes }
     }
 }
 
@@ -194,29 +225,51 @@ fn invocation(
     command: &CommandNode,
     executable: &Path,
     outputs: &std::collections::BTreeMap<crate::workflow::NodeId, WorkflowValue>,
+    limits: &crate::workflow::FrozenRuntimeLimits,
 ) -> Result<ProcessInvocation, RuntimeError> {
-    Ok(match command {
-        CommandNode::Direct { arguments, .. } => ProcessInvocation::executable(
-            executable,
-            arguments
+    let invocation = match command {
+        CommandNode::Direct { arguments, .. } => {
+            let arguments = arguments
                 .iter()
-                .map(|argument| render_template(argument, outputs))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
+                .map(|argument| render_template(argument, outputs, limits))
+                .collect::<Result<Vec<_>, _>>()?;
+            let argv_bytes = arguments.iter().try_fold(
+                executable.as_os_str().as_encoded_bytes().len() as u64,
+                |total, argument| {
+                    total.checked_add(argument.len() as u64).ok_or({
+                        RuntimeError::Workflow(crate::workflow::WorkflowError::BudgetExceeded {
+                            budget: "argv expansion bytes",
+                            limit: limits.argv_expansion_bytes,
+                            actual: u64::MAX,
+                        })
+                    })
+                },
+            )?;
+            check_runtime_limit(
+                "argv expansion bytes",
+                limits.argv_expansion_bytes,
+                argv_bytes,
+            )?;
+            ProcessInvocation::executable(executable, arguments)
+        }
         CommandNode::Shell {
             arguments, command, ..
         } => ProcessInvocation::shell(executable, arguments.clone(), command),
-    })
+    };
+    Ok(invocation)
 }
 
 pub(super) fn render_template(
     template: &Template,
     outputs: &std::collections::BTreeMap<crate::workflow::NodeId, WorkflowValue>,
+    limits: &crate::workflow::FrozenRuntimeLimits,
 ) -> Result<String, RuntimeError> {
     let mut rendered = String::new();
     for part in &template.0 {
         match part {
-            TemplatePart::Literal { value } => rendered.push_str(value),
+            TemplatePart::Literal { value } => {
+                append_bounded(&mut rendered, value, limits.rendered_template_bytes)?
+            }
             TemplatePart::Output { reference } => {
                 let value = outputs
                     .get(&reference.node)
@@ -228,11 +281,45 @@ pub(super) fn render_template(
                             reference.path.0.join(".")
                         ))
                     })?;
-                rendered.push_str(&value.to_string());
+                append_bounded(
+                    &mut rendered,
+                    &value.to_string(),
+                    limits.rendered_template_bytes,
+                )?;
             }
         }
     }
     Ok(rendered)
+}
+
+fn append_bounded(output: &mut String, value: &str, limit: u64) -> Result<(), RuntimeError> {
+    let requested = output
+        .len()
+        .checked_add(value.len())
+        .map(|value| value as u64)
+        .unwrap_or(u64::MAX);
+    check_runtime_limit("rendered template bytes", limit, requested)?;
+    output
+        .try_reserve(value.len())
+        .map_err(|error| RuntimeError::Executor(format!("template allocation failed: {error}")))?;
+    output.push_str(value);
+    Ok(())
+}
+
+pub(super) fn check_runtime_limit(
+    budget: &'static str,
+    limit: u64,
+    actual: u64,
+) -> Result<(), RuntimeError> {
+    if actual > limit {
+        return Err(crate::workflow::WorkflowError::BudgetExceeded {
+            budget,
+            limit,
+            actual,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn map_exit(exit: ExactProcessExit) -> CommandExit {

@@ -485,6 +485,10 @@ fn parse_node(value: &serde_json::Value, limits: &PlanningLimits) -> WorkflowRes
         .unwrap_or(false);
     let timeout_seconds = required_u64(value, "timeout_seconds")?;
     let max_output_bytes = required_u64(value, "max_output_bytes")?;
+    limits.node_timeout_seconds.check_nonzero(timeout_seconds)?;
+    limits
+        .retained_output_per_stream_bytes
+        .check_nonzero(max_output_bytes)?;
     let (execution, access) = match kind {
         "agent" => (
             NodeExecution::Agent(AgentNode {

@@ -22,7 +22,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
     pub(crate) workspace: Workspace,
     pub(crate) workspace_policy: P,
-    pub(crate) approval_handler: Option<Arc<dyn rho_sdk::ApprovalHandler>>,
+    pub(crate) approval_session: Option<rho_sdk::ApprovalSession>,
     pub(crate) system_prompt: SystemPrompt,
     pub(crate) reasoning: rho_sdk::ReasoningLevel,
     pub(crate) service_tier: Option<rho_sdk::model::ServiceTier>,
@@ -62,7 +62,7 @@ where
         tools,
         workspace,
         workspace_policy,
-        approval_handler,
+        approval_session,
         system_prompt,
         reasoning,
         service_tier,
@@ -107,8 +107,8 @@ where
             ))
             .usage_parent_session_id(parent_session_id);
     }
-    if let Some(handler) = approval_handler {
-        builder = builder.approval_handler_shared(handler);
+    if let Some(session) = approval_session {
+        builder = builder.approval_session(session);
     }
     if let Some(policy) = policy {
         builder = builder.compaction_policy(policy);

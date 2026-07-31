@@ -8,18 +8,20 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     agent::{AgentOrigin, PromptPolicy, ToolCapability, BUILTIN_TOOL_CAPABILITIES},
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
-        derive_workflow_outcome, normalize_workflow, validate_workflow, CollectedSources,
-        Diagnostic, Digest, FreezePlan, FrozenSchedulerSettings, FrozenWorkflow, InputName,
-        NodeExecution, PlanConsent, PlannerIdentity, PlanningLimits, PlanningMeasurements,
-        ResolvedAgent, ResolvedCommand, ResolvedNode, RunLifecycle, SourceCollector,
-        SourceManifest, StarlarkPlanner, StoredPlan, StoredRun, WorkflowError, WorkflowResult,
-        WorkflowService, WorkflowStore, WorkflowValue, FROZEN_WORKFLOW_SCHEMA_VERSION,
+        derive_workflow_outcome, freeze_directory_identity, freeze_executable_identity,
+        normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
+        verify_executable_identity, CollectedSources, Diagnostic, Digest, FreezePlan,
+        FrozenSchedulerSettings, FrozenWorkflow, InputName, NodeExecution, PlanConsent,
+        PlannerIdentity, PlanningLimits, PlanningMeasurements, ResolvedAgent, ResolvedCommand,
+        ResolvedNode, RunLifecycle, SourceCollector, SourceManifest, StarlarkPlanner, StoredPlan,
+        StoredRun, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
+        FROZEN_WORKFLOW_SCHEMA_VERSION,
     },
 };
 
@@ -42,6 +44,17 @@ mod tool_service;
 pub(super) use tool_service::workflow_tool_service;
 
 const PLANNER_WORKER_ENV: &str = "RHO_WORKFLOW_PLANNER_WORKER";
+// Receipt: a 256-bit bearer token gives the internal one-shot channel 256 bits of entropy.
+const PLANNER_TOKEN_BYTES: usize = 32;
+// Receipt: JSON can escape each source/input byte as six bytes; 2 MiB * 6 plus 4 MiB framing room.
+const PLANNER_REQUEST_FRAME_BYTES: u64 = 16 * 1024 * 1024;
+// Receipt: the 10 MB graph budget plus 6 MiB for the response envelope and diagnostics.
+const PLANNER_RESPONSE_FRAME_BYTES: u64 = 16 * 1024 * 1024;
+// Receipt: 64 KiB retains the worker's bounded startup and one planning diagnostic.
+const PLANNER_STDERR_BYTES: usize = 64 * 1024;
+// Receipt: 16 times the 64 MB evaluator heap covers binary mappings plus four bounded data copies.
+#[cfg(any(unix, windows))]
+const PLANNER_ADDRESS_SPACE_BYTES: u64 = 16 * 64 * 1024 * 1024;
 const PLANNER_FORMAT_VERSION: u32 = 1;
 const WORKFLOW_WIRE_VERSION: u32 = 1;
 // Receipt: matches agent_executor::DEFAULT_TOTAL_CONCURRENCY. Kind limits
@@ -50,8 +63,13 @@ const DEFAULT_PARALLEL_NODES: u32 = 4;
 const DEFAULT_PARALLEL_AGENTS: u32 = 4;
 const DEFAULT_PARALLEL_COMMANDS: u32 = 4;
 
-pub(super) fn planner_worker_requested() -> bool {
-    std::env::var_os(PLANNER_WORKER_ENV).is_some()
+pub(super) fn planner_worker_requested(cli: &Cli) -> bool {
+    matches!(
+        &cli.command,
+        Some(crate::cli::Command::Workflow {
+            command: WorkflowCommand::Validate { file, input },
+        }) if file == Path::new("worker.star") && input.is_empty()
+    ) && std::env::var(PLANNER_WORKER_ENV).is_ok_and(|token| valid_planner_token(&token))
 }
 
 pub(super) async fn run(command: &WorkflowCommand, cli: &Cli) -> anyhow::Result<()> {
@@ -157,6 +175,7 @@ async fn run_plan(
         graph: prepared.workflow.graph,
         resolved_nodes: prepared.workflow.resolved_nodes,
         scheduler: prepared.workflow.scheduler,
+        runtime_limits: prepared.workflow.runtime_limits,
         workspace_identity: workspace_identity(&std::env::current_dir()?)?,
     })?;
     write_plan(&stored, output)
@@ -247,8 +266,10 @@ async fn prepare_plan_from_sources(
             max_parallel_agents: DEFAULT_PARALLEL_AGENTS,
             max_parallel_commands: DEFAULT_PARALLEL_COMMANDS,
         },
+        runtime_limits: limits.frozen_runtime_limits(),
     })?;
     validate_workflow(&workflow)?;
+    validate_runtime_budgets(&workflow, limits)?;
     Ok(PreparedPlan { sources, workflow })
 }
 
@@ -270,140 +291,13 @@ fn parse_inputs(values: &[String]) -> anyhow::Result<BTreeMap<InputName, Workflo
     Ok(inputs)
 }
 
-fn planning_limits() -> WorkflowResult<PlanningLimits> {
-    // These are the measured acceptance values recorded by the workflow foundation
-    // prototype. Keep the receipt with every limit until a config-backed profile exists.
-    PlanningLimits::from_measurements(planning_measurements())
-}
+mod planner_worker;
 
-#[derive(Serialize, Deserialize)]
-struct PlannerWorkerRequest {
-    entry_label: String,
-    sources: BTreeMap<String, String>,
-    manifest: SourceManifest,
-    inputs: BTreeMap<InputName, WorkflowValue>,
-    measurements: PlanningMeasurements,
-}
-
-#[derive(Serialize, Deserialize)]
-struct PlannerWorkerPlan {
-    graph: crate::workflow::WorkflowGraph,
-    inputs: BTreeMap<InputName, WorkflowValue>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct PlannerWorkerResponse {
-    plan: Option<PlannerWorkerPlan>,
-    error: Option<String>,
-}
-
-fn planning_measurements() -> PlanningMeasurements {
-    PlanningMeasurements {
-        receipt: "workflow foundation prototype acceptance profile".to_owned(),
-        total_source_bytes: 1_000_000,
-        module_count: 100,
-        module_depth: 20,
-        evaluator_ticks: 1_000_000,
-        evaluator_heap_bytes: 64_000_000,
-        call_stack_depth: 100,
-        string_bytes: 1_000_000,
-        list_items: 10_000,
-        dict_items: 10_000,
-        input_depth: 20,
-        input_bytes: 1_000_000,
-        node_count: 1_000,
-        edge_count: 10_000,
-        condition_depth: crate::workflow::CONDITION_DEPTH_LIMIT as u64,
-        schema_depth: 20,
-        schema_bytes: 1_000_000,
-        graph_bytes: 10_000_000,
-        worker_wall_millis: 10_000,
-    }
-}
-
-async fn run_supervised_planner(
-    sources: &CollectedSources,
-    inputs: BTreeMap<InputName, WorkflowValue>,
-    limits: &PlanningLimits,
-) -> anyhow::Result<PlannerWorkerPlan> {
-    let request = PlannerWorkerRequest {
-        entry_label: sources.entry_label.clone(),
-        sources: sources.sources.clone(),
-        manifest: sources.manifest.clone(),
-        inputs,
-        measurements: planning_measurements(),
-    };
-    let mut child = tokio::process::Command::new(std::env::current_exe()?)
-        .args(["workflow", "validate", "worker.star"])
-        .env(PLANNER_WORKER_ENV, "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
-    child
-        .stdin
-        .take()
-        .expect("planner worker stdin is piped")
-        .write_all(&serde_json::to_vec(&request)?)
-        .await?;
-    let output = tokio::time::timeout(
-        Duration::from_millis(limits.worker_wall_millis.limit),
-        child.wait_with_output(),
-    )
-    .await
-    .map_err(|_| {
-        anyhow::anyhow!(
-            "{} budget exceeded: accepted limit {}, requested or measured {}",
-            limits.worker_wall_millis.name,
-            limits.worker_wall_millis.limit,
-            limits.worker_wall_millis.limit.saturating_add(1)
-        )
-    })??;
-    if !output.status.success() {
-        anyhow::bail!(
-            "workflow planner worker failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let response: PlannerWorkerResponse = serde_json::from_slice(&output.stdout)?;
-    match (response.plan, response.error) {
-        (Some(plan), None) => Ok(plan),
-        (None, Some(error)) => anyhow::bail!(error),
-        _ => anyhow::bail!("workflow planner worker returned an invalid response"),
-    }
-}
-
-pub(super) async fn run_planner_worker() -> anyhow::Result<()> {
-    let mut bytes = Vec::new();
-    io::stdin().read_to_end(&mut bytes)?;
-    let request: PlannerWorkerRequest = serde_json::from_slice(&bytes)?;
-    let limits = PlanningLimits::from_measurements(request.measurements)?;
-    let collected = CollectedSources {
-        entry_label: request.entry_label,
-        sources: request.sources,
-        manifest: request.manifest,
-    };
-    let response = match StarlarkPlanner::new(&limits).plan_in_process_prototype(
-        &collected,
-        &request.inputs,
-        Arc::new(AtomicBool::new(false)),
-    ) {
-        Ok(planned) => PlannerWorkerResponse {
-            plan: Some(PlannerWorkerPlan {
-                graph: planned.graph,
-                inputs: planned.inputs,
-            }),
-            error: None,
-        },
-        Err(error) => PlannerWorkerResponse {
-            plan: None,
-            error: Some(error.to_string()),
-        },
-    };
-    serde_json::to_writer(io::stdout().lock(), &response)?;
-    Ok(())
-}
+pub(super) use planner_worker::planning_limits;
+#[cfg(test)]
+use planner_worker::read_frame_sync;
+pub(super) use planner_worker::run_planner_worker;
+use planner_worker::{run_supervised_planner, valid_planner_token};
 
 fn resolve_nodes(
     graph: &crate::workflow::WorkflowGraph,
@@ -442,12 +336,15 @@ fn resolve_nodes(
                     if !cwd_path.starts_with(workspace) {
                         anyhow::bail!("command node '{id}' cwd is outside the workspace");
                     }
-                    ResolvedNode::Command(ResolvedCommand {
-                        executable: resolve_executable(executable, workspace)?,
+                    let executable = resolve_executable(executable, workspace)?;
+                    ResolvedNode::Command(Box::new(ResolvedCommand {
+                        executable_identity: freeze_executable_identity(&executable)?,
+                        executable: crate::paths::display(&executable),
                         exact_path: true,
                         cwd: crate::paths::display(&cwd_path),
+                        cwd_identity: freeze_directory_identity(&cwd_path)?,
                         environment_policy: "inherit-current-process".to_owned(),
-                    })
+                    }))
                 }
             };
             Ok((id.clone(), resolved))
@@ -499,6 +396,7 @@ fn resolve_agent(
         permission_ceiling,
         auth_profile: None,
         executable: None,
+        executable_identity: None,
         arguments: Vec::new(),
     };
     Ok(match bound.runtime() {
@@ -521,6 +419,7 @@ fn resolve_agent(
             max_turns,
             effort,
         } => {
+            let executable = resolve_executable("claude", workspace)?;
             let plan = crate::claude_runtime::spawn::build_spawn_plan(
                 &crate::claude_runtime::spawn::ClaudeSpawnRequest {
                     system_prompt: entry.definition.prompt.clone(),
@@ -538,7 +437,8 @@ fn resolve_agent(
                 reasoning: effort.map(str::to_owned),
                 step_limit: *max_turns,
                 capabilities: tools.iter().cloned().collect(),
-                executable: Some(resolve_executable("claude", workspace)?),
+                executable: Some(crate::paths::display(&executable)),
+                executable_identity: Some(freeze_executable_identity(&executable)?),
                 arguments: plan.args,
                 ..common
             }
@@ -564,7 +464,7 @@ fn frozen_capabilities(capabilities: &crate::agent::AgentCapabilities) -> BTreeS
         .collect()
 }
 
-fn resolve_executable(executable: &str, workspace: &Path) -> anyhow::Result<String> {
+fn resolve_executable(executable: &str, workspace: &Path) -> anyhow::Result<std::path::PathBuf> {
     let path = Path::new(executable);
     let resolved = if path.components().count() == 1 {
         crate::executable::find_on_path(executable)
@@ -574,7 +474,7 @@ fn resolve_executable(executable: &str, workspace: &Path) -> anyhow::Result<Stri
     } else {
         workspace.join(path).canonicalize()?
     };
-    Ok(crate::paths::display(&resolved))
+    Ok(resolved)
 }
 
 async fn run_frozen_plan(
@@ -624,30 +524,36 @@ fn recheck_plan(plan: &StoredPlan, config_path: Option<std::path::PathBuf>) -> a
             current_workspace
         );
     }
-    let entry = plan
-        .graph
-        .sources
-        .entry_label
-        .strip_prefix("//")
-        .ok_or_else(|| anyhow::anyhow!("frozen workflow entry label is invalid"))?;
-    let measured_sources = SourceCollector::new(&current_directory, &planning_limits()?)?
-        .collect(&current_directory.join(entry))?;
-    if measured_sources.manifest != plan.graph.sources {
-        anyhow::bail!(
-            "workflow source drift was detected for plan {}",
-            plan.manifest.plan_id
-        );
-    }
+    recheck_frozen_graph(&plan.graph, config_path)
+}
+
+fn recheck_frozen_graph(
+    graph: &FrozenWorkflow,
+    config_path: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    validate_workflow(graph)?;
+    validate_runtime_budgets(graph, &planning_limits()?)?;
     let config = ConfigRepository::new(config_path).load()?;
-    for agent in plan
-        .graph
-        .resolved_nodes
-        .values()
-        .filter_map(|node| match node {
-            ResolvedNode::Agent(agent) => Some(agent.as_ref()),
-            ResolvedNode::Command(_) => None,
-        })
-    {
+    for resolved in graph.resolved_nodes.values() {
+        let agent = match resolved {
+            ResolvedNode::Command(command) => {
+                verify_executable_identity(&command.executable_identity)?;
+                verify_directory_identity(&command.cwd_identity)?;
+                continue;
+            }
+            ResolvedNode::Agent(agent) => agent,
+        };
+        match (&agent.executable, &agent.executable_identity) {
+            (Some(_), Some(identity)) => {
+                verify_executable_identity(identity)?;
+            }
+            (Some(path), None) => anyhow::bail!(
+                "frozen agent '{}' records executable '{}' without a frozen identity",
+                agent.agent_id,
+                path
+            ),
+            (None, _) => {}
+        }
         if agent.trust_required
             && std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
                 != Some(std::ffi::OsStr::new("1"))
@@ -683,12 +589,23 @@ fn recheck_plan(plan: &StoredPlan, config_path: Option<std::path::PathBuf>) -> a
 }
 
 fn recheck_run(run: &StoredRun, config_path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
-    let service = workflow_service()?;
-    let plan = service.store().load_plan(run.manifest.plan_id)?;
-    if plan.manifest.graph_digest != run.manifest.graph_digest {
-        anyhow::bail!("workflow run plan digest does not match its frozen graph");
+    let current_workspace = workspace_identity(&std::env::current_dir()?)?;
+    if current_workspace != run.manifest.workspace_identity {
+        anyhow::bail!(
+            "workflow run workspace is '{}', but the current workspace is '{}'",
+            run.manifest.workspace_identity,
+            current_workspace
+        );
     }
-    recheck_plan(&plan, config_path)
+    if crate::workflow::graph_digest(&run.graph)? != run.manifest.graph_digest {
+        anyhow::bail!("workflow run digest does not match its copied frozen graph");
+    }
+    if !run.manifest.consent.confirmed
+        || run.manifest.consent.graph_digest != run.manifest.graph_digest
+    {
+        anyhow::bail!("workflow run consent does not match its copied frozen graph");
+    }
+    recheck_frozen_graph(&run.graph, config_path)
 }
 
 fn permission_rank(value: &str) -> Option<u8> {
@@ -777,6 +694,14 @@ fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()
             for (node, value) in &run.state.state.outputs {
                 println!("output {node}: {value}");
             }
+            for (node, completion) in &run.state.state.completions {
+                for (kind, artifact) in completion.artifacts.iter() {
+                    println!(
+                        "artifact {node} {kind:?}: {}",
+                        serde_json::to_string(artifact)?
+                    );
+                }
+            }
             if let Some(outcome) = document.outcome {
                 println!("outcome: {:?}", outcome);
             }
@@ -801,15 +726,21 @@ fn run_cancel(prefix: &str) -> anyhow::Result<()> {
         return write_json_document(&CancelDocument {
             run_id: run_id.to_string(),
             cancellation_requested: run.state.state.cancellation_requested,
-            owner_acknowledged: true,
+            owner_acknowledged: WorkflowRunner::cross_process_cancel_acknowledged(
+                &crate::paths::rho_dir()?,
+                run_id,
+            )?,
             lifecycle: RunLifecycle::Completed,
         });
     }
-    WorkflowRunner::request_cross_process_cancel(&crate::paths::rho_dir()?, run_id)?;
+    let rho_home = crate::paths::rho_dir()?;
+    let receipt = WorkflowRunner::request_cross_process_cancel(&rho_home, run_id)?;
     write_json_document(&CancelDocument {
         run_id: run_id.to_string(),
         cancellation_requested: true,
-        owner_acknowledged: run.state.state.cancellation_requested,
+        owner_acknowledged: WorkflowRunner::cancellation_request_acknowledged(
+            &rho_home, run_id, &receipt,
+        )?,
         lifecycle: run.state.state.lifecycle,
     })
 }

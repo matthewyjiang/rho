@@ -35,7 +35,7 @@ impl AppHookEnvelope {
         let payload = BoundedWorkflowPayload::new(payload, bounds, &mut truncation);
         let mut envelope = Self {
             kind: event,
-            schema_version: 1,
+            schema_version: 2,
             event: event.wire_name(),
             event_id: rho_sdk::HookEventId::new(),
             timestamp_unix_ms: SystemTime::now()
@@ -114,7 +114,7 @@ pub(super) enum WorkflowPayload<'a> {
         plan_digest: &'a str,
         outcome: Option<&'a str>,
         duration_ms: Option<u64>,
-        artifacts: &'a [String],
+        artifacts: &'a [crate::workflow::DurableArtifactReference],
     },
     Node {
         workflow_run_id: &'a str,
@@ -123,7 +123,7 @@ pub(super) enum WorkflowPayload<'a> {
         attempt: u32,
         outcome: Option<&'a str>,
         duration_ms: Option<u64>,
-        artifacts: &'a [String],
+        artifacts: &'a [crate::workflow::DurableArtifactReference],
     },
 }
 
@@ -140,7 +140,7 @@ struct BoundedWorkflowPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    artifact_references: Vec<String>,
+    artifact_references: Vec<crate::workflow::DurableArtifactReference>,
 }
 
 impl BoundedWorkflowPayload {
@@ -204,15 +204,20 @@ impl BoundedWorkflowPayload {
 }
 
 fn bounded_artifacts(
-    artifacts: &[String],
+    artifacts: &[crate::workflow::DurableArtifactReference],
     bounds: HookPayloadBounds,
     truncation: &mut AppHookTruncation,
-) -> Vec<String> {
+) -> Vec<crate::workflow::DurableArtifactReference> {
     let mut bounded = Vec::new();
     let mut encoded_bytes = 0usize;
     for (index, artifact) in artifacts.iter().enumerate() {
-        let field = format!("payload.artifact_references.{index}");
-        let artifact = bounded_app_string(artifact, &field, bounds, truncation);
+        let mut artifact = artifact.clone();
+        artifact.artifact.relative_path = bounded_app_string(
+            &artifact.artifact.relative_path,
+            &format!("payload.artifact_references.{index}.relative_path"),
+            bounds,
+            truncation,
+        );
         let item_bytes = serde_json::to_vec(&artifact)
             .map(|encoded| encoded.len().saturating_add(1))
             .unwrap_or(bounds.max_envelope_bytes());

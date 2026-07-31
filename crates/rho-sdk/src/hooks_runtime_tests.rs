@@ -17,8 +17,9 @@ use crate::{
     model::{ContentBlock, ModelIdentity, ModelResponse, ModelUsage, ToolCall, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{Tool, ToolContext, ToolFuture, ToolInvocation, ToolOutput},
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityRequest,
-    CapabilitySource, PathScope, PolicyDecision, Rho, SessionOptions, Workspace, WorkspacePolicy,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalSession,
+    CapabilityRequest, CapabilitySource, PathScope, PolicyDecision, Rho, SessionOptions, Workspace,
+    WorkspacePolicy,
 };
 
 fn identity() -> ModelIdentity {
@@ -253,6 +254,51 @@ async fn require_approval_plus_continue_still_prompts_the_host() {
         harness.gate.seen.lock().unwrap().as_slice(),
         [HookPolicyOutcome::RequireApproval]
     );
+}
+
+struct RememberingApprovals {
+    prompts: Arc<Mutex<usize>>,
+}
+
+impl ApprovalHandler for RememberingApprovals {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        *self.prompts.lock().unwrap() += 1;
+        Box::pin(std::future::ready(ApprovalDecision::AllowForSession))
+    }
+}
+
+// Covers: one host-owned approval session must share exact-request memory
+// across distinct model runtimes in the same logical workflow run.
+// Owner: SDK runtime authorization composition.
+#[tokio::test]
+async fn approval_session_is_shared_across_model_runtimes() {
+    let prompts = Arc::new(Mutex::new(0));
+    let approvals = ApprovalSession::new(RememberingApprovals {
+        prompts: Arc::clone(&prompts),
+    });
+    let workspace = Workspace::new(std::env::temp_dir()).unwrap();
+    let build = |approvals: ApprovalSession| {
+        Rho::builder()
+            .provider(tool_then_text())
+            .tool(ReadingTool)
+            .workspace(workspace.clone())
+            .workspace_policy(FixedPolicy(PolicyDecision::RequireApproval {
+                reason: "ask".into(),
+            }))
+            .approval_session(approvals)
+            .build()
+            .unwrap()
+    };
+    let first = build(approvals.clone());
+    let second = build(approvals.clone());
+
+    for runtime in [first, second] {
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("go").await.unwrap();
+    }
+
+    assert_eq!(*prompts.lock().unwrap(), 1);
+    assert_eq!(approvals.audit().len(), 2);
 }
 
 #[tokio::test]

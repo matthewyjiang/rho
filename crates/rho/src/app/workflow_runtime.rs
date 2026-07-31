@@ -7,12 +7,16 @@
 mod agent;
 #[path = "workflow_runtime/artifacts.rs"]
 mod artifacts;
+#[path = "workflow_runtime/cancellation.rs"]
+mod cancellation;
 #[path = "workflow_runtime/checkout_gate.rs"]
 mod checkout_gate;
 #[path = "workflow_runtime/command.rs"]
 mod command;
 #[path = "workflow_runtime/journal.rs"]
 mod journal;
+#[path = "workflow_runtime/recovery.rs"]
+mod recovery;
 #[path = "workflow_runtime/runner.rs"]
 mod runner;
 #[path = "workflow_runtime/types.rs"]

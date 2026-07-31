@@ -3,15 +3,15 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AttemptNumber, CommandExit, Digest, FrozenWorkflow, NodeId, NodeTerminalState, PlanId, RunId,
-    RunLifecycle, WorkflowState, WorkflowValue,
+    AttemptNumber, CommandExit, Digest, FrozenWorkflow, NodeId, NodeResetReason, NodeTerminalState,
+    PlanId, RunId, RunLifecycle, WorkflowState, WorkflowValue,
 };
 
 pub(crate) const PLAN_MANIFEST_VERSION: u32 = 1;
 pub(crate) const RUN_MANIFEST_VERSION: u32 = 1;
-pub(crate) const RUN_STATE_VERSION: u32 = 1;
-pub(crate) const EVENT_VERSION: u32 = 1;
-pub(crate) const ATTEMPT_VERSION: u32 = 1;
+pub(crate) const RUN_STATE_VERSION: u32 = 2;
+pub(crate) const EVENT_VERSION: u32 = 2;
+pub(crate) const ATTEMPT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PlanManifest {
@@ -71,7 +71,9 @@ pub(crate) enum WorkflowEvent {
     RunLifecycle {
         lifecycle: RunLifecycle,
     },
-    CancellationRequested,
+    CancellationRequested {
+        request_id: String,
+    },
     NodeReady {
         node: NodeId,
     },
@@ -86,12 +88,21 @@ pub(crate) enum WorkflowEvent {
     },
     NodeFinished {
         node: NodeId,
-        attempt: AttemptNumber,
+        attempt: Option<AttemptNumber>,
         outcome: NodeTerminalState,
     },
     StructuredOutput {
         node: NodeId,
-        value: WorkflowValue,
+        attempt: AttemptNumber,
+        output: ValidatedOutputRef,
+    },
+    NodeReset {
+        node: NodeId,
+        reason: NodeResetReason,
+    },
+    CancellationCleared,
+    CancellationAcknowledged {
+        request_id: String,
     },
     HookObserved {
         event: String,
@@ -119,7 +130,7 @@ pub(crate) struct AttemptRecord {
 pub(crate) enum AttemptState {
     LaunchIntended,
     Started { owner: ExternalOwner },
-    Completed { outcome: NodeTerminalState },
+    Completed { completion: Box<NodeCompletion> },
     CleanlyCancelled,
     InterruptedUncertain { owner: ExternalOwner },
 }
@@ -127,8 +138,16 @@ pub(crate) enum AttemptState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ArtifactRef {
     pub(crate) relative_path: String,
-    pub(crate) bytes: u64,
+    pub(crate) retained_bytes: u64,
+    pub(crate) observed: ArtifactObservation,
     pub(crate) digest: Digest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ArtifactObservation {
+    Complete { observed_bytes: u64 },
+    Truncated { observed_bytes_at_least: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,4 +162,97 @@ pub(crate) struct CommandOutcome {
     pub(crate) stdout: ArtifactRef,
     pub(crate) stderr: ArtifactRef,
     pub(crate) structured_output: Option<ValidatedOutputRef>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AttemptArtifacts {
+    pub(crate) stdout: Option<ArtifactRef>,
+    pub(crate) stderr: Option<ArtifactRef>,
+    pub(crate) answer: Option<ArtifactRef>,
+    pub(crate) structured_output: Option<ArtifactRef>,
+    pub(crate) command_outcome: Option<ArtifactRef>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ArtifactKind {
+    Stdout,
+    Stderr,
+    AgentAnswer,
+    StructuredOutput,
+    CommandOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DurableArtifactReference {
+    pub(crate) kind: ArtifactKind,
+    #[serde(flatten)]
+    pub(crate) artifact: ArtifactRef,
+}
+
+impl AttemptArtifacts {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (ArtifactKind, &ArtifactRef)> {
+        [
+            (ArtifactKind::Stdout, self.stdout.as_ref()),
+            (ArtifactKind::Stderr, self.stderr.as_ref()),
+            (ArtifactKind::AgentAnswer, self.answer.as_ref()),
+            (
+                ArtifactKind::StructuredOutput,
+                self.structured_output.as_ref(),
+            ),
+            (ArtifactKind::CommandOutcome, self.command_outcome.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(kind, artifact)| artifact.map(|artifact| (kind, artifact)))
+    }
+
+    pub(crate) fn references(&self) -> Vec<DurableArtifactReference> {
+        self.iter()
+            .map(|(kind, artifact)| DurableArtifactReference {
+                kind,
+                artifact: artifact.clone(),
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NodeCompletion {
+    pub(crate) attempt: Option<AttemptNumber>,
+    pub(crate) outcome: NodeTerminalState,
+    pub(crate) cancellation_resume: Option<CancellationResumeState>,
+    pub(crate) command_exit: Option<CommandExit>,
+    pub(crate) structured_output: Option<ValidatedOutputRef>,
+    pub(crate) artifacts: AttemptArtifacts,
+}
+
+impl NodeCompletion {
+    pub(crate) fn terminal(outcome: NodeTerminalState) -> Self {
+        Self {
+            attempt: None,
+            outcome,
+            cancellation_resume: None,
+            command_exit: None,
+            structured_output: None,
+            artifacts: AttemptArtifacts::default(),
+        }
+    }
+
+    pub(crate) fn cancelled(resume: CancellationResumeState) -> Self {
+        Self {
+            attempt: None,
+            outcome: NodeTerminalState::Cancellation,
+            cancellation_resume: Some(resume),
+            command_exit: None,
+            structured_output: None,
+            artifacts: AttemptArtifacts::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CancellationResumeState {
+    Pending,
+    Ready,
 }

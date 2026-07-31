@@ -3,6 +3,7 @@ use std::{future::Future, pin::Pin};
 #[cfg(debug_assertions)]
 use std::{collections::VecDeque, str::FromStr, time::Duration};
 
+pub(crate) use crate::workflow::ArtifactKind;
 #[cfg(debug_assertions)]
 use crate::workflow::NodeTerminalState;
 use crate::workflow::{
@@ -43,14 +44,6 @@ pub(crate) enum ExecutionMetadata {
         cwd: String,
         shell: bool,
     },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ArtifactKind {
-    Stdout,
-    Stderr,
-    StructuredOutput,
-    AgentAnswer,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -290,7 +283,10 @@ impl MatrixAdapter {
                     kind: ArtifactKind::Stdout,
                     artifact: ArtifactRef {
                         relative_path: "artifacts/apply/stdout".into(),
-                        bytes: 5,
+                        retained_bytes: 5,
+                        observed: crate::workflow::ArtifactObservation::Complete {
+                            observed_bytes: 5,
+                        },
                         digest: Digest(
                             "6742222222222222222222222222222222222222222222222222222222222222"
                                 .into(),

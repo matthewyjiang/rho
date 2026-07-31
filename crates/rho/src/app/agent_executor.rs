@@ -40,6 +40,7 @@ pub(crate) struct AgentExecutor {
     /// Acquired before the global pool for Claude runs.
     claude_permits: Arc<tokio::sync::Semaphore>,
     host_input: SubagentHostInputBridge,
+    approval_session: Option<rho_sdk::ApprovalSession>,
 }
 
 pub(crate) struct AgentLaunchRequest {
@@ -116,7 +117,15 @@ impl AgentExecutor {
             total_permits: Arc::new(tokio::sync::Semaphore::new(limits.total)),
             claude_permits: Arc::new(tokio::sync::Semaphore::new(limits.claude)),
             host_input,
+            approval_session: None,
         }
+    }
+
+    /// Routes workflow-agent capability requests through the workflow run's
+    /// host and exact-request approval memory.
+    pub(crate) fn with_approval_session(mut self, session: rho_sdk::ApprovalSession) -> Self {
+        self.approval_session = Some(session);
+        self
     }
 
     pub(crate) fn host_input(&self) -> &SubagentHostInputBridge {
@@ -208,11 +217,33 @@ impl AgentExecutor {
         current_tools.remove(&ToolCapability::Questionnaire);
         let bound = AgentBinder::bind_frozen(&request.agent, &config, &current_tools)?;
         let frozen_claude = if request.agent.runtime == crate::workflow::AgentRuntime::ClaudeCli {
+            let identity = request.agent.executable_identity.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("frozen Claude launch has no executable identity")
+            })?;
+            let verified_executable = crate::workflow::verify_executable_identity(identity)?;
+            let script_path = crate::workflow::verified_handle_path(
+                &verified_executable.executable.file,
+                std::path::Path::new(&identity.file.canonical_path),
+            )?;
+            let mut arguments = request.agent.arguments;
+            let executable = if let Some(interpreter) = &verified_executable.interpreter {
+                let interpreter_path = crate::workflow::verified_handle_path(
+                    &interpreter.file,
+                    std::path::Path::new(&interpreter.identity.canonical_path),
+                )?;
+                let mut interpreter_arguments = verified_executable.interpreter_arguments.clone();
+                interpreter_arguments.push(crate::paths::display(&script_path));
+                interpreter_arguments.extend(arguments);
+                arguments = interpreter_arguments;
+                interpreter_path
+            } else {
+                script_path
+            };
             Some(FrozenClaudeLaunch {
-                executable: request.agent.executable.map(PathBuf::from).ok_or_else(|| {
-                    anyhow::anyhow!("frozen Claude launch has no resolved executable")
-                })?,
-                arguments: request.agent.arguments,
+                executable,
+                arguments,
+                executable_identity: identity.clone(),
+                _verified_executable: verified_executable,
             })
         } else {
             None
@@ -266,6 +297,7 @@ impl AgentExecutor {
         let persisted_output = output_file.clone();
         let total_permits = Arc::clone(&self.total_permits);
         let claude_permits = Arc::clone(&self.claude_permits);
+        let approval_session = self.approval_session.clone();
 
         let task_status_tx = status_tx.clone();
         let task: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
@@ -299,12 +331,20 @@ impl AgentExecutor {
                 Some(started_status),
             ) {
                 if let Some(frozen) = frozen_claude {
+                    let expected_identity = frozen.executable_identity;
+                    let verified_executable = frozen._verified_executable;
                     session.overrides.executable = Some(
                         crate::claude_runtime::executable::ClaudeExecutable::from_path(
                             frozen.executable,
                         ),
                     );
                     session.set_frozen_argv(frozen.arguments);
+                    session.overrides.before_spawn = Some(Box::new(move || {
+                        let _keep_handles_open = &verified_executable;
+                        crate::workflow::verify_executable_identity(&expected_identity)
+                            .map(|_| ())
+                            .map_err(std::io::Error::other)
+                    }));
                 }
                 return crate::claude_runtime::session::run_session(session).await;
             }
@@ -327,6 +367,7 @@ impl AgentExecutor {
                 cancellation: task_cancellation,
                 status_tx: task_status_tx,
                 hook_host_labels,
+                approval_session,
             })
             .await
         });
@@ -373,6 +414,9 @@ struct BoundLaunchRequest {
 struct FrozenClaudeLaunch {
     executable: PathBuf,
     arguments: Vec<String>,
+    executable_identity: crate::workflow::ExecutableIdentity,
+    // Keep descriptor-backed paths alive until the child has exited.
+    _verified_executable: crate::workflow::VerifiedExecutable,
 }
 
 /// One delegated run on the Rho runtime, after binding and permit acquisition.
@@ -390,6 +434,7 @@ struct RhoAgentRun {
     cancellation: RunCancellation,
     status_tx: tokio::sync::watch::Sender<RunStatus>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
+    approval_session: Option<rho_sdk::ApprovalSession>,
 }
 
 /// Drive a delegated run through Rho's own automation loop.
@@ -408,6 +453,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         cancellation,
         status_tx,
         hook_host_labels,
+        approval_session,
     } = run;
 
     super::cli_config::prepare_model_metadata(
@@ -460,6 +506,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
                 host_input,
             )) as Arc<dyn super::headless_run::HostInputResponder>
         }),
+        approval_session,
         hook_host_labels,
     };
     let result =

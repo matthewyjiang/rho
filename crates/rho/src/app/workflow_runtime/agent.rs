@@ -3,12 +3,17 @@ use std::{sync::Arc, time::Duration};
 use crate::{
     app::agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
     subagent::RunState,
-    workflow::{NodeExecution, NodeTerminalState, ResolvedNode, WorkflowValue},
+    workflow::{
+        ArtifactObservation, NodeExecution, NodeTerminalState, ResolvedNode, ValidatedOutputRef,
+        WorkflowValue,
+    },
 };
 
 use super::{
-    artifacts::write_artifact, command::render_template, NodeExecutionRequest, NodeExecutionResult,
-    RuntimeError, WorkflowExecutionFuture, WorkflowNodeExecutor,
+    artifacts::{write_artifact, write_artifact_with_observation},
+    command::render_template,
+    NodeExecutionRequest, NodeExecutionResult, RuntimeError, WorkflowExecutionFuture,
+    WorkflowNodeExecutor,
 };
 
 pub(crate) struct WorkflowAgentExecutor {
@@ -40,7 +45,11 @@ impl WorkflowAgentExecutor {
         else {
             return Err(RuntimeError::LaunchMetadata { node: request.node });
         };
-        let mut prompt = render_template(&agent_node.prompt, &request.outputs)?;
+        let mut prompt = render_template(
+            &agent_node.prompt,
+            &request.outputs,
+            &request.workflow.runtime_limits,
+        )?;
         if let Some(schema) = &agent_node.output {
             let normalized = serde_json::to_string(schema)?;
             prompt.push_str(
@@ -48,8 +57,23 @@ impl WorkflowAgentExecutor {
             );
             prompt.push_str(&normalized);
         }
+        super::command::check_runtime_limit(
+            "prompt expansion bytes",
+            request.workflow.runtime_limits.prompt_expansion_bytes,
+            prompt.len() as u64,
+        )?;
         let agent_directory = request.attempt_directory.join("agent");
-        super::artifacts::ensure_private_directory(&agent_directory)?;
+        let run_directory = request
+            .attempt_directory
+            .ancestors()
+            .nth(4)
+            .ok_or_else(|| RuntimeError::UnsafeArtifact(request.attempt_directory.clone()))?;
+        crate::workflow::ensure_directory_beneath(
+            run_directory,
+            agent_directory
+                .strip_prefix(run_directory)
+                .map_err(|_| RuntimeError::UnsafeArtifact(agent_directory.clone()))?,
+        )?;
         let output_file = agent_directory.join(crate::subagent::RESULT_FILE_NAME);
         let mut handle = self
             .executor
@@ -96,24 +120,32 @@ impl WorkflowAgentExecutor {
             }
             return Ok(result);
         };
-        let run_directory = request
-            .attempt_directory
-            .ancestors()
-            .nth(4)
-            .ok_or_else(|| RuntimeError::UnsafeArtifact(request.attempt_directory.clone()))?;
         let max_output_bytes = usize::try_from(node.max_output_bytes).map_err(|_| {
             RuntimeError::Data(format!(
                 "node '{}' output limit does not fit this platform",
                 request.node
             ))
         })?;
-        let retained = answer.len().min(max_output_bytes);
+        let mut retained = answer.len().min(max_output_bytes);
+        while !answer.is_char_boundary(retained) {
+            retained -= 1;
+        }
         let answer_truncated = retained < answer.len();
-        write_artifact(
+        let answer_artifact = write_artifact_with_observation(
             run_directory,
             &agent_directory.join("answer.txt"),
             &answer.as_bytes()[..retained],
+            if answer_truncated {
+                ArtifactObservation::Truncated {
+                    observed_bytes_at_least: answer.len() as u64,
+                }
+            } else {
+                ArtifactObservation::Complete {
+                    observed_bytes: answer.len() as u64,
+                }
+            },
         )?;
+        result.artifacts.answer = Some(answer_artifact);
         if let Some(schema) = &agent_node.output {
             if answer_truncated {
                 result.outcome = NodeTerminalState::Failure;
@@ -128,12 +160,13 @@ impl WorkflowAgentExecutor {
                 });
             match parsed {
                 Ok(value) => {
-                    write_artifact(
+                    let artifact = write_artifact(
                         run_directory,
                         &request.attempt_directory.join("output.json"),
                         &serde_json::to_vec_pretty(&value)?,
                     )?;
-                    result.output = Some(value);
+                    result.artifacts.structured_output = Some(artifact.clone());
+                    result.structured_output = Some(ValidatedOutputRef { artifact, value });
                 }
                 Err(_) => result.outcome = NodeTerminalState::Failure,
             }

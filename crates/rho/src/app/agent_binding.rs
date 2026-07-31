@@ -342,7 +342,7 @@ fn parse_permission_mode(value: &str) -> anyhow::Result<crate::permission::Permi
         .map_err(|error| anyhow::anyhow!("frozen permission ceiling is invalid: {error}"))
 }
 
-fn narrower_permission_mode(
+pub(crate) fn narrower_permission_mode(
     frozen: crate::permission::PermissionMode,
     current: crate::permission::PermissionMode,
 ) -> crate::permission::PermissionMode {

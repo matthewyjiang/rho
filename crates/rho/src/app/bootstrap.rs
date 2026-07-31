@@ -24,7 +24,7 @@ use super::{
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
-    if workflow_cli::planner_worker_requested() {
+    if workflow_cli::planner_worker_requested(&cli) {
         return workflow_cli::run_planner_worker().await;
     }
     let run_output = match &cli.command {
@@ -290,6 +290,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             diagnostics,
             herdr: startup.herdr,
             host_input: None,
+            approval_session: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         },
     )

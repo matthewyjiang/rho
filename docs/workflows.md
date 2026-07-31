@@ -50,7 +50,8 @@ CLI help is the source of truth for supported flags and recovery actions.
 inputs, evaluates `build` once, and checks the full graph. It checks agent
 references, schemas, conditions, access declarations, cycles, and planning
 limits. It does not create a plan or run. It does not start a model provider or
-load provider credentials.
+load provider credentials. Rho evaluates Starlark in a separate worker with a
+private framed channel, a wall-time limit, and OS process limits.
 
 ```bash
 rho workflow validate .rho/workflows/review.star \
@@ -457,7 +458,7 @@ A plan records:
 - normalized graph and inputs
 - source labels, sizes, and content digests
 - resolved agent setup and capability sets
-- resolved command paths and invocation mode
+- resolved command, script-interpreter, and working-directory identities
 - working directories and environment policy
 - timeout and output limits
 - schemas and scheduler settings
@@ -469,7 +470,13 @@ not from pretty JSON. JSON remains available for inspection.
 Resume checks the copied graph and schema version. It uses current trust and
 security policy only to narrow authority. It cannot widen the frozen plan. If a
 plan needs project trust that has since been removed, create a new plan after
-you resolve trust.
+you resolve trust. Resume does not read the plan or any workflow source file.
+
+Before execution, Rho opens each frozen executable, script interpreter, and
+working directory with no-follow checks and compares its content and file
+identity with the confirmed graph. Linux execution uses the verified file
+handle. Other systems reject an identity change immediately before process
+start. A changed path fails closed and needs a new plan and confirmation.
 
 ## Permissions, approval, and trust
 
@@ -570,9 +577,12 @@ Planning checks named measured budgets for:
 - node and edge count
 - condition and schema depth
 - schema and serialized graph bytes
+- rendered templates, expanded prompts and argv, node timeouts, and retained
+  command output
 
 A limit error names the budget, accepted limit, and requested or measured
-value. Rho evaluates untrusted Starlark only in its supervised planning path.
+value. Runtime values do not use hidden defaults for timeout or output limits.
+Rho evaluates untrusted Starlark only in its supervised planning worker.
 
 ## First-release limits
 

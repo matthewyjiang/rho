@@ -2,11 +2,23 @@ use std::collections::BTreeMap;
 
 use super::*;
 
-pub(super) fn id(value: &str) -> NodeId {
+pub(crate) fn runtime_limits() -> FrozenRuntimeLimits {
+    FrozenRuntimeLimits {
+        retained_output_per_stream_bytes: 1024 * 1024,
+        retained_output_total_bytes: 2 * 1024 * 1024,
+        rendered_template_bytes: 1024 * 1024,
+        node_timeout_seconds: 24 * 60 * 60,
+        prompt_expansion_bytes: 1024 * 1024,
+        argv_expansion_bytes: 1024 * 1024,
+        environment_expansion_bytes: 1024 * 1024,
+    }
+}
+
+pub(crate) fn id(value: &str) -> NodeId {
     NodeId::new(value).unwrap()
 }
 
-pub(super) fn agent_node(name: &str, needs: &[&str], access: WorkspaceAccess) -> Node {
+pub(crate) fn agent_node(name: &str, needs: &[&str], access: WorkspaceAccess) -> Node {
     let id = id(name);
     Node {
         id: id.clone(),
@@ -27,7 +39,7 @@ pub(super) fn agent_node(name: &str, needs: &[&str], access: WorkspaceAccess) ->
     }
 }
 
-pub(super) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
+pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
     let graph = WorkflowGraph {
         name: WorkflowName::new("test").unwrap(),
         nodes: nodes
@@ -54,9 +66,10 @@ pub(super) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
                     reasoning: None,
                     step_limit: 100,
                     capabilities: Default::default(),
-                    permission_ceiling: "ask".to_owned(),
+                    permission_ceiling: "auto".to_owned(),
                     auth_profile: None,
                     executable: None,
+                    executable_identity: None,
                     arguments: Vec::new(),
                 })),
             )
@@ -91,15 +104,17 @@ pub(super) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
             max_parallel_agents: 8,
             max_parallel_commands: 8,
         },
+        runtime_limits: runtime_limits(),
     };
     workflow.graph_digest = graph_digest(&workflow).unwrap();
     workflow
 }
 
-pub(super) fn state(workflow: &FrozenWorkflow) -> WorkflowState {
+pub(crate) fn state(workflow: &FrozenWorkflow) -> WorkflowState {
     WorkflowState {
         revision: 0,
         lifecycle: RunLifecycle::Running,
+        outcome: None,
         cancellation_requested: false,
         nodes: workflow
             .graph
@@ -110,10 +125,11 @@ pub(super) fn state(workflow: &FrozenWorkflow) -> WorkflowState {
             .collect(),
         command_exits: BTreeMap::new(),
         outputs: BTreeMap::new(),
+        completions: BTreeMap::new(),
     }
 }
 
-pub(super) fn limits() -> PlanningLimits {
+pub(crate) fn limits() -> PlanningLimits {
     PlanningLimits::from_measurements(PlanningMeasurements {
         receipt: "workflow test fixture measured from its exact source and graph".to_owned(),
         total_source_bytes: 1_000_000,
@@ -134,6 +150,14 @@ pub(super) fn limits() -> PlanningLimits {
         schema_bytes: 1_000_000,
         graph_bytes: 10_000_000,
         worker_wall_millis: 10_000,
+        retained_output_per_stream_bytes: 8 * 1024 * 1024,
+        retained_output_total_bytes: 64 * 1024 * 1024,
+        rendered_template_bytes: 4 * 1024 * 1024,
+        node_timeout_seconds: 24 * 60 * 60,
+        prompt_expansion_bytes: 8 * 1024 * 1024,
+        argv_expansion_bytes: 8 * 1024 * 1024,
+        // Schema v1 forbids command environment entries; one byte is the budget floor.
+        environment_expansion_bytes: 1,
     })
     .unwrap()
 }

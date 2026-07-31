@@ -144,6 +144,7 @@ pub(super) struct Startup<'a> {
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
     pub host_input: Option<Arc<dyn HostInputResponder>>,
+    pub approval_session: Option<rho_sdk::ApprovalSession>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
 
@@ -461,7 +462,7 @@ async fn run_session_with_output(
             tools: tool_set.tools(),
             workspace,
             workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
-            approval_handler: None,
+            approval_session: startup.approval_session.clone(),
             system_prompt,
             reasoning: sdk_options.runtime.reasoning,
             service_tier: sdk_options.runtime.service_tier,

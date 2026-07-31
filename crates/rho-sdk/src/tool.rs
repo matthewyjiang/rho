@@ -405,6 +405,15 @@ impl ToolContext {
         requester.request(request).await
     }
 
+    /// Creates child-run approval state routed through this call's active host.
+    ///
+    /// Call this once at the child-run boundary, then share the returned value
+    /// across every child executor. The child uses this host call's handler,
+    /// exact-request memory, and audit log.
+    pub fn child_approval_session(&self) -> crate::ApprovalSession {
+        self.authorization.approval_session()
+    }
+
     pub fn workspace(&self) -> Option<&Workspace> {
         self.workspace.as_ref()
     }

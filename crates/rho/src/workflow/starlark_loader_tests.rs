@@ -52,3 +52,23 @@ fn collects_each_loaded_source_once_in_sorted_manifest() {
         vec!["//common.star".to_owned(), "//entry.star".to_owned()]
     );
 }
+
+// Covers: a source path substituted with a symlink must never be opened after authorization.
+// Owner: workflow source collector filesystem boundary.
+#[cfg(unix)]
+#[test]
+fn rejects_source_symlink_substitution() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    fs::write(outside.path(), "WORKFLOW = None").unwrap();
+    symlink(outside.path(), root.path().join("entry.star")).unwrap();
+
+    let limits = limits();
+    let result = SourceCollector::new(root.path(), &limits)
+        .unwrap()
+        .collect(Path::new("entry.star"));
+
+    assert!(matches!(result, Err(WorkflowError::SourceSymlink { .. })));
+}

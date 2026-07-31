@@ -53,3 +53,43 @@ fn rejects_missing_dependencies_cycles_and_non_ancestor_references() {
         Err(WorkflowError::NonAncestorReference { .. })
     ));
 }
+
+// Covers: source-controlled runtime values must not bypass fixed allocation and time budgets.
+// Owner: frozen workflow runtime-budget validation.
+#[test]
+fn rejects_zero_and_over_budget_runtime_values() {
+    let limits = crate::workflow::test_support::limits();
+    let cases = [
+        ("node timeout seconds", 0, 1),
+        (
+            "node timeout seconds",
+            limits.node_timeout_seconds.limit + 1,
+            1,
+        ),
+        ("retained output bytes per stream", 1, 0),
+        (
+            "retained output bytes per stream",
+            1,
+            limits.retained_output_per_stream_bytes.limit + 1,
+        ),
+    ];
+    for (budget, timeout, output) in cases {
+        let mut workflow = workflow(vec![agent_node("a", &[], WorkspaceAccess::Mutating)]);
+        workflow
+            .graph
+            .nodes
+            .get_mut(&id("a"))
+            .unwrap()
+            .timeout_seconds = timeout;
+        workflow
+            .graph
+            .nodes
+            .get_mut(&id("a"))
+            .unwrap()
+            .max_output_bytes = output;
+        assert!(matches!(
+            validate_runtime_budgets(&workflow, &limits),
+            Err(WorkflowError::BudgetExceeded { budget: found, .. }) if found == budget
+        ));
+    }
+}

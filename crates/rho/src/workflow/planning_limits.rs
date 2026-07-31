@@ -40,6 +40,18 @@ impl Budget {
             Ok(())
         }
     }
+
+    pub(crate) fn check_nonzero(&self, actual: u64) -> WorkflowResult<()> {
+        if actual == 0 || actual > self.limit {
+            Err(WorkflowError::BudgetExceeded {
+                budget: self.name,
+                limit: self.limit,
+                actual,
+            })
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +75,13 @@ pub(crate) struct PlanningMeasurements {
     pub(crate) schema_bytes: u64,
     pub(crate) graph_bytes: u64,
     pub(crate) worker_wall_millis: u64,
+    pub(crate) retained_output_per_stream_bytes: u64,
+    pub(crate) retained_output_total_bytes: u64,
+    pub(crate) rendered_template_bytes: u64,
+    pub(crate) node_timeout_seconds: u64,
+    pub(crate) prompt_expansion_bytes: u64,
+    pub(crate) argv_expansion_bytes: u64,
+    pub(crate) environment_expansion_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -85,9 +104,71 @@ pub(crate) struct PlanningLimits {
     pub(crate) schema_bytes: Budget,
     pub(crate) graph_bytes: Budget,
     pub(crate) worker_wall_millis: Budget,
+    pub(crate) retained_output_per_stream_bytes: Budget,
+    pub(crate) retained_output_total_bytes: Budget,
+    pub(crate) rendered_template_bytes: Budget,
+    pub(crate) node_timeout_seconds: Budget,
+    pub(crate) prompt_expansion_bytes: Budget,
+    pub(crate) argv_expansion_bytes: Budget,
+    pub(crate) environment_expansion_bytes: Budget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FrozenRuntimeLimits {
+    pub(crate) retained_output_per_stream_bytes: u64,
+    pub(crate) retained_output_total_bytes: u64,
+    pub(crate) rendered_template_bytes: u64,
+    pub(crate) node_timeout_seconds: u64,
+    pub(crate) prompt_expansion_bytes: u64,
+    pub(crate) argv_expansion_bytes: u64,
+    pub(crate) environment_expansion_bytes: u64,
+}
+
+impl FrozenRuntimeLimits {
+    pub(crate) fn validate(&self) -> WorkflowResult<()> {
+        for (name, limit) in [
+            (
+                "retained output per stream bytes",
+                self.retained_output_per_stream_bytes,
+            ),
+            (
+                "retained output total bytes",
+                self.retained_output_total_bytes,
+            ),
+            ("rendered template bytes", self.rendered_template_bytes),
+            ("node timeout seconds", self.node_timeout_seconds),
+            ("prompt expansion bytes", self.prompt_expansion_bytes),
+            ("argv expansion bytes", self.argv_expansion_bytes),
+            (
+                "environment expansion bytes",
+                self.environment_expansion_bytes,
+            ),
+        ] {
+            if limit == 0 {
+                return Err(WorkflowError::BudgetExceeded {
+                    budget: name,
+                    limit,
+                    actual: 1,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PlanningLimits {
+    pub(crate) fn frozen_runtime_limits(&self) -> FrozenRuntimeLimits {
+        FrozenRuntimeLimits {
+            retained_output_per_stream_bytes: self.retained_output_per_stream_bytes.limit,
+            retained_output_total_bytes: self.retained_output_total_bytes.limit,
+            rendered_template_bytes: self.rendered_template_bytes.limit,
+            node_timeout_seconds: self.node_timeout_seconds.limit,
+            prompt_expansion_bytes: self.prompt_expansion_bytes.limit,
+            argv_expansion_bytes: self.argv_expansion_bytes.limit,
+            environment_expansion_bytes: self.environment_expansion_bytes.limit,
+        }
+    }
+
     /// Build limits from an externally recorded acceptance run. No guessed
     /// default exists: the caller must provide each accepted measured value.
     pub(crate) fn from_measurements(values: PlanningMeasurements) -> WorkflowResult<Self> {
@@ -182,6 +263,41 @@ impl PlanningLimits {
                 "planning worker wall milliseconds",
                 values.worker_wall_millis,
                 receipt("supervised worker benchmark"),
+            )?,
+            retained_output_per_stream_bytes: Budget::measured(
+                "retained output bytes per stream",
+                values.retained_output_per_stream_bytes,
+                receipt("largest accepted retained process stream"),
+            )?,
+            retained_output_total_bytes: Budget::measured(
+                "total retained workflow output bytes",
+                values.retained_output_total_bytes,
+                receipt("sum of all source-controlled retained streams"),
+            )?,
+            rendered_template_bytes: Budget::measured(
+                "rendered template bytes",
+                values.rendered_template_bytes,
+                receipt("largest accepted rendered template"),
+            )?,
+            node_timeout_seconds: Budget::measured(
+                "node timeout seconds",
+                values.node_timeout_seconds,
+                receipt("longest accepted node timeout"),
+            )?,
+            prompt_expansion_bytes: Budget::measured(
+                "expanded prompt bytes",
+                values.prompt_expansion_bytes,
+                receipt("largest accepted prompt allocation"),
+            )?,
+            argv_expansion_bytes: Budget::measured(
+                "expanded argv bytes",
+                values.argv_expansion_bytes,
+                receipt("largest accepted argv allocation"),
+            )?,
+            environment_expansion_bytes: Budget::measured(
+                "expanded environment bytes",
+                values.environment_expansion_bytes,
+                receipt("workflow source cannot add environment entries in schema v1"),
             )?,
         })
     }

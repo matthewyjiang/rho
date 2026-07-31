@@ -18,9 +18,9 @@ use crate::{
         ToolProgress,
     },
     ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
-    AuthorizationDenialKind, CapabilityRequest, CapabilitySource, Error, HostChoice,
-    HostInputRequest, HostInputResponse, HostQuestion, PathScope, PolicyDecision, SelectionMode,
-    ToolHost, ToolHostCall, ToolHostEvent, WorkspacePolicy,
+    ApprovalSession, AuthorizationDenialKind, CapabilityRequest, CapabilitySource, Error,
+    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, PathScope, PolicyDecision,
+    SelectionMode, ToolHost, ToolHostCall, ToolHostEvent, WorkspacePolicy,
 };
 
 #[derive(Clone)]
@@ -90,9 +90,14 @@ impl Tool for AuthorizingTool {
         }
     }
 
-    fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            context.authorize(capability()).await.map_err(|error| {
+            let path = invocation
+                .arguments()
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("/work/input");
+            context.authorize(capability(path)).await.map_err(|error| {
                 if matches!(error.kind(), AuthorizationDenialKind::Cancelled) {
                     ToolError::cancelled()
                 } else {
@@ -105,9 +110,9 @@ impl Tool for AuthorizingTool {
     }
 }
 
-fn capability() -> CapabilityRequest {
+fn capability(path: &str) -> CapabilityRequest {
     CapabilityRequest::read_path(
-        "/work/input",
+        path,
         PathScope::PrimaryWorkspace,
         CapabilitySource::host_tool("host_exec"),
     )
@@ -115,6 +120,10 @@ fn capability() -> CapabilityRequest {
 
 fn call() -> ToolHostCall {
     ToolHostCall::new("host_exec", json!({"input": "value"}))
+}
+
+fn call_path(path: &str) -> ToolHostCall {
+    ToolHostCall::new("host_exec", json!({"path": path}))
 }
 
 // Covers: a host tool must not bypass or reorder any authorization stage when no provider exists.
@@ -222,6 +231,9 @@ impl ApprovalHandler for CountingApproval {
 #[tokio::test]
 async fn exact_approval_is_remembered_for_the_tool_host_session() {
     let count = Arc::new(Mutex::new(0));
+    let approvals = ApprovalSession::new(CountingApproval {
+        count: Arc::clone(&count),
+    });
     let host = ToolHost::builder()
         .tool(AuthorizingTool {
             order: Arc::default(),
@@ -229,39 +241,73 @@ async fn exact_approval_is_remembered_for_the_tool_host_session() {
         .workspace_policy(OrderedPolicy {
             order: Arc::default(),
         })
-        .approval_handler(CountingApproval {
-            count: Arc::clone(&count),
-        })
+        .approval_session(approvals.clone())
         .build()
         .unwrap();
 
     host.invoke(call()).await.unwrap();
-    host.invoke(call()).await.unwrap();
-
-    let other_host = ToolHost::builder()
+    let later_host = ToolHost::builder()
         .tool(AuthorizingTool {
             order: Arc::default(),
         })
         .workspace_policy(OrderedPolicy {
             order: Arc::default(),
         })
-        .approval_handler(CountingApproval {
-            count: Arc::clone(&count),
-        })
+        .approval_session(approvals)
         .build()
         .unwrap();
-    other_host.invoke(call()).await.unwrap();
+    later_host.invoke(call()).await.unwrap();
+    later_host.invoke(call_path("/work/other")).await.unwrap();
 
     assert_eq!(*count.lock().unwrap(), 2);
     assert_eq!(
-        host.approval_audit()
+        later_host
+            .approval_audit()
             .iter()
             .map(|record| record.decision())
             .collect::<Vec<_>>(),
         vec![
             ApprovalAuditDecision::AllowedForSession,
             ApprovalAuditDecision::AllowedByRememberedApproval,
+            ApprovalAuditDecision::AllowedForSession,
         ]
+    );
+}
+
+// Covers: host denial must stop a provider-free tool before execution.
+// Owner: SDK ToolHost authorization orchestration.
+#[tokio::test]
+async fn host_denial_stops_before_execution() {
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let host = ToolHost::builder()
+        .tool(AuthorizingTool {
+            order: Arc::clone(&order),
+        })
+        .workspace_policy(OrderedPolicy {
+            order: Arc::clone(&order),
+        })
+        .approval_handler(OrderedApproval {
+            order: Arc::clone(&order),
+            decision: ApprovalDecision::Deny {
+                reason: "denied by test host".into(),
+            },
+        })
+        .build()
+        .unwrap();
+
+    let error = host.invoke(call()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::Tool(ref error) if error.kind() == ToolErrorKind::PolicyDenied
+    ));
+    assert_eq!(*order.lock().unwrap(), vec!["policy", "approval"]);
+    assert_eq!(
+        host.approval_audit()
+            .iter()
+            .map(|record| record.decision())
+            .collect::<Vec<_>>(),
+        vec![ApprovalAuditDecision::DeniedByHost]
     );
 }
 

@@ -3,8 +3,9 @@
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use rho_sdk::tool::{
-    OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
-    ToolMetadata, ToolOutput, ToolSecurity,
+    OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
+    ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+    ToolSecurity,
 };
 use serde::{Deserialize, Serialize};
 
@@ -63,10 +64,9 @@ impl WorkflowToolRequest {
 /// A bounded artifact pointer. Workflow tool results never contain artifact data.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct WorkflowArtifactSummary {
-    pub(crate) kind: String,
-    pub(crate) relative_path: String,
-    pub(crate) bytes: u64,
-    pub(crate) digest: String,
+    pub(crate) kind: crate::workflow::ArtifactKind,
+    #[serde(flatten)]
+    pub(crate) artifact: crate::workflow::ArtifactRef,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -161,6 +161,13 @@ pub(crate) enum WorkflowToolResult {
 /// read through `context`. Run and resume must request host input for the exact
 /// graph digest and fail closed when no responder exists.
 pub(crate) trait WorkflowToolService: Send + Sync {
+    fn prepare(
+        &self,
+        _request: &WorkflowToolRequest,
+    ) -> Result<Vec<rho_sdk::CapabilityRequest>, ToolError> {
+        Ok(Vec::new())
+    }
+
     fn execute<'a>(
         &'a self,
         request: WorkflowToolRequest,
@@ -192,10 +199,18 @@ impl Tool for WorkflowTool {
     }
 
     fn security(&self) -> ToolSecurity {
-        ToolSecurity::built_in([rho_sdk::CapabilityKind::Read])
+        ToolSecurity::built_in([
+            rho_sdk::CapabilityKind::Read,
+            rho_sdk::CapabilityKind::Write,
+            rho_sdk::CapabilityKind::Process,
+        ])
     }
 
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
         Box::pin(async move {
             let request: WorkflowToolRequest =
                 serde_json::from_value(invocation.arguments().clone()).map_err(|error| {
@@ -205,9 +220,21 @@ impl Tool for WorkflowTool {
                     )
                 })?;
             let operation = request.operation();
-            let result = self.service.execute(request, &context).await?;
-            let content = bounded_result(&result, self.max_output_bytes)?;
-            Ok(ToolOutput::text(content).metadata(ToolMetadata::new().operation(operation)))
+            let capabilities = self.service.prepare(&request)?;
+            let service = Arc::clone(&self.service);
+            let max_output_bytes = self.max_output_bytes;
+            Ok(PreparedToolInvocation::exclusive_with_capabilities(
+                capabilities,
+                ToolMetadata::new().operation(operation.clone()),
+                move |context| {
+                    Box::pin(async move {
+                        let result = service.execute(request, &context).await?;
+                        let content = bounded_result(&result, max_output_bytes)?;
+                        Ok(ToolOutput::text(content)
+                            .metadata(ToolMetadata::new().operation(operation)))
+                    })
+                },
+            ))
         })
     }
 }

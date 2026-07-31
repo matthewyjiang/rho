@@ -6,11 +6,14 @@ use ratatui::{
     Frame,
 };
 
-use crate::workflow::{AgentRuntime, CommandExit, NodeState, NodeTerminalState, WorkspaceAccess};
+use crate::workflow::{
+    AgentRuntime, ArtifactKind, ArtifactObservation, CommandExit, NodeState, NodeTerminalState,
+    WorkspaceAccess,
+};
 
 use super::{
     event_adapter::{
-        ArtifactKind, CancellationState, ExecutionMetadata, PlanApprovalState, RecoveryRequirement,
+        CancellationState, ExecutionMetadata, PlanApprovalState, RecoveryRequirement,
         TerminalReason, WorkflowNodeSnapshot,
     },
     state::WorkflowUiState,
@@ -175,10 +178,13 @@ fn detail_lines<'a>(node: &'a WorkflowNodeSnapshot, state: &'a WorkflowUiState) 
     }
     for artifact in &node.artifacts {
         lines.push(Line::from(format!(
-            "artifact {}: {} ({} bytes, {})",
+            "artifact {}: {} ({}, {})",
             artifact_kind_label(&artifact.kind),
             artifact.artifact.relative_path,
-            artifact.artifact.bytes,
+            artifact_size_label(
+                &artifact.artifact.observed,
+                artifact.artifact.retained_bytes
+            ),
             short_digest(&artifact.artifact.digest.0),
         )));
     }
@@ -321,6 +327,20 @@ fn artifact_kind_label(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Stderr => "stderr",
         ArtifactKind::StructuredOutput => "structured output",
         ArtifactKind::AgentAnswer => "agent answer",
+        ArtifactKind::CommandOutcome => "command outcome",
+    }
+}
+
+fn artifact_size_label(observed: &ArtifactObservation, retained: u64) -> String {
+    match observed {
+        ArtifactObservation::Complete { observed_bytes } => {
+            format!("{retained} bytes, observed {observed_bytes}")
+        }
+        ArtifactObservation::Truncated {
+            observed_bytes_at_least,
+        } => format!(
+            "{retained} bytes retained, observed at least {observed_bytes_at_least}, truncated"
+        ),
     }
 }
 

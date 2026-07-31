@@ -1,6 +1,11 @@
 use std::{
-    collections::VecDeque, fmt, future::Future, num::NonZeroUsize, panic::AssertUnwindSafe,
-    pin::Pin, sync::Mutex,
+    collections::VecDeque,
+    fmt,
+    future::Future,
+    num::NonZeroUsize,
+    panic::AssertUnwindSafe,
+    pin::Pin,
+    sync::{Arc, Mutex},
 };
 
 use tokio::sync::{mpsc, oneshot};
@@ -74,6 +79,71 @@ pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ApprovalDecision> + Se
 /// Host extension point for interactive or remote approval decisions.
 pub trait ApprovalHandler: Send + Sync {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a>;
+}
+
+/// Shared approval state for one host-owned authorization session.
+///
+/// Clones use the same handler, exact-request memory, and audit log. A host can
+/// attach one value to several SDK runtimes and [`ToolHost`](crate::ToolHost)
+/// instances when those executors belong to one logical run.
+#[derive(Clone)]
+pub struct ApprovalSession {
+    handler: Arc<dyn ApprovalHandler>,
+    remembered: Arc<SessionApprovals>,
+    audit: Arc<ApprovalAuditLog>,
+}
+
+impl ApprovalSession {
+    pub fn new<A>(handler: A) -> Self
+    where
+        A: ApprovalHandler + 'static,
+    {
+        Self::from_shared(Arc::new(handler))
+    }
+
+    pub fn from_shared(handler: Arc<dyn ApprovalHandler>) -> Self {
+        Self {
+            handler,
+            remembered: Arc::default(),
+            audit: Arc::default(),
+        }
+    }
+
+    pub(crate) fn from_parts(
+        handler: Arc<dyn ApprovalHandler>,
+        remembered: Arc<SessionApprovals>,
+        audit: Arc<ApprovalAuditLog>,
+    ) -> Self {
+        Self {
+            handler,
+            remembered,
+            audit,
+        }
+    }
+
+    pub fn audit(&self) -> Vec<ApprovalAuditRecord> {
+        self.audit.snapshot()
+    }
+
+    pub(crate) fn handler(&self) -> Arc<dyn ApprovalHandler> {
+        Arc::clone(&self.handler)
+    }
+
+    pub(crate) fn remembered(&self) -> Arc<SessionApprovals> {
+        Arc::clone(&self.remembered)
+    }
+
+    pub(crate) fn audit_log(&self) -> Arc<ApprovalAuditLog> {
+        Arc::clone(&self.audit)
+    }
+}
+
+impl fmt::Debug for ApprovalSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ApprovalSession")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Approval handler that denies every request.

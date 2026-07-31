@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use super::{
-    evaluate_condition, validate_transition, ConditionContext, FrozenWorkflow, NodeExecution,
-    NodeId, NodeState, NodeTerminalState, RunLifecycle, SchedulerAction, SchedulerCapacity,
-    SchedulerEvent, TruthValue, WorkflowError, WorkflowResult, WorkflowState, WorkspaceAccess,
+    evaluate_condition, validate_reset_transition, validate_transition, ConditionContext,
+    FrozenWorkflow, NodeExecution, NodeId, NodeState, NodeTerminalState, RunLifecycle,
+    SchedulerAction, SchedulerCapacity, SchedulerEvent, TruthValue, WorkflowError, WorkflowResult,
+    WorkflowState, WorkspaceAccess,
 };
 
 pub(crate) fn next_actions(
@@ -157,16 +158,12 @@ pub(crate) fn apply_event(
         SchedulerEvent::Launched { node, attempt } => {
             replace_node(&mut next, node, NodeState::Running { attempt })?
         }
-        SchedulerEvent::Finished {
-            node,
-            outcome,
-            command_exit,
-            output,
-        } => {
+        SchedulerEvent::Finished { node, completion } => {
             let definition = workflow.graph.nodes.get(&node).ok_or_else(|| {
                 WorkflowError::Scheduler(format!("event targets unknown node '{node}'"))
             })?;
-            if let Some(value) = &output {
+            if let Some(output) = &completion.structured_output {
+                let value = &output.value;
                 let output_bytes = serde_json::to_vec(value)?.len() as u64;
                 if output_bytes > definition.max_output_bytes {
                     return Err(WorkflowError::Scheduler(format!(
@@ -185,19 +182,52 @@ pub(crate) fn apply_event(
                     .validate_value(value)?;
                 next.outputs.insert(node.clone(), value.clone());
             }
-            if let Some(exit) = command_exit {
+            if let Some(exit) = &completion.command_exit {
                 if !matches!(definition.execution, NodeExecution::Command(_)) {
                     return Err(WorkflowError::Scheduler(format!(
                         "agent node '{node}' reported a command exit"
                     )));
                 }
-                next.command_exits.insert(node.clone(), exit);
+                next.command_exits.insert(node.clone(), exit.clone());
             }
-            replace_node(&mut next, node, NodeState::Terminal { outcome })?;
+            replace_node(
+                &mut next,
+                node.clone(),
+                NodeState::Terminal {
+                    outcome: completion.outcome,
+                },
+            )?;
+            next.completions.insert(node, *completion);
         }
         SchedulerEvent::CancellationRequested => {
             next.cancellation_requested = true;
             next.lifecycle = RunLifecycle::Cancelling;
+        }
+        SchedulerEvent::ResetNode { node, reason } => {
+            let current = next.nodes.get(&node).ok_or_else(|| {
+                WorkflowError::Scheduler(format!("event targets unknown node '{node}'"))
+            })?;
+            let target = match reason {
+                super::NodeResetReason::InterruptedRecovery => NodeState::Ready,
+                super::NodeResetReason::CleanCancellation => match next
+                    .completions
+                    .get(&node)
+                    .and_then(|completion| completion.cancellation_resume)
+                {
+                    Some(super::CancellationResumeState::Pending) => NodeState::Pending,
+                    Some(super::CancellationResumeState::Ready) => NodeState::Ready,
+                    None => {
+                        return Err(WorkflowError::Scheduler(format!(
+                            "cancelled node '{node}' has no resume state"
+                        )))
+                    }
+                },
+            };
+            validate_reset_transition(&node, current, reason, &target)?;
+            next.nodes.insert(node.clone(), target);
+            next.command_exits.remove(&node);
+            next.outputs.remove(&node);
+            next.completions.remove(&node);
         }
     }
     next.revision = next

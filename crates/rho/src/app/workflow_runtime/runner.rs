@@ -3,43 +3,27 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
 use tokio::task::JoinSet;
 
 use crate::workflow::{
-    apply_event, next_actions, AttemptNumber, AttemptRecord, AttemptState, ExternalOwner,
-    NodeExecution, NodeId, NodeState, NodeTerminalState, ResolvedNode, RunId, RunLifecycle,
-    RunStateRecord, SchedulerAction, SchedulerCapacity, SchedulerEvent, StoredRun, WorkflowEvent,
-    WorkflowEventRecord, WorkflowStore, WorkspaceAccess, ATTEMPT_VERSION, EVENT_VERSION,
+    next_actions, AttemptNumber, AttemptRecord, AttemptState, ExternalOwner, NodeExecution, NodeId,
+    NodeState, NodeTerminalState, ResolvedNode, RunId, RunLifecycle, RunStateRecord,
+    SchedulerAction, SchedulerCapacity, StoredRun, WorkflowEvent, WorkflowEventRecord,
+    WorkflowStore, WorkspaceAccess, ATTEMPT_VERSION, EVENT_VERSION,
 };
 
 use super::{
-    artifacts::{ensure_private_directory, write_json},
+    artifacts::write_json,
+    cancellation::{
+        read_cancellation_request, run_directory, CancellationRequest, CancellationRequestReceipt,
+        CROSS_PROCESS_CANCEL_POLL,
+    },
+    recovery::{recover_state, uncertain_nodes},
     CheckoutGate, NodeExecutionRequest, NodeExecutionResult, RuntimeError, RuntimeEvent,
     RuntimeSecurity, WorkflowNodeExecutor,
 };
-
-// Receipt: the cross-process command-cancellation E2E completed in 87 ms
-// with this 100 ms poll, below its sub-second response target.
-const CROSS_PROCESS_CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecoveryDecision {
     NormalResume,
     ConfirmNoProcess,
-}
-
-#[derive(Clone)]
-pub(crate) struct CancellationRequest {
-    path: PathBuf,
-    cancellation: rho_sdk::CancellationToken,
-}
-
-impl CancellationRequest {
-    pub(crate) fn request(&self) -> Result<(), RuntimeError> {
-        if let Some(parent) = self.path.parent() {
-            ensure_private_directory(parent)?;
-        }
-        crate::config_writer::write_bytes_atomically(&self.path, b"cancel\n")?;
-        self.cancellation.cancel();
-        Ok(())
-    }
 }
 
 macro_rules! append_event {
@@ -58,31 +42,6 @@ macro_rules! append_event {
             },
         )?;
         record.last_event_sequence = sequence;
-        Ok::<(), RuntimeError>(())
-    }};
-}
-
-macro_rules! append_then_save {
-    ($store:expr, $guard:expr, $record:expr, $next:expr, $event:expr $(,)?) => {{
-        let record = &mut *$record;
-        append_event!($store, &mut *$guard, &mut *record, $event)?;
-        record.state = $next;
-        $store.save_state(&mut *$guard, record)?;
-        Ok::<(), RuntimeError>(())
-    }};
-}
-
-macro_rules! persist_lifecycle {
-    ($store:expr, $guard:expr, $record:expr) => {{
-        let record = &mut *$record;
-        let lifecycle = record.state.lifecycle;
-        append_event!(
-            $store,
-            &mut *$guard,
-            &mut *record,
-            WorkflowEvent::RunLifecycle { lifecycle },
-        )?;
-        $store.save_state(&mut *$guard, record)?;
         Ok::<(), RuntimeError>(())
     }};
 }
@@ -131,10 +90,52 @@ impl WorkflowRunner {
     pub(crate) fn request_cross_process_cancel(
         rho_home: &std::path::Path,
         run_id: RunId,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<CancellationRequestReceipt, RuntimeError> {
+        let request_id = uuid::Uuid::new_v4().to_string();
         let path = run_directory(rho_home, run_id).join("cancel.request");
-        crate::config_writer::write_bytes_atomically(&path, b"cancel\n")?;
-        Ok(())
+        crate::config_writer::write_bytes_atomically(&path, request_id.as_bytes())?;
+        Ok(CancellationRequestReceipt { request_id })
+    }
+
+    pub(crate) fn cross_process_cancel_acknowledged(
+        rho_home: &std::path::Path,
+        run_id: RunId,
+    ) -> Result<bool, RuntimeError> {
+        let events = WorkflowStore::new(rho_home)?.read_events(run_id)?;
+        let requested = events
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(position, record)| {
+                if let WorkflowEvent::CancellationRequested { request_id } = &record.event {
+                    Some((position, request_id))
+                } else {
+                    None
+                }
+            });
+        let Some((position, request_id)) = requested else {
+            return Ok(false);
+        };
+        Ok(events[position + 1..].iter().any(|record| {
+            matches!(&record.event, WorkflowEvent::CancellationAcknowledged { request_id: acknowledged } if acknowledged == request_id)
+        }))
+    }
+
+    pub(crate) fn cancellation_request_acknowledged(
+        rho_home: &std::path::Path,
+        run_id: RunId,
+        receipt: &CancellationRequestReceipt,
+    ) -> Result<bool, RuntimeError> {
+        let events = WorkflowStore::new(rho_home)?.read_events(run_id)?;
+        let requested = events.iter().rfind(|record| {
+            matches!(&record.event, WorkflowEvent::CancellationRequested { request_id } if request_id == &receipt.request_id)
+        });
+        let acknowledged = events.iter().rfind(|record| {
+            matches!(&record.event, WorkflowEvent::CancellationAcknowledged { request_id } if request_id == &receipt.request_id)
+        });
+        Ok(
+            matches!((requested, acknowledged), (Some(request), Some(ack)) if ack.sequence > request.sequence),
+        )
     }
 
     pub(crate) async fn drive(
@@ -158,6 +159,7 @@ impl WorkflowRunner {
         if super::journal::replay_journal(&store, &run_directory, &mut run)? {
             store.save_state(&guard, &run.state)?;
         }
+        recover_completed_transitions(&store, &mut guard, &run_directory, &mut run)?;
         let first_start = run.state.state.lifecycle == RunLifecycle::Planned;
         self.validate_security(&run)?;
         let checkout = CheckoutGate::new(&self.rho_home, &self.workspace)?;
@@ -186,9 +188,16 @@ impl WorkflowRunner {
         let uncertain = uncertain_nodes(&run.state);
         if !uncertain.is_empty() {
             mark_uncertain_attempts(&run_directory, &run.state)?;
-            run.state.state.lifecycle = RunLifecycle::NeedsRecovery;
-            bump_revision(&mut run.state.state)?;
-            persist_lifecycle!(&store, &mut guard, &mut run.state)?;
+            persist_state_event(
+                &store,
+                &mut guard,
+                &run_directory,
+                &run.graph,
+                &mut run.state,
+                WorkflowEvent::RunLifecycle {
+                    lifecycle: RunLifecycle::NeedsRecovery,
+                },
+            )?;
             send_event(
                 &events,
                 RuntimeEvent::NeedsRecovery {
@@ -205,7 +214,23 @@ impl WorkflowRunner {
                 });
             }
         }
-        recover_state(&mut run.state, recovery)?;
+        recover_state(
+            &store,
+            &mut guard,
+            &run_directory,
+            &run.graph,
+            &mut run.state,
+            recovery,
+        )?;
+        let mut cancellation_request_id =
+            store
+                .read_events(run_id)?
+                .into_iter()
+                .rev()
+                .find_map(|record| match record.event {
+                    WorkflowEvent::CancellationRequested { request_id } => Some(request_id),
+                    _ => None,
+                });
         if resuming_cancellation {
             match std::fs::remove_file(run_directory.join("cancel.request")) {
                 Ok(()) => {}
@@ -213,8 +238,18 @@ impl WorkflowRunner {
                 Err(error) => return Err(error.into()),
             }
         }
-        set_running(&mut run.state);
-        persist_lifecycle!(&store, &mut guard, &mut run.state)?;
+        if run.state.state.lifecycle != RunLifecycle::Running {
+            persist_state_event(
+                &store,
+                &mut guard,
+                &run_directory,
+                &run.graph,
+                &mut run.state,
+                WorkflowEvent::RunLifecycle {
+                    lifecycle: RunLifecycle::Running,
+                },
+            )?;
+        }
         if first_start {
             if let Some(hooks) = &self.hooks {
                 append_event!(
@@ -235,19 +270,19 @@ impl WorkflowRunner {
         let graph = Arc::new(run.graph.clone());
         let mut tasks = JoinSet::new();
         loop {
-            if self.cancellation.is_cancelled() || run_directory.join("cancel.request").exists() {
+            let durable_cancellation = read_cancellation_request(&run_directory)?;
+            if self.cancellation.is_cancelled() || durable_cancellation.is_some() {
                 if !run.state.state.cancellation_requested {
-                    let next = apply_event(
-                        &graph,
-                        &run.state.state,
-                        SchedulerEvent::CancellationRequested,
-                    )?;
-                    append_then_save!(
+                    let request_id =
+                        durable_cancellation.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    cancellation_request_id = Some(request_id.clone());
+                    persist_state_event(
                         &store,
                         &mut guard,
+                        &run_directory,
+                        &graph,
                         &mut run.state,
-                        next,
-                        WorkflowEvent::CancellationRequested,
+                        WorkflowEvent::CancellationRequested { request_id },
                     )?;
                     send_event(
                         &events,
@@ -265,16 +300,12 @@ impl WorkflowRunner {
             for action in actions {
                 match action {
                     SchedulerAction::MarkReady { node } => {
-                        let next = apply_event(
-                            &graph,
-                            &run.state.state,
-                            SchedulerEvent::MarkReady { node: node.clone() },
-                        )?;
-                        append_then_save!(
+                        persist_state_event(
                             &store,
                             &mut guard,
+                            &run_directory,
+                            &graph,
                             &mut run.state,
-                            next,
                             WorkflowEvent::NodeReady { node },
                         )?;
                         send_event(
@@ -285,24 +316,15 @@ impl WorkflowRunner {
                         );
                     }
                     SchedulerAction::MarkTerminal { node, outcome } => {
-                        let next = apply_event(
-                            &graph,
-                            &run.state.state,
-                            SchedulerEvent::Finished {
-                                node: node.clone(),
-                                outcome,
-                                command_exit: None,
-                                output: None,
-                            },
-                        )?;
-                        append_then_save!(
+                        persist_state_event(
                             &store,
                             &mut guard,
+                            &run_directory,
+                            &graph,
                             &mut run.state,
-                            next,
                             WorkflowEvent::NodeFinished {
                                 node: node.clone(),
-                                attempt: AttemptNumber::new(1)?,
+                                attempt: None,
                                 outcome,
                             },
                         )?;
@@ -317,7 +339,13 @@ impl WorkflowRunner {
                     SchedulerAction::Launch { node, access } => {
                         let attempt = next_attempt(&run_directory, &node)?;
                         let attempt_directory = attempt_directory(&run_directory, &node, attempt);
-                        ensure_private_directory(&attempt_directory)?;
+                        let relative_attempt = attempt_directory
+                            .strip_prefix(&run_directory)
+                            .map_err(|_| RuntimeError::UnsafeArtifact(attempt_directory.clone()))?;
+                        crate::workflow::ensure_directory_beneath(
+                            &run_directory,
+                            relative_attempt,
+                        )?;
                         write_attempt(
                             &run_directory,
                             &attempt_directory,
@@ -333,14 +361,6 @@ impl WorkflowRunner {
                                 attempt,
                             },
                         )?;
-                        let next = apply_event(
-                            &graph,
-                            &run.state.state,
-                            SchedulerEvent::Launched {
-                                node: node.clone(),
-                                attempt,
-                            },
-                        )?;
                         let owner = ExternalOwner::Process {
                             pid: std::process::id(),
                         };
@@ -352,11 +372,12 @@ impl WorkflowRunner {
                                 owner: owner.clone(),
                             },
                         )?;
-                        append_then_save!(
+                        persist_state_event(
                             &store,
                             &mut guard,
+                            &run_directory,
+                            &graph,
                             &mut run.state,
-                            next,
                             WorkflowEvent::AttemptStarted {
                                 node: node.clone(),
                                 attempt,
@@ -438,17 +459,45 @@ impl WorkflowRunner {
                 continue;
             }
             if tasks.is_empty() {
-                if run.state.state.cancellation_requested
-                    || run
-                        .state
-                        .state
-                        .nodes
-                        .values()
-                        .all(|state| state.terminal().is_some())
+                if run.state.state.cancellation_requested {
+                    cancel_waiting_nodes(
+                        &store,
+                        &mut guard,
+                        &run_directory,
+                        &graph,
+                        &mut run.state,
+                    )?;
+                    append_event!(
+                        &store,
+                        &mut guard,
+                        &mut run.state,
+                        WorkflowEvent::CancellationAcknowledged {
+                            request_id: cancellation_request_id.clone().ok_or_else(|| {
+                                RuntimeError::Data(
+                                    "cancellation has no durable request identifier".into(),
+                                )
+                            })?,
+                        },
+                    )?;
+                    store.save_state(&guard, &run.state)?;
+                }
+                if run
+                    .state
+                    .state
+                    .nodes
+                    .values()
+                    .all(|state| state.terminal().is_some())
                 {
-                    run.state.state.lifecycle = RunLifecycle::Completed;
-                    bump_revision(&mut run.state.state)?;
-                    persist_lifecycle!(&store, &mut guard, &mut run.state)?;
+                    persist_state_event(
+                        &store,
+                        &mut guard,
+                        &run_directory,
+                        &graph,
+                        &mut run.state,
+                        WorkflowEvent::RunLifecycle {
+                            lifecycle: RunLifecycle::Completed,
+                        },
+                    )?;
                     observe_workflow_completion(
                         &self.hooks,
                         &store,
@@ -484,49 +533,43 @@ impl WorkflowRunner {
                 }
                 Err(_) => NodeExecutionResult::terminal(NodeTerminalState::Failure),
             };
+            let completion = result.completion(attempt);
+            let outcome = completion.outcome;
             let attempt_directory = attempt_directory(&run_directory, &node, attempt);
-            let attempt_state = if result.outcome == NodeTerminalState::Cancellation {
-                AttemptState::CleanlyCancelled
-            } else {
+            write_attempt(
+                &run_directory,
+                &attempt_directory,
+                attempt,
                 AttemptState::Completed {
-                    outcome: result.outcome,
-                }
-            };
-            write_attempt(&run_directory, &attempt_directory, attempt, attempt_state)?;
-            let next = apply_event(
-                &graph,
-                &run.state.state,
-                SchedulerEvent::Finished {
-                    node: node.clone(),
-                    outcome: result.outcome,
-                    command_exit: result.command_exit,
-                    output: result.output.clone(),
+                    completion: Box::new(completion.clone()),
                 },
             )?;
-            if let Some(value) = result.output {
+            if let Some(output) = completion.structured_output.clone() {
                 append_event!(
                     &store,
                     &mut guard,
                     &mut run.state,
                     WorkflowEvent::StructuredOutput {
                         node: node.clone(),
-                        value,
+                        attempt,
+                        output,
                     },
                 )?;
             }
-            append_then_save!(
+            persist_state_event(
                 &store,
                 &mut guard,
+                &run_directory,
+                &graph,
                 &mut run.state,
-                next,
                 WorkflowEvent::NodeFinished {
                     node: node.clone(),
-                    attempt,
-                    outcome: result.outcome,
+                    attempt: Some(attempt),
+                    outcome,
                 },
             )?;
             if let Some(hooks) = &self.hooks {
-                let artifacts = attempt_artifacts(&run_directory, &node, attempt);
+                let artifacts = completion_artifacts(&completion);
                 append_event!(
                     &store,
                     &mut guard,
@@ -543,7 +586,7 @@ impl WorkflowRunner {
                     plan_digest: &run.manifest.graph_digest.0,
                     node_id: node.as_str(),
                     attempt: attempt.get(),
-                    outcome: &result.outcome,
+                    outcome: &outcome,
                     duration: attempt_started_at
                         .remove(&node)
                         .map(|started| started.elapsed())
@@ -557,13 +600,7 @@ impl WorkflowRunner {
                     revision: run.state.state.revision,
                 },
             );
-            send_event(
-                &events,
-                RuntimeEvent::NodeFinished {
-                    node,
-                    outcome: result.outcome,
-                },
-            );
+            send_event(&events, RuntimeEvent::NodeFinished { node, outcome });
         }
     }
 
@@ -656,28 +693,10 @@ fn observe_workflow_completion(
     Ok(())
 }
 
-fn attempt_artifacts(
-    run_directory: &std::path::Path,
-    node: &NodeId,
-    attempt: AttemptNumber,
-) -> Vec<String> {
-    let directory = attempt_directory(run_directory, node, attempt);
-    [
-        "stdout",
-        "stderr",
-        "output.json",
-        "command.json",
-        "agent/answer.txt",
-    ]
-    .into_iter()
-    .map(|name| directory.join(name))
-    .filter(|path| path.is_file())
-    .filter_map(|path| {
-        path.strip_prefix(run_directory)
-            .ok()
-            .map(crate::paths::display)
-    })
-    .collect()
+fn completion_artifacts(
+    completion: &crate::workflow::NodeCompletion,
+) -> Vec<crate::workflow::DurableArtifactReference> {
+    completion.artifacts.references()
 }
 
 fn validate_permission_ceiling(
@@ -744,70 +763,97 @@ fn validate_agent_access(
     Ok(())
 }
 
-fn uncertain_nodes(state: &RunStateRecord) -> Vec<NodeId> {
-    state
-        .state
-        .nodes
-        .iter()
-        .filter_map(|(node, value)| {
-            matches!(value, NodeState::Running { .. }).then_some(node.clone())
-        })
-        .collect()
-}
-
-fn recover_state(
-    state: &mut RunStateRecord,
-    decision: RecoveryDecision,
+fn recover_completed_transitions(
+    store: &WorkflowStore,
+    guard: &mut crate::workflow::RunMutationGuard,
+    run_directory: &std::path::Path,
+    run: &mut StoredRun,
 ) -> Result<(), RuntimeError> {
-    let uncertain = uncertain_nodes(state);
-    if uncertain.is_empty() && state.state.lifecycle != RunLifecycle::NeedsRecovery {
-        return reset_clean_cancellations(state);
-    }
-    if decision != RecoveryDecision::ConfirmNoProcess {
-        return Err(RuntimeError::NeedsRecovery {
-            nodes: uncertain
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", "),
-        });
-    }
-    for node in uncertain {
-        state.state.nodes.insert(node, NodeState::Ready);
-    }
-    reset_clean_cancellations(state)?;
-    state.state.lifecycle = RunLifecycle::Running;
-    state.state.cancellation_requested = false;
-    bump_revision(&mut state.state)
-}
-
-fn reset_clean_cancellations(state: &mut RunStateRecord) -> Result<(), RuntimeError> {
-    let cancelled = state
+    let running = run
+        .state
         .state
         .nodes
         .iter()
-        .filter_map(|(node, value)| {
-            matches!(
-                value,
-                NodeState::Terminal {
-                    outcome: NodeTerminalState::Cancellation
-                }
-            )
-            .then_some(node.clone())
+        .filter_map(|(node, state)| match state {
+            NodeState::Running { attempt } => Some((node.clone(), *attempt)),
+            _ => None,
         })
         .collect::<Vec<_>>();
-    let changed = !cancelled.is_empty()
-        || state.state.cancellation_requested
-        || state.state.lifecycle == RunLifecycle::Cancelling;
-    for node in cancelled {
-        state.state.nodes.insert(node, NodeState::Ready);
+    let events = store.read_events(run.manifest.run_id)?;
+    for (node, attempt) in running {
+        let Some(completion) = super::journal::completed_attempt(run_directory, &node, attempt)?
+        else {
+            continue;
+        };
+        if let Some(output) = completion.structured_output.clone() {
+            let recorded = events.iter().any(|record| {
+                matches!(
+                    &record.event,
+                    WorkflowEvent::StructuredOutput {
+                        node: event_node,
+                        attempt: event_attempt,
+                        ..
+                    } if event_node == &node && event_attempt == &attempt
+                )
+            });
+            if !recorded {
+                append_event!(
+                    store,
+                    guard,
+                    &mut run.state,
+                    WorkflowEvent::StructuredOutput {
+                        node: node.clone(),
+                        attempt,
+                        output,
+                    },
+                )?;
+                store.save_state(guard, &run.state)?;
+            }
+        }
+        persist_state_event(
+            store,
+            guard,
+            run_directory,
+            &run.graph,
+            &mut run.state,
+            WorkflowEvent::NodeFinished {
+                node,
+                attempt: Some(attempt),
+                outcome: completion.outcome,
+            },
+        )?;
     }
-    state.state.cancellation_requested = false;
-    if state.state.lifecycle != RunLifecycle::Planned {
-        state.state.lifecycle = RunLifecycle::Running;
-    }
-    if changed {
-        bump_revision(&mut state.state)?;
+    Ok(())
+}
+
+fn cancel_waiting_nodes(
+    store: &WorkflowStore,
+    guard: &mut crate::workflow::RunMutationGuard,
+    run_directory: &std::path::Path,
+    graph: &crate::workflow::FrozenWorkflow,
+    state: &mut RunStateRecord,
+) -> Result<(), RuntimeError> {
+    let waiting = state
+        .state
+        .nodes
+        .iter()
+        .filter_map(|(node, state)| {
+            matches!(state, NodeState::Pending | NodeState::Ready).then_some(node.clone())
+        })
+        .collect::<Vec<_>>();
+    for node in waiting {
+        persist_state_event(
+            store,
+            guard,
+            run_directory,
+            graph,
+            state,
+            WorkflowEvent::NodeFinished {
+                node,
+                attempt: None,
+                outcome: NodeTerminalState::Cancellation,
+            },
+        )?;
     }
     Ok(())
 }
@@ -844,13 +890,6 @@ fn mark_uncertain_attempts(
     Ok(())
 }
 
-fn set_running(state: &mut RunStateRecord) {
-    if state.state.lifecycle == RunLifecycle::Planned {
-        state.state.lifecycle = RunLifecycle::Running;
-        state.state.revision = state.state.revision.saturating_add(1);
-    }
-}
-
 fn available_capacity(
     graph: &crate::workflow::FrozenWorkflow,
     _state: &crate::workflow::WorkflowState,
@@ -860,14 +899,6 @@ fn available_capacity(
         agents: graph.scheduler.max_parallel_agents,
         commands: graph.scheduler.max_parallel_commands,
     }
-}
-
-fn bump_revision(state: &mut crate::workflow::WorkflowState) -> Result<(), RuntimeError> {
-    state.revision = state
-        .revision
-        .checked_add(1)
-        .ok_or_else(|| RuntimeError::Data("workflow state revision overflow".into()))?;
-    Ok(())
 }
 
 fn next_attempt(
@@ -916,6 +947,34 @@ fn write_attempt(
             state,
         },
     )
+    .map(|_| ())
+}
+
+pub(super) fn persist_state_event(
+    store: &WorkflowStore,
+    guard: &mut crate::workflow::RunMutationGuard,
+    run_directory: &std::path::Path,
+    graph: &crate::workflow::FrozenWorkflow,
+    record: &mut RunStateRecord,
+    event: WorkflowEvent,
+) -> Result<(), RuntimeError> {
+    let next = super::journal::apply_durable_event(graph, run_directory, &record.state, &event)?;
+    let sequence = record
+        .last_event_sequence
+        .checked_add(1)
+        .ok_or_else(|| RuntimeError::Data("workflow event sequence overflow".into()))?;
+    store.append_event(
+        guard,
+        &WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence,
+            event,
+        },
+    )?;
+    record.last_event_sequence = sequence;
+    record.state = next;
+    store.save_state(guard, record)?;
+    Ok(())
 }
 
 fn attempt_directory(
@@ -928,13 +987,6 @@ fn attempt_directory(
         .join(node.as_str())
         .join("attempts")
         .join(attempt.to_string())
-}
-
-fn run_directory(rho_home: &std::path::Path, run_id: RunId) -> PathBuf {
-    rho_home
-        .join("workflows")
-        .join("runs")
-        .join(run_id.to_string())
 }
 
 fn send_event(

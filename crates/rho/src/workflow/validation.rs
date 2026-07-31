@@ -5,10 +5,11 @@ use std::{
 
 use super::{
     AgentRuntime, Condition, FrozenWorkflow, Node, NodeExecution, NodeId, OutputReference,
-    TemplatePart, WorkflowError, WorkflowResult, WorkspaceAccess,
+    PlanningLimits, Template, TemplatePart, WorkflowError, WorkflowResult, WorkspaceAccess,
 };
 
 pub(crate) fn validate_workflow(workflow: &FrozenWorkflow) -> WorkflowResult<()> {
+    workflow.runtime_limits.validate()?;
     let graph = &workflow.graph;
     if graph.nodes.keys().ne(workflow.resolved_nodes.keys()) {
         return Err(WorkflowError::Scheduler(
@@ -36,7 +37,127 @@ pub(crate) fn validate_workflow(workflow: &FrozenWorkflow) -> WorkflowResult<()>
     validate_references(workflow)
 }
 
+pub(crate) fn validate_runtime_budgets(
+    workflow: &FrozenWorkflow,
+    limits: &PlanningLimits,
+) -> WorkflowResult<()> {
+    let mut retained_total = 0_u64;
+    for node in workflow.graph.nodes.values() {
+        limits
+            .node_timeout_seconds
+            .check_nonzero(node.timeout_seconds)?;
+        limits
+            .retained_output_per_stream_bytes
+            .check_nonzero(node.max_output_bytes)?;
+        let stream_count = if matches!(node.execution, NodeExecution::Command(_)) {
+            2
+        } else {
+            1
+        };
+        retained_total = checked_add(
+            &limits.retained_output_total_bytes,
+            retained_total,
+            node.max_output_bytes.saturating_mul(stream_count),
+        )?;
+
+        match &node.execution {
+            NodeExecution::Agent(agent) => {
+                let mut prompt = template_expansion_bound(&agent.prompt, workflow, limits)?;
+                if let Some(schema) = &agent.output {
+                    prompt = checked_add(
+                        &limits.prompt_expansion_bytes,
+                        prompt,
+                        serde_json::to_vec(schema)?.len() as u64,
+                    )?;
+                }
+                limits.prompt_expansion_bytes.check(prompt)?;
+            }
+            NodeExecution::Command(super::CommandNode::Direct {
+                executable,
+                arguments,
+                ..
+            }) => {
+                let mut argv_bytes = executable.len() as u64;
+                for argument in arguments {
+                    argv_bytes = checked_add(
+                        &limits.argv_expansion_bytes,
+                        argv_bytes,
+                        template_expansion_bound(argument, workflow, limits)?,
+                    )?;
+                }
+                limits.argv_expansion_bytes.check(argv_bytes)?;
+            }
+            NodeExecution::Command(super::CommandNode::Shell {
+                executable,
+                arguments,
+                command,
+                ..
+            }) => {
+                let argv_bytes = arguments.iter().try_fold(
+                    executable.len() as u64 + command.len() as u64,
+                    |total, argument| {
+                        checked_add(&limits.argv_expansion_bytes, total, argument.len() as u64)
+                    },
+                )?;
+                limits.argv_expansion_bytes.check(argv_bytes)?;
+            }
+        }
+    }
+    limits.retained_output_total_bytes.check(retained_total)?;
+    // Workflow schema v1 has no source-controlled environment entries.
+    limits.environment_expansion_bytes.check(0)
+}
+
+fn template_expansion_bound(
+    template: &Template,
+    workflow: &FrozenWorkflow,
+    limits: &PlanningLimits,
+) -> WorkflowResult<u64> {
+    let mut bytes = 0_u64;
+    for part in &template.0 {
+        let part_bytes = match part {
+            TemplatePart::Literal { value } => value.len() as u64,
+            TemplatePart::Output { reference } => workflow
+                .graph
+                .nodes
+                .get(&reference.node)
+                .map_or(u64::MAX, |node| node.max_output_bytes),
+        };
+        bytes = checked_add(&limits.rendered_template_bytes, bytes, part_bytes)?;
+    }
+    limits.rendered_template_bytes.check(bytes)?;
+    Ok(bytes)
+}
+
+fn checked_add(budget: &super::Budget, left: u64, right: u64) -> WorkflowResult<u64> {
+    let actual = left.saturating_add(right);
+    budget.check(actual)?;
+    Ok(actual)
+}
+
 fn validate_node_shape(node: &Node, workflow: &FrozenWorkflow) -> WorkflowResult<()> {
+    if node.timeout_seconds == 0
+        || node.timeout_seconds > workflow.runtime_limits.node_timeout_seconds
+    {
+        return Err(WorkflowError::BudgetExceeded {
+            budget: "node timeout seconds",
+            limit: workflow.runtime_limits.node_timeout_seconds,
+            actual: node.timeout_seconds,
+        });
+    }
+    if node.max_output_bytes == 0
+        || node.max_output_bytes > workflow.runtime_limits.retained_output_per_stream_bytes
+        || node.max_output_bytes > workflow.runtime_limits.retained_output_total_bytes
+    {
+        return Err(WorkflowError::BudgetExceeded {
+            budget: "node retained output bytes",
+            limit: workflow
+                .runtime_limits
+                .retained_output_per_stream_bytes
+                .min(workflow.runtime_limits.retained_output_total_bytes),
+            actual: node.max_output_bytes,
+        });
+    }
     if node.display_name.is_empty() {
         return Err(WorkflowError::Scheduler(format!(
             "node '{}' has an empty display name",
@@ -70,7 +191,40 @@ fn validate_node_shape(node: &Node, workflow: &FrozenWorkflow) -> WorkflowResult
             });
         }
     }
+    if let Some(super::ResolvedNode::Command(command)) = workflow.resolved_nodes.get(&node.id) {
+        if command.executable != command.executable_identity.file.canonical_path {
+            return Err(WorkflowError::InvalidAccess {
+                node: node.id.clone(),
+                reason: "resolved command path differs from its frozen executable identity"
+                    .to_owned(),
+            });
+        }
+        if command.cwd != command.cwd_identity.canonical_path {
+            return Err(WorkflowError::InvalidAccess {
+                node: node.id.clone(),
+                reason: "resolved command cwd differs from its frozen directory identity"
+                    .to_owned(),
+            });
+        }
+    }
     if let Some(super::ResolvedNode::Agent(agent)) = workflow.resolved_nodes.get(&node.id) {
+        match (&agent.executable, &agent.executable_identity) {
+            (Some(executable), Some(identity)) if executable != &identity.file.canonical_path => {
+                return Err(WorkflowError::InvalidAccess {
+                    node: node.id.clone(),
+                    reason: "resolved agent path differs from its frozen executable identity"
+                        .to_owned(),
+                });
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(WorkflowError::InvalidAccess {
+                    node: node.id.clone(),
+                    reason: "resolved agent executable and identity must both be present"
+                        .to_owned(),
+                });
+            }
+            (Some(_), Some(_)) | (None, None) => {}
+        }
         if agent.runtime == AgentRuntime::ClaudeCli && node.access != WorkspaceAccess::Mutating {
             return Err(WorkflowError::InvalidAccess {
                 node: node.id.clone(),
