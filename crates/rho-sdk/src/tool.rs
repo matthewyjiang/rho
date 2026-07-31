@@ -12,9 +12,8 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::{
-    model::ToolSpec, ApprovalHandler, AuthorizationError, AuthorizationOutcome, CancellationToken,
-    CapabilityKind, CapabilityRequest, DenyAllPolicy, DenyApprovals, HostInputRequest,
-    HostInputResponse, ToolCallId, Workspace, WorkspacePolicy,
+    model::ToolSpec, AuthorizationError, AuthorizationOutcome, CancellationToken, CapabilityKind,
+    CapabilityRequest, HostInputRequest, HostInputResponse, ToolCallId, Workspace,
 };
 
 mod preparation;
@@ -341,10 +340,7 @@ impl ToolInvocation {
 #[derive(Clone, Debug)]
 pub struct ToolContext {
     workspace: Option<Workspace>,
-    policy: Arc<dyn WorkspacePolicy>,
-    approvals: Arc<dyn ApprovalHandler>,
-    remembered_approvals: Arc<crate::workspace::SessionApprovals>,
-    approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
+    authorization: Arc<crate::workspace::AuthorizationServices>,
     host_input: Option<crate::host_input::HostInputRequester>,
     call_id: Option<ToolCallId>,
     cancellation: CancellationToken,
@@ -359,10 +355,7 @@ impl ToolContext {
     ) -> Self {
         Self {
             workspace,
-            policy: Arc::new(DenyAllPolicy),
-            approvals: Arc::new(DenyApprovals),
-            remembered_approvals: Arc::default(),
-            approval_audit: Arc::default(),
+            authorization: Arc::new(crate::workspace::AuthorizationServices::denied()),
             host_input: None,
             call_id: None,
             cancellation,
@@ -372,19 +365,13 @@ impl ToolContext {
 
     pub(crate) fn with_security(
         workspace: Option<Workspace>,
-        policy: Arc<dyn WorkspacePolicy>,
-        approvals: Arc<dyn ApprovalHandler>,
-        remembered_approvals: Arc<crate::workspace::SessionApprovals>,
-        approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
+        authorization: Arc<crate::workspace::AuthorizationServices>,
         cancellation: CancellationToken,
         progress: ToolProgressSender,
     ) -> Self {
         Self {
             workspace,
-            policy,
-            approvals,
-            remembered_approvals,
-            approval_audit,
+            authorization,
             host_input: None,
             call_id: None,
             cancellation,
@@ -433,15 +420,12 @@ impl ToolContext {
         let capability = request.kind();
         tokio::select! {
             result = crate::workspace::authorize_for_call(
-                &self.policy,
-                &self.approvals,
-                &self.remembered_approvals,
-                &self.approval_audit,
+                &self.authorization,
                 request,
                 self.call_id.as_ref(),
             ) => result,
             () = self.cancellation.cancelled() => {
-                self.approval_audit.record(
+                self.authorization.audit().record(
                     capability,
                     crate::ApprovalAuditDecision::Cancelled,
                 );

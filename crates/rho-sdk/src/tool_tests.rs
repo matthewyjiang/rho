@@ -106,14 +106,18 @@ async fn cancellation_interrupts_a_pending_host_approval() {
     let (progress, _receiver) = tool_progress_channel(NonZeroUsize::new(1).unwrap());
     let context = ToolContext::with_security(
         None,
-        Arc::new(
-            ScopedWorkspacePolicy::new()
-                .allow_processes()
-                .require_process_approval(),
-        ),
-        Arc::new(PendingApproval),
-        Arc::default(),
-        Arc::default(),
+        Arc::new(crate::workspace::AuthorizationServices::new(
+            Arc::new(
+                ScopedWorkspacePolicy::new()
+                    .allow_processes()
+                    .require_process_approval(),
+            ),
+            Arc::new(PendingApproval),
+            /* remembered */ Arc::default(),
+            /* audit */ Arc::default(),
+            /* hooks */ Default::default(),
+            /* scope */ Default::default(),
+        )),
         cancellation,
         progress,
     );

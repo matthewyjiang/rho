@@ -12,6 +12,7 @@ mod diagnostics;
 mod executable;
 mod export;
 mod herdr;
+mod hooks;
 mod keybindings;
 mod model_aliases;
 mod paths;

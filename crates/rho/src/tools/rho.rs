@@ -83,7 +83,7 @@ fn parse_args(arguments: serde_json::Value) -> Result<Args, SdkToolError> {
         .map_err(|error| SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))?;
     if matches!(
         args.action.as_str(),
-        "info" | "context" | "prompt_sources" | "tools" | "config"
+        "info" | "context" | "prompt_sources" | "tools" | "config" | "hooks"
     ) {
         Ok(args)
     } else {

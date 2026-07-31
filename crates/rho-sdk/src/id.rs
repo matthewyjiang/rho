@@ -88,6 +88,10 @@ opaque_id!(
     ToolCallId,
     "Stable identity for one model- or host-requested tool call."
 );
+opaque_id!(
+    HookEventId,
+    "Stable identity for one dispatched lifecycle hook event."
+);
 
 /// Monotonically increasing revision of a session snapshot.
 #[derive(

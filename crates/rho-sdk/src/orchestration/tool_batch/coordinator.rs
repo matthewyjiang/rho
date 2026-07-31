@@ -117,8 +117,16 @@ pub(in crate::orchestration) async fn execute(
         .map(|(call, _, _)| runtime.tools.get(&call.name))
         .collect::<Vec<_>>();
     let (worker_tx, mut worker_rx) = mpsc::channel(limit.get());
-    let (mut batch, preparation_cancelled) =
-        prepare_batch(core, runtime, &tools, calls, &batch_cancellation, limit).await;
+    let (mut batch, preparation_cancelled) = prepare_batch(
+        core,
+        runtime,
+        control.hooks.run_id(),
+        &tools,
+        calls,
+        &batch_cancellation,
+        limit,
+    )
+    .await;
     if preparation_cancelled {
         interrupt_batch(&batch_cancellation, &mut batch, history);
         return Ok(true);
@@ -334,6 +342,9 @@ async fn resolve_without_work(
         };
         entry.result = Some(result);
         entry.state = CallState::Resolved;
+        control
+            .hooks
+            .after_tool_use(&entry.call.name, &entry.id, &completion, None);
         emit(
             control.events,
             control.cancellation,
@@ -692,9 +703,10 @@ async fn finish_call(
         },
         Err(error) => failed_result(&entry.call, error),
     };
-    if let Some(started) = entry.execution_started {
+    let duration = entry.execution_started.map(|started| started.elapsed());
+    if let Some(elapsed) = duration {
         tracing::debug!(
-            execution_duration_ms = started.elapsed().as_millis() as u64,
+            execution_duration_ms = elapsed.as_millis() as u64,
             "tool call execution completed"
         );
     }
@@ -706,6 +718,9 @@ async fn finish_call(
     };
     entry.result = Some(normalized);
     entry.state = CallState::Resolved;
+    control
+        .hooks
+        .after_tool_use(&entry.call.name, &entry.id, &completion, duration);
     emit(
         control.events,
         control.cancellation,

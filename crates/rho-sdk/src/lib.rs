@@ -129,6 +129,7 @@ mod compaction;
 mod diagnostics;
 mod error;
 mod event;
+pub mod hooks;
 mod host_input;
 mod id;
 pub mod model;
@@ -165,7 +166,9 @@ pub use event::{
 pub use host_input::{
     DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
 };
-pub use id::{HostInputId, InvalidId, Revision, RunId, SessionId, SteeringId, ToolCallId};
+pub use id::{
+    HookEventId, HostInputId, InvalidId, Revision, RunId, SessionId, SteeringId, ToolCallId,
+};
 pub use persistence::{
     InMemorySessionStore, SessionSnapshot, SessionStore, SessionStoreFuture,
     MIN_SESSION_SNAPSHOT_SCHEMA_VERSION, SESSION_SNAPSHOT_SCHEMA_VERSION,
@@ -191,6 +194,9 @@ pub use workspace::{
     WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
 
+#[cfg(test)]
+#[path = "hooks_runtime_tests.rs"]
+mod hooks_runtime_tests;
 #[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod runtime_tests;

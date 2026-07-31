@@ -25,6 +25,42 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
+// Covers: hook matcher names must not drift from the application tool registry.
+// Owner: application tool registry.
+#[test]
+fn canonical_tool_names_match_the_unfiltered_registry() {
+    fn normalized(names: impl IntoIterator<Item = String>) -> Vec<String> {
+        let mut names = names
+            .into_iter()
+            .map(|name| match name.as_str() {
+                "bash" | "powershell" => "shell".to_owned(),
+                _ => name,
+            })
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let options = ToolSetOptions::default().delegation(DelegationConfig::new(
+        root.path().to_owned(),
+        root.path().join("config.toml"),
+        BackgroundSubagents::Enabled,
+    ));
+    let tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
+
+    assert_eq!(
+        normalized(tools.unfiltered_names()),
+        normalized(
+            super::super::CANONICAL_TOOL_NAMES
+                .iter()
+                .map(|name| (*name).to_owned())
+        )
+    );
+}
+
 struct RecordingBundle {
     tools: Vec<Arc<dyn Tool>>,
     shutdown: Arc<AtomicBool>,

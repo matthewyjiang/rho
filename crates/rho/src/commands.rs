@@ -15,6 +15,7 @@ pub enum CommandId {
     Compact,
     Goal,
     Skills,
+    Hooks,
     Agents,
     Diff,
     Doctor,
@@ -151,6 +152,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "help",
         usage: "/help",
         description: "show keyboard shortcuts",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Hooks,
+        name: "hooks",
+        usage: "/hooks",
+        description: "reload lifecycle hooks and show what each one will run",
         argument_choices: &[],
     },
     CommandSpec {

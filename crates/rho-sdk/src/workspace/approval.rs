@@ -1,16 +1,11 @@
 use std::{
-    collections::VecDeque,
-    fmt,
-    future::Future,
-    num::NonZeroUsize,
-    panic::AssertUnwindSafe,
-    pin::Pin,
-    sync::{Arc, Mutex},
+    collections::VecDeque, fmt, future::Future, num::NonZeroUsize, panic::AssertUnwindSafe,
+    pin::Pin, sync::Mutex,
 };
 
 use tokio::sync::{mpsc, oneshot};
 
-use super::{CapabilityKind, CapabilityRequest, PolicyDecision, WorkspacePolicy};
+use super::{CapabilityKind, CapabilityRequest};
 
 /// Host decision for one approval request.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +34,11 @@ impl ApprovalRequest {
             reason: reason.into(),
             tool_call_id: None,
         }
+    }
+
+    pub(crate) fn with_tool_call_id(mut self, tool_call_id: Option<crate::ToolCallId>) -> Self {
+        self.tool_call_id = tool_call_id;
+        self
     }
 
     pub fn capability(&self) -> &CapabilityRequest {
@@ -218,6 +218,8 @@ pub enum AuthorizationDenialKind {
     Policy,
     Host,
     Cancelled,
+    /// A trusted pre-action hook narrowed the decision to a denial.
+    Hook,
 }
 
 /// Typed authorization failure available to tool implementations and hosts.
@@ -303,6 +305,8 @@ pub enum ApprovalAuditDecision {
     DeniedByPolicy,
     DeniedByHost,
     Cancelled,
+    /// A trusted pre-action hook denied the request before any prompt.
+    DeniedByHook,
 }
 
 const MAX_AUDIT_RECORDS: usize = 1024;
@@ -368,14 +372,14 @@ impl Default for SessionApprovals {
 }
 
 impl SessionApprovals {
-    fn contains(&self, request: &CapabilityRequest) -> bool {
+    pub(crate) fn contains(&self, request: &CapabilityRequest) -> bool {
         self.exact_requests
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .contains(request)
     }
 
-    fn remember(&self, request: CapabilityRequest) {
+    pub(crate) fn remember(&self, request: CapabilityRequest) {
         let mut requests = self
             .exact_requests
             .lock()
@@ -384,86 +388,9 @@ impl SessionApprovals {
             requests.push(request);
         }
     }
-}
 
-#[cfg(test)]
-pub(crate) async fn authorize(
-    policy: &Arc<dyn WorkspacePolicy>,
-    approvals: &Arc<dyn ApprovalHandler>,
-    remembered: &Arc<SessionApprovals>,
-    audit: &Arc<ApprovalAuditLog>,
-    request: CapabilityRequest,
-) -> Result<AuthorizationOutcome, AuthorizationError> {
-    authorize_for_call(policy, approvals, remembered, audit, request, None).await
-}
-
-pub(crate) async fn authorize_for_call(
-    policy: &Arc<dyn WorkspacePolicy>,
-    approvals: &Arc<dyn ApprovalHandler>,
-    remembered: &Arc<SessionApprovals>,
-    audit: &Arc<ApprovalAuditLog>,
-    request: CapabilityRequest,
-    tool_call_id: Option<&crate::ToolCallId>,
-) -> Result<AuthorizationOutcome, AuthorizationError> {
-    let capability = request.kind();
-    match policy.evaluate(&request) {
-        PolicyDecision::Allow => Ok(AuthorizationOutcome::AllowedByPolicy),
-        PolicyDecision::Deny { reason } => {
-            audit.record(capability, ApprovalAuditDecision::DeniedByPolicy);
-            Err(AuthorizationError::denied(
-                AuthorizationDenialKind::Policy,
-                capability,
-                reason,
-            ))
-        }
-        PolicyDecision::RequireApproval { reason } => {
-            if remembered.contains(&request) {
-                audit.record(
-                    capability,
-                    ApprovalAuditDecision::AllowedByRememberedApproval,
-                );
-                return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
-            }
-
-            // Serialize only the miss path so a concurrent identical waiter
-            // observes AllowForSession recorded by the first prompt. Remembered
-            // hits above stay concurrent. AllowOnce/Deny still re-prompt after
-            // the holder finishes because nothing is remembered for them.
-            let _gate = remembered.approval_gate.lock().await;
-            if remembered.contains(&request) {
-                audit.record(
-                    capability,
-                    ApprovalAuditDecision::AllowedByRememberedApproval,
-                );
-                return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
-            }
-            match approvals
-                .request(ApprovalRequest {
-                    capability: request.clone(),
-                    reason,
-                    tool_call_id: tool_call_id.cloned(),
-                })
-                .await
-            {
-                ApprovalDecision::AllowOnce => {
-                    audit.record(capability, ApprovalAuditDecision::AllowedOnce);
-                    Ok(AuthorizationOutcome::AllowedOnce)
-                }
-                ApprovalDecision::AllowForSession => {
-                    remembered.remember(request);
-                    audit.record(capability, ApprovalAuditDecision::AllowedForSession);
-                    Ok(AuthorizationOutcome::AllowedForSession)
-                }
-                ApprovalDecision::Deny { reason } => {
-                    audit.record(capability, ApprovalAuditDecision::DeniedByHost);
-                    Err(AuthorizationError::denied(
-                        AuthorizationDenialKind::Host,
-                        capability,
-                        reason,
-                    ))
-                }
-            }
-        }
+    pub(crate) fn approval_gate(&self) -> &tokio::sync::Mutex<()> {
+        &self.approval_gate.0
     }
 }
 
