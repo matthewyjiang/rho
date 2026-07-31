@@ -65,7 +65,7 @@ impl App {
                     .map(|segment| segment.start..segment.end());
                 let media_labels = self
                     .input_ui
-                    .pending_media()
+                    .attachments()
                     .iter()
                     .enumerate()
                     .map(|(index, media)| media.composer_label(index + 1))
@@ -117,7 +117,7 @@ impl App {
                     .min(width.saturating_sub(1) as u16);
                 position.y = position
                     .y
-                    .saturating_add(self.input_ui.pending_media().len() as u16);
+                    .saturating_add(self.input_ui.attachments().len() as u16);
                 position
             }
             ComposerMode::SecretInput(secret) => Position {

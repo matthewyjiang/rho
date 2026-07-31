@@ -18,7 +18,10 @@ impl App {
         invocation: super::CommandInvocation,
         expanded_input: String,
     ) -> CommandSubmission {
-        let media = std::mem::take(self.input_ui.pending_media_mut());
+        let media = self
+            .input_ui
+            .take_ready_media()
+            .expect("pending attachments block submission");
         let submission = CommandSubmission::new(invocation, expanded_input, media);
         self.clear_submitted_input();
         submission
@@ -104,7 +107,6 @@ impl App {
                     self.clear_submitted_input();
                     self.input_ui
                         .set_submission_mode(InputSubmissionMode::ParseCommands);
-                    self.input_ui.clear_pending_media();
                     self.notify_status("input cleared; press ctrl-c again to quit");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -274,7 +276,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if !self.pending_media_attaches.is_empty() {
+        if self.input_ui.has_pending_attachments() {
             self.notify_status("wait for document extraction to finish before submitting");
             return Ok(());
         }
@@ -283,7 +285,7 @@ impl App {
             self.input_ui.text().trim().to_string(),
         );
         if turn.model.is_empty()
-            && self.input_ui.pending_media().is_empty()
+            && self.input_ui.attachments().is_empty()
             && self.input_ui.shell_mode().is_none()
         {
             self.clear_submitted_input();
@@ -340,7 +342,10 @@ impl App {
             }
         }
 
-        let media = std::mem::take(self.input_ui.pending_media_mut());
+        let media = self
+            .input_ui
+            .take_ready_media()
+            .expect("pending attachments block submission");
         self.clear_submitted_input();
         let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;

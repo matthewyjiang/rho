@@ -131,7 +131,7 @@ use types::*;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
-use chat_media::{ChatMedia, ChatTextDocument};
+use chat_media::{ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId};
 use clipboard::ClipboardWriter;
 use config_editor::{
     config_number_input_lines, resolve_web_search_editor_value, ConfigMutation, ConfigNumberInput,
@@ -360,7 +360,7 @@ struct App {
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
-    pending_media_attaches: VecDeque<clipboard::PendingMediaAttach>,
+    media_attach_tasks: Vec<clipboard::MediaAttachTask>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.

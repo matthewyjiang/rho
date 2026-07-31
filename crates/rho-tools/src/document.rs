@@ -254,6 +254,16 @@ impl DocumentFormat {
     }
 }
 
+/// Returns whether a path has an extension handled by the document extractor.
+pub fn path_has_supported_document_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+        .and_then(document_format_from_extension)
+        .is_some()
+}
+
 /// Extracts a document from a filesystem path with hard byte and character caps.
 pub fn extract_document_from_path(
     path: impl AsRef<Path>,
@@ -408,15 +418,9 @@ fn detect_format(name: &str, bytes: &[u8]) -> Result<DocumentFormat, DocumentExt
         .extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase);
-    let format = match extension.as_deref() {
-        Some("pdf") => Some(DocumentFormat::Pdf),
-        Some("xlsx") => Some(DocumentFormat::Xlsx),
-        Some("xls") => Some(DocumentFormat::Xls),
-        Some("ods") => Some(DocumentFormat::Ods),
-        Some("docx") => Some(DocumentFormat::Docx),
-        Some(extension) => text_mime(extension).map(DocumentFormat::Text),
-        None => None,
-    };
+    let format = extension
+        .as_deref()
+        .and_then(document_format_from_extension);
     if let Some(format) = format {
         return Ok(format);
     }
@@ -426,6 +430,17 @@ fn detect_format(name: &str, bytes: &[u8]) -> Result<DocumentFormat, DocumentExt
     Err(DocumentExtractionError::UnsupportedFormat {
         name: name.to_owned(),
     })
+}
+
+fn document_format_from_extension(extension: &str) -> Option<DocumentFormat> {
+    match extension {
+        "pdf" => Some(DocumentFormat::Pdf),
+        "xlsx" => Some(DocumentFormat::Xlsx),
+        "xls" => Some(DocumentFormat::Xls),
+        "ods" => Some(DocumentFormat::Ods),
+        "docx" => Some(DocumentFormat::Docx),
+        extension => text_mime(extension).map(DocumentFormat::Text),
+    }
 }
 
 fn text_mime(extension: &str) -> Option<&'static str> {
