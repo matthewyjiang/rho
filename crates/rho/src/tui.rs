@@ -46,6 +46,7 @@ mod line_editor;
 mod subagent_questionnaires;
 mod text_input;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
+mod changelog_command;
 mod chat_media;
 mod choice_actions;
 mod claude_login;

@@ -844,6 +844,7 @@ impl App {
                     | Entry::Assistant(_)
                     | Entry::Reasoning(_)
                     | Entry::RuntimeInfo(_)
+                    | Entry::Changelog(_)
                     | Entry::UsageLimits(_)
                     | Entry::Tool(_)
                     | Entry::Error(_) => None,

@@ -470,7 +470,7 @@ fn is_scoop_rho_path(lower_path: &str) -> bool {
         || lower_path.ends_with("/scoop/shims/rho.exe")
 }
 
-async fn latest_release_tag() -> anyhow::Result<String> {
+pub(crate) async fn latest_release_tag() -> anyhow::Result<String> {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("rho-coding-agent"));
     headers.insert(
@@ -491,7 +491,7 @@ async fn latest_release_tag() -> anyhow::Result<String> {
     Ok(release.tag_name)
 }
 
-fn release_tag_to_version(tag: &str) -> Option<String> {
+pub(crate) fn release_tag_to_version(tag: &str) -> Option<String> {
     let version = tag
         .rsplit_once('v')
         .map(|(_, version)| version)

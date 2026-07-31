@@ -5,6 +5,7 @@ pub(super) use entry_render::{
 };
 
 use super::{
+    changelog_command::changelog_lines,
     feed_image::{reserve_entry_image_rows, reserve_markdown_image_rows},
     info_command::runtime_info_lines,
     limits_command::usage_limit_lines,
@@ -659,6 +660,7 @@ fn render_non_assistant_entry(
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
         Entry::RuntimeInfo(info) => lines.extend(runtime_info_lines(info, width)),
+        Entry::Changelog(display) => lines.extend(changelog_lines(display, width)),
         Entry::UsageLimits(limits) => lines.extend(usage_limit_lines(limits, width)),
         Entry::Error(text) => {
             push_wrapped_text(lines, text, width, Theme::error(), LineFill::Natural)
