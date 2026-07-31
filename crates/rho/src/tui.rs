@@ -46,6 +46,7 @@ mod line_editor;
 mod subagent_questionnaires;
 mod text_input;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
+mod changelog_command;
 mod chat_media;
 mod choice_actions;
 mod claude_login;
@@ -347,6 +348,7 @@ struct App {
     using_unavailable_provider: bool,
     pending_interactive_login: Option<PendingInteractiveLogin>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
+    pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
     usage_limits_client: reqwest::Client,
     usage: UsageUi,
     model_metadata: Option<ModelMetadata>,

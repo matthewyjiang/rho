@@ -80,6 +80,7 @@ impl App {
             CommandId::Hooks => self.execute_hooks_command(agent),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
+            CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command_with_probes(terminal).await,
             CommandId::Export => self.execute_export_command(&invocation),

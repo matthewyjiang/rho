@@ -264,6 +264,7 @@ pub(super) enum Entry {
     Tool(ToolEntry),
     Notice(String),
     RuntimeInfo(Box<info_command::RuntimeInfo>),
+    Changelog(Box<crate::changelog::ChangelogDisplay>),
     UsageLimits(limits_command::LimitsDisplay),
     Error(String),
 }

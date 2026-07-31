@@ -53,12 +53,17 @@ impl App {
                 || self
                     .pending_usage_limits
                     .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_changelog
+                    .as_ref()
                     .is_some_and(|handle| handle.is_finished());
             self.poll_model_metadata_fetch(agent);
             self.poll_update_notice();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
             needs_redraw |= self.poll_limits_command().await?;
+            needs_redraw |= self.poll_changelog_command().await?;
             needs_redraw |= self.poll_markdown_images();
             let shell_changed = self.finish_completed_inline_shells().await?;
             if !self.is_ui_busy() {
@@ -85,6 +90,7 @@ impl App {
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()
                 || self.pending_usage_limits.is_some()
+                || self.pending_changelog.is_some()
                 || self.has_pending_subagent_attach()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
@@ -124,6 +130,7 @@ impl App {
             }
         }
         self.cancel_limits_command().await;
+        self.cancel_changelog_command().await;
         if let Some(mut pending) = self.pending_session_title.take() {
             pending.cancel();
             let _ = (&mut pending).await;

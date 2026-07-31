@@ -76,6 +76,7 @@ impl App {
             using_unavailable_provider,
             pending_interactive_login: None,
             pending_usage_limits: None,
+            pending_changelog: None,
             usage_limits_client: reqwest::Client::new(),
             usage: UsageUi::default(),
             model_metadata: None,

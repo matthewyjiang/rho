@@ -11,6 +11,7 @@ include = [
     "/src/**",
     "/tests/**",
     "/build.rs",
+    "/CHANGELOG.md",
     "/README.md",
     "/LICENSE",
     "/LICENSE-APACHE-GROK-BUILD",
