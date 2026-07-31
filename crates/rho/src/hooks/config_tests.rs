@@ -188,7 +188,7 @@ timeout = "1s"
 
 // Covers: a valid executable under a non-UTF-8 project path must remain executable.
 // Owner: hook config path resolution
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn a_project_executable_keeps_its_native_path() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
