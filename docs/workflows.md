@@ -36,16 +36,13 @@ The main steps are:
 
 ## Interactive hub
 
-In the chat TUI, run `/workflow` to open a hub picker:
+In the chat TUI, run `/workflow` to open one list:
 
-1. **Sources** lists entry files under `.rho/workflows` (folder `workflow.star` or a flat `.star` file).
-2. **Plans** lists frozen plans for the current workspace.
-3. **Runs** lists durable runs for the current workspace.
+1. **Start** - local workflows. Enter starts with default inputs and opens the graph screen.
+2. **Runs** - active and recent runs. Enter opens the live graph, or step status when finished.
+3. **Saved plans** - shown only when present. Enter runs the plan.
 
-From a source you can validate or plan with default inputs only. Supply custom
-inputs with the CLI `--input` flags. From a plan you can inspect the graph or
-start a run (the full-screen workflow screen). From a run you can open status,
-request cancel, or resume.
+The live screen shows the step graph and details for the selected step. Custom inputs still need the CLI `--input` flags.
 
 ## CLI reference
 

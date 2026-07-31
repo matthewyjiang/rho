@@ -1,20 +1,21 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
 use crate::workflow::{
-    AgentRuntime, ArtifactKind, ArtifactObservation, CommandExit, NodeState, NodeTerminalState,
+    ArtifactKind, CommandExit, NodeState, NodeTerminalState, RunLifecycle, WorkflowOutcome,
     WorkspaceAccess,
 };
 
 use super::{
+    dag::{self, state_glyph, state_label, state_style},
     event_adapter::{
-        CancellationState, ExecutionMetadata, PlanApprovalState, RecoveryRequirement,
-        TerminalReason, WorkflowNodeSnapshot,
+        CancellationState, ExecutionMetadata, PlanApprovalState, TerminalReason,
+        WorkflowNodeSnapshot,
     },
     state::WorkflowUiState,
 };
@@ -24,105 +25,48 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &WorkflowUiState) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7),
-            Constraint::Min(8),
             Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(2),
         ])
         .split(area);
 
     draw_header(frame, vertical[0], state);
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(43), Constraint::Percentage(57)])
+        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
         .split(vertical[1]);
-    draw_nodes(frame, body[0], state);
+    draw_dag(frame, body[0], state);
     draw_details(frame, body[1], state);
     draw_footer(frame, vertical[2], state);
 }
 
 fn draw_header(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
     let snapshot = state.snapshot();
-    let counts = state.counts();
-    let run = snapshot
-        .run_id
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| "not created".into());
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Workflow", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(format!(
-                "  {:?}  outcome: {}  approval: {}",
-                snapshot.lifecycle,
-                snapshot
-                    .outcome
-                    .map(|outcome| format!("{outcome:?}"))
-                    .unwrap_or_else(|| "pending".into()),
-                approval(snapshot.approval)
-            )),
-        ]),
-        Line::from(format!("plan: {}", snapshot.plan_id)),
-        Line::from(format!("run: {run}")),
-        Line::from(format!(
-            "graph: {}  sources: {} ({})",
-            short_digest(&snapshot.graph_digest.0),
-            snapshot.sources.source_count,
-            short_digest(&snapshot.sources.digest.0),
-        )),
-        Line::from(format!(
-            "states  pending:{} ready:{} running:{} success:{} failure:{} denied:{} cancelled:{} skipped:{} blocked:{}",
-            counts.pending,
-            counts.ready,
-            counts.running,
-            counts.success,
-            counts.failure,
-            counts.denial,
-            counts.cancelled,
-            counts.skipped,
-            counts.blocked,
-        )),
-    ];
+    let progress = progress_summary(state);
+    let status = run_status_label(snapshot.lifecycle, snapshot.outcome, snapshot.cancellation);
+    let line = Line::from(vec![
+        Span::styled(
+            snapshot.workflow_name.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("  ·  {status}  ·  {progress}")),
+    ]);
     frame.render_widget(
-        Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+        Paragraph::new(line).block(Block::default().borders(Borders::BOTTOM)),
         area,
     );
 }
 
-fn draw_nodes(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
-    let items = state
-        .snapshot()
-        .nodes
-        .iter()
-        .map(|node| {
-            let access = match node.access {
-                WorkspaceAccess::ReadOnly => "read only",
-                WorkspaceAccess::Mutating => "mutating",
-            };
-            let attempt = node
-                .current_attempt
-                .map(|attempt| format!(" attempt {attempt}"))
-                .unwrap_or_default();
-            let line = Line::from(vec![
-                Span::styled(
-                    node.id.to_string(),
-                    state_style(&node.state).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(format!(
-                    " [{}] {access}{attempt}",
-                    node_state_label(&node.state)
-                )),
-            ]);
-            ListItem::new(line)
-        })
-        .collect::<Vec<_>>();
-    let mut list_state = ListState::default().with_selected(Some(state.selected_index()));
-    frame.render_stateful_widget(
-        List::new(items).highlight_symbol("▶ ").block(
-            Block::default()
-                .title(" Nodes - scheduler order ")
-                .borders(Borders::ALL),
-        ),
+fn draw_dag(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
+    let inner_width = area.width.saturating_sub(2);
+    let dag_lines = dag::render_dag(&state.snapshot().nodes, state.selected_index(), inner_width);
+    let lines = dag::to_paragraph_lines(dag_lines);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default().title(" Graph ").borders(Borders::ALL))
+            .wrap(Wrap { trim: false }),
         area,
-        &mut list_state,
     );
 }
 
@@ -130,175 +74,246 @@ fn draw_details(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &Work
     let lines = state
         .selected_node()
         .map(|node| detail_lines(node, state))
-        .unwrap_or_else(|| vec![Line::from("No workflow nodes")]);
+        .unwrap_or_else(|| vec![Line::from("No steps")]);
     frame.render_widget(
         Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(" Node details ")
-                    .borders(Borders::ALL),
-            )
+            .block(Block::default().title(" Selected ").borders(Borders::ALL))
             .wrap(Wrap { trim: false }),
         area,
     );
 }
 
 fn detail_lines<'a>(node: &'a WorkflowNodeSnapshot, state: &'a WorkflowUiState) -> Vec<Line<'a>> {
-    let dependencies = if node.dependencies.is_empty() {
-        "none".into()
-    } else {
-        node.dependencies
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
     let mut lines = vec![
-        Line::from(Span::styled(
-            node.display_name.as_str(),
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
-        Line::from(format!("id: {}", node.id)),
-        Line::from(format!("dependencies: {dependencies}")),
-        Line::from(format!("access: {}", access_label(node.access))),
-        Line::from(execution_label(&node.execution)),
+        Line::from(vec![
+            Span::styled(
+                format!("{} ", state_glyph(&node.state)),
+                state_style(&node.state),
+            ),
+            Span::styled(
+                node.display_name.as_str(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(state_label(&node.state)),
+        Line::from(kind_line(node)),
     ];
+
+    if matches!(node.access, WorkspaceAccess::Mutating) {
+        lines.push(Line::from("writes to the workspace"));
+    }
+
+    let waiting = waiting_on(node, state);
+    if !waiting.is_empty() {
+        lines.push(Line::from(format!("waiting on {waiting}")));
+    }
+
     if let Some(progress) = state.progress(node) {
         lines.push(Line::from(format!(
-            "progress: {}/{} {}",
+            "progress {}/{} · {}",
             progress.completed, progress.total, progress.message
         )));
     }
+
     if let Some(exit) = &node.command_exit {
-        lines.push(Line::from(format!("command exit: {}", exit_label(exit))));
+        if !matches!(
+            (&node.state, exit),
+            (
+                NodeState::Terminal {
+                    outcome: NodeTerminalState::Success
+                },
+                CommandExit::Code { code: 0 }
+            )
+        ) {
+            lines.push(Line::from(format!("exit {}", exit_label(exit))));
+        }
     }
-    if let Some(output) = &node.validated_output {
-        let output = serde_json::to_string(output).unwrap_or_else(|_| "<invalid>".into());
-        lines.push(Line::from(format!("validated output: {output}")));
-    }
-    for artifact in &node.artifacts {
-        lines.push(Line::from(format!(
-            "artifact {}: {} ({}, {})",
-            artifact_kind_label(&artifact.kind),
-            artifact.artifact.relative_path,
-            artifact_size_label(
-                &artifact.artifact.observed,
-                artifact.artifact.retained_bytes
-            ),
-            short_digest(&artifact.artifact.digest.0),
-        )));
-    }
+
     if let Some(reason) = &node.terminal_reason {
-        lines.push(Line::from(format!("reason: {}", reason_label(reason))));
+        lines.push(Line::from(format!("because {}", reason_text(reason))));
     }
+
     if let Some(recovery) = state
         .snapshot()
         .recovery_requirement
         .as_ref()
         .filter(|recovery| recovery.node == node.id)
     {
-        lines.push(Line::from(recovery_label(recovery)));
+        lines.push(Line::from(format!(
+            "needs recovery · attempt {} may still own the process",
+            recovery.attempt
+        )));
     }
+
+    if let Some(path) = primary_artifact_path(node) {
+        lines.push(Line::from(format!("output {path}")));
+    }
+
+    // Keep structured output only when short and terminal-interesting.
+    if let Some(output) = interesting_output(node) {
+        lines.push(Line::from(format!("result {output}")));
+    }
+
     lines
 }
 
 fn draw_footer(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
     let snapshot = state.snapshot();
-    let action = match snapshot.approval {
-        PlanApprovalState::AwaitingPlan => "Enter confirm plan  ↑/↓ nodes  q exit",
-        PlanApprovalState::AwaitingResume => "Enter confirm resume  ↑/↓ nodes  q exit",
-        PlanApprovalState::Approved if !snapshot.exit_is_safe => "↑/↓ nodes  c/Esc cancel and save",
-        PlanApprovalState::Approved => "↑/↓ nodes  q/Esc exit",
-    };
-    let cancellation = match snapshot.cancellation {
-        CancellationState::NotRequested => "not requested",
-        CancellationState::Requested => "stopping active work",
-        CancellationState::Saved => "saved and resumable",
-    };
-    let action = state
-        .notice()
-        .map_or_else(|| action.to_owned(), |notice| format!("{notice}  {action}"));
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(format!("cancellation: {cancellation}")),
-            Line::from(action),
-        ])
-        .block(Block::default().borders(Borders::TOP)),
-        area,
-    );
+    let mut keys = vec!["j/k move".to_owned()];
+    match snapshot.approval {
+        PlanApprovalState::AwaitingPlan => keys.push("enter start".into()),
+        PlanApprovalState::AwaitingResume => keys.push("enter continue".into()),
+        PlanApprovalState::Approved
+            if !snapshot.exit_is_safe
+                && matches!(
+                    snapshot.lifecycle,
+                    RunLifecycle::Running | RunLifecycle::Cancelling
+                ) =>
+        {
+            keys.push("c stop".into());
+        }
+        PlanApprovalState::Approved if snapshot.exit_is_safe => keys.push("q leave".into()),
+        PlanApprovalState::Approved => {}
+    }
+    if matches!(snapshot.cancellation, CancellationState::Requested) {
+        keys.push("stopping…".into());
+    }
+    let mut text = keys.join("  ·  ");
+    if let Some(notice) = state.notice() {
+        text = format!("{notice}  ·  {text}");
+    }
+    frame.render_widget(Paragraph::new(text), area);
 }
 
-fn approval(value: PlanApprovalState) -> &'static str {
-    match value {
-        PlanApprovalState::AwaitingPlan => "awaiting plan confirmation",
-        PlanApprovalState::AwaitingResume => "awaiting resume confirmation",
-        PlanApprovalState::Approved => "approved",
+fn progress_summary(state: &WorkflowUiState) -> String {
+    let total = state.snapshot().nodes.len();
+    if total == 0 {
+        return "0 steps".into();
+    }
+    let done = state
+        .snapshot()
+        .nodes
+        .iter()
+        .filter(|node| node.state.terminal().is_some())
+        .count();
+    let running = state
+        .snapshot()
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.state, NodeState::Running { .. }))
+        .count();
+    if running > 0 {
+        format!("{done}/{total} done · {running} running")
+    } else {
+        format!("{done}/{total} done")
     }
 }
 
-fn node_state_label(state: &NodeState) -> &'static str {
-    match state {
-        NodeState::Pending => "pending",
-        NodeState::Ready => "ready",
-        NodeState::Running { .. } => "running",
-        NodeState::Terminal { outcome } => match outcome {
-            NodeTerminalState::Success => "success",
-            NodeTerminalState::Failure => "failure",
-            NodeTerminalState::Denial => "denied",
-            NodeTerminalState::Cancellation => "cancelled",
-            NodeTerminalState::Skipped => "skipped",
-            NodeTerminalState::Blocked => "blocked",
+fn run_status_label(
+    lifecycle: RunLifecycle,
+    outcome: Option<WorkflowOutcome>,
+    cancellation: CancellationState,
+) -> String {
+    if matches!(cancellation, CancellationState::Requested) {
+        return "stopping".into();
+    }
+    match lifecycle {
+        RunLifecycle::Planned => "ready".into(),
+        RunLifecycle::Running => "running".into(),
+        RunLifecycle::Cancelling => "stopping".into(),
+        RunLifecycle::NeedsRecovery => "needs recovery".into(),
+        RunLifecycle::Completed => match outcome {
+            Some(WorkflowOutcome::Success) => "finished · success".into(),
+            Some(WorkflowOutcome::Failure) => "finished · failed".into(),
+            Some(WorkflowOutcome::Denial) => "finished · denied".into(),
+            Some(WorkflowOutcome::Cancellation) => "finished · cancelled".into(),
+            Some(WorkflowOutcome::Blocked) => "finished · blocked".into(),
+            None => "finished".into(),
         },
     }
 }
 
-fn state_style(state: &NodeState) -> Style {
-    let color = match state {
-        NodeState::Pending | NodeState::Ready => Color::Gray,
-        NodeState::Running { .. } => Color::Cyan,
-        NodeState::Terminal { outcome } => match outcome {
-            NodeTerminalState::Success => Color::Green,
-            NodeTerminalState::Skipped => Color::Yellow,
-            NodeTerminalState::Failure
-            | NodeTerminalState::Denial
-            | NodeTerminalState::Cancellation
-            | NodeTerminalState::Blocked => Color::Red,
-        },
-    };
-    Style::default().fg(color)
-}
-
-fn access_label(access: WorkspaceAccess) -> &'static str {
-    match access {
-        WorkspaceAccess::ReadOnly => "read only",
-        WorkspaceAccess::Mutating => "mutating exclusive",
-    }
-}
-
-fn execution_label(metadata: &ExecutionMetadata) -> String {
-    match metadata {
+fn kind_line(node: &WorkflowNodeSnapshot) -> String {
+    match &node.execution {
         ExecutionMetadata::Agent {
             name,
-            runtime,
             provider,
             model,
-        } => format!(
-            "agent: {name} ({}) provider:{} model:{}",
-            match runtime {
-                AgentRuntime::Rho => "rho",
-                AgentRuntime::ClaudeCli => "claude-cli",
-            },
-            provider.as_deref().unwrap_or("default"),
-            model.as_deref().unwrap_or("default"),
-        ),
+            ..
+        } => {
+            let model = match (provider.as_deref(), model.as_deref()) {
+                (Some(provider), Some(model)) => format!(" · {provider}/{model}"),
+                (None, Some(model)) => format!(" · {model}"),
+                _ => String::new(),
+            };
+            format!("agent {name}{model}")
+        }
         ExecutionMetadata::Command {
-            executable,
-            cwd,
-            shell,
-        } => format!(
-            "command: {executable} cwd:{cwd} mode:{}",
-            if *shell { "shell" } else { "direct" }
-        ),
+            executable, shell, ..
+        } => {
+            let mode = if *shell { "shell" } else { "command" };
+            let name = std::path::Path::new(executable)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(executable);
+            format!("{mode} {name}")
+        }
+    }
+}
+
+fn waiting_on(node: &WorkflowNodeSnapshot, state: &WorkflowUiState) -> String {
+    if !matches!(node.state, NodeState::Pending | NodeState::Ready) {
+        return String::new();
+    }
+    let by_id = state
+        .snapshot()
+        .nodes
+        .iter()
+        .map(|node| (node.id.clone(), node))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    node.dependencies
+        .iter()
+        .filter_map(|dep| by_id.get(dep))
+        .filter(|dep| {
+            dep.state.terminal() != Some(NodeTerminalState::Success)
+                && dep.state.terminal() != Some(NodeTerminalState::Skipped)
+        })
+        .map(|dep| dep.display_name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn primary_artifact_path(node: &WorkflowNodeSnapshot) -> Option<&str> {
+    let preferred = [
+        ArtifactKind::AgentAnswer,
+        ArtifactKind::StructuredOutput,
+        ArtifactKind::Stdout,
+        ArtifactKind::Stderr,
+    ];
+    for kind in preferred {
+        if let Some(artifact) = node.artifacts.iter().find(|item| item.kind == kind) {
+            return Some(artifact.artifact.relative_path.as_str());
+        }
+    }
+    None
+}
+
+fn interesting_output(node: &WorkflowNodeSnapshot) -> Option<String> {
+    let output = node.validated_output.as_ref()?;
+    // Only show short results; full dumps belong in artifacts.
+    let text = output.to_string();
+    if text.chars().count() > 120 {
+        return None;
+    }
+    if matches!(
+        node.state,
+        NodeState::Terminal {
+            outcome: NodeTerminalState::Success | NodeTerminalState::Failure
+        }
+    ) {
+        Some(text)
+    } else {
+        None
     }
 }
 
@@ -308,52 +323,15 @@ fn exit_label(exit: &CommandExit) -> String {
         CommandExit::Signal { signal } => format!("signal {signal}"),
         CommandExit::Timeout => "timeout".into(),
         CommandExit::Cancellation => "cancelled".into(),
-        CommandExit::Abnormal => "abnormal termination".into(),
+        CommandExit::Abnormal => "abnormal stop".into(),
     }
 }
 
-fn reason_label(reason: &TerminalReason) -> &str {
+fn reason_text(reason: &TerminalReason) -> &str {
     match reason {
         TerminalReason::Failure(reason)
         | TerminalReason::Denial(reason)
         | TerminalReason::Cancellation(reason)
         | TerminalReason::Blocked(reason) => reason,
     }
-}
-
-fn artifact_kind_label(kind: &ArtifactKind) -> &'static str {
-    match kind {
-        ArtifactKind::Stdout => "stdout",
-        ArtifactKind::Stderr => "stderr",
-        ArtifactKind::StructuredOutput => "structured output",
-        ArtifactKind::AgentAnswer => "agent answer",
-        ArtifactKind::CommandOutcome => "command outcome",
-    }
-}
-
-fn artifact_size_label(observed: &ArtifactObservation, retained: u64) -> String {
-    match observed {
-        ArtifactObservation::Complete { observed_bytes } => {
-            format!("{retained} bytes, observed {observed_bytes}")
-        }
-        ArtifactObservation::Truncated {
-            observed_bytes_at_least,
-        } => format!(
-            "{retained} bytes retained, observed at least {observed_bytes_at_least}, truncated"
-        ),
-        ArtifactObservation::Incomplete { observed_bytes } => {
-            format!("{retained} bytes retained, observed {observed_bytes} before cleanup ended")
-        }
-    }
-}
-
-fn recovery_label(recovery: &RecoveryRequirement) -> String {
-    format!(
-        "recovery required: node {} attempt {} has uncertain owner {:?}",
-        recovery.node, recovery.attempt, recovery.uncertain_owner
-    )
-}
-
-fn short_digest(digest: &str) -> &str {
-    digest.get(..12).unwrap_or(digest)
 }

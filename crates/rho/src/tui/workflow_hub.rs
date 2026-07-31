@@ -1,4 +1,4 @@
-//! In-app `/workflow` hub: browse sources, plans, and runs from the chat TUI.
+//! In-app `/workflow` hub: start workflows and check runs from the chat TUI.
 
 use std::{collections::BTreeMap, str::FromStr};
 
@@ -15,47 +15,40 @@ use crate::{
         workflow_runtime::RecoveryDecision,
     },
     workflow::{
-        derive_workflow_outcome, PlanId, RunId, RunLifecycle, StoredPlan, StoredRun, WorkflowValue,
+        derive_workflow_outcome, NodeState, NodeTerminalState, PlanId, RunId, RunLifecycle,
+        StoredPlan, StoredRun, WorkflowOutcome, WorkflowValue,
     },
 };
 
-const HUB_SOURCES: &str = "hub:sources";
-const HUB_PLANS: &str = "hub:plans";
-const HUB_RUNS: &str = "hub:runs";
-
 const SOURCE_PREFIX: &str = "source:";
-const SOURCE_VALIDATE_PREFIX: &str = "source_validate:";
-const SOURCE_PLAN_PREFIX: &str = "source_plan:";
 const PLAN_PREFIX: &str = "plan:";
-const PLAN_RUN_PREFIX: &str = "plan_run:";
-const PLAN_DETAIL_PREFIX: &str = "plan_detail:";
 const RUN_PREFIX: &str = "run:";
-const RUN_STATUS_PREFIX: &str = "run_status:";
-const RUN_CANCEL_PREFIX: &str = "run_cancel:";
-const RUN_RESUME_PREFIX: &str = "run_resume:";
-const RUN_RECOVER_PREFIX: &str = "run_recover:";
 
-fn badge(text: impl Into<String>) -> PickerBadge {
+const MAX_FINISHED_RUNS: usize = 8;
+
+fn badge(text: impl Into<String>, tone: PickerBadgeTone) -> PickerBadge {
     PickerBadge {
         text: text.into(),
-        tone: PickerBadgeTone::Selected,
+        tone,
     }
 }
 
 fn item(
+    section: Option<&str>,
     label: impl Into<String>,
     detail: impl Into<String>,
     value: impl Into<String>,
-    badge_text: Option<String>,
+    badge_text: Option<(String, PickerBadgeTone)>,
+    selection_verb: Option<&'static str>,
 ) -> PickerItem {
     PickerItem {
-        section: None,
+        section: section.map(str::to_owned),
         label: label.into(),
         detail: Some(detail.into()),
         preview: None,
-        badge: badge_text.map(badge),
+        badge: badge_text.map(|(text, tone)| badge(text, tone)),
         value: value.into(),
-        selection_verb: None,
+        selection_verb,
     }
 }
 
@@ -63,304 +56,211 @@ fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
-fn short_digest(digest: &str) -> String {
-    let body = digest.strip_prefix("sha256:").unwrap_or(digest);
-    body.chars().take(12).collect()
+fn lifecycle_label(lifecycle: RunLifecycle) -> &'static str {
+    match lifecycle {
+        RunLifecycle::Planned => "ready",
+        RunLifecycle::Running => "running",
+        RunLifecycle::Cancelling => "stopping",
+        RunLifecycle::Completed => "finished",
+        RunLifecycle::NeedsRecovery => "needs recovery",
+    }
 }
 
-pub(super) fn hub_picker(source_count: usize, plan_count: usize, run_count: usize) -> UiPicker {
-    UiPicker::new(
-        "workflows",
-        "browse sources, plans, and runs · type filter · esc close",
-        vec![
-            item(
-                "Sources",
-                format!(
-                    "{source_count} workflow entr{}",
-                    if source_count == 1 { "y" } else { "ies" }
-                ),
-                HUB_SOURCES,
-                Some(source_count.to_string()),
-            ),
-            item(
-                "Plans",
-                format!(
-                    "{plan_count} frozen plan{}",
-                    if plan_count == 1 { "" } else { "s" }
-                ),
-                HUB_PLANS,
-                Some(plan_count.to_string()),
-            ),
-            item(
-                "Runs",
-                format!(
-                    "{run_count} durable run{}",
-                    if run_count == 1 { "" } else { "s" }
-                ),
-                HUB_RUNS,
-                Some(run_count.to_string()),
-            ),
-        ],
-        PickerAction::Workflow,
-    )
-    .with_confirm_verb("open")
+fn lifecycle_tone(lifecycle: RunLifecycle) -> PickerBadgeTone {
+    match lifecycle {
+        RunLifecycle::Running | RunLifecycle::Planned => PickerBadgeTone::Selected,
+        RunLifecycle::NeedsRecovery | RunLifecycle::Cancelling => PickerBadgeTone::Warning,
+        RunLifecycle::Completed => PickerBadgeTone::Internal,
+    }
 }
 
-fn sources_picker(sources: Vec<workflow_discover::DiscoveredWorkflow>) -> UiPicker {
-    let items = sources
-        .into_iter()
-        .map(|source| {
-            item(
-                source.label,
-                source.relative_path.clone(),
+fn outcome_label(outcome: Option<WorkflowOutcome>) -> String {
+    match outcome {
+        Some(WorkflowOutcome::Success) => "success".into(),
+        Some(WorkflowOutcome::Failure) => "failed".into(),
+        Some(WorkflowOutcome::Denial) => "denied".into(),
+        Some(WorkflowOutcome::Cancellation) => "cancelled".into(),
+        Some(WorkflowOutcome::Blocked) => "blocked".into(),
+        None => "pending".into(),
+    }
+}
+
+fn node_state_label(state: &NodeState) -> String {
+    match state {
+        NodeState::Pending => "waiting".into(),
+        NodeState::Ready => "ready".into(),
+        NodeState::Running { attempt } => format!("running (try {})", attempt),
+        NodeState::Terminal { outcome } => match outcome {
+            NodeTerminalState::Success => "done".into(),
+            NodeTerminalState::Failure => "failed".into(),
+            NodeTerminalState::Denial => "denied".into(),
+            NodeTerminalState::Cancellation => "cancelled".into(),
+            NodeTerminalState::Skipped => "skipped".into(),
+            NodeTerminalState::Blocked => "blocked".into(),
+        },
+    }
+}
+
+fn run_progress(run: &StoredRun) -> String {
+    let total = run.state.state.nodes.len().max(1);
+    let done = run
+        .state
+        .state
+        .nodes
+        .values()
+        .filter(|state| state.terminal().is_some())
+        .count();
+    format!("{done}/{total} steps done")
+}
+
+/// Root list: start workflows, open runs, or reuse a saved plan.
+pub(super) fn hub_picker(
+    sources: &[workflow_discover::DiscoveredWorkflow],
+    plans: &[StoredPlan],
+    runs: &[StoredRun],
+) -> UiPicker {
+    let mut items = Vec::new();
+
+    if sources.is_empty() {
+        items.push(item(
+            Some("Start"),
+            "No local workflows yet",
+            "Add .rho/workflows/<name>/workflow.star or .rho/workflows/<name>.star",
+            "noop:empty_sources",
+            None,
+            Some("close"),
+        ));
+    } else {
+        for source in sources {
+            items.push(item(
+                Some("Start"),
+                &source.label,
+                format!("Start with default inputs · {}", source.relative_path),
                 format!("{SOURCE_PREFIX}{}", source.relative_path),
                 None,
-            )
-        })
+                Some("start"),
+            ));
+        }
+    }
+
+    let mut active = runs
+        .iter()
+        .filter(|run| run.state.state.lifecycle != RunLifecycle::Completed)
         .collect::<Vec<_>>();
-    UiPicker::new(
-        "workflow sources",
-        "enter opens actions · esc back",
-        items,
-        PickerAction::Workflow,
-    )
-    .with_confirm_verb("open")
-}
+    active.sort_by_key(|run| run.manifest.run_id);
+    active.reverse();
 
-fn source_actions_picker(relative_path: &str) -> UiPicker {
-    UiPicker::new(
-        format!("source {relative_path}"),
-        "validate or plan with default inputs · esc back",
-        vec![
-            item(
-                "Validate",
-                "Check the graph without storing a plan",
-                format!("{SOURCE_VALIDATE_PREFIX}{relative_path}"),
-                None,
-            ),
-            item(
-                "Plan",
-                "Freeze a plan using default inputs only",
-                format!("{SOURCE_PLAN_PREFIX}{relative_path}"),
-                None,
-            ),
-        ],
-        PickerAction::Workflow,
-    )
-    .with_confirm_verb("run")
-}
+    let mut finished = runs
+        .iter()
+        .filter(|run| run.state.state.lifecycle == RunLifecycle::Completed)
+        .collect::<Vec<_>>();
+    finished.sort_by_key(|run| run.manifest.run_id);
+    finished.reverse();
+    finished.truncate(MAX_FINISHED_RUNS);
 
-fn plans_picker(plans: Vec<StoredPlan>) -> UiPicker {
-    let items = plans
-        .into_iter()
-        .map(|plan| {
+    if active.is_empty() && finished.is_empty() {
+        items.push(item(
+            Some("Runs"),
+            "No runs yet",
+            "Start a workflow above to create one",
+            "noop:empty_runs",
+            None,
+            Some("close"),
+        ));
+    } else {
+        for run in active {
+            let id = run.manifest.run_id.to_string();
+            let life = lifecycle_label(run.state.state.lifecycle);
+            items.push(item(
+                Some("Runs"),
+                run.graph.graph.name.to_string(),
+                format!("{life} · {} · id {}", run_progress(run), short_id(&id)),
+                format!("{RUN_PREFIX}{id}"),
+                Some((life.into(), lifecycle_tone(run.state.state.lifecycle))),
+                Some("open"),
+            ));
+        }
+        for run in finished {
+            let id = run.manifest.run_id.to_string();
+            let outcome = outcome_label(derive_workflow_outcome(&run.graph, &run.state.state));
+            items.push(item(
+                Some("Runs"),
+                run.graph.graph.name.to_string(),
+                format!("finished · {outcome} · id {}", short_id(&id)),
+                format!("{RUN_PREFIX}{id}"),
+                Some((outcome, PickerBadgeTone::Internal)),
+                Some("open"),
+            ));
+        }
+    }
+
+    if !plans.is_empty() {
+        for plan in plans {
             let id = plan.manifest.plan_id.to_string();
-            item(
+            items.push(item(
+                Some("Saved plans"),
                 plan.graph.graph.name.to_string(),
                 format!(
-                    "plan {} · {} nodes · {}",
-                    short_id(&id),
+                    "{} steps · id {} · enter runs",
                     plan.graph.graph.nodes.len(),
-                    short_digest(&plan.manifest.graph_digest.0)
+                    short_id(&id)
                 ),
                 format!("{PLAN_PREFIX}{id}"),
-                Some(short_id(&id)),
-            )
-        })
-        .collect::<Vec<_>>();
+                Some((short_id(&id), PickerBadgeTone::Internal)),
+                Some("run"),
+            ));
+        }
+    }
+
     UiPicker::new(
-        "workflow plans",
-        "enter opens actions · esc back",
+        "Workflows",
+        "start a workflow or open a run · type to filter · esc close",
         items,
         PickerAction::Workflow,
     )
     .with_confirm_verb("open")
-}
-
-fn plan_actions_picker(plan: &StoredPlan) -> UiPicker {
-    let id = plan.manifest.plan_id.to_string();
-    UiPicker::new(
-        format!("plan {}", short_id(&id)),
-        "run opens the workflow screen · esc back",
-        vec![
-            item(
-                "Run",
-                format!(
-                    "Start a run of {} ({})",
-                    plan.graph.graph.name,
-                    short_digest(&plan.manifest.graph_digest.0)
-                ),
-                format!("{PLAN_RUN_PREFIX}{id}"),
-                None,
-            ),
-            item(
-                "Details",
-                format!(
-                    "{} nodes · digest {}",
-                    plan.graph.graph.nodes.len(),
-                    short_digest(&plan.manifest.graph_digest.0)
-                ),
-                format!("{PLAN_DETAIL_PREFIX}{id}"),
-                None,
-            ),
-        ],
-        PickerAction::Workflow,
-    )
-    .with_confirm_verb("select")
-}
-
-fn runs_picker(runs: Vec<StoredRun>) -> UiPicker {
-    let items = runs
-        .into_iter()
-        .map(|run| {
-            let id = run.manifest.run_id.to_string();
-            let lifecycle = format!("{:?}", run.state.state.lifecycle).to_ascii_lowercase();
-            item(
-                run.graph.graph.name.to_string(),
-                format!(
-                    "run {} · {lifecycle} · plan {}",
-                    short_id(&id),
-                    short_id(&run.manifest.plan_id.to_string())
-                ),
-                format!("{RUN_PREFIX}{id}"),
-                Some(lifecycle),
-            )
-        })
-        .collect::<Vec<_>>();
-    UiPicker::new(
-        "workflow runs",
-        "enter opens actions · esc back",
-        items,
-        PickerAction::Workflow,
-    )
-    .with_confirm_verb("open")
-}
-
-fn run_actions_picker(run: &StoredRun) -> UiPicker {
-    let id = run.manifest.run_id.to_string();
-    let lifecycle = run.state.state.lifecycle;
-    let mut items = vec![item(
-        "Status",
-        "Show node states and outcome",
-        format!("{RUN_STATUS_PREFIX}{id}"),
-        None,
-    )];
-    if matches!(
-        lifecycle,
-        RunLifecycle::Running | RunLifecycle::Cancelling | RunLifecycle::Planned
-    ) {
-        items.push(item(
-            "Cancel",
-            "Request cancellation of active work",
-            format!("{RUN_CANCEL_PREFIX}{id}"),
-            None,
-        ));
-    }
-    match lifecycle {
-        RunLifecycle::NeedsRecovery => {
-            items.push(item(
-                "Recover and resume",
-                "Confirm no prior process remains, then resume",
-                format!("{RUN_RECOVER_PREFIX}{id}"),
-                None,
-            ));
-        }
-        RunLifecycle::Completed => {}
-        RunLifecycle::Running | RunLifecycle::Cancelling | RunLifecycle::Planned => {
-            items.push(item(
-                "Resume",
-                "Resume from the frozen run graph",
-                format!("{RUN_RESUME_PREFIX}{id}"),
-                None,
-            ));
-        }
-    }
-    UiPicker::new(
-        format!("run {}", short_id(&id)),
-        "status, cancel, or resume · esc back",
-        items,
-        PickerAction::Workflow,
-    )
-    .with_confirm_verb("select")
 }
 
 fn status_overlay(run: &StoredRun) -> UiPicker {
     let outcome = derive_workflow_outcome(&run.graph, &run.state.state);
     let mut items = vec![item(
-        "Summary",
+        Some("Summary"),
+        run.graph.graph.name.to_string(),
         format!(
-            "lifecycle {:?} · outcome {} · plan {} · digest {}",
-            run.state.state.lifecycle,
-            outcome
-                .map(|value| format!("{value:?}"))
-                .unwrap_or_else(|| "pending".into()),
-            short_id(&run.manifest.plan_id.to_string()),
-            short_digest(&run.manifest.graph_digest.0)
+            "{} · {} · id {}",
+            lifecycle_label(run.state.state.lifecycle),
+            outcome_label(outcome),
+            short_id(&run.manifest.run_id.to_string())
         ),
         "status:summary",
-        None,
+        Some((
+            lifecycle_label(run.state.state.lifecycle).into(),
+            lifecycle_tone(run.state.state.lifecycle),
+        )),
+        Some("close"),
     )];
     for (node_id, state) in &run.state.state.nodes {
+        let label = node_state_label(state);
         items.push(item(
+            Some("Steps"),
             node_id.to_string(),
-            format!("{state:?}"),
+            label.clone(),
             format!("status:node:{node_id}"),
-            Some(format!("{state:?}")),
+            Some((label, PickerBadgeTone::Internal)),
+            Some("close"),
         ));
     }
     UiPicker::new(
-        format!("run {} status", short_id(&run.manifest.run_id.to_string())),
+        format!("Status · {}", short_id(&run.manifest.run_id.to_string())),
         "enter or esc closes",
         items,
         PickerAction::Dismiss,
     )
     .with_layout(PickerLayout::Overlay)
     .with_overlay_chrome(OverlayChrome {
-        nav_label: " NODES".into(),
-        detail_label: Some(" STATE".into()),
-        nav_keys_hint: "↑↓ nodes".into(),
-    })
-    .with_confirm_verb("close")
-}
-
-fn plan_detail_overlay(plan: &StoredPlan) -> UiPicker {
-    let mut items = vec![item(
-        "Summary",
-        format!(
-            "plan {} · {} nodes · digest {}",
-            plan.manifest.plan_id,
-            plan.graph.graph.nodes.len(),
-            short_digest(&plan.manifest.graph_digest.0)
-        ),
-        "plan_detail:summary",
-        None,
-    )];
-    for node in plan.graph.graph.nodes.values() {
-        let kind = match &node.execution {
-            crate::workflow::NodeExecution::Agent(_) => "agent",
-            crate::workflow::NodeExecution::Command(_) => "command",
-        };
-        items.push(item(
-            node.id.to_string(),
-            format!("{kind} · {}", node.display_name),
-            format!("plan_detail:node:{}", node.id),
-            None,
-        ));
-    }
-    UiPicker::new(
-        format!(
-            "plan {} detail",
-            short_id(&plan.manifest.plan_id.to_string())
-        ),
-        "enter or esc closes",
-        items,
-        PickerAction::Dismiss,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " NODES".into(),
+        nav_label: " STEPS".into(),
         detail_label: Some(" DETAIL".into()),
-        nav_keys_hint: "↑↓ nodes".into(),
+        nav_keys_hint: "↑↓ steps".into(),
     })
     .with_confirm_verb("close")
 }
@@ -387,7 +287,16 @@ impl App {
         let sources = workflow_discover::discover_workflow_sources(&self.info.runtime.cwd);
         let plans = ops.list_workspace_plans().unwrap_or_default();
         let runs = ops.list_workspace_runs().unwrap_or_default();
-        let picker = hub_picker(sources.len(), plans.len(), runs.len());
+        if sources.is_empty() && plans.is_empty() && runs.is_empty() {
+            self.input_ui.set_composer(ComposerMode::Input);
+            self.insert_entry(&Entry::Notice(
+                "No workflows yet. Add .rho/workflows/<name>/workflow.star, then run /workflow again."
+                    .into(),
+            ));
+            self.status = "no workflows".into();
+            return Ok(());
+        }
+        let picker = hub_picker(&sources, &plans, &runs);
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.status = "workflows".into();
         Ok(())
@@ -398,50 +307,25 @@ impl App {
         value: &str,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if value.starts_with("noop:") {
+            return Ok(());
+        }
         match value {
-            HUB_SOURCES => self.open_workflow_sources_picker(),
-            HUB_PLANS => self.open_workflow_plans_picker(),
-            HUB_RUNS => self.open_workflow_runs_picker(),
-            value if let Some(path) = value.strip_prefix(SOURCE_VALIDATE_PREFIX) => {
-                self.validate_workflow_source(path).await
-            }
-            value if let Some(path) = value.strip_prefix(SOURCE_PLAN_PREFIX) => {
-                self.plan_workflow_source(path).await
-            }
+            // Enter on a workflow starts it. No extra menu.
             value if let Some(path) = value.strip_prefix(SOURCE_PREFIX) => {
-                self.open_child_picker(source_actions_picker(path));
-                self.status = format!("source {path}");
-                Ok(())
+                self.start_workflow_source(path, terminal).await
             }
-            value if let Some(id) = value.strip_prefix(PLAN_RUN_PREFIX) => {
+            // Enter on a saved plan runs it.
+            value if let Some(id) = value.strip_prefix(PLAN_PREFIX) => {
                 self.run_workflow_plan(id, terminal).await
             }
-            value if let Some(id) = value.strip_prefix(PLAN_DETAIL_PREFIX) => {
-                self.open_workflow_plan_detail(id)
-            }
-            value if let Some(id) = value.strip_prefix(PLAN_PREFIX) => {
-                self.open_workflow_plan_actions(id)
-            }
-            value if let Some(id) = value.strip_prefix(RUN_STATUS_PREFIX) => {
-                self.open_workflow_run_status(id)
-            }
-            value if let Some(id) = value.strip_prefix(RUN_CANCEL_PREFIX) => {
-                self.cancel_workflow_run(id).await
-            }
-            value if let Some(id) = value.strip_prefix(RUN_RESUME_PREFIX) => {
-                self.resume_workflow_run(id, /*recover_uncertain*/ false, terminal)
-                    .await
-            }
-            value if let Some(id) = value.strip_prefix(RUN_RECOVER_PREFIX) => {
-                self.resume_workflow_run(id, /*recover_uncertain*/ true, terminal)
-                    .await
-            }
+            // Enter on a run opens the live screen or finished status.
             value if let Some(id) = value.strip_prefix(RUN_PREFIX) => {
-                self.open_workflow_run_actions(id)
+                self.open_workflow_run_primary(id, terminal).await
             }
             other => {
                 self.insert_entry(&Entry::Error(format!(
-                    "unknown workflow hub selection '{other}'"
+                    "unknown workflow selection '{other}'"
                 )));
                 self.status = "workflow selection failed".into();
                 Ok(())
@@ -454,134 +338,86 @@ impl App {
         WorkflowOps::open(self.info.runtime.cwd.clone(), path)
     }
 
-    fn open_workflow_sources_picker(&mut self) -> anyhow::Result<()> {
-        let sources = workflow_discover::discover_workflow_sources(&self.info.runtime.cwd);
-        if sources.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no workflow sources under .rho/workflows (add folder/workflow.star or a .star file)"
-                    .into(),
-            ));
-            self.status = "no workflow sources".into();
-            return Ok(());
-        }
-        self.open_child_picker(sources_picker(sources));
-        self.status = "workflow sources".into();
-        Ok(())
-    }
-
-    fn open_workflow_plans_picker(&mut self) -> anyhow::Result<()> {
-        let plans = self.workflow_ops()?.list_workspace_plans()?;
-        if plans.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no frozen plans for this workspace yet; plan a source first".into(),
-            ));
-            self.status = "no workflow plans".into();
-            return Ok(());
-        }
-        self.open_child_picker(plans_picker(plans));
-        self.status = "workflow plans".into();
-        Ok(())
-    }
-
-    fn open_workflow_runs_picker(&mut self) -> anyhow::Result<()> {
-        let runs = self.workflow_ops()?.list_workspace_runs()?;
-        if runs.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no durable runs for this workspace yet".into(),
-            ));
-            self.status = "no workflow runs".into();
-            return Ok(());
-        }
-        self.open_child_picker(runs_picker(runs));
-        self.status = "workflow runs".into();
-        Ok(())
-    }
-
-    fn open_workflow_plan_actions(&mut self, plan_id: &str) -> anyhow::Result<()> {
-        let plan_id = PlanId::from_str(plan_id)?;
-        let plan = self.workflow_ops()?.load_plan_id(plan_id)?;
-        self.open_child_picker(plan_actions_picker(&plan));
-        self.status = format!("plan {}", short_id(&plan_id.to_string()));
-        Ok(())
-    }
-
-    fn open_workflow_plan_detail(&mut self, plan_id: &str) -> anyhow::Result<()> {
-        let plan_id = PlanId::from_str(plan_id)?;
-        let plan = self.workflow_ops()?.load_plan_id(plan_id)?;
-        self.open_child_picker(plan_detail_overlay(&plan));
-        self.status = "plan detail".into();
-        Ok(())
-    }
-
-    fn open_workflow_run_actions(&mut self, run_id: &str) -> anyhow::Result<()> {
-        let run_id = RunId::from_str(run_id)?;
-        let run = self.workflow_ops()?.load_run_id(run_id)?;
-        self.open_child_picker(run_actions_picker(&run));
-        self.status = format!("run {}", short_id(&run_id.to_string()));
-        Ok(())
-    }
-
-    fn open_workflow_run_status(&mut self, run_id: &str) -> anyhow::Result<()> {
-        let run_id = RunId::from_str(run_id)?;
-        let run = self.workflow_ops()?.load_run_id(run_id)?;
-        self.open_child_picker(status_overlay(&run));
-        self.status = "run status".into();
-        Ok(())
-    }
-
-    async fn validate_workflow_source(&mut self, relative_path: &str) -> anyhow::Result<()> {
-        let absolute = self.info.runtime.cwd.join(relative_path);
-        self.status = format!("validating {relative_path}");
-        match self.prepare_source(&absolute).await {
-            Ok(prepared) => {
-                self.insert_entry(&Entry::Notice(format!(
-                    "valid workflow '{}' · {} nodes · {}",
-                    prepared.workflow.graph.name,
-                    prepared.workflow.graph.nodes.len(),
-                    relative_path
-                )));
-                self.status = "workflow valid".into();
+    async fn open_workflow_run_primary(
+        &mut self,
+        run_id: &str,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let parsed = RunId::from_str(run_id)?;
+        let run = self.workflow_ops()?.load_run_id(parsed)?;
+        match run.state.state.lifecycle {
+            RunLifecycle::Completed => {
+                self.open_child_picker(status_overlay(&run));
+                self.status = "run status".into();
+                Ok(())
             }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "workflow validate failed for {relative_path}: {error:#}"
-                )));
-                self.status = "validate failed".into();
+            RunLifecycle::NeedsRecovery => {
+                self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal)
+                    .await
+            }
+            RunLifecycle::Planned | RunLifecycle::Running | RunLifecycle::Cancelling => {
+                self.resume_workflow_run(run_id, /*recover_uncertain*/ false, terminal)
+                    .await
             }
         }
-        Ok(())
     }
 
-    async fn plan_workflow_source(&mut self, relative_path: &str) -> anyhow::Result<()> {
+    async fn start_workflow_source(
+        &mut self,
+        relative_path: &str,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
         let absolute = self.info.runtime.cwd.join(relative_path);
-        self.status = format!("planning {relative_path}");
+        self.status = format!("starting {relative_path}");
         let ops = self.workflow_ops()?;
-        match self.prepare_source(&absolute).await {
-            Ok(prepared) => match ops.store_plan(&prepared) {
-                Ok(plan) => {
-                    self.insert_entry(&Entry::Notice(format!(
-                        "planned '{}' as {} · digest {} · defaults only (use CLI --input for custom values)",
-                        plan.graph.graph.name,
-                        plan.manifest.plan_id,
-                        short_digest(&plan.manifest.graph_digest.0)
-                    )));
-                    self.status = "workflow planned".into();
-                }
-                Err(error) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "workflow plan store failed: {error:#}"
-                    )));
-                    self.status = "plan failed".into();
-                }
-            },
+        let prepared = match self.prepare_source(&absolute).await {
+            Ok(prepared) => prepared,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "workflow plan failed for {relative_path}: {error:#}"
+                    "Could not start {relative_path}: {error:#}"
                 )));
-                self.status = "plan failed".into();
+                self.status = "start failed".into();
+                return Ok(());
             }
-        }
-        Ok(())
+        };
+        let plan = match ops.store_plan(&prepared) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("Could not save plan: {error:#}")));
+                self.status = "start failed".into();
+                return Ok(());
+            }
+        };
+        let plan = match ops.prepare_run_id(plan.manifest.plan_id) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("Could not prepare run: {error:#}")));
+                self.status = "start failed".into();
+                return Ok(());
+            }
+        };
+        let run = match ops.create_confirmed_run(&plan) {
+            Ok(run) => run,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("Could not create run: {error:#}")));
+                self.status = "start failed".into();
+                return Ok(());
+            }
+        };
+        let run_id = run.manifest.run_id;
+        self.input_ui.set_composer(ComposerMode::Input);
+        self.insert_entry(&Entry::Notice(format!(
+            "Starting '{}' (run {}). Default inputs only.",
+            plan.graph.graph.name,
+            short_id(&run_id.to_string())
+        )));
+        self.launch_workflow_execution(
+            run,
+            RecoveryDecision::NormalResume,
+            terminal,
+            format!("workflow {} finished", short_id(&run_id.to_string())),
+        )
+        .await
     }
 
     async fn prepare_source(
@@ -612,7 +448,7 @@ impl App {
         let plan = match ops.prepare_run_id(plan_id) {
             Ok(plan) => plan,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not prepare plan: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("Could not prepare plan: {error:#}")));
                 self.status = "run failed".into();
                 return Ok(());
             }
@@ -620,7 +456,7 @@ impl App {
         let run = match ops.create_confirmed_run(&plan) {
             Ok(run) => run,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("Could not create run: {error:#}")));
                 self.status = "run failed".into();
                 return Ok(());
             }
@@ -631,7 +467,7 @@ impl App {
             run,
             RecoveryDecision::NormalResume,
             terminal,
-            format!("workflow run {run_id} finished"),
+            format!("workflow {} finished", short_id(&run_id.to_string())),
         )
         .await
     }
@@ -647,16 +483,16 @@ impl App {
         let run = match ops.load_run_id(run_id) {
             Ok(run) => run,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
-                self.status = "resume failed".into();
+                self.insert_entry(&Entry::Error(format!("Could not load run: {error:#}")));
+                self.status = "open failed".into();
                 return Ok(());
             }
         };
         let recovery = match ops.prepare_resume(&run, recover_uncertain) {
             Ok(recovery) => recovery,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not resume run: {error:#}")));
-                self.status = "resume failed".into();
+                self.insert_entry(&Entry::Error(format!("Could not open run: {error:#}")));
+                self.status = "open failed".into();
                 return Ok(());
             }
         };
@@ -665,38 +501,9 @@ impl App {
             run,
             recovery,
             terminal,
-            format!("workflow resume {run_id} finished"),
+            format!("workflow {} finished", short_id(&run_id.to_string())),
         )
         .await
-    }
-
-    async fn cancel_workflow_run(&mut self, run_id: &str) -> anyhow::Result<()> {
-        let run_id = RunId::from_str(run_id)?;
-        let ops = self.workflow_ops()?;
-        let run = match ops.load_run_id(run_id) {
-            Ok(run) => run,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
-                self.status = "cancel failed".into();
-                return Ok(());
-            }
-        };
-        match ops.cancel(run_id, run.state.state.lifecycle).await {
-            Ok(outcome) => {
-                self.insert_entry(&Entry::Notice(format!(
-                    "cancel run {} · state {:?} · lifecycle {:?}",
-                    short_id(&run_id.to_string()),
-                    outcome.state,
-                    outcome.lifecycle
-                )));
-                self.status = "cancel requested".into();
-            }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("cancel failed: {error:#}")));
-                self.status = "cancel failed".into();
-            }
-        }
-        Ok(())
     }
 
     async fn launch_workflow_execution(
@@ -712,7 +519,7 @@ impl App {
             Some(session) => session,
             None => {
                 self.insert_entry(&Entry::Error(
-                    "terminal session is unavailable for workflow execution".into(),
+                    "Terminal session is unavailable for workflow execution.".into(),
                 ));
                 self.status = "workflow failed".into();
                 return Ok(());
@@ -727,11 +534,11 @@ impl App {
 
         if let Err(resume_error) = suspended.resume_result {
             self.insert_entry(&Entry::Error(format!(
-                "failed to resume chat after workflow: {resume_error:#}"
+                "Failed to return to chat after workflow: {resume_error:#}"
             )));
             if let Err(operation_error) = suspended.operation_result {
                 self.insert_entry(&Entry::Error(format!(
-                    "workflow also failed: {operation_error:#}"
+                    "Workflow also failed: {operation_error:#}"
                 )));
             }
             self.status = "workflow handoff failed".into();
@@ -741,13 +548,13 @@ impl App {
         match suspended.operation_result {
             Ok(()) => {
                 self.insert_entry(&Entry::Notice(format!(
-                    "workflow run {} returned to chat",
+                    "Returned from workflow run {}.",
                     short_id(&run_id.to_string())
                 )));
                 self.status = success_status;
             }
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("workflow failed: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("Workflow failed: {error:#}")));
                 self.status = "workflow failed".into();
             }
         }
@@ -758,3 +565,12 @@ impl App {
 #[cfg(test)]
 #[path = "workflow_hub_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+fn test_source(label: &str, relative: &str) -> workflow_discover::DiscoveredWorkflow {
+    workflow_discover::DiscoveredWorkflow {
+        relative_path: relative.into(),
+        absolute_path: std::path::PathBuf::from(relative),
+        label: label.into(),
+    }
+}

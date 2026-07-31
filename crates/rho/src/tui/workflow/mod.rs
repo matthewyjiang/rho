@@ -12,6 +12,7 @@
 //! then call `matrix_adapter` with the matching run or resume start.
 
 mod app;
+mod dag;
 mod event_adapter;
 mod input;
 mod state;

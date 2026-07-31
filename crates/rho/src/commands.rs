@@ -243,7 +243,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Workflow,
         name: "workflow",
         usage: "/workflow",
-        description: "browse workflow sources, plans, and runs",
+        description: "start a workflow or check runs",
         argument_choices: &[],
     },
 ];

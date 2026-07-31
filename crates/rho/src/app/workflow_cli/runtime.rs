@@ -531,6 +531,7 @@ fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
         .collect();
     let lifecycle = state.lifecycle;
     WorkflowSnapshot {
+        workflow_name: run.graph.graph.name.to_string(),
         plan_id: run.manifest.plan_id,
         run_id: Some(run.manifest.run_id),
         graph_digest: run.manifest.graph_digest.clone(),

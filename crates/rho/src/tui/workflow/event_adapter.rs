@@ -92,6 +92,7 @@ pub(crate) struct WorkflowNodeSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowSnapshot {
+    pub(crate) workflow_name: String,
     pub(crate) plan_id: PlanId,
     pub(crate) run_id: Option<RunId>,
     pub(crate) graph_digest: Digest,
@@ -401,6 +402,7 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
         NodeState::Pending
     };
     WorkflowSnapshot {
+        workflow_name: "matrix workflow".into(),
         plan_id: PlanId::from_str(MATRIX_WORKFLOW_PLAN_ID).expect("valid matrix plan id"),
         run_id: Some(RunId::from_str(MATRIX_WORKFLOW_RUN_ID).expect("valid matrix run id")),
         graph_digest: Digest(

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::workflow::{NodeId, NodeState, NodeTerminalState, RunLifecycle};
+use crate::workflow::{NodeId, RunLifecycle};
 
 use super::event_adapter::{
     PlanApprovalState, WorkflowEvent, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSnapshot,
@@ -81,37 +81,4 @@ impl WorkflowUiState {
     pub(super) fn lifecycle(&self) -> RunLifecycle {
         self.snapshot.lifecycle
     }
-
-    pub(super) fn counts(&self) -> StateCounts {
-        let mut counts = StateCounts::default();
-        for node in &self.snapshot.nodes {
-            match &node.state {
-                NodeState::Pending => counts.pending += 1,
-                NodeState::Ready => counts.ready += 1,
-                NodeState::Running { .. } => counts.running += 1,
-                NodeState::Terminal { outcome } => match outcome {
-                    NodeTerminalState::Success => counts.success += 1,
-                    NodeTerminalState::Failure => counts.failure += 1,
-                    NodeTerminalState::Denial => counts.denial += 1,
-                    NodeTerminalState::Cancellation => counts.cancelled += 1,
-                    NodeTerminalState::Skipped => counts.skipped += 1,
-                    NodeTerminalState::Blocked => counts.blocked += 1,
-                },
-            }
-        }
-        counts
-    }
-}
-
-#[derive(Default)]
-pub(super) struct StateCounts {
-    pub(super) pending: usize,
-    pub(super) ready: usize,
-    pub(super) running: usize,
-    pub(super) success: usize,
-    pub(super) failure: usize,
-    pub(super) denial: usize,
-    pub(super) cancelled: usize,
-    pub(super) skipped: usize,
-    pub(super) blocked: usize,
 }
