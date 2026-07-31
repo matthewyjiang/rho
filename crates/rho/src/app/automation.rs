@@ -144,6 +144,7 @@ pub(super) struct Startup<'a> {
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
     pub host_input: Option<Arc<dyn HostInputResponder>>,
+    pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
 
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
@@ -156,6 +157,7 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::Login { .. }
             | Command::CredentialStore { .. }
             | Command::Sessions { .. }
+            | Command::Workflow { .. }
             | Command::Update,
         )
         | None => Ok(None),
@@ -468,6 +470,7 @@ async fn run_session_with_output(
             usage_purpose: startup.usage_purpose,
             usage_parent_session_id: startup.parent_session_id.clone(),
             usage_recording,
+            hook_host_labels: startup.hook_host_labels.clone(),
             hooks: hooks.as_ref(),
         },
         startup.max_steps,

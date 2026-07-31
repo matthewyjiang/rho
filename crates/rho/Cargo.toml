@@ -50,6 +50,7 @@ rusqlite = { version = "0.32" }
 keyring = "4.1.2"
 rand = "0.8"
 sha2 = "0.10"
+starlark = "=0.14.2"
 base64 = "0.22"
 url = "2"
 webbrowser = "1"

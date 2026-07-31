@@ -50,6 +50,7 @@ features:
 - [Interactive TUI](/interactive-tui)
 - [Inline shell](/inline-shell)
 - [Automation and CLI](/automation-cli)
+- [Workflows](/workflows)
 - [Configuration](/configuration)
 - [Tools and workspace](/tools-workspace)
 - [Skills](/skills)

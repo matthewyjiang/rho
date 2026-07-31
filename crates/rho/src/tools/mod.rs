@@ -9,11 +9,13 @@ pub mod skill;
 #[cfg(debug_assertions)]
 pub(crate) mod tui_fixture;
 pub mod web;
+pub(crate) mod workflow;
 
-/// Stable superset of tool names exposed by the application's tool registry.
+/// Stable union of model-facing and host-only built-in tool names.
 ///
-/// Capability filtering may disable an entry for a particular run, but public
-/// contracts such as hook matchers validate against this owning registry.
+/// Capability filtering may disable a model-facing entry for a particular run.
+/// Host-only entries are never sent to a model, but public contracts such as
+/// hook matchers still validate against this owning registry.
 pub(crate) const CANONICAL_TOOL_NAMES: &[&str] = &[
     "agent",
     "agents",
@@ -32,8 +34,25 @@ pub(crate) const CANONICAL_TOOL_NAMES: &[&str] = &[
     "rho",
     "skill",
     "web_search",
+    "workflow",
+    "workflow_command",
     "write_file",
 ];
+
+/// Returns whether a canonical built-in tool can mutate workspace or run state.
+pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
+    match name {
+        "agent" | "agents" | "apply_patch" | "bash" | "edit_file" | "powershell" | "process"
+        | "rho" | "workflow" | "workflow_command" | "write_file" => Some(true),
+        "fetch_content" | "get_search_content" | "glob" | "grep" | "list_dir" | "questionnaire"
+        | "read_file" | "skill" | "web_search" => Some(false),
+        _ => None,
+    }
+}
+
+/// Built-ins registered only on provider-free host tool registries.
+#[cfg(test)]
+pub(crate) const HOST_ONLY_TOOL_NAMES: &[&str] = &["workflow_command"];
 
 #[cfg(test)]
 #[path = "app_owned_opt_in_tests.rs"]

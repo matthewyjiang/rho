@@ -34,6 +34,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | --- | --- |
 | `rho` | Start an interactive TUI session in the current working directory. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
+| `rho workflow <COMMAND>` | Validate, plan, run, inspect, cancel, or resume a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects]` | List saved sessions for the current workspace, or every workspace with cwd context. |
 | `rho sessions rename <ID> <TITLE>...` | Rename a session by UUID or prefix. See [sessions](/sessions#listing-renaming-and-deleting-sessions). |
 | `rho sessions rm <ID>...` | Delete sessions by UUID or prefix. Cascades parent-linked subagent runs. See [sessions](/sessions#listing-renaming-and-deleting-sessions). |
@@ -46,7 +47,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 
 Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers). For example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
 
-`--no-system-prompt` and `--no-tools` only affect the current invocation and are not written to config. `--resume` cannot be combined with a subcommand such as `run` or `update`.
+`--no-system-prompt` and `--no-tools` only affect the current invocation and are not written to config. `--resume` cannot be combined with a subcommand such as `run` or `update`. Workflow resume is a separate command: `rho workflow resume <RUN_ID>`.
 
 ## `rho login`
 

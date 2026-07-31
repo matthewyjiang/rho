@@ -31,6 +31,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) usage_purpose: &'static str,
     pub(crate) usage_parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) usage_recording: ProviderRequestUsageRecording,
+    pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
     /// Shared hook pipeline, or `None` when no hooks are configured.
     ///
     /// Borrowed rather than owned because the interactive host rebuilds its
@@ -70,6 +71,7 @@ where
         usage_purpose,
         usage_parent_session_id,
         usage_recording,
+        hook_host_labels,
         hooks,
     } = options;
     let (compactor, policy) = build_compaction(
@@ -90,6 +92,7 @@ where
         .max_parallel_tools(super::sdk_config::parallel_tool_limit())
         .usage_purpose(usage_purpose)
         .usage_recording(usage_recording)
+        .hook_host_labels(hook_host_labels)
         .compactor(compactor);
     if let Some(service_tier) = service_tier {
         builder = builder.service_tier(service_tier);

@@ -53,6 +53,9 @@ For one-off prompts:
 rho run "summarize this repository"
 ```
 
+For a deterministic multi-step graph, see the
+[workflow guide](https://matthewyjiang.github.io/rho/workflows).
+
 ## Docs
 
 Read the documentation at <https://matthewyjiang.github.io/rho/>.

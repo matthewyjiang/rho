@@ -30,6 +30,7 @@ pub struct Skill {
 const BUILTIN_SKILLS: &[&str] = &[
     include_str!("builtin_skills/rho-diagnostics/SKILL.md"),
     include_str!("builtin_skills/rho-agent-creator/SKILL.md"),
+    include_str!("builtin_skills/rho-workflow-authoring/SKILL.md"),
 ];
 
 pub fn discover(cwd: &Path) -> Vec<Skill> {
@@ -350,6 +351,7 @@ mod tests {
                 "rho-agent-creator",
                 "rho-diagnostics",
                 "rho-skill",
+                "rho-workflow-authoring",
             ]
         );
     }
@@ -411,9 +413,10 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 2);
+        assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].name, "rho-agent-creator");
         assert_eq!(skills[1].name, "rho-diagnostics");
+        assert_eq!(skills[2].name, "rho-workflow-authoring");
     }
 
     #[test]
@@ -423,9 +426,10 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 2);
+        assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].name, "rho-agent-creator");
         assert_eq!(skills[1].name, "rho-diagnostics");
+        assert_eq!(skills[2].name, "rho-workflow-authoring");
     }
 
     #[test]
@@ -435,9 +439,10 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 2);
+        assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].name, "rho-agent-creator");
         assert_eq!(skills[1].name, "rho-diagnostics");
+        assert_eq!(skills[2].name, "rho-workflow-authoring");
     }
 
     #[test]
@@ -447,9 +452,10 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 2);
+        assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].name, "rho-agent-creator");
         assert_eq!(skills[1].name, "rho-diagnostics");
+        assert_eq!(skills[2].name, "rho-workflow-authoring");
     }
 
     #[test]

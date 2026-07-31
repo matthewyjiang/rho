@@ -175,3 +175,121 @@ fn rejects_zero_steps_and_invalid_durations() {
         assert!(Cli::try_parse_from(arguments).is_err());
     }
 }
+
+// Covers: workflow command flags could drift from the documented shell contract.
+// Owner: CLI parser.
+#[test]
+fn parses_all_workflow_commands_and_output_modes() {
+    let validate = Cli::try_parse_from([
+        "rho",
+        "workflow",
+        "validate",
+        "review.star",
+        "--input",
+        "target=\"src\"",
+    ])
+    .unwrap();
+    assert!(matches!(
+        validate.command,
+        Some(Command::Workflow {
+            command: WorkflowCommand::Validate { file, input }
+        }) if file.as_path() == std::path::Path::new("review.star") && input == ["target=\"src\""]
+    ));
+
+    let plan = Cli::try_parse_from(["rho", "workflow", "plan", "review.star", "--output", "json"])
+        .unwrap();
+    assert!(matches!(
+        plan.command,
+        Some(Command::Workflow {
+            command: WorkflowCommand::Plan {
+                output: WorkflowDocumentFormat::Json,
+                ..
+            }
+        })
+    ));
+
+    let run = Cli::try_parse_from([
+        "rho",
+        "workflow",
+        "run",
+        "plan-prefix",
+        "--yes",
+        "--output",
+        "jsonl",
+    ])
+    .unwrap();
+    assert!(matches!(
+        run.command,
+        Some(Command::Workflow {
+            command: WorkflowCommand::Run {
+                plan_id,
+                yes: true,
+                output: Some(WorkflowRunFormat::Jsonl)
+            }
+        }) if plan_id == "plan-prefix"
+    ));
+
+    let status = Cli::try_parse_from([
+        "rho",
+        "workflow",
+        "status",
+        "run-prefix",
+        "--output",
+        "json",
+    ])
+    .unwrap();
+    assert!(matches!(
+        status.command,
+        Some(Command::Workflow {
+            command: WorkflowCommand::Status {
+                output: WorkflowDocumentFormat::Json,
+                ..
+            }
+        })
+    ));
+
+    let cancel = Cli::try_parse_from(["rho", "workflow", "cancel", "run-prefix"]).unwrap();
+    assert!(matches!(
+        cancel.command,
+        Some(Command::Workflow {
+            command: WorkflowCommand::Cancel { run_id }
+        }) if run_id == "run-prefix"
+    ));
+
+    let resume = Cli::try_parse_from([
+        "rho",
+        "workflow",
+        "resume",
+        "run-prefix",
+        "--yes",
+        "--output",
+        "text",
+    ])
+    .unwrap();
+    assert!(matches!(
+        resume.command,
+        Some(Command::Workflow {
+            command: WorkflowCommand::Resume {
+                yes: true,
+                output: Some(WorkflowRunFormat::Text),
+                ..
+            }
+        })
+    ));
+}
+
+#[test]
+fn workflow_commands_reject_wrong_output_modes() {
+    assert!(Cli::try_parse_from([
+        "rho",
+        "workflow",
+        "plan",
+        "review.star",
+        "--output",
+        "jsonl"
+    ])
+    .is_err());
+    assert!(
+        Cli::try_parse_from(["rho", "workflow", "run", "plan-id", "--output", "json"]).is_err()
+    );
+}

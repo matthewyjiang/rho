@@ -51,6 +51,15 @@ pub(crate) struct AgentLaunchRequest {
     pub(crate) output_file: PathBuf,
 }
 
+/// Launch request whose agent definition was resolved and frozen at plan time.
+pub(crate) struct FrozenAgentLaunchRequest {
+    pub(crate) agent: crate::workflow::ResolvedAgent,
+    pub(crate) prompt: String,
+    pub(crate) run_id: String,
+    pub(crate) output_file: PathBuf,
+    pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentRunHandle {
     cancellation: RunCancellation,
@@ -172,6 +181,66 @@ impl AgentExecutor {
             &config,
         )?;
 
+        self.spawn_bound(BoundLaunchRequest {
+            bound,
+            prompt: request.prompt,
+            run_id: request.run_id,
+            parent_session_id: request.parent_session_id,
+            output_file: request.output_file,
+            questionnaire_available,
+            frozen_claude: None,
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        })
+    }
+
+    /// Starts a workflow node from persisted launch metadata without looking up
+    /// or rebinding an agent definition.
+    pub(crate) fn spawn_frozen(
+        &self,
+        request: FrozenAgentLaunchRequest,
+    ) -> anyhow::Result<AgentRunHandle> {
+        let config = self.config.read().expect("delegated config lock").clone();
+        let mut current_tools = AgentCapabilities::all_host_tools();
+        #[cfg(windows)]
+        current_tools.remove(&ToolCapability::Bash);
+        #[cfg(not(windows))]
+        current_tools.remove(&ToolCapability::Powershell);
+        current_tools.remove(&ToolCapability::Questionnaire);
+        let bound = AgentBinder::bind_frozen(&request.agent, &config, &current_tools)?;
+        let frozen_claude = if request.agent.runtime == crate::workflow::AgentRuntime::ClaudeCli {
+            Some(FrozenClaudeLaunch {
+                executable: request.agent.executable.map(PathBuf::from).ok_or_else(|| {
+                    anyhow::anyhow!("frozen Claude launch has no resolved executable")
+                })?,
+                arguments: request.agent.arguments,
+            })
+        } else {
+            None
+        };
+        self.spawn_bound(BoundLaunchRequest {
+            bound,
+            prompt: request.prompt,
+            run_id: request.run_id,
+            parent_session_id: None,
+            output_file: request.output_file,
+            questionnaire_available: false,
+            frozen_claude,
+            hook_host_labels: request.hook_host_labels,
+        })
+    }
+
+    fn spawn_bound(&self, request: BoundLaunchRequest) -> anyhow::Result<AgentRunHandle> {
+        let BoundLaunchRequest {
+            bound,
+            prompt,
+            run_id,
+            parent_session_id,
+            output_file,
+            questionnaire_available,
+            frozen_claude,
+            hook_host_labels,
+        } = request;
+
         let labels = bound.runtime().artifact_labels();
         let capacity_class = bound.runtime().capacity_class();
 
@@ -181,12 +250,12 @@ impl AgentExecutor {
             agent_fingerprint: Some(bound.fingerprint().to_string()),
             provider: Some(labels.provider.clone()),
             model: Some(labels.model.clone()),
-            parent_session_id: request.parent_session_id.as_ref().map(ToString::to_string),
+            parent_session_id: parent_session_id.as_ref().map(ToString::to_string),
             ..RunStatus::default()
         };
         // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.
-        subagent::initialize_status(&request.output_file, &initial)?;
+        subagent::initialize_status(&output_file, &initial)?;
         let (status_tx, status) = tokio::sync::watch::channel(initial);
         let (completion_tx, completion) = tokio::sync::watch::channel(false);
         let cancellation = RunCancellation::new();
@@ -194,11 +263,7 @@ impl AgentExecutor {
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
         let host_input = self.host_input.clone();
-        let output_file = request.output_file;
-        let parent_session_id = request.parent_session_id;
-        let run_id = request.run_id;
         let persisted_output = output_file.clone();
-        let prompt = request.prompt;
         let total_permits = Arc::clone(&self.total_permits);
         let claude_permits = Arc::clone(&self.claude_permits);
 
@@ -225,7 +290,7 @@ impl AgentExecutor {
             };
 
             let started_status = task_status_tx.borrow().clone();
-            if let Some(session) = bound.clone().into_claude_session(
+            if let Some(mut session) = bound.clone().into_claude_session(
                 prompt.clone(),
                 output_file.clone(),
                 cwd.clone(),
@@ -233,6 +298,14 @@ impl AgentExecutor {
                 Some(task_status_tx.clone()),
                 Some(started_status),
             ) {
+                if let Some(frozen) = frozen_claude {
+                    session.overrides.executable = Some(
+                        crate::claude_runtime::executable::ClaudeExecutable::from_path(
+                            frozen.executable,
+                        ),
+                    );
+                    session.set_frozen_argv(frozen.arguments);
+                }
                 return crate::claude_runtime::session::run_session(session).await;
             }
 
@@ -253,6 +326,7 @@ impl AgentExecutor {
                 host_input,
                 cancellation: task_cancellation,
                 status_tx: task_status_tx,
+                hook_host_labels,
             })
             .await
         });
@@ -285,6 +359,22 @@ impl AgentExecutor {
     }
 }
 
+struct BoundLaunchRequest {
+    bound: super::agent_binding::BoundAgent,
+    prompt: String,
+    run_id: String,
+    parent_session_id: Option<rho_sdk::SessionId>,
+    output_file: PathBuf,
+    questionnaire_available: bool,
+    frozen_claude: Option<FrozenClaudeLaunch>,
+    hook_host_labels: rho_sdk::hooks::HookHostLabels,
+}
+
+struct FrozenClaudeLaunch {
+    executable: PathBuf,
+    arguments: Vec<String>,
+}
+
 /// One delegated run on the Rho runtime, after binding and permit acquisition.
 struct RhoAgentRun {
     bound: super::agent_binding::BoundAgent,
@@ -299,6 +389,7 @@ struct RhoAgentRun {
     host_input: SubagentHostInputBridge,
     cancellation: RunCancellation,
     status_tx: tokio::sync::watch::Sender<RunStatus>,
+    hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
 
 /// Drive a delegated run through Rho's own automation loop.
@@ -316,6 +407,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         host_input,
         cancellation,
         status_tx,
+        hook_host_labels,
     } = run;
 
     super::cli_config::prepare_model_metadata(
@@ -337,6 +429,13 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         Some(status_tx),
     )?;
     let agent_id = bound.id().to_string();
+    let max_steps = std::num::NonZeroUsize::new(
+        bound
+            .step_limit()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("agent step limit does not fit this platform"))?,
+    )
+    .ok_or_else(|| anyhow::anyhow!("agent step limit must be positive"))?;
     let startup = automation::Startup {
         config: &config,
         config_path,
@@ -349,7 +448,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         agent: bound,
         output_file: None,
         output: OutputFormat::Text,
-        max_steps: None,
+        max_steps: Some(max_steps),
         timeout: None,
         diagnostics,
         herdr: HerdrReporter::default(),
@@ -361,6 +460,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
                 host_input,
             )) as Arc<dyn super::headless_run::HostInputResponder>
         }),
+        hook_host_labels,
     };
     let result =
         automation::run_session(prompt, &startup, Some(&mut reporter), Some(cancellation)).await;

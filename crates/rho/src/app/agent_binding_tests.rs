@@ -73,6 +73,80 @@ fn delegated_role_removes_recursive_capabilities() {
     );
 }
 
+// Covers: workflow agents must not recurse or wait on an interactive question.
+// Owner: workflow agent binding.
+#[test]
+fn workflow_role_removes_orchestration_and_questionnaire_capabilities() {
+    let bound = AgentBinder::bind(
+        definition(ToolPolicy::All),
+        AgentInvocation {
+            role: AgentRole::Workflow,
+            available_tools: capability_set(&[
+                "read_file",
+                "write_file",
+                "agent",
+                "agents",
+                "questionnaire",
+                "rho",
+                "workflow",
+            ]),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        bound.rho_capabilities(),
+        Some(&capability_set(&["read_file", "write_file"]))
+    );
+}
+
+// Covers: resume must use frozen launch choices while current policy can only narrow them.
+// Owner: frozen workflow agent binding.
+#[test]
+fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
+    let source = definition(ToolPolicy::All);
+    let frozen = crate::workflow::ResolvedAgent {
+        agent_id: source.id.to_string(),
+        fingerprint: source.fingerprint().to_string(),
+        runtime: crate::workflow::AgentRuntime::Rho,
+        source_origin: "project".into(),
+        trust_required: true,
+        prompt_policy: "replace:frozen".into(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4-6".into()),
+        reasoning: None,
+        step_limit: 17,
+        capabilities: ["read_file", "write_file", "workflow"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        permission_ceiling: "auto".into(),
+        auth_profile: Some("anthropic".into()),
+        executable: None,
+        arguments: Vec::new(),
+    };
+    let current = Config {
+        provider: "openai".into(),
+        model: "changed".into(),
+        permission_mode: crate::permission::PermissionMode::Plan,
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind_frozen(&frozen, &current, &capabilities()).unwrap();
+
+    assert_eq!(bound.prompt(), &PromptPolicy::Replace("frozen".into()));
+    assert_eq!(bound.step_limit(), 17);
+    assert_eq!(bound.rho_config().unwrap().provider, "anthropic");
+    assert_eq!(bound.rho_config().unwrap().model, "claude-sonnet-4-6");
+    assert_eq!(
+        bound.rho_config().unwrap().permission_mode,
+        crate::permission::PermissionMode::Plan
+    );
+    assert_eq!(
+        bound.rho_capabilities(),
+        Some(&capability_set(&["read_file", "write_file"]))
+    );
+}
+
 #[test]
 fn bind_drops_web_search_when_bound_path_cannot_search() {
     let host = Config {

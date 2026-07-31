@@ -5,6 +5,7 @@ use rho_sdk::tool::Tool as SdkTool;
 use super::sdk_registry::ToolBundle;
 
 mod display;
+mod exact;
 mod manager;
 mod platform;
 pub(super) mod sdk_process;
@@ -12,6 +13,7 @@ mod supervisor;
 mod tools;
 mod types;
 
+pub(crate) use exact::{ExactProcessExit, WorkflowCommandTool};
 pub use manager::ProcessManager;
 pub(crate) use platform::{prepare_child_command, ProcessTree};
 pub use tools::Process;

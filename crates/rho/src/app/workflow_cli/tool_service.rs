@@ -1,0 +1,583 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+};
+
+use rho_sdk::{
+    tool::{ToolContext, ToolError, ToolErrorKind},
+    CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest, HostQuestion, SelectionMode,
+};
+
+use crate::{
+    agent::AgentCapabilities,
+    app::{
+        config_repository::ConfigRepository,
+        workflow_runtime::{RecoveryDecision, WorkflowRunner},
+    },
+    tools::workflow::{
+        WorkflowArtifactSummary, WorkflowDiagnosticSummary, WorkflowNodeStateSummary,
+        WorkflowNodeSummary, WorkflowRunStateSummary, WorkflowToolRequest, WorkflowToolResult,
+        WorkflowToolService,
+    },
+    workflow::{
+        CollectedSources, Digest, FreezePlan, InputName, NodeState, NodeTerminalState, PlanConsent,
+        PlanningLimits, RunLifecycle, SourceFile, SourceManifest, StoredPlan, StoredRun,
+        WorkflowError, WorkflowStore, WorkflowValue,
+    },
+};
+
+use super::{diagnostic_for_error, prepare_plan_from_sources, recheck_plan, runtime};
+
+pub(in crate::app) fn workflow_tool_service(
+    cwd: PathBuf,
+    config_path: Option<PathBuf>,
+) -> Arc<dyn WorkflowToolService> {
+    Arc::new(AppWorkflowToolService { cwd, config_path })
+}
+
+struct AppWorkflowToolService {
+    cwd: PathBuf,
+    config_path: Option<PathBuf>,
+}
+
+impl WorkflowToolService for AppWorkflowToolService {
+    fn execute<'a>(
+        &'a self,
+        request: WorkflowToolRequest,
+        context: &'a ToolContext,
+    ) -> Pin<Box<dyn Future<Output = Result<WorkflowToolResult, ToolError>> + Send + 'a>> {
+        Box::pin(async move { self.execute_request(request, context).await })
+    }
+}
+
+impl AppWorkflowToolService {
+    async fn execute_request(
+        &self,
+        request: WorkflowToolRequest,
+        context: &ToolContext,
+    ) -> Result<WorkflowToolResult, ToolError> {
+        match request {
+            WorkflowToolRequest::Validate { file, inputs } => {
+                match self.prepare(Path::new(&file), inputs, context).await {
+                    Ok(_) => Ok(WorkflowToolResult::Validate {
+                        valid: true,
+                        diagnostics: Vec::new(),
+                    }),
+                    Err(error) => Ok(WorkflowToolResult::Validate {
+                        valid: false,
+                        diagnostics: vec![diagnostic_summary(diagnostic_for_error(&error))],
+                    }),
+                }
+            }
+            WorkflowToolRequest::Plan { file, inputs } => {
+                let prepared = self
+                    .prepare(Path::new(&file), inputs, context)
+                    .await
+                    .map_err(tool_error)?;
+                let stored = super::workflow_service()
+                    .map_err(tool_error)?
+                    .freeze_and_store(FreezePlan {
+                        planner: prepared.workflow.planner,
+                        sources: prepared.sources.manifest,
+                        source_bytes: &prepared.sources.sources,
+                        inputs: prepared.workflow.inputs,
+                        graph: prepared.workflow.graph,
+                        resolved_nodes: prepared.workflow.resolved_nodes,
+                        scheduler: prepared.workflow.scheduler,
+                        workspace_identity: super::workspace_identity(&self.cwd)
+                            .map_err(tool_error)?,
+                    })
+                    .map_err(tool_error)?;
+                Ok(WorkflowToolResult::Plan {
+                    plan_id: stored.manifest.plan_id.to_string(),
+                    graph_digest: stored.manifest.graph_digest.0.clone(),
+                    workflow_name: stored.graph.graph.name.as_str().to_owned(),
+                    node_count: stored.graph.graph.nodes.len() as u64,
+                })
+            }
+            WorkflowToolRequest::Run { plan_id } => {
+                let plan = self.load_plan(&plan_id)?;
+                self.authorize_manifest_sources(context, &plan.graph.sources)
+                    .await?;
+                recheck_plan(&plan, self.config_path.clone()).map_err(tool_error)?;
+                confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
+                let run = super::workflow_service()
+                    .map_err(tool_error)?
+                    .create_run(
+                        &plan,
+                        PlanConsent {
+                            graph_digest: plan.manifest.graph_digest.clone(),
+                            confirmed: true,
+                        },
+                    )
+                    .map_err(tool_error)?;
+                let completed = runtime::execute_tool_run(
+                    run,
+                    RecoveryDecision::NormalResume,
+                    self.config_path.clone(),
+                    context,
+                )
+                .await
+                .map_err(tool_error)?;
+                run_result(completed, RunResultKind::Run)
+            }
+            WorkflowToolRequest::Status { run_id } => {
+                run_result(self.load_run(&run_id)?, RunResultKind::Status)
+            }
+            WorkflowToolRequest::Cancel { run_id } => {
+                let run = self.load_run(&run_id)?;
+                WorkflowRunner::request_cross_process_cancel(
+                    &crate::paths::rho_dir().map_err(tool_error)?,
+                    run.manifest.run_id,
+                )
+                .map_err(tool_error)?;
+                let updated = self.load_run(&run.manifest.run_id.to_string())?;
+                Ok(WorkflowToolResult::Cancel {
+                    run_id: updated.manifest.run_id.to_string(),
+                    state: state_summary(updated.state.state.lifecycle),
+                })
+            }
+            WorkflowToolRequest::Resume {
+                run_id,
+                recover_uncertain,
+            } => {
+                let run = self.load_run(&run_id)?;
+                let plan = self.load_plan(&run.manifest.plan_id.to_string())?;
+                self.authorize_manifest_sources(context, &plan.graph.sources)
+                    .await?;
+                super::recheck_run(&run, self.config_path.clone()).map_err(tool_error)?;
+                if run.state.state.lifecycle == RunLifecycle::NeedsRecovery && !recover_uncertain {
+                    return Err(ToolError::new(
+                        ToolErrorKind::InvalidArguments,
+                        "the run has uncertain attempts; confirm that no prior process remains and set recover_uncertain to true",
+                    ));
+                }
+                confirm_exact_plan(context, "Resume", &run.manifest.graph_digest.0).await?;
+                let recovery = if recover_uncertain {
+                    RecoveryDecision::ConfirmNoProcess
+                } else {
+                    RecoveryDecision::NormalResume
+                };
+                let completed =
+                    runtime::execute_tool_run(run, recovery, self.config_path.clone(), context)
+                        .await
+                        .map_err(tool_error)?;
+                run_result(completed, RunResultKind::Resume)
+            }
+        }
+    }
+
+    async fn authorize_path(
+        &self,
+        context: &ToolContext,
+        path: &Path,
+    ) -> Result<PathBuf, ToolError> {
+        let workspace = context.workspace().ok_or_else(|| {
+            ToolError::new(
+                ToolErrorKind::Execution,
+                "workflow tool requires a workspace",
+            )
+        })?;
+        let resolved = workspace
+            .resolve_for_read(path)
+            .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
+        if !resolved.path().starts_with(&self.cwd) {
+            return Err(ToolError::new(
+                ToolErrorKind::PolicyDenied,
+                "workflow source is outside the workspace",
+            ));
+        }
+        context
+            .authorize(CapabilityRequest::read_path(
+                resolved.path(),
+                resolved.scope().clone(),
+                CapabilitySource::built_in_tool("workflow"),
+            ))
+            .await
+            .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
+        Ok(resolved.path().to_path_buf())
+    }
+
+    async fn authorize_manifest_sources(
+        &self,
+        context: &ToolContext,
+        manifest: &SourceManifest,
+    ) -> Result<(), ToolError> {
+        for label in manifest.modules.keys() {
+            let relative = source_relative_path(label).map_err(tool_error)?;
+            self.authorize_path(context, &self.cwd.join(relative))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn prepare(
+        &self,
+        file: &Path,
+        inputs: BTreeMap<String, serde_json::Value>,
+        context: &ToolContext,
+    ) -> anyhow::Result<super::PreparedPlan> {
+        let config = self.load_config()?;
+        let supplied_inputs = inputs
+            .into_iter()
+            .map(|(name, value)| Ok((InputName::new(name)?, WorkflowValue::from_json(value)?)))
+            .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+        let limits = super::planning_limits()?;
+        let sources = self.collect_sources(file, &limits, context).await?;
+        prepare_plan_from_sources(
+            sources,
+            supplied_inputs,
+            &config,
+            &self.cwd,
+            &AgentCapabilities::all_host_tools(),
+            &limits,
+        )
+        .await
+    }
+
+    async fn collect_sources(
+        &self,
+        entry: &Path,
+        limits: &PlanningLimits,
+        context: &ToolContext,
+    ) -> anyhow::Result<CollectedSources> {
+        use sha2::Digest as _;
+        use starlark::syntax::{AstModule, Dialect};
+
+        let entry = if entry.is_absolute() {
+            entry.to_path_buf()
+        } else {
+            self.cwd.join(entry)
+        };
+        let entry = context
+            .workspace()
+            .ok_or_else(|| anyhow::anyhow!("workflow tool requires a workspace"))?
+            .resolve(&entry)?;
+        let relative =
+            entry
+                .strip_prefix(&self.cwd)
+                .map_err(|_| WorkflowError::SourceOutsideRoot {
+                    path: entry.clone(),
+                })?;
+        let entry_label = format!("//{}", crate::paths::display(relative));
+        source_relative_path(&entry_label)?;
+
+        let mut pending = vec![(entry_label.clone(), 1_u64, Vec::<String>::new())];
+        let mut seen = BTreeSet::new();
+        let mut sources = BTreeMap::new();
+        let mut total_bytes = 0_u64;
+        while let Some((label, depth, ancestors)) = pending.pop() {
+            limits.module_depth.check(depth)?;
+            if let Some(index) = ancestors.iter().position(|ancestor| ancestor == &label) {
+                let mut cycle = ancestors[index..].to_vec();
+                cycle.push(label);
+                return Err(WorkflowError::ImportCycle {
+                    chain: cycle.join(" -> "),
+                }
+                .into());
+            }
+            if seen.contains(&label) {
+                continue;
+            }
+            limits.module_count.check((seen.len() + 1) as u64)?;
+            let relative = source_relative_path(&label)?;
+            let lexical = self.cwd.join(relative);
+            let authorized = self
+                .authorize_path(context, &lexical)
+                .await
+                .map_err(anyhow::Error::from)?;
+            if authorized != lexical {
+                return Err(WorkflowError::SourceSymlink { path: lexical }.into());
+            }
+            let source = std::fs::read_to_string(&authorized)?;
+            total_bytes = total_bytes.checked_add(source.len() as u64).ok_or(
+                WorkflowError::BudgetExceeded {
+                    budget: limits.total_source_bytes.name,
+                    limit: limits.total_source_bytes.limit,
+                    actual: u64::MAX,
+                },
+            )?;
+            limits.total_source_bytes.check(total_bytes)?;
+            let ast = AstModule::parse(&label, source.clone(), &Dialect::Standard)
+                .map_err(|error| WorkflowError::Starlark(error.to_string()))?;
+            let mut next_ancestors = ancestors;
+            next_ancestors.push(label.clone());
+            for load in ast.loads().iter().rev() {
+                source_relative_path(load.module_id)?;
+                pending.push((load.module_id.to_owned(), depth + 1, next_ancestors.clone()));
+            }
+            seen.insert(label.clone());
+            sources.insert(label, source);
+        }
+        let modules = sources
+            .iter()
+            .map(|(label, source)| {
+                let digest = sha2::Sha256::digest(source.as_bytes());
+                (
+                    label.clone(),
+                    SourceFile {
+                        digest: Digest(format!("sha256:{digest:x}")),
+                        bytes: source.len() as u64,
+                    },
+                )
+            })
+            .collect();
+        Ok(CollectedSources {
+            entry_label: entry_label.clone(),
+            sources,
+            manifest: SourceManifest {
+                entry_label,
+                modules,
+            },
+        })
+    }
+
+    fn load_plan(&self, plan_id: &str) -> Result<StoredPlan, ToolError> {
+        let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
+        let store = WorkflowStore::new(&rho_home).map_err(tool_error)?;
+        let plan_id = store.resolve_plan(plan_id).map_err(tool_error)?;
+        store.load_plan(plan_id).map_err(tool_error)
+    }
+
+    fn load_config(&self) -> anyhow::Result<crate::config::Config> {
+        ConfigRepository::new(self.config_path.clone()).load()
+    }
+
+    fn load_run(&self, prefix: &str) -> Result<StoredRun, ToolError> {
+        let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
+        let store = WorkflowStore::new(&rho_home).map_err(tool_error)?;
+        let run_id = store.resolve_run(prefix).map_err(tool_error)?;
+        store.load_run(run_id).map_err(tool_error)
+    }
+}
+
+async fn confirm_exact_plan(
+    context: &ToolContext,
+    action: &str,
+    digest: &str,
+) -> Result<(), ToolError> {
+    let question = HostQuestion::new(
+        "confirm",
+        format!("{action} workflow plan {digest}?"),
+        vec![
+            HostChoice::new("yes", format!("{action} {digest}")),
+            HostChoice::new("no", "Do not continue"),
+        ],
+        SelectionMode::One,
+    )
+    .map_err(host_input_error)?;
+    let request = HostInputRequest::questionnaire(
+        format!("Confirm exact workflow plan {digest}"),
+        vec![question],
+    )
+    .map_err(host_input_error)?;
+    let response = context
+        .request_host_input(request)
+        .await
+        .map_err(host_input_error)?;
+    let confirmed = response
+        .answers()
+        .get("confirm")
+        .is_some_and(|answers| answers.iter().any(|answer| answer == "yes"));
+    if !confirmed {
+        return Err(ToolError::cancelled());
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum RunResultKind {
+    Run,
+    Status,
+    Resume,
+}
+
+fn run_result(run: StoredRun, kind: RunResultKind) -> Result<WorkflowToolResult, ToolError> {
+    let run_id = run.manifest.run_id.to_string();
+    let graph_digest = run.manifest.graph_digest.0.clone();
+    let state = state_summary(run.state.state.lifecycle);
+    let nodes = run
+        .state
+        .state
+        .nodes
+        .iter()
+        .map(|(node_id, state)| {
+            let attempt = match state {
+                NodeState::Running { attempt } => Some(attempt.get()),
+                _ => latest_attempt(run.manifest.run_id, node_id.as_str())?,
+            };
+            Ok(WorkflowNodeSummary {
+                node_id: node_id.to_string(),
+                state: node_state_summary(state),
+                attempt,
+                artifacts: match attempt {
+                    Some(attempt) => {
+                        artifact_summaries(run.manifest.run_id, node_id.as_str(), attempt)?
+                    }
+                    None => Vec::new(),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, ToolError>>()?;
+    Ok(match kind {
+        RunResultKind::Run => WorkflowToolResult::Run {
+            run_id,
+            graph_digest,
+            state,
+            nodes,
+        },
+        RunResultKind::Status => WorkflowToolResult::Status {
+            run_id,
+            graph_digest,
+            state,
+            nodes,
+        },
+        RunResultKind::Resume => WorkflowToolResult::Resume {
+            run_id,
+            graph_digest,
+            state,
+            nodes,
+        },
+    })
+}
+
+fn latest_attempt(run_id: crate::workflow::RunId, node: &str) -> Result<Option<u32>, ToolError> {
+    let directory = crate::paths::rho_dir()
+        .map_err(tool_error)?
+        .join("workflows/runs")
+        .join(run_id.to_string())
+        .join("nodes")
+        .join(node)
+        .join("attempts");
+    if !directory.is_dir() {
+        return Ok(None);
+    }
+    let mut latest = None;
+    for entry in std::fs::read_dir(directory).map_err(tool_error)? {
+        let entry = entry.map_err(tool_error)?;
+        if !entry.file_type().map_err(tool_error)?.is_dir() {
+            continue;
+        }
+        if let Some(attempt) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        {
+            latest = Some(latest.map_or(attempt, |current: u32| current.max(attempt)));
+        }
+    }
+    Ok(latest)
+}
+
+fn artifact_summaries(
+    run_id: crate::workflow::RunId,
+    node: &str,
+    attempt: u32,
+) -> Result<Vec<WorkflowArtifactSummary>, ToolError> {
+    use sha2::Digest as _;
+
+    let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
+    let directory = rho_home
+        .join("workflows/runs")
+        .join(run_id.to_string())
+        .join("nodes")
+        .join(node)
+        .join("attempts")
+        .join(attempt.to_string());
+    let mut artifacts = Vec::new();
+    for name in [
+        "stdout",
+        "stderr",
+        "output.json",
+        "command.json",
+        "agent/answer.txt",
+    ] {
+        let path = directory.join(name);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() => metadata,
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(tool_error(error)),
+        };
+        let bytes = std::fs::read(&path).map_err(tool_error)?;
+        let relative_path = path
+            .strip_prefix(&rho_home)
+            .map_err(tool_error)
+            .map(crate::paths::display)?;
+        artifacts.push(WorkflowArtifactSummary {
+            kind: name.replace('/', "_"),
+            relative_path,
+            bytes: metadata.len(),
+            digest: format!("sha256:{:x}", sha2::Sha256::digest(bytes)),
+        });
+    }
+    Ok(artifacts)
+}
+
+fn state_summary(lifecycle: RunLifecycle) -> WorkflowRunStateSummary {
+    match lifecycle {
+        RunLifecycle::Planned => WorkflowRunStateSummary::Planned,
+        RunLifecycle::Running => WorkflowRunStateSummary::Running,
+        RunLifecycle::Cancelling => WorkflowRunStateSummary::Cancelling,
+        RunLifecycle::Completed => WorkflowRunStateSummary::Completed,
+        RunLifecycle::NeedsRecovery => WorkflowRunStateSummary::NeedsRecovery,
+    }
+}
+
+fn node_state_summary(state: &NodeState) -> WorkflowNodeStateSummary {
+    match state {
+        NodeState::Pending => WorkflowNodeStateSummary::Pending,
+        NodeState::Ready => WorkflowNodeStateSummary::Ready,
+        NodeState::Running { .. } => WorkflowNodeStateSummary::Running,
+        NodeState::Terminal { outcome } => match outcome {
+            NodeTerminalState::Success => WorkflowNodeStateSummary::Success,
+            NodeTerminalState::Failure => WorkflowNodeStateSummary::Failure,
+            NodeTerminalState::Denial => WorkflowNodeStateSummary::Denial,
+            NodeTerminalState::Cancellation => WorkflowNodeStateSummary::Cancellation,
+            NodeTerminalState::Skipped => WorkflowNodeStateSummary::Skipped,
+            NodeTerminalState::Blocked => WorkflowNodeStateSummary::Blocked,
+        },
+    }
+}
+
+fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagnosticSummary {
+    WorkflowDiagnosticSummary {
+        severity: "error".into(),
+        code: diagnostic.code,
+        message: diagnostic.message,
+        source: diagnostic.span.as_ref().map(|span| span.label.clone()),
+        line: diagnostic.span.as_ref().map(|span| u64::from(span.line)),
+        column: diagnostic.span.as_ref().map(|span| u64::from(span.column)),
+    }
+}
+
+fn source_relative_path(label: &str) -> Result<PathBuf, WorkflowError> {
+    let invalid = || WorkflowError::InvalidModuleLabel {
+        label: label.to_owned(),
+        reason: "expected // followed by non-empty '/'-separated components and a .star suffix"
+            .into(),
+    };
+    if !label.starts_with("//") || label.contains('\\') || !label.ends_with(".star") {
+        return Err(invalid());
+    }
+    let path = PathBuf::from(&label[2..]);
+    if path.as_os_str().is_empty()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(invalid());
+    }
+    Ok(path)
+}
+
+fn tool_error(error: impl std::fmt::Display) -> ToolError {
+    ToolError::new(ToolErrorKind::Execution, error.to_string())
+}
+
+fn host_input_error(error: impl std::fmt::Display) -> ToolError {
+    ToolError::new(ToolErrorKind::Execution, error.to_string())
+}

@@ -1,4 +1,6 @@
 use std::{
+    collections::BTreeMap,
+    fmt,
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -14,7 +16,54 @@ use super::{
 };
 
 /// Wire schema version of [`HookEnvelope`]. Handlers must reject other values.
-pub const HOOK_SCHEMA_VERSION: u32 = 1;
+pub const HOOK_SCHEMA_VERSION: u32 = 2;
+
+/// Generic, non-secret labels supplied by the embedding host.
+///
+/// Labels let a host attribute capability events to its own bounded execution
+/// context without adding host-specific model types to the SDK. Keys and values
+/// are shortened to the configured hook field bound when an envelope is built.
+#[derive(Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct HookHostLabels {
+    labels: BTreeMap<String, String>,
+}
+
+impl HookHostLabels {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds one label. Do not use labels for prompts, credentials, environment
+    /// values, or tool output.
+    pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.labels.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.labels.get(key).map(String::as_str)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.labels
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+}
+
+impl fmt::Debug for HookHostLabels {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HookHostLabels")
+            .field("keys", &self.labels.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
 
 /// Session and run identity, including delegated parent session.
 ///
@@ -39,6 +88,7 @@ pub struct HookEnvelope {
     event_id: HookEventId,
     timestamp_unix_ms: u64,
     identity: HookIdentity,
+    host_labels: HookHostLabels,
     workspace: HookWorkspace,
     #[serde(rename = "bounds")]
     truncation: HookTruncation,
@@ -64,6 +114,10 @@ impl HookEnvelope {
 
     pub fn identity(&self) -> &HookIdentity {
         &self.identity
+    }
+
+    pub fn host_labels(&self) -> &HookHostLabels {
+        &self.host_labels
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {
@@ -162,6 +216,7 @@ impl std::error::Error for HookEnvelopeTooLarge {}
 /// Assembles one envelope with its identity, clock reading, and bounds report.
 pub struct HookEnvelopeBuilder {
     identity: HookIdentity,
+    host_labels: HookHostLabels,
     workspace: HookWorkspace,
     truncation: HookTruncation,
     bounds: HookPayloadBounds,
@@ -174,11 +229,22 @@ impl HookEnvelopeBuilder {
         workspace_root: Option<&Path>,
         bounds: HookPayloadBounds,
     ) -> Self {
+        Self::with_host_labels(identity, HookHostLabels::default(), workspace_root, bounds)
+    }
+
+    pub(crate) fn with_host_labels(
+        identity: HookIdentity,
+        host_labels: HookHostLabels,
+        workspace_root: Option<&Path>,
+        bounds: HookPayloadBounds,
+    ) -> Self {
         let mut truncation = HookTruncation::default();
         let identity = bounded_identity(identity, bounds, &mut truncation);
+        let host_labels = bounded_host_labels(host_labels, bounds, &mut truncation);
         let workspace = HookWorkspace::from_root(workspace_root, bounds, &mut truncation);
         Self {
             identity,
+            host_labels,
             workspace,
             truncation,
             bounds,
@@ -201,11 +267,40 @@ impl HookEnvelopeBuilder {
             event_id: HookEventId::new(),
             timestamp_unix_ms: self.timestamp_unix_ms,
             identity: self.identity,
+            host_labels: self.host_labels,
             workspace: self.workspace,
             truncation: self.truncation,
             payload,
         }
     }
+}
+
+fn bounded_host_labels(
+    labels: HookHostLabels,
+    bounds: HookPayloadBounds,
+    truncation: &mut HookTruncation,
+) -> HookHostLabels {
+    let mut bounded = BTreeMap::new();
+    let mut bytes = 0usize;
+    for (index, (key, value)) in labels.labels.into_iter().enumerate() {
+        let key_field = format!("host_labels.keys[{index}]");
+        let key = bounded_string(key, &key_field, bounds, truncation);
+        let value_field = format!("host_labels.{key}");
+        let value = bounded_string(value, &value_field, bounds, truncation);
+        if bytes.saturating_add(key.len()).saturating_add(value.len()) > bounds.max_envelope_bytes()
+        {
+            truncation.record("host_labels");
+            break;
+        }
+        bytes = bytes.saturating_add(key.len()).saturating_add(value.len());
+        match bounded.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(value);
+            }
+            std::collections::btree_map::Entry::Occupied(_) => truncation.record(key_field),
+        }
+    }
+    HookHostLabels { labels: bounded }
 }
 
 fn bounded_identity(

@@ -6,9 +6,8 @@ use std::{
 use crate::{
     event::{RunOutcome, ToolCompletion},
     hooks::{
-        bounded_failure, error_label, AfterToolUsePayload, BoundedFailure, HookPayload,
-        HookStopReason, HookTool, HookToolStatus, HookWiring, RunCompletedPayload,
-        RunFailedPayload,
+        bounded_failure, error_label, BoundedFailure, HookPayload, HookStopReason,
+        HookToolIdentity, HookToolStatus, HookWiring, RunCompletedPayload, RunFailedPayload,
     },
     tool::ToolErrorKind,
     Error, RunId, SessionId, ToolCallId,
@@ -67,41 +66,29 @@ impl RunHooks {
         completion: &ToolCompletion,
         duration: Option<Duration>,
     ) {
-        let bounds = self.hooks.bounds();
-        self.hooks.observe(
-            Some(&self.session_id),
-            Some(&self.run_id),
-            self.workspace_root(),
-            |builder| {
-                let tool = HookTool::new(
-                    tool_name,
-                    Some(call_id.as_str().to_owned()),
-                    bounds,
-                    builder.truncation(),
-                );
-                let (status, failure) = match completion {
-                    ToolCompletion::Success(_) => (HookToolStatus::Succeeded, None),
-                    ToolCompletion::Failure(failure) => (
-                        HookToolStatus::Failed,
-                        Some(bounded_failure(
-                            BoundedFailure {
-                                kind: tool_error_label(failure.kind()),
-                                message: failure.message(),
-                                field: "payload.failure",
-                            },
-                            bounds,
-                            builder.truncation(),
-                        )),
-                    ),
-                    ToolCompletion::Unavailable => (HookToolStatus::Unavailable, None),
-                };
-                HookPayload::AfterToolUse(AfterToolUsePayload {
-                    tool,
-                    status,
-                    failure,
-                    duration_ms: duration.map(|elapsed| elapsed.as_millis() as u64),
-                })
+        let (status, failure) = match completion {
+            ToolCompletion::Success(_) => (HookToolStatus::Succeeded, None),
+            ToolCompletion::Failure(failure) => (
+                HookToolStatus::Failed,
+                Some(BoundedFailure {
+                    kind: tool_error_label(failure.kind()),
+                    message: failure.message(),
+                    field: "payload.failure",
+                }),
+            ),
+            ToolCompletion::Unavailable => (HookToolStatus::Unavailable, None),
+        };
+        self.hooks.observe_after_tool_use(
+            HookToolIdentity {
+                session_id: Some(&self.session_id),
+                run_id: Some(&self.run_id),
+                workspace_root: self.workspace_root(),
+                tool_name,
+                call_id,
             },
+            status,
+            failure,
+            duration.map(|elapsed| elapsed.as_millis() as u64),
         );
     }
 

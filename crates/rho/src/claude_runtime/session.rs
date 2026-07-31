@@ -60,11 +60,20 @@ pub(crate) struct ClaudeSessionRequest {
     pub(crate) overrides: ClaudeSessionOverrides,
 }
 
+impl ClaudeSessionRequest {
+    /// Replace generated Claude arguments with the exact frozen workflow argv.
+    pub(crate) fn set_frozen_argv(&mut self, arguments: Vec<String>) {
+        self.overrides.frozen_argv = Some(arguments);
+    }
+}
+
 /// Seams a session may replace. Production leaves every field unset.
 #[derive(Default)]
 pub(crate) struct ClaudeSessionOverrides {
     /// Claude binary to run instead of the resolved one.
     pub(crate) executable: Option<ClaudeExecutable>,
+    /// Exact workflow arguments to use instead of generated Claude arguments.
+    pub(crate) frozen_argv: Option<Vec<String>>,
     /// Auth preflight result. When set, production `auth::query` is not called.
     pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
     /// Rate-limit cache path. Tests inject a temp path so settle never touches
@@ -274,10 +283,15 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         None => executable::resolve().map_err(|error| error.to_string())?,
     };
 
-    let plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
+    let frozen_arguments = request.overrides.frozen_argv.take();
+    let mut plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
         system_prompt: request.system_prompt.clone(),
         model: request.model.clone(),
-        tools: request.tools.clone(),
+        tools: if frozen_arguments.is_some() {
+            Vec::new()
+        } else {
+            request.tools.clone()
+        },
         inherit_claude_config: request.inherit_claude_config,
         permission_mode: request.permission_mode,
         cwd: request.cwd.clone(),
@@ -285,6 +299,9 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         effort: request.effort,
     })
     .map_err(|error| error.to_string())?;
+    if let Some(arguments) = frozen_arguments {
+        plan.args = arguments;
+    }
 
     // Materialize the system prompt next to the status file (kept as a run
     // artifact). File flags keep multiline prompt bytes out of shell/cmd argv.

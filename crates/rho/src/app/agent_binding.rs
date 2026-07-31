@@ -13,6 +13,7 @@ pub(crate) enum AgentRole {
     InteractiveRoot,
     AutomationRoot,
     Delegated,
+    Workflow,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +91,7 @@ pub(crate) struct BoundAgent {
     definition: Arc<AgentDefinition>,
     fingerprint: AgentFingerprint,
     runtime: BoundRuntime,
+    step_limit: u64,
 }
 
 impl BoundAgent {
@@ -123,6 +125,10 @@ impl BoundAgent {
             BoundRuntime::Rho { capabilities, .. } => Some(capabilities),
             BoundRuntime::ClaudeCli { .. } => None,
         }
+    }
+
+    pub(crate) fn step_limit(&self) -> u64 {
+        self.step_limit
     }
 
     pub(crate) fn prompt(&self) -> &PromptPolicy {
@@ -217,7 +223,139 @@ impl AgentBinder {
             definition,
             fingerprint,
             runtime,
+            step_limit: super::sdk_config::run_step_limit().get() as u64,
         })
+    }
+
+    /// Rebuilds a launch object only from metadata stored in a frozen graph.
+    ///
+    /// This path does not discover, open, or bind an agent definition. Current
+    /// config supplies credentials and can narrow permission mode, but every
+    /// provider, model, prompt, capability, and step choice comes from `frozen`.
+    pub(crate) fn bind_frozen(
+        frozen: &crate::workflow::ResolvedAgent,
+        current_config: &Config,
+        current_tools: &AgentCapabilities,
+    ) -> anyhow::Result<BoundAgent> {
+        let id = AgentId::new(frozen.agent_id.clone())?;
+        let fingerprint = frozen.fingerprint.parse::<AgentFingerprint>()?;
+        let prompt = decode_frozen_prompt_policy(&frozen.prompt_policy)?;
+        let permission_mode = narrower_permission_mode(
+            parse_permission_mode(&frozen.permission_ceiling)?,
+            current_config.permission_mode,
+        );
+        let definition = Arc::new(AgentDefinition {
+            id,
+            description: "frozen workflow agent".into(),
+            prompt,
+            runtime: AgentRuntimeSpec::default(),
+        });
+        let runtime = match frozen.runtime {
+            crate::workflow::AgentRuntime::Rho => {
+                let mut config = current_config.clone();
+                if let Some(provider) = &frozen.provider {
+                    config.provider.clone_from(provider);
+                }
+                if let Some(model) = &frozen.model {
+                    config.model.clone_from(model);
+                }
+                if let Some(reasoning) = &frozen.reasoning {
+                    config.reasoning = reasoning.parse().map_err(|_| {
+                        anyhow::anyhow!("frozen agent reasoning is invalid: '{reasoning}'")
+                    })?;
+                }
+                if let Some(auth) = &frozen.auth_profile {
+                    config.auth.clone_from(auth);
+                }
+                config.permission_mode = permission_mode;
+                let available_tools = available_tools_for_bound_config(current_tools, &config);
+                let capabilities = frozen_capabilities(frozen, &available_tools);
+                BoundRuntime::Rho {
+                    config: Box::new(config),
+                    capabilities,
+                }
+            }
+            crate::workflow::AgentRuntime::ClaudeCli => {
+                let effort = frozen
+                    .reasoning
+                    .as_deref()
+                    .map(|reasoning| reasoning.parse())
+                    .transpose()
+                    .map_err(|_| anyhow::anyhow!("frozen Claude reasoning is invalid"))?
+                    .and_then(crate::claude_runtime::spawn::claude_effort_flag);
+                BoundRuntime::ClaudeCli {
+                    model: frozen.model.clone(),
+                    tools: frozen.capabilities.iter().cloned().collect(),
+                    inherit_claude_config: false,
+                    permission_mode,
+                    max_turns: frozen.step_limit,
+                    effort,
+                }
+            }
+        };
+        Ok(BoundAgent {
+            definition,
+            fingerprint,
+            runtime,
+            step_limit: frozen.step_limit,
+        })
+    }
+}
+
+fn decode_frozen_prompt_policy(encoded: &str) -> anyhow::Result<PromptPolicy> {
+    if let Some(text) = encoded.strip_prefix("extend:") {
+        Ok(PromptPolicy::Extend(text.to_owned()))
+    } else if let Some(text) = encoded.strip_prefix("replace:") {
+        Ok(PromptPolicy::Replace(text.to_owned()))
+    } else {
+        anyhow::bail!("frozen prompt policy is invalid")
+    }
+}
+
+fn frozen_capabilities(
+    frozen: &crate::workflow::ResolvedAgent,
+    current_tools: &AgentCapabilities,
+) -> AgentCapabilities {
+    let mut tools = crate::agent::ToolCapabilitySet::new();
+    for name in &frozen.capabilities {
+        let capability = ToolCapability::parse(name.clone());
+        if current_tools.contains(&capability) {
+            tools.insert(capability);
+        }
+    }
+    let mut capabilities = AgentCapabilities::new(tools);
+    for forbidden in [
+        ToolCapability::Agent,
+        ToolCapability::Agents,
+        ToolCapability::Questionnaire,
+        ToolCapability::Rho,
+        ToolCapability::Workflow,
+    ] {
+        capabilities.remove(&forbidden);
+    }
+    capabilities
+}
+
+fn parse_permission_mode(value: &str) -> anyhow::Result<crate::permission::PermissionMode> {
+    value
+        .parse()
+        .map_err(|error| anyhow::anyhow!("frozen permission ceiling is invalid: {error}"))
+}
+
+fn narrower_permission_mode(
+    frozen: crate::permission::PermissionMode,
+    current: crate::permission::PermissionMode,
+) -> crate::permission::PermissionMode {
+    use crate::permission::PermissionMode;
+    let rank = |mode| match mode {
+        PermissionMode::Plan => 0,
+        PermissionMode::Supervised => 1,
+        PermissionMode::Auto => 2,
+    };
+    if rank(current) < rank(frozen) {
+        current
+    } else {
+        frozen
     }
 }
 
@@ -227,12 +365,23 @@ fn bind_rho_capabilities(
     invocation: &AgentInvocation,
 ) -> anyhow::Result<AgentCapabilities> {
     let mut capabilities = invocation.available_tools.clone();
-    if invocation.role == AgentRole::Delegated {
+    if matches!(invocation.role, AgentRole::Delegated | AgentRole::Workflow) {
         // Keep questionnaire when the host offers it. The executor gates it to
         // background runs with a live parent bridge; foreground and headless
         // paths strip it before bind.
         capabilities.remove(&ToolCapability::Agent);
         capabilities.remove(&ToolCapability::Agents);
+    }
+    if invocation.role == AgentRole::Workflow {
+        for capability in [
+            ToolCapability::Agent,
+            ToolCapability::Agents,
+            ToolCapability::Questionnaire,
+            ToolCapability::Rho,
+            ToolCapability::Workflow,
+        ] {
+            capabilities.remove(&capability);
+        }
     }
 
     match tools {
@@ -344,7 +493,7 @@ fn bind_claude_runtime(
     host_config: &Config,
 ) -> anyhow::Result<BoundRuntime> {
     match invocation.role {
-        AgentRole::Delegated => {}
+        AgentRole::Delegated | AgentRole::Workflow => {}
         AgentRole::InteractiveRoot | AgentRole::AutomationRoot => {
             anyhow::bail!(
                 "agent '{}': runtime claude-cli is delegated-only; use it through the agent tool, not as an interactive or automation root",

@@ -31,6 +31,25 @@ pub enum OutputFormat {
     Jsonl,
 }
 
+/// Output contract for workflow plans and snapshots.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum WorkflowDocumentFormat {
+    /// Print a human-readable document.
+    #[default]
+    Text,
+    /// Print one JSON document.
+    Json,
+}
+
+/// Output contract for workflow execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum WorkflowRunFormat {
+    /// Print human-readable state changes.
+    Text,
+    /// Stream versioned JSON Lines events.
+    Jsonl,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "rho")]
 pub struct Cli {
@@ -114,6 +133,78 @@ pub enum Command {
     Sessions {
         #[command(subcommand)]
         command: SessionsCommand,
+    },
+    /// Validate, plan, run, and inspect deterministic workflows.
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WorkflowCommand {
+    /// Validate a Starlark workflow without creating durable state.
+    Validate {
+        /// Workflow entry file under the current workspace.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Supply one non-secret workflow input as KEY=JSON. May be repeated.
+        #[arg(long, value_name = "KEY=JSON")]
+        input: Vec<String>,
+    },
+    /// Validate, freeze, and persist an immutable workflow plan.
+    Plan {
+        /// Workflow entry file under the current workspace.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Supply one non-secret workflow input as KEY=JSON. May be repeated.
+        #[arg(long, value_name = "KEY=JSON")]
+        input: Vec<String>,
+        /// Select human-readable or machine-readable plan output.
+        #[arg(long, value_enum, default_value_t)]
+        output: WorkflowDocumentFormat,
+    },
+    /// Create and run a workflow from an immutable plan.
+    Run {
+        /// Full plan UUID or unique UUID prefix.
+        #[arg(value_name = "PLAN_ID")]
+        plan_id: String,
+        /// Confirm the exact plan digest without an interactive prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Select text or JSON Lines instead of the workflow TUI.
+        #[arg(long, value_enum)]
+        output: Option<WorkflowRunFormat>,
+    },
+    /// Read one durable workflow run snapshot.
+    Status {
+        /// Full run UUID or unique UUID prefix.
+        #[arg(value_name = "RUN_ID")]
+        run_id: String,
+        /// Select human-readable or machine-readable snapshot output.
+        #[arg(long, value_enum, default_value_t)]
+        output: WorkflowDocumentFormat,
+    },
+    /// Request cancellation of a durable workflow run.
+    Cancel {
+        /// Full run UUID or unique UUID prefix.
+        #[arg(value_name = "RUN_ID")]
+        run_id: String,
+    },
+    /// Resume a durable workflow run from its frozen graph.
+    Resume {
+        /// Full run UUID or unique UUID prefix.
+        #[arg(value_name = "RUN_ID")]
+        run_id: String,
+        /// Confirm the frozen graph without an interactive prompt.
+        #[arg(long)]
+        yes: bool,
+        /// Confirm that no prior process remains and relaunch uncertain attempts.
+        #[arg(long)]
+        recover_uncertain: bool,
+        /// Select text or JSON Lines instead of the workflow TUI.
+        #[arg(long, value_enum)]
+        output: Option<WorkflowRunFormat>,
     },
 }
 

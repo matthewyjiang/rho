@@ -20,6 +20,8 @@ pub(crate) mod sdk_config;
 mod sessions_cli;
 pub(crate) mod subagent_host_input;
 mod tools_prompt;
+mod workflow_cli;
+mod workflow_runtime;
 
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;

@@ -30,6 +30,7 @@ mod tui;
 mod update;
 mod usage;
 mod usage_limits;
+pub(crate) mod workflow;
 mod workspace;
 
 pub use app::{run, AutomationExit, AutomationInterrupted};

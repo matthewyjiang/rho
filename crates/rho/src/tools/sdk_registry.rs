@@ -27,12 +27,12 @@ pub(super) trait ToolBundle: Send + Sync {
 }
 
 /// A bundle for features which need no shutdown work.
-pub(super) struct StaticToolBundle {
+pub(crate) struct StaticToolBundle {
     tools: Vec<Arc<dyn Tool>>,
 }
 
 impl StaticToolBundle {
-    pub(super) fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
+    pub(crate) fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
         Self { tools }
     }
 }
@@ -60,10 +60,11 @@ impl DelegationConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ToolSetOptions {
     capabilities: AgentCapabilities,
     delegation: Option<DelegationConfig>,
+    workflow: Option<Arc<dyn super::workflow::WorkflowToolService>>,
 }
 
 impl Default for ToolSetOptions {
@@ -77,11 +78,20 @@ impl ToolSetOptions {
         Self {
             capabilities,
             delegation: None,
+            workflow: None,
         }
     }
 
     pub fn delegation(mut self, config: DelegationConfig) -> Self {
         self.delegation = Some(config);
+        self
+    }
+
+    pub(crate) fn workflow(
+        mut self,
+        service: Arc<dyn super::workflow::WorkflowToolService>,
+    ) -> Self {
+        self.workflow = Some(service);
         self
     }
 }
@@ -111,6 +121,7 @@ impl AppToolSet {
         let ToolSetOptions {
             capabilities,
             delegation,
+            workflow,
         } = options;
         let mut tool_set = Self::disabled();
         tool_set.checkpoint_tracker = Arc::new(
@@ -146,6 +157,13 @@ impl AppToolSet {
         }
         if capabilities.contains(&ToolCapability::Questionnaire) {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
+        }
+        if let (true, Some(service)) = (capabilities.contains(&ToolCapability::Workflow), workflow)
+        {
+            tool_set.add_bundle(super::workflow::sdk_bundle(
+                service,
+                config.max_output_bytes,
+            ));
         }
         #[cfg(debug_assertions)]
         if capabilities.contains(&ToolCapability::Extension(super::tui_fixture::NAME.into())) {

@@ -17,6 +17,8 @@
 //!   [`Run`].
 //! - [`Run`] exposes ordered [`RunEvent`]s, cooperative cancellation, host input
 //!   responses, and a typed [`RunOutcome`].
+//! - [`ToolHost`] runs registered tools through SDK authorization and hooks
+//!   without a model provider. Its clones share one approval-memory session.
 //!
 //! Construction is side-effect-free by default: no automatic writes to `~/.rho`,
 //! no implicit environment reads, no credential-store access, and no terminal or
@@ -109,6 +111,8 @@
 //! - Answer questionnaires with [`Run::respond`](crate::Run::respond) after
 //!   [`RunEvent::ToolHostInputRequested`].
 //! - Gate sensitive work with [`WorkspacePolicy`] and [`ApprovalHandler`].
+//! - Use [`ToolHost::start`] for provider-free tools that report progress or ask
+//!   for host input, or [`ToolHost::invoke`] for non-interactive calls.
 //!
 //! The compiling examples under `examples/` cover simple completion, streaming,
 //! custom providers, custom tools, snapshot restore, image/history input,
@@ -142,6 +146,7 @@ mod secret;
 mod session;
 mod steering;
 pub mod tool;
+mod tool_host;
 mod usage;
 mod workspace;
 
@@ -178,6 +183,10 @@ pub use run::Run;
 pub use secret::SecretString;
 pub use session::{Session, SessionState, UserInput};
 pub use steering::SteeringRetraction;
+pub use tool_host::{
+    PendingToolHostInput, ToolHost, ToolHostBuilder, ToolHostCall, ToolHostEvent, ToolHostFuture,
+    ToolHostRun,
+};
 pub use usage::{
     ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
     ProviderRequestUsageRecorder, ProviderRequestUsageRecorderError,

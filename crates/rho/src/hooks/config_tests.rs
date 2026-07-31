@@ -59,7 +59,10 @@ env = ["MY_HOOK_TOKEN", "MY_HOOK_TOKEN"]
 
     let hook = &hooks[0];
     assert_eq!(hook.qualified_id(), "user:deny-force-push");
-    assert_eq!(hook.event(), HookEventKind::BeforeToolUse);
+    assert_eq!(
+        hook.event(),
+        ConfiguredHookEvent::Sdk(HookEventKind::BeforeToolUse)
+    );
     assert_eq!(hook.command(), [PROGRAM, "-c", "exit 0"]);
     assert_eq!(hook.timeout(), Duration::from_secs(2));
     assert_eq!(hook.env(), ["MY_HOOK_TOKEN"], "duplicates collapse");
@@ -159,6 +162,30 @@ timeout = "1s"
     assert!(error
         .message
         .contains("unknown event 'user_prompt_accepted'"));
+}
+
+// Covers: workflow lifecycle hook names must load without adding workflow policy to the SDK.
+// Owner: app hook configuration.
+#[test]
+fn workflow_lifecycle_events_are_app_owned_and_observational() {
+    for event in WorkflowHookEventKind::ALL {
+        let hooks = parse_user(&format!(
+            r#"
+version = 1
+
+[[hook]]
+id = "workflow"
+on = "{}"
+command = ["{PROGRAM}"]
+timeout = "1s"
+"#,
+            event.wire_name()
+        ))
+        .unwrap();
+
+        assert_eq!(hooks[0].event(), ConfiguredHookEvent::Workflow(*event));
+        assert!(!hooks[0].event().is_blocking());
+    }
 }
 
 #[test]

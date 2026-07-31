@@ -15,6 +15,7 @@ mod resume_delete;
 mod runtime_info;
 mod subagent_rail;
 mod text_selection;
+mod workflow;
 mod workspace_rewind;
 
 use apply_patch_diff::APPLY_PATCH_DIFF_SCENARIO;
@@ -40,6 +41,7 @@ use runtime_info::RUNTIME_INFO_STEPS;
 use std::time::{Duration, Instant};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
+use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
 use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
 
 use anyhow::Result;
@@ -593,6 +595,20 @@ const ALL_SCENARIOS: &[Scenario] = &[
         TERMINAL_RESTORATION_STEPS,
         true,
     ),
+    Scenario::new(
+        WORKFLOW_RUN_ID,
+        "Confirm and observe a workflow in its separate terminal mode",
+        DEFAULT_SIZE,
+        &[],
+        true,
+    ),
+    Scenario::new(
+        WORKFLOW_CANCEL_RESUME_ID,
+        "Cancel, save, and resume a workflow without rerunning completed nodes",
+        DEFAULT_SIZE,
+        &[],
+        true,
+    ),
     PASTE_MULTILINE_SCENARIO,
     DOCUMENT_ATTACHMENT_SCENARIO,
     Scenario::new(
@@ -789,6 +805,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .iter()
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
+    if workflow::is_workflow_scenario(name) {
+        return workflow::run(runner, name);
+    }
     runner.run(scenario)
 }
 

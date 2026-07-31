@@ -173,6 +173,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: hooks.as_ref(),
         })?;
         let session_options =
@@ -262,6 +263,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
@@ -696,6 +698,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
@@ -920,6 +923,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = match lifecycle {

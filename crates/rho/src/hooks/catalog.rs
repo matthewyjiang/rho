@@ -6,7 +6,10 @@ use crate::tools::CANONICAL_TOOL_NAMES;
 use rho_sdk::hooks::HookEventKind;
 
 use super::{
-    config::{parse_hooks_file, HookConfigError, HookDefinition},
+    config::{
+        parse_hooks_file, ConfiguredHookEvent, HookConfigError, HookDefinition,
+        WorkflowHookEventKind,
+    },
     environment::base_environment_names,
     HookSource,
 };
@@ -151,6 +154,18 @@ impl HookCatalog {
     /// Order is user file first, then project file, each in file order. That is
     /// the order blocking hooks run in, and first denial wins.
     pub fn matching(&self, event: HookEventKind, tool: Option<&str>) -> Vec<&HookDefinition> {
+        self.matching_configured(ConfiguredHookEvent::Sdk(event), tool)
+    }
+
+    pub(crate) fn matching_workflow(&self, event: WorkflowHookEventKind) -> Vec<&HookDefinition> {
+        self.matching_configured(ConfiguredHookEvent::Workflow(event), None)
+    }
+
+    pub(crate) fn matching_configured(
+        &self,
+        event: ConfiguredHookEvent,
+        tool: Option<&str>,
+    ) -> Vec<&HookDefinition> {
         self.hooks
             .iter()
             .filter(|hook| hook.event() == event)
@@ -205,7 +220,7 @@ fn read_definitions(
             return Err(HookConfigError::at_file(
                 path,
                 format!("cannot read hooks file: {error}"),
-            ))
+            ));
         }
     };
     parse_hooks_file(path, &contents, source, project_root, CANONICAL_TOOL_NAMES).map(Some)

@@ -154,6 +154,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         usage_purpose: "agent",
         usage_parent_session_id: None,
         usage_recording: Default::default(),
+        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         hooks: None,
     })
     .unwrap();

@@ -50,6 +50,7 @@ pub use catalog::{HookCatalog, ProjectTrust, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
 pub use diagnostics::{contract_views, HookInspector, HookReport};
 pub use dispatch::HookEngine;
+pub(crate) use dispatch::WorkflowNodeFinished;
 
 /// Marker that tells a nested Rho it is running inside a hook program.
 ///
@@ -128,6 +129,24 @@ impl HookPipeline {
 
     /// Installs this pipeline's gate and observer on an SDK builder.
     pub fn attach(&self, mut builder: rho_sdk::RhoBuilder) -> rho_sdk::RhoBuilder {
+        if let Some(gate) = &self.gate {
+            builder = builder
+                .pre_tool_gate_shared(Arc::clone(gate) as Arc<dyn rho_sdk::hooks::PreToolUseGate>);
+        }
+        if let Some(observer) = &self.observer {
+            builder =
+                builder.hook_observer_shared(
+                    Arc::clone(observer) as Arc<dyn rho_sdk::hooks::HookObserver>
+                );
+        }
+        builder
+    }
+
+    /// Installs this pipeline's gate and observer on a provider-free tool host.
+    pub fn attach_tool_host(
+        &self,
+        mut builder: rho_sdk::ToolHostBuilder,
+    ) -> rho_sdk::ToolHostBuilder {
         if let Some(gate) = &self.gate {
             builder = builder
                 .pre_tool_gate_shared(Arc::clone(gate) as Arc<dyn rho_sdk::hooks::PreToolUseGate>);
