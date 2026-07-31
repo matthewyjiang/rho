@@ -3,10 +3,6 @@
 ## [1.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.24.1...rho-coding-agent-v1.25.0) (2026-07-31)
 
 
-### ⚠ BREAKING CHANGES
-
-* **hooks:** `AuthorizationDenialKind` and `ApprovalAuditDecision` gain a hook variant. Both are `#[non_exhaustive]`, so only exhaustive matches written before this change need updating.
-
 ### Features
 
 * **documents:** add bounded document extraction and attachments ([#669](https://github.com/matthewyjiang/rho/issues/669)) ([d1ec3cd](https://github.com/matthewyjiang/rho/commit/d1ec3cd5d8f5683c7b8de0047070a6029bb1ec33))
