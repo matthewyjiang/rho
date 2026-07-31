@@ -2,9 +2,8 @@
 //!
 //! A hook that forks a background process must not outlive its timeout. Unix
 //! gets a process group, Windows a job object; both are killed on completion,
-//! timeout, cancellation, and drop. Windows assigns the job immediately after
-//! spawn because Tokio does not expose suspended process creation, leaving a
-//! narrow window in which a child-created descendant can escape supervision.
+//! timeout, cancellation, and drop. Windows starts the child suspended, assigns
+//! it to the job, and only then resumes its primary thread.
 
 use tokio::process::Command;
 
@@ -56,11 +55,20 @@ unsafe impl Send for SupervisedTree {}
 
 #[cfg(windows)]
 impl ProcessTree for SupervisedTree {
-    fn prepare(_command: &mut Command) {}
+    fn prepare(command: &mut Command) {
+        use std::os::windows::process::CommandExt;
+
+        command
+            .as_std_mut()
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+    }
 
     fn attach(child: &tokio::process::Child) -> std::io::Result<Self> {
         use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
 
+        let pid = child
+            .id()
+            .ok_or_else(|| std::io::Error::other("spawned hook process has no id"))?;
         let process = child
             .raw_handle()
             .ok_or_else(|| std::io::Error::other("spawned hook process has no handle"))?;
@@ -82,6 +90,11 @@ impl ProcessTree for SupervisedTree {
                 CloseHandle(job);
                 return Err(error);
             }
+            if let Err(error) = resume_process_thread(pid) {
+                // Closing a configured job kills the still-suspended child.
+                CloseHandle(job);
+                return Err(error);
+            }
             Ok(Self { job: Some(job) })
         }
     }
@@ -94,6 +107,49 @@ impl ProcessTree for SupervisedTree {
             }
         }
     }
+}
+
+#[cfg(windows)]
+unsafe fn resume_process_thread(pid: u32) -> std::io::Result<()> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
+                THREADENTRY32,
+            },
+            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+        },
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut entry = THREADENTRY32 {
+        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let mut found = unsafe { Thread32First(snapshot, &raw mut entry) } != 0;
+    while found && entry.th32OwnerProcessID != pid {
+        found = unsafe { Thread32Next(snapshot, &raw mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    if !found {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "spawned hook process has no thread",
+        ));
+    }
+
+    let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+    if thread.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    let resumed = unsafe { ResumeThread(thread) };
+    let error = (resumed == u32::MAX).then(std::io::Error::last_os_error);
+    unsafe { CloseHandle(thread) };
+    error.map_or(Ok(()), Err)
 }
 
 impl Drop for SupervisedTree {
