@@ -105,6 +105,20 @@ async fn unsupported_binary_path_paste_stays_text() {
     assert!(!app.input_ui.text().is_empty() || !app.input_ui.paste_segments().is_empty());
 }
 
+// Covers: a pasted path that disappears before background resolution remains composer text.
+// Owner: TUI clipboard attachment orchestration.
+#[tokio::test]
+async fn missing_path_paste_stays_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = test_app();
+    app.info.runtime.cwd = dir.path().to_path_buf();
+
+    insert_external_paste_and_finish(&mut app, "missing.txt").await;
+
+    assert!(app.input_ui.pending_media().is_empty());
+    assert_eq!(app.input_ui.text(), "missing.txt");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn unreadable_image_path_paste_reports_error_without_inserting_text() {

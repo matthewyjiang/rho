@@ -69,6 +69,10 @@ fn paste_text_recognizes_absolute_and_relative_image_paths() {
         Some(path.canonicalize().unwrap())
     );
     assert_eq!(paste_text_as_file_path("shot.png\nextra", cwd), None);
+    assert_eq!(
+        paste_text_as_file_path("missing.txt", cwd),
+        Some(cwd.join("missing.txt"))
+    );
 
     let text_path = cwd.join("notes.txt");
     fs::write(&text_path, "hello").unwrap();

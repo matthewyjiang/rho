@@ -50,6 +50,13 @@ const APPLY_PATCH_DIFF_STEPS: &[Step] = &[
         text: "Choose one color",
         timeout: STREAM,
     },
+    // The question is rendered in history before the interactive modal becomes
+    // active. Wait for the modal controls so Esc cannot race with host-input
+    // activation and interrupt the model instead of cancelling the question.
+    Step::WaitText {
+        text: "esc cancel",
+        timeout: STREAM,
+    },
     Step::Key(crate::keys::Key::Esc),
     Step::WaitText {
         text: "questionnaire cancelled",

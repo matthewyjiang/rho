@@ -188,6 +188,20 @@ fn rejects_flate_streams_that_exceed_the_expanded_budget() {
 }
 
 #[cfg(feature = "document-pdf")]
+// Covers: chained Flate filters must be rejected rather than bypass the expansion budget.
+// Owner: PDF extractor
+#[test]
+fn rejects_pdf_streams_with_chained_flate_filters() {
+    let bytes = pdf_fixture_with_filter("(content) Tj", "/FlateDecode /FlateDecode");
+
+    let error = extract_document_from_bytes("filters.pdf", &bytes).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("filter chain '[FlateDecode, FlateDecode]'"));
+}
+
+#[cfg(feature = "document-pdf")]
 // Covers: xref streams must be rejected before lopdf can expand them while loading.
 // Owner: PDF extractor
 #[test]
@@ -215,6 +229,22 @@ fn extracts_docx_paragraphs_and_tables() {
 
     assert_eq!(document.text, "Hello & world\n|A |B |");
     assert_eq!(document.warnings, Vec::<String>::new());
+}
+
+#[cfg(feature = "document-docx")]
+// Covers: nested tables must not clear the surrounding table-cell formatting state.
+// Owner: DOCX extractor
+#[test]
+fn preserves_outer_cell_context_after_nested_tables() {
+    let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Nested</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+</w:body></w:document>"#;
+
+    let document =
+        extract_document_from_bytes("nested.docx", &zip_fixture(&[("word/document.xml", xml)]))
+            .unwrap();
+
+    assert_eq!(document.text, "|Before<br>|Nested |\nAfter |");
 }
 
 #[cfg(feature = "document-docx")]
@@ -253,6 +283,28 @@ fn renders_xlsx_as_bounded_markdown_tables() {
             format!("worksheet 'Data' was limited to {MAX_SPREADSHEET_ROWS} rows"),
         ]
     );
+}
+
+#[cfg(feature = "document-spreadsheets")]
+// Covers: empty worksheets must not produce orphan Markdown headings.
+// Owner: spreadsheet extractor
+#[test]
+fn skips_empty_spreadsheet_worksheets() {
+    let document = extract_document_from_bytes("empty.xlsx", &xlsx_fixture(0, 0)).unwrap();
+
+    assert_eq!(document.text, "");
+}
+
+#[cfg(feature = "document-spreadsheets")]
+// Covers: archive preflight must count bytes actually decompressed, not ZIP metadata alone.
+// Owner: spreadsheet extractor
+#[test]
+fn rejects_spreadsheet_entries_exceeding_expansion_budget() {
+    let bytes = zip_fixture(&[("large.xml", &"A".repeat(1_024))]);
+
+    let error = spreadsheet::validate_archive_limits_with_budget(&bytes, 512).unwrap_err();
+
+    assert!(error.contains("exceeds the 512 byte limit"));
 }
 
 #[cfg(any(feature = "document-docx", feature = "document-spreadsheets"))]
@@ -335,13 +387,26 @@ fn spreadsheet_column_name(mut column: usize) -> String {
 
 #[cfg(feature = "document-pdf")]
 fn pdf_fixture(text_operation: &str) -> Vec<u8> {
+    pdf_fixture_with_stream_dictionary(text_operation, "")
+}
+
+#[cfg(feature = "document-pdf")]
+fn pdf_fixture_with_filter(text_operation: &str, filters: &str) -> Vec<u8> {
+    pdf_fixture_with_stream_dictionary(text_operation, &format!("/Filter [{filters}] "))
+}
+
+#[cfg(feature = "document-pdf")]
+fn pdf_fixture_with_stream_dictionary(text_operation: &str, extra_dictionary: &str) -> Vec<u8> {
     let stream = format!("BT /F1 12 Tf 72 720 Td {text_operation} ET");
     let objects = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_owned(),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
-        format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+        format!(
+            "<< {extra_dictionary}/Length {} >>\nstream\n{stream}\nendstream",
+            stream.len()
+        ),
     ];
     let mut pdf = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();

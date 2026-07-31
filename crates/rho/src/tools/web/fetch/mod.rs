@@ -8,7 +8,8 @@ use url::Url;
 
 use rho_tools::{
     document::{
-        extract_document_from_bytes_async, extract_document_from_path_async, ExtractedDocument,
+        extract_document_from_bytes_async, extract_document_from_path_async,
+        render_extracted_document, ExtractedDocument,
     },
     tool::{truncate, ToolError},
 };
@@ -18,10 +19,17 @@ use super::util::{extract_title, html_to_text, is_video_extension};
 pub(super) const PREVIEW_BYTES: usize = 8_000;
 const MAX_FETCH_BYTES: usize = 2 * 1024 * 1024;
 
-struct DownloadedResponse {
-    bytes: Vec<u8>,
-    content_type: Option<String>,
-    truncated: bool,
+pub(super) struct DownloadedResponse {
+    pub(super) bytes: Vec<u8>,
+    pub(super) truncated: bool,
+    pub(super) pdf_detection: PdfDetection,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PdfDetection {
+    NotDetected,
+    Declared,
+    MagicBytes,
 }
 
 enum DocumentSource {
@@ -40,10 +48,9 @@ pub(super) async fn fetch_http_url(
     url: &Url,
     prompt: Option<&str>,
 ) -> Result<FetchedTarget, ToolError> {
-    let downloaded = fetch_url_bytes_with_auth(url.as_str(), None).await?;
-    if is_pdf_response(url, downloaded.content_type.as_deref())
-        || downloaded.bytes.starts_with(b"%PDF-")
-    {
+    let downloaded =
+        fetch_url_bytes(url.as_str(), rho_tools::document::MAX_DOCUMENT_INPUT_BYTES).await?;
+    if downloaded.pdf_detection != PdfDetection::NotDetected {
         if downloaded.truncated {
             return Err(ToolError::Message(format!(
                 "remote PDF exceeds the {} byte extraction limit",
@@ -86,13 +93,13 @@ pub(super) async fn fetch_http_url(
 /// plan types. The client is built here too, so no caller can reach an
 /// arbitrary URL through a client that resolves the hostname itself.
 pub(super) async fn fetch_url_text(url: &str) -> Result<String, ToolError> {
-    let downloaded = fetch_url_bytes_with_auth(url, None).await?;
+    let downloaded = fetch_url_bytes(url, MAX_FETCH_BYTES).await?;
     decode_downloaded_text(downloaded)
 }
 
-async fn fetch_url_bytes_with_auth(
+pub(super) async fn fetch_url_bytes(
     url: &str,
-    bearer_token: Option<&str>,
+    max_bytes: usize,
 ) -> Result<DownloadedResponse, ToolError> {
     // Resolve and reject private/loopback targets, then connect only to the
     // vetted addresses so a changed DNS answer cannot move the request after
@@ -101,11 +108,9 @@ async fn fetch_url_bytes_with_auth(
     let allow_ranges = super::ssrf::configured_allow_ranges()?;
     let target = super::ssrf::resolve_public_target(url, &allow_ranges).await?;
     let client = super::util::pinned_http_client(&target)?;
-    let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
-    if let Some(token) = bearer_token {
-        request = request.bearer_auth(token);
-    }
-    let response = request
+    let response = client
+        .get(url)
+        .header("User-Agent", "rho-coding-agent")
         .send()
         .await
         .map_err(|err| ToolError::Message(format!("request failed: {err}")))?;
@@ -122,20 +127,20 @@ async fn fetch_url_bytes_with_auth(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let parsed_url = Url::parse(url).ok();
-    let mut max_bytes = if parsed_url
+    let mut pdf_detection = if Url::parse(url)
+        .ok()
         .as_ref()
         .is_some_and(|url| is_pdf_response(url, content_type.as_deref()))
     {
-        rho_tools::document::MAX_DOCUMENT_INPUT_BYTES
+        PdfDetection::Declared
     } else {
-        MAX_FETCH_BYTES
+        PdfDetection::NotDetected
     };
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|err| ToolError::Message(format!("request failed: {err}")))?;
-        if max_bytes == MAX_FETCH_BYTES
+        if pdf_detection == PdfDetection::NotDetected
             && bytes.len() < b"%PDF-".len()
             && bytes
                 .iter()
@@ -144,7 +149,7 @@ async fn fetch_url_bytes_with_auth(
                 .copied()
                 .eq(b"%PDF-".iter().copied())
         {
-            max_bytes = rho_tools::document::MAX_DOCUMENT_INPUT_BYTES;
+            pdf_detection = PdfDetection::MagicBytes;
         }
         let remaining = (max_bytes + 1).saturating_sub(bytes.len());
         bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
@@ -156,8 +161,8 @@ async fn fetch_url_bytes_with_auth(
     bytes.truncate(max_bytes);
     Ok(DownloadedResponse {
         bytes,
-        content_type,
         truncated,
+        pdf_detection,
     })
 }
 
@@ -220,7 +225,7 @@ pub(super) async fn fetch_local_path(
 }
 
 fn fetched_document(document: ExtractedDocument, source: DocumentSource) -> FetchedTarget {
-    let content = extracted_document_content(&document);
+    let content = render_extracted_document(&document);
     let content_preview = truncate(content.clone(), PREVIEW_BYTES);
     let (preview, metadata) = match source {
         DocumentSource::Http { url, prompt } => (
@@ -266,17 +271,6 @@ fn fetched_document(document: ExtractedDocument, source: DocumentSource) -> Fetc
         preview,
         metadata,
     }
-}
-
-fn extracted_document_content(document: &ExtractedDocument) -> String {
-    if document.warnings.is_empty() {
-        return document.text.clone();
-    }
-    format!(
-        "{}\n\nExtraction warnings:\n- {}",
-        document.text,
-        document.warnings.join("\n- ")
-    )
 }
 
 pub(super) fn youtube_placeholder(

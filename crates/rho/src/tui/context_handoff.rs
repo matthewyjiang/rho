@@ -602,6 +602,7 @@ impl App {
         self.input_ui.clear_paste_segments();
         self.input_ui.set_shell_mode(None);
         self.input_ui.set_cursor(0);
+        self.cancel_pending_media_attaches();
         self.input_ui.clear_pending_media();
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();

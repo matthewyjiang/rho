@@ -115,22 +115,19 @@ fn validate_stream_expansion(document: &pdf_extract::Document) -> Result<(), Str
             }
             filters
                 if filters.iter().any(|filter| {
-                    matches!(*filter, b"LZWDecode" | b"LZW" | b"ASCII85Decode" | b"A85")
+                    matches!(
+                        *filter,
+                        b"LZWDecode" | b"LZW" | b"ASCII85Decode" | b"A85" | b"FlateDecode" | b"Fl"
+                    )
                 }) =>
             {
+                let chain = filters
+                    .iter()
+                    .map(|filter| String::from_utf8_lossy(filter))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 return Err(format!(
-                    "PDF stream filter '{}' is unsupported by bounded extraction",
-                    String::from_utf8_lossy(
-                        filters
-                            .iter()
-                            .find(|filter| {
-                                matches!(
-                                    **filter,
-                                    b"LZWDecode" | b"LZW" | b"ASCII85Decode" | b"A85"
-                                )
-                            })
-                            .expect("matching filter checked above")
-                    )
+                    "PDF stream filter chain '[{chain}]' is unsupported by bounded extraction"
                 ));
             }
             // Image codecs and other filters are not expanded by lopdf's text-content path.
@@ -142,10 +139,7 @@ fn validate_stream_expansion(document: &pdf_extract::Document) -> Result<(), Str
 
 fn consume_budget(remaining: &mut usize, size: usize) -> Result<(), String> {
     *remaining = remaining.checked_sub(size).ok_or_else(|| {
-        format!(
-            "PDF expanded stream data exceeds the {} byte limit",
-            MAX_PDF_EXPANDED_STREAM_BYTES
-        )
+        format!("PDF expanded stream data exceeds the {MAX_PDF_EXPANDED_STREAM_BYTES} byte limit")
     })?;
     Ok(())
 }

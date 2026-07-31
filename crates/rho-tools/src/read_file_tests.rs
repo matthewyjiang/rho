@@ -4,6 +4,8 @@ use std::io::{Cursor, Write};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
+
+use crate::document::{render_extracted_document, ExtractedDocument, MAX_EXTRACTED_CHARACTERS};
 use tempfile::TempDir;
 
 use super::*;
@@ -93,6 +95,65 @@ async fn extracts_supported_binary_documents_for_whole_file_reads() {
         .unwrap();
 
     assert_eq!(result.content, "Tool document");
+}
+
+// Covers: whole-file reads must tell callers when extracted document content is incomplete.
+// Owner: read_file tool
+#[tokio::test]
+async fn reports_truncated_document_extraction() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("large.txt");
+    fs::write(&path, "x".repeat(MAX_EXTRACTED_CHARACTERS + 1)).unwrap();
+
+    let output = read_file_content(&path, None, None).await.unwrap();
+
+    assert_eq!(
+        output.content,
+        format!(
+            "{}\n\nExtraction notice: content was truncated at the output limit.",
+            "x".repeat(MAX_EXTRACTED_CHARACTERS)
+        )
+    );
+}
+
+#[test]
+fn renders_document_warnings() {
+    let content = render_extracted_document(&ExtractedDocument {
+        name: "sample.docx".into(),
+        mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
+        text: "Document body".into(),
+        truncated: false,
+        warnings: vec!["archive contains ignored entries".into()],
+    });
+
+    assert_eq!(
+        content,
+        "Document body\n[document warning: archive contains ignored entries]"
+    );
+}
+
+#[tokio::test]
+async fn rejects_documents_over_the_input_limit() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("oversized.pdf");
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(crate::document::MAX_DOCUMENT_INPUT_BYTES as u64 + 1)
+        .unwrap();
+
+    let error = match read_file_content(&path, None, None).await {
+        Ok(_) => panic!("oversized document unexpectedly succeeded"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "document '{}' is {} bytes; the input limit is {} bytes",
+            path.display(),
+            crate::document::MAX_DOCUMENT_INPUT_BYTES + 1,
+            crate::document::MAX_DOCUMENT_INPUT_BYTES
+        )
+    );
 }
 
 #[tokio::test]

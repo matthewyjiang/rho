@@ -73,6 +73,10 @@ const DOCUMENT_ATTACHMENT_STEPS: &[Step] = &[
         text: "fixture response: Attached file: absolute-path-report.txt (text/plain)",
         timeout: RESPONSE,
     },
+    Step::WaitText {
+        text: "document body from path",
+        timeout: RESPONSE,
+    },
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(200),
         timeout: SETTLE,

@@ -48,6 +48,31 @@ pub struct ExtractedDocument {
     pub warnings: Vec<String>,
 }
 
+/// Renders extracted text and any completeness notices for tool output.
+pub fn render_extracted_document(document: &ExtractedDocument) -> String {
+    let mut content = document.text.clone();
+    if document.truncated {
+        content.push_str("\n\nExtraction notice: content was truncated at the output limit.");
+    }
+    let truncation_warning =
+        format!("extracted text was truncated at {MAX_EXTRACTED_CHARACTERS} characters");
+    let warnings = document
+        .warnings
+        .iter()
+        .filter(|warning| !document.truncated || *warning != &truncation_warning)
+        .cloned()
+        .collect::<Vec<_>>();
+    for warning in warnings {
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str("[document warning: ");
+        content.push_str(&warning);
+        content.push(']');
+    }
+    content
+}
+
 /// Failure to identify, read, or extract a document.
 #[derive(Debug, Error)]
 pub enum DocumentExtractionError {
@@ -118,7 +143,7 @@ impl BoundedText {
         self.push_str(character.encode_utf8(&mut encoded))
     }
 
-    #[cfg(feature = "document-docx")]
+    #[cfg(any(feature = "document-docx", feature = "document-spreadsheets"))]
     pub(super) fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
@@ -315,11 +340,15 @@ pub fn extract_document_from_bytes(
                 "PDF contains no extractable text; it may be empty or contain only scanned images"
                     .to_owned()
             }
-            _ => "document contains no extractable text".to_owned(),
+            DocumentFormat::Text(_)
+            | DocumentFormat::Docx
+            | DocumentFormat::Xlsx
+            | DocumentFormat::Xls
+            | DocumentFormat::Ods => "document contains no extractable text".to_owned(),
         });
     }
 
-    let mut warnings = warnings.finish(usize::from(extracted.truncated));
+    let mut warnings = warnings.finish(/*reserved_slots*/ usize::from(extracted.truncated));
     if extracted.truncated {
         warnings.push(format!(
             "extracted text was truncated at {MAX_EXTRACTED_CHARACTERS} characters"

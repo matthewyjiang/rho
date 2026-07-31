@@ -149,6 +149,14 @@ impl App {
 }
 
 async fn classify_pasted_path(path: PathBuf, original_text: String) -> PastedMediaOutcome {
+    let path = match tokio::task::spawn_blocking(move || {
+        path.canonicalize().ok().filter(|path| path.is_file())
+    })
+    .await
+    {
+        Ok(Some(path)) => path,
+        Ok(None) | Err(_) => return PastedMediaOutcome::Unsupported { original_text },
+    };
     let image_path = path.clone();
     let image_outcome =
         tokio::task::spawn_blocking(move || classify_pasted_image(image_path)).await;

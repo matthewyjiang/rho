@@ -6,7 +6,9 @@ use serde_json::json;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::{
-    document::{extract_document_from_bytes_async, MAX_DOCUMENT_INPUT_BYTES},
+    document::{
+        extract_document_from_bytes_async, render_extracted_document, MAX_DOCUMENT_INPUT_BYTES,
+    },
     image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES},
     tool::*,
 };
@@ -182,7 +184,7 @@ pub(super) async fn read_file_content(
         let document = extract_document_from_bytes_async(name, bytes)
             .await
             .map_err(|error| ToolError::Message(error.to_string()))?;
-        let content = format_extracted_document(document.text, &document.warnings);
+        let content = render_extracted_document(&document);
         return Ok(ReadFileContent {
             content,
             image: None,
@@ -195,18 +197,6 @@ pub(super) async fn read_file_content(
         image: None,
         preview_error: None,
     })
-}
-
-fn format_extracted_document(mut text: String, warnings: &[String]) -> String {
-    for warning in warnings {
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str("[document warning: ");
-        text.push_str(warning);
-        text.push(']');
-    }
-    text
 }
 
 fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)> {

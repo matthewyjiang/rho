@@ -45,6 +45,11 @@ jobs:
         run: cargo test --workspace --locked
       - name: Run documentation tests
         run: cargo test --workspace --doc --all-features --locked
+      - name: Check rho-tools document features independently
+        run: |
+          cargo check -p rho-agent-tools --no-default-features --features document-docx --locked
+          cargo check -p rho-agent-tools --no-default-features --features document-pdf --locked
+          cargo check -p rho-agent-tools --no-default-features --features document-spreadsheets --locked
 
   sdk-benchmarks:
     name: SDK release benchmarks

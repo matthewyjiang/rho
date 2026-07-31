@@ -45,18 +45,18 @@ fn extract_document_xml(xml: &[u8], max_characters: usize) -> Result<ExtractedTe
     let mut reader = Reader::from_reader(xml);
     let mut output = BoundedText::new(max_characters);
     let mut in_text = false;
-    let mut in_table = false;
-    let mut in_table_cell = false;
+    let mut table_depth = 0_usize;
+    let mut cell_depth = 0_usize;
 
     loop {
         match reader.read_event().map_err(|error| error.to_string())? {
             Event::Start(event) => match event.local_name().as_ref() {
                 b"t" => in_text = true,
-                b"tbl" => in_table = true,
+                b"tbl" => table_depth += 1,
                 b"tr" => {
                     output.push('|');
                 }
-                b"tc" => in_table_cell = true,
+                b"tc" => cell_depth += 1,
                 b"tab" => {
                     output.push('\t');
                 }
@@ -84,21 +84,21 @@ fn extract_document_xml(xml: &[u8], max_characters: usize) -> Result<ExtractedTe
             Event::End(event) => match event.local_name().as_ref() {
                 b"t" => in_text = false,
                 b"tc" => {
-                    in_table_cell = false;
-                    trim_suffix(&mut output, "<br>");
+                    cell_depth = cell_depth.saturating_sub(1);
+                    output.remove_suffix("<br>");
                     output.push_str(" |");
                 }
                 b"tr" => {
                     push_separator(&mut output, '\n');
                 }
                 b"tbl" => {
-                    in_table = false;
+                    table_depth = table_depth.saturating_sub(1);
                     push_separator(&mut output, '\n');
                 }
-                b"p" if in_table_cell => {
+                b"p" if cell_depth > 0 => {
                     output.push_str("<br>");
                 }
-                b"p" if !in_table => push_separator(&mut output, '\n'),
+                b"p" if table_depth == 0 => push_separator(&mut output, '\n'),
                 _ => {}
             },
             Event::Eof => break,
@@ -116,8 +116,4 @@ fn push_separator(output: &mut BoundedText, separator: char) {
     if !output.is_empty() && !output.ends_with_char(separator) {
         output.push(separator);
     }
-}
-
-fn trim_suffix(output: &mut BoundedText, suffix: &str) {
-    output.remove_suffix(suffix);
 }

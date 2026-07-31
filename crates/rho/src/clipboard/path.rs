@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-/// Resolves a single-line pasted path to an existing regular file.
+/// Parses a single-line pasted path without accessing the filesystem.
 pub(crate) fn paste_text_as_file_path(text: &str, cwd: &Path) -> Option<PathBuf> {
     let trimmed = text.trim();
     if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
@@ -16,7 +16,7 @@ pub(crate) fn paste_text_as_file_path(text: &str, cwd: &Path) -> Option<PathBuf>
     } else {
         cwd.join(candidate)
     };
-    path.canonicalize().ok().filter(|path| path.is_file())
+    Some(path)
 }
 
 fn strip_matching_quotes(text: &str) -> &str {

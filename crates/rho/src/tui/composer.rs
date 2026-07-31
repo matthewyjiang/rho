@@ -28,7 +28,7 @@ impl App {
             return;
         };
         let text = normalize_paste(&text);
-        self.insert_paste(&text);
+        self.insert_external_paste(&text);
     }
 
     pub(super) fn handle_paste_burst_key(&mut self, key: KeyEvent) -> bool {

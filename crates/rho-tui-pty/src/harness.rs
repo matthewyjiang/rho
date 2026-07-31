@@ -152,7 +152,7 @@ impl PtyHarness {
         &self.action_log
     }
 
-    pub fn working_directory(&self) -> Option<&Path> {
+    pub(crate) fn working_directory(&self) -> Option<&Path> {
         self.cwd.as_deref()
     }
 

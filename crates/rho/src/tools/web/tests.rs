@@ -334,6 +334,56 @@ async fn fetch_url_text_rejects_invalid_utf8_at_the_byte_cap() {
     assert!(matches!(result, Err(rho_tools::tool::ToolError::Utf8(_))));
 }
 
+// Covers: an extensionless PDF truncated at a caller-selected transport limit remains identified
+// as a PDF, so callers can reject partial document extraction.
+// Owner: fetch_content transport
+#[tokio::test]
+async fn byte_limited_fetch_marks_magic_byte_pdf_as_truncated() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        drop(reader);
+        let body = b"%PDF-1.4 truncated fixture";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+    });
+
+    let url = format!("http://{address}/download");
+    let loopback = vec![super::ssrf::Cidr::parse("127.0.0.0/8").unwrap()];
+    let downloaded = super::ssrf::with_allow_ranges(loopback, async {
+        super::fetch::fetch_url_bytes(&url, 8).await
+    })
+    .await
+    .unwrap();
+    server.join().unwrap();
+
+    assert_eq!(downloaded.bytes, b"%PDF-1.4");
+    assert!(downloaded.truncated);
+    assert_eq!(
+        downloaded.pdf_detection,
+        super::fetch::PdfDetection::MagicBytes
+    );
+}
+
 #[tokio::test]
 async fn fetch_url_text_blocks_loopback_by_default() {
     let error = super::fetch::fetch_url_text("http://127.0.0.1:9/")
