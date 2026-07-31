@@ -8,7 +8,6 @@
       "component": "rho-coding-agent",
       "changelog-path": "CHANGELOG.md",
       "draft": true,
-      "release-as": "1.25.0",
       "extra-files": [
         {
           "type": "generic",
@@ -21,8 +20,7 @@
       "package-name": "rho-sdk",
       "component": "rho-sdk",
       "changelog-path": "CHANGELOG.md",
-      "draft": true,
-      "release-as": "1.14.0"
+      "draft": true
     },
     "crates/rho-tools": {
       "release-type": "rust",

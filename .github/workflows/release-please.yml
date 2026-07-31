@@ -133,83 +133,13 @@ jobs:
           echo "sdk_tag_name=$SDK_TAG" >> "$GITHUB_OUTPUT"
           echo "tools_tag_name=$TOOLS_TAG" >> "$GITHUB_OUTPUT"
           echo "providers_tag_name=$PROVIDERS_TAG" >> "$GITHUB_OUTPUT"
-      # Check out the generated release PR so post-processing can rewrite versions,
-      # changelogs, internal path pins, and the separate downstream lockfile.
+      # The downstream fixture is a deliberately separate workspace, so the
+      # cargo-workspace plugin cannot update its lockfile when rho-sdk changes.
       - name: Check out release pull request
         if: ${{ steps.release.outputs.prs_created == 'true' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
-          fetch-depth: 0
-      # Release Please majors on any BREAKING CHANGE footer. Unless
-      # .release-policy.json sets allow-major=true, pin the next minors on main
-      # and demote this PR in place so a false footer cannot ship 2.x.
-      - name: Block accidental major releases
-        id: block_majors
-        if: ${{ steps.release.outputs.prs_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          release_branch="$(git branch --show-current)"
-          git fetch origin main
-          previous_manifest="$(mktemp)"
-          git show origin/main:.release-please-manifest.json > "$previous_manifest"
-          proposed_manifest="$(pwd)/.release-please-manifest.json"
-
-          pin_workdir="$(mktemp -d)"
-          git worktree add --detach "$pin_workdir" origin/main
-          mkdir -p "$pin_workdir/scripts"
-          cp scripts/release_please_postprocess.py "$pin_workdir/scripts/release_please_postprocess.py"
-          if [[ -f .release-policy.json ]]; then
-            cp .release-policy.json "$pin_workdir/.release-policy.json"
-          else
-            printf '%s\n' '{"allow-major": false}' > "$pin_workdir/.release-policy.json"
-          fi
-          python3 "$pin_workdir/scripts/release_please_postprocess.py" sync-minor-pins \
-            --config "$pin_workdir/.release-please-config.json" \
-            --policy "$pin_workdir/.release-policy.json" \
-            --previous-manifest "$previous_manifest" \
-            --proposed-manifest "$proposed_manifest"
-          if ! git -C "$pin_workdir" diff --quiet -- .release-please-config.json .release-policy.json; then
-            git -C "$pin_workdir" config user.name "github-actions[bot]"
-            git -C "$pin_workdir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git -C "$pin_workdir" add .release-please-config.json .release-policy.json
-            git -C "$pin_workdir" commit -m "chore(release): pin minor versions for blocked major bumps"
-            git -C "$pin_workdir" push origin HEAD:main
-            echo "Pinned blocked majors on main"
-          else
-            echo "Main already has the required minor pins"
-          fi
-          git worktree remove --force "$pin_workdir"
-
-          python3 scripts/release_please_postprocess.py demote-majors \
-            --previous-manifest "$previous_manifest" \
-            --proposed-manifest "$proposed_manifest"
-          python3 scripts/release_please_postprocess.py strip-non-major-breaking
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add \
-              .release-please-manifest.json \
-              Cargo.lock \
-              crates/*/Cargo.toml \
-              crates/*/CHANGELOG.md \
-              crates/rho/PKGBUILD \
-              || true
-            # Only stage files that exist and changed under the release packages.
-            git diff --name-only --cached
-            if git diff --cached --quiet; then
-              echo "demote produced unstaged changes outside the release package set" >&2
-              git diff --name-only >&2
-              exit 1
-            fi
-            git commit -m "chore(release): demote blocked majors and drop false breaking notes"
-            git push origin "HEAD:$release_branch"
-            echo "Demoted release PR away from blocked majors"
-          else
-            echo "Release PR already matches the minor policy"
-          fi
       # Release Please leaves renamed path dependency pins stale (for example
       # rho-tools with package = "rho-agent-tools"). Sync those before checks.
       - name: Synchronize internal dependency versions
@@ -256,33 +186,6 @@ jobs:
           git add fixtures/downstream/Cargo.lock
           git commit -m "chore(release): sync downstream SDK lockfile"
           git push origin "HEAD:$release_branch"
-
-  clear-release-pins:
-    name: clear spent release-as pins
-    needs: release
-    if: ${{ needs.release.outputs.releases_created == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - name: Remove spent release-as pins
-        run: |
-          set -euo pipefail
-          if [[ ! -f scripts/release_please_postprocess.py ]]; then
-            echo "release postprocess script not on main yet"
-            exit 0
-          fi
-          python3 scripts/release_please_postprocess.py clear-spent-pins
-          if git diff --quiet -- .release-please-config.json; then
-            echo "No spent release-as pins"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .release-please-config.json
-          git commit -m "chore(release): remove spent release-as version pins"
-          git push origin HEAD:main
 
   sdk-release-evidence:
     needs: release
