@@ -168,8 +168,9 @@ pub(crate) fn resolve_nodes_with_host(
                             executable, cwd, ..
                         } => (executable, cwd),
                     };
-                    let cwd_path = host.workspace().join(cwd).canonicalize()?;
-                    if !cwd_path.starts_with(host.workspace()) {
+                    let workspace = host.workspace().canonicalize()?;
+                    let cwd_path = workspace.join(cwd).canonicalize()?;
+                    if !cwd_path.starts_with(&workspace) {
                         anyhow::bail!("command node '{id}' cwd is outside the workspace");
                     }
                     let (executable_path, executable_identity) =

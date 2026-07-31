@@ -30,13 +30,13 @@ struct NodeTaskOutput {
 }
 
 enum DriveStart<'a> {
-    Finished(StoredRun),
-    Running(DriveSession<'a>),
+    Finished(Box<StoredRun>),
+    Running(Box<DriveSession<'a>>),
 }
 
 enum TaskWait {
     Continue,
-    Joined(NodeTaskOutput),
+    Joined(Box<NodeTaskOutput>),
 }
 
 struct DriveSession<'a> {
@@ -61,7 +61,7 @@ pub(super) async fn drive(
     events: Option<tokio::sync::mpsc::UnboundedSender<RuntimeEvent>>,
 ) -> Result<StoredRun, RuntimeError> {
     match DriveSession::bootstrap_run(runner, run_id, recovery, events)? {
-        DriveStart::Finished(run) => Ok(run),
+        DriveStart::Finished(run) => Ok(*run),
         DriveStart::Running(session) => session.run_loop().await,
     }
 }
@@ -101,7 +101,7 @@ impl<'a> DriveSession<'a> {
                 )
             })
         {
-            return Ok(DriveStart::Finished(run));
+            return Ok(DriveStart::Finished(Box::new(run)));
         }
         let resuming_cancellation = run.state.state.cancellation_requested
             || run.state.state.lifecycle == RunLifecycle::Cancelling
@@ -198,7 +198,7 @@ impl<'a> DriveSession<'a> {
         }
 
         let graph = Arc::new(run.graph.clone());
-        Ok(DriveStart::Running(Self {
+        Ok(DriveStart::Running(Box::new(Self {
             runner,
             store,
             guard,
@@ -211,7 +211,7 @@ impl<'a> DriveSession<'a> {
             graph,
             checkout,
             tasks: JoinSet::new(),
-        }))
+        })))
     }
 
     async fn run_loop(mut self) -> Result<StoredRun, RuntimeError> {
@@ -228,7 +228,7 @@ impl<'a> DriveSession<'a> {
             }
             match self.await_next_task().await? {
                 TaskWait::Continue => continue,
-                TaskWait::Joined(joined) => self.complete_node(joined)?,
+                TaskWait::Joined(joined) => self.complete_node(*joined)?,
             }
         }
     }
@@ -448,7 +448,7 @@ impl<'a> DriveSession<'a> {
         }
         .ok_or_else(|| RuntimeError::Executor("workflow task set closed".into()))?
         .map_err(|error| RuntimeError::Executor(format!("node task failed: {error}")))??;
-        Ok(TaskWait::Joined(joined))
+        Ok(TaskWait::Joined(Box::new(joined)))
     }
 
     fn complete_node(&mut self, joined: NodeTaskOutput) -> Result<(), RuntimeError> {

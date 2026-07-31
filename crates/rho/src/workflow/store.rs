@@ -26,6 +26,14 @@ pub(crate) struct WorkflowStore {
 impl WorkflowStore {
     pub(crate) fn new(rho_home: &Path) -> WorkflowResult<Self> {
         let layout = WorkflowLayout::new(rho_home);
+        if !rho_home.exists() {
+            std::fs::create_dir_all(rho_home)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(rho_home, std::fs::Permissions::from_mode(0o700))?;
+            }
+        }
         super::ensure_directory_beneath(rho_home, Path::new("workflows"))?;
         let root = super::secure_fs::SecureDirectory::open(layout.root())?;
         root.ensure_directory(Path::new("plans"))?;

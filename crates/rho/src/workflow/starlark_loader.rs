@@ -162,6 +162,7 @@ impl<'a> SourceCollector<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_label<'b, R: SourceBytes>(
         &'b self,
         reader: &'b mut R,

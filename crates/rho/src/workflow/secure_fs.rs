@@ -526,7 +526,10 @@ pub(super) fn verified_from_open_file(
     let platform_id = platform_id(&file, &metadata);
     #[cfg(windows)]
     if platform_id.is_none() {
-        return Err(identity_drift(path, "Windows file identity is unavailable"));
+        return Err(identity_drift(
+            &canonical,
+            "Windows file identity is unavailable",
+        ));
     }
     let identity = FrozenPathIdentity {
         canonical_path: crate::paths::display(&canonical),
@@ -638,6 +641,9 @@ fn open_absolute_directory(path: &Path) -> WorkflowResult<File> {
     if !path.is_absolute() {
         return Err(identity_drift(path, "root is not absolute"));
     }
+    // Resolve intermediate directory symlinks (for example macOS /var -> /private/var)
+    // once, then walk the physical path with O_NOFOLLOW so later components cannot swap.
+    let path = path.canonicalize().map_err(WorkflowError::Io)?;
     let slash = c"/";
     // SAFETY: slash is static and the returned descriptor is owned below.
     let fd = unsafe {
@@ -654,9 +660,9 @@ fn open_absolute_directory(path: &Path) -> WorkflowResult<File> {
     for component in path.components() {
         let Component::RootDir = component else {
             let Component::Normal(name) = component else {
-                return Err(identity_drift(path, "invalid absolute path component"));
+                return Err(identity_drift(&path, "invalid absolute path component"));
             };
-            let name = CString::new(name.as_bytes()).map_err(|_| identity_drift(path, "NUL"))?;
+            let name = CString::new(name.as_bytes()).map_err(|_| identity_drift(&path, "NUL"))?;
             // SAFETY: the held descriptor and name remain valid for this call.
             let fd = unsafe {
                 libc::openat(
@@ -874,7 +880,7 @@ fn opened_windows_path(file: &File) -> WorkflowResult<PathBuf> {
     };
     if length == 0 || length as usize >= buffer.len() {
         return Err(identity_drift(
-            expected,
+            Path::new("<handle>"),
             "opened Windows path is unavailable",
         ));
     }
