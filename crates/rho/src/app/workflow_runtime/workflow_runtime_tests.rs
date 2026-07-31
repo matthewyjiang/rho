@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     io::Write as _,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -31,6 +31,88 @@ impl WorkflowNodeExecutor for CountingExecutor {
 
 struct CancellationExecutor {
     started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+struct NeverCompletingAgentExecutor {
+    cancelled: AtomicBool,
+}
+
+impl super::agent::AgentCleanupHandle for NeverCompletingAgentExecutor {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn wait(&mut self) -> super::agent::AgentCleanupFuture<'_> {
+        Box::pin(std::future::pending())
+    }
+}
+
+struct UncertainCleanupExecutor {
+    started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    cleanup_started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release_cleanup: Arc<tokio::sync::Notify>,
+}
+
+impl WorkflowNodeExecutor for UncertainCleanupExecutor {
+    fn execute<'a>(&'a self, request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a> {
+        Box::pin(async move {
+            if let Some(started) = self.started.lock().unwrap().take() {
+                let _ = started.send(());
+            }
+            request.cancellation.cancelled().await;
+            if let Some(cleanup_started) = self.cleanup_started.lock().unwrap().take() {
+                let _ = cleanup_started.send(());
+            }
+            self.release_cleanup.notified().await;
+            Err(RuntimeError::CleanupUncertain {
+                cause: CleanupCause::Cancellation,
+            })
+        })
+    }
+}
+
+struct SignallingSuccessfulExecutor {
+    started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+struct TimeoutCleanupExecutor;
+
+impl WorkflowNodeExecutor for TimeoutCleanupExecutor {
+    fn execute<'a>(&'a self, _request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a> {
+        Box::pin(async {
+            Err(RuntimeError::CleanupUncertain {
+                cause: CleanupCause::Timeout,
+            })
+        })
+    }
+}
+
+impl WorkflowNodeExecutor for SignallingSuccessfulExecutor {
+    fn execute<'a>(&'a self, _request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a> {
+        if let Some(started) = self.started.lock().unwrap().take() {
+            let _ = started.send(());
+        }
+        Box::pin(async { Ok(NodeExecutionResult::terminal(NodeTerminalState::Success)) })
+    }
+}
+
+#[cfg(unix)]
+struct AllowCommandHosts;
+
+#[cfg(unix)]
+impl CommandHostFactory for AllowCommandHosts {
+    fn create(
+        &self,
+        tool: crate::tools::process::WorkflowCommandTool,
+        labels: rho_sdk::hooks::HookHostLabels,
+    ) -> Result<rho_sdk::ToolHost, RuntimeError> {
+        rho_sdk::ToolHost::builder()
+            .tool(tool)
+            .workspace_policy(crate::app::policy::AppPolicy::Allow)
+            .hook_host_labels(labels)
+            .build()
+            .map_err(|error| RuntimeError::Executor(error.to_string()))
+    }
 }
 
 impl WorkflowNodeExecutor for CancellationExecutor {
@@ -154,6 +236,46 @@ fn cancellation_workflow() -> FrozenWorkflow {
     workflow.resolved_nodes.insert(
         node_id("report"),
         workflow.resolved_nodes[&node_id("inspect")].clone(),
+    );
+    workflow.graph_digest = graph_digest(&workflow).unwrap();
+    workflow
+}
+
+#[cfg(unix)]
+fn command_workflow(
+    workspace: &std::path::Path,
+    ready_fifo: &std::path::Path,
+    marker: &std::path::Path,
+) -> FrozenWorkflow {
+    let mut workflow = test_workflow();
+    let executable = std::path::Path::new("/bin/sh").canonicalize().unwrap();
+    let cwd = workspace.canonicalize().unwrap();
+    let quote = |path: &std::path::Path| shell_words::quote(&path.to_string_lossy()).into_owned();
+    let script = format!(
+        "if test -f {marker}; then printf resumed; printf done >&2; exit 0; fi; \
+         : > {marker}; printf first; printf err >&2; printf x > {fifo}; while :; do :; done",
+        marker = quote(marker),
+        fifo = quote(ready_fifo),
+    );
+    let node = workflow.graph.nodes.get_mut(&node_id("inspect")).unwrap();
+    node.execution = NodeExecution::Command(CommandNode::Shell {
+        executable: executable.to_string_lossy().into_owned(),
+        arguments: vec!["-c".into()],
+        command: script,
+        cwd: ".".into(),
+        output: None,
+    });
+    node.max_output_bytes = 4;
+    workflow.resolved_nodes.insert(
+        node_id("inspect"),
+        ResolvedNode::Command(Box::new(ResolvedCommand {
+            executable: executable.to_string_lossy().into_owned(),
+            executable_identity: freeze_executable_identity(&executable).unwrap(),
+            exact_path: true,
+            cwd: cwd.to_string_lossy().into_owned(),
+            cwd_identity: freeze_directory_identity(&cwd).unwrap(),
+            environment_policy: "empty".into(),
+        })),
     );
     workflow.graph_digest = graph_digest(&workflow).unwrap();
     workflow
@@ -327,16 +449,16 @@ async fn terminal_completion_recovers_at_each_crash_point() {
                 ..AttemptArtifacts::default()
             },
         };
-        std::fs::write(
-            attempt_directory.join("status.json"),
-            serde_json::to_vec(&AttemptRecord {
+        super::artifacts::write_json(
+            &run_directory,
+            &attempt_directory.join("status.json"),
+            &AttemptRecord {
                 schema_version: ATTEMPT_VERSION,
                 attempt,
                 state: AttemptState::Completed {
                     completion: Box::new(completion.clone()),
                 },
-            })
-            .unwrap(),
+            },
         )
         .unwrap();
         append_fixture_event(
@@ -357,8 +479,7 @@ async fn terminal_completion_recovers_at_each_crash_point() {
         };
         let finished_event = WorkflowEvent::NodeFinished {
             node,
-            attempt: Some(attempt),
-            outcome: completion.outcome,
+            completion: Box::new(completion.clone()),
         };
         match point {
             CompletionCrashPoint::TerminalAttempt => {}
@@ -499,6 +620,54 @@ async fn runner_persists_successful_attempt() {
     );
 }
 
+// Covers: replacing mutable attempt status after NodeFinished must not change load or resume.
+// Owner: workflow journal completion binding.
+#[tokio::test]
+async fn attempt_status_substitution_cannot_change_journal_completion() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let run = create_run(home.path(), workspace.path());
+    let completed = runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
+        .drive(run.manifest.run_id, RecoveryDecision::NormalResume, None)
+        .await
+        .unwrap();
+    let attempt = AttemptNumber::new(1).unwrap();
+    let status = home
+        .path()
+        .join("workflows/runs")
+        .join(run.manifest.run_id.to_string())
+        .join("nodes/inspect/attempts/1/status.json");
+    std::fs::write(
+        status,
+        serde_json::to_vec(&AttemptRecord {
+            schema_version: ATTEMPT_VERSION,
+            attempt,
+            state: AttemptState::Completed {
+                completion: Box::new(NodeCompletion {
+                    attempt: Some(attempt),
+                    ..NodeCompletion::terminal(NodeTerminalState::Failure)
+                }),
+            },
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    let loaded = WorkflowStore::new(home.path())
+        .unwrap()
+        .load_run(run.manifest.run_id)
+        .unwrap();
+    assert_eq!(loaded.state, completed.state);
+    let executor = Arc::new(CountingExecutor(AtomicUsize::new(0)));
+    let executor_trait: Arc<dyn WorkflowNodeExecutor> = executor.clone();
+    let resumed = runner(home.path(), workspace.path(), executor_trait)
+        .drive(run.manifest.run_id, RecoveryDecision::NormalResume, None)
+        .await
+        .unwrap();
+    assert_eq!(executor.0.load(Ordering::SeqCst), 0);
+    assert_eq!(resumed.state, completed.state);
+}
+
 // Covers: artifact writes must not follow a substituted parent or final symlink.
 // Owner: durable workflow artifact storage.
 #[cfg(unix)]
@@ -624,6 +793,323 @@ async fn cross_process_request_cancels_active_node() {
     );
 }
 
+// Covers: concurrent cancellation retries must name one durable request rather
+// than replace a receipt that the runner can no longer acknowledge.
+// Owner: durable workflow cancellation request creation.
+#[tokio::test]
+async fn concurrent_cancellation_requests_share_the_active_receipt() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let run = create_run(home.path(), workspace.path());
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let request = |barrier: Arc<std::sync::Barrier>| {
+        let home = home.path().to_owned();
+        let run_id = run.manifest.run_id;
+        tokio::task::spawn_blocking(move || {
+            barrier.wait();
+            WorkflowRunner::request_cross_process_cancel(&home, run_id).unwrap()
+        })
+    };
+    let first = request(Arc::clone(&barrier));
+    let second = request(Arc::clone(&barrier));
+    barrier.wait();
+    let (first, second) = tokio::join!(first, second);
+
+    assert_eq!(first.unwrap(), second.unwrap());
+}
+
+// Covers: an agent cleanup that cannot confirm termination must stay bounded,
+// retain exclusion while cleanup runs, persist uncertainty, and require a
+// recovery confirmation before its exact cancellation receipt is acknowledged.
+// Owner: durable workflow agent cancellation cleanup.
+#[tokio::test]
+async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
+    for (reason, expected_cause) in [
+        (
+            super::agent::AgentStopReason::Cancellation,
+            CleanupCause::Cancellation,
+        ),
+        (
+            super::agent::AgentStopReason::Timeout,
+            CleanupCause::Timeout,
+        ),
+    ] {
+        let mut never_completes = NeverCompletingAgentExecutor {
+            cancelled: AtomicBool::new(false),
+        };
+        let cleanup =
+            super::agent::stop_agent(&mut never_completes, reason, std::time::Duration::ZERO).await;
+        assert!(matches!(
+            cleanup,
+            Err(RuntimeError::CleanupUncertain { cause }) if cause == expected_cause
+        ));
+        assert!(never_completes.cancelled.load(Ordering::SeqCst));
+    }
+
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let run = create_run(home.path(), workspace.path());
+    let competing_run = create_run(home.path(), workspace.path());
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (cleanup_started_tx, cleanup_started_rx) = tokio::sync::oneshot::channel();
+    let release_cleanup = Arc::new(tokio::sync::Notify::new());
+    let executor = Arc::new(UncertainCleanupExecutor {
+        started: std::sync::Mutex::new(Some(started_tx)),
+        cleanup_started: std::sync::Mutex::new(Some(cleanup_started_tx)),
+        release_cleanup: Arc::clone(&release_cleanup),
+    });
+    let active_runner = Arc::new(runner(home.path(), workspace.path(), executor));
+    let worker_runner = Arc::clone(&active_runner);
+    let run_id = run.manifest.run_id;
+    let worker = tokio::spawn(async move {
+        worker_runner
+            .drive(run_id, RecoveryDecision::NormalResume, None)
+            .await
+    });
+
+    started_rx.await.unwrap();
+    let receipt = active_runner
+        .cancellation_request(run_id)
+        .request()
+        .unwrap();
+    cleanup_started_rx.await.unwrap();
+    let retry = WorkflowRunner::request_cross_process_cancel(home.path(), run_id).unwrap();
+    assert_eq!(retry, receipt);
+    assert!(matches!(
+        active_runner
+            .drive(run_id, RecoveryDecision::NormalResume, None)
+            .await,
+        Err(RuntimeError::ActiveOwner)
+    ));
+
+    let (competing_executor_tx, mut competing_executor_rx) = tokio::sync::oneshot::channel();
+    let competing_executor = Arc::new(SignallingSuccessfulExecutor {
+        started: std::sync::Mutex::new(Some(competing_executor_tx)),
+    });
+    let competing_runner = Arc::new(runner(home.path(), workspace.path(), competing_executor));
+    let (competing_events_tx, mut competing_events_rx) = tokio::sync::mpsc::unbounded_channel();
+    let competing_run_id = competing_run.manifest.run_id;
+    let competing_worker = tokio::spawn(async move {
+        competing_runner
+            .drive(
+                competing_run_id,
+                RecoveryDecision::NormalResume,
+                Some(competing_events_tx),
+            )
+            .await
+    });
+    loop {
+        if matches!(
+            competing_events_rx.recv().await,
+            Some(RuntimeEvent::NodeStarted { .. })
+        ) {
+            break;
+        }
+    }
+    assert!(matches!(
+        competing_executor_rx.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
+
+    release_cleanup.notify_one();
+    let worker_result = worker.await.unwrap();
+    assert!(
+        matches!(worker_result, Err(RuntimeError::NeedsRecovery { .. })),
+        "unexpected cleanup result: {worker_result:?}"
+    );
+    competing_executor_rx.await.unwrap();
+    assert_eq!(
+        competing_worker.await.unwrap().unwrap().state.state.outcome,
+        Some(WorkflowOutcome::Success)
+    );
+
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let uncertain = store.load_run(run_id).unwrap();
+    assert_eq!(uncertain.state.state.lifecycle, RunLifecycle::NeedsRecovery);
+    assert_eq!(
+        uncertain.state.state.nodes[&node_id("inspect")],
+        NodeState::Running {
+            attempt: AttemptNumber::new(1).unwrap()
+        }
+    );
+    let attempt: AttemptRecord = serde_json::from_slice(
+        &std::fs::read(
+            home.path()
+                .join("workflows/runs")
+                .join(run_id.to_string())
+                .join("nodes/inspect/attempts/1/status.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        attempt.state,
+        AttemptState::InterruptedUncertain { .. }
+    ));
+    assert!(
+        !WorkflowRunner::cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap()
+    );
+    assert!(matches!(
+        runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
+            .drive(run_id, RecoveryDecision::NormalResume, None)
+            .await,
+        Err(RuntimeError::NeedsRecovery { .. })
+    ));
+
+    let resumed = runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
+        .drive(run_id, RecoveryDecision::ConfirmNoProcess, None)
+        .await
+        .unwrap();
+    assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
+    assert!(
+        WorkflowRunner::cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap()
+    );
+}
+
+// Covers: a timed-out agent with unconfirmed cleanup must require recovery
+// without creating a cancellation request or reporting a cancelled node.
+// Owner: durable workflow agent timeout cleanup.
+#[tokio::test]
+async fn uncertain_timeout_cleanup_does_not_become_cancellation() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let run = create_run(home.path(), workspace.path());
+    let run_id = run.manifest.run_id;
+
+    assert!(matches!(
+        runner(
+            home.path(),
+            workspace.path(),
+            Arc::new(TimeoutCleanupExecutor)
+        )
+        .drive(run_id, RecoveryDecision::NormalResume, None)
+        .await,
+        Err(RuntimeError::NeedsRecovery { .. })
+    ));
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let uncertain = store.load_run(run_id).unwrap();
+    assert_eq!(uncertain.state.state.lifecycle, RunLifecycle::NeedsRecovery);
+    assert!(!uncertain.state.state.cancellation_requested);
+    assert!(!store
+        .read_events(run_id)
+        .unwrap()
+        .iter()
+        .any(|record| { matches!(record.event, WorkflowEvent::CancellationRequested { .. }) }));
+
+    let resumed = runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
+        .drive(run_id, RecoveryDecision::ConfirmNoProcess, None)
+        .await
+        .unwrap();
+    assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
+}
+
+// Covers: cancelling a real process must retain both streams and its typed result across resume.
+// Owner: durable workflow command runtime.
+#[cfg(unix)]
+#[tokio::test]
+async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
+    use std::{ffi::CString, io::Read as _, os::unix::ffi::OsStrExt as _};
+
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let fifo = workspace.path().join("ready.fifo");
+    let marker = workspace.path().join("first-attempt");
+    let fifo_name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: fifo_name is a valid C string in a private test directory.
+    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+    let run = create_run_with_workflow(
+        home.path(),
+        workspace.path(),
+        command_workflow(workspace.path(), &fifo, &marker),
+    );
+    let command_executor: Arc<dyn WorkflowNodeExecutor> = Arc::new(WorkflowCommandExecutor::new(
+        rho_sdk::ProcessEnvironment::Empty,
+        Arc::new(AllowCommandHosts),
+    ));
+    let active_runner = Arc::new(WorkflowRunner::new(
+        home.path().to_owned(),
+        workspace.path().to_owned(),
+        RuntimeSecurity {
+            project_trusted: true,
+            permission_mode: crate::permission::PermissionMode::Auto,
+        },
+        Arc::new(SuccessfulExecutor),
+        Arc::clone(&command_executor),
+    ));
+    let fifo_reader = fifo.clone();
+    let ready = tokio::task::spawn_blocking(move || {
+        let mut byte = [0_u8; 1];
+        std::fs::File::open(fifo_reader)
+            .unwrap()
+            .read_exact(&mut byte)
+            .unwrap();
+        byte
+    });
+    let worker_runner = Arc::clone(&active_runner);
+    let run_id = run.manifest.run_id;
+    let worker = tokio::spawn(async move {
+        worker_runner
+            .drive(run_id, RecoveryDecision::NormalResume, None)
+            .await
+    });
+    assert_eq!(ready.await.unwrap(), [b'x']);
+    active_runner
+        .cancellation_request(run_id)
+        .request()
+        .unwrap();
+    let cancelled = worker.await.unwrap().unwrap();
+    let loaded = WorkflowStore::new(home.path())
+        .unwrap()
+        .load_run(run_id)
+        .unwrap();
+    assert_eq!(loaded.state, cancelled.state);
+    let completion = &loaded.state.state.completions[&node_id("inspect")];
+    assert_eq!(completion.command_exit, Some(CommandExit::Cancellation));
+    assert_eq!(completion.outcome, NodeTerminalState::Cancellation);
+    let stdout = completion.artifacts.stdout.as_ref().unwrap();
+    let stderr = completion.artifacts.stderr.as_ref().unwrap();
+    assert!(stdout.retained_bytes <= 4);
+    assert!(stderr.retained_bytes <= 4);
+    let run_directory = home.path().join("workflows/runs").join(run_id.to_string());
+    let command_outcome: CommandOutcome = serde_json::from_slice(
+        &std::fs::read(
+            run_directory.join(
+                &completion
+                    .artifacts
+                    .command_outcome
+                    .as_ref()
+                    .unwrap()
+                    .relative_path,
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(command_outcome.exit, CommandExit::Cancellation);
+    assert_eq!(command_outcome.stdout, *stdout);
+    assert_eq!(command_outcome.stderr, *stderr);
+
+    let resumed_runner = WorkflowRunner::new(
+        home.path().to_owned(),
+        workspace.path().to_owned(),
+        RuntimeSecurity {
+            project_trusted: true,
+            permission_mode: crate::permission::PermissionMode::Auto,
+        },
+        Arc::new(SuccessfulExecutor),
+        command_executor,
+    );
+    let resumed = resumed_runner
+        .drive(run_id, RecoveryDecision::NormalResume, None)
+        .await
+        .unwrap();
+    assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
+    assert_eq!(
+        resumed.state.state.command_exits[&node_id("inspect")],
+        CommandExit::Code { code: 0 }
+    );
+}
+
 // Covers: a flushed event after the last snapshot must replay before scheduling resumes.
 // Owner: workflow journal replay.
 #[tokio::test]
@@ -708,31 +1194,46 @@ async fn uncertain_attempt_requires_explicit_recovery() {
     let mut run = create_run(home.path(), workspace.path());
     let node = node_id("inspect");
     let attempt = AttemptNumber::new(1).unwrap();
-    run.state.state.lifecycle = RunLifecycle::Running;
-    run.state
-        .state
-        .nodes
-        .insert(node, NodeState::Running { attempt });
     let store = WorkflowStore::new(home.path()).unwrap();
-    let guard = store.lock_run(run.manifest.run_id).unwrap();
-    store.save_state(&guard, &run.state).unwrap();
-    drop(guard);
-    let attempt_directory = home
+    let run_directory = home
         .path()
         .join("workflows/runs")
-        .join(run.manifest.run_id.to_string())
-        .join("nodes/inspect/attempts/1");
-    std::fs::create_dir_all(&attempt_directory).unwrap();
-    std::fs::write(
-        attempt_directory.join("status.json"),
-        serde_json::to_vec(&AttemptRecord {
+        .join(run.manifest.run_id.to_string());
+    let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+    for event in [
+        WorkflowEvent::RunLifecycle {
+            lifecycle: RunLifecycle::Running,
+        },
+        WorkflowEvent::NodeReady { node: node.clone() },
+        WorkflowEvent::LaunchIntended {
+            node: node.clone(),
+            attempt,
+        },
+        WorkflowEvent::AttemptStarted {
+            node: node.clone(),
+            attempt,
+            owner: ExternalOwner::Process { pid: 4242 },
+        },
+    ] {
+        append_fixture_event(&store, &mut guard, &run_directory, &mut run, event);
+    }
+    drop(guard);
+    let attempt_directory = run_directory.join("nodes/inspect/attempts/1");
+    crate::workflow::ensure_directory_beneath(
+        &run_directory,
+        std::path::Path::new("nodes/inspect/attempts/1"),
+    )
+    .unwrap();
+    super::artifacts::write_json(
+        &run_directory,
+        &attempt_directory.join("status.json"),
+        &AttemptRecord {
             schema_version: ATTEMPT_VERSION,
             attempt,
             state: AttemptState::Started {
                 owner: ExternalOwner::Process { pid: 4242 },
             },
-        })
-        .unwrap(),
+        },
     )
     .unwrap();
 

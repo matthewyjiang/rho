@@ -136,7 +136,7 @@ pub(crate) fn validate_lifecycle_transition(
                 )
                 | (
                     RunLifecycle::Cancelling,
-                    RunLifecycle::Completed | RunLifecycle::Running
+                    RunLifecycle::Completed | RunLifecycle::Running | RunLifecycle::NeedsRecovery
                 )
                 | (RunLifecycle::NeedsRecovery, RunLifecycle::Running)
                 | (RunLifecycle::Completed, RunLifecycle::Running)

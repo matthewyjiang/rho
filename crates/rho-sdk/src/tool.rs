@@ -21,8 +21,8 @@ mod preparation;
 use preparation::call_prepared_for;
 pub use preparation::{
     call_prepared, AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode,
-    ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture, ToolResource,
-    ToolResourceAccess, ToolResourceKind,
+    ToolCancellationPolicy, ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture,
+    ToolResource, ToolResourceAccess, ToolResourceKind,
 };
 
 /// Future returned by [`Tool`] implementations.

@@ -1,4 +1,10 @@
-use std::{future::Future, num::NonZeroUsize, pin::Pin, sync::Arc, time::Instant};
+use std::{
+    future::Future,
+    num::NonZeroUsize,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use serde_json::Value;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -489,6 +495,8 @@ impl ToolHostWorker {
         let started = Instant::now();
         let invocation = ToolInvocation::from_host(call.id.clone(), call.arguments.clone());
         let workspace = core.workspace.clone();
+        let cancellation_cleanup_timeout = Arc::new(Mutex::new(None));
+        let execution_completion = Arc::clone(&cancellation_cleanup_timeout);
         let execution = async {
             let prepared = tool
                 .prepare(
@@ -508,15 +516,23 @@ impl ToolHostWorker {
                         }
                     })?;
             }
+            *execution_completion
+                .lock()
+                .expect("tool cancellation policy lock") = match prepared.cancellation_policy() {
+                crate::tool::ToolCancellationPolicy::Abort => None,
+                crate::tool::ToolCancellationPolicy::Complete { timeout } => Some(timeout),
+            };
             prepared.execute(context).await
         };
         tokio::pin!(execution);
         let mut progress_open = true;
         let mut host_input_open = true;
+        let mut cancellation_deferred = false;
+        let mut cancellation_cleanup_deadline: Option<Pin<Box<tokio::time::Sleep>>> = None;
         let result = loop {
             tokio::select! {
                 biased;
-                next = progress.recv(), if progress_open => {
+                next = progress.recv(), if progress_open && !cancellation.is_cancelled() => {
                     if let Some(progress) = next {
                         if !send_event(&events, ToolHostEvent::Progress(progress), &cancellation).await {
                             break Err(ToolError::cancelled());
@@ -525,7 +541,7 @@ impl ToolHostWorker {
                         progress_open = false;
                     }
                 }
-                next = host_input.recv(), if host_input_open => {
+                next = host_input.recv(), if host_input_open && !cancellation.is_cancelled() => {
                     if let Some(envelope) = next {
                         let pending = PendingToolHostInput {
                             request: envelope.request,
@@ -545,7 +561,31 @@ impl ToolHostWorker {
                     }
                 }
                 result = &mut execution => break result,
-                () = cancellation.cancelled() => break Err(ToolError::cancelled()),
+                () = async {
+                    cancellation_cleanup_deadline
+                        .as_mut()
+                        .expect("guarded cancellation cleanup deadline")
+                        .await
+                }, if cancellation_cleanup_deadline.is_some() => {
+                    let timeout = cancellation_cleanup_timeout
+                        .lock()
+                        .expect("tool cancellation policy lock")
+                        .expect("cleanup deadline requires a timeout");
+                    break Err(ToolError::new(
+                        ToolErrorKind::Cancelled,
+                        format!("tool cancellation cleanup exceeded {timeout:?}"),
+                    ));
+                }
+                () = cancellation.cancelled(), if !cancellation_deferred => {
+                    let timeout = *cancellation_cleanup_timeout
+                        .lock()
+                        .expect("tool cancellation policy lock");
+                    let Some(timeout) = timeout else {
+                        break Err(ToolError::cancelled());
+                    };
+                    cancellation_cleanup_deadline = Some(Box::pin(tokio::time::sleep(timeout)));
+                    cancellation_deferred = true;
+                }
             }
         };
         while let Some(update) = progress.try_recv() {

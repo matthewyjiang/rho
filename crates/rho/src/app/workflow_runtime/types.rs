@@ -81,6 +81,12 @@ pub(crate) enum RuntimeEvent {
     Completed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CleanupCause {
+    Cancellation,
+    Timeout,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RuntimeError {
     #[error(transparent)]
@@ -101,6 +107,8 @@ pub(crate) enum RuntimeError {
     Denied(String),
     #[error("workflow operation was cancelled")]
     Cancelled,
+    #[error("workflow executor cleanup did not confirm termination after {cause:?}")]
+    CleanupUncertain { cause: CleanupCause },
     #[error("workflow artifact path is unsafe: {0}")]
     UnsafeArtifact(PathBuf),
     #[error("workflow runtime I/O failed: {0}")]

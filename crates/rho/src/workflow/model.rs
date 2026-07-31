@@ -172,9 +172,9 @@ pub(crate) enum Condition {
     },
 }
 
-// Receipt: this matches the existing planning condition-depth budget, so
-// stored data cannot bypass the planning contract.
-pub(crate) const CONDITION_DEPTH_LIMIT: usize = 20;
+// Receipt: limit_receipt.json planning.accepted.condition_depth. This matches
+// the planning budget, so stored data cannot bypass the planning contract.
+pub(crate) const CONDITION_DEPTH_LIMIT: usize = 2;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

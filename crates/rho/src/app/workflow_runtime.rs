@@ -27,8 +27,8 @@ pub(crate) use checkout_gate::CheckoutGate;
 pub(crate) use command::{CommandHostFactory, WorkflowCommandExecutor};
 pub(crate) use runner::{RecoveryDecision, WorkflowRunner};
 pub(crate) use types::{
-    NodeExecutionRequest, NodeExecutionResult, RuntimeError, RuntimeEvent, RuntimeSecurity,
-    WorkflowExecutionFuture, WorkflowNodeExecutor,
+    CleanupCause, NodeExecutionRequest, NodeExecutionResult, RuntimeError, RuntimeEvent,
+    RuntimeSecurity, WorkflowExecutionFuture, WorkflowNodeExecutor,
 };
 
 #[cfg(test)]

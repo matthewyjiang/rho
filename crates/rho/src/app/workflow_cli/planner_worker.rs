@@ -3,9 +3,24 @@
 use super::*;
 
 pub(crate) fn planning_limits() -> WorkflowResult<PlanningLimits> {
-    // These are the measured acceptance values recorded by the workflow foundation
-    // prototype. Keep the receipt with every limit until a config-backed profile exists.
     PlanningLimits::from_measurements(planning_measurements())
+}
+
+#[derive(Deserialize)]
+struct WorkflowLimitReceipt {
+    cancellation: CancellationLimitReceipt,
+    planning: PlanningLimitReceipt,
+}
+
+#[derive(Deserialize)]
+struct CancellationLimitReceipt {
+    accepted_acknowledgement_millis: u64,
+    poll_millis: u64,
+}
+
+#[derive(Deserialize)]
+struct PlanningLimitReceipt {
+    accepted: PlanningMeasurements,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -21,6 +36,8 @@ struct PlannerWorkerRequest {
 pub(super) struct PlannerWorkerPlan {
     pub(super) graph: crate::workflow::WorkflowGraph,
     pub(super) inputs: BTreeMap<InputName, WorkflowValue>,
+    pub(super) evaluator_ticks: u64,
+    pub(super) evaluator_peak_heap_bytes: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,41 +47,22 @@ struct PlannerWorkerResponse {
 }
 
 fn planning_measurements() -> PlanningMeasurements {
-    PlanningMeasurements {
-        receipt: "workflow foundation prototype acceptance profile".to_owned(),
-        total_source_bytes: 1_000_000,
-        module_count: 100,
-        module_depth: 20,
-        evaluator_ticks: 1_000_000,
-        evaluator_heap_bytes: 64_000_000,
-        call_stack_depth: 100,
-        string_bytes: 1_000_000,
-        list_items: 10_000,
-        dict_items: 10_000,
-        input_depth: 20,
-        input_bytes: 1_000_000,
-        node_count: 1_000,
-        edge_count: 10_000,
-        condition_depth: crate::workflow::CONDITION_DEPTH_LIMIT as u64,
-        schema_depth: 20,
-        schema_bytes: 1_000_000,
-        graph_bytes: 10_000_000,
-        worker_wall_millis: 10_000,
-        // Receipt: one process stream measured at 8 MiB; commands have two streams.
-        retained_output_per_stream_bytes: 8 * 1024 * 1024,
-        // Receipt: four command slots times two streams times 8 MiB.
-        retained_output_total_bytes: 4 * 2 * 8 * 1024 * 1024,
-        // Receipt: half of one retained stream leaves equal space for render growth.
-        rendered_template_bytes: 4 * 1024 * 1024,
-        // Receipt: the accepted long-running workflow fixture completes within one day.
-        node_timeout_seconds: 24 * 60 * 60,
-        // Receipt: one retained stream bounds a fully expanded agent prompt.
-        prompt_expansion_bytes: 8 * 1024 * 1024,
-        // Receipt: one retained stream bounds all expanded argv strings for one process.
-        argv_expansion_bytes: 8 * 1024 * 1024,
-        // Receipt: schema v1 permits zero source-controlled environment bytes.
-        environment_expansion_bytes: 1,
-    }
+    workflow_limit_receipt().planning.accepted
+}
+
+pub(super) fn cancellation_acknowledgement_limit_millis() -> u64 {
+    workflow_limit_receipt()
+        .cancellation
+        .accepted_acknowledgement_millis
+}
+
+pub(super) fn cancellation_acknowledgement_poll_millis() -> u64 {
+    workflow_limit_receipt().cancellation.poll_millis
+}
+
+fn workflow_limit_receipt() -> WorkflowLimitReceipt {
+    serde_json::from_str(include_str!("../../workflow/fixtures/limit_receipt.json"))
+        .expect("checked-in workflow limit receipt must match its schema")
 }
 
 pub(super) async fn run_supervised_planner(
@@ -170,6 +168,8 @@ pub(crate) async fn run_planner_worker() -> anyhow::Result<()> {
             plan: Some(PlannerWorkerPlan {
                 graph: planned.graph,
                 inputs: planned.inputs,
+                evaluator_ticks: planned.ticks,
+                evaluator_peak_heap_bytes: planned.peak_heap_bytes,
             }),
             error: None,
         },

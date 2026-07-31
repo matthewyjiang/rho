@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::{self, IsTerminal, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
@@ -36,23 +36,28 @@ use super::{
     workflow_runtime::WorkflowRunner,
 };
 
+#[path = "workflow_cli/cancel.rs"]
+mod cancel;
 #[path = "workflow_cli/runtime.rs"]
 mod runtime;
 #[path = "workflow_cli/tool_service.rs"]
 mod tool_service;
 
+use cancel::run_cancel;
+#[cfg(test)]
+use cancel::{cancellation_state, wait_for_cancellation_ack};
+pub(super) use cancel::{request_cancellation, CancellationState};
 pub(super) use tool_service::workflow_tool_service;
 
 const PLANNER_WORKER_ENV: &str = "RHO_WORKFLOW_PLANNER_WORKER";
 // Receipt: a 256-bit bearer token gives the internal one-shot channel 256 bits of entropy.
 const PLANNER_TOKEN_BYTES: usize = 32;
-// Receipt: JSON can escape each source/input byte as six bytes; 2 MiB * 6 plus 4 MiB framing room.
+// Receipts: limit_receipt.json planner_process.request_frame_bytes,
+// response_frame_bytes, stderr_bytes, and address_space_bytes. Reproduce them
+// with scripts/measure_workflow_limits.py.
 const PLANNER_REQUEST_FRAME_BYTES: u64 = 16 * 1024 * 1024;
-// Receipt: the 10 MB graph budget plus 6 MiB for the response envelope and diagnostics.
 const PLANNER_RESPONSE_FRAME_BYTES: u64 = 16 * 1024 * 1024;
-// Receipt: 64 KiB retains the worker's bounded startup and one planning diagnostic.
 const PLANNER_STDERR_BYTES: usize = 64 * 1024;
-// Receipt: 16 times the 64 MB evaluator heap covers binary mappings plus four bounded data copies.
 #[cfg(any(unix, windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 16 * 64 * 1024 * 1024;
 const PLANNER_FORMAT_VERSION: u32 = 1;
@@ -86,7 +91,7 @@ pub(super) async fn run(command: &WorkflowCommand, cli: &Cli) -> anyhow::Result<
             output,
         } => run_frozen_plan(plan_id, *yes, *output, cli.config.clone()).await,
         WorkflowCommand::Status { run_id, output } => run_status(run_id, *output),
-        WorkflowCommand::Cancel { run_id } => run_cancel(run_id),
+        WorkflowCommand::Cancel { run_id } => run_cancel(run_id).await,
         WorkflowCommand::Resume {
             run_id,
             yes,
@@ -249,6 +254,15 @@ async fn prepare_plan_from_sources(
 ) -> anyhow::Result<PreparedPlan> {
     let planned = run_supervised_planner(&sources, supplied_inputs, limits).await?;
     let resolved_nodes = resolve_nodes(&planned.graph, config, workspace, available_tools)?;
+    freeze_planned_workflow(sources, planned, resolved_nodes, limits)
+}
+
+fn freeze_planned_workflow(
+    sources: CollectedSources,
+    planned: planner_worker::PlannerWorkerPlan,
+    resolved_nodes: BTreeMap<crate::workflow::NodeId, ResolvedNode>,
+    limits: &PlanningLimits,
+) -> anyhow::Result<PreparedPlan> {
     let workflow = normalize_workflow(FrozenWorkflow {
         schema_version: FROZEN_WORKFLOW_SCHEMA_VERSION,
         planner: PlannerIdentity {
@@ -306,6 +320,52 @@ fn resolve_nodes(
     available_tools: &crate::agent::AgentCapabilities,
 ) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
     let catalog = crate::agent::AgentCatalog::discover(workspace)?;
+    resolve_nodes_with_catalog(graph, config, workspace, available_tools, &catalog)
+}
+
+fn resolve_nodes_with_catalog(
+    graph: &crate::workflow::WorkflowGraph,
+    config: &crate::config::Config,
+    workspace: &Path,
+    available_tools: &crate::agent::AgentCapabilities,
+    catalog: &crate::agent::AgentCatalog,
+) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
+    resolve_nodes_with_catalog_and_executables(
+        graph,
+        config,
+        workspace,
+        available_tools,
+        catalog,
+        None,
+    )
+}
+
+fn resolve_nodes_with_authorized_executables(
+    graph: &crate::workflow::WorkflowGraph,
+    config: &crate::config::Config,
+    workspace: &Path,
+    available_tools: &crate::agent::AgentCapabilities,
+    catalog: &crate::agent::AgentCatalog,
+    executables: &BTreeMap<String, crate::workflow::ExecutableIdentity>,
+) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
+    resolve_nodes_with_catalog_and_executables(
+        graph,
+        config,
+        workspace,
+        available_tools,
+        catalog,
+        Some(executables),
+    )
+}
+
+fn resolve_nodes_with_catalog_and_executables(
+    graph: &crate::workflow::WorkflowGraph,
+    config: &crate::config::Config,
+    workspace: &Path,
+    available_tools: &crate::agent::AgentCapabilities,
+    catalog: &crate::agent::AgentCatalog,
+    authorized_executables: Option<&BTreeMap<String, crate::workflow::ExecutableIdentity>>,
+) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
     graph
         .nodes
         .iter()
@@ -321,7 +381,12 @@ fn resolve_nodes(
                         },
                         config,
                     )?;
-                    ResolvedNode::Agent(Box::new(resolve_agent(entry, bound, workspace)?))
+                    ResolvedNode::Agent(Box::new(resolve_agent(
+                        entry,
+                        bound,
+                        workspace,
+                        authorized_executables,
+                    )?))
                 }
                 NodeExecution::Command(command) => {
                     let (executable, cwd) = match command {
@@ -336,10 +401,25 @@ fn resolve_nodes(
                     if !cwd_path.starts_with(workspace) {
                         anyhow::bail!("command node '{id}' cwd is outside the workspace");
                     }
-                    let executable = resolve_executable(executable, workspace)?;
+                    let (executable_path, executable_identity) =
+                        if let Some(identities) = authorized_executables {
+                            let identity = identities.get(executable).ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "authorized executable identity is missing for '{executable}'"
+                                )
+                            })?;
+                            (
+                                PathBuf::from(&identity.file.canonical_path),
+                                identity.clone(),
+                            )
+                        } else {
+                            let path = resolve_executable(executable, workspace)?;
+                            let identity = freeze_executable_identity(&path)?;
+                            (path, identity)
+                        };
                     ResolvedNode::Command(Box::new(ResolvedCommand {
-                        executable_identity: freeze_executable_identity(&executable)?,
-                        executable: crate::paths::display(&executable),
+                        executable_identity,
+                        executable: crate::paths::display(&executable_path),
                         exact_path: true,
                         cwd: crate::paths::display(&cwd_path),
                         cwd_identity: freeze_directory_identity(&cwd_path)?,
@@ -356,6 +436,7 @@ fn resolve_agent(
     entry: &crate::agent::AgentCatalogEntry,
     bound: super::agent_binding::BoundAgent,
     workspace: &Path,
+    authorized_executables: Option<&BTreeMap<String, crate::workflow::ExecutableIdentity>>,
 ) -> anyhow::Result<ResolvedAgent> {
     let source_origin = match entry.metadata.origin {
         AgentOrigin::Internal => "internal",
@@ -419,7 +500,20 @@ fn resolve_agent(
             max_turns,
             effort,
         } => {
-            let executable = resolve_executable("claude", workspace)?;
+            let (executable, executable_identity) = if let Some(identities) = authorized_executables
+            {
+                let identity = identities.get("claude").ok_or_else(|| {
+                    anyhow::anyhow!("authorized executable identity is missing for 'claude'")
+                })?;
+                (
+                    PathBuf::from(&identity.file.canonical_path),
+                    identity.clone(),
+                )
+            } else {
+                let executable = resolve_executable("claude", workspace)?;
+                let identity = freeze_executable_identity(&executable)?;
+                (executable, identity)
+            };
             let plan = crate::claude_runtime::spawn::build_spawn_plan(
                 &crate::claude_runtime::spawn::ClaudeSpawnRequest {
                     system_prompt: entry.definition.prompt.clone(),
@@ -438,7 +532,7 @@ fn resolve_agent(
                 step_limit: *max_turns,
                 capabilities: tools.iter().cloned().collect(),
                 executable: Some(crate::paths::display(&executable)),
-                executable_identity: Some(freeze_executable_identity(&executable)?),
+                executable_identity: Some(executable_identity),
                 arguments: plan.args,
                 ..common
             }
@@ -708,41 +802,6 @@ fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()
             Ok(())
         }
     }
-}
-
-#[derive(Serialize)]
-struct CancelDocument {
-    run_id: String,
-    cancellation_requested: bool,
-    owner_acknowledged: bool,
-    lifecycle: RunLifecycle,
-}
-
-fn run_cancel(prefix: &str) -> anyhow::Result<()> {
-    let service = workflow_service()?;
-    let run_id = service.store().resolve_run(prefix)?;
-    let run = service.store().load_run(run_id)?;
-    if run.state.state.lifecycle == RunLifecycle::Completed {
-        return write_json_document(&CancelDocument {
-            run_id: run_id.to_string(),
-            cancellation_requested: run.state.state.cancellation_requested,
-            owner_acknowledged: WorkflowRunner::cross_process_cancel_acknowledged(
-                &crate::paths::rho_dir()?,
-                run_id,
-            )?,
-            lifecycle: RunLifecycle::Completed,
-        });
-    }
-    let rho_home = crate::paths::rho_dir()?;
-    let receipt = WorkflowRunner::request_cross_process_cancel(&rho_home, run_id)?;
-    write_json_document(&CancelDocument {
-        run_id: run_id.to_string(),
-        cancellation_requested: true,
-        owner_acknowledged: WorkflowRunner::cancellation_request_acknowledged(
-            &rho_home, run_id, &receipt,
-        )?,
-        lifecycle: run.state.state.lifecycle,
-    })
 }
 
 async fn run_resume(

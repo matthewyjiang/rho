@@ -486,7 +486,7 @@ impl WorkflowEventAdapter for RunnerTuiAdapter {
         Box::pin(async move {
             match action {
                 WorkflowAction::Cancel => {
-                    self.runner.cancellation_request(self.run_id).request()?
+                    self.runner.cancellation_request(self.run_id).request()?;
                 }
                 WorkflowAction::ConfirmPlan | WorkflowAction::ConfirmResume => {
                     anyhow::bail!("the workflow plan was already confirmed")

@@ -287,6 +287,18 @@ pub enum ToolExecutionPolicy {
     Exclusive,
 }
 
+/// Controls what the host does with an authorized tool future after cancellation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolCancellationPolicy {
+    /// Drop the tool future as soon as cancellation is observed.
+    #[default]
+    Abort,
+    /// Let the tool future return within the given cleanup deadline after it
+    /// observes cancellation.
+    Complete { timeout: std::time::Duration },
+}
+
 impl ToolExecutionPolicy {
     pub fn resource_aware(accesses: impl IntoIterator<Item = ToolResourceAccess>) -> Self {
         Self::ResourceAware {
@@ -318,6 +330,7 @@ enum ToolExecutor<'a> {
 /// capabilities after the coordinator authorizes `capabilities()`.
 pub struct PreparedToolInvocation<'a> {
     execution: ToolExecutionPolicy,
+    cancellation: ToolCancellationPolicy,
     capabilities: Vec<CapabilityRequest>,
     metadata: ToolMetadata,
     executor: ToolExecutor<'a>,
@@ -333,6 +346,7 @@ impl<'a> PreparedToolInvocation<'a> {
     {
         Self {
             execution: ToolExecutionPolicy::Exclusive,
+            cancellation: ToolCancellationPolicy::Abort,
             capabilities: Vec::new(),
             metadata,
             executor: ToolExecutor::Exclusive(Box::new(executor)),
@@ -355,6 +369,7 @@ impl<'a> PreparedToolInvocation<'a> {
     {
         Self {
             execution: ToolExecutionPolicy::Exclusive,
+            cancellation: ToolCancellationPolicy::Abort,
             capabilities: capabilities.into_iter().collect(),
             metadata,
             executor: ToolExecutor::Exclusive(Box::new(executor)),
@@ -393,6 +408,7 @@ impl<'a> PreparedToolInvocation<'a> {
     {
         Self {
             execution: ToolExecutionPolicy::resource_aware(accesses),
+            cancellation: ToolCancellationPolicy::Abort,
             capabilities: capabilities.into_iter().collect(),
             metadata,
             executor: ToolExecutor::ResourceAware(Box::new(executor)),
@@ -402,6 +418,19 @@ impl<'a> PreparedToolInvocation<'a> {
 
     pub fn execution_policy(&self) -> &ToolExecutionPolicy {
         &self.execution
+    }
+
+    /// Keeps this authorized tool future alive until it completes after cancellation.
+    ///
+    /// Use this only when the executor has a measured cleanup bound and must
+    /// return typed final data produced during cleanup.
+    pub fn complete_after_cancellation(mut self, timeout: std::time::Duration) -> Self {
+        self.cancellation = ToolCancellationPolicy::Complete { timeout };
+        self
+    }
+
+    pub(crate) fn cancellation_policy(&self) -> ToolCancellationPolicy {
+        self.cancellation
     }
 
     pub fn capabilities(&self) -> &[CapabilityRequest] {

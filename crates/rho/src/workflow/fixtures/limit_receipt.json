@@ -1,0 +1,135 @@
+{
+  "schema_version": 2,
+  "measurement_command": "CARGO_BUILD_JOBS=12 cargo build -p rho-coding-agent --locked && python3 scripts/measure_workflow_limits.py --rho target/debug/rho",
+  "corpus_generator": "scripts/workflow_limit_corpus.py",
+  "measurement_environment": {
+    "platform": "Linux x86_64 with /proc",
+    "required_executable": "generated ./wait.sh POSIX script",
+    "clock": "time.monotonic_ns"
+  },
+  "verification": {
+    "minimum_worker_wall_margin_millis": 3000,
+    "minimum_address_space_margin_bytes": 2097152
+  },
+  "cancellation": {
+    "measurement_command": "python3 scripts/measure_workflow_cancellation.py --rho target/debug/rho --repeat 5",
+    "environment": "Linux x86_64 with pidfd_open and Unix sockets, rustc on PATH, no other process uses the temporary RHO_HOME",
+    "repeat_count": 5,
+    "poll_millis": 20,
+    "measured_acknowledgement_millis": 33,
+    "margin_millis": 1967,
+    "accepted_acknowledgement_millis": 2000,
+    "measured_final_process_cleanup_millis": 33,
+    "final_process_cleanup_margin_millis": 1967,
+    "accepted_final_process_cleanup_millis": 2000,
+    "measured_host_cancellation_completion_millis": 33,
+    "host_cancellation_completion_margin_millis": 2467,
+    "accepted_host_cancellation_completion_millis": 2500
+  },
+  "planning": {
+    "measured": {
+      "total_source_bytes": 750000,
+      "module_count": 75,
+      "module_depth": 15,
+      "evaluator_ticks": 750019,
+      "evaluator_heap_bytes": 50334528,
+      "call_stack_depth": 15,
+      "string_bytes": 750000,
+      "list_items": 7500,
+      "dict_items": 7501,
+      "input_depth": 1,
+      "input_bytes": 749914,
+      "node_count": 750,
+      "edge_count": 7500,
+      "condition_depth": 1,
+      "schema_depth": 5,
+      "schema_bytes": 756418,
+      "graph_bytes": 7515347,
+      "worker_wall_millis": 3494,
+      "retained_output_per_stream_bytes": 6291456,
+      "retained_output_total_bytes": 50331648,
+      "rendered_template_bytes": 3145728,
+      "node_timeout_seconds": 64800,
+      "prompt_expansion_bytes": 3902146,
+      "argv_expansion_bytes": 6291409,
+      "environment_expansion_bytes": 0
+    },
+    "margin": {
+      "total_source_bytes": 250000,
+      "module_count": 25,
+      "module_depth": 5,
+      "evaluator_ticks": 249981,
+      "evaluator_heap_bytes": 13665472,
+      "call_stack_depth": 10,
+      "string_bytes": 250000,
+      "list_items": 2500,
+      "dict_items": 2499,
+      "input_depth": 19,
+      "input_bytes": 250086,
+      "node_count": 250,
+      "edge_count": 2500,
+      "condition_depth": 1,
+      "schema_depth": 1,
+      "schema_bytes": 243582,
+      "graph_bytes": 2484653,
+      "worker_wall_millis": 6506,
+      "retained_output_per_stream_bytes": 2097152,
+      "retained_output_total_bytes": 16777216,
+      "rendered_template_bytes": 1048576,
+      "node_timeout_seconds": 21600,
+      "prompt_expansion_bytes": 4486462,
+      "argv_expansion_bytes": 2097199,
+      "environment_expansion_bytes": 1
+    },
+    "accepted": {
+      "receipt": "generated workflow limit corpus; reproduce with scripts/measure_workflow_limits.py",
+      "total_source_bytes": 1000000,
+      "module_count": 100,
+      "module_depth": 20,
+      "evaluator_ticks": 1000000,
+      "evaluator_heap_bytes": 64000000,
+      "call_stack_depth": 25,
+      "string_bytes": 1000000,
+      "list_items": 10000,
+      "dict_items": 10000,
+      "input_depth": 20,
+      "input_bytes": 1000000,
+      "node_count": 1000,
+      "edge_count": 10000,
+      "condition_depth": 2,
+      "schema_depth": 6,
+      "schema_bytes": 1000000,
+      "graph_bytes": 10000000,
+      "worker_wall_millis": 10000,
+      "retained_output_per_stream_bytes": 8388608,
+      "retained_output_total_bytes": 67108864,
+      "rendered_template_bytes": 4194304,
+      "node_timeout_seconds": 86400,
+      "prompt_expansion_bytes": 8388608,
+      "argv_expansion_bytes": 8388608,
+      "environment_expansion_bytes": 1
+    }
+  },
+  "planner_process": {
+    "request_frame_bytes": {
+      "measured": 763254,
+      "margin": 16013962,
+      "accepted": 16777216
+    },
+    "response_frame_bytes": {
+      "measured": 7515451,
+      "margin": 9261765,
+      "accepted": 16777216
+    },
+    "stderr_bytes": {
+      "measured": 0,
+      "margin": 65536,
+      "accepted": 65536
+    },
+    "address_space_bytes": {
+      "measured": 1071063040,
+      "margin": 2678784,
+      "accepted": 1073741824
+    }
+  }
+}

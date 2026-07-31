@@ -114,9 +114,19 @@ cancelled.
 rho workflow cancel 0190...
 ```
 
-If no process owns the run, Rho changes only states that have a safe transition.
-If another active owner cannot acknowledge the request, the command returns a
-clear active-owner error. It does not claim that active work has stopped.
+The command waits up to the measured cancellation acknowledgement limit for the
+exact request ID. An `acknowledged` result means the owner stopped active work
+before it wrote that request's acknowledgement. A `pending` result includes the
+request ID and means the bound expired. It does not claim that active work has
+stopped. Cancelling a completed run returns `already_completed` without reusing
+an acknowledgement from an older request.
+
+```json
+{"run_id":"...","request_id":"...","cancellation_state":"pending","lifecycle":"running"}
+```
+
+If no process owns the run, the durable request stays pending. Rho changes only
+states that have a safe transition when an owner next opens the run.
 
 ### Resume
 
@@ -151,9 +161,16 @@ An agent with the `workflow` tool capability can use these typed operations:
 ```
 
 The tool uses the same application service and data store as the CLI. Validate
-and plan authorize each source read. Run and resume ask the host to confirm the
-exact graph digest and fail closed if host input is not available. Node
-capabilities are authorized separately.
+and plan authorize the exact config path, agent catalog roots and discovered
+agent files, entry source and loaded modules, planner process facts, command
+working directories, executable candidates and resolved paths, and script
+interpreter paths. Paths found during source, catalog, or executable discovery
+use normal dynamic authorization before Rho reads them. Run and resume ask the
+host to confirm the exact graph digest and fail closed if host input is not
+available. Node capabilities are authorized separately.
+
+The tool cancel result has the same `request_id` and typed
+`cancellation_state` as the CLI result.
 
 Results contain bounded diagnostics, IDs, typed state summaries, and artifact
 references. They do not return full source files or logs.
@@ -474,9 +491,13 @@ you resolve trust. Resume does not read the plan or any workflow source file.
 
 Before execution, Rho opens each frozen executable, script interpreter, and
 working directory with no-follow checks and compares its content and file
-identity with the confirmed graph. Linux execution uses the verified file
-handle. Other systems reject an identity change immediately before process
-start. A changed path fails closed and needs a new plan and confirmation.
+identity with the confirmed graph. Linux and Android launch the executable,
+script interpreter, and working directory through those verified handles, so a
+path replacement after the check cannot select another object. Frozen workflow
+command execution fails closed on other targets. Those targets do not use the
+verified original path because their current process adapter cannot keep the
+same handle-based guarantee. Workflows with only in-process Rho agent nodes
+remain available there.
 
 ## Permissions, approval, and trust
 
@@ -583,6 +604,69 @@ Planning checks named measured budgets for:
 A limit error names the budget, accepted limit, and requested or measured
 value. Runtime values do not use hidden defaults for timeout or output limits.
 Rho evaluates untrusted Starlark only in its supervised planning worker.
+
+The checked-in receipt records each corpus measurement, its free margin, and
+the accepted value. The planner reads its limits from that receipt. The corpus
+is not one small example. A deterministic generator creates separate stress
+cases for source modules, evaluator work and heap, values, a 750-node and
+7,500-edge graph, schemas and conditions, serialized graph size, runtime output,
+templates, prompts, argv, inputs, and planner process frames.
+
+Build Rho and verify the receipt with:
+
+```bash
+cargo build -p rho-coding-agent -j 12
+python3 scripts/measure_workflow_limits.py --rho target/debug/rho
+```
+
+The command runs each generated case in the product planner worker, reads the
+worker's evaluator tick and peak-heap counters, derives all graph and runtime
+values from the returned plan, and also runs the public `workflow validate`
+path. It fails if a deterministic value differs from the receipt, if a process
+frame differs, or if wall time or address space loses its stated safety margin.
+Wall time and address space use checked baselines because OS load can change
+them. The verifier allows at most twice the baseline and still requires the
+separate minimum margin recorded in the receipt.
+
+On Linux, the address-space value is the highest `/proc/<pid>/status` `VmSize`
+seen after the supervised child starts the planner worker executable. This omits
+the short period before the child applies its limit. The checked debug build
+used 1,071,063,040 bytes of its 1,073,741,824-byte limit. The verifier requires
+at least 2,097,152 free bytes. This margin is small because
+the debug allocator reserves virtual address space near the enforced limit;
+resident memory is much lower. If the worker needs more than the checked
+amount, the check reports its measured value and the hard limit.
+
+The receipt and corpus map are in
+`crates/rho/src/workflow/fixtures/limit_receipt.json` and
+`crates/rho/src/workflow/fixtures/limit_corpus.json`. The generator is
+`scripts/workflow_limit_corpus.py`. The current measured stress values include
+750,000 source bytes, 75 modules at depth 15, 750,019 evaluator ticks,
+50,334,528 evaluator heap bytes, 750 nodes, 7,500 edges, a 756,418-byte schema,
+a 7,515,347-byte graph, 6,291,456 bytes per retained stream, and 50,331,648
+total retained bytes. Read the receipt for every value and margin.
+
+### Cancellation receipt
+
+Cancellation uses a separate cross-process measurement. It starts a real
+workflow owner, waits on a Unix socket until a compiled command node is active,
+and starts a second Rho process to run `workflow cancel`. Linux `pidfd_open`
+checks that the command process has exited. Process completion, not a sleep,
+ends each wait.
+
+Run the five-sample receipt command after the build:
+
+```bash
+python3 scripts/measure_workflow_cancellation.py \
+  --rho target/debug/rho --repeat 5
+```
+
+This command needs Linux with Unix sockets and `pidfd_open`, and `rustc` on
+`PATH`. It uses a new temporary `RHO_HOME` for each sample. The checked run
+measured 33 ms for acknowledgement, final command cleanup, and workflow owner
+completion. The accepted limits are 2,000 ms, 2,000 ms, and 2,500 ms. The
+cancellation command checks both the accepted limits and twice the checked
+baseline.
 
 ## First-release limits
 

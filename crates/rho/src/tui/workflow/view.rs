@@ -341,6 +341,9 @@ fn artifact_size_label(observed: &ArtifactObservation, retained: u64) -> String 
         } => format!(
             "{retained} bytes retained, observed at least {observed_bytes_at_least}, truncated"
         ),
+        ArtifactObservation::Incomplete { observed_bytes } => {
+            format!("{retained} bytes retained, observed {observed_bytes} before cleanup ended")
+        }
     }
 }
 

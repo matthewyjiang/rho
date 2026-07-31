@@ -81,6 +81,14 @@ pub(crate) enum WorkflowRunStateSummary {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum WorkflowCancellationStateSummary {
+    Acknowledged,
+    Pending,
+    AlreadyCompleted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum WorkflowNodeStateSummary {
     Pending,
     Ready,
@@ -144,6 +152,9 @@ pub(crate) enum WorkflowToolResult {
     },
     Cancel {
         run_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+        cancellation_state: WorkflowCancellationStateSummary,
         state: WorkflowRunStateSummary,
     },
     Resume {

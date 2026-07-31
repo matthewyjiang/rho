@@ -53,6 +53,13 @@ pub struct AgentCatalog {
     internal_entries: BTreeMap<AgentId, AgentCatalogEntry>,
 }
 
+#[derive(Default)]
+pub(crate) struct AgentCatalogSources {
+    pub(crate) agents_home: Vec<(PathBuf, String)>,
+    pub(crate) rho_home: Vec<(PathBuf, String)>,
+    pub(crate) project: Vec<Vec<(PathBuf, String)>>,
+}
+
 impl AgentCatalog {
     /// Discovers built-ins and user/project files. Precedence is project,
     /// `~/.rho/agents`, `~/.agents/agents`, then built-ins.
@@ -90,6 +97,21 @@ impl AgentCatalog {
                 .map(|path| path.join(".agents/agents"))
                 .collect();
             catalog.load_tier(AgentOrigin::Project, &project_roots)?;
+        }
+        catalog.load_internals();
+        Ok(catalog)
+    }
+
+    /// Builds a catalog from file bytes whose reads the caller already authorized.
+    pub(crate) fn from_authorized_sources(
+        sources: AgentCatalogSources,
+    ) -> Result<Self, AgentCatalogError> {
+        let mut catalog = Self::default();
+        catalog.load_builtins()?;
+        catalog.load_sources(AgentOrigin::AgentsHome, sources.agents_home)?;
+        catalog.load_sources(AgentOrigin::RhoHome, sources.rho_home)?;
+        for tier in sources.project {
+            catalog.load_sources(AgentOrigin::Project, tier)?;
         }
         catalog.load_internals();
         Ok(catalog)
@@ -161,6 +183,36 @@ impl AgentCatalog {
                 }
                 insert_in_tier(&mut tier, definition, &path)?;
             }
+        }
+        self.merge_tier(tier, origin);
+        Ok(())
+    }
+
+    fn load_sources(
+        &mut self,
+        origin: AgentOrigin,
+        sources: Vec<(PathBuf, String)>,
+    ) -> Result<(), AgentCatalogError> {
+        let mut tier = BTreeMap::new();
+        for (path, contents) in sources {
+            let fallback_id = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| {
+                    AgentCatalogError::at_field(path.clone(), "id", "filename is not valid UTF-8")
+                })?;
+            let definition = parse_definition(&path, fallback_id, &contents)?;
+            if is_internal_agent_id(&definition.id) {
+                return Err(AgentCatalogError::at_field(
+                    path.clone(),
+                    "id",
+                    format!(
+                        "agent ID '{}' is reserved for an internal agent and cannot be overridden",
+                        definition.id
+                    ),
+                ));
+            }
+            insert_in_tier(&mut tier, definition, &path)?;
         }
         self.merge_tier(tier, origin);
         Ok(())

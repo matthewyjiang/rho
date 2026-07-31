@@ -172,133 +172,134 @@ impl PlanningLimits {
     /// Build limits from an externally recorded acceptance run. No guessed
     /// default exists: the caller must provide each accepted measured value.
     pub(crate) fn from_measurements(values: PlanningMeasurements) -> WorkflowResult<Self> {
-        let receipt = |name: &str| format!("{name}; {}", values.receipt);
+        let receipt = |entry: &str| {
+            format!(
+                "limit_receipt.json planning.accepted.{entry}; {}",
+                values.receipt
+            )
+        };
         Ok(Self {
             total_source_bytes: Budget::measured(
                 "total source bytes",
                 values.total_source_bytes,
-                receipt("source corpus"),
+                receipt("total_source_bytes"),
             )?,
             module_count: Budget::measured(
                 "module count",
                 values.module_count,
-                receipt("source corpus"),
+                receipt("module_count"),
             )?,
             module_depth: Budget::measured(
                 "module depth",
                 values.module_depth,
-                receipt("source corpus"),
+                receipt("module_depth"),
             )?,
             evaluator_ticks: Budget::measured(
                 "Starlark evaluator ticks",
                 values.evaluator_ticks,
-                receipt("evaluator counter"),
+                receipt("evaluator_ticks"),
             )?,
             evaluator_heap_bytes: Budget::measured(
                 "Starlark evaluator heap bytes",
                 values.evaluator_heap_bytes,
-                receipt("evaluator peak heap"),
+                receipt("evaluator_heap_bytes"),
             )?,
             call_stack_depth: Budget::measured(
                 "Starlark call-stack depth",
                 values.call_stack_depth,
-                receipt("accepted recursion case"),
+                receipt("call_stack_depth"),
             )?,
             string_bytes: Budget::measured(
                 "Starlark string bytes",
                 values.string_bytes,
-                receipt("largest accepted string"),
+                receipt("string_bytes"),
             )?,
             list_items: Budget::measured(
                 "Starlark list items",
                 values.list_items,
-                receipt("largest accepted list"),
+                receipt("list_items"),
             )?,
             dict_items: Budget::measured(
                 "Starlark dict items",
                 values.dict_items,
-                receipt("largest accepted dict"),
+                receipt("dict_items"),
             )?,
             input_depth: Budget::measured(
                 "input depth",
                 values.input_depth,
-                receipt("accepted input fixture"),
+                receipt("input_depth"),
             )?,
             input_bytes: Budget::measured(
                 "input bytes",
                 values.input_bytes,
-                receipt("accepted input fixture"),
+                receipt("input_bytes"),
             )?,
-            node_count: Budget::measured(
-                "node count",
-                values.node_count,
-                receipt("accepted graph fixture"),
-            )?,
-            edge_count: Budget::measured(
-                "edge count",
-                values.edge_count,
-                receipt("accepted graph fixture"),
-            )?,
+            node_count: Budget::measured("node count", values.node_count, receipt("node_count"))?,
+            edge_count: Budget::measured("edge count", values.edge_count, receipt("edge_count"))?,
             condition_depth: Budget::measured(
                 "condition depth",
                 values.condition_depth,
-                receipt("accepted condition fixture"),
+                receipt("condition_depth"),
             )?,
             schema_depth: Budget::measured(
                 "output schema depth",
                 values.schema_depth,
-                receipt("accepted schema fixture"),
+                receipt("schema_depth"),
             )?,
             schema_bytes: Budget::measured(
                 "output schema bytes",
                 values.schema_bytes,
-                receipt("accepted schema fixture"),
+                receipt("schema_bytes"),
             )?,
             graph_bytes: Budget::measured(
                 "serialized graph bytes",
                 values.graph_bytes,
-                receipt("accepted graph fixture"),
+                receipt("graph_bytes"),
             )?,
             worker_wall_millis: Budget::measured(
                 "planning worker wall milliseconds",
                 values.worker_wall_millis,
-                receipt("supervised worker benchmark"),
+                receipt("worker_wall_millis"),
             )?,
             retained_output_per_stream_bytes: Budget::measured(
                 "retained output bytes per stream",
                 values.retained_output_per_stream_bytes,
-                receipt("largest accepted retained process stream"),
+                receipt("retained_output_per_stream_bytes"),
             )?,
             retained_output_total_bytes: Budget::measured(
                 "total retained workflow output bytes",
                 values.retained_output_total_bytes,
-                receipt("sum of all source-controlled retained streams"),
+                receipt("retained_output_total_bytes"),
             )?,
             rendered_template_bytes: Budget::measured(
                 "rendered template bytes",
                 values.rendered_template_bytes,
-                receipt("largest accepted rendered template"),
+                receipt("rendered_template_bytes"),
             )?,
             node_timeout_seconds: Budget::measured(
                 "node timeout seconds",
                 values.node_timeout_seconds,
-                receipt("longest accepted node timeout"),
+                receipt("node_timeout_seconds"),
             )?,
             prompt_expansion_bytes: Budget::measured(
                 "expanded prompt bytes",
                 values.prompt_expansion_bytes,
-                receipt("largest accepted prompt allocation"),
+                receipt("prompt_expansion_bytes"),
             )?,
             argv_expansion_bytes: Budget::measured(
                 "expanded argv bytes",
                 values.argv_expansion_bytes,
-                receipt("largest accepted argv allocation"),
+                receipt("argv_expansion_bytes"),
             )?,
             environment_expansion_bytes: Budget::measured(
                 "expanded environment bytes",
                 values.environment_expansion_bytes,
-                receipt("workflow source cannot add environment entries in schema v1"),
+                receipt("environment_expansion_bytes"),
             )?,
         })
     }
 }
+
+#[cfg(test)]
+#[path = "planning_limits_tests.rs"]
+mod tests;

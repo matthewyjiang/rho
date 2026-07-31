@@ -23,6 +23,11 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::{prepare_child_command, ProcessTree};
 
+// Receipt and its exact timing command: workflow/fixtures/limit_receipt.json.
+// scripts/measure_workflow_limits.py checks the recorded margin arithmetic.
+const FINAL_PROCESS_CLEANUP_MILLIS: u64 = 2_000;
+const HOST_CANCELLATION_COMPLETION_MILLIS: u64 = 2_500;
+
 /// Typed termination of one exact process invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExactProcessExit {
@@ -43,6 +48,7 @@ pub(crate) struct ExactProcessOutput {
     pub(crate) stderr_truncated: bool,
     pub(crate) stdout_observed_bytes: u64,
     pub(crate) stderr_observed_bytes: u64,
+    pub(crate) cleanup_incomplete: bool,
 }
 
 /// Internal SDK tool used to authorize and execute a frozen workflow command.
@@ -132,24 +138,29 @@ impl Tool for WorkflowCommandTool {
                         .display(),
                     authorized_execution.invocation().arguments().len()
                 ));
-            Ok(PreparedToolInvocation::resource_aware(
-                [],
-                [capability],
-                metadata,
-                move |context| {
-                    Box::pin(async move {
-                        let output = run_exact_process(
-                            execution,
-                            &executable_identity,
-                            &cwd_identity,
-                            context.cancellation(),
-                        )
-                        .await?;
-                        *result.lock().expect("workflow command result lock") = Some(output);
-                        Ok(ToolOutput::text(""))
-                    })
-                },
-            ))
+            Ok(
+                PreparedToolInvocation::resource_aware(
+                    [],
+                    [capability],
+                    metadata,
+                    move |context| {
+                        Box::pin(async move {
+                            let output = run_exact_process(
+                                execution,
+                                &executable_identity,
+                                &cwd_identity,
+                                context.cancellation(),
+                            )
+                            .await?;
+                            *result.lock().expect("workflow command result lock") = Some(output);
+                            Ok(ToolOutput::text(""))
+                        })
+                    },
+                )
+                .complete_after_cancellation(Duration::from_millis(
+                    HOST_CANCELLATION_COMPLETION_MILLIS,
+                )),
+            )
         })
     }
 }
@@ -181,6 +192,7 @@ async fn run_exact_process(
     cwd_identity: &crate::workflow::FrozenPathIdentity,
     cancellation: &rho_sdk::CancellationToken,
 ) -> Result<ExactProcessOutput, ToolError> {
+    ensure_handle_based_launch_supported()?;
     // This check runs after ToolHost authorization and directly before spawn.
     let verified_executable = crate::workflow::verify_executable_identity(executable_identity)
         .map_err(|error| execution_error(error.to_string()))?;
@@ -218,8 +230,20 @@ async fn run_exact_process(
     let limit = execution.output_limits().max_output_bytes();
     let total_limit = limit.saturating_mul(2);
     let total_remaining = Arc::new(AtomicUsize::new(total_limit));
-    let stdout_task = tokio::spawn(read_bounded(stdout, limit, Arc::clone(&total_remaining)));
-    let stderr_task = tokio::spawn(read_bounded(stderr, limit, total_remaining));
+    let stdout_state = Arc::new(Mutex::new(BoundedReadState::new(limit)));
+    let stderr_state = Arc::new(Mutex::new(BoundedReadState::new(limit)));
+    let mut stdout_task = tokio::spawn(read_bounded(
+        stdout,
+        limit,
+        Arc::clone(&total_remaining),
+        Arc::clone(&stdout_state),
+    ));
+    let mut stderr_task = tokio::spawn(read_bounded(
+        stderr,
+        limit,
+        total_remaining,
+        Arc::clone(&stderr_state),
+    ));
 
     let exited = child.try_wait();
     let exit = if let Some(status) = exited.transpose() {
@@ -230,11 +254,11 @@ async fn run_exact_process(
         tokio::select! {
             biased;
             () = cancellation.cancelled() => {
-                tree.terminate(&mut child, Duration::ZERO).await;
+                tree.kill();
                 ExactProcessExit::Cancellation
             }
             () = &mut deadline => {
-                tree.terminate(&mut child, Duration::ZERO).await;
+                tree.kill();
                 ExactProcessExit::Timeout
             }
             status = child.wait() => map_status(status),
@@ -243,7 +267,7 @@ async fn run_exact_process(
         tokio::select! {
             biased;
             () = cancellation.cancelled() => {
-                tree.terminate(&mut child, Duration::ZERO).await;
+                tree.kill();
                 ExactProcessExit::Cancellation
             }
             status = child.wait() => map_status(status),
@@ -252,8 +276,29 @@ async fn run_exact_process(
     // The leader may exit while descendants hold pipes. End the whole group so
     // stream drains always finish and no descendant survives the tool call.
     tree.kill();
-    let (stdout, stdout_truncated, stdout_observed_bytes) = join_reader(stdout_task).await?;
-    let (stderr, stderr_truncated, stderr_observed_bytes) = join_reader(stderr_task).await?;
+    let cleanup = async {
+        let _ = child.wait().await;
+        join_reader(&mut stdout_task).await?;
+        join_reader(&mut stderr_task).await
+    };
+    let cleanup_timed_out =
+        match tokio::time::timeout(Duration::from_millis(FINAL_PROCESS_CLEANUP_MILLIS), cleanup)
+            .await
+        {
+            Ok(result) => {
+                result?;
+                false
+            }
+            Err(_) => true,
+        };
+    if cleanup_timed_out {
+        tree.kill();
+        let _ = child.start_kill();
+        stdout_task.abort();
+        stderr_task.abort();
+    }
+    let (stdout, stdout_truncated, stdout_observed_bytes) = read_snapshot(&stdout_state);
+    let (stderr, stderr_truncated, stderr_observed_bytes) = read_snapshot(&stderr_state);
     Ok(ExactProcessOutput {
         exit,
         stdout,
@@ -262,7 +307,20 @@ async fn run_exact_process(
         stderr_truncated,
         stdout_observed_bytes,
         stderr_observed_bytes,
+        cleanup_incomplete: cleanup_timed_out,
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn ensure_handle_based_launch_supported() -> Result<(), ToolError> {
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn ensure_handle_based_launch_supported() -> Result<(), ToolError> {
+    Err(execution_error(
+        "frozen workflow process execution is unavailable on this platform because the OS adapter cannot launch the executable, interpreter, and working directory from verified handles",
+    ))
 }
 
 fn command_from_execution(
@@ -300,18 +358,17 @@ async fn read_bounded(
     mut stream: impl AsyncRead + Unpin,
     limit: usize,
     total_remaining: Arc<AtomicUsize>,
-) -> std::io::Result<(Vec<u8>, bool, u64)> {
-    let mut retained = Vec::with_capacity(limit.min(8 * 1024));
-    let mut truncated = false;
-    let mut observed_bytes = 0_u64;
+    state: Arc<Mutex<BoundedReadState>>,
+) -> std::io::Result<()> {
     let mut buffer = [0_u8; 8 * 1024];
     loop {
         let read = stream.read(&mut buffer).await?;
         if read == 0 {
             break;
         }
-        observed_bytes = observed_bytes.saturating_add(read as u64);
-        let remaining = limit.saturating_sub(retained.len());
+        let mut state = state.lock().expect("bounded workflow stream lock");
+        state.observed_bytes = state.observed_bytes.saturating_add(read as u64);
+        let remaining = limit.saturating_sub(state.retained.len());
         let wanted = read.min(remaining);
         let keep = total_remaining
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
@@ -319,15 +376,40 @@ async fn read_bounded(
             })
             .unwrap_or(0)
             .min(wanted);
-        retained.extend_from_slice(&buffer[..keep]);
-        truncated |= keep < read;
+        state.retained.extend_from_slice(&buffer[..keep]);
+        state.truncated |= keep < read;
     }
-    Ok((retained, truncated, observed_bytes))
+    Ok(())
+}
+
+struct BoundedReadState {
+    retained: Vec<u8>,
+    truncated: bool,
+    observed_bytes: u64,
+}
+
+impl BoundedReadState {
+    fn new(limit: usize) -> Self {
+        Self {
+            retained: Vec::with_capacity(limit.min(8 * 1024)),
+            truncated: false,
+            observed_bytes: 0,
+        }
+    }
+}
+
+fn read_snapshot(state: &Mutex<BoundedReadState>) -> (Vec<u8>, bool, u64) {
+    let state = state.lock().expect("bounded workflow stream lock");
+    (
+        state.retained.clone(),
+        state.truncated,
+        state.observed_bytes,
+    )
 }
 
 async fn join_reader(
-    task: tokio::task::JoinHandle<std::io::Result<(Vec<u8>, bool, u64)>>,
-) -> Result<(Vec<u8>, bool, u64), ToolError> {
+    task: &mut tokio::task::JoinHandle<std::io::Result<()>>,
+) -> Result<(), ToolError> {
     task.await
         .map_err(|error| execution_error(format!("output reader failed: {error}")))?
         .map_err(|error| execution_error(format!("output read failed: {error}")))

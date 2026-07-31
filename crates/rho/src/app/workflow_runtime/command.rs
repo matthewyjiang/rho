@@ -117,25 +117,26 @@ impl WorkflowCommandExecutor {
         let mut run = host
             .start(ToolHostCall::new("workflow_command", serde_json::json!({})))
             .map_err(map_host_error)?;
+        let host_cancellation = run.cancellation_handle();
+        let mut host_outcome = Box::pin(run.outcome());
         let cancellation = request.cancellation.clone();
         let host_result = tokio::select! {
             biased;
             () = cancellation.cancelled() => {
-                run.cancel();
-                let _ = run.outcome().await;
-                return Ok(NodeExecutionResult {
-                    outcome: NodeTerminalState::Cancellation,
-                    command_exit: Some(CommandExit::Cancellation),
-                    structured_output: None,
-                    artifacts: AttemptArtifacts::default(),
-                });
+                host_cancellation.cancel();
+                host_outcome.await
             }
-            result = run.outcome() => result,
+            result = &mut host_outcome => result,
         };
-        host_result.map_err(map_host_error)?;
-        let output = tool.take_result().ok_or_else(|| {
-            RuntimeError::Executor("workflow_command returned without a process result".into())
-        })?;
+        let output = match tool.take_result() {
+            Some(output) => output,
+            None => {
+                host_result.map_err(map_host_error)?;
+                return Err(RuntimeError::Executor(
+                    "workflow_command returned without a process result".into(),
+                ));
+            }
+        };
         let run_directory = request
             .attempt_directory
             .ancestors()
@@ -145,18 +146,29 @@ impl WorkflowCommandExecutor {
             run_directory,
             &request.attempt_directory.join("stdout"),
             &output.stdout,
-            stream_observation(output.stdout_observed_bytes, output.stdout_truncated),
+            stream_observation(
+                output.stdout_observed_bytes,
+                output.stdout_truncated,
+                output.cleanup_incomplete,
+            ),
         )?;
         let stderr = write_artifact_with_observation(
             run_directory,
             &request.attempt_directory.join("stderr"),
             &output.stderr,
-            stream_observation(output.stderr_observed_bytes, output.stderr_truncated),
+            stream_observation(
+                output.stderr_observed_bytes,
+                output.stderr_truncated,
+                output.cleanup_incomplete,
+            ),
         )?;
         let exit = map_exit(output.exit);
         let mut structured_output = None;
-        let mut outcome = exit_outcome(&exit);
-        if let Some(schema) = command.output() {
+        let mut outcome = process_outcome(&exit, output.cleanup_incomplete);
+        let successful_schema = (outcome == NodeTerminalState::Success)
+            .then_some(command.output())
+            .flatten();
+        if let Some(schema) = successful_schema {
             if output.stdout_truncated {
                 outcome = NodeTerminalState::Failure;
             } else {
@@ -211,8 +223,14 @@ impl WorkflowCommandExecutor {
     }
 }
 
-fn stream_observation(observed_bytes: u64, truncated: bool) -> ArtifactObservation {
-    if truncated {
+fn stream_observation(
+    observed_bytes: u64,
+    truncated: bool,
+    cleanup_incomplete: bool,
+) -> ArtifactObservation {
+    if cleanup_incomplete {
+        ArtifactObservation::Incomplete { observed_bytes }
+    } else if truncated {
         ArtifactObservation::Truncated {
             observed_bytes_at_least: observed_bytes,
         }
@@ -343,6 +361,15 @@ fn exit_outcome(exit: &CommandExit) -> NodeTerminalState {
     }
 }
 
+fn process_outcome(exit: &CommandExit, cleanup_incomplete: bool) -> NodeTerminalState {
+    let outcome = exit_outcome(exit);
+    if cleanup_incomplete && outcome == NodeTerminalState::Success {
+        NodeTerminalState::Failure
+    } else {
+        outcome
+    }
+}
+
 fn map_host_error(error: rho_sdk::Error) -> RuntimeError {
     match error {
         rho_sdk::Error::Tool(error)
@@ -356,3 +383,7 @@ fn map_host_error(error: rho_sdk::Error) -> RuntimeError {
         error => RuntimeError::Executor(error.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "command_tests.rs"]
+mod tests;

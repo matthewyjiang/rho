@@ -10,7 +10,7 @@ use super::{
 pub(crate) const PLAN_MANIFEST_VERSION: u32 = 1;
 pub(crate) const RUN_MANIFEST_VERSION: u32 = 1;
 pub(crate) const RUN_STATE_VERSION: u32 = 2;
-pub(crate) const EVENT_VERSION: u32 = 2;
+pub(crate) const EVENT_VERSION: u32 = 3;
 pub(crate) const ATTEMPT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,8 +88,7 @@ pub(crate) enum WorkflowEvent {
     },
     NodeFinished {
         node: NodeId,
-        attempt: Option<AttemptNumber>,
-        outcome: NodeTerminalState,
+        completion: Box<NodeCompletion>,
     },
     StructuredOutput {
         node: NodeId,
@@ -148,6 +147,7 @@ pub(crate) struct ArtifactRef {
 pub(crate) enum ArtifactObservation {
     Complete { observed_bytes: u64 },
     Truncated { observed_bytes_at_least: u64 },
+    Incomplete { observed_bytes: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

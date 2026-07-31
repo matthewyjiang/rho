@@ -15,14 +15,11 @@ use rho_sdk::{
 
 use crate::{
     agent::AgentCapabilities,
-    app::{
-        config_repository::ConfigRepository,
-        workflow_runtime::{RecoveryDecision, WorkflowRunner},
-    },
+    app::workflow_runtime::RecoveryDecision,
     tools::workflow::{
-        WorkflowArtifactSummary, WorkflowDiagnosticSummary, WorkflowNodeStateSummary,
-        WorkflowNodeSummary, WorkflowRunStateSummary, WorkflowToolRequest, WorkflowToolResult,
-        WorkflowToolService,
+        WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
+        WorkflowNodeStateSummary, WorkflowNodeSummary, WorkflowRunStateSummary,
+        WorkflowToolRequest, WorkflowToolResult, WorkflowToolService,
     },
     workflow::{
         CollectedSources, Digest, FreezePlan, InputName, NodeState, NodeTerminalState, PlanConsent,
@@ -31,7 +28,9 @@ use crate::{
     },
 };
 
-use super::{diagnostic_for_error, prepare_plan_from_sources, recheck_plan, runtime};
+use super::{diagnostic_for_error, recheck_plan, runtime};
+
+mod capabilities;
 
 pub(in crate::app) fn workflow_tool_service(
     cwd: PathBuf,
@@ -66,36 +65,40 @@ impl AppWorkflowToolService {
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let rho_home = crate::paths::rho_dir()?;
         let executable = std::env::current_exe()?;
-        self.capabilities_for_paths(request, &rho_home, &executable)
+        self.capabilities_for_paths(
+            request,
+            &rho_home,
+            crate::paths::home_dir().as_deref(),
+            &executable,
+        )
     }
 
     fn capabilities_for_paths(
         &self,
         request: &WorkflowToolRequest,
         rho_home: &Path,
+        home: Option<&Path>,
         executable: &Path,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
         let plans = rho_home.join("workflows/plans");
         let runs = rho_home.join("workflows/runs");
         let capabilities = match request {
-            WorkflowToolRequest::Validate { file, .. } => vec![
-                CapabilityRequest::read_path(
-                    self.source_request_path(file)?,
-                    PathScope::PrimaryWorkspace,
+            WorkflowToolRequest::Validate { file, .. } | WorkflowToolRequest::Plan { file, .. } => {
+                let mut requests = self.planning_read_capabilities(file, rho_home, home)?;
+                requests.push(CapabilityRequest::process(
+                    self.planner_process_request(executable)?,
                     source(),
-                ),
-                CapabilityRequest::process(self.planner_process_request(executable)?, source()),
-            ],
-            WorkflowToolRequest::Plan { file, .. } => vec![
-                CapabilityRequest::read_path(
-                    self.source_request_path(file)?,
-                    PathScope::PrimaryWorkspace,
-                    source(),
-                ),
-                CapabilityRequest::process(self.planner_process_request(executable)?, source()),
-                CapabilityRequest::write_path(plans, PathScope::UnrestrictedFilesystem, source()),
-            ],
+                ));
+                if matches!(request, WorkflowToolRequest::Plan { .. }) {
+                    requests.push(CapabilityRequest::write_path(
+                        plans,
+                        PathScope::UnrestrictedFilesystem,
+                        source(),
+                    ));
+                }
+                requests
+            }
             WorkflowToolRequest::Run { plan_id } => vec![
                 CapabilityRequest::read_path(
                     durable_id_path(&plans, plan_id)?,
@@ -137,6 +140,44 @@ impl AppWorkflowToolService {
             }
         };
         Ok(capabilities)
+    }
+
+    fn planning_read_capabilities(
+        &self,
+        file: &str,
+        rho_home: &Path,
+        home: Option<&Path>,
+    ) -> anyhow::Result<Vec<CapabilityRequest>> {
+        let source = || CapabilitySource::built_in_tool("workflow");
+        let mut requests = vec![
+            CapabilityRequest::read_path(
+                self.source_request_path(file)?,
+                PathScope::PrimaryWorkspace,
+                source(),
+            ),
+            CapabilityRequest::read_path(
+                self.config_request_path(rho_home),
+                PathScope::UnrestrictedFilesystem,
+                source(),
+            ),
+        ];
+        for path in agent_catalog_roots(&self.cwd, home) {
+            let scope = if path.starts_with(&self.cwd) {
+                PathScope::PrimaryWorkspace
+            } else {
+                PathScope::UnrestrictedFilesystem
+            };
+            requests.push(CapabilityRequest::read_path(path, scope, source()));
+        }
+        Ok(requests)
+    }
+
+    fn config_request_path(&self, rho_home: &Path) -> PathBuf {
+        match &self.config_path {
+            Some(path) if path.is_absolute() => path.clone(),
+            Some(path) => self.cwd.join(path),
+            None => rho_home.join("config.toml"),
+        }
     }
 
     fn source_request_path(&self, file: &str) -> anyhow::Result<PathBuf> {
@@ -251,15 +292,28 @@ impl AppWorkflowToolService {
             }
             WorkflowToolRequest::Cancel { run_id } => {
                 let run = self.load_run(&run_id)?;
-                WorkflowRunner::request_cross_process_cancel(
+                let outcome = super::request_cancellation(
                     &crate::paths::rho_dir().map_err(tool_error)?,
                     run.manifest.run_id,
+                    run.state.state.lifecycle,
                 )
+                .await
                 .map_err(tool_error)?;
-                let updated = self.load_run(&run.manifest.run_id.to_string())?;
                 Ok(WorkflowToolResult::Cancel {
-                    run_id: updated.manifest.run_id.to_string(),
-                    state: state_summary(updated.state.state.lifecycle),
+                    run_id: run.manifest.run_id.to_string(),
+                    request_id: outcome.request_id,
+                    cancellation_state: match outcome.state {
+                        super::CancellationState::Acknowledged => {
+                            WorkflowCancellationStateSummary::Acknowledged
+                        }
+                        super::CancellationState::Pending => {
+                            WorkflowCancellationStateSummary::Pending
+                        }
+                        super::CancellationState::AlreadyCompleted => {
+                            WorkflowCancellationStateSummary::AlreadyCompleted
+                        }
+                    },
+                    state: state_summary(outcome.lifecycle),
                 })
             }
             WorkflowToolRequest::Resume {
@@ -289,59 +343,35 @@ impl AppWorkflowToolService {
         }
     }
 
-    async fn authorize_path(
-        &self,
-        context: &ToolContext,
-        path: &Path,
-    ) -> Result<PathBuf, ToolError> {
-        let workspace = context.workspace().ok_or_else(|| {
-            ToolError::new(
-                ToolErrorKind::Execution,
-                "workflow tool requires a workspace",
-            )
-        })?;
-        let resolved = workspace
-            .resolve_for_read(path)
-            .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
-        if !resolved.path().starts_with(&self.cwd) {
-            return Err(ToolError::new(
-                ToolErrorKind::PolicyDenied,
-                "workflow source is outside the workspace",
-            ));
-        }
-        context
-            .authorize(CapabilityRequest::read_path(
-                resolved.path(),
-                resolved.scope().clone(),
-                CapabilitySource::built_in_tool("workflow"),
-            ))
-            .await
-            .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
-        Ok(resolved.path().to_path_buf())
-    }
-
     async fn prepare(
         &self,
         file: &Path,
         inputs: BTreeMap<String, serde_json::Value>,
         context: &ToolContext,
     ) -> anyhow::Result<super::PreparedPlan> {
-        let config = self.load_config()?;
+        let catalog = self.authorized_agent_catalog(context).await?;
+        let rho_home = crate::paths::rho_dir()?;
+        let config_path = self.config_request_path(&rho_home);
+        let config = self.authorized_config(context, &config_path).await?;
         let supplied_inputs = inputs
             .into_iter()
             .map(|(name, value)| Ok((InputName::new(name)?, WorkflowValue::from_json(value)?)))
             .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
         let limits = super::planning_limits()?;
         let sources = self.collect_sources(file, &limits, context).await?;
-        prepare_plan_from_sources(
-            sources,
-            supplied_inputs,
+        let planned = super::run_supervised_planner(&sources, supplied_inputs, &limits).await?;
+        let executable_identities = self
+            .authorize_node_resolution_reads(&planned.graph, &catalog, context)
+            .await?;
+        let resolved_nodes = super::resolve_nodes_with_authorized_executables(
+            &planned.graph,
             &config,
             &self.cwd,
             &AgentCapabilities::all_host_tools(),
-            &limits,
-        )
-        .await
+            &catalog,
+            &executable_identities,
+        )?;
+        super::freeze_planned_workflow(sources, planned, resolved_nodes, &limits)
     }
 
     async fn collect_sources(
@@ -391,16 +421,9 @@ impl AppWorkflowToolService {
             limits.module_count.check((seen.len() + 1) as u64)?;
             let relative = source_relative_path(&label)?;
             let lexical = self.cwd.join(&relative);
-            let authorized = self
-                .authorize_path(context, &lexical)
-                .await
-                .map_err(anyhow::Error::from)?;
-            if authorized != lexical {
-                return Err(WorkflowError::SourceSymlink { path: lexical }.into());
-            }
-            let source = crate::workflow::read_source_beneath(
-                &self.cwd,
-                &relative,
+            let opened = self.authorize_path(context, &lexical).await?;
+            let source = crate::workflow::read_opened_utf8_bounded(
+                opened,
                 &limits.total_source_bytes,
                 total_bytes,
             )?;
@@ -457,10 +480,6 @@ impl AppWorkflowToolService {
         store.load_plan(parsed).map_err(tool_error)
     }
 
-    fn load_config(&self) -> anyhow::Result<crate::config::Config> {
-        ConfigRepository::new(self.config_path.clone()).load()
-    }
-
     fn load_run(&self, run_id: &str) -> Result<StoredRun, ToolError> {
         let rho_home = crate::paths::rho_dir().map_err(tool_error)?;
         let store = WorkflowStore::new(&rho_home).map_err(tool_error)?;
@@ -471,6 +490,67 @@ impl AppWorkflowToolService {
         }
         store.load_run(parsed).map_err(tool_error)
     }
+}
+
+fn agent_catalog_roots(cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+    agent_catalog_roots_for(cwd, home, project_agent_catalogs_trusted())
+}
+
+fn project_agent_catalogs_trusted() -> bool {
+    std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref() == Some(std::ffi::OsStr::new("1"))
+}
+
+fn agent_catalog_roots_for(
+    cwd: &Path,
+    home: Option<&Path>,
+    project_agents_trusted: bool,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = home {
+        roots.push(home.join(".agents/agents"));
+        roots.push(home.join(".rho/agents"));
+    }
+    if project_agents_trusted {
+        roots.extend(
+            crate::workspace::project_ancestor_dirs(cwd)
+                .into_iter()
+                .map(|path| path.join(".agents/agents")),
+        );
+    }
+    roots
+}
+
+fn path_scope(cwd: &Path, path: &Path) -> PathScope {
+    if path.starts_with(cwd) {
+        PathScope::PrimaryWorkspace
+    } else {
+        PathScope::UnrestrictedFilesystem
+    }
+}
+
+fn executable_candidates(program: &str) -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|paths| executable_candidates_in(program, std::env::split_paths(&paths)))
+        .unwrap_or_default()
+}
+
+fn executable_candidates_in(
+    program: &str,
+    directories: impl IntoIterator<Item = PathBuf>,
+) -> Vec<PathBuf> {
+    directories
+        .into_iter()
+        .map(|directory| {
+            let path = directory.join(program);
+            #[cfg(windows)]
+            {
+                if !program.contains('.') {
+                    return path.with_extension("exe");
+                }
+            }
+            path
+        })
+        .collect()
 }
 
 fn durable_id_path(root: &Path, value: &str) -> anyhow::Result<PathBuf> {

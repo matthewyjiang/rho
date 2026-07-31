@@ -86,3 +86,27 @@ fn oversized_results_are_replaced_with_a_bounded_summary() {
         true
     );
 }
+
+// Covers: model cancellation must preserve the exact durable request ID and
+// typed acknowledgement state returned by the application service.
+// Owner: model-facing workflow tool result wire format.
+#[test]
+fn cancel_result_exposes_exact_request_state() {
+    let result = WorkflowToolResult::Cancel {
+        run_id: "00000000-0000-0000-0000-000000000001".into(),
+        request_id: Some("00000000-0000-0000-0000-000000000002".into()),
+        cancellation_state: WorkflowCancellationStateSummary::Pending,
+        state: WorkflowRunStateSummary::Running,
+    };
+
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        serde_json::json!({
+            "operation": "cancel",
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "request_id": "00000000-0000-0000-0000-000000000002",
+            "cancellation_state": "pending",
+            "state": "running"
+        })
+    );
+}

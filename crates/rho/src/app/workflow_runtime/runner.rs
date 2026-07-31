@@ -12,12 +12,13 @@ use crate::workflow::{
 use super::{
     artifacts::write_json,
     cancellation::{
-        read_cancellation_request, run_directory, CancellationRequest, CancellationRequestReceipt,
-        CROSS_PROCESS_CANCEL_POLL,
+        cancel_waiting_nodes, create_or_read_cancellation_request, latest_cancellation_request,
+        latest_pending_cancellation_request, read_cancellation_request, run_directory,
+        CancellationRequest, CancellationRequestReceipt, CROSS_PROCESS_CANCEL_POLL,
     },
-    recovery::{recover_state, uncertain_nodes},
-    CheckoutGate, NodeExecutionRequest, NodeExecutionResult, RuntimeError, RuntimeEvent,
-    RuntimeSecurity, WorkflowNodeExecutor,
+    recovery::{mark_attempt_uncertain, mark_uncertain_attempts, recover_state, uncertain_nodes},
+    CheckoutGate, CleanupCause, NodeExecutionRequest, NodeExecutionResult, RuntimeError,
+    RuntimeEvent, RuntimeSecurity, WorkflowNodeExecutor,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +83,8 @@ impl WorkflowRunner {
 
     pub(crate) fn cancellation_request(&self, run_id: RunId) -> CancellationRequest {
         CancellationRequest {
-            path: run_directory(&self.rho_home, run_id).join("cancel.request"),
+            rho_home: self.rho_home.clone(),
+            run_id,
             cancellation: self.cancellation.clone(),
         }
     }
@@ -91,10 +93,8 @@ impl WorkflowRunner {
         rho_home: &std::path::Path,
         run_id: RunId,
     ) -> Result<CancellationRequestReceipt, RuntimeError> {
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let path = run_directory(rho_home, run_id).join("cancel.request");
-        crate::config_writer::write_bytes_atomically(&path, request_id.as_bytes())?;
-        Ok(CancellationRequestReceipt { request_id })
+        let store = WorkflowStore::new(rho_home)?;
+        create_or_read_cancellation_request(&store, run_id)
     }
 
     pub(crate) fn cross_process_cancel_acknowledged(
@@ -214,6 +214,23 @@ impl WorkflowRunner {
                 });
             }
         }
+        let events_before_recovery = store.read_events(run_id)?;
+        let mut cancellation_request_id = latest_cancellation_request(&events_before_recovery);
+        let pending_cancellation_request =
+            latest_pending_cancellation_request(&events_before_recovery);
+        if run.state.state.cancellation_requested
+            && (uncertain.is_empty() || recovery == RecoveryDecision::ConfirmNoProcess)
+        {
+            if let Some(request_id) = pending_cancellation_request {
+                append_event!(
+                    &store,
+                    &mut guard,
+                    &mut run.state,
+                    WorkflowEvent::CancellationAcknowledged { request_id },
+                )?;
+                store.save_state(&guard, &run.state)?;
+            }
+        }
         recover_state(
             &store,
             &mut guard,
@@ -222,21 +239,8 @@ impl WorkflowRunner {
             &mut run.state,
             recovery,
         )?;
-        let mut cancellation_request_id =
-            store
-                .read_events(run_id)?
-                .into_iter()
-                .rev()
-                .find_map(|record| match record.event {
-                    WorkflowEvent::CancellationRequested { request_id } => Some(request_id),
-                    _ => None,
-                });
         if resuming_cancellation {
-            match std::fs::remove_file(run_directory.join("cancel.request")) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
+            store.clear_cancellation_request(run_id)?;
         }
         if run.state.state.lifecycle != RunLifecycle::Running {
             persist_state_event(
@@ -270,7 +274,7 @@ impl WorkflowRunner {
         let graph = Arc::new(run.graph.clone());
         let mut tasks = JoinSet::new();
         loop {
-            let durable_cancellation = read_cancellation_request(&run_directory)?;
+            let durable_cancellation = read_cancellation_request(&store, run_id)?;
             if self.cancellation.is_cancelled() || durable_cancellation.is_some() {
                 if !run.state.state.cancellation_requested {
                     let request_id =
@@ -324,8 +328,9 @@ impl WorkflowRunner {
                             &mut run.state,
                             WorkflowEvent::NodeFinished {
                                 node: node.clone(),
-                                attempt: None,
-                                outcome,
+                                completion: Box::new(crate::workflow::NodeCompletion::terminal(
+                                    outcome,
+                                )),
                             },
                         )?;
                         send_event(
@@ -523,6 +528,41 @@ impl WorkflowRunner {
             .ok_or_else(|| RuntimeError::Executor("workflow task set closed".into()))?
             .map_err(|error| RuntimeError::Executor(format!("node task failed: {error}")))??;
             let (node, attempt, result) = joined;
+            if let Err(RuntimeError::CleanupUncertain { cause }) = &result {
+                if *cause == CleanupCause::Cancellation && !run.state.state.cancellation_requested {
+                    let request_id = read_cancellation_request(&store, run_id)?
+                        .or_else(|| cancellation_request_id.clone())
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    persist_state_event(
+                        &store,
+                        &mut guard,
+                        &run_directory,
+                        &graph,
+                        &mut run.state,
+                        WorkflowEvent::CancellationRequested { request_id },
+                    )?;
+                }
+                mark_attempt_uncertain(&run_directory, &node, attempt)?;
+                persist_state_event(
+                    &store,
+                    &mut guard,
+                    &run_directory,
+                    &graph,
+                    &mut run.state,
+                    WorkflowEvent::RunLifecycle {
+                        lifecycle: RunLifecycle::NeedsRecovery,
+                    },
+                )?;
+                send_event(
+                    &events,
+                    RuntimeEvent::NeedsRecovery {
+                        nodes: vec![node.clone()],
+                    },
+                );
+                return Err(RuntimeError::NeedsRecovery {
+                    nodes: node.to_string(),
+                });
+            }
             let result = match result {
                 Ok(result) => result,
                 Err(RuntimeError::Denied(_)) => {
@@ -564,8 +604,7 @@ impl WorkflowRunner {
                 &mut run.state,
                 WorkflowEvent::NodeFinished {
                     node: node.clone(),
-                    attempt: Some(attempt),
-                    outcome,
+                    completion: Box::new(completion.clone()),
                 },
             )?;
             if let Some(hooks) = &self.hooks {
@@ -818,73 +857,8 @@ fn recover_completed_transitions(
             &mut run.state,
             WorkflowEvent::NodeFinished {
                 node,
-                attempt: Some(attempt),
-                outcome: completion.outcome,
+                completion: Box::new(completion),
             },
-        )?;
-    }
-    Ok(())
-}
-
-fn cancel_waiting_nodes(
-    store: &WorkflowStore,
-    guard: &mut crate::workflow::RunMutationGuard,
-    run_directory: &std::path::Path,
-    graph: &crate::workflow::FrozenWorkflow,
-    state: &mut RunStateRecord,
-) -> Result<(), RuntimeError> {
-    let waiting = state
-        .state
-        .nodes
-        .iter()
-        .filter_map(|(node, state)| {
-            matches!(state, NodeState::Pending | NodeState::Ready).then_some(node.clone())
-        })
-        .collect::<Vec<_>>();
-    for node in waiting {
-        persist_state_event(
-            store,
-            guard,
-            run_directory,
-            graph,
-            state,
-            WorkflowEvent::NodeFinished {
-                node,
-                attempt: None,
-                outcome: NodeTerminalState::Cancellation,
-            },
-        )?;
-    }
-    Ok(())
-}
-
-fn mark_uncertain_attempts(
-    run_directory: &std::path::Path,
-    state: &RunStateRecord,
-) -> Result<(), RuntimeError> {
-    for (node, node_state) in &state.state.nodes {
-        let NodeState::Running { attempt } = node_state else {
-            continue;
-        };
-        let directory = attempt_directory(run_directory, node, *attempt);
-        let path = directory.join("status.json");
-        let record: AttemptRecord = serde_json::from_slice(&std::fs::read(&path)?)?;
-        let owner = match record.state {
-            AttemptState::Started { owner } | AttemptState::InterruptedUncertain { owner } => owner,
-            // A flushed launch intent means work may have started before the
-            // owner saved process identity. Keep a typed unknown owner.
-            AttemptState::LaunchIntended => ExternalOwner::Process { pid: 0 },
-            AttemptState::Completed { .. } | AttemptState::CleanlyCancelled => {
-                return Err(RuntimeError::Data(format!(
-                    "running node '{node}' has a terminal attempt record"
-                )))
-            }
-        };
-        write_attempt(
-            run_directory,
-            &directory,
-            *attempt,
-            AttemptState::InterruptedUncertain { owner },
         )?;
     }
     Ok(())

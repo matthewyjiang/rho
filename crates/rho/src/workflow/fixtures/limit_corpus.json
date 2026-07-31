@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "generator": "scripts/workflow_limit_corpus.py",
+  "cases": {
+    "source_modules": ["total_source_bytes", "module_count", "module_depth"],
+    "evaluator_values": ["evaluator_ticks", "evaluator_heap_bytes", "call_stack_depth", "string_bytes", "list_items"],
+    "graph_edges": ["node_count", "edge_count"],
+    "schema_condition": ["dict_items", "condition_depth", "schema_depth", "schema_bytes"],
+    "graph_bytes": ["graph_bytes"],
+    "runtime_output": ["retained_output_per_stream_bytes", "retained_output_total_bytes", "node_timeout_seconds"],
+    "prompt_schema": ["rendered_template_bytes", "prompt_expansion_bytes"],
+    "argv_expansion": ["argv_expansion_bytes"],
+    "input_bytes": ["input_depth", "input_bytes"],
+    "all_cases": ["worker_wall_millis", "environment_expansion_bytes", "request_frame_bytes", "response_frame_bytes", "stderr_bytes", "address_space_bytes"]
+  }
+}

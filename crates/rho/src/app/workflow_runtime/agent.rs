@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     app::agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
@@ -11,8 +11,9 @@ use crate::{
 
 use super::{
     artifacts::{write_artifact, write_artifact_with_observation},
+    cancellation::AGENT_CANCELLATION_CLEANUP_MILLIS,
     command::render_template,
-    NodeExecutionRequest, NodeExecutionResult, RuntimeError, WorkflowExecutionFuture,
+    CleanupCause, NodeExecutionRequest, NodeExecutionResult, RuntimeError, WorkflowExecutionFuture,
     WorkflowNodeExecutor,
 };
 
@@ -97,14 +98,18 @@ impl WorkflowAgentExecutor {
         let status = tokio::select! {
             biased;
             () = request.cancellation.cancelled() => {
-                handle.cancel();
-                let _ = handle.wait().await;
-                return Ok(NodeExecutionResult::terminal(NodeTerminalState::Cancellation));
+                return stop_agent(
+                    &mut handle,
+                    AgentStopReason::Cancellation,
+                    agent_cleanup_limit(),
+                ).await;
             }
             () = &mut deadline => {
-                handle.cancel();
-                let _ = handle.wait().await;
-                return Ok(NodeExecutionResult::terminal(NodeTerminalState::Failure));
+                return stop_agent(
+                    &mut handle,
+                    AgentStopReason::Timeout,
+                    agent_cleanup_limit(),
+                ).await;
             }
             status = handle.wait() => status,
         };
@@ -172,5 +177,56 @@ impl WorkflowAgentExecutor {
             }
         }
         Ok(result)
+    }
+}
+
+fn agent_cleanup_limit() -> Duration {
+    Duration::from_millis(AGENT_CANCELLATION_CLEANUP_MILLIS)
+}
+
+pub(super) type AgentCleanupFuture<'a> =
+    Pin<Box<dyn Future<Output = crate::subagent::RunStatus> + Send + 'a>>;
+
+/// A cancelled agent execution whose terminal state can be confirmed.
+pub(super) trait AgentCleanupHandle {
+    fn cancel(&self);
+    fn wait(&mut self) -> AgentCleanupFuture<'_>;
+}
+
+impl AgentCleanupHandle for crate::app::agent_executor::AgentRunHandle {
+    fn cancel(&self) {
+        crate::app::agent_executor::AgentRunHandle::cancel(self);
+    }
+
+    fn wait(&mut self) -> AgentCleanupFuture<'_> {
+        Box::pin(crate::app::agent_executor::AgentRunHandle::wait(self))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum AgentStopReason {
+    Cancellation,
+    Timeout,
+}
+
+pub(super) async fn stop_agent(
+    handle: &mut impl AgentCleanupHandle,
+    reason: AgentStopReason,
+    limit: Duration,
+) -> Result<NodeExecutionResult, RuntimeError> {
+    handle.cancel();
+    match tokio::time::timeout(limit, handle.wait()).await {
+        Ok(status) if status.state.is_terminal() => {
+            Ok(NodeExecutionResult::terminal(match reason {
+                AgentStopReason::Cancellation => NodeTerminalState::Cancellation,
+                AgentStopReason::Timeout => NodeTerminalState::Failure,
+            }))
+        }
+        Ok(_) | Err(_) => Err(RuntimeError::CleanupUncertain {
+            cause: match reason {
+                AgentStopReason::Cancellation => CleanupCause::Cancellation,
+                AgentStopReason::Timeout => CleanupCause::Timeout,
+            },
+        }),
     }
 }

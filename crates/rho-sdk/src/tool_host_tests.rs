@@ -14,7 +14,8 @@ use crate::{
     },
     model::ToolSpec,
     tool::{
-        Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput,
+        PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
         ToolProgress,
     },
     ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
@@ -22,6 +23,108 @@ use crate::{
     HostChoice, HostInputRequest, HostInputResponse, HostQuestion, PathScope, PolicyDecision,
     SelectionMode, ToolHost, ToolHostCall, ToolHostEvent, WorkspacePolicy,
 };
+
+struct CompletingCancellationTool {
+    started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    cleanup_timeout: std::time::Duration,
+    finish_cleanup: bool,
+}
+
+impl Tool for CompletingCancellationTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "complete_cancel".into(),
+            description: "complete bounded cancellation cleanup".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        _invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            let started = self.started.lock().unwrap().take();
+            Ok(PreparedToolInvocation::resource_aware(
+                [],
+                [],
+                ToolMetadata::new(),
+                move |context| {
+                    Box::pin(async move {
+                        if let Some(started) = started {
+                            let _ = started.send(());
+                        }
+                        context.cancellation().cancelled().await;
+                        if !self.finish_cleanup {
+                            std::future::pending::<()>().await;
+                        }
+                        Ok(ToolOutput::text("cleanup complete"))
+                    })
+                },
+            )
+            .complete_after_cancellation(self.cleanup_timeout))
+        })
+    }
+}
+
+// Covers: an opted-in prepared tool must return its typed result after it
+// observes cancellation instead of having its cleanup future dropped.
+// Owner: SDK ToolHost cancellation orchestration.
+#[tokio::test]
+async fn cancellation_can_complete_an_authorized_tool_future() {
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let host = ToolHost::builder()
+        .tool(CompletingCancellationTool {
+            started: Mutex::new(Some(started)),
+            cleanup_timeout: std::time::Duration::from_secs(1),
+            finish_cleanup: true,
+        })
+        .build()
+        .unwrap();
+    let mut run = host
+        .start(ToolHostCall::new("complete_cancel", json!({})))
+        .unwrap();
+    ready.await.unwrap();
+
+    run.cancel();
+
+    assert_eq!(run.outcome().await.unwrap().content(), "cleanup complete");
+}
+
+// Covers: an opted-in tool that does not finish cleanup must still resolve its
+// host outcome at the explicit cleanup deadline.
+// Owner: SDK ToolHost cancellation orchestration.
+#[tokio::test]
+async fn cancellation_cleanup_deadline_resolves_the_host_run() {
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let host = ToolHost::builder()
+        .tool(CompletingCancellationTool {
+            started: Mutex::new(Some(started)),
+            cleanup_timeout: std::time::Duration::ZERO,
+            finish_cleanup: false,
+        })
+        .build()
+        .unwrap();
+    let mut run = host
+        .start(ToolHostCall::new("complete_cancel", json!({})))
+        .unwrap();
+    ready.await.unwrap();
+
+    run.cancel();
+
+    let error = run.outcome().await.unwrap_err();
+    let crate::Error::Tool(error) = error else {
+        panic!("expected a tool error");
+    };
+    assert_eq!(
+        (error.kind(), error.message()),
+        (
+            ToolErrorKind::Cancelled,
+            "tool cancellation cleanup exceeded 0ns"
+        )
+    );
+}
 
 #[derive(Clone)]
 struct OrderedPolicy {

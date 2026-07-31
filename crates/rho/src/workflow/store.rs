@@ -1,6 +1,6 @@
 use std::{
-    fs::{self, File, OpenOptions},
-    io::Write,
+    fs::File,
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -16,17 +16,21 @@ use super::{
     PLAN_MANIFEST_VERSION, RUN_MANIFEST_VERSION, RUN_STATE_VERSION,
 };
 
+use super::store_replay::derive_snapshot;
+
 pub(crate) struct WorkflowStore {
     layout: WorkflowLayout,
+    root: super::secure_fs::SecureDirectory,
 }
 
 impl WorkflowStore {
     pub(crate) fn new(rho_home: &Path) -> WorkflowResult<Self> {
         let layout = WorkflowLayout::new(rho_home);
-        ensure_private_dir(layout.root())?;
-        ensure_private_dir(&layout.plans())?;
-        ensure_private_dir(&layout.runs())?;
-        Ok(Self { layout })
+        super::ensure_directory_beneath(rho_home, Path::new("workflows"))?;
+        let root = super::secure_fs::SecureDirectory::open(layout.root())?;
+        root.ensure_directory(Path::new("plans"))?;
+        root.ensure_directory(Path::new("runs"))?;
+        Ok(Self { layout, root })
     }
 
     pub(crate) fn create_plan(
@@ -60,9 +64,8 @@ impl WorkflowStore {
             unique_sources.entry(digest).or_insert(source);
         }
         let id = PlanId::new();
-        let directory = self.layout.plan(id);
-        create_private_dir(&directory)?;
-        ensure_private_dir(&self.layout.plan_sources(id))?;
+        self.root
+            .ensure_directory(&plan_relative(id, Path::new("sources")))?;
         let source_digests = graph
             .sources
             .modules
@@ -76,11 +79,19 @@ impl WorkflowStore {
             workspace_identity,
             source_digests,
         };
-        write_json(&self.layout.plan_manifest(id), &manifest)?;
-        write_json(&self.layout.plan_graph(id), graph)?;
+        write_json_beneath(
+            &self.root,
+            &plan_relative(id, Path::new("manifest.json")),
+            &manifest,
+        )?;
+        write_json_beneath(
+            &self.root,
+            &plan_relative(id, Path::new("graph.json")),
+            graph,
+        )?;
         for (digest, source) in unique_sources {
-            write_new_private(
-                &self.layout.plan_sources(id).join(format!("{digest}.star")),
+            self.root.write_file(
+                &plan_relative(id, &PathBuf::from("sources").join(format!("{digest}.star"))),
                 source.as_bytes(),
             )?;
         }
@@ -91,7 +102,8 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_plan(&self, id: PlanId) -> WorkflowResult<StoredPlan> {
-        let manifest: PlanManifest = read_json(&self.layout.plan_manifest(id))?;
+        let manifest: PlanManifest =
+            read_json(&self.root, &plan_relative(id, Path::new("manifest.json")))?;
         check_schema_version(
             "plan manifest",
             manifest.schema_version,
@@ -103,13 +115,14 @@ impl WorkflowStore {
                 "plan manifest ID differs from its directory ID",
             );
         }
-        let graph: FrozenWorkflow = read_json(&self.layout.plan_graph(id))?;
+        let graph: FrozenWorkflow =
+            read_json(&self.root, &plan_relative(id, Path::new("graph.json")))?;
         check_schema_version(
             "frozen graph",
             graph.schema_version,
             FROZEN_WORKFLOW_SCHEMA_VERSION,
         )?;
-        validate_plan(&self.layout, id, &manifest, &graph)?;
+        validate_plan(&self.layout, &self.root, id, &manifest, &graph)?;
         Ok(StoredPlan { manifest, graph })
     }
 
@@ -121,6 +134,7 @@ impl WorkflowStore {
     ) -> WorkflowResult<StoredRun> {
         validate_plan(
             &self.layout,
+            &self.root,
             plan.manifest.plan_id,
             &plan.manifest,
             &plan.graph,
@@ -131,9 +145,17 @@ impl WorkflowStore {
                 reason: "run consent does not match the exact plan digest".to_owned(),
             });
         }
-        validate_state(&plan.graph, &state, &[], &self.layout.runs())?;
+        validate_state(
+            &plan.graph,
+            &state,
+            &[],
+            &self.layout.runs(),
+            &self.root,
+            Path::new("runs"),
+        )?;
         let id = RunId::new();
-        create_private_dir(&self.layout.run(id))?;
+        self.root
+            .ensure_directory(&run_relative(id, Path::new("")))?;
         let manifest = RunManifest {
             schema_version: RUN_MANIFEST_VERSION,
             run_id: id,
@@ -142,11 +164,25 @@ impl WorkflowStore {
             workspace_identity: plan.manifest.workspace_identity.clone(),
             consent,
         };
-        write_json(&self.layout.run_manifest(id), &manifest)?;
-        write_json(&self.layout.run_graph(id), &plan.graph)?;
-        write_json(&self.layout.run_state(id), &state)?;
-        write_new_private(&self.layout.run_events(id), b"")?;
-        write_new_private(&self.layout.run_lock(id), b"")?;
+        write_json_beneath(
+            &self.root,
+            &run_relative(id, Path::new("manifest.json")),
+            &manifest,
+        )?;
+        write_json_beneath(
+            &self.root,
+            &run_relative(id, Path::new("graph.json")),
+            &plan.graph,
+        )?;
+        write_json_beneath(
+            &self.root,
+            &run_relative(id, Path::new("state.json")),
+            &state,
+        )?;
+        self.root
+            .write_file(&run_relative(id, Path::new("events.jsonl")), b"")?;
+        self.root
+            .write_file(&run_relative(id, Path::new("mutation.lock")), b"")?;
         Ok(StoredRun {
             manifest,
             graph: plan.graph.clone(),
@@ -155,7 +191,8 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_run(&self, id: RunId) -> WorkflowResult<StoredRun> {
-        let manifest: RunManifest = read_json(&self.layout.run_manifest(id))?;
+        let manifest: RunManifest =
+            read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
         check_schema_version(
             "run manifest",
             manifest.schema_version,
@@ -167,7 +204,8 @@ impl WorkflowStore {
                 "run manifest ID differs from its directory ID",
             );
         }
-        let graph: FrozenWorkflow = read_json(&self.layout.run_graph(id))?;
+        let graph: FrozenWorkflow =
+            read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
         check_schema_version(
             "frozen graph",
             graph.schema_version,
@@ -175,10 +213,18 @@ impl WorkflowStore {
         )?;
         validate_frozen_graph(&graph, &manifest.graph_digest, &self.layout.run_graph(id))?;
         validate_run_manifest(&manifest, &graph, &self.layout.run_manifest(id))?;
-        let state: RunStateRecord = read_json(&self.layout.run_state(id))?;
+        let state: RunStateRecord =
+            read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
         check_schema_version("run state", state.schema_version, RUN_STATE_VERSION)?;
         let events = self.read_events(id)?;
-        validate_state(&graph, &state, &events, &self.layout.run_state(id))?;
+        validate_state(
+            &graph,
+            &state,
+            &events,
+            &self.layout.run_state(id),
+            &self.root,
+            &run_relative(id, Path::new("")),
+        )?;
         Ok(StoredRun {
             manifest,
             graph,
@@ -187,18 +233,20 @@ impl WorkflowStore {
     }
 
     pub(crate) fn lock_run(&self, id: RunId) -> WorkflowResult<RunMutationGuard> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(self.layout.run_lock(id))?;
+        let file = self
+            .root
+            .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;
         file.try_lock_exclusive()
             .map_err(|error| WorkflowError::Corrupt {
                 path: self.layout.run_lock(id),
                 reason: format!("run already has an active writer: {error}"),
             })?;
         let path = self.layout.run_events(id);
-        let journal = OpenOptions::new().read(true).write(true).open(&path)?;
-        let bytes = fs::read(&path)?;
+        let mut journal = self
+            .root
+            .open_private_file(&run_relative(id, Path::new("events.jsonl")), true)?;
+        let mut bytes = Vec::new();
+        journal.read_to_end(&mut bytes)?;
         let scan = scan_journal(&path, &bytes)?;
         if scan.valid_bytes != bytes.len() {
             journal.set_len(scan.valid_bytes as u64)?;
@@ -212,6 +260,7 @@ impl WorkflowStore {
             id,
             next_sequence,
             file,
+            journal,
         })
     }
 
@@ -231,12 +280,10 @@ impl WorkflowStore {
                 ),
             });
         }
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(self.layout.run_events(guard.id))?;
-        serde_json::to_writer(&mut file, event)?;
-        file.write_all(b"\n")?;
-        file.sync_data()?;
+        guard.journal.seek(SeekFrom::End(0))?;
+        serde_json::to_writer(&mut guard.journal, event)?;
+        guard.journal.write_all(b"\n")?;
+        guard.journal.sync_data()?;
         guard.next_sequence = expected.saturating_add(1);
         Ok(())
     }
@@ -247,23 +294,74 @@ impl WorkflowStore {
         state: &RunStateRecord,
     ) -> WorkflowResult<()> {
         check_schema_version("run state", state.schema_version, RUN_STATE_VERSION)?;
-        let graph: FrozenWorkflow = read_json(&self.layout.run_graph(guard.id))?;
+        let graph: FrozenWorkflow =
+            read_json(&self.root, &run_relative(guard.id, Path::new("graph.json")))?;
         let events = self.read_events(guard.id)?;
-        validate_state(&graph, state, &events, &self.layout.run_state(guard.id))?;
-        write_json(&self.layout.run_state(guard.id), state)
+        validate_state(
+            &graph,
+            state,
+            &events,
+            &self.layout.run_state(guard.id),
+            &self.root,
+            &run_relative(guard.id, Path::new("")),
+        )?;
+        write_json_beneath(
+            &self.root,
+            &run_relative(guard.id, Path::new("state.json")),
+            state,
+        )
     }
 
     pub(crate) fn read_events(&self, id: RunId) -> WorkflowResult<Vec<WorkflowEventRecord>> {
         let path = self.layout.run_events(id);
-        Ok(scan_journal(&path, &fs::read(&path)?)?.records)
+        let mut file = self
+            .root
+            .open_private_file(&run_relative(id, Path::new("events.jsonl")), false)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(scan_journal(&path, &bytes)?.records)
+    }
+
+    pub(crate) fn read_cancellation_request(&self, id: RunId) -> WorkflowResult<Option<Vec<u8>>> {
+        let relative = run_relative(id, Path::new("cancel.request"));
+        let mut file = match self.root.open_private_file(&relative, false) {
+            Ok(file) => file,
+            Err(WorkflowError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file).take(37).read_to_end(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    pub(crate) fn install_cancellation_request(
+        &self,
+        id: RunId,
+        bytes: &[u8],
+    ) -> WorkflowResult<bool> {
+        self.root
+            .write_file_if_absent(&run_relative(id, Path::new("cancel.request")), bytes)
+    }
+
+    pub(crate) fn clear_cancellation_request(&self, id: RunId) -> WorkflowResult<()> {
+        match self
+            .root
+            .remove_file(&run_relative(id, Path::new("cancel.request")))
+        {
+            Ok(()) => Ok(()),
+            Err(WorkflowError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) fn resolve_plan(&self, prefix: &str) -> WorkflowResult<PlanId> {
-        resolve_prefix(&self.layout.plans(), prefix)
+        resolve_prefix(&self.root, Path::new("plans"), prefix)
     }
 
     pub(crate) fn resolve_run(&self, prefix: &str) -> WorkflowResult<RunId> {
-        resolve_prefix(&self.layout.runs(), prefix)
+        resolve_prefix(&self.root, Path::new("runs"), prefix)
     }
 }
 
@@ -271,6 +369,7 @@ pub(crate) struct RunMutationGuard {
     id: RunId,
     next_sequence: u64,
     file: File,
+    journal: File,
 }
 impl Drop for RunMutationGuard {
     fn drop(&mut self) {
@@ -314,6 +413,27 @@ fn validate_frozen_graph(
         path: path.to_path_buf(),
         reason: format!("frozen graph validation failed: {error}"),
     })?;
+    let retained_bound = graph.graph.nodes.values().try_fold(0_u64, |total, node| {
+        let streams = if matches!(node.execution, NodeExecution::Command(_)) {
+            2
+        } else {
+            1
+        };
+        total
+            .checked_add(node.max_output_bytes.checked_mul(streams).ok_or_else(|| {
+                WorkflowError::Corrupt {
+                    path: path.to_path_buf(),
+                    reason: "frozen retained output bound overflowed".to_owned(),
+                }
+            })?)
+            .ok_or_else(|| WorkflowError::Corrupt {
+                path: path.to_path_buf(),
+                reason: "frozen retained output bound overflowed".to_owned(),
+            })
+    })?;
+    if retained_bound > graph.runtime_limits.retained_output_total_bytes {
+        return corrupt(path, "frozen graph exceeds its workflow-wide output limit");
+    }
     if !graph
         .sources
         .modules
@@ -329,6 +449,7 @@ fn validate_frozen_graph(
 
 fn validate_plan(
     layout: &WorkflowLayout,
+    root: &super::secure_fs::SecureDirectory,
     id: PlanId,
     manifest: &PlanManifest,
     graph: &FrozenWorkflow,
@@ -369,8 +490,12 @@ fn validate_plan(
                     reason: format!("source '{label}' has an unsupported digest"),
                 })?;
         let path = layout.plan_sources(id).join(format!("{digest}.star"));
-        reject_symlink(&path)?;
-        let bytes = fs::read(&path)?;
+        let mut file = root.open_private_file(
+            &plan_relative(id, &PathBuf::from("sources").join(format!("{digest}.star"))),
+            false,
+        )?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
         if bytes.len() as u64 != source.bytes || sha256(&bytes) != digest {
             return corrupt(
                 &path,
@@ -403,6 +528,8 @@ fn validate_state(
     record: &RunStateRecord,
     events: &[WorkflowEventRecord],
     path: &Path,
+    root: &super::secure_fs::SecureDirectory,
+    run_relative: &Path,
 ) -> WorkflowResult<()> {
     check_schema_version("run state", record.schema_version, RUN_STATE_VERSION)?;
     let state = &record.state;
@@ -413,6 +540,20 @@ fn validate_state(
     if record.last_event_sequence > tail {
         return corrupt(path, "snapshot sequence is ahead of the journal tail");
     }
+    let derived =
+        derive_snapshot(graph, events, record.last_event_sequence, path).map_err(|error| {
+            match error {
+                WorkflowError::Corrupt { .. } => error,
+                error => WorkflowError::Corrupt {
+                    path: path.to_path_buf(),
+                    reason: format!("journal prefix does not derive valid state: {error}"),
+                },
+            }
+        })?;
+    if record.state != derived {
+        return corrupt(path, "snapshot state differs from its journal prefix");
+    }
+    let mut retained_workflow_output = 0_u64;
     let terminal = state
         .nodes
         .iter()
@@ -498,14 +639,34 @@ fn validate_state(
             .try_fold(0_u64, |total, artifact| {
                 total.checked_add(artifact.retained_bytes)
             })
-            .is_none_or(|total| total > definition.max_output_bytes)
+            .is_none_or(|total| total > definition.max_output_bytes.saturating_mul(2))
         {
             return corrupt(
                 path,
-                "command stream artifacts exceed the frozen total output limit",
+                "command stream artifacts exceed twice the per-stream output limit",
             );
         }
-        validate_completion_artifacts(completion, path)?;
+        retained_workflow_output = [
+            completion.artifacts.stdout.as_ref(),
+            completion.artifacts.stderr.as_ref(),
+            completion.artifacts.answer.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .try_fold(retained_workflow_output, |total, artifact| {
+            total.checked_add(artifact.retained_bytes)
+        })
+        .ok_or_else(|| WorkflowError::Corrupt {
+            path: path.to_path_buf(),
+            reason: "retained workflow output size overflowed".to_owned(),
+        })?;
+        validate_completion_artifacts(completion, path, root, run_relative)?;
+    }
+    if retained_workflow_output > graph.runtime_limits.retained_output_total_bytes {
+        return corrupt(
+            path,
+            "retained output exceeds the frozen workflow-wide limit",
+        );
     }
     let expected_exits = state
         .completions
@@ -553,6 +714,8 @@ fn validate_state(
 fn validate_completion_artifacts(
     completion: &super::NodeCompletion,
     path: &Path,
+    root: &super::secure_fs::SecureDirectory,
+    run_relative: &Path,
 ) -> WorkflowResult<()> {
     if completion
         .structured_output
@@ -580,6 +743,9 @@ fn validate_completion_artifacts(
             ArtifactObservation::Truncated {
                 observed_bytes_at_least,
             } => observed_bytes_at_least > artifact.retained_bytes,
+            ArtifactObservation::Incomplete { observed_bytes } => {
+                observed_bytes >= artifact.retained_bytes
+            }
         };
         if artifact.relative_path.is_empty() || !observation_valid {
             return corrupt(path, "durable artifact reference has invalid size metadata");
@@ -594,7 +760,7 @@ fn validate_completion_artifacts(
         }
         if let Some(run_directory) = path.parent() {
             let artifact_path = run_directory.join(relative);
-            let mut file = super::secure_fs::open_file_beneath(run_directory, relative)?;
+            let mut file = root.open_file(&run_relative.join(relative))?;
             let metadata = file.metadata().map_err(WorkflowError::Io)?;
             if metadata.len() != artifact.retained_bytes {
                 return corrupt(
@@ -708,15 +874,21 @@ fn corrupt<T>(path: &Path, reason: &str) -> WorkflowResult<T> {
     })
 }
 
-fn resolve_prefix<T: FromStr<Err = WorkflowError>>(root: &Path, prefix: &str) -> WorkflowResult<T> {
+fn resolve_prefix<T: FromStr<Err = WorkflowError>>(
+    root: &super::secure_fs::SecureDirectory,
+    directory: &Path,
+    prefix: &str,
+) -> WorkflowResult<T> {
     if prefix.is_empty() {
         return Err(WorkflowError::UnknownId(prefix.to_owned()));
     }
-    let mut matches = fs::read_dir(root)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
-            (name.starts_with(prefix) && entry.file_type().ok()?.is_dir()).then_some(name)
+    let mut matches = root
+        .directory_names(directory)?
+        .into_iter()
+        .filter_map(|name| {
+            let name = name.into_string().ok()?;
+            (name.starts_with(prefix) && root.open_directory(&directory.join(&name)).is_ok())
+                .then_some(name)
         })
         .collect::<Vec<_>>();
     matches.sort();
@@ -730,72 +902,42 @@ fn resolve_prefix<T: FromStr<Err = WorkflowError>>(root: &Path, prefix: &str) ->
     }
 }
 
-fn read_json<T: DeserializeOwned>(path: &Path) -> WorkflowResult<T> {
-    reject_symlink(path)?;
-    serde_json::from_slice(&fs::read(path)?).map_err(WorkflowError::from)
+fn read_json<T: DeserializeOwned>(
+    root: &super::secure_fs::SecureDirectory,
+    relative: &Path,
+) -> WorkflowResult<T> {
+    let mut file = root.open_private_file(relative, false)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    serde_json::from_slice(&bytes).map_err(WorkflowError::from)
 }
+fn write_json_beneath(
+    root: &super::secure_fs::SecureDirectory,
+    relative: &Path,
+    value: &impl Serialize,
+) -> WorkflowResult<()> {
+    let bytes = serde_json::to_vec_pretty(value)?;
+    root.write_file(relative, &bytes)
+}
+
+#[cfg(test)]
 fn write_json(path: &Path, value: &impl Serialize) -> WorkflowResult<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
-    crate::config_writer::write_bytes_atomically(path, &bytes)?;
-    set_private_file(path)?;
-    Ok(())
+    let parent = path
+        .parent()
+        .ok_or_else(|| WorkflowError::UntrustedDirectory(path.to_path_buf()))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| WorkflowError::UntrustedDirectory(path.to_path_buf()))?;
+    super::write_file_beneath(parent, Path::new(name), &bytes)
 }
-fn ensure_private_dir(path: &Path) -> WorkflowResult<()> {
-    if path.exists() {
-        reject_symlink(path)?;
-        if !path.is_dir() {
-            return Err(WorkflowError::UntrustedDirectory(path.to_path_buf()));
-        }
-    } else {
-        create_private_dir(path)?;
-    }
-    set_private_dir(path)?;
-    Ok(())
+
+fn plan_relative(id: PlanId, child: &Path) -> PathBuf {
+    PathBuf::from("plans").join(id.to_string()).join(child)
 }
-fn create_private_dir(path: &Path) -> WorkflowResult<()> {
-    fs::create_dir(path)?;
-    set_private_dir(path)?;
-    Ok(())
-}
-fn write_new_private(path: &Path, bytes: &[u8]) -> WorkflowResult<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(())
-}
-fn reject_symlink(path: &Path) -> WorkflowResult<()> {
-    if fs::symlink_metadata(path)?.file_type().is_symlink() {
-        Err(WorkflowError::UntrustedDirectory(path.to_path_buf()))
-    } else {
-        Ok(())
-    }
-}
-#[cfg(unix)]
-fn set_private_dir(path: &Path) -> WorkflowResult<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    Ok(())
-}
-#[cfg(not(unix))]
-fn set_private_dir(_: &Path) -> WorkflowResult<()> {
-    Ok(())
-}
-#[cfg(unix)]
-fn set_private_file(path: &Path) -> WorkflowResult<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-#[cfg(not(unix))]
-fn set_private_file(_: &Path) -> WorkflowResult<()> {
-    Ok(())
+
+fn run_relative(id: RunId, child: &Path) -> PathBuf {
+    PathBuf::from("runs").join(id.to_string()).join(child)
 }
 fn sha256(bytes: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};

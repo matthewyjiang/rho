@@ -73,6 +73,51 @@ fn planner_frame_rejects_zero_and_oversized_lengths() {
     }
 }
 
+// Covers: cancel must expose a typed pending result at its measured wait bound
+// instead of treating an older acknowledgement as success.
+// Owner: workflow CLI cancellation contract.
+#[tokio::test]
+async fn cancellation_wait_returns_typed_exact_state() {
+    let mut checks = 0;
+    let acknowledged = wait_for_cancellation_ack(
+        || {
+            checks += 1;
+            Ok::<_, std::convert::Infallible>(true)
+        },
+        Duration::ZERO,
+        Duration::ZERO,
+    )
+    .await
+    .unwrap();
+    assert!(acknowledged);
+    assert_eq!(
+        cancellation_state(acknowledged, RunLifecycle::Running),
+        CancellationState::Acknowledged
+    );
+    assert_eq!(checks, 1);
+
+    let pending = wait_for_cancellation_ack(
+        || Ok::<_, std::convert::Infallible>(false),
+        Duration::ZERO,
+        Duration::ZERO,
+    )
+    .await
+    .unwrap();
+    assert!(!pending);
+    assert_eq!(
+        cancellation_state(pending, RunLifecycle::Running),
+        CancellationState::Pending
+    );
+    assert_eq!(
+        cancellation_state(true, RunLifecycle::Completed),
+        CancellationState::Acknowledged
+    );
+    assert_eq!(
+        cancellation_state(false, RunLifecycle::Completed),
+        CancellationState::AlreadyCompleted
+    );
+}
+
 // Covers: resume must use the run's copied graph when its plan and source no longer exist.
 // Owner: workflow CLI resume preflight.
 #[tokio::test]
@@ -119,7 +164,10 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
             crate::workflow::RunStateRecord {
                 schema_version: crate::workflow::RUN_STATE_VERSION,
                 last_event_sequence: 0,
-                state: crate::workflow::test_support::state(&graph),
+                state: crate::workflow::WorkflowState {
+                    lifecycle: crate::workflow::RunLifecycle::Planned,
+                    ..crate::workflow::test_support::state(&graph)
+                },
             },
         )
         .unwrap();

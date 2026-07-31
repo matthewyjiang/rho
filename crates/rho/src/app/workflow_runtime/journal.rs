@@ -39,7 +39,7 @@ pub(super) fn replay_journal(
 
 pub(super) fn apply_durable_event(
     graph: &crate::workflow::FrozenWorkflow,
-    run_directory: &std::path::Path,
+    _run_directory: &std::path::Path,
     state: &WorkflowState,
     event: &WorkflowEvent,
 ) -> Result<WorkflowState, RuntimeError> {
@@ -61,14 +61,10 @@ pub(super) fn apply_durable_event(
                 attempt: *attempt,
             },
         )?,
-        WorkflowEvent::NodeFinished {
-            node,
-            attempt,
-            outcome,
-        } => {
-            let completion = match attempt {
-                Some(attempt) => read_attempt_completion(run_directory, node, *attempt, *outcome)?,
-                None if *outcome == NodeTerminalState::Cancellation => {
+        WorkflowEvent::NodeFinished { node, completion } => {
+            let completion = match completion.attempt {
+                Some(_) => completion.as_ref().clone(),
+                None if completion.outcome == NodeTerminalState::Cancellation => {
                     let resume = match state.nodes.get(node) {
                         Some(crate::workflow::NodeState::Pending) => {
                             crate::workflow::CancellationResumeState::Pending
@@ -84,7 +80,7 @@ pub(super) fn apply_durable_event(
                     };
                     NodeCompletion::cancelled(resume)
                 }
-                None => NodeCompletion::terminal(*outcome),
+                None => completion.as_ref().clone(),
             };
             apply_event(
                 graph,
@@ -133,8 +129,29 @@ pub(super) fn completed_attempt(
     node: &NodeId,
     attempt: AttemptNumber,
 ) -> Result<Option<NodeCompletion>, RuntimeError> {
+    let record = read_attempt_record(run_directory, node, attempt)?;
+    Ok(match record.state {
+        AttemptState::Completed { completion } => Some(*completion),
+        AttemptState::LaunchIntended
+        | AttemptState::Started { .. }
+        | AttemptState::CleanlyCancelled
+        | AttemptState::InterruptedUncertain { .. } => None,
+    })
+}
+
+pub(super) fn read_attempt_record(
+    run_directory: &std::path::Path,
+    node: &NodeId,
+    attempt: AttemptNumber,
+) -> Result<AttemptRecord, RuntimeError> {
     let path = attempt_status_path(run_directory, node, attempt);
-    let record: AttemptRecord = serde_json::from_slice(&std::fs::read(path)?)?;
+    let relative = path
+        .strip_prefix(run_directory)
+        .map_err(|_| RuntimeError::UnsafeArtifact(path.clone()))?;
+    let mut file = crate::workflow::open_private_file_beneath(run_directory, relative, false)?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes)?;
+    let record: AttemptRecord = serde_json::from_slice(&bytes)?;
     crate::workflow::check_schema_version(
         "workflow attempt",
         record.schema_version,
@@ -145,32 +162,7 @@ pub(super) fn completed_attempt(
             "attempt record for node '{node}' has the wrong attempt number"
         )));
     }
-    Ok(match record.state {
-        AttemptState::Completed { completion } => Some(*completion),
-        AttemptState::LaunchIntended
-        | AttemptState::Started { .. }
-        | AttemptState::CleanlyCancelled
-        | AttemptState::InterruptedUncertain { .. } => None,
-    })
-}
-
-fn read_attempt_completion(
-    run_directory: &std::path::Path,
-    node: &NodeId,
-    attempt: AttemptNumber,
-    outcome: NodeTerminalState,
-) -> Result<NodeCompletion, RuntimeError> {
-    let completion = completed_attempt(run_directory, node, attempt)?.ok_or_else(|| {
-        RuntimeError::Data(format!(
-            "node '{node}' finished event has no completed attempt record"
-        ))
-    })?;
-    if completion.outcome != outcome {
-        return Err(RuntimeError::Data(format!(
-            "node '{node}' attempt outcome differs from its finished event"
-        )));
-    }
-    Ok(completion)
+    Ok(record)
 }
 
 fn attempt_status_path(
