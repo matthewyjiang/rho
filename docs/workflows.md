@@ -42,6 +42,8 @@ In the chat TUI, run `/workflow` to open one list:
 2. **RUNS** - `Open <status> · <id>` resumes live work; `Status <result> · <id>` opens finished step status.
 3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan.
 
+Press `d` on a **RUNS** or **SAVED PLANS** row to delete it after confirm. Local `.star` source files are not deleted from disk.
+
 The right pane explains the highlighted row. Enter runs that action.
 
 ## CLI reference

@@ -136,6 +136,34 @@ impl WorkflowOps {
             .collect())
     }
 
+    pub(crate) fn delete_workspace_plan(&self, plan_id: PlanId) -> anyhow::Result<()> {
+        let plan = self.load_plan_id(plan_id)?;
+        let identity = workspace_identity(&self.workspace)?;
+        if plan.manifest.workspace_identity != identity {
+            anyhow::bail!("plan belongs to another workspace");
+        }
+        Ok(self.service.store().delete_plan(plan_id)?)
+    }
+
+    pub(crate) fn delete_workspace_run(&self, run_id: RunId) -> anyhow::Result<()> {
+        let run = self.load_run_id(run_id)?;
+        let identity = workspace_identity(&self.workspace)?;
+        if run.manifest.workspace_identity != identity {
+            anyhow::bail!("run belongs to another workspace");
+        }
+        if matches!(
+            run.state.state.lifecycle,
+            RunLifecycle::Running | RunLifecycle::Cancelling
+        ) {
+            anyhow::bail!(
+                "run {} is still {}, stop it before deleting",
+                run_id,
+                format!("{:?}", run.state.state.lifecycle).to_ascii_lowercase()
+            );
+        }
+        Ok(self.service.store().delete_run(run_id)?)
+    }
+
     pub(crate) fn recheck_plan(&self, plan: &StoredPlan) -> anyhow::Result<()> {
         let current_workspace = workspace_identity(&self.workspace)?;
         if current_workspace != plan.manifest.workspace_identity {

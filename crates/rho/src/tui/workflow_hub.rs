@@ -5,8 +5,9 @@ use std::{collections::BTreeMap, str::FromStr};
 use ratatui::DefaultTerminal;
 
 use super::{
-    picker_overlay::OverlayChrome, workflow_discover, App, ComposerMode, Entry, PickerAction,
-    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+    picker_overlay::OverlayChrome, workflow_discover, App, ComposerMode, Entry, InlineChoice,
+    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, PickerAction, PickerBadge,
+    PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
 };
 use crate::{
     agent::AgentCapabilities,
@@ -180,7 +181,7 @@ pub(super) fn hub_picker(
                 Some("RUNS"),
                 format!("Open  {life}  ·  {short}"),
                 format!(
-                    "{name}\n{life} · {}\nEnter opens the live graph.\nRun id {short}",
+                    "{name}\n{life} · {}\nEnter opens the live graph. Press d to delete.\nRun id {short}",
                     run_progress(run)
                 ),
                 format!("{RUN_PREFIX}{id}"),
@@ -198,7 +199,7 @@ pub(super) fn hub_picker(
                 Some("RUNS"),
                 format!("Status  {outcome}  ·  {short}"),
                 format!(
-                    "{name}\nFinished · {outcome} · {}\nEnter shows step status.\nRun id {short}",
+                    "{name}\nFinished · {outcome} · {}\nEnter shows step status. Press d to delete.\nRun id {short}",
                     run_progress(run)
                 ),
                 format!("{RUN_PREFIX}{id}"),
@@ -220,7 +221,7 @@ pub(super) fn hub_picker(
                 Some("SAVED PLANS"),
                 format!("Run plan  ·  {short}"),
                 format!(
-                    "{name}\n{steps} steps already frozen.\nEnter starts a new run from this plan.\nPlan id {short}"
+                    "{name}\n{steps} steps already frozen.\nEnter starts a new run. Press d to delete this plan.\nPlan id {short}\nRuns that already used this plan keep their own copy."
                 ),
                 format!("{PLAN_PREFIX}{id}"),
                 Some(("saved".into(), PickerBadgeTone::Internal)),
@@ -231,7 +232,7 @@ pub(super) fn hub_picker(
 
     UiPicker::new(
         "Workflows",
-        "enter acts · type to filter · esc close",
+        "enter acts · d deletes plan/run · type to filter · esc close",
         items,
         PickerAction::Workflow,
     )
@@ -331,6 +332,142 @@ impl App {
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.status = "workflows".into();
         Ok(())
+    }
+
+    pub(super) fn workflow_picker_is_open(&self) -> bool {
+        matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Workflow
+        )
+    }
+
+    pub(super) fn prompt_delete_selected_workflow_item(&mut self) -> anyhow::Result<()> {
+        let Some(value) = self.selected_workflow_value() else {
+            return Ok(());
+        };
+        if let Some(plan_id) = value.strip_prefix(PLAN_PREFIX) {
+            let short = short_id(plan_id);
+            let choice = InlineChoice::new(
+                format!("Delete plan {short}?"),
+                "Removes this saved plan. Existing runs keep their own graph copy and still open.",
+                vec![
+                    InlineChoiceOption::available(
+                        "delete",
+                        'd',
+                        "Delete",
+                        "Permanently remove this plan",
+                    ),
+                    InlineChoiceOption::available(
+                        "cancel",
+                        'c',
+                        "Cancel",
+                        "Keep the plan and return to workflows",
+                    )
+                    .with_alternate_shortcut('n'),
+                ],
+            )?;
+            self.input_ui
+                .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                    choice,
+                    pending: InlineChoicePending::DeleteWorkflowPlan {
+                        plan_id: plan_id.to_owned(),
+                    },
+                }));
+            self.status = "confirm delete plan".into();
+            return Ok(());
+        }
+        if let Some(run_id) = value.strip_prefix(RUN_PREFIX) {
+            let short = short_id(run_id);
+            let choice = InlineChoice::new(
+                format!("Delete run {short}?"),
+                "Removes this run's durable status and artifacts. Active runs must be stopped first.",
+                vec![
+                    InlineChoiceOption::available(
+                        "delete",
+                        'd',
+                        "Delete",
+                        "Permanently remove this run",
+                    ),
+                    InlineChoiceOption::available(
+                        "cancel",
+                        'c',
+                        "Cancel",
+                        "Keep the run and return to workflows",
+                    )
+                    .with_alternate_shortcut('n'),
+                ],
+            )?;
+            self.input_ui
+                .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                    choice,
+                    pending: InlineChoicePending::DeleteWorkflowRun {
+                        run_id: run_id.to_owned(),
+                    },
+                }));
+            self.status = "confirm delete run".into();
+            return Ok(());
+        }
+        self.insert_entry(&Entry::Notice(
+            "Only saved plans and runs can be deleted here. Local workflow files stay on disk."
+                .into(),
+        ));
+        self.status = "nothing to delete".into();
+        Ok(())
+    }
+
+    pub(super) fn submit_delete_workflow_plan_choice(
+        &mut self,
+        value: &str,
+        plan_id: &str,
+    ) -> anyhow::Result<()> {
+        if value != "delete" {
+            return self.open_workflow_hub();
+        }
+        let short = short_id(plan_id);
+        let parsed = PlanId::from_str(plan_id)?;
+        match self.workflow_ops()?.delete_workspace_plan(parsed) {
+            Ok(()) => {
+                self.insert_entry(&Entry::Notice(format!("Deleted plan {short}.")));
+                self.status = "plan deleted".into();
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("Could not delete plan: {error:#}")));
+                self.status = "delete failed".into();
+            }
+        }
+        self.open_workflow_hub()
+    }
+
+    pub(super) fn submit_delete_workflow_run_choice(
+        &mut self,
+        value: &str,
+        run_id: &str,
+    ) -> anyhow::Result<()> {
+        if value != "delete" {
+            return self.open_workflow_hub();
+        }
+        let short = short_id(run_id);
+        let parsed = RunId::from_str(run_id)?;
+        match self.workflow_ops()?.delete_workspace_run(parsed) {
+            Ok(()) => {
+                self.insert_entry(&Entry::Notice(format!("Deleted run {short}.")));
+                self.status = "run deleted".into();
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("Could not delete run: {error:#}")));
+                self.status = "delete failed".into();
+            }
+        }
+        self.open_workflow_hub()
+    }
+
+    fn selected_workflow_value(&self) -> Option<String> {
+        match self.input_ui.composer() {
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Workflow => {
+                picker.selected_item().map(|item| item.value.clone())
+            }
+            _ => None,
+        }
     }
 
     pub(super) async fn submit_workflow_selection(

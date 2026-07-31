@@ -711,3 +711,26 @@ fn lists_plans_and_runs_skipping_unreadable_entries() {
     std::fs::create_dir_all(store.layout.plans().join("not-a-uuid")).unwrap();
     assert_eq!(store.list_plans().unwrap().len(), 2);
 }
+
+// Covers: hub plan/run cleanup must remove only the targeted store entry.
+// Owner: workflow durable store.
+#[test]
+fn deletes_plans_and_runs() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let first = plan(&store);
+    let second = plan(&store);
+    let run = run(&store, &first);
+
+    store.delete_plan(first.manifest.plan_id).unwrap();
+    assert!(store.load_plan(first.manifest.plan_id).is_err());
+    assert!(store.load_plan(second.manifest.plan_id).is_ok());
+    // Run still loads after its plan is gone (graph was copied into the run).
+    assert_eq!(
+        store.load_run(run.manifest.run_id).unwrap().manifest.run_id,
+        run.manifest.run_id
+    );
+
+    store.delete_run(run.manifest.run_id).unwrap();
+    assert!(store.load_run(run.manifest.run_id).is_err());
+}
