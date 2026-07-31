@@ -19,8 +19,8 @@ use super::{
         append_event_and_save, append_event_only, persist_state_event,
         recover_completed_transitions, send_event, RecoveryDecision, WorkflowRunner,
     },
-    CheckoutGate, CleanupCause, NodeExecutionRequest, NodeExecutionResult, RuntimeError,
-    RuntimeEvent,
+    CheckoutGate, CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressReporter,
+    RuntimeError, RuntimeEvent,
 };
 
 struct NodeTaskOutput {
@@ -399,6 +399,10 @@ impl<'a> DriveSession<'a> {
             NodeExecution::Command(_) => Arc::clone(&self.runner.commands),
         };
         let gate = self.checkout.clone();
+        let progress = self
+            .events
+            .as_ref()
+            .map(|sender| NodeProgressReporter::new(node.clone(), attempt, sender.clone()));
         let request = NodeExecutionRequest {
             workflow: Arc::clone(&self.graph),
             run_id,
@@ -408,6 +412,7 @@ impl<'a> DriveSession<'a> {
             attempt_directory,
             outputs: self.run.state.state.outputs.clone(),
             cancellation: self.runner.cancellation.clone(),
+            progress,
         };
         self.tasks.spawn(async move {
             let cancellation = request.cancellation.clone();

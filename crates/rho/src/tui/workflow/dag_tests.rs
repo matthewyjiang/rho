@@ -17,6 +17,7 @@ fn node(id: &str, name: &str, deps: &[&str], state: NodeState) -> WorkflowNodeSn
             provider: None,
             model: None,
         },
+        work: format!("work for {name}"),
         state,
         current_attempt: None,
         command_exit: None,
@@ -38,7 +39,7 @@ fn dependents_render_below_dependencies() {
     assert_eq!(layer_index_of(&nodes, 2), Some(0));
     assert_eq!(layer_index_of(&nodes, 0), Some(1));
 
-    let lines = render_dag(&nodes, 0, 80);
+    let lines = render_dag(&nodes, 0, 80, &vec![None; nodes.len()]);
     let text = lines
         .iter()
         .map(|line| {

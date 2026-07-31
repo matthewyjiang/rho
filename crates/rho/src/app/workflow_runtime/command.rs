@@ -88,6 +88,9 @@ impl WorkflowCommandExecutor {
             &request.outputs,
             &request.workflow.runtime_limits,
         )?;
+        if let Some(progress) = &request.progress {
+            progress.message(command_progress_message(command, &executable, &invocation));
+        }
         let max_output_bytes = usize::try_from(node.max_output_bytes).map_err(|_| {
             RuntimeError::Data(format!(
                 "node '{}' output limit does not fit this platform",
@@ -275,6 +278,42 @@ fn invocation(
         } => ProcessInvocation::shell(executable, arguments.clone(), command),
     };
     Ok(invocation)
+}
+
+fn command_progress_message(
+    command: &CommandNode,
+    executable: &Path,
+    invocation: &ProcessInvocation,
+) -> String {
+    match command {
+        CommandNode::Shell { command, .. } => {
+            let shell = executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("shell");
+            format!("running {shell}: {command}")
+        }
+        CommandNode::Direct { .. } => {
+            let exe = executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("command");
+            let args = invocation.arguments();
+            if args.is_empty() {
+                format!("running {exe}")
+            } else {
+                let joined = args.join(" ");
+                let summary = if joined.chars().count() > 140 {
+                    let mut out = joined.chars().take(139).collect::<String>();
+                    out.push('…');
+                    out
+                } else {
+                    joined
+                };
+                format!("running {exe} {summary}")
+            }
+        }
+    }
 }
 
 pub(super) fn render_template(

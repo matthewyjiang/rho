@@ -26,10 +26,28 @@ impl WorkflowUiState {
     pub(super) fn apply(&mut self, event: WorkflowEvent) {
         match event {
             WorkflowEvent::Snapshot(snapshot) => {
+                let previous_id = self.selected_node().map(|node| node.id.clone());
                 self.snapshot = snapshot;
                 self.selected = self
                     .selected
                     .min(self.snapshot.nodes.len().saturating_sub(1));
+                // Keep the user on the same node when possible; otherwise prefer work in flight.
+                if let Some(previous_id) = previous_id {
+                    if let Some(index) = self
+                        .snapshot
+                        .nodes
+                        .iter()
+                        .position(|node| node.id == previous_id)
+                    {
+                        self.selected = index;
+                        return;
+                    }
+                }
+                if let Some(index) = self.snapshot.nodes.iter().position(|node| {
+                    matches!(node.state, crate::workflow::NodeState::Running { .. })
+                }) {
+                    self.selected = index;
+                }
             }
             WorkflowEvent::Progress { node, progress } => {
                 self.progress.insert(node, progress);
@@ -82,3 +100,7 @@ impl WorkflowUiState {
         self.snapshot.lifecycle
     }
 }
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;

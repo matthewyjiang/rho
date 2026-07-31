@@ -70,9 +70,10 @@ pub(crate) struct RecoveryRequirement {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowProgress {
     pub(crate) attempt: AttemptNumber,
-    pub(crate) completed: u64,
-    pub(crate) total: u64,
+    pub(crate) completed: Option<u64>,
+    pub(crate) total: Option<u64>,
     pub(crate) message: String,
+    pub(crate) detail: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,6 +83,8 @@ pub(crate) struct WorkflowNodeSnapshot {
     pub(crate) dependencies: Vec<NodeId>,
     pub(crate) access: WorkspaceAccess,
     pub(crate) execution: ExecutionMetadata,
+    /// Short task description from the plan (prompt/command), always available.
+    pub(crate) work: String,
     pub(crate) state: NodeState,
     pub(crate) current_attempt: Option<AttemptNumber>,
     pub(crate) command_exit: Option<CommandExit>,
@@ -248,9 +251,10 @@ impl MatrixAdapter {
                     node: node_id("test"),
                     progress: WorkflowProgress {
                         attempt: test_attempt,
-                        completed: 2,
-                        total: 2,
+                        completed: Some(2),
+                        total: Some(2),
                         message: "checks complete".into(),
+                        detail: None,
                     },
                 });
                 for node in &mut self.snapshot.nodes {
@@ -432,6 +436,7 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
                     provider: Some("openai".into()),
                     model: Some("gpt-5.5".into()),
                 },
+                work: "Inspect the workspace and summarize risks".into(),
                 state: inspect_state,
                 current_attempt: (start == MatrixWorkflowStart::Resume).then_some(attempt_one),
                 command_exit: None,
@@ -449,6 +454,7 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
                     cwd: ".".into(),
                     shell: false,
                 },
+                work: "cargo test --workspace".into(),
                 state: NodeState::Pending,
                 current_attempt: None,
                 command_exit: None,
@@ -466,6 +472,7 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
                     cwd: ".".into(),
                     shell: false,
                 },
+                work: "apply-result --from inspect".into(),
                 state: NodeState::Pending,
                 current_attempt: None,
                 command_exit: None,

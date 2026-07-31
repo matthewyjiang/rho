@@ -13,8 +13,8 @@ use super::{
     artifacts::{write_artifact, write_artifact_with_observation},
     cancellation::AGENT_CANCELLATION_CLEANUP_MILLIS,
     command::render_template,
-    CleanupCause, NodeExecutionRequest, NodeExecutionResult, RuntimeError, WorkflowExecutionFuture,
-    WorkflowNodeExecutor,
+    CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressUpdate, RuntimeError,
+    WorkflowExecutionFuture, WorkflowNodeExecutor,
 };
 
 pub(crate) struct WorkflowAgentExecutor {
@@ -93,25 +93,41 @@ impl WorkflowAgentExecutor {
                     .label("attempt", request.attempt.to_string()),
             })
             .map_err(|error| RuntimeError::Executor(error.to_string()))?;
+        if let Some(progress) = &request.progress {
+            progress.message(format!("starting agent {}", agent.agent_id));
+        }
         let deadline = tokio::time::sleep(Duration::from_secs(node.timeout_seconds));
         tokio::pin!(deadline);
-        let status = tokio::select! {
-            biased;
-            () = request.cancellation.cancelled() => {
-                return stop_agent(
-                    &mut handle,
-                    AgentStopReason::Cancellation,
-                    agent_cleanup_limit(),
-                ).await;
+        let mut status_rx = handle.clone_status_watch();
+        let mut last_report = String::new();
+        let status = loop {
+            tokio::select! {
+                biased;
+                () = request.cancellation.cancelled() => {
+                    return stop_agent(
+                        &mut handle,
+                        AgentStopReason::Cancellation,
+                        agent_cleanup_limit(),
+                    ).await;
+                }
+                () = &mut deadline => {
+                    return stop_agent(
+                        &mut handle,
+                        AgentStopReason::Timeout,
+                        agent_cleanup_limit(),
+                    ).await;
+                }
+                status = handle.wait() => break status,
+                changed = status_rx.changed() => {
+                    if changed.is_err() {
+                        continue;
+                    }
+                    let current = status_rx.borrow().clone();
+                    if let Some(progress) = &request.progress {
+                        report_agent_progress(progress, &current, &mut last_report);
+                    }
+                }
             }
-            () = &mut deadline => {
-                return stop_agent(
-                    &mut handle,
-                    AgentStopReason::Timeout,
-                    agent_cleanup_limit(),
-                ).await;
-            }
-            status = handle.wait() => status,
         };
         let outcome = match status.state {
             RunState::Ok => NodeTerminalState::Success,
@@ -182,6 +198,59 @@ impl WorkflowAgentExecutor {
 
 fn agent_cleanup_limit() -> Duration {
     Duration::from_millis(AGENT_CANCELLATION_CLEANUP_MILLIS)
+}
+
+fn report_agent_progress(
+    progress: &super::NodeProgressReporter,
+    status: &crate::subagent::RunStatus,
+    last_report: &mut String,
+) {
+    let message = status
+        .last_activity
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("working");
+    let detail = status
+        .last_text
+        .as_deref()
+        .map(last_nonempty_line)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_chars(&value, 120));
+    let fingerprint = match &detail {
+        Some(detail) => format!("{message}\0{detail}"),
+        None => message.to_owned(),
+    };
+    if fingerprint == *last_report {
+        return;
+    }
+    *last_report = fingerprint;
+    progress.report(NodeProgressUpdate {
+        message: message.to_owned(),
+        detail,
+        completed: (status.turns > 0).then_some(status.turns),
+        total: None,
+    });
+}
+
+fn last_nonempty_line(text: &str) -> String {
+    text.lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .to_owned()
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+    let mut out = text
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    out.push('…');
+    out
 }
 
 pub(super) type AgentCleanupFuture<'a> =

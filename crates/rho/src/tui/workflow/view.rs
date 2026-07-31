@@ -60,7 +60,18 @@ fn draw_header(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &Workf
 
 fn draw_dag(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
     let inner_width = area.width.saturating_sub(2);
-    let dag_lines = dag::render_dag(&state.snapshot().nodes, state.selected_index(), inner_width);
+    let activities = state
+        .snapshot()
+        .nodes
+        .iter()
+        .map(|node| node_graph_activity(node, state))
+        .collect::<Vec<_>>();
+    let dag_lines = dag::render_dag(
+        &state.snapshot().nodes,
+        state.selected_index(),
+        inner_width,
+        &activities,
+    );
     let lines = dag::to_paragraph_lines(dag_lines);
     frame.render_widget(
         Paragraph::new(lines)
@@ -99,6 +110,10 @@ fn detail_lines<'a>(node: &'a WorkflowNodeSnapshot, state: &'a WorkflowUiState) 
         Line::from(kind_line(node)),
     ];
 
+    if !node.work.is_empty() {
+        lines.push(Line::from(format!("task {}", node.work)));
+    }
+
     if matches!(node.access, WorkspaceAccess::Mutating) {
         lines.push(Line::from("writes to the workspace"));
     }
@@ -109,10 +124,12 @@ fn detail_lines<'a>(node: &'a WorkflowNodeSnapshot, state: &'a WorkflowUiState) 
     }
 
     if let Some(progress) = state.progress(node) {
-        lines.push(Line::from(format!(
-            "progress {}/{} · {}",
-            progress.completed, progress.total, progress.message
-        )));
+        lines.push(Line::from(progress_now_line(progress)));
+        if let Some(detail) = progress.detail.as_deref().filter(|value| !value.is_empty()) {
+            lines.push(Line::from(format!("  {detail}")));
+        }
+    } else if matches!(node.state, NodeState::Running { .. }) {
+        lines.push(Line::from("now starting…"));
     }
 
     if let Some(exit) = &node.command_exit {
@@ -155,6 +172,29 @@ fn detail_lines<'a>(node: &'a WorkflowNodeSnapshot, state: &'a WorkflowUiState) 
     }
 
     lines
+}
+
+fn node_graph_activity(node: &WorkflowNodeSnapshot, state: &WorkflowUiState) -> Option<String> {
+    if let Some(progress) = state.progress(node) {
+        return Some(progress.message.clone());
+    }
+    if matches!(node.state, NodeState::Running { .. }) {
+        if node.work.is_empty() {
+            return Some("working".into());
+        }
+        return Some(node.work.clone());
+    }
+    None
+}
+
+fn progress_now_line(progress: &super::event_adapter::WorkflowProgress) -> String {
+    match (progress.completed, progress.total) {
+        (Some(completed), Some(total)) if total > 0 => {
+            format!("now {completed}/{total} · {}", progress.message)
+        }
+        (Some(completed), _) => format!("now turn {completed} · {}", progress.message),
+        _ => format!("now {}", progress.message),
+    }
 }
 
 fn draw_footer(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
@@ -201,11 +241,37 @@ fn progress_summary(state: &WorkflowUiState) -> String {
         .nodes
         .iter()
         .filter(|node| matches!(node.state, NodeState::Running { .. }))
-        .count();
-    if running > 0 {
-        format!("{done}/{total} done · {running} running")
+        .collect::<Vec<_>>();
+    if running.is_empty() {
+        return format!("{done}/{total} done");
+    }
+    let focus = running
+        .iter()
+        .find_map(|node| {
+            state
+                .progress(node)
+                .map(|progress| format!("{}: {}", node.display_name, progress.message))
+        })
+        .or_else(|| {
+            running.first().map(|node| {
+                if node.work.is_empty() {
+                    format!("{} running", node.display_name)
+                } else {
+                    format!("{}: {}", node.display_name, short_work(&node.work))
+                }
+            })
+        })
+        .unwrap_or_else(|| format!("{} running", running.len()));
+    format!("{done}/{total} done · {focus}")
+}
+
+fn short_work(work: &str) -> String {
+    if work.chars().count() <= 48 {
+        work.to_owned()
     } else {
-        format!("{done}/{total} done")
+        let mut out = work.chars().take(47).collect::<String>();
+        out.push('…');
+        out
     }
 }
 

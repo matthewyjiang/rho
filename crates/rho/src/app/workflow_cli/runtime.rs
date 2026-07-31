@@ -27,11 +27,11 @@ use crate::{
     tui::workflow::{
         CancellationState, ExecutionMetadata, PlanApprovalState, SourceDigestSummary,
         TerminalReason, WorkflowAction, WorkflowEvent as TuiEvent, WorkflowEventAdapter,
-        WorkflowNodeSnapshot, WorkflowSnapshot,
+        WorkflowNodeSnapshot, WorkflowProgress, WorkflowSnapshot,
     },
     workflow::{
-        derive_workflow_outcome, Digest, NodeExecution, NodeState, NodeTerminalState, ResolvedNode,
-        RunId, RunLifecycle, StoredRun, WorkflowStore,
+        derive_workflow_outcome, CommandNode, Digest, NodeExecution, NodeState, NodeTerminalState,
+        ResolvedNode, RunId, RunLifecycle, StoredRun, Template, TemplatePart, WorkflowStore,
     },
 };
 
@@ -450,13 +450,32 @@ impl WorkflowEventAdapter for RunnerTuiAdapter {
         &mut self,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<TuiEvent>>> + Send + '_>> {
         Box::pin(async move {
-            if self.events.recv().await.is_some() {
-                return self
+            match self.events.recv().await {
+                Some(RuntimeEvent::NodeProgress {
+                    node,
+                    attempt,
+                    message,
+                    detail,
+                    completed,
+                    total,
+                }) => Ok(Some(TuiEvent::Progress {
+                    node,
+                    progress: WorkflowProgress {
+                        attempt,
+                        completed,
+                        total,
+                        message,
+                        detail,
+                    },
+                })),
+                Some(_) => self
                     .load_snapshot()
-                    .map(|snapshot| Some(TuiEvent::Snapshot(snapshot)));
+                    .map(|snapshot| Some(TuiEvent::Snapshot(snapshot))),
+                None => {
+                    self.finish_worker().await?;
+                    Ok(None)
+                }
             }
-            self.finish_worker().await?;
-            Ok(None)
         })
     }
 
@@ -520,6 +539,7 @@ fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
                 dependencies: node.needs.clone(),
                 access: node.access,
                 execution,
+                work: node_work_summary(&node.execution),
                 state: node_state.clone(),
                 current_attempt,
                 command_exit: state.command_exits.get(id).cloned(),
@@ -574,6 +594,73 @@ fn durable_artifacts_for_node(
             artifact: artifact.clone(),
         })
         .collect()
+}
+
+fn node_work_summary(execution: &NodeExecution) -> String {
+    match execution {
+        NodeExecution::Agent(agent) => {
+            let preview = template_preview(&agent.prompt);
+            if preview.is_empty() {
+                format!("agent {}", agent.agent)
+            } else {
+                preview
+            }
+        }
+        NodeExecution::Command(CommandNode::Direct {
+            executable,
+            arguments,
+            ..
+        }) => {
+            let exe = std::path::Path::new(executable)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(executable);
+            if arguments.is_empty() {
+                format!("run {exe}")
+            } else {
+                let args = arguments
+                    .iter()
+                    .map(template_preview)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                truncate_chars(&format!("run {exe} {args}"), 160)
+            }
+        }
+        NodeExecution::Command(CommandNode::Shell { command, .. }) => {
+            truncate_chars(&format!("shell: {command}"), 160)
+        }
+    }
+}
+
+fn template_preview(template: &Template) -> String {
+    let mut out = String::new();
+    for part in &template.0 {
+        match part {
+            TemplatePart::Literal { value } => out.push_str(value),
+            TemplatePart::Output { reference } => {
+                let path = if reference.path.0.is_empty() {
+                    String::new()
+                } else {
+                    format!(".{}", reference.path.0.join("."))
+                };
+                out.push_str(&format!("{{{{{node}{path}}}}}", node = reference.node));
+            }
+        }
+    }
+    let collapsed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_chars(&collapsed, 160)
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+    let mut out = text
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    out.push('…');
+    out
 }
 
 fn source_digest(run: &StoredRun) -> Digest {

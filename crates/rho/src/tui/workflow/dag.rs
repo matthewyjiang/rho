@@ -24,6 +24,7 @@ pub(super) fn render_dag(
     nodes: &[WorkflowNodeSnapshot],
     selected: usize,
     width: u16,
+    live_activity: &[Option<String>],
 ) -> Vec<DagLine> {
     if nodes.is_empty() {
         return vec![DagLine {
@@ -46,7 +47,7 @@ pub(super) fn render_dag(
         if layer_idx > 0 {
             lines.push(connector_line(layer, nodes, width));
         }
-        lines.extend(layer_lines(layer, nodes, selected, width));
+        lines.extend(layer_lines(layer, nodes, selected, width, live_activity));
     }
     lines
 }
@@ -94,11 +95,12 @@ fn layer_lines(
     nodes: &[WorkflowNodeSnapshot],
     selected: usize,
     width: usize,
+    live_activity: &[Option<String>],
 ) -> Vec<DagLine> {
     // Prefer one row when labels fit; otherwise stack nodes in the layer.
     let labels = layer
         .iter()
-        .map(|&index| node_chip(nodes, index, index == selected))
+        .map(|&index| node_chip(nodes, index, index == selected, live_activity))
         .collect::<Vec<_>>();
     let joined_width = labels.iter().map(|chip| chip.display_width).sum::<usize>()
         + labels.len().saturating_sub(1) * 3;
@@ -119,7 +121,7 @@ fn layer_lines(
     layer
         .iter()
         .map(|&index| {
-            let chip = node_chip(nodes, index, index == selected);
+            let chip = node_chip(nodes, index, index == selected, live_activity);
             DagLine {
                 spans: chip.spans,
                 node_index: Some(index),
@@ -154,12 +156,26 @@ struct Chip {
     display_width: usize,
 }
 
-fn node_chip(nodes: &[WorkflowNodeSnapshot], index: usize, selected: bool) -> Chip {
+fn node_chip(
+    nodes: &[WorkflowNodeSnapshot],
+    index: usize,
+    selected: bool,
+    live_activity: &[Option<String>],
+) -> Chip {
     let node = &nodes[index];
     let glyph = state_glyph(&node.state);
-    let name = truncate(&node.display_name, 28);
+    let name = truncate(&node.display_name, 22);
     let marker = if selected { "▶ " } else { "  " };
-    let body = format!("{marker}{glyph} {name}");
+    let activity = live_activity
+        .get(index)
+        .and_then(|value| value.as_deref())
+        .map(|value| truncate(value, 28))
+        .or_else(|| running_activity(node));
+    let body = if let Some(activity) = activity {
+        format!("{marker}{glyph} {name} · {activity}")
+    } else {
+        format!("{marker}{glyph} {name}")
+    };
     let style = if selected {
         state_style(&node.state).add_modifier(Modifier::BOLD | Modifier::REVERSED)
     } else {
@@ -170,6 +186,18 @@ fn node_chip(nodes: &[WorkflowNodeSnapshot], index: usize, selected: bool) -> Ch
         spans: vec![Span::styled(body, style)],
         display_width,
     }
+}
+
+fn running_activity(node: &WorkflowNodeSnapshot) -> Option<String> {
+    if !matches!(node.state, NodeState::Running { .. }) {
+        return None;
+    }
+    let text = if node.work.is_empty() {
+        "working".into()
+    } else {
+        truncate(&node.work, 28)
+    };
+    Some(text)
 }
 
 pub(super) fn state_glyph(state: &NodeState) -> &'static str {

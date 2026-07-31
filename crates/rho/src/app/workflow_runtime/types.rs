@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
 use serde::Serialize;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::workflow::{
     AttemptArtifacts, AttemptNumber, CancellationResumeState, CommandExit, FrozenWorkflow,
@@ -15,6 +16,56 @@ pub(crate) trait WorkflowNodeExecutor: Send + Sync {
     fn execute<'a>(&'a self, request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a>;
 }
 
+/// Live activity from one node attempt for TUI and text observers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NodeProgressUpdate {
+    pub(crate) message: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) completed: Option<u64>,
+    pub(crate) total: Option<u64>,
+}
+
+#[derive(Clone)]
+pub(crate) struct NodeProgressReporter {
+    node: NodeId,
+    attempt: AttemptNumber,
+    sender: UnboundedSender<RuntimeEvent>,
+}
+
+impl NodeProgressReporter {
+    pub(crate) fn new(
+        node: NodeId,
+        attempt: AttemptNumber,
+        sender: UnboundedSender<RuntimeEvent>,
+    ) -> Self {
+        Self {
+            node,
+            attempt,
+            sender,
+        }
+    }
+
+    pub(crate) fn report(&self, update: NodeProgressUpdate) {
+        let _ = self.sender.send(RuntimeEvent::NodeProgress {
+            node: self.node.clone(),
+            attempt: self.attempt,
+            message: update.message,
+            detail: update.detail,
+            completed: update.completed,
+            total: update.total,
+        });
+    }
+
+    pub(crate) fn message(&self, message: impl Into<String>) {
+        self.report(NodeProgressUpdate {
+            message: message.into(),
+            detail: None,
+            completed: None,
+            total: None,
+        });
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct NodeExecutionRequest {
     pub(crate) workflow: Arc<FrozenWorkflow>,
@@ -25,6 +76,7 @@ pub(crate) struct NodeExecutionRequest {
     pub(crate) attempt_directory: PathBuf,
     pub(crate) outputs: BTreeMap<NodeId, WorkflowValue>,
     pub(crate) cancellation: rho_sdk::CancellationToken,
+    pub(crate) progress: Option<NodeProgressReporter>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +126,18 @@ pub(crate) enum RuntimeEvent {
         node: NodeId,
         attempt: AttemptNumber,
     },
+    /// In-flight activity for a launched node. Does not change durable state.
+    NodeProgress {
+        node: NodeId,
+        attempt: AttemptNumber,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        completed: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
+    },
     NodeFinished {
         node: NodeId,
         outcome: NodeTerminalState,
@@ -91,6 +155,23 @@ impl RuntimeEvent {
             Self::StateChanged { revision } => format!("workflow state revision {revision}"),
             Self::NodeStarted { node, attempt } => {
                 format!("workflow node {node} started attempt {attempt}")
+            }
+            Self::NodeProgress {
+                node,
+                message,
+                detail,
+                completed,
+                total,
+                ..
+            } => {
+                let mut text = format!("workflow node {node}: {message}");
+                if let (Some(completed), Some(total)) = (completed, total) {
+                    text = format!("{text} ({completed}/{total})");
+                }
+                if let Some(detail) = detail.as_deref().filter(|value| !value.is_empty()) {
+                    text = format!("{text} · {detail}");
+                }
+                text
             }
             Self::NodeFinished { node, outcome } => {
                 format!("workflow node {node} finished: {outcome:?}")

@@ -167,6 +167,31 @@ fn runtime_event_json_matches_wire_shape() {
             "run_id": run_id.to_string(),
         })
     );
+    assert_eq!(
+        runtime_event_json(
+            6,
+            run_id,
+            &RuntimeEvent::NodeProgress {
+                node: node.clone(),
+                attempt,
+                message: "tool: Bash".into(),
+                detail: Some("git status".into()),
+                completed: Some(2),
+                total: None,
+            }
+        ),
+        json!({
+            "type": "node_progress",
+            "node": "build",
+            "attempt": 2,
+            "message": "tool: Bash",
+            "detail": "git status",
+            "completed": 2,
+            "version": WORKFLOW_WIRE_VERSION,
+            "sequence": 6,
+            "run_id": run_id.to_string(),
+        })
+    );
 }
 
 // Covers: tools and CLI text share one RuntimeEvent message path.
@@ -186,6 +211,18 @@ fn runtime_event_message_is_canonical() {
         }
         .message(),
         "workflow node build started attempt 2"
+    );
+    assert_eq!(
+        RuntimeEvent::NodeProgress {
+            node: node.clone(),
+            attempt,
+            message: "tool: Read".into(),
+            detail: Some("src/lib.rs".into()),
+            completed: None,
+            total: None,
+        }
+        .message(),
+        "workflow node build: tool: Read · src/lib.rs"
     );
     assert_eq!(
         RuntimeEvent::NodeFinished {

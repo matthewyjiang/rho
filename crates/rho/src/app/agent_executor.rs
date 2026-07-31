@@ -90,6 +90,11 @@ impl AgentRunHandle {
         self.status()
     }
 
+    /// Clone of the live status watch used while the run is in flight.
+    pub(crate) fn clone_status_watch(&self) -> tokio::sync::watch::Receiver<RunStatus> {
+        self.status.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn completed_for_test(status: RunStatus) -> Self {
         let (_status_tx, status_rx) = tokio::sync::watch::channel(status);
