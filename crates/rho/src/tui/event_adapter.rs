@@ -323,15 +323,7 @@ impl SdkEventAdapter {
                     detail.as_str()
                 ))]
             }
-            RunEvent::ProviderServiceTierFallback { requested, used } => {
-                let requested = match requested {
-                    rho_sdk::model::ServiceTier::Priority => "priority",
-                    _ => "requested",
-                };
-                vec![ViewEvent::Notice(format!(
-                    "provider used the {used} service tier instead of {requested}; fast mode was not applied"
-                ))]
-            }
+            RunEvent::ProviderServiceTierFallback { .. } => Vec::new(),
             RunEvent::HostInputRequested { request } => {
                 vec![ViewEvent::Questionnaire {
                     call_id: rho_sdk::ToolCallId::new(),
