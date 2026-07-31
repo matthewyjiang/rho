@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.11.0...rho-agent-tools-v0.11.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **tui:** validate dropped file attachments ([#677](https://github.com/matthewyjiang/rho/issues/677)) ([1c62a3d](https://github.com/matthewyjiang/rho/commit/1c62a3d638328bc829350f1cf32649fd58f7abcb))
+
 ## [0.11.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.10.1...rho-agent-tools-v0.11.0) (2026-07-31)
 
 
