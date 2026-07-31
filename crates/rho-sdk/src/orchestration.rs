@@ -26,14 +26,21 @@ const PROVIDER_TURN_ATTEMPTS: usize = 4;
 const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
 mod model_call_timer;
+mod run_hooks;
 mod stream_capture;
 mod tool_batch;
 mod tool_turn;
 
 use model_call_timer::ModelCallTimer;
+use run_hooks::RunHooks;
 use stream_capture::{capture_provider_event, StreamCapture};
 use tool_turn::{execute_staged_tool_turn, StagedToolTurn, ToolTurnStatus};
 
+/// Runs one turn loop and reports its terminal outcome to lifecycle hooks.
+///
+/// The hook dispatch lives here, around the whole loop, so every exit path
+/// reports exactly once. `run_completed` and `run_failed` fire per run, which is
+/// what "notify me when a run finishes" means inside a long interactive session.
 pub(crate) async fn execute_run(
     core: Arc<SessionCore>,
     runtime: Rho,
@@ -41,7 +48,38 @@ pub(crate) async fn execute_run(
     start: RunStart,
     cancellation: CancellationToken,
     events: mpsc::Sender<RunEvent>,
+    commands: mpsc::Receiver<RunCommand>,
+) -> Result<RunOutcome, Error> {
+    let hooks = RunHooks::new(&runtime, core.id().clone(), run_id.clone());
+    let result = execute_turn_loop(
+        core,
+        runtime,
+        run_id,
+        start,
+        cancellation,
+        events,
+        commands,
+        &hooks,
+    )
+    .await;
+    // Cancellation is an ordinary user-controlled stop in schema v1, which
+    // has no cancellation event. Do not misreport it as `run_failed`.
+    if !matches!(result, Err(Error::Cancelled)) {
+        hooks.run_finished(&result);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_turn_loop(
+    core: Arc<SessionCore>,
+    runtime: Rho,
+    run_id: RunId,
+    start: RunStart,
+    cancellation: CancellationToken,
+    events: mpsc::Sender<RunEvent>,
     mut commands: mpsc::Receiver<RunCommand>,
+    hooks: &RunHooks,
 ) -> Result<RunOutcome, Error> {
     let (mut history, revision) = core.snapshot();
     history.push(Message::User(start.input.into_blocks()));
@@ -70,6 +108,7 @@ pub(crate) async fn execute_run(
         )]));
         let mut tool_turn = StagedToolTurn::host_requested(call);
         let mut control = RunControl {
+            hooks,
             cancellation: &cancellation,
             events: &events,
             commands: &mut commands,
@@ -129,6 +168,7 @@ pub(crate) async fn execute_run(
         }
 
         let mut control = RunControl {
+            hooks,
             cancellation: &cancellation,
             events: &events,
             commands: &mut commands,
@@ -330,6 +370,7 @@ struct RequestFailure {
 }
 
 struct RunControl<'a> {
+    hooks: &'a RunHooks,
     cancellation: &'a CancellationToken,
     events: &'a mpsc::Sender<RunEvent>,
     commands: &'a mut mpsc::Receiver<RunCommand>,

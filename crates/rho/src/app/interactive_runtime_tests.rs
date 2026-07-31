@@ -61,6 +61,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         usage_purpose: "agent",
         usage_parent_session_id: None,
         usage_recording: Default::default(),
+        hooks: None,
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(10));
@@ -192,6 +193,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     InteractiveRuntime {
         runtime,
+        hooks: None,
         runs: InteractiveRunController::default(),
         sessions: InteractiveSessionController::new(
             session,
@@ -211,6 +213,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         agent: test_bound_agent(),
         agent_id: "default".into(),
         agent_fingerprint: "test-fingerprint".into(),
+        completed_runs: 0,
         pending_persistence_error: None,
         pending_persistence_checkpoint: None,
         experimental_workspace_rewind: false,
@@ -343,7 +346,7 @@ async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_po
 async fn permission_mode_switch_preserves_a_pending_new_session() {
     let mut interactive = pending_compaction_runtime("done").await;
     let previous_id = interactive.session_id().clone();
-    interactive.reset().unwrap();
+    interactive.reset().await.unwrap();
     let pending_id = interactive.session_id().clone();
     assert_ne!(pending_id, previous_id);
 

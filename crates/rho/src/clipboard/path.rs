@@ -11,6 +11,12 @@ pub(crate) fn paste_text_as_file_path(text: &str, cwd: &Path) -> Option<PathBuf>
         return None;
     }
     let candidate = PathBuf::from(unquoted);
+    if !candidate.is_absolute()
+        && candidate.extension().is_none()
+        && candidate.components().count() == 1
+    {
+        return None;
+    }
     let path = if candidate.is_absolute() {
         candidate
     } else {

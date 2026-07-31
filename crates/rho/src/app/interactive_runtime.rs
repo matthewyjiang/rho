@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use rho_sdk::{
     model::{Message, ToolCall},
@@ -10,14 +10,16 @@ use rho_sdk::{
 use {
     crate::compaction::CompactionConfig,
     crate::config::Config,
-    crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::permission::PermissionMode,
     crate::session::Session as StoredSession,
     crate::tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
-    rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider},
 };
 
+#[path = "interactive_runtime_hooks.rs"]
+mod session_hooks;
+#[path = "interactive_runtime_startup.rs"]
+mod startup;
 #[path = "interactive_runtime_workspace_rewind.rs"]
 mod workspace_rewind;
 
@@ -39,6 +41,10 @@ pub(crate) use super::interactive_run_controller::{
 use super::interactive_state::{
     active_run_disposition, ActiveRunCommand, ActiveRunDisposition, InteractiveState,
 };
+use startup::{
+    approval_channel_for, prompt_cache_key, resolve_provider, resolve_session_options,
+    resume_omissions_report,
+};
 
 pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) config: &'a Config,
@@ -58,6 +64,9 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
 
 pub(crate) struct InteractiveRuntime {
     runtime: Rho,
+    /// One hook pipeline for the whole session. Runtime rebuilds reattach it
+    /// rather than starting a second worker.
+    hooks: Option<crate::hooks::HookPipeline>,
     runs: InteractiveRunController,
     sessions: InteractiveSessionController,
     provider: ProviderController,
@@ -78,6 +87,8 @@ pub(crate) struct InteractiveRuntime {
     pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     /// True after the current provider completes a live turn on the current history.
     live_context_warm: bool,
+    /// Runs that reached a terminal outcome, reported at the session boundary.
+    completed_runs: u64,
 }
 
 fn bind_subagent_parent(
@@ -96,6 +107,12 @@ fn bind_subagent_parent(
 enum TurnPrelude {
     None,
     ToolCall(ToolCall),
+}
+
+#[derive(Clone, Copy)]
+enum ReplacementLifecycle {
+    Started,
+    Rebound,
 }
 
 impl InteractiveRuntime {
@@ -138,6 +155,10 @@ impl InteractiveRuntime {
         let (approval_handler, approval_receiver) = approval_channel_for(permission_mode);
         diagnostics.update_compaction_config(&compaction);
         let usage_recording = crate::usage::default_recording().await;
+        let hooks = crate::hooks::start_for_cwd(&cwd);
+        if let Some(hooks) = hooks.as_ref() {
+            diagnostics.attach_hooks(hooks);
+        }
         let runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(&provider),
             tools: tools.tools(),
@@ -152,6 +173,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: usage_recording.clone(),
+            hooks: hooks.as_ref(),
         })?;
         let session_options =
             resolve_session_options(&provider, history, session_id.as_deref(), storage.as_ref())?;
@@ -159,6 +181,7 @@ impl InteractiveRuntime {
         bind_subagent_parent(&tools, session.id(), storage.as_ref());
         Ok(Self {
             runtime,
+            hooks,
             runs: InteractiveRunController::default(),
             sessions: InteractiveSessionController::new(
                 session,
@@ -182,6 +205,7 @@ impl InteractiveRuntime {
             pending_persistence_error: None,
             pending_persistence_checkpoint: None,
             live_context_warm: false,
+            completed_runs: 0,
         })
     }
 
@@ -238,9 +262,10 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
-            .session(SessionOptions::from_snapshot(snapshot))
+            .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
 
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
@@ -390,7 +415,7 @@ impl InteractiveRuntime {
             return Err(Error::SessionBusy);
         }
         if let Some(source) = self.sessions.pending_replacement() {
-            self.rebuild_session(source)
+            self.rebuild_session(source, ReplacementLifecycle::Started)
                 .await
                 .map_err(|error| Error::Persistence {
                     message: error.to_string(),
@@ -565,6 +590,7 @@ impl InteractiveRuntime {
             self.tools.checkpoint_tracker().discard_turn();
         }
         self.refresh_context_usage();
+        self.completed_runs = self.completed_runs.saturating_add(1);
         Ok(finished.outcome?)
     }
 
@@ -594,10 +620,14 @@ impl InteractiveRuntime {
         }
     }
 
-    pub(crate) fn reset(&mut self) -> anyhow::Result<()> {
+    pub(crate) async fn reset(&mut self) -> anyhow::Result<()> {
         if self.runs.is_active() {
             anyhow::bail!("cannot reset while a run is active");
         }
+        self.runtime
+            .hooks()
+            .session_completed(self.sessions.session().id(), self.completed_runs);
+        self.completed_runs = 0;
         let session_id = self.sessions.reset()?;
         bind_subagent_parent(&self.tools, &session_id, None);
         self.invalidate_live_context();
@@ -616,11 +646,18 @@ impl InteractiveRuntime {
             );
             anyhow::bail!("cannot switch sessions while a run is active");
         }
+        self.runtime
+            .hooks()
+            .session_completed(self.sessions.session().id(), self.completed_runs);
+        self.completed_runs = 0;
         let id = storage.id().to_string();
-        self.rebuild_session(ReplacementSessionSource::Snapshot {
-            storage: storage.clone(),
-            id,
-        })
+        self.rebuild_session(
+            ReplacementSessionSource::Snapshot {
+                storage: storage.clone(),
+                id,
+            },
+            ReplacementLifecycle::Started,
+        )
         .await?;
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
@@ -659,9 +696,10 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
-            .session(SessionOptions::from_snapshot(snapshot))
+            .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
 
         // Do not change the live runtime until the selected leaf is durable.
@@ -781,6 +819,7 @@ impl InteractiveRuntime {
             let _ = self.finish_run().await;
         }
         self.runtime.shutdown();
+        self.drain_hooks().await;
         self.tools.shutdown().await;
     }
 
@@ -814,8 +853,11 @@ impl InteractiveRuntime {
         checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     ) -> anyhow::Result<()> {
         if let Some((storage, snapshot)) = checkpoint {
-            self.rebuild_session(ReplacementSessionSource::DurableSnapshot { snapshot })
-                .await?;
+            self.rebuild_session(
+                ReplacementSessionSource::DurableSnapshot { snapshot },
+                ReplacementLifecycle::Rebound,
+            )
+            .await?;
             self.sessions.set_resumed_storage(storage);
             return Ok(());
         }
@@ -825,16 +867,23 @@ impl InteractiveRuntime {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("durable session storage is unavailable"))?;
         let id = storage.id().to_string();
-        self.rebuild_session(ReplacementSessionSource::Snapshot {
-            storage: storage.clone(),
-            id,
-        })
+        self.rebuild_session(
+            ReplacementSessionSource::Snapshot {
+                storage: storage.clone(),
+                id,
+            },
+            ReplacementLifecycle::Rebound,
+        )
         .await?;
         self.sessions.set_resumed_storage(storage);
         Ok(())
     }
 
-    async fn rebuild_session(&mut self, source: ReplacementSessionSource) -> anyhow::Result<()> {
+    async fn rebuild_session(
+        &mut self,
+        source: ReplacementSessionSource,
+        lifecycle: ReplacementLifecycle,
+    ) -> anyhow::Result<()> {
         let identity = self.provider.provider().identity();
         let (options, resume_omission) = match source {
             ReplacementSessionSource::DurableSnapshot { snapshot } => {
@@ -871,112 +920,18 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hooks: self.hooks.as_ref(),
         })?;
-        let replacement_session = replacement_runtime.session(options).await?;
+        let replacement_session = match lifecycle {
+            ReplacementLifecycle::Started => replacement_runtime.session(options).await?,
+            ReplacementLifecycle::Rebound => replacement_runtime.rebind_session(options).await?,
+        };
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);
         previous_runtime.shutdown();
         Ok(())
     }
-}
-
-fn resolve_provider(
-    unavailable_error: Option<rho_providers::model::ModelError>,
-    sdk_options: &super::sdk_config::SdkBootstrapOptions,
-) -> anyhow::Result<Arc<dyn ModelProvider>> {
-    match unavailable_error {
-        Some(error) => Ok(Arc::new(UnavailableProvider::new(error))),
-        None => {
-            let credentials =
-                rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-                    Arc::new(AppCredentialStore),
-                );
-            Ok(build_sdk_provider_with_source(
-                sdk_options.provider.clone(),
-                &credentials,
-            )?)
-        }
-    }
-}
-
-fn resolve_session_options(
-    provider: &Arc<dyn ModelProvider>,
-    history: Vec<Message>,
-    session_id: Option<&str>,
-    storage: Option<&StoredSession>,
-) -> anyhow::Result<SessionOptions> {
-    let cache_key = session_id.map(prompt_cache_key);
-    let resumed_snapshot = storage
-        .map(|storage| {
-            storage.snapshot_for_resume(
-                provider.identity(),
-                cache_key
-                    .clone()
-                    .unwrap_or_else(|| prompt_cache_key(storage.id())),
-            )
-        })
-        .transpose()?;
-    if let Some(snapshot) = resumed_snapshot {
-        // The TUI has not started yet, so stderr is still safe here.
-        if let Some(notice) = resume_omissions_notice(&snapshot, &provider.identity()) {
-            eprintln!("warning: {notice}");
-        }
-        return Ok(SessionOptions::from_snapshot(snapshot));
-    }
-    // Always seed a prompt-cache key, including brand-new sessions that
-    // do not yet have durable storage. ensure_session later reuses this
-    // session id when creating the on-disk transcript.
-    let id = match session_id {
-        Some(id) => SessionId::from_string(id)?,
-        None => SessionId::new(),
-    };
-    Ok(SessionOptions::new()
-        .history(history)
-        .id(id.clone())
-        .prompt_cache_key(prompt_cache_key(id.as_str())))
-}
-
-fn approval_channel_for(
-    mode: PermissionMode,
-) -> (
-    Option<Arc<dyn ApprovalHandler>>,
-    Option<ApprovalRequestReceiver>,
-) {
-    match mode {
-        PermissionMode::Supervised => {
-            let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
-            let (handler, receiver) = rho_sdk::approval_channel(capacity);
-            (Some(Arc::new(handler)), Some(receiver))
-        }
-        PermissionMode::Auto | PermissionMode::Plan => (None, None),
-    }
-}
-
-fn prompt_cache_key(id: &str) -> String {
-    rho_providers::providers::openai::prompt_cache_key_from_session_id(id)
-        .unwrap_or_else(|| format!("rho:{id}"))
-}
-
-fn resume_omissions_report(
-    snapshot: &rho_sdk::SessionSnapshot,
-    target: &rho_sdk::model::ModelIdentity,
-) -> Option<rho_sdk::model::handoff::HandoffReport> {
-    let report = snapshot.provider_context_omissions(target);
-    report.has_omissions().then_some(report)
-}
-
-fn resume_omissions_notice(
-    snapshot: &rho_sdk::SessionSnapshot,
-    target: &rho_sdk::model::ModelIdentity,
-) -> Option<String> {
-    resume_omissions_report(snapshot, target).map(|report| {
-        format!(
-            "omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
-            report.omitted_provider_context,
-            report.omitted_kinds.join(", ")
-        )
-    })
 }
 
 #[cfg(test)]

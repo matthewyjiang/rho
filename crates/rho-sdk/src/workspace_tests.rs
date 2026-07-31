@@ -11,12 +11,30 @@ use tempfile::TempDir;
 
 use super::{
     approval_channel, authorize, authorize_for_call, ApprovalAuditDecision, ApprovalAuditLog,
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityKind,
-    CapabilityOperation, CapabilityRequest, CapabilitySource, DenyAllPolicy, DenyApprovals,
-    NetworkTarget, PathScope, PolicyDecision, ProcessEnvironment, ProcessExecution,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, AuthorizationServices,
+    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, DenyAllPolicy,
+    DenyApprovals, NetworkTarget, PathScope, PolicyDecision, ProcessEnvironment, ProcessExecution,
     ProcessInvocation, ProcessOutputLimits, ScopedWorkspacePolicy, SessionApprovals, Workspace,
     WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
+
+/// Bundles the collaborators an authorization needs, with hooks left out so
+/// these tests exercise policy and approval composition on its own.
+fn services(
+    policy: &Arc<dyn WorkspacePolicy>,
+    approvals: &Arc<dyn ApprovalHandler>,
+    remembered: &Arc<SessionApprovals>,
+    audit: &Arc<ApprovalAuditLog>,
+) -> AuthorizationServices {
+    AuthorizationServices::new(
+        Arc::clone(policy),
+        Arc::clone(approvals),
+        Arc::clone(remembered),
+        Arc::clone(audit),
+        /* hooks */ Default::default(),
+        /* scope */ Default::default(),
+    )
+}
 
 fn source(name: &str) -> CapabilitySource {
     CapabilitySource::built_in_tool(name)
@@ -381,23 +399,17 @@ async fn remembered_approval_matches_only_the_exact_session_request() {
     let call_id = crate::ToolCallId::from_string("approval-call").unwrap();
 
     let first = authorize_for_call(
-        &policy,
-        &erased,
-        &remembered,
-        &audit,
+        &services(&policy, &erased, &remembered, &audit),
         request.clone(),
         Some(&call_id),
     )
     .await
     .unwrap();
-    let repeated = authorize(&policy, &erased, &remembered, &audit, request)
+    let repeated = authorize(&services(&policy, &erased, &remembered, &audit), request)
         .await
         .unwrap();
     authorize(
-        &policy,
-        &erased,
-        &remembered,
-        &audit,
+        &services(&policy, &erased, &remembered, &audit),
         process_request("cargo test --all"),
     )
     .await
@@ -507,10 +519,7 @@ async fn no_approval_handler_returns_typed_host_denial() {
     );
     let approvals: Arc<dyn ApprovalHandler> = Arc::new(DenyApprovals);
     let error = authorize(
-        &policy,
-        &approvals,
-        &Arc::default(),
-        &Arc::default(),
+        &services(&policy, &approvals, &Arc::default(), &Arc::default()),
         process_request("cargo test"),
     )
     .await
@@ -571,10 +580,11 @@ async fn concurrent_identical_requests_prompt_the_host_once() {
     let remembered = Arc::new(SessionApprovals::default());
     let audit = Arc::new(ApprovalAuditLog::default());
     let request = process_request("cargo test");
+    let services = services(&policy, &erased, &remembered, &audit);
 
     let (first, second, ()) = tokio::join!(
-        authorize_for_call(&policy, &erased, &remembered, &audit, request.clone(), None),
-        authorize_for_call(&policy, &erased, &remembered, &audit, request.clone(), None),
+        authorize_for_call(&services, request.clone(), None),
+        authorize_for_call(&services, request.clone(), None),
         async {
             wait_until_prompts(&approvals, 1).await;
             // First caller is parked in the host prompt and holds the session
@@ -619,16 +629,10 @@ async fn remembered_approval_stays_concurrent_while_unrelated_prompt_is_held() {
     let audit = Arc::new(ApprovalAuditLog::default());
     let approved = process_request("cargo test");
     let unrelated = process_request("cargo clippy");
+    let services = services(&policy, &erased, &remembered, &audit);
 
     let (seeded, ()) = tokio::join!(
-        authorize_for_call(
-            &policy,
-            &erased,
-            &remembered,
-            &audit,
-            approved.clone(),
-            None,
-        ),
+        authorize_for_call(&services, approved.clone(), None),
         async {
             wait_until_prompts(&approvals, 1).await;
             approvals.release.notify_one();
@@ -643,16 +647,13 @@ async fn remembered_approval_stays_concurrent_while_unrelated_prompt_is_held() {
     // If the remembered hit took the session gate, this join would deadlock:
     // the unrelated miss holds the gate while parked on the prompt, and the
     // release only runs after the remembered hit completes.
-    let (held, remembered_hit) = tokio::join!(
-        authorize_for_call(&policy, &erased, &remembered, &audit, unrelated, None),
-        async {
+    let (held, remembered_hit) =
+        tokio::join!(authorize_for_call(&services, unrelated, None), async {
             wait_until_prompts(&approvals, 2).await;
-            let remembered_hit =
-                authorize_for_call(&policy, &erased, &remembered, &audit, approved, None).await;
+            let remembered_hit = authorize_for_call(&services, approved, None).await;
             approvals.release.notify_one();
             remembered_hit
-        },
-    );
+        },);
 
     assert_eq!(
         remembered_hit.unwrap(),
@@ -679,24 +680,11 @@ async fn distinct_approval_misses_both_prompt_under_the_session_gate() {
     let erased: Arc<dyn ApprovalHandler> = approvals.clone();
     let remembered = Arc::new(SessionApprovals::default());
     let audit = Arc::new(ApprovalAuditLog::default());
+    let services = services(&policy, &erased, &remembered, &audit);
 
     let (first, second, ()) = tokio::join!(
-        authorize_for_call(
-            &policy,
-            &erased,
-            &remembered,
-            &audit,
-            process_request("cargo test"),
-            None
-        ),
-        authorize_for_call(
-            &policy,
-            &erased,
-            &remembered,
-            &audit,
-            process_request("cargo clippy"),
-            None
-        ),
+        authorize_for_call(&services, process_request("cargo test"), None),
+        authorize_for_call(&services, process_request("cargo clippy"), None),
         async {
             wait_until_prompts(&approvals, 1).await;
             // Distinct misses still each prompt; the session gate only orders

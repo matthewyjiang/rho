@@ -1,0 +1,96 @@
+use serde::Serialize;
+
+/// Every lifecycle moment Rho delivers to a hook at schema version 1.
+///
+/// The enum is the single place that defines the delivered hook vocabulary.
+/// [`HookEventKind::is_blocking`] separates the one pre-action event whose
+/// decision can stop work; every other variant is observational.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HookEventKind {
+    /// A session was created on a runtime.
+    SessionStarted,
+    /// A capability-bearing tool call is about to be authorized. Blocking.
+    BeforeToolUse,
+    /// A tool call resolved, successfully or not.
+    AfterToolUse,
+    /// One run finished with a typed outcome.
+    RunCompleted,
+    /// One run ended in an error.
+    RunFailed,
+    /// The host closed a session normally.
+    SessionCompleted,
+    /// The host closed a session after a failure.
+    SessionFailed,
+}
+
+impl HookEventKind {
+    /// Every delivered event, in wire-documentation order.
+    pub const ALL: &'static [Self] = &[
+        Self::SessionStarted,
+        Self::BeforeToolUse,
+        Self::AfterToolUse,
+        Self::RunCompleted,
+        Self::RunFailed,
+        Self::SessionCompleted,
+        Self::SessionFailed,
+    ];
+
+    /// Stable serialized name. This is the value hosts accept in configuration.
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::SessionStarted => "session_started",
+            Self::BeforeToolUse => "before_tool_use",
+            Self::AfterToolUse => "after_tool_use",
+            Self::RunCompleted => "run_completed",
+            Self::RunFailed => "run_failed",
+            Self::SessionCompleted => "session_completed",
+            Self::SessionFailed => "session_failed",
+        }
+    }
+
+    /// Resolves a configured event name.
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|event| event.wire_name() == name)
+    }
+
+    /// Whether a hook decision for this event can stop the operation.
+    ///
+    /// Only [`HookEventKind::BeforeToolUse`] is blocking. Every other event is
+    /// observational: its handler result cannot change what the agent does.
+    pub const fn is_blocking(self) -> bool {
+        match self {
+            Self::BeforeToolUse => true,
+            Self::SessionStarted
+            | Self::AfterToolUse
+            | Self::RunCompleted
+            | Self::RunFailed
+            | Self::SessionCompleted
+            | Self::SessionFailed => false,
+        }
+    }
+
+    /// Whether this event reports the result of an operation.
+    ///
+    /// Post events carry a status a matcher may filter on.
+    pub const fn is_post_action(self) -> bool {
+        match self {
+            Self::AfterToolUse | Self::RunCompleted | Self::RunFailed | Self::SessionFailed => true,
+            Self::SessionStarted | Self::BeforeToolUse | Self::SessionCompleted => false,
+        }
+    }
+}
+
+impl std::fmt::Display for HookEventKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.wire_name())
+    }
+}
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

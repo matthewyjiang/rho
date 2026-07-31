@@ -58,15 +58,12 @@ fn paste_text_recognizes_absolute_and_relative_image_paths() {
 
     assert_eq!(
         paste_text_as_file_path(&path.to_string_lossy(), cwd),
-        Some(path.canonicalize().unwrap())
+        Some(path.clone())
     );
-    assert_eq!(
-        paste_text_as_file_path("shot.png", cwd),
-        Some(path.canonicalize().unwrap())
-    );
+    assert_eq!(paste_text_as_file_path("shot.png", cwd), Some(path.clone()));
     assert_eq!(
         paste_text_as_file_path(&format!("\"{}\"", path.display()), cwd),
-        Some(path.canonicalize().unwrap())
+        Some(path.clone())
     );
     assert_eq!(paste_text_as_file_path("shot.png\nextra", cwd), None);
     assert_eq!(
@@ -76,10 +73,7 @@ fn paste_text_recognizes_absolute_and_relative_image_paths() {
 
     let text_path = cwd.join("notes.txt");
     fs::write(&text_path, "hello").unwrap();
-    assert_eq!(
-        paste_text_as_file_path("notes.txt", cwd),
-        Some(text_path.canonicalize().unwrap())
-    );
+    assert_eq!(paste_text_as_file_path("notes.txt", cwd), Some(text_path));
 }
 
 #[test]

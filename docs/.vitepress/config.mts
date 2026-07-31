@@ -94,6 +94,7 @@ export default defineConfig({
           { text: 'Configuration', link: '/configuration' },
           { text: 'Tools and workspace', link: '/tools-workspace' },
           { text: 'Skills', link: '/skills' },
+          { text: 'Hooks', link: '/hooks' },
           { text: 'Subagents', link: '/subagents' },
           { text: 'Sessions', link: '/sessions' },
           { text: 'Development', link: '/development' },

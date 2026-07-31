@@ -91,7 +91,10 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_configurable_composer_key(key, terminal, agent)? {
+        if self
+            .handle_configurable_composer_key(key, terminal, agent)
+            .await?
+        {
             return Ok(());
         }
 
