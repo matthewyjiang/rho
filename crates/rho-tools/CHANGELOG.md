@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.10.1...rho-agent-tools-v0.11.0) (2026-07-31)
+
+
+### Features
+
+* **documents:** add bounded document extraction and attachments ([#669](https://github.com/matthewyjiang/rho/issues/669)) ([d1ec3cd](https://github.com/matthewyjiang/rho/commit/d1ec3cd5d8f5683c7b8de0047070a6029bb1ec33))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.13.1 to 1.14.0
+
 ## [0.10.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.10.0...rho-agent-tools-v0.10.1) (2026-07-30)
 
 

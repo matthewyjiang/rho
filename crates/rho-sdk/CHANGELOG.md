@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.14.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.13.1...rho-sdk-v1.14.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **hooks:** `AuthorizationDenialKind` and `ApprovalAuditDecision` gain a hook variant. Both are `#[non_exhaustive]`, so only exhaustive matches written before this change need updating.
+
+### Features
+
+* **hooks:** add typed lifecycle hooks ([#668](https://github.com/matthewyjiang/rho/issues/668)) ([4a69c3d](https://github.com/matthewyjiang/rho/commit/4a69c3dfbc2136a8c23dff515909e23886b8651f))
+
 ## [1.13.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.13.0...rho-sdk-v1.13.1) (2026-07-30)
 
 

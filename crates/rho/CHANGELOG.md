@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.24.1...rho-coding-agent-v1.25.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **hooks:** `AuthorizationDenialKind` and `ApprovalAuditDecision` gain a hook variant. Both are `#[non_exhaustive]`, so only exhaustive matches written before this change need updating.
+
+### Features
+
+* **documents:** add bounded document extraction and attachments ([#669](https://github.com/matthewyjiang/rho/issues/669)) ([d1ec3cd](https://github.com/matthewyjiang/rho/commit/d1ec3cd5d8f5683c7b8de0047070a6029bb1ec33))
+* **hooks:** add typed lifecycle hooks ([#668](https://github.com/matthewyjiang/rho/issues/668)) ([4a69c3d](https://github.com/matthewyjiang/rho/commit/4a69c3dfbc2136a8c23dff515909e23886b8651f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.13.1 to 1.14.0
+    * rho-providers bumped from 0.15.1 to 0.15.2
+
 ## [1.24.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.24.0...rho-coding-agent-v1.24.1) (2026-07-30)
 
 
