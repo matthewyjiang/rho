@@ -1294,22 +1294,37 @@ async fn checkout_gate_lock_wait_honors_cancellation() {
         .unwrap();
     FileExt::lock_exclusive(&contender).unwrap();
     let cancellation = rho_sdk::CancellationToken::new();
-    let wait_entered = CheckoutGate::arm_lock_wait_signal();
     let wait_limit_seconds = test_workflow().graph.nodes[&node_id("inspect")].timeout_seconds;
 
-    let acquire = tokio::spawn({
-        let gate = gate.clone();
-        let cancellation = cancellation.clone();
-        async move {
-            gate.acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds)
-                .await
-        }
-    });
-    within_budget("checkout gate entered lock wait", wait_entered)
+    // Unix flock contends across file descriptors in the same process, so we can
+    // enter the wait loop and cancel mid-wait. Windows LockFileEx is process-scoped,
+    // so another handle here does not block; cover cancel-before-acquire instead.
+    #[cfg(unix)]
+    let result = {
+        let wait_entered = CheckoutGate::arm_lock_wait_signal();
+        let acquire = tokio::spawn({
+            let gate = gate.clone();
+            let cancellation = cancellation.clone();
+            async move {
+                gate.acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds)
+                    .await
+            }
+        });
+        within_budget("checkout gate entered lock wait", wait_entered)
+            .await
+            .expect("acquire should enter lock_file wait while contender holds the exclusive lock");
+        cancellation.cancel();
+        join_within_budget("checkout gate cancellation", acquire).await
+    };
+    #[cfg(windows)]
+    let result = {
+        cancellation.cancel();
+        within_budget(
+            "checkout gate cancellation",
+            gate.acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds),
+        )
         .await
-        .expect("acquire should enter lock_file wait while contender holds the exclusive lock");
-    cancellation.cancel();
-    let result = join_within_budget("checkout gate cancellation", acquire).await;
+    };
 
     assert!(matches!(result, Err(RuntimeError::Cancelled)));
     FileExt::unlock(&contender).unwrap();
