@@ -187,6 +187,41 @@ pub(crate) async fn execute_run(
     Ok(())
 }
 
+/// Starts a workflow run on a detached task and returns immediately.
+///
+/// The caller keeps chatting or returns a tool result while the run continues.
+/// Inspect progress with status; stop it with cancel. The owner process must
+/// stay alive for the run to make progress.
+pub(crate) async fn spawn_background_run(
+    run: StoredRun,
+    recovery: RecoveryDecision,
+    config_path: Option<std::path::PathBuf>,
+    approvals: ApprovalSession,
+) -> anyhow::Result<StoredRun> {
+    let run_id = run.manifest.run_id;
+    let runtime = WorkflowRuntime::build(&run, config_path, approvals)?;
+    let runner = Arc::clone(&runtime.runner);
+    tokio::spawn(async move {
+        let result = runner.drive(run_id, recovery, None).await;
+        drop(runner);
+        runtime.shutdown().await;
+        match result {
+            Ok(_) => tracing::info!(%run_id, "background workflow completed"),
+            Err(error) => {
+                tracing::warn!(%run_id, error = %error, "background workflow failed")
+            }
+        }
+    });
+    // Give the driver a chance to take the run lock and mark nodes ready/running.
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+    let store = WorkflowStore::new(&crate::paths::rho_dir()?)?;
+    match store.load_run(run_id) {
+        Ok(current) => Ok(current),
+        Err(_) => Ok(run),
+    }
+}
+
 struct WorkflowRuntime {
     runner: Arc<WorkflowRunner>,
     command_executor: Arc<dyn WorkflowNodeExecutor>,

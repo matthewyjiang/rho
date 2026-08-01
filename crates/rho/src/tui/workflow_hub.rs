@@ -523,9 +523,17 @@ impl App {
                 self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal)
                     .await
             }
+            // Live runs stay in-process in the background. Show status instead of
+            // taking over the terminal.
             RunLifecycle::Planned | RunLifecycle::Running | RunLifecycle::Cancelling => {
-                self.resume_workflow_run(run_id, /*recover_uncertain*/ false, terminal)
-                    .await
+                self.open_child_picker(status_overlay(&run));
+                self.status = match run.state.state.lifecycle {
+                    RunLifecycle::Running => "run in background".into(),
+                    RunLifecycle::Cancelling => "run stopping".into(),
+                    RunLifecycle::Planned => "run queued".into(),
+                    _ => "run status".into(),
+                };
+                Ok(())
             }
         }
     }
@@ -533,7 +541,7 @@ impl App {
     async fn start_workflow_source(
         &mut self,
         relative_path: &str,
-        terminal: &mut DefaultTerminal,
+        _terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let absolute = self.info.runtime.cwd.join(relative_path);
         self.status = format!("starting {relative_path}");
@@ -575,15 +583,17 @@ impl App {
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
-            "Starting '{}' (run {}). Default inputs only.",
+            "Starting '{}' in the background (run {}). Default inputs only. Reopen /workflow for status.",
             plan.graph.graph.name,
             short_id(&run_id.to_string())
         )));
         self.launch_workflow_execution(
             run,
             RecoveryDecision::NormalResume,
-            terminal,
-            format!("workflow {} finished", short_id(&run_id.to_string())),
+            format!(
+                "workflow {} running in background",
+                short_id(&run_id.to_string())
+            ),
         )
         .await
     }
@@ -609,7 +619,7 @@ impl App {
     async fn run_workflow_plan(
         &mut self,
         plan_id: &str,
-        terminal: &mut DefaultTerminal,
+        _terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let plan_id = PlanId::from_str(plan_id)?;
         let ops = self.workflow_ops()?;
@@ -631,11 +641,18 @@ impl App {
         };
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
+        self.insert_entry(&Entry::Notice(format!(
+            "Starting plan {} in the background (run {}). Reopen /workflow for status.",
+            short_id(&plan_id.to_string()),
+            short_id(&run_id.to_string())
+        )));
         self.launch_workflow_execution(
             run,
             RecoveryDecision::NormalResume,
-            terminal,
-            format!("workflow {} finished", short_id(&run_id.to_string())),
+            format!(
+                "workflow {} running in background",
+                short_id(&run_id.to_string())
+            ),
         )
         .await
     }
@@ -644,7 +661,7 @@ impl App {
         &mut self,
         run_id: &str,
         recover_uncertain: bool,
-        terminal: &mut DefaultTerminal,
+        _terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let run_id = RunId::from_str(run_id)?;
         let ops = self.workflow_ops()?;
@@ -665,11 +682,17 @@ impl App {
             }
         };
         self.input_ui.set_composer(ComposerMode::Input);
+        self.insert_entry(&Entry::Notice(format!(
+            "Resuming run {} in the background. Reopen /workflow for status.",
+            short_id(&run_id.to_string())
+        )));
         self.launch_workflow_execution(
             run,
             recovery,
-            terminal,
-            format!("workflow {} finished", short_id(&run_id.to_string())),
+            format!(
+                "workflow {} running in background",
+                short_id(&run_id.to_string())
+            ),
         )
         .await
     }
@@ -678,51 +701,25 @@ impl App {
         &mut self,
         run: StoredRun,
         recovery: RecoveryDecision,
-        terminal: &mut DefaultTerminal,
         success_status: String,
     ) -> anyhow::Result<()> {
         let run_id = run.manifest.run_id;
         let config_path = self.info.services.config_repository.configured_path().ok();
-        let mut terminal_session = match self.terminal_session.take() {
-            Some(session) => session,
-            None => {
-                self.insert_entry(&Entry::Error(
-                    "Terminal session is unavailable for workflow execution.".into(),
-                ));
-                self.status = "workflow failed".into();
-                return Ok(());
-            }
-        };
-        let suspended = terminal_session
-            .run_suspended(terminal, "Opening workflow…", || async move {
-                workflow_cli::execute_run(run, recovery, None, config_path).await
-            })
-            .await;
-        self.terminal_session = Some(terminal_session);
-
-        if let Err(resume_error) = suspended.resume_result {
-            self.insert_entry(&Entry::Error(format!(
-                "Failed to return to chat after workflow: {resume_error:#}"
-            )));
-            if let Err(operation_error) = suspended.operation_result {
-                self.insert_entry(&Entry::Error(format!(
-                    "Workflow also failed: {operation_error:#}"
-                )));
-            }
-            self.status = "workflow handoff failed".into();
-            return Ok(());
-        }
-        self.ctrl_c_streak = 0;
-        match suspended.operation_result {
-            Ok(()) => {
+        // Background runs keep the chat TUI. Approvals for rare supervised needs
+        // are denied; auto/plan modes are the intended path for /workflow starts.
+        let approvals = rho_sdk::ApprovalSession::new(rho_sdk::DenyApprovals);
+        match workflow_cli::spawn_background_run(run, recovery, config_path, approvals).await {
+            Ok(_) => {
                 self.insert_entry(&Entry::Notice(format!(
-                    "Returned from workflow run {}.",
+                    "Workflow run {} is running in the background.",
                     short_id(&run_id.to_string())
                 )));
                 self.status = success_status;
             }
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Workflow failed: {error:#}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "Could not start workflow in the background: {error:#}"
+                )));
                 self.status = "workflow failed".into();
             }
         }

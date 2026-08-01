@@ -48,7 +48,7 @@ pub(super) use cancel::{request_cancellation, CancellationState};
 pub(crate) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
 #[cfg(test)]
 pub(super) use plan_host::{resolve_nodes_with_host, AuthorizedPlanHost};
-pub(crate) use runtime::execute_run;
+pub(crate) use runtime::{execute_run, spawn_background_run};
 pub(super) use tool_service::workflow_tool_service;
 
 const PLANNER_WORKER_ENV: &str = "RHO_WORKFLOW_PLANNER_WORKER";

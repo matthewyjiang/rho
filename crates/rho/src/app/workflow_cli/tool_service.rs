@@ -264,15 +264,15 @@ impl AppWorkflowToolService {
                 let plan = ops.prepare_run_id(plan_id).map_err(tool_error)?;
                 confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
                 let run = ops.create_confirmed_run(&plan).map_err(tool_error)?;
-                let completed = runtime::execute_tool_run(
+                let started = runtime::spawn_background_run(
                     run,
                     RecoveryDecision::NormalResume,
                     self.config_path.clone(),
-                    context,
+                    context.child_approval_session(),
                 )
                 .await
                 .map_err(tool_error)?;
-                run_result(completed, RunResultKind::Run)
+                run_result(started, RunResultKind::Run)
             }
             WorkflowToolRequest::Status { run_id } => {
                 let ops = self.ops().map_err(tool_error)?;
@@ -324,11 +324,15 @@ impl AppWorkflowToolService {
                         }
                     })?;
                 confirm_exact_plan(context, "Resume", &run.manifest.graph_digest.0).await?;
-                let completed =
-                    runtime::execute_tool_run(run, recovery, self.config_path.clone(), context)
-                        .await
-                        .map_err(tool_error)?;
-                run_result(completed, RunResultKind::Resume)
+                let started = runtime::spawn_background_run(
+                    run,
+                    recovery,
+                    self.config_path.clone(),
+                    context.child_approval_session(),
+                )
+                .await
+                .map_err(tool_error)?;
+                run_result(started, RunResultKind::Resume)
             }
         }
     }

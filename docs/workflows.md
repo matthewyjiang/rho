@@ -39,11 +39,16 @@ The main steps are:
 
 In the chat TUI, run `/workflow` to open one list:
 
-1. **START** - `Start <name>` begins a new run.
-2. **RUNS** - `Open <status> · <id>` resumes live work; `Status <result> · <id>` opens finished step status.
-3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan.
+1. **START** - `Start <name>` starts a new run in the background and returns to chat.
+2. **RUNS** - `Status <state> · <id>` opens step status for live or finished runs.
+3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan in the background.
 
-Press `d` on a **RUNS** or **SAVED PLANS** row to delete it after confirm. Local `.star` source files are not deleted from disk.
+Keep chatting while a run continues. Reopen `/workflow` for status. Press `d` on a
+**RUNS** or **SAVED PLANS** row to delete it after confirm. Local `.star` source
+files are not deleted from disk.
+
+The model `workflow` tool also starts `run` and `resume` in the background and
+returns a run id immediately. Use `status` and `cancel` for follow-up.
 
 The right pane explains the highlighted row. Enter runs that action.
 

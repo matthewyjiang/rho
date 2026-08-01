@@ -206,7 +206,7 @@ impl Tool for WorkflowTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: NAME.into(),
-            description: "Validate, freeze, run, inspect, cancel, or resume a Rho workflow. Results are bounded summaries; read artifacts separately.".into(),
+            description: "Validate, freeze, run, inspect, cancel, or resume a Rho workflow. Run and resume start in the background and return immediately with a run id; use status to inspect progress and cancel to stop. Results are bounded summaries; read artifacts separately.".into(),
             input_schema: workflow_schema(),
         }
     }
