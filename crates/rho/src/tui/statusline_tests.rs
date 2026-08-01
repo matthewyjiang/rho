@@ -14,6 +14,40 @@ fn statusline_rows_use_display_width_for_alignment() {
     assert_eq!(display_width(&line_text(&line)), 10);
 }
 
+#[test]
+fn model_segment_prefixes_provider_display_name() {
+    assert_eq!(model_segment("OpenAI", "gpt-5.5"), "OpenAI · gpt-5.5");
+    assert_eq!(model_segment("", "gpt-5.5"), "gpt-5.5");
+    assert_eq!(model_segment("", ""), "");
+}
+
+#[test]
+fn provider_degrades_before_model_on_narrow_width() {
+    // Covers: adding the provider label must not hide the model on narrow terminals
+    // Owner: statusline fit logic
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+    // Wide enough for provider+model but not reasoning, then narrow enough that
+    // provider must drop while the bare model still fits.
+    let wide = statusline.lines(40, None)[1].clone();
+    assert!(
+        line_text(&wide).contains("OpenAI · gpt-5.5"),
+        "wide row should keep provider: {:?}",
+        line_text(&wide)
+    );
+
+    let narrow = statusline.lines(18, None)[1].clone();
+    assert!(
+        line_text(&narrow).contains("gpt-5.5"),
+        "narrow row should keep the model: {:?}",
+        line_text(&narrow)
+    );
+    assert!(
+        !line_text(&narrow).contains("OpenAI"),
+        "provider should drop before the model: {:?}",
+        line_text(&narrow)
+    );
+}
+
 fn test_info(cwd: PathBuf) -> RuntimeModelView {
     let mut info = crate::tui::tests::test_bootstrap().runtime;
     info.cwd = cwd;

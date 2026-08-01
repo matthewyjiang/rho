@@ -211,6 +211,15 @@ fn reasoning_is_configurable(provider: &str, model: &str) -> bool {
         != ReasoningCapabilities::NotConfigurable
 }
 
+/// Friendly provider display name, e.g. "OpenAI Codex" for "openai-codex".
+/// Falls back to the raw provider id so unsupported providers stay visible.
+fn provider_display_name(provider: &str) -> String {
+    rho_providers::provider::provider_descriptor(provider)
+        .map(|descriptor| descriptor.display_name)
+        .unwrap_or(provider)
+        .to_string()
+}
+
 fn statusline_lines(
     state: &StatusLineState,
     width: usize,
@@ -244,32 +253,20 @@ fn statusline_lines(
 }
 
 fn bottom_status(state: &StatusLineState, width: usize) -> (String, String) {
-    let mut left = String::new();
-    let mut right = state.permission_mode.label().to_string();
-
-    let context = format_context_summary(state);
-    if !context.is_empty() && row_fits(&context, &right, width) {
-        left = context;
-    }
-
+    let permission = state.permission_mode.label().to_string();
     let model = if state.fast_mode_active {
         format!("{} (fast)", state.model)
     } else {
         state.model.clone()
     };
-    let with_model = format!("{right} · {model}");
-    if !row_fits(&left, &with_model, width) {
-        return (left, right);
-    }
-    right = with_model;
 
-    if state.reasoning_configurable {
-        let with_reasoning = format!("{right} · {}", state.reasoning);
-        if !row_fits(&left, &with_reasoning, width) {
-            return (left, right);
-        }
-        right = with_reasoning;
+    let mut left = String::new();
+    let context = format_context_summary(state);
+    if !context.is_empty() && row_fits(&context, &permission, width) {
+        left = context;
     }
+
+    let right = fit_model_right(&left, &permission, &model, state, width);
 
     if let Some(cost) = status_cost(state) {
         append_left_if_fits(&mut left, &right, width, cost);
@@ -278,6 +275,39 @@ fn bottom_status(state: &StatusLineState, width: usize) -> (String, String) {
         append_left_if_fits(&mut left, &right, width, format!("{rate} tok/s avg"));
     }
     (left, right)
+}
+
+/// Degrading right side: `permission · provider · model · reasoning`, dropping
+/// reasoning, then the provider, then the model as space runs out. Reuses
+/// [`fit_right_status`] so the provider never hides the model on its own.
+fn fit_model_right(
+    left: &str,
+    permission: &str,
+    model: &str,
+    state: &StatusLineState,
+    width: usize,
+) -> String {
+    let provider = provider_display_name(&state.provider);
+    let full = format!("{permission} · {}", model_segment(&provider, model));
+
+    let mut candidates = Vec::with_capacity(4);
+    if state.reasoning_configurable {
+        candidates.push(format!("{full} · {}", state.reasoning));
+    }
+    candidates.push(full);
+    if !provider.is_empty() {
+        candidates.push(format!("{permission} · {model}"));
+    }
+    candidates.push(permission.to_string());
+    fit_right_status(left, &candidates, width)
+}
+
+fn model_segment(provider: &str, model: &str) -> String {
+    if provider.is_empty() {
+        model.to_string()
+    } else {
+        format!("{provider} · {model}")
+    }
 }
 
 fn append_left_if_fits(left: &mut String, right: &str, width: usize, segment: String) {
