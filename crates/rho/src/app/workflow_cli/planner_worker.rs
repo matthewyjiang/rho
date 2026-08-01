@@ -92,7 +92,6 @@ pub(super) async fn run_supervised_planner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    apply_planner_worker_command_limits(&mut command)?;
     let mut child = command.spawn()?;
     let mut stdin = child.stdin.take().expect("planner worker stdin is piped");
     write_frame_async(&mut stdin, &bytes).await?;
@@ -278,35 +277,21 @@ async fn read_retained(mut input: impl AsyncRead + Unpin, limit: usize) -> io::R
     }
 }
 
-#[cfg(unix)]
-fn apply_planner_worker_command_limits(
-    command: &mut tokio::process::Command,
-) -> anyhow::Result<()> {
-    let cpu_seconds = planning_measurements().worker_wall_millis.div_ceil(1_000);
-    // SAFETY: pre_exec only calls async-signal-safe setrlimit operations with
-    // values computed before the child process is forked.
-    unsafe {
-        command.pre_exec(move || {
-            set_resource_limit(libc::RLIMIT_AS, PLANNER_ADDRESS_SPACE_BYTES)?;
-            set_resource_limit(libc::RLIMIT_CPU, cpu_seconds)
-        })
-    };
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn apply_planner_worker_command_limits(
-    _command: &mut tokio::process::Command,
-) -> anyhow::Result<()> {
-    Ok(())
-}
-
+/// Applies the planner worker's OS resource backstops in-process.
+///
+/// The worker binary is ours and this runs before it reads any request, so a
+/// pre-exec cap adds nothing over capping here (Windows already limits only in
+/// the worker). `RLIMIT_AS` caps address space where the OS supports it; macOS
+/// (Darwin) has no address-space rlimit and rejects the call with `EINVAL`, and
+/// Windows uses a Job Object memory limit in the sibling below. `RLIMIT_CPU` caps
+/// CPU time on all unix. Wall-clock time is enforced by the parent's tokio
+/// timeout and `kill_on_drop`, not here.
 #[cfg(unix)]
 fn apply_planner_worker_limits() -> io::Result<()> {
-    let wall_millis = planning_measurements().worker_wall_millis;
-    let cpu_seconds = wall_millis.div_ceil(1_000);
-    set_resource_limit(libc::RLIMIT_AS, PLANNER_ADDRESS_SPACE_BYTES)?;
-    set_resource_limit(libc::RLIMIT_CPU, cpu_seconds)?;
+    let cpu_seconds = planning_measurements().worker_wall_millis.div_ceil(1_000);
+    #[cfg(not(target_os = "macos"))]
+    set_resource_limit("RLIMIT_AS", libc::RLIMIT_AS, PLANNER_ADDRESS_SPACE_BYTES)?;
+    set_resource_limit("RLIMIT_CPU", libc::RLIMIT_CPU, cpu_seconds)?;
     Ok(())
 }
 
@@ -317,7 +302,7 @@ type ResourceLimitKind = libc::__rlimit_resource_t;
 type ResourceLimitKind = libc::c_int;
 
 #[cfg(unix)]
-fn set_resource_limit(resource: ResourceLimitKind, value: u64) -> io::Result<()> {
+fn set_resource_limit(name: &str, resource: ResourceLimitKind, value: u64) -> io::Result<()> {
     let limit = libc::rlimit {
         rlim_cur: value as libc::rlim_t,
         rlim_max: value as libc::rlim_t,
@@ -326,7 +311,11 @@ fn set_resource_limit(resource: ResourceLimitKind, value: u64) -> io::Result<()>
     if unsafe { libc::setrlimit(resource, &limit) } == 0 {
         Ok(())
     } else {
-        Err(std::io::Error::last_os_error())
+        let error = io::Error::last_os_error();
+        Err(io::Error::new(
+            error.kind(),
+            format!("failed to set planner {name} limit: {error}"),
+        ))
     }
 }
 
