@@ -252,10 +252,11 @@ fn cancellation_workflow() -> FrozenWorkflow {
     workflow
 }
 
-#[cfg(unix)]
+// Frozen handle-based command launch is Linux/Android-only (see exact process adapter).
+#[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
 fn command_workflow(
     workspace: &std::path::Path,
-    ready_fifo: &std::path::Path,
+    ready: &std::path::Path,
     marker: &std::path::Path,
 ) -> FrozenWorkflow {
     let mut workflow = test_workflow();
@@ -263,11 +264,12 @@ fn command_workflow(
     let cwd = workspace.canonicalize().unwrap();
     let quote = |path: &std::path::Path| shell_words::quote(&path.to_string_lossy()).into_owned();
     // Park on sleep (not a CPU spin) until the runtime cancels the process tree.
+    // Signal readiness with a regular file so the test never blocks forever on FIFO open.
     let script = format!(
         "if test -f {marker}; then printf resumed; printf done >&2; exit 0; fi; \
-         : > {marker}; printf first; printf err >&2; printf x > {fifo}; exec sleep 1000",
+         : > {marker}; printf first; printf err >&2; : > {ready}; exec sleep 1000",
         marker = quote(marker),
-        fifo = quote(ready_fifo),
+        ready = quote(ready),
     );
     let node = workflow.graph.nodes.get_mut(&node_id("inspect")).unwrap();
     node.execution = NodeExecution::Command(CommandNode::Shell {
@@ -1070,22 +1072,21 @@ async fn uncertain_timeout_cleanup_does_not_become_cancellation() {
 
 // Covers: cancelling a real process must retain both streams and its typed result across resume.
 // Owner: durable workflow command runtime.
-#[cfg(unix)]
+//
+// Linux/Android only: frozen handle launch is unsupported elsewhere. The previous
+// macOS path blocked forever on FIFO open after launch failed-closed, then hung
+// runtime shutdown for the full CI job limit.
+#[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
-    use std::{ffi::CString, io::Read as _, os::unix::ffi::OsStrExt as _};
-
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
-    let fifo = workspace.path().join("ready.fifo");
+    let ready = workspace.path().join("ready");
     let marker = workspace.path().join("first-attempt");
-    let fifo_name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
-    // SAFETY: fifo_name is a valid C string in a private test directory.
-    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
     let run = create_run_with_workflow(
         home.path(),
         workspace.path(),
-        command_workflow(workspace.path(), &fifo, &marker),
+        command_workflow(workspace.path(), &ready, &marker),
     );
     let command_executor: Arc<dyn WorkflowNodeExecutor> = Arc::new(WorkflowCommandExecutor::new(
         rho_sdk::ProcessEnvironment::Empty,
@@ -1101,15 +1102,6 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
         Arc::new(SuccessfulExecutor),
         Arc::clone(&command_executor),
     ));
-    let fifo_reader = fifo.clone();
-    let ready = tokio::task::spawn_blocking(move || {
-        let mut byte = [0_u8; 1];
-        std::fs::File::open(fifo_reader)
-            .unwrap()
-            .read_exact(&mut byte)
-            .unwrap();
-        byte
-    });
     let worker_runner = Arc::clone(&active_runner);
     let run_id = run.manifest.run_id;
     let worker = tokio::spawn(async move {
@@ -1117,17 +1109,36 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
             .drive(run_id, RecoveryDecision::NormalResume, None)
             .await
     });
-    assert_eq!(
-        within_budget("command ready signal", ready).await.unwrap(),
-        [b'x']
-    );
+    // Abort on any early exit so a failed ready wait cannot leave drive() holding
+    // run/checkout locks into runtime teardown.
+    struct AbortOnDrop(Option<tokio::task::JoinHandle<Result<StoredRun, RuntimeError>>>);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            if let Some(handle) = self.0.take() {
+                handle.abort();
+            }
+        }
+    }
+    let mut worker = AbortOnDrop(Some(worker));
+    within_budget("command ready signal", async {
+        loop {
+            if tokio::fs::try_exists(&ready).await.unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await;
     active_runner
         .cancellation_request(run_id)
         .request()
         .unwrap();
-    let cancelled = join_within_budget("real command cancellation", worker)
-        .await
-        .unwrap();
+    let cancelled = join_within_budget(
+        "real command cancellation",
+        worker.0.take().expect("worker handle"),
+    )
+    .await
+    .unwrap();
     let loaded = WorkflowStore::new(home.path())
         .unwrap()
         .load_run(run_id)
@@ -1283,14 +1294,22 @@ async fn checkout_gate_lock_wait_honors_cancellation() {
         .unwrap();
     FileExt::lock_exclusive(&contender).unwrap();
     let cancellation = rho_sdk::CancellationToken::new();
-    cancellation.cancel();
+    let wait_entered = CheckoutGate::arm_lock_wait_signal();
     let wait_limit_seconds = test_workflow().graph.nodes[&node_id("inspect")].timeout_seconds;
 
-    let result = within_budget(
-        "checkout gate cancellation",
-        gate.acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds),
-    )
-    .await;
+    let acquire = tokio::spawn({
+        let gate = gate.clone();
+        let cancellation = cancellation.clone();
+        async move {
+            gate.acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds)
+                .await
+        }
+    });
+    within_budget("checkout gate entered lock wait", wait_entered)
+        .await
+        .expect("acquire should enter lock_file wait while contender holds the exclusive lock");
+    cancellation.cancel();
+    let result = join_within_budget("checkout gate cancellation", acquire).await;
 
     assert!(matches!(result, Err(RuntimeError::Cancelled)));
     FileExt::unlock(&contender).unwrap();

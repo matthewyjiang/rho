@@ -16,6 +16,9 @@ use super::{
 
 type LocalGate = tokio::sync::RwLock<()>;
 
+#[cfg(test)]
+static LOCK_WAIT_SIGNAL: Mutex<Option<tokio::sync::oneshot::Sender<()>>> = Mutex::new(None);
+
 fn local_gates() -> &'static Mutex<BTreeMap<PathBuf, Weak<LocalGate>>> {
     static GATES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<LocalGate>>>> = OnceLock::new();
     GATES.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -55,6 +58,13 @@ impl CheckoutGate {
             lock_path: Arc::new(lock_path),
             _lock_anchor: Arc::new(lock_file),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arm_lock_wait_signal() -> tokio::sync::oneshot::Receiver<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *LOCK_WAIT_SIGNAL.lock().expect("checkout lock wait signal") = Some(tx);
+        rx
     }
 
     pub(crate) async fn acquire(
@@ -130,6 +140,14 @@ async fn lock_file(
         return Err(RuntimeError::Data(
             "checkout lock descriptor is not a regular file".to_owned(),
         ));
+    }
+    #[cfg(test)]
+    if let Some(signal) = LOCK_WAIT_SIGNAL
+        .lock()
+        .expect("checkout lock wait signal")
+        .take()
+    {
+        let _ = signal.send(());
     }
     loop {
         if cancellation.is_cancelled() {
