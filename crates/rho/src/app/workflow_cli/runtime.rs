@@ -1,9 +1,4 @@
-//! Workflow run composition: hosts, execute/spawn, and present/TUI submodules.
-
-#[path = "runtime_present.rs"]
-mod present;
-#[path = "runtime_tui.rs"]
-mod tui_bridge;
+//! Workflow run composition: hosts, execute/spawn, and drive selection.
 
 use std::{
     io::{self, IsTerminal, Write},
@@ -31,10 +26,10 @@ use crate::{
     workflow::{ResolvedNode, StoredRun},
 };
 
-use present::{drive_with_stream, RuntimePresentation};
-use tui_bridge::RunnerTuiAdapter;
-
-pub(crate) use tui_bridge::watch_run;
+use super::{
+    runtime_present::{drive_with_stream, RuntimePresentation},
+    runtime_tui::RunnerTuiAdapter,
+};
 
 struct TerminalWorkflowApprovals {
     interactive: bool,
@@ -161,7 +156,8 @@ pub(crate) async fn execute_run(
         && runtime.permission_mode != crate::permission::PermissionMode::Supervised;
     let runner = Arc::clone(&runtime.runner);
     let execution = if use_tui {
-        let adapter = RunnerTuiAdapter::start(Arc::clone(&runner), rho_home, run.clone(), recovery);
+        let adapter =
+            RunnerTuiAdapter::start(Arc::clone(&runner), rho_home, run.clone(), recovery)?;
         crate::tui::workflow::run(Box::new(adapter))
             .await
             .map(|_| false)

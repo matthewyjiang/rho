@@ -8,7 +8,7 @@ use std::path::Path;
 use fs2::FileExt;
 
 use super::{delete_child_directory, read_json, run_relative, WorkflowStore};
-use crate::workflow::{PlanId, RunId, RunLifecycle, RunManifest, WorkflowError, WorkflowResult};
+use crate::workflow::{PlanId, RunId, RunManifest, WorkflowError, WorkflowResult};
 
 impl WorkflowStore {
     /// Deletes one plan directory. Runs keep their copied graph, so resume still works.
@@ -38,7 +38,7 @@ impl WorkflowStore {
         // Re-check lifecycle under the lock. Ops may have checked earlier, but
         // a concurrent owner could have advanced state before we took the lock.
         let lifecycle = self.read_run_lifecycle(id)?;
-        if matches!(lifecycle, RunLifecycle::Running | RunLifecycle::Cancelling) {
+        if lifecycle.is_live() {
             let _ = lock.unlock();
             return Err(WorkflowError::Corrupt {
                 path: self.layout.run(id),

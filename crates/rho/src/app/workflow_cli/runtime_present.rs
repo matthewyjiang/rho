@@ -7,7 +7,7 @@ use crate::{
     workflow::{RunId, StoredRun},
 };
 
-use super::super::{write_json_document, WORKFLOW_WIRE_VERSION};
+use super::{write_json_document, WORKFLOW_WIRE_VERSION};
 
 #[derive(Clone, Copy)]
 pub(super) enum RuntimePresentation {
@@ -100,3 +100,7 @@ async fn workflow_shutdown_signal() -> io::Result<()> {
 async fn workflow_shutdown_signal() -> io::Result<()> {
     tokio::signal::ctrl_c().await
 }
+
+#[cfg(test)]
+#[path = "runtime_present_tests.rs"]
+mod tests;

@@ -38,6 +38,10 @@ mod ops;
 mod plan_host;
 #[path = "workflow_cli/runtime.rs"]
 mod runtime;
+#[path = "workflow_cli/runtime_present.rs"]
+mod runtime_present;
+#[path = "workflow_cli/runtime_tui.rs"]
+mod runtime_tui;
 #[path = "workflow_cli/tool_service.rs"]
 mod tool_service;
 
@@ -48,7 +52,8 @@ pub(super) use cancel::{request_cancellation, CancellationState};
 pub(crate) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
 #[cfg(test)]
 pub(super) use plan_host::{resolve_nodes_with_host, AuthorizedPlanHost};
-pub(crate) use runtime::{spawn_background_run, watch_run};
+pub(crate) use runtime::spawn_background_run;
+pub(crate) use runtime_tui::watch_run;
 pub(super) use tool_service::workflow_tool_service;
 
 const PLANNER_WORKER_ENV: &str = "RHO_WORKFLOW_PLANNER_WORKER";

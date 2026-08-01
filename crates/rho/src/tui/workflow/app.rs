@@ -67,7 +67,10 @@ async fn run_loop(
                         InputResult::Action(action) => {
                             adapter.send(action).await?;
                         }
-                        InputResult::Exit => return Ok(WorkflowTuiExit::LeftScreen),
+                        InputResult::Exit => {
+                            adapter.finish().await?;
+                            return Ok(WorkflowTuiExit::LeftScreen);
+                        }
                     },
                     Event::Resize(_, _) => {
                         terminal.draw(|frame| view::draw(frame, app))?;
@@ -78,6 +81,7 @@ async fn run_loop(
             update = adapter.next_event() => {
                 let Some(update) = update? else {
                     if app.can_exit() {
+                        adapter.finish().await?;
                         return Ok(WorkflowTuiExit::LeftScreen);
                     }
                     anyhow::bail!("workflow event source ended before the run reached a durable state");

@@ -143,9 +143,9 @@ pub(crate) enum WorkflowSession {
 /// `send` must persist or apply an action before it returns. `next_event` must
 /// yield typed durable snapshots in order.
 ///
-/// [`WorkflowSession::Watcher`] adapters may no-op [`Self::shutdown`].
-/// Owner leave permission is derived from snapshot lifecycle, not a separate
-/// adapter flag on the shared snapshot type.
+/// [`WorkflowSession::Watcher`] adapters may no-op [`Self::shutdown`] and
+/// [`Self::finish`]. Owner leave permission is derived from snapshot lifecycle
+/// (`!lifecycle.is_live()`), not a separate adapter flag on the shared snapshot.
 pub(crate) trait WorkflowEventAdapter: Send {
     /// Session relationship for this adapter.
     ///
@@ -164,7 +164,16 @@ pub(crate) trait WorkflowEventAdapter: Send {
         action: WorkflowAction,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
 
-    /// Owner: stop active handles and save durable state before returning.
+    /// Clean leave: await owner worker completion without requesting cancel.
+    ///
+    /// The TUI calls this when the user leaves after a durable lifecycle, or
+    /// when the event source ends while leave is allowed. Watchers default to
+    /// a no-op; owners must surface drive errors here.
+    fn finish(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move { Ok(()) })
+    }
+
+    /// Owner: request cancel, stop active handles, and save durable state.
     /// Watcher: may return immediately; the background driver owns cleanup.
     ///
     /// The TUI calls this after any screen, input, or event-source error.
@@ -244,10 +253,7 @@ impl MatrixAdapter {
     }
 
     fn request_cancel(&mut self) {
-        if matches!(
-            self.snapshot.lifecycle,
-            RunLifecycle::Completed | RunLifecycle::NeedsRecovery | RunLifecycle::Planned
-        ) {
+        if !self.snapshot.lifecycle.is_live() {
             return;
         }
         self.snapshot.lifecycle = RunLifecycle::Cancelling;

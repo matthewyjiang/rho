@@ -16,6 +16,7 @@ mod control;
 mod dag;
 mod event_adapter;
 mod input;
+pub(crate) mod snapshot;
 mod state;
 mod view;
 

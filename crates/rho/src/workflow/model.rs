@@ -444,6 +444,16 @@ pub(crate) enum RunLifecycle {
     NeedsRecovery,
 }
 
+impl RunLifecycle {
+    /// True while an owner may still be driving the run (`Running` / `Cancelling`).
+    ///
+    /// Shared by TUI leave/cancel policy, delete guards, and matrix adapters so
+    /// the live set cannot drift across call sites.
+    pub(crate) const fn is_live(self) -> bool {
+        matches!(self, Self::Running | Self::Cancelling)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WorkflowState {
     pub(crate) revision: u64,

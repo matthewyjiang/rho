@@ -843,6 +843,59 @@ fn plan_and_run_inventory_skips_journal_replay() {
     assert!(store.read_run_inventory(run.manifest.run_id).is_err());
 }
 
+// Covers: pre-field manifests still get name/steps via graph, else (unnamed).
+// Owner: workflow durable store.
+#[test]
+fn inventory_falls_back_for_legacy_manifests() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+
+    // Strip inventory fields as if the manifests predate name/step_count.
+    let mut plan_manifest: crate::workflow::PlanManifest = serde_json::from_slice(
+        &std::fs::read(store.layout.plan_manifest(plan.manifest.plan_id)).unwrap(),
+    )
+    .unwrap();
+    plan_manifest.name.clear();
+    plan_manifest.step_count = 0;
+    std::fs::write(
+        store.layout.plan_manifest(plan.manifest.plan_id),
+        serde_json::to_vec_pretty(&plan_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let mut run_manifest: crate::workflow::RunManifest = serde_json::from_slice(
+        &std::fs::read(store.layout.run_manifest(run.manifest.run_id)).unwrap(),
+    )
+    .unwrap();
+    run_manifest.name.clear();
+    run_manifest.step_count = 0;
+    std::fs::write(
+        store.layout.run_manifest(run.manifest.run_id),
+        serde_json::to_vec_pretty(&run_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans[0].name, plan.graph.graph.name.as_str());
+    assert_eq!(plans[0].step_count, plan.graph.graph.nodes.len());
+
+    let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs[0].name, run.graph.graph.name.as_str());
+    assert_eq!(runs[0].total_steps, run.graph.graph.nodes.len());
+
+    // Without graph either, label is stable and listing still works.
+    std::fs::remove_file(store.layout.plan_graph(plan.manifest.plan_id)).unwrap();
+    std::fs::remove_file(store.layout.run_graph(run.manifest.run_id)).unwrap();
+    let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans[0].name, "(unnamed)");
+    assert_eq!(plans[0].step_count, 0);
+    let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs[0].name, "(unnamed)");
+    assert_eq!(runs[0].total_steps, 0);
+}
+
 // Covers: a valid plan ID with unreadable contents must fail the list closed,
 // not vanish into an empty hub.
 // Owner: workflow durable store.

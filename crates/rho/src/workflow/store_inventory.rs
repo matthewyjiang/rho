@@ -5,8 +5,10 @@
 //! event journals. Inventory reads the small on-disk fields the UI needs
 //! and skips that validation path.
 //!
-//! Name and step counts come from manifests so inventory never opens
-//! `graph.json`. Lifecycle and progress still come from `state.json`.
+//! Name and step counts come from manifests so the hot path never opens
+//! `graph.json`. Manifests written before those fields may still fall back
+//! to a graph peek once; if the graph is gone, the label is `(unnamed)`.
+//! Lifecycle and progress still come from `state.json`.
 //!
 //! This module is projection only. Destructive store mutations live on
 //! [`WorkflowStore`] in `store.rs`.
@@ -20,6 +22,9 @@ use crate::workflow::{
     NodeId, NodeState, PlanId, PlanManifest, RunId, RunLifecycle, RunManifest, WorkflowOutcome,
     WorkflowResult,
 };
+
+/// Label used when a pre-field manifest has no graph fallback either.
+const UNNAMED_WORKFLOW: &str = "(unnamed)";
 
 /// Lightweight plan row for workspace inventory UIs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +45,17 @@ pub(crate) struct RunInventoryItem {
     pub(crate) outcome: Option<WorkflowOutcome>,
     pub(crate) done_steps: usize,
     pub(crate) total_steps: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryGraphFile {
+    graph: InventoryGraphBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryGraphBody {
+    name: String,
+    nodes: BTreeMap<String, serde::de::IgnoredAny>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +88,24 @@ struct LifecycleStateFile {
 #[derive(Debug, Deserialize)]
 struct LifecycleOnly {
     lifecycle: RunLifecycle,
+}
+
+/// Resolve inventory label + step count from the manifest, with a one-shot
+/// graph fallback only for manifests written before those fields existed.
+fn inventory_identity(
+    name: String,
+    step_count: usize,
+    graph_relative: &Path,
+    root: &crate::workflow::secure_fs::SecureDirectory,
+) -> (String, usize) {
+    if !name.is_empty() {
+        return (name, step_count);
+    }
+    match read_json::<InventoryGraphFile>(root, graph_relative) {
+        Ok(graph) => (graph.graph.name, graph.graph.nodes.len()),
+        Err(_) if step_count > 0 => (UNNAMED_WORKFLOW.to_owned(), step_count),
+        Err(_) => (UNNAMED_WORKFLOW.to_owned(), 0),
+    }
 }
 
 impl WorkflowStore {
@@ -132,7 +166,10 @@ impl WorkflowStore {
         Ok(state.state.lifecycle)
     }
 
-    /// Reads one run inventory row without journal replay or graph.json.
+    /// Reads one run inventory row without journal replay.
+    ///
+    /// Prefers manifest name/step_count. Opens graph.json only for pre-field
+    /// manifests that still lack a name.
     pub(crate) fn read_run_inventory(&self, id: RunId) -> WorkflowResult<RunInventoryItem> {
         let manifest: RunManifest =
             read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
@@ -144,7 +181,12 @@ impl WorkflowStore {
         }
         let state: InventoryStateFile =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
-        let total_steps = manifest.step_count;
+        let (name, total_steps) = inventory_identity(
+            manifest.name,
+            manifest.step_count,
+            &run_relative(id, Path::new("graph.json")),
+            &self.root,
+        );
         let done_steps = state
             .state
             .nodes
@@ -154,7 +196,7 @@ impl WorkflowStore {
         Ok(RunInventoryItem {
             run_id: id,
             workspace_identity: manifest.workspace_identity,
-            name: manifest.name,
+            name,
             lifecycle: state.state.lifecycle,
             outcome: state.state.outcome,
             done_steps,
@@ -171,11 +213,17 @@ impl WorkflowStore {
                 reason: "plan manifest ID differs from its directory ID".to_owned(),
             });
         }
+        let (name, step_count) = inventory_identity(
+            manifest.name,
+            manifest.step_count,
+            &plan_relative(id, Path::new("graph.json")),
+            &self.root,
+        );
         Ok(PlanInventoryItem {
             plan_id: id,
             workspace_identity: manifest.workspace_identity,
-            name: manifest.name,
-            step_count: manifest.step_count,
+            name,
+            step_count,
         })
     }
 }

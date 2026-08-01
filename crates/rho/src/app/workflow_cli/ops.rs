@@ -152,10 +152,7 @@ impl WorkflowOps {
         if run.workspace_identity != identity {
             anyhow::bail!("run belongs to another workspace");
         }
-        if matches!(
-            run.lifecycle,
-            RunLifecycle::Running | RunLifecycle::Cancelling
-        ) {
+        if run.lifecycle.is_live() {
             anyhow::bail!(
                 "run {} is still {}, stop it before deleting",
                 run_id,
