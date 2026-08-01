@@ -56,7 +56,7 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 - **Internal agent models**: use `/agents`, select `session-title` or `goal-judge`, and press `enter` to choose a model, or edit `[internal_agents.<role>]` in config. Pick **Use conversation model** to remove an override.
 - **Permission mode**: `permission_mode` must be `auto`, `plan`, or `supervised`. Set it under Agent behavior in `/config`, or in config. `auto` allows, `plan` denies file writes and process execution, `supervised` asks before file writes and process execution. The change applies before the next turn and clears session approvals.
 - **Auto compaction**: under Context & limits in `/config`. `compact_target_percent` must stay below `compact_threshold_percent`; values at or above the threshold are clamped.
-- **Web search**: under Tools in `/config`. `hosted` enables provider-hosted search; `provider` selects the backup backend (`auto`, `openai`, `exa`, `brave`, `disabled`). Set both off to disable search entirely.
+- **Web search**: under Tools in `/config`. `hosted` enables provider-hosted search; `provider` selects the backup backend (`auto`, `openai`, `exa`, `brave`, `disabled`). Set `hosted` to `false` and `provider` to `disabled` to disable search entirely.
 - **Prompt templates**: add a file under `~/.rho/prompts/` or `<project>/.rho/prompts/`, or define `[prompt_templates]` inline in config. The filename or key becomes the slash command. Restart rho after adding or editing templates.
 - **Global instructions**: to change rules that apply to every session, edit `~/.rho/AGENTS.md` (see above).
 - **Keybindings**: edit `[keybindings]` in config. Values use `+`-separated modifiers and keys. Keybinding changes take effect at startup.
