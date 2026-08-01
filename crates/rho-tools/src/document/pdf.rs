@@ -191,11 +191,20 @@ fn validate_stream_expansion(document: &lopdf::Document) -> Result<(), String> {
         let Ok(stream) = object.as_stream() else {
             continue;
         };
+        if stream
+            .dict
+            .get(b"Subtype")
+            .and_then(lopdf::Object::as_name)
+            .is_ok_and(|name| name == b"Image")
+        {
+            continue;
+        }
         let filters = stream.filters().unwrap_or_default();
         match filters.as_slice() {
             [] => consume_budget(&mut remaining, stream.content.len())?,
             [b"FlateDecode" | b"Fl"] => {
-                let expanded = bounded_flate_size(&stream.content, remaining)?;
+                let expanded =
+                    bounded_flate_size(&stream.content, remaining, MAX_PDF_EXPANDED_STREAM_BYTES)?;
                 consume_budget(&mut remaining, expanded)?;
             }
             filters
@@ -223,20 +232,34 @@ fn validate_stream_expansion(document: &lopdf::Document) -> Result<(), String> {
 }
 
 fn consume_budget(remaining: &mut usize, size: usize) -> Result<(), String> {
+    let requested = MAX_PDF_EXPANDED_STREAM_BYTES
+        .saturating_sub(*remaining)
+        .saturating_add(size);
     *remaining = remaining.checked_sub(size).ok_or_else(|| {
-        format!("PDF expanded stream data exceeds the {MAX_PDF_EXPANDED_STREAM_BYTES} byte limit")
+        format!(
+            "PDF expanded stream data exceeds the {MAX_PDF_EXPANDED_STREAM_BYTES} byte limit ({requested} bytes requested)"
+        )
     })?;
     Ok(())
 }
 
-pub(super) fn bounded_flate_size(compressed: &[u8], max: usize) -> Result<usize, String> {
-    let mut decoder = ZlibDecoder::new(compressed).take(max.saturating_add(1) as u64);
-    let mut expanded = Vec::with_capacity(max.min(64 * 1024));
+pub(super) fn bounded_flate_size(
+    compressed: &[u8],
+    remaining: usize,
+    total_limit: usize,
+) -> Result<usize, String> {
+    let mut decoder = ZlibDecoder::new(compressed).take(remaining.saturating_add(1) as u64);
+    let mut expanded = Vec::with_capacity(remaining.min(64 * 1024));
     decoder
         .read_to_end(&mut expanded)
         .map_err(|error| format!("could not validate PDF stream expansion: {error}"))?;
-    if expanded.len() > max {
-        return Err(format!("PDF stream expands beyond its {max} byte budget"));
+    if expanded.len() > remaining {
+        let requested = total_limit
+            .saturating_sub(remaining)
+            .saturating_add(expanded.len());
+        return Err(format!(
+            "PDF expanded stream data exceeds the {total_limit} byte limit (at least {requested} bytes requested)"
+        ));
     }
     Ok(expanded.len())
 }

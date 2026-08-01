@@ -182,9 +182,14 @@ fn rejects_flate_streams_that_exceed_the_expanded_budget() {
     encoder.write_all(&vec![b'A'; 2_000]).unwrap();
     let compressed = encoder.finish().unwrap();
 
-    let error = pdf::bounded_flate_size(&compressed, 1_000).unwrap_err();
+    let error = pdf::bounded_flate_size(
+        &compressed,
+        /*remaining*/ 1_000,
+        /*total_limit*/ 1_000,
+    )
+    .unwrap_err();
 
-    assert!(error.contains("expands beyond"));
+    assert!(error.contains("1000 byte limit (at least 1001 bytes requested)"));
 }
 
 #[cfg(feature = "document-pdf")]
