@@ -43,11 +43,25 @@ impl<'a> DiscoveringPlanHost<'a> {
         workspace: &'a Path,
         config: &'a crate::config::Config,
         available_tools: &'a crate::agent::AgentCapabilities,
+        workflow_entry: &Path,
     ) -> anyhow::Result<Self> {
+        let home = crate::paths::home_dir();
+        let trust = if std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            crate::agent::ProjectTrust::Trusted
+        } else {
+            crate::agent::ProjectTrust::Untrusted
+        };
         Ok(Self {
             workspace,
             config,
-            catalog: crate::agent::AgentCatalog::discover(workspace)?,
+            catalog: crate::agent::AgentCatalog::discover_for_workflow_entry(
+                workspace,
+                workflow_entry,
+                home.as_deref(),
+                trust,
+            )?,
             available_tools,
         })
     }
@@ -201,6 +215,7 @@ fn resolve_agent(
         AgentOrigin::AgentsHome => "agents_home",
         AgentOrigin::RhoHome => "rho_home",
         AgentOrigin::Project => "project",
+        AgentOrigin::Workflow => "workflow",
     };
     let source_origin = match &entry.metadata.path {
         Some(path) => format!("{source_origin}:{}", crate::paths::display(path)),
@@ -224,6 +239,8 @@ fn resolve_agent(
             BoundRuntime::ClaudeCli { .. } => crate::workflow::AgentRuntime::ClaudeCli,
         },
         source_origin,
+        // Workflow-local agents ship with the workflow source the user planned.
+        // Project catalog agents still require project trust.
         trust_required: entry.metadata.origin == AgentOrigin::Project,
         prompt_policy,
         provider: None,

@@ -88,6 +88,7 @@ impl AppWorkflowToolService {
     pub(super) async fn authorized_agent_catalog(
         &self,
         context: &ToolContext,
+        workflow_entry: &Path,
     ) -> anyhow::Result<crate::agent::AgentCatalog> {
         let home = crate::paths::home_dir();
         let mut sources = crate::agent::AgentCatalogSources::default();
@@ -109,6 +110,17 @@ impl AppWorkflowToolService {
                     .push(self.authorized_agent_sources(context, &root).await?);
             }
         }
+        let workflow_agents = {
+            let root = crate::agent::workflow_local_agents_root(workflow_entry);
+            if root.is_absolute() {
+                root
+            } else {
+                self.cwd.join(root)
+            }
+        };
+        sources.workflow = self
+            .authorized_agent_sources(context, &workflow_agents)
+            .await?;
         crate::agent::AgentCatalog::from_authorized_sources(sources).map_err(Into::into)
     }
 

@@ -82,7 +82,7 @@ impl WorkflowOps {
         limits: &PlanningLimits,
     ) -> anyhow::Result<PreparedPlan> {
         let sources = self.collect_local_sources(entry, limits).await?;
-        let host = DiscoveringPlanHost::new(&self.workspace, config, available_tools)?;
+        let host = DiscoveringPlanHost::new(&self.workspace, config, available_tools, entry)?;
         self.prepare_from_sources(sources, inputs, &host, limits)
             .await
     }

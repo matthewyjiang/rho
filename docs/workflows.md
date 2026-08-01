@@ -25,9 +25,10 @@ stateDiagram
 The main steps are:
 
 1. Write one or more `.star` files under the workspace or project root. When a
-   workflow owns helper scripts or local modules, put the entry file and those
-   companions in one folder such as `.rho/workflows/review/` instead of leaving
-   scripts loose under `.rho/workflows/`.
+   workflow owns helper scripts, local modules, or local agents, put the entry
+   file and those companions in one folder such as `.rho/workflows/review/`
+   instead of leaving scripts loose under `.rho/workflows/`. Local agents live
+   in `<workflow_dir>/agents/*.md`.
 2. Validate the source and inputs.
 3. Create a frozen plan and inspect its graph digest and authority list.
 4. Confirm that exact digest and start a run by plan ID.
@@ -312,8 +313,10 @@ inspect = agent(
 )
 ```
 
-`agent` names a Rho agent or `claude-cli` agent definition. Planning freezes
-the full resolved agent setup. Run and resume do not reopen that definition.
+`agent` names a Rho agent or `claude-cli` agent definition from the catalog.
+Planning also loads agents from `<workflow_dir>/agents/*.md` next to the entry
+file (highest precedence for that plan). Planning freezes the full resolved
+agent setup. Run and resume do not reopen that definition.
 
 An agent with no output schema may return prose, but no condition or template
 can inspect it. An agent with a schema must return exactly one JSON value in its

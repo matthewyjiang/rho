@@ -32,6 +32,8 @@ pub enum AgentOrigin {
     AgentsHome,
     RhoHome,
     Project,
+    /// Agents shipped beside a workflow entry (`<workflow_dir>/agents/*.md`).
+    Workflow,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +60,7 @@ pub(crate) struct AgentCatalogSources {
     pub(crate) agents_home: Vec<(PathBuf, String)>,
     pub(crate) rho_home: Vec<(PathBuf, String)>,
     pub(crate) project: Vec<Vec<(PathBuf, String)>>,
+    pub(crate) workflow: Vec<(PathBuf, String)>,
 }
 
 impl AgentCatalog {
@@ -102,6 +105,21 @@ impl AgentCatalog {
         Ok(catalog)
     }
 
+    /// Catalog for planning one workflow entry, including `<dir>/agents/*.md`.
+    pub fn discover_for_workflow_entry(
+        cwd: &Path,
+        workflow_entry: &Path,
+        home: Option<&Path>,
+        project_trust: ProjectTrust,
+    ) -> Result<Self, AgentCatalogError> {
+        let mut catalog = Self::discover_with_home_and_trust(cwd, home, project_trust)?;
+        catalog.load_tier(
+            AgentOrigin::Workflow,
+            &[workflow_local_agents_root(workflow_entry)],
+        )?;
+        Ok(catalog)
+    }
+
     /// Builds a catalog from file bytes whose reads the caller already authorized.
     pub(crate) fn from_authorized_sources(
         sources: AgentCatalogSources,
@@ -113,6 +131,7 @@ impl AgentCatalog {
         for tier in sources.project {
             catalog.load_sources(AgentOrigin::Project, tier)?;
         }
+        catalog.load_sources(AgentOrigin::Workflow, sources.workflow)?;
         catalog.load_internals();
         Ok(catalog)
     }
@@ -299,6 +318,16 @@ fn markdown_paths(root: &Path) -> Result<Vec<PathBuf>, AgentCatalogError> {
     }
     paths.sort();
     Ok(paths)
+}
+
+/// Directory that holds agents shipped with one workflow entry file.
+///
+/// Layout: `<parent-of-entry>/agents/*.md`.
+pub fn workflow_local_agents_root(workflow_entry: &Path) -> PathBuf {
+    match workflow_entry.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join("agents"),
+        _ => PathBuf::from("agents"),
+    }
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

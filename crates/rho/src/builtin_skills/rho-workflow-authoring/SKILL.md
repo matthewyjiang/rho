@@ -16,24 +16,31 @@ author a workflow, but it is not a security boundary.
    companion code. Do not drop helper scripts loose next to unrelated workflows.
 3. Declare each external value as an explicit input.
 4. Build a finite directed acyclic graph in one `build(inputs)` call.
-5. Use typed output schemas before a later node reads an output.
-6. Use `command` for direct argv. Use `shell` only when shell syntax is needed.
-7. Declare `access = "read_only"` only for a Rho agent whose frozen tools
+5. Choose agents from the catalog. Prefer built-ins when tools and role fit.
+   If none fit, add a custom agent **inside the workflow folder** at
+   `<workflow_dir>/agents/<id>.md` and set `agent = "<id>"`. Do not create
+   workflow specialists under `~/.rho/agents` or project `.agents/agents`
+   unless the user asks for a shared catalog agent.
+6. Use typed output schemas before a later node reads an output.
+7. Use `command` for direct argv. Use `shell` only when shell syntax is needed.
+8. Declare `access = "read_only"` only for a Rho agent whose frozen tools
    enforce read-only work.
-8. Validate the source.
-9. Create and inspect a frozen plan.
-10. Confirm and run that plan ID.
-11. Inspect status and artifact references. Cancel or resume by run ID.
+9. Validate the source.
+10. Create and inspect a frozen plan.
+11. Confirm and run that plan ID.
+12. Inspect status and artifact references. Cancel or resume by run ID.
 
 ## Project layout
 
 Prefer a per-workflow directory under `.rho/workflows/` whenever the graph owns
-helper scripts, fixtures, or shared Starlark modules:
+helper scripts, fixtures, local agents, or shared Starlark modules:
 
 ```text
 .rho/workflows/
   review/
     workflow.star
+    agents/
+      boundary-reviewer.md
     collect_context.py
   release/
     workflow.star
@@ -45,6 +52,9 @@ Rules of thumb:
 
 - Entry file: `workflow.star` inside the workflow folder.
 - Helper scripts and local modules: same folder as that entry file.
+- Workflow-local agents: `agents/*.md` next to the entry file. Planning loads
+  that directory in addition to built-ins and user/project catalogs. Local
+  agents win on id conflicts for that plan only.
 - Shared pure-Starlark helpers used by many workflows: a sibling module such as
   `.rho/workflows/common.star`, or a small `shared/` folder with explicit loads.
 - Point `command` / `shell` argv at the helper with a workspace-relative path
@@ -52,8 +62,42 @@ Rules of thumb:
   `.rho/workflows/review/collect_context.py`.
 
 A single standalone `.star` file is fine when there are no companion files. As
-soon as you add a script or local module, move the graph into a folder and keep
-the set together.
+soon as you add a script, local module, or local agent, move the graph into a
+folder and keep the set together.
+
+### Workflow-local agents
+
+When a node needs tools or a role that built-ins do not provide:
+
+1. Create `<workflow_dir>/agents/<id>.md` (Markdown + frontmatter, same schema
+   as other Rho agents).
+2. Keep tools minimal. Use `access = "read_only"` only when every tool is
+   non-mutating.
+3. Reference it from Starlark with `agent = "<id>"`.
+4. Do not place that specialist in `~/.rho/agents` or `.agents/agents` just for
+   one workflow.
+
+Example agent file `.rho/workflows/review/agents/boundary-reviewer.md`:
+
+```markdown
+---
+description: Architecture boundary review for this workflow only
+reasoning: high
+tools: [list_dir, read_file, grep, glob, skill]
+---
+Review module boundaries only. Do not modify files.
+```
+
+```starlark
+inspect = agent(
+    name = "boundaries",
+    agent = "boundary-reviewer",
+    access = "read_only",
+    prompt = template(["Review boundaries in ", inputs["target"]]),
+    timeout_seconds = 1800,
+    max_output_bytes = 12000,
+)
+```
 
 Starlark runs during `validate` and `plan`. It does not run during `run` or
 `resume`. Run and resume use the frozen graph only. Plan approval accepts one

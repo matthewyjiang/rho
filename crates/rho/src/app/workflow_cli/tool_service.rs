@@ -167,6 +167,17 @@ impl AppWorkflowToolService {
             };
             requests.push(CapabilityRequest::read_path(path, scope, source()));
         }
+        let workflow_agents = crate::agent::workflow_local_agents_root(Path::new(file));
+        let workflow_agents = if workflow_agents.is_absolute() {
+            workflow_agents
+        } else {
+            self.cwd.join(workflow_agents)
+        };
+        requests.push(CapabilityRequest::read_path(
+            workflow_agents,
+            PathScope::PrimaryWorkspace,
+            source(),
+        ));
         Ok(requests)
     }
 
@@ -332,7 +343,7 @@ impl AppWorkflowToolService {
         inputs: BTreeMap<String, serde_json::Value>,
         context: &ToolContext,
     ) -> anyhow::Result<super::PreparedPlan> {
-        let catalog = self.authorized_agent_catalog(context).await?;
+        let catalog = self.authorized_agent_catalog(context, file).await?;
         let rho_home = crate::paths::rho_dir()?;
         let config_path = self.config_request_path(&rho_home);
         let config = self.authorized_config(context, &config_path).await?;
