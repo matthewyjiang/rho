@@ -6,14 +6,29 @@ use lopdf::xref::XrefEntry;
 use super::{BoundedText, ExtractedText};
 
 const MAX_PDF_EXPANDED_STREAM_BYTES: usize = 64 * 1024 * 1024;
-// Match lopdf 0.42's parser limit so older transitive parsers never receive deeper objects.
+/// Caps nested PDF arrays/dicts before lopdf 0.41 parses untrusted bytes.
+///
+/// lopdf 0.41 (pulled by `pdf-inspector`) bounds nested literal strings but not
+/// array/dictionary depth. This byte scan runs before any parser load.
 pub(super) const MAX_PDF_OBJECT_NESTING_DEPTH: usize = 100;
 
 pub(super) fn extract(bytes: &[u8], max_characters: usize) -> Result<ExtractedText, String> {
-    // Keep this preflight on a lopdf release that bounds nested objects. pdf-inspector does not
-    // accept a preloaded document, so only pass it the same bytes after all Rho limits succeed.
+    // pdf-inspector only accepts bytes and always loads with its own lopdf 0.41
+    // path. Preflight uses that same lopdf version so reject decisions match the
+    // extractor stack. A second parse is forced by the crate API; keep it short.
     validate_object_nesting(bytes)?;
     validate_classic_cross_reference(bytes)?;
+    preflight_document(bytes)?;
+
+    // pdf-inspector builds Markdown in memory; the facade then caps Unicode length.
+    let result = pdf_inspector::process_pdf_mem(bytes).map_err(|error| error.to_string())?;
+    let markdown = result.markdown.unwrap_or_default();
+    let mut text = BoundedText::new(max_characters);
+    text.push_str(&markdown);
+    Ok(text.into_extracted())
+}
+
+fn preflight_document(bytes: &[u8]) -> Result<(), String> {
     let mut document = lopdf::Document::load_mem_with_options(
         bytes,
         lopdf::LoadOptions {
@@ -36,16 +51,7 @@ pub(super) fn extract(bytes: &[u8], max_characters: usize) -> Result<ExtractedTe
     if document.is_encrypted() {
         document.decrypt("").map_err(|error| error.to_string())?;
     }
-    validate_stream_expansion(&document)?;
-    drop(document);
-
-    // pdf-inspector builds Markdown in memory. The preflight above caps all expanded source streams
-    // at 64 MiB, and the facade bounds the returned text by Unicode character count here.
-    let result = pdf_inspector::process_pdf_mem(bytes).map_err(|error| error.to_string())?;
-    let markdown = result.markdown.unwrap_or_default();
-    let mut text = BoundedText::new(max_characters);
-    text.push_str(&markdown);
-    Ok(text.into_extracted())
+    validate_stream_expansion(&document)
 }
 
 pub(super) fn validate_object_nesting(bytes: &[u8]) -> Result<(), String> {
@@ -191,20 +197,16 @@ fn validate_stream_expansion(document: &lopdf::Document) -> Result<(), String> {
         let Ok(stream) = object.as_stream() else {
             continue;
         };
-        if stream
-            .dict
-            .get(b"Subtype")
-            .and_then(lopdf::Object::as_name)
-            .is_ok_and(|name| name == b"Image")
-        {
+        // Image XObjects are not decompressed on the text/Markdown path.
+        // Budget only streams the extractor may expand (content, fonts, etc.).
+        if stream_is_image(stream) {
             continue;
         }
         let filters = stream.filters().unwrap_or_default();
         match filters.as_slice() {
             [] => consume_budget(&mut remaining, stream.content.len())?,
             [b"FlateDecode" | b"Fl"] => {
-                let expanded =
-                    bounded_flate_size(&stream.content, remaining, MAX_PDF_EXPANDED_STREAM_BYTES)?;
+                let expanded = bounded_flate_size(&stream.content, remaining)?;
                 consume_budget(&mut remaining, expanded)?;
             }
             filters
@@ -224,41 +226,37 @@ fn validate_stream_expansion(document: &lopdf::Document) -> Result<(), String> {
                     "PDF stream filter chain '[{chain}]' is unsupported by bounded extraction"
                 ));
             }
-            // Image codecs and other filters are not expanded by lopdf's text-content path.
+            // Image codecs and other filters are not expanded by the text path.
             _ => {}
         }
     }
     Ok(())
 }
 
+fn stream_is_image(stream: &lopdf::Stream) -> bool {
+    stream
+        .dict
+        .get(b"Subtype")
+        .and_then(lopdf::Object::as_name)
+        .is_ok_and(|name| name == b"Image")
+}
+
 fn consume_budget(remaining: &mut usize, size: usize) -> Result<(), String> {
-    let requested = MAX_PDF_EXPANDED_STREAM_BYTES
-        .saturating_sub(*remaining)
-        .saturating_add(size);
     *remaining = remaining.checked_sub(size).ok_or_else(|| {
-        format!(
-            "PDF expanded stream data exceeds the {MAX_PDF_EXPANDED_STREAM_BYTES} byte limit ({requested} bytes requested)"
-        )
+        format!("PDF expanded stream data exceeds the {MAX_PDF_EXPANDED_STREAM_BYTES} byte limit")
     })?;
     Ok(())
 }
 
-pub(super) fn bounded_flate_size(
-    compressed: &[u8],
-    remaining: usize,
-    total_limit: usize,
-) -> Result<usize, String> {
+pub(super) fn bounded_flate_size(compressed: &[u8], remaining: usize) -> Result<usize, String> {
     let mut decoder = ZlibDecoder::new(compressed).take(remaining.saturating_add(1) as u64);
     let mut expanded = Vec::with_capacity(remaining.min(64 * 1024));
     decoder
         .read_to_end(&mut expanded)
         .map_err(|error| format!("could not validate PDF stream expansion: {error}"))?;
     if expanded.len() > remaining {
-        let requested = total_limit
-            .saturating_sub(remaining)
-            .saturating_add(expanded.len());
         return Err(format!(
-            "PDF expanded stream data exceeds the {total_limit} byte limit (at least {requested} bytes requested)"
+            "PDF stream expands beyond its remaining {remaining} byte budget"
         ));
     }
     Ok(expanded.len())

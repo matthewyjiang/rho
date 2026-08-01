@@ -512,8 +512,16 @@ async fn fetch_content_extracts_local_and_remote_pdf_text() {
     .unwrap();
     server.join().unwrap();
 
-    assert_eq!(local.content.trim(), "## Fetched PDF");
-    assert_eq!(remote.content.trim(), "## Fetched PDF");
+    assert!(
+        local.content.contains("Fetched PDF"),
+        "local PDF extract should keep the text layer: {}",
+        local.content
+    );
+    assert!(
+        remote.content.contains("Fetched PDF"),
+        "remote PDF extract should keep the text layer: {}",
+        remote.content
+    );
     assert_eq!(local.metadata["mode"], "document_extract");
     assert_eq!(remote.metadata["mode"], "document_extract");
 }

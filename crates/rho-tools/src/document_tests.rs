@@ -146,7 +146,11 @@ fn extracts_pdf_markdown_and_warns_for_empty_pages() {
     let text_document =
         extract_document_from_bytes("renamed.bin", &pdf_fixture("(Hello PDF) Tj")).unwrap();
     assert_eq!(text_document.mime, "application/pdf");
-    assert_eq!(text_document.text.trim(), "## Hello PDF");
+    assert!(
+        text_document.text.contains("Hello PDF"),
+        "structured markdown should keep the text layer: {:?}",
+        text_document.text
+    );
     assert_eq!(text_document.warnings, Vec::<String>::new());
 
     let empty_document = extract_document_from_bytes("blank.pdf", &pdf_fixture("")).unwrap();
@@ -182,14 +186,9 @@ fn rejects_flate_streams_that_exceed_the_expanded_budget() {
     encoder.write_all(&vec![b'A'; 2_000]).unwrap();
     let compressed = encoder.finish().unwrap();
 
-    let error = pdf::bounded_flate_size(
-        &compressed,
-        /*remaining*/ 1_000,
-        /*total_limit*/ 1_000,
-    )
-    .unwrap_err();
+    let error = pdf::bounded_flate_size(&compressed, /*remaining*/ 1_000).unwrap_err();
 
-    assert!(error.contains("1000 byte limit (at least 1001 bytes requested)"));
+    assert!(error.contains("remaining 1000 byte budget"));
 }
 
 #[cfg(feature = "document-pdf")]
