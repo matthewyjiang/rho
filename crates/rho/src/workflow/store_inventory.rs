@@ -1,13 +1,93 @@
 //! Plan/run inventory helpers for the durable workflow store.
+//!
+//! Hub and status UIs need name, lifecycle, and progress only. Full
+//! `load_plan` / `load_run` rehash sources, re-digest graphs, and replay
+//! event journals. Inventory reads the small on-disk fields the UI needs
+//! and skips that validation path.
+//!
+//! This module is projection only. Destructive store mutations live on
+//! [`WorkflowStore`] in `store.rs`.
 
-use std::{path::Path, str::FromStr};
+use std::{collections::BTreeMap, path::Path, str::FromStr};
 
-use super::WorkflowStore;
-use crate::workflow::{PlanId, RunId, StoredPlan, StoredRun, WorkflowError, WorkflowResult};
+use serde::Deserialize;
+
+use super::{plan_relative, read_json, run_relative, WorkflowStore};
+use crate::workflow::{
+    NodeId, NodeState, PlanId, PlanManifest, RunId, RunLifecycle, RunManifest, WorkflowOutcome,
+    WorkflowResult,
+};
+
+/// Lightweight plan row for workspace inventory UIs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PlanInventoryItem {
+    pub(crate) plan_id: PlanId,
+    pub(crate) workspace_identity: String,
+    pub(crate) name: String,
+    pub(crate) step_count: usize,
+}
+
+/// Lightweight run row for workspace inventory UIs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunInventoryItem {
+    pub(crate) run_id: RunId,
+    pub(crate) workspace_identity: String,
+    pub(crate) name: String,
+    pub(crate) lifecycle: RunLifecycle,
+    pub(crate) outcome: Option<WorkflowOutcome>,
+    pub(crate) done_steps: usize,
+    pub(crate) total_steps: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryGraphFile {
+    graph: InventoryGraphBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryGraphBody {
+    name: String,
+    nodes: BTreeMap<String, serde::de::IgnoredAny>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryStateFile {
+    state: InventoryWorkflowState,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryWorkflowState {
+    lifecycle: RunLifecycle,
+    outcome: Option<WorkflowOutcome>,
+    nodes: BTreeMap<NodeId, NodeState>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RevisionStateFile {
+    state: RevisionOnly,
+}
+
+#[derive(Debug, Deserialize)]
+struct RevisionOnly {
+    revision: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct LifecycleStateFile {
+    state: LifecycleOnly,
+}
+
+#[derive(Debug, Deserialize)]
+struct LifecycleOnly {
+    lifecycle: RunLifecycle,
+}
 
 impl WorkflowStore {
-    /// Lists stored plans. Skips unreadable entries so one corrupt plan does not hide the rest.
-    pub(crate) fn list_plans(&self) -> WorkflowResult<Vec<StoredPlan>> {
+    /// Lists plan rows without source rehash or graph re-digest.
+    ///
+    /// Non-UUID directory names are ignored. A valid plan ID directory that
+    /// cannot be read fails the list; empty means empty, not broken.
+    pub(crate) fn list_plan_inventory(&self) -> WorkflowResult<Vec<PlanInventoryItem>> {
         let mut plans = Vec::new();
         for name in self.root.directory_names(Path::new("plans"))? {
             let Ok(name) = name.into_string() else {
@@ -16,16 +96,17 @@ impl WorkflowStore {
             let Ok(id) = PlanId::from_str(&name) else {
                 continue;
             };
-            if let Ok(plan) = self.load_plan(id) {
-                plans.push(plan);
-            }
+            plans.push(self.read_plan_inventory(id)?);
         }
-        plans.sort_by_key(|plan| std::cmp::Reverse(plan.manifest.plan_id));
+        plans.sort_by_key(|plan| std::cmp::Reverse(plan.plan_id));
         Ok(plans)
     }
 
-    /// Lists stored runs. Skips unreadable entries so one corrupt run does not hide the rest.
-    pub(crate) fn list_runs(&self) -> WorkflowResult<Vec<StoredRun>> {
+    /// Lists run rows without journal replay or frozen-graph validation.
+    ///
+    /// Non-UUID directory names (including trash names) are ignored. A valid
+    /// run ID directory that cannot be read fails the list.
+    pub(crate) fn list_run_inventory(&self) -> WorkflowResult<Vec<RunInventoryItem>> {
         let mut runs = Vec::new();
         for name in self.root.directory_names(Path::new("runs"))? {
             let Ok(name) = name.into_string() else {
@@ -34,41 +115,79 @@ impl WorkflowStore {
             let Ok(id) = RunId::from_str(&name) else {
                 continue;
             };
-            if let Ok(run) = self.load_run(id) {
-                runs.push(run);
-            }
+            runs.push(self.read_run_inventory(id)?);
         }
-        runs.sort_by_key(|run| std::cmp::Reverse(run.manifest.run_id));
+        runs.sort_by_key(|run| std::cmp::Reverse(run.run_id));
         Ok(runs)
     }
 
-    /// Deletes one plan directory. Runs keep their copied graph, so resume still works.
-    pub(crate) fn delete_plan(&self, id: PlanId) -> WorkflowResult<()> {
-        // Confirm the plan is a real store entry before removal.
-        let _ = self.load_plan(id)?;
-        delete_child_directory(&self.layout.plans(), &self.layout.plan(id))
+    /// Reads one plan manifest for workspace checks without loading the graph.
+    pub(crate) fn read_plan_manifest(&self, id: PlanId) -> WorkflowResult<PlanManifest> {
+        read_json(&self.root, &plan_relative(id, Path::new("manifest.json")))
     }
 
-    /// Deletes one run directory. Fails if another process holds the run lock.
-    pub(crate) fn delete_run(&self, id: RunId) -> WorkflowResult<()> {
-        let _ = self.load_run(id)?;
-        // Refuse while an owner holds the exclusive writer lock.
-        let guard = self.lock_run(id)?;
-        drop(guard);
-        delete_child_directory(&self.layout.runs(), &self.layout.run(id))
+    /// Reads the durable revision without journal replay or graph validation.
+    pub(crate) fn read_run_revision(&self, id: RunId) -> WorkflowResult<u64> {
+        let state: RevisionStateFile =
+            read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
+        Ok(state.state.revision)
     }
-}
 
-/// Removes `child` only when it is a direct subdirectory of `parent`.
-fn delete_child_directory(parent: &Path, child: &Path) -> WorkflowResult<()> {
-    let parent = parent.canonicalize().map_err(WorkflowError::Io)?;
-    let child = child.canonicalize().map_err(WorkflowError::Io)?;
-    if child.parent() != Some(parent.as_path()) {
-        return Err(WorkflowError::Corrupt {
-            path: child,
-            reason: "refusing to delete a path outside the store entry parent".to_owned(),
-        });
+    /// Reads lifecycle without journal replay. Used by locked delete checks.
+    pub(crate) fn read_run_lifecycle(&self, id: RunId) -> WorkflowResult<RunLifecycle> {
+        let state: LifecycleStateFile =
+            read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
+        Ok(state.state.lifecycle)
     }
-    std::fs::remove_dir_all(&child).map_err(WorkflowError::Io)?;
-    Ok(())
+
+    /// Reads one run inventory row without journal replay.
+    pub(crate) fn read_run_inventory(&self, id: RunId) -> WorkflowResult<RunInventoryItem> {
+        let manifest: RunManifest =
+            read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
+        if manifest.run_id != id {
+            return Err(crate::workflow::WorkflowError::Corrupt {
+                path: self.layout.run_manifest(id),
+                reason: "run manifest ID differs from its directory ID".to_owned(),
+            });
+        }
+        let graph: InventoryGraphFile =
+            read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
+        let state: InventoryStateFile =
+            read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
+        let total_steps = graph.graph.nodes.len();
+        let done_steps = state
+            .state
+            .nodes
+            .values()
+            .filter(|node| node.terminal().is_some())
+            .count();
+        Ok(RunInventoryItem {
+            run_id: id,
+            workspace_identity: manifest.workspace_identity,
+            name: graph.graph.name,
+            lifecycle: state.state.lifecycle,
+            outcome: state.state.outcome,
+            done_steps,
+            total_steps,
+        })
+    }
+
+    fn read_plan_inventory(&self, id: PlanId) -> WorkflowResult<PlanInventoryItem> {
+        let manifest: PlanManifest =
+            read_json(&self.root, &plan_relative(id, Path::new("manifest.json")))?;
+        if manifest.plan_id != id {
+            return Err(crate::workflow::WorkflowError::Corrupt {
+                path: self.layout.plan_manifest(id),
+                reason: "plan manifest ID differs from its directory ID".to_owned(),
+            });
+        }
+        let graph: InventoryGraphFile =
+            read_json(&self.root, &plan_relative(id, Path::new("graph.json")))?;
+        Ok(PlanInventoryItem {
+            plan_id: id,
+            workspace_identity: manifest.workspace_identity,
+            name: graph.graph.name,
+            step_count: graph.graph.nodes.len(),
+        })
+    }
 }

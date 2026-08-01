@@ -11,9 +11,11 @@ use super::{
 };
 use crate::tui::terminal_events::TerminalEvents;
 
+/// Why the workflow screen closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowTuiExit {
-    DurableState,
+    /// User left the screen, or the event source ended while leave was allowed.
+    LeftScreen,
 }
 
 /// Runs the dedicated workflow screen.
@@ -31,8 +33,9 @@ pub(crate) async fn run(
 
     let mut terminal = ratatui::init();
     let _terminal_restore = RestoreTerminal;
+    let session = adapter.session();
     let initial = adapter.initial_snapshot();
-    let mut app = WorkflowUiState::new(initial);
+    let mut app = WorkflowUiState::new(session, initial);
     match run_loop(&mut terminal, &mut app, adapter.as_mut()).await {
         Ok(exit) => Ok(exit),
         Err(run_error) => match adapter.shutdown().await {
@@ -64,7 +67,7 @@ async fn run_loop(
                         InputResult::Action(action) => {
                             adapter.send(action).await?;
                         }
-                        InputResult::Exit => return Ok(WorkflowTuiExit::DurableState),
+                        InputResult::Exit => return Ok(WorkflowTuiExit::LeftScreen),
                     },
                     Event::Resize(_, _) => {
                         terminal.draw(|frame| view::draw(frame, app))?;
@@ -75,7 +78,7 @@ async fn run_loop(
             update = adapter.next_event() => {
                 let Some(update) = update? else {
                     if app.can_exit() {
-                        return Ok(WorkflowTuiExit::DurableState);
+                        return Ok(WorkflowTuiExit::LeftScreen);
                     }
                     anyhow::bail!("workflow event source ended before the run reached a durable state");
                 };

@@ -27,7 +27,7 @@ use crate::{
     tui::workflow::{
         CancellationState, ExecutionMetadata, PlanApprovalState, SourceDigestSummary,
         TerminalReason, WorkflowAction, WorkflowEvent as TuiEvent, WorkflowEventAdapter,
-        WorkflowNodeSnapshot, WorkflowProgress, WorkflowSnapshot,
+        WorkflowNodeSnapshot, WorkflowProgress, WorkflowSession, WorkflowSnapshot,
     },
     workflow::{
         derive_workflow_outcome, CommandNode, Digest, NodeExecution, NodeState, NodeTerminalState,
@@ -212,14 +212,9 @@ pub(crate) async fn spawn_background_run(
             }
         }
     });
-    // Give the driver a chance to take the run lock and mark nodes ready/running.
-    tokio::task::yield_now().await;
-    tokio::task::yield_now().await;
-    let store = WorkflowStore::new(&crate::paths::rho_dir()?)?;
-    match store.load_run(run_id) {
-        Ok(current) => Ok(current),
-        Err(_) => Ok(run),
-    }
+    // Return the pre-spawn snapshot immediately. Progress is eventually consistent
+    // via status / watch; do not sleep or yield hoping the driver advanced.
+    Ok(run)
 }
 
 struct WorkflowRuntime {
@@ -478,6 +473,10 @@ impl RunnerTuiAdapter {
 }
 
 impl WorkflowEventAdapter for RunnerTuiAdapter {
+    fn session(&self) -> WorkflowSession {
+        WorkflowSession::Owner
+    }
+
     fn initial_snapshot(&self) -> WorkflowSnapshot {
         self.initial.clone()
     }
@@ -551,6 +550,7 @@ pub(crate) async fn watch_run(run: StoredRun) -> anyhow::Result<()> {
 }
 
 struct WatchAdapter {
+    store: WorkflowStore,
     rho_home: std::path::PathBuf,
     run_id: RunId,
     initial: WorkflowSnapshot,
@@ -565,23 +565,32 @@ impl WatchAdapter {
         let mut interval = tokio::time::interval(WATCH_POLL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         Ok(Self {
+            store: WorkflowStore::new(&rho_home)?,
             rho_home,
             run_id,
-            initial: watch_snapshot(&run),
+            initial: tui_snapshot(&run),
             last_revision,
             interval,
         })
     }
 
-    fn load(&self) -> anyhow::Result<(WorkflowSnapshot, u64)> {
-        let store = WorkflowStore::new(&self.rho_home)?;
-        let run = store.load_run(self.run_id)?;
+    /// Cheap poll: read revision only. Full load happens on change.
+    fn load_if_changed(&self) -> anyhow::Result<Option<(WorkflowSnapshot, u64)>> {
+        let revision = self.store.read_run_revision(self.run_id)?;
+        if revision == self.last_revision {
+            return Ok(None);
+        }
+        let run = self.store.load_run(self.run_id)?;
         let revision = run.state.state.revision;
-        Ok((watch_snapshot(&run), revision))
+        Ok(Some((tui_snapshot(&run), revision)))
     }
 }
 
 impl WorkflowEventAdapter for WatchAdapter {
+    fn session(&self) -> WorkflowSession {
+        WorkflowSession::Watcher
+    }
+
     fn initial_snapshot(&self) -> WorkflowSnapshot {
         self.initial.clone()
     }
@@ -592,8 +601,7 @@ impl WorkflowEventAdapter for WatchAdapter {
         Box::pin(async move {
             loop {
                 self.interval.tick().await;
-                let (snapshot, revision) = self.load()?;
-                if revision != self.last_revision {
+                if let Some((snapshot, revision)) = self.load_if_changed()? {
                     self.last_revision = revision;
                     return Ok(Some(TuiEvent::Snapshot(snapshot)));
                 }
@@ -608,8 +616,7 @@ impl WorkflowEventAdapter for WatchAdapter {
         Box::pin(async move {
             match action {
                 WorkflowAction::Cancel => {
-                    let store = WorkflowStore::new(&self.rho_home)?;
-                    let lifecycle = store.load_run(self.run_id)?.state.state.lifecycle;
+                    let lifecycle = self.store.read_run_lifecycle(self.run_id)?;
                     super::request_cancellation(&self.rho_home, self.run_id, lifecycle).await?;
                 }
                 WorkflowAction::ConfirmPlan | WorkflowAction::ConfirmResume => {
@@ -623,13 +630,6 @@ impl WorkflowEventAdapter for WatchAdapter {
     fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
         Box::pin(async move { Ok(()) })
     }
-}
-
-fn watch_snapshot(run: &StoredRun) -> WorkflowSnapshot {
-    let mut snapshot = tui_snapshot(run);
-    snapshot.detachable = true;
-    snapshot.exit_is_safe = true;
-    snapshot
 }
 
 fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
@@ -701,7 +701,6 @@ fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
             CancellationState::NotRequested
         },
         recovery_requirement: None,
-        detachable: false,
         exit_is_safe: matches!(
             lifecycle,
             RunLifecycle::Completed | RunLifecycle::NeedsRecovery

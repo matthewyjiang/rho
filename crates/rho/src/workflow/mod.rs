@@ -58,7 +58,7 @@ pub(crate) use service::WorkflowService;
 pub(crate) use starlark::StarlarkPlanner;
 pub(crate) use starlark_diagnostics::Diagnostic;
 pub(crate) use starlark_loader::{CollectedSources, SourceBytes, SourceCollector};
-pub(crate) use store::{RunMutationGuard, WorkflowStore};
+pub(crate) use store::{PlanInventoryItem, RunInventoryItem, RunMutationGuard, WorkflowStore};
 pub(crate) use transition::{
     derive_workflow_outcome, validate_lifecycle_transition, validate_reset_transition,
     validate_transition,

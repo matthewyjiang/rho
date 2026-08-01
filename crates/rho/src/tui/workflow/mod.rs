@@ -12,6 +12,7 @@
 //! then call `matrix_adapter` with the matching run or resume start.
 
 mod app;
+mod control;
 mod dag;
 mod event_adapter;
 mod input;
@@ -24,7 +25,8 @@ pub(crate) use app::{run, WorkflowTuiExit};
 pub(crate) use event_adapter::{
     ArtifactKind, ArtifactReference, CancellationState, ExecutionMetadata, PlanApprovalState,
     RecoveryRequirement, SourceDigestSummary, TerminalReason, WorkflowAction, WorkflowEvent,
-    WorkflowEventAdapter, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSnapshot,
+    WorkflowEventAdapter, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSession,
+    WorkflowSnapshot,
 };
 
 #[cfg(debug_assertions)]

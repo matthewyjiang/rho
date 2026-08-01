@@ -16,7 +16,7 @@ use crate::{
         workflow_runtime::RecoveryDecision,
     },
     workflow::{
-        derive_workflow_outcome, PlanId, RunId, RunLifecycle, StoredPlan, StoredRun,
+        PlanId, PlanInventoryItem, RunId, RunInventoryItem, RunLifecycle, StoredRun,
         WorkflowOutcome, WorkflowValue,
     },
 };
@@ -86,23 +86,16 @@ fn outcome_label(outcome: Option<WorkflowOutcome>) -> String {
     }
 }
 
-fn run_progress(run: &StoredRun) -> String {
-    let total = run.state.state.nodes.len().max(1);
-    let done = run
-        .state
-        .state
-        .nodes
-        .values()
-        .filter(|state| state.terminal().is_some())
-        .count();
+fn run_progress(done: usize, total: usize) -> String {
+    let total = total.max(1);
     format!("{done}/{total} steps done")
 }
 
 /// Root list: start workflows, open runs, or reuse a saved plan.
 pub(super) fn hub_picker(
     sources: &[workflow_discover::DiscoveredWorkflow],
-    plans: &[StoredPlan],
-    runs: &[StoredRun],
+    plans: &[PlanInventoryItem],
+    runs: &[RunInventoryItem],
 ) -> UiPicker {
     let mut items = Vec::new();
 
@@ -133,16 +126,16 @@ pub(super) fn hub_picker(
 
     let mut active = runs
         .iter()
-        .filter(|run| run.state.state.lifecycle != RunLifecycle::Completed)
+        .filter(|run| run.lifecycle != RunLifecycle::Completed)
         .collect::<Vec<_>>();
-    active.sort_by_key(|run| run.manifest.run_id);
+    active.sort_by_key(|run| run.run_id);
     active.reverse();
 
     let mut finished = runs
         .iter()
-        .filter(|run| run.state.state.lifecycle == RunLifecycle::Completed)
+        .filter(|run| run.lifecycle == RunLifecycle::Completed)
         .collect::<Vec<_>>();
-    finished.sort_by_key(|run| run.manifest.run_id);
+    finished.sort_by_key(|run| run.run_id);
     finished.reverse();
     finished.truncate(MAX_FINISHED_RUNS);
 
@@ -157,34 +150,34 @@ pub(super) fn hub_picker(
         ));
     } else {
         for run in active {
-            let id = run.manifest.run_id.to_string();
+            let id = run.run_id.to_string();
             let short = short_id(&id);
-            let life = lifecycle_label(run.state.state.lifecycle);
-            let name = run.graph.graph.name.as_str();
+            let life = lifecycle_label(run.lifecycle);
+            let name = run.name.as_str();
             items.push(item(
                 Some("RUNS"),
                 format!("Watch  {life}  ·  {short}"),
                 format!(
                     "{name}\n{life} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}",
-                    run_progress(run)
+                    run_progress(run.done_steps, run.total_steps)
                 ),
                 format!("{RUN_PREFIX}{id}"),
-                Some((life.into(), lifecycle_tone(run.state.state.lifecycle))),
+                Some((life.into(), lifecycle_tone(run.lifecycle))),
                 Some("watch"),
             ));
         }
         for run in finished {
-            let id = run.manifest.run_id.to_string();
+            let id = run.run_id.to_string();
             let short = short_id(&id);
-            let outcome = outcome_label(derive_workflow_outcome(&run.graph, &run.state.state));
-            let name = run.graph.graph.name.as_str();
+            let outcome = outcome_label(run.outcome);
+            let name = run.name.as_str();
             let tone = outcome_tone(&outcome);
             items.push(item(
                 Some("RUNS"),
                 format!("Watch  {outcome}  ·  {short}"),
                 format!(
                     "{name}\nFinished · {outcome} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}",
-                    run_progress(run)
+                    run_progress(run.done_steps, run.total_steps)
                 ),
                 format!("{RUN_PREFIX}{id}"),
                 Some((outcome, tone)),
@@ -197,10 +190,10 @@ pub(super) fn hub_picker(
         // Keep the list focused; empty plans stay hidden.
     } else {
         for plan in plans {
-            let id = plan.manifest.plan_id.to_string();
+            let id = plan.plan_id.to_string();
             let short = short_id(&id);
-            let name = plan.graph.graph.name.as_str();
-            let steps = plan.graph.graph.nodes.len();
+            let name = plan.name.as_str();
+            let steps = plan.step_count;
             items.push(item(
                 Some("SAVED PLANS"),
                 format!("Run plan  ·  {short}"),
@@ -257,8 +250,8 @@ impl App {
     pub(super) fn open_workflow_hub(&mut self) -> anyhow::Result<()> {
         let ops = self.workflow_ops()?;
         let sources = workflow_discover::discover_workflow_sources(&self.info.runtime.cwd);
-        let plans = ops.list_workspace_plans().unwrap_or_default();
-        let runs = ops.list_workspace_runs().unwrap_or_default();
+        let plans = ops.list_workspace_plans()?;
+        let runs = ops.list_workspace_runs()?;
         if sources.is_empty() && plans.is_empty() && runs.is_empty() {
             self.input_ui.set_composer(ComposerMode::Input);
             self.insert_entry(&Entry::Notice(

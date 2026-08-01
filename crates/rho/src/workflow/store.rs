@@ -373,8 +373,26 @@ impl WorkflowStore {
     }
 }
 
+/// Removes `child` only when it is a direct subdirectory of `parent`.
+fn delete_child_directory(parent: &Path, child: &Path) -> WorkflowResult<()> {
+    let parent = parent.canonicalize().map_err(WorkflowError::Io)?;
+    let child = child.canonicalize().map_err(WorkflowError::Io)?;
+    if child.parent() != Some(parent.as_path()) {
+        return Err(WorkflowError::Corrupt {
+            path: child,
+            reason: "refusing to delete a path outside the store entry parent".to_owned(),
+        });
+    }
+    std::fs::remove_dir_all(&child).map_err(WorkflowError::Io)?;
+    Ok(())
+}
+
 #[path = "store_inventory.rs"]
 mod inventory;
+pub(crate) use inventory::{PlanInventoryItem, RunInventoryItem};
+
+#[path = "store_mutate.rs"]
+mod mutate;
 
 pub(crate) struct RunMutationGuard {
     id: RunId,

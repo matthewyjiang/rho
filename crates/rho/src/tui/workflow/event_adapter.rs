@@ -107,10 +107,8 @@ pub(crate) struct WorkflowSnapshot {
     pub(crate) nodes: Vec<WorkflowNodeSnapshot>,
     pub(crate) cancellation: CancellationState,
     pub(crate) recovery_requirement: Option<RecoveryRequirement>,
-    /// True when the TUI is only observing a run and does not own the driver.
-    /// Leave with q anytime; cancel still requests a stop when the run is live.
-    pub(crate) detachable: bool,
-    /// True only after the runner has saved state and stopped active handles.
+    /// True only after an owner-mode runner has saved state and stopped active
+    /// handles. Watch sessions ignore this for leave permission.
     pub(crate) exit_is_safe: bool,
 }
 
@@ -131,12 +129,33 @@ pub(crate) enum WorkflowAction {
     Cancel,
 }
 
+/// How this TUI session relates to the workflow driver.
+///
+/// Session mode is fixed for the adapter lifetime. It is not run state and must
+/// not be stamped onto [`WorkflowSnapshot`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkflowSession {
+    /// Owns the driver. Leave only after durable stop (`exit_is_safe`).
+    Owner,
+    /// Observes store snapshots only. Leave anytime; cancel still requests stop.
+    Watcher,
+}
+
 /// Adapter contract between the workflow runner and this terminal mode.
 ///
 /// `send` must persist or apply an action before it returns. `next_event` must
 /// yield typed durable snapshots in order. In particular, it must not set
 /// `exit_is_safe` until all active work has stopped and state has been saved.
+///
+/// [`WorkflowSession::Watcher`] adapters may no-op [`Self::shutdown`] and must
+/// still report honest `exit_is_safe` values from the store.
 pub(crate) trait WorkflowEventAdapter: Send {
+    /// Session relationship for this adapter.
+    ///
+    /// Required with no default so a new adapter cannot silently become an
+    /// owner UI (leave blocked, Esc cancels).
+    fn session(&self) -> WorkflowSession;
+
     fn initial_snapshot(&self) -> WorkflowSnapshot;
 
     fn next_event(
@@ -148,10 +167,10 @@ pub(crate) trait WorkflowEventAdapter: Send {
         action: WorkflowAction,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
 
-    /// Stops active handles and saves a durable state before returning.
+    /// Owner: stop active handles and save durable state before returning.
+    /// Watcher: may return immediately; the background driver owns cleanup.
     ///
-    /// The TUI calls this after any screen, input, or event-source error. The
-    /// runner adapter must apply the same cleanup path as SIGINT cancellation.
+    /// The TUI calls this after any screen, input, or event-source error.
     fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
 }
 
@@ -338,6 +357,10 @@ impl MatrixAdapter {
 
 #[cfg(debug_assertions)]
 impl WorkflowEventAdapter for MatrixAdapter {
+    fn session(&self) -> WorkflowSession {
+        WorkflowSession::Owner
+    }
+
     fn initial_snapshot(&self) -> WorkflowSnapshot {
         self.snapshot.clone()
     }
@@ -486,7 +509,6 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
         ],
         cancellation: CancellationState::NotRequested,
         recovery_requirement: None,
-        detachable: false,
         exit_is_safe: true,
     }
 }

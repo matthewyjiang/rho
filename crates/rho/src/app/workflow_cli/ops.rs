@@ -10,9 +10,10 @@ use crate::{
     workflow::{
         normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
         verify_executable_identity, CollectedSources, Digest, FrozenSchedulerSettings,
-        FrozenWorkflow, InputName, PlanConsent, PlanId, PlannerIdentity, PlanningLimits,
-        ResolvedNode, RunId, RunLifecycle, SourceCollector, StoredPlan, StoredRun, WorkflowService,
-        WorkflowStore, WorkflowValue, FROZEN_WORKFLOW_SCHEMA_VERSION,
+        FrozenWorkflow, InputName, PlanConsent, PlanId, PlanInventoryItem, PlannerIdentity,
+        PlanningLimits, ResolvedNode, RunId, RunInventoryItem, RunLifecycle, SourceCollector,
+        StoredPlan, StoredRun, WorkflowService, WorkflowStore, WorkflowValue,
+        FROZEN_WORKFLOW_SCHEMA_VERSION,
     },
 };
 
@@ -114,51 +115,51 @@ impl WorkflowOps {
         Ok(self.service.store().load_run(run_id)?)
     }
 
-    pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<Vec<StoredPlan>> {
+    pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<Vec<PlanInventoryItem>> {
         let identity = workspace_identity(&self.workspace)?;
         Ok(self
             .service
             .store()
-            .list_plans()?
+            .list_plan_inventory()?
             .into_iter()
-            .filter(|plan| plan.manifest.workspace_identity == identity)
+            .filter(|plan| plan.workspace_identity == identity)
             .collect())
     }
 
-    pub(crate) fn list_workspace_runs(&self) -> anyhow::Result<Vec<StoredRun>> {
+    pub(crate) fn list_workspace_runs(&self) -> anyhow::Result<Vec<RunInventoryItem>> {
         let identity = workspace_identity(&self.workspace)?;
         Ok(self
             .service
             .store()
-            .list_runs()?
+            .list_run_inventory()?
             .into_iter()
-            .filter(|run| run.manifest.workspace_identity == identity)
+            .filter(|run| run.workspace_identity == identity)
             .collect())
     }
 
     pub(crate) fn delete_workspace_plan(&self, plan_id: PlanId) -> anyhow::Result<()> {
-        let plan = self.load_plan_id(plan_id)?;
+        let manifest = self.service.store().read_plan_manifest(plan_id)?;
         let identity = workspace_identity(&self.workspace)?;
-        if plan.manifest.workspace_identity != identity {
+        if manifest.workspace_identity != identity {
             anyhow::bail!("plan belongs to another workspace");
         }
         Ok(self.service.store().delete_plan(plan_id)?)
     }
 
     pub(crate) fn delete_workspace_run(&self, run_id: RunId) -> anyhow::Result<()> {
-        let run = self.load_run_id(run_id)?;
+        let run = self.service.store().read_run_inventory(run_id)?;
         let identity = workspace_identity(&self.workspace)?;
-        if run.manifest.workspace_identity != identity {
+        if run.workspace_identity != identity {
             anyhow::bail!("run belongs to another workspace");
         }
         if matches!(
-            run.state.state.lifecycle,
+            run.lifecycle,
             RunLifecycle::Running | RunLifecycle::Cancelling
         ) {
             anyhow::bail!(
                 "run {} is still {}, stop it before deleting",
                 run_id,
-                format!("{:?}", run.state.state.lifecycle).to_ascii_lowercase()
+                format!("{:?}", run.lifecycle).to_ascii_lowercase()
             );
         }
         Ok(self.service.store().delete_run(run_id)?)

@@ -1,12 +1,16 @@
 use std::collections::BTreeMap;
 
-use crate::workflow::{NodeId, RunLifecycle};
+use crate::workflow::NodeId;
 
-use super::event_adapter::{
-    PlanApprovalState, WorkflowEvent, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSnapshot,
+use super::{
+    control::{control_policy, ControlPolicy},
+    event_adapter::{
+        WorkflowEvent, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSession, WorkflowSnapshot,
+    },
 };
 
 pub(super) struct WorkflowUiState {
+    session: WorkflowSession,
     snapshot: WorkflowSnapshot,
     selected: usize,
     progress: BTreeMap<NodeId, WorkflowProgress>,
@@ -14,8 +18,9 @@ pub(super) struct WorkflowUiState {
 }
 
 impl WorkflowUiState {
-    pub(super) fn new(snapshot: WorkflowSnapshot) -> Self {
+    pub(super) fn new(session: WorkflowSession, snapshot: WorkflowSnapshot) -> Self {
         Self {
+            session,
             snapshot,
             selected: 0,
             progress: BTreeMap::new(),
@@ -60,6 +65,14 @@ impl WorkflowUiState {
         &self.snapshot
     }
 
+    pub(super) fn policy(&self) -> ControlPolicy {
+        control_policy(self.session, &self.snapshot)
+    }
+
+    pub(super) fn session(&self) -> WorkflowSession {
+        self.session
+    }
+
     pub(super) fn selected_node(&self) -> Option<&WorkflowNodeSnapshot> {
         self.snapshot.nodes.get(self.selected)
     }
@@ -88,16 +101,8 @@ impl WorkflowUiState {
         }
     }
 
-    pub(super) fn approval(&self) -> PlanApprovalState {
-        self.snapshot.approval
-    }
-
     pub(super) fn can_exit(&self) -> bool {
-        self.snapshot.exit_is_safe
-    }
-
-    pub(super) fn lifecycle(&self) -> RunLifecycle {
-        self.snapshot.lifecycle
+        self.policy().can_leave
     }
 }
 

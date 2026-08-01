@@ -687,29 +687,29 @@ fn cancellation_marker_uses_the_held_workflows_root() {
 // Covers: hub and status UIs need a workspace-scoped inventory of plans and runs.
 // Owner: workflow durable store.
 #[test]
-fn lists_plans_and_runs_skipping_unreadable_entries() {
+fn lists_plan_and_run_inventory_skipping_unreadable_entries() {
     let home = tempfile::tempdir().unwrap();
     let store = WorkflowStore::new(home.path()).unwrap();
     let first = plan(&store);
     let second = plan(&store);
     let run = run(&store, &first);
 
-    let plans = store.list_plans().unwrap();
+    let plans = store.list_plan_inventory().unwrap();
     assert_eq!(plans.len(), 2);
     assert!(plans
         .iter()
-        .any(|plan| plan.manifest.plan_id == first.manifest.plan_id));
+        .any(|plan| plan.plan_id == first.manifest.plan_id));
     assert!(plans
         .iter()
-        .any(|plan| plan.manifest.plan_id == second.manifest.plan_id));
+        .any(|plan| plan.plan_id == second.manifest.plan_id));
 
-    let runs = store.list_runs().unwrap();
+    let runs = store.list_run_inventory().unwrap();
     assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].manifest.run_id, run.manifest.run_id);
+    assert_eq!(runs[0].run_id, run.manifest.run_id);
 
     // Corrupt one plan directory name so list skips it.
     std::fs::create_dir_all(store.layout.plans().join("not-a-uuid")).unwrap();
-    assert_eq!(store.list_plans().unwrap().len(), 2);
+    assert_eq!(store.list_plan_inventory().unwrap().len(), 2);
 }
 
 // Covers: hub plan/run cleanup must remove only the targeted store entry.
@@ -733,4 +733,121 @@ fn deletes_plans_and_runs() {
 
     store.delete_run(run.manifest.run_id).unwrap();
     assert!(store.load_run(run.manifest.run_id).is_err());
+}
+
+// Covers: delete must hold the exclusive lock across the destructive rename so
+// a concurrent owner cannot lock_run and drive a half-removed tree.
+// Owner: workflow durable store.
+#[test]
+fn delete_run_fails_while_writer_lock_is_held() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let _guard = store.lock_run(run.manifest.run_id).unwrap();
+    let err = store.delete_run(run.manifest.run_id).unwrap_err();
+    assert!(
+        matches!(err, WorkflowError::Corrupt { .. }),
+        "expected locked-run refusal, got {err:?}"
+    );
+    // Run remains intact for the owner that still holds the lock.
+    drop(_guard);
+    assert_eq!(
+        store.load_run(run.manifest.run_id).unwrap().manifest.run_id,
+        run.manifest.run_id
+    );
+}
+
+// Covers: delete refuses live lifecycle under the lock even when the writer
+// lock is free (for example after a crash left Running without a holder).
+// Owner: workflow durable store.
+#[test]
+fn delete_run_refuses_running_lifecycle() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    // Bypass journal validation: crash-like durable state left as Running.
+    let mut record = run.state.clone();
+    record.state.lifecycle = RunLifecycle::Running;
+    write_json(&store.layout.run_state(run.manifest.run_id), &record).unwrap();
+
+    let err = store.delete_run(run.manifest.run_id).unwrap_err();
+    assert!(
+        matches!(err, WorkflowError::Corrupt { .. }),
+        "expected live-run refusal, got {err:?}"
+    );
+    assert!(store.read_run_lifecycle(run.manifest.run_id).is_ok());
+}
+
+// Covers: watch polling must read revision without journal replay.
+// Owner: workflow durable store.
+#[test]
+fn read_run_revision_skips_journal_replay() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let expected = run.state.state.revision;
+
+    // Corrupt the journal so full load_run fails.
+    std::fs::write(store.layout.run_events(run.manifest.run_id), b"{not-json\n").unwrap();
+    assert!(store.load_run(run.manifest.run_id).is_err());
+    assert_eq!(
+        store.read_run_revision(run.manifest.run_id).unwrap(),
+        expected
+    );
+    assert_eq!(
+        store.read_run_lifecycle(run.manifest.run_id).unwrap(),
+        RunLifecycle::Planned
+    );
+}
+
+// Covers: hub inventory must list plans/runs without full validation.
+// Owner: workflow durable store.
+#[test]
+fn plan_and_run_inventory_skips_journal_replay() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+
+    // Corrupt the journal so full load_run fails.
+    std::fs::write(store.layout.run_events(run.manifest.run_id), b"{not-json\n").unwrap();
+    assert!(store.load_run(run.manifest.run_id).is_err());
+
+    let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].plan_id, plan.manifest.plan_id);
+    assert_eq!(plans[0].name, plan.graph.graph.name.as_str());
+    assert_eq!(plans[0].step_count, plan.graph.graph.nodes.len());
+    assert_eq!(
+        plans[0].workspace_identity,
+        plan.manifest.workspace_identity
+    );
+
+    let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].run_id, run.manifest.run_id);
+    assert_eq!(runs[0].name, run.graph.graph.name.as_str());
+    assert_eq!(runs[0].lifecycle, run.state.state.lifecycle);
+    assert_eq!(runs[0].total_steps, run.graph.graph.nodes.len());
+    assert_eq!(runs[0].done_steps, 0);
+
+    // Delete must not require journal replay either.
+    store.delete_run(run.manifest.run_id).unwrap();
+    assert!(store.read_run_inventory(run.manifest.run_id).is_err());
+}
+
+// Covers: a valid plan ID with unreadable contents must fail the list closed,
+// not vanish into an empty hub.
+// Owner: workflow durable store.
+#[test]
+fn list_plan_inventory_fails_closed_on_corrupt_uuid_entry() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    // Truncate the manifest so read fails for a real UUID directory.
+    std::fs::write(store.layout.plan_manifest(plan.manifest.plan_id), b"{").unwrap();
+    assert!(store.list_plan_inventory().is_err());
 }

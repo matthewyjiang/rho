@@ -4,7 +4,7 @@ use super::WorkflowUiState;
 use crate::{
     tui::workflow::event_adapter::{
         CancellationState, ExecutionMetadata, PlanApprovalState, SourceDigestSummary,
-        WorkflowEvent, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSnapshot,
+        WorkflowEvent, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSession, WorkflowSnapshot,
     },
     workflow::{
         AgentRuntime, AttemptNumber, Digest, NodeId, NodeState, PlanId, RunId, RunLifecycle,
@@ -28,7 +28,6 @@ fn snapshot(nodes: Vec<WorkflowNodeSnapshot>) -> WorkflowSnapshot {
         nodes,
         cancellation: CancellationState::NotRequested,
         recovery_requirement: None,
-        detachable: false,
         exit_is_safe: false,
     }
 }
@@ -62,7 +61,7 @@ fn running_node(id: &str, name: &str, work: &str) -> WorkflowNodeSnapshot {
 fn progress_is_visible_for_current_attempt() {
     let node = running_node("review", "Review", "audit the change");
     let attempt = node.current_attempt.unwrap();
-    let mut state = WorkflowUiState::new(snapshot(vec![node]));
+    let mut state = WorkflowUiState::new(WorkflowSession::Owner, snapshot(vec![node]));
     state.apply(WorkflowEvent::Progress {
         node: NodeId::new("review").unwrap(),
         progress: WorkflowProgress {

@@ -12,11 +12,9 @@ use crate::workflow::{
 };
 
 use super::{
+    control::ConfirmKind,
     dag::{self, state_glyph, state_label, state_style},
-    event_adapter::{
-        CancellationState, ExecutionMetadata, PlanApprovalState, TerminalReason,
-        WorkflowNodeSnapshot,
-    },
+    event_adapter::{CancellationState, ExecutionMetadata, TerminalReason, WorkflowNodeSnapshot},
     state::WorkflowUiState,
 };
 
@@ -199,33 +197,25 @@ fn progress_now_line(progress: &super::event_adapter::WorkflowProgress) -> Strin
 
 fn draw_footer(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
     let snapshot = state.snapshot();
+    let policy = state.policy();
     let mut keys = vec!["j/k move".to_owned()];
-    if snapshot.detachable {
+    if matches!(
+        state.session(),
+        super::event_adapter::WorkflowSession::Watcher
+    ) {
         keys.push("watch".into());
-        if matches!(
-            snapshot.lifecycle,
-            RunLifecycle::Running | RunLifecycle::Cancelling
-        ) && !matches!(snapshot.cancellation, CancellationState::Requested)
-        {
-            keys.push("c stop".into());
-        }
+    }
+    match policy.confirm {
+        Some(ConfirmKind::StartPlan) => keys.push("enter start".into()),
+        Some(ConfirmKind::ContinueResume) => keys.push("enter continue".into()),
+        None => {}
+    }
+    // Stop hint is cancel capability minus an already-requested cancel.
+    if policy.cancel_plain_c && !matches!(snapshot.cancellation, CancellationState::Requested) {
+        keys.push("c stop".into());
+    }
+    if policy.show_leave_hint {
         keys.push("q leave".into());
-    } else {
-        match snapshot.approval {
-            PlanApprovalState::AwaitingPlan => keys.push("enter start".into()),
-            PlanApprovalState::AwaitingResume => keys.push("enter continue".into()),
-            PlanApprovalState::Approved
-                if !snapshot.exit_is_safe
-                    && matches!(
-                        snapshot.lifecycle,
-                        RunLifecycle::Running | RunLifecycle::Cancelling
-                    ) =>
-            {
-                keys.push("c stop".into());
-            }
-            PlanApprovalState::Approved if snapshot.exit_is_safe => keys.push("q leave".into()),
-            PlanApprovalState::Approved => {}
-        }
     }
     if matches!(snapshot.cancellation, CancellationState::Requested) {
         keys.push("stopping…".into());
