@@ -75,7 +75,7 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "reviewer",
-            "b83ec2ab30d6b667ba8813165ad141b7ef3e7bd53b189f6eb8f04ee0c08b9de0",
+            "cd03df83eaff48df965e3cf03431f40af67fb05aadab95397fb698d9f2ae4806",
         ),
         (
             "worker",
