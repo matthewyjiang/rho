@@ -27,6 +27,17 @@ pub(super) struct ControlPolicy {
     pub(super) show_leave_hint: bool,
 }
 
+/// Owner may leave when the run is not live. Watchers may leave always.
+///
+/// Derived from durable lifecycle on the snapshot so adapters do not stamp a
+/// separate session flag onto shared run state.
+pub(super) fn owner_can_leave(lifecycle: RunLifecycle) -> bool {
+    !matches!(
+        lifecycle,
+        RunLifecycle::Running | RunLifecycle::Cancelling
+    )
+}
+
 pub(super) fn control_policy(
     session: WorkflowSession,
     snapshot: &WorkflowSnapshot,
@@ -46,7 +57,7 @@ pub(super) fn control_policy(
             show_leave_hint: true,
         },
         WorkflowSession::Owner => {
-            let can_leave = snapshot.exit_is_safe;
+            let can_leave = owner_can_leave(snapshot.lifecycle);
             let may_cancel = !can_leave && live && approved;
             ControlPolicy {
                 can_leave,

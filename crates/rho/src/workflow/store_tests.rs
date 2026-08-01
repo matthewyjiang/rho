@@ -816,6 +816,10 @@ fn plan_and_run_inventory_skips_journal_replay() {
     std::fs::write(store.layout.run_events(run.manifest.run_id), b"{not-json\n").unwrap();
     assert!(store.load_run(run.manifest.run_id).is_err());
 
+    // Inventory must not need graph.json either (name/steps live on manifests).
+    std::fs::remove_file(store.layout.plan_graph(plan.manifest.plan_id)).unwrap();
+    std::fs::remove_file(store.layout.run_graph(run.manifest.run_id)).unwrap();
+
     let plans = store.list_plan_inventory().unwrap();
     assert_eq!(plans.len(), 1);
     assert_eq!(plans[0].plan_id, plan.manifest.plan_id);

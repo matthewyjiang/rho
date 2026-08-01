@@ -86,6 +86,8 @@ impl WorkflowStore {
             graph_digest: graph.graph_digest.clone(),
             workspace_identity,
             source_digests,
+            name: graph.graph.name.to_string(),
+            step_count: graph.graph.nodes.len(),
         };
         write_json_beneath(
             &self.root,
@@ -171,6 +173,8 @@ impl WorkflowStore {
             graph_digest: plan.manifest.graph_digest.clone(),
             workspace_identity: plan.manifest.workspace_identity.clone(),
             consent,
+            name: plan.graph.graph.name.to_string(),
+            step_count: plan.graph.graph.nodes.len(),
         };
         write_json_beneath(
             &self.root,

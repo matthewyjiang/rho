@@ -107,9 +107,6 @@ pub(crate) struct WorkflowSnapshot {
     pub(crate) nodes: Vec<WorkflowNodeSnapshot>,
     pub(crate) cancellation: CancellationState,
     pub(crate) recovery_requirement: Option<RecoveryRequirement>,
-    /// True only after an owner-mode runner has saved state and stopped active
-    /// handles. Watch sessions ignore this for leave permission.
-    pub(crate) exit_is_safe: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,7 +132,7 @@ pub(crate) enum WorkflowAction {
 /// not be stamped onto [`WorkflowSnapshot`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowSession {
-    /// Owns the driver. Leave only after durable stop (`exit_is_safe`).
+    /// Owns the driver. Leave only when lifecycle is durable (not live).
     Owner,
     /// Observes store snapshots only. Leave anytime; cancel still requests stop.
     Watcher,
@@ -144,11 +141,11 @@ pub(crate) enum WorkflowSession {
 /// Adapter contract between the workflow runner and this terminal mode.
 ///
 /// `send` must persist or apply an action before it returns. `next_event` must
-/// yield typed durable snapshots in order. In particular, it must not set
-/// `exit_is_safe` until all active work has stopped and state has been saved.
+/// yield typed durable snapshots in order.
 ///
-/// [`WorkflowSession::Watcher`] adapters may no-op [`Self::shutdown`] and must
-/// still report honest `exit_is_safe` values from the store.
+/// [`WorkflowSession::Watcher`] adapters may no-op [`Self::shutdown`].
+/// Owner leave permission is derived from snapshot lifecycle, not a separate
+/// adapter flag on the shared snapshot type.
 pub(crate) trait WorkflowEventAdapter: Send {
     /// Session relationship for this adapter.
     ///
@@ -227,7 +224,6 @@ impl MatrixAdapter {
     fn begin(&mut self) {
         self.snapshot.approval = PlanApprovalState::Approved;
         self.snapshot.lifecycle = RunLifecycle::Running;
-        self.snapshot.exit_is_safe = false;
         for node in &mut self.snapshot.nodes {
             if node.id.as_str() == "inspect" && self.start == MatrixWorkflowStart::Resume {
                 continue;
@@ -248,7 +244,10 @@ impl MatrixAdapter {
     }
 
     fn request_cancel(&mut self) {
-        if self.snapshot.exit_is_safe {
+        if matches!(
+            self.snapshot.lifecycle,
+            RunLifecycle::Completed | RunLifecycle::NeedsRecovery | RunLifecycle::Planned
+        ) {
             return;
         }
         self.snapshot.lifecycle = RunLifecycle::Cancelling;
@@ -322,7 +321,6 @@ impl MatrixAdapter {
                 });
                 self.snapshot.lifecycle = RunLifecycle::Completed;
                 self.snapshot.outcome = Some(WorkflowOutcome::Success);
-                self.snapshot.exit_is_safe = true;
                 self.stage = MatrixStage::Complete;
                 self.queued.push_back(WorkflowEvent::Notice(
                     "workflow completed; durable state saved".into(),
@@ -343,7 +341,6 @@ impl MatrixAdapter {
                 self.snapshot.lifecycle = RunLifecycle::Completed;
                 self.snapshot.outcome = Some(WorkflowOutcome::Cancellation);
                 self.snapshot.cancellation = CancellationState::Saved;
-                self.snapshot.exit_is_safe = true;
                 self.stage = MatrixStage::Complete;
                 self.queued.push_back(WorkflowEvent::Notice(format!(
                     "run saved; resume with rho workflow resume {}",
@@ -509,7 +506,6 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
         ],
         cancellation: CancellationState::NotRequested,
         recovery_requirement: None,
-        exit_is_safe: true,
     }
 }
 

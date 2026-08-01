@@ -2,9 +2,11 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::{
-    durable_artifacts_for_node, effective_permission_mode_for, runtime_event_json,
-    WORKFLOW_WIRE_VERSION,
+    effective_permission_mode_for,
+    present::runtime_event_json,
+    tui_bridge::durable_artifacts_for_node,
 };
+use super::super::WORKFLOW_WIRE_VERSION;
 use crate::{
     app::workflow_runtime::RuntimeEvent,
     permission::PermissionMode,

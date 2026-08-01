@@ -5,6 +5,9 @@
 //! event journals. Inventory reads the small on-disk fields the UI needs
 //! and skips that validation path.
 //!
+//! Name and step counts come from manifests so inventory never opens
+//! `graph.json`. Lifecycle and progress still come from `state.json`.
+//!
 //! This module is projection only. Destructive store mutations live on
 //! [`WorkflowStore`] in `store.rs`.
 
@@ -37,17 +40,6 @@ pub(crate) struct RunInventoryItem {
     pub(crate) outcome: Option<WorkflowOutcome>,
     pub(crate) done_steps: usize,
     pub(crate) total_steps: usize,
-}
-
-#[derive(Debug, Deserialize)]
-struct InventoryGraphFile {
-    graph: InventoryGraphBody,
-}
-
-#[derive(Debug, Deserialize)]
-struct InventoryGraphBody {
-    name: String,
-    nodes: BTreeMap<String, serde::de::IgnoredAny>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,7 +132,7 @@ impl WorkflowStore {
         Ok(state.state.lifecycle)
     }
 
-    /// Reads one run inventory row without journal replay.
+    /// Reads one run inventory row without journal replay or graph.json.
     pub(crate) fn read_run_inventory(&self, id: RunId) -> WorkflowResult<RunInventoryItem> {
         let manifest: RunManifest =
             read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
@@ -150,11 +142,9 @@ impl WorkflowStore {
                 reason: "run manifest ID differs from its directory ID".to_owned(),
             });
         }
-        let graph: InventoryGraphFile =
-            read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
         let state: InventoryStateFile =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
-        let total_steps = graph.graph.nodes.len();
+        let total_steps = manifest.step_count;
         let done_steps = state
             .state
             .nodes
@@ -164,7 +154,7 @@ impl WorkflowStore {
         Ok(RunInventoryItem {
             run_id: id,
             workspace_identity: manifest.workspace_identity,
-            name: graph.graph.name,
+            name: manifest.name,
             lifecycle: state.state.lifecycle,
             outcome: state.state.outcome,
             done_steps,
@@ -181,13 +171,11 @@ impl WorkflowStore {
                 reason: "plan manifest ID differs from its directory ID".to_owned(),
             });
         }
-        let graph: InventoryGraphFile =
-            read_json(&self.root, &plan_relative(id, Path::new("graph.json")))?;
         Ok(PlanInventoryItem {
             plan_id: id,
             workspace_identity: manifest.workspace_identity,
-            name: graph.graph.name,
-            step_count: graph.graph.nodes.len(),
+            name: manifest.name,
+            step_count: manifest.step_count,
         })
     }
 }

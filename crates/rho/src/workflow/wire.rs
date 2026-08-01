@@ -20,6 +20,12 @@ pub(crate) struct PlanManifest {
     pub(crate) graph_digest: Digest,
     pub(crate) workspace_identity: String,
     pub(crate) source_digests: BTreeMap<String, Digest>,
+    /// Inventory label. Default empty for manifests written before this field.
+    #[serde(default)]
+    pub(crate) name: String,
+    /// Inventory step count. Default 0 for manifests written before this field.
+    #[serde(default)]
+    pub(crate) step_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +48,12 @@ pub(crate) struct RunManifest {
     pub(crate) graph_digest: Digest,
     pub(crate) workspace_identity: String,
     pub(crate) consent: PlanConsent,
+    /// Inventory label. Default empty for manifests written before this field.
+    #[serde(default)]
+    pub(crate) name: String,
+    /// Inventory step count. Default 0 for manifests written before this field.
+    #[serde(default)]
+    pub(crate) step_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

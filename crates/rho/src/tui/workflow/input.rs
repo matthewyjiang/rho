@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::{control::ConfirmKind, event_adapter::WorkflowAction, state::WorkflowUiState};
 
+#[derive(Debug)]
 pub(super) enum InputResult {
     Ignore,
     Redraw,
@@ -44,3 +45,7 @@ pub(super) fn handle_key(state: &mut WorkflowUiState, key: KeyEvent) -> InputRes
         _ => InputResult::Ignore,
     }
 }
+
+#[cfg(test)]
+#[path = "input_tests.rs"]
+mod tests;

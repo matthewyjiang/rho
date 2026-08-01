@@ -12,7 +12,6 @@ use crate::{
 fn snapshot(
     approval: PlanApprovalState,
     lifecycle: RunLifecycle,
-    exit_is_safe: bool,
     cancellation: CancellationState,
 ) -> WorkflowSnapshot {
     WorkflowSnapshot {
@@ -30,7 +29,6 @@ fn snapshot(
         nodes: Vec::new(),
         cancellation,
         recovery_requirement: None,
-        exit_is_safe,
     }
 }
 
@@ -45,7 +43,6 @@ fn control_policy_matrix() {
             snapshot(
                 PlanApprovalState::Approved,
                 RunLifecycle::Running,
-                false,
                 CancellationState::NotRequested,
             ),
             ControlPolicy {
@@ -62,7 +59,6 @@ fn control_policy_matrix() {
             snapshot(
                 PlanApprovalState::Approved,
                 RunLifecycle::Completed,
-                true,
                 CancellationState::NotRequested,
             ),
             ControlPolicy {
@@ -79,7 +75,6 @@ fn control_policy_matrix() {
             snapshot(
                 PlanApprovalState::AwaitingPlan,
                 RunLifecycle::Planned,
-                true,
                 CancellationState::NotRequested,
             ),
             ControlPolicy {
@@ -96,7 +91,6 @@ fn control_policy_matrix() {
             snapshot(
                 PlanApprovalState::Approved,
                 RunLifecycle::Running,
-                false,
                 CancellationState::NotRequested,
             ),
             ControlPolicy {
@@ -113,7 +107,6 @@ fn control_policy_matrix() {
             snapshot(
                 PlanApprovalState::Approved,
                 RunLifecycle::Cancelling,
-                false,
                 CancellationState::Requested,
             ),
             ControlPolicy {
@@ -130,7 +123,6 @@ fn control_policy_matrix() {
             snapshot(
                 PlanApprovalState::Approved,
                 RunLifecycle::Completed,
-                true,
                 CancellationState::NotRequested,
             ),
             ControlPolicy {

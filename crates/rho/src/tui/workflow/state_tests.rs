@@ -28,7 +28,6 @@ fn snapshot(nodes: Vec<WorkflowNodeSnapshot>) -> WorkflowSnapshot {
         nodes,
         cancellation: CancellationState::NotRequested,
         recovery_requirement: None,
-        exit_is_safe: false,
     }
 }
 
