@@ -387,10 +387,13 @@ impl WorkflowEventAdapter for MatrixAdapter {
                 self.stage,
                 MatrixStage::AwaitingApproval | MatrixStage::Complete
             ) {
-                // Wait for send() to enqueue work; never sleep-sync.
+                // Wait for send() to enqueue work; never sleep-sync on keys.
                 std::future::pending::<()>().await;
             }
-            // Stage transitions are fully determined by prior actions/events.
+            // Fixture pacing only: keep intermediate run states on screen long
+            // enough for humans and PTY wait_for_text. Tests must wait on the
+            // rendered text, not on this delay as a task barrier.
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
             Ok(self.advance())
         })
     }

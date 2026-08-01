@@ -729,10 +729,7 @@ async fn within_budget<T>(label: &str, future: impl std::future::Future<Output =
 
 /// Like [`within_budget`], but aborts a detached task on timeout so it cannot
 /// keep run/checkout locks after the test has failed.
-async fn join_within_budget<T: 'static>(
-    label: &str,
-    handle: tokio::task::JoinHandle<T>,
-) -> T {
+async fn join_within_budget<T: 'static>(label: &str, handle: tokio::task::JoinHandle<T>) -> T {
     tokio::pin!(handle);
     tokio::select! {
         result = &mut handle => result.unwrap_or_else(|error| {
@@ -773,7 +770,8 @@ async fn cross_process_request_cancels_active_node() {
     // Durable request is file-based; wake the in-process owner without waiting
     // for CROSS_PROCESS_CANCEL_POLL (production separate-process path still polls).
     active_runner.wake_cancel_check();
-    let completed = join_within_budget("cross-process cancellation", worker).await
+    let completed = join_within_budget("cross-process cancellation", worker)
+        .await
         .unwrap();
 
     assert_eq!(completed.state.state.lifecycle, RunLifecycle::Completed);
@@ -855,10 +853,9 @@ async fn concurrent_cancellation_requests_share_the_active_receipt() {
     let first = request(Arc::clone(&barrier));
     let second = request(Arc::clone(&barrier));
     barrier.wait();
-    let (first, second) = within_budget(
-        "concurrent cancellation receipts",
-        async { tokio::join!(first, second) },
-    )
+    let (first, second) = within_budget("concurrent cancellation receipts", async {
+        tokio::join!(first, second)
+    })
     .await;
 
     assert_eq!(first.unwrap(), second.unwrap());

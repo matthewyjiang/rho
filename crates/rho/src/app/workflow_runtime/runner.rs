@@ -56,6 +56,7 @@ impl WorkflowRunner {
     }
 
     /// Ask the drive loop to re-read the durable cancellation request file now.
+    #[cfg(test)]
     pub(crate) fn wake_cancel_check(&self) {
         self.cancel_check.notify_one();
     }
