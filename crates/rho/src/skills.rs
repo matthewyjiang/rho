@@ -536,10 +536,10 @@ mod tests {
             .filter(|skill| skill.name != rejected)
             .map(|skill| skill.name)
             .collect();
-        expected.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        expected.sort_by_key(|a| a.to_ascii_lowercase());
 
         let mut actual: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
-        actual.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        actual.sort_by_key(|a| a.to_ascii_lowercase());
 
         assert_eq!(actual, expected);
     }
