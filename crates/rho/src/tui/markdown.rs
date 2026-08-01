@@ -68,7 +68,6 @@ pub(super) struct RenderedMarkdown {
     pub(super) image_rows: Vec<usize>,
 }
 
-#[cfg(test)]
 pub(super) fn markdown_lines(
     text: &str,
     width: usize,

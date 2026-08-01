@@ -55,6 +55,12 @@ const CONTINUE: &str = r#"cat > /dev/null; echo '{"version":1,"decision":"contin
 const DENY: &str =
     r#"cat > /dev/null; echo '{"version":1,"decision":"deny","reason":"force push"}'"#;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum NodeOutcome {
+    Success,
+}
+
 /// Builds a `before_tool_use` request for tool `bash` through the SDK's own
 /// constructor so the payload shape stays honest.
 fn request() -> PreToolUseRequest {
@@ -286,6 +292,69 @@ async fn an_observational_success_is_recorded() {
     worker.drain(Duration::from_secs(10)).await;
 
     assert_eq!(engine.activity()[0].outcome.label(), "observed");
+}
+
+// Covers: a workflow hook crash and stdout must stay observational.
+// Owner: app observational dispatcher.
+#[tokio::test]
+async fn workflow_hook_failure_and_output_do_not_return_to_the_caller() {
+    let fixture = Fixture::new();
+    let recorded = fixture.home.path().join("workflow-event.json");
+    let engine = fixture
+        .hook(
+            "workflow",
+            "workflow_node_finished",
+            "10s",
+            &format!(
+                "cat > '{}'; printf 'not workflow data'; exit 7",
+                recorded.display()
+            ),
+        )
+        .engine();
+    let (_observer, worker) =
+        observational_channel(Arc::clone(&engine), rho_sdk::CancellationToken::new());
+
+    engine.observe_workflow_node_finished(super::WorkflowNodeFinished {
+        workflow_run_id: "run-1",
+        plan_digest: "digest-1",
+        node_id: "node-1",
+        attempt: 2,
+        outcome: &NodeOutcome::Success,
+        duration: Duration::from_millis(41),
+        artifacts: &[crate::workflow::DurableArtifactReference {
+            kind: crate::workflow::ArtifactKind::Stdout,
+            artifact: crate::workflow::ArtifactRef {
+                relative_path: "artifacts/stdout".into(),
+                retained_bytes: 4,
+                observed: crate::workflow::ArtifactObservation::Complete { observed_bytes: 4 },
+                digest: crate::workflow::Digest("sha256:test".into()),
+            },
+        }],
+    });
+    worker.drain(Duration::from_secs(10)).await;
+
+    let event: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(recorded).unwrap()).unwrap();
+    assert_eq!(event["event"], "workflow_node_finished");
+    assert_eq!(
+        event["payload"],
+        serde_json::json!({
+            "workflow_run_id": "run-1",
+            "plan_digest": "digest-1",
+            "node_id": "node-1",
+            "attempt": 2,
+            "outcome": "success",
+            "duration_ms": 41,
+            "artifact_references": [{
+                "kind": "stdout",
+                "relative_path": "artifacts/stdout",
+                "retained_bytes": 4,
+                "observed": {"kind": "complete", "observed_bytes": 4},
+                "digest": "sha256:test"
+            }]
+        })
+    );
+    assert_eq!(engine.activity()[0].outcome.label(), "failed");
 }
 
 // Covers: one waiting observer must not prevent an independent observer from running.

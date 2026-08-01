@@ -20,10 +20,13 @@ use super::{
     config_repository::ConfigRepository,
     interactive, login,
     sdk_config::SdkBootstrapOptions,
-    sessions_cli,
+    sessions_cli, workflow_cli,
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    if workflow_cli::planner_worker_requested(&cli) {
+        return workflow_cli::run_planner_worker().await;
+    }
     let run_output = match &cli.command {
         Some(Command::Run { output, .. }) => Some(*output),
         _ => None,
@@ -119,6 +122,11 @@ enum EarlyDispatch {
 }
 
 async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
+    if let Some(Command::Workflow { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(
+            workflow_cli::run(command, cli).await,
+        ));
+    }
     if let Some(Command::CredentialStore { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(run_credential_store_command(
             command,
@@ -282,6 +290,8 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             diagnostics,
             herdr: startup.herdr,
             host_input: None,
+            approval_session: None,
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         },
     )
     .await
@@ -461,7 +471,7 @@ fn run_credential_store_command(
     }
 }
 
-fn host_capabilities(
+pub(super) fn host_capabilities(
     cli: &Cli,
     config: &crate::config::Config,
     role: AgentRole,
@@ -493,7 +503,9 @@ fn host_capabilities(
     tools
 }
 
-fn absolute_config_path(repository: &ConfigRepository) -> anyhow::Result<std::path::PathBuf> {
+pub(super) fn absolute_config_path(
+    repository: &ConfigRepository,
+) -> anyhow::Result<std::path::PathBuf> {
     let path = repository.configured_path()?;
     if path.is_absolute() {
         Ok(path)

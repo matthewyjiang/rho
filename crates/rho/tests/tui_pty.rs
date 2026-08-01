@@ -67,6 +67,22 @@ fn smoke_terminal_restoration() {
     assert_pass("terminal_restoration");
 }
 
+// Covers: an interactive workflow must use its own resizable screen, show typed parallel and
+// exclusive node states, and restore the terminal after a durable completion.
+// Owner: interactive TUI
+#[test]
+fn workflow_run_uses_separate_terminal_mode() {
+    assert_pass("workflow_run_interactive");
+}
+
+// Covers: terminal cancellation must reach durable resumable state, and resume must not rerun a
+// node that already succeeded.
+// Owner: interactive TUI
+#[test]
+fn workflow_cancel_then_resume_preserves_completed_nodes() {
+    assert_pass("workflow_cancel_resume");
+}
+
 // Covers: pasting an absolute document path must attach extracted text instead of parsing it as a
 // slash command.
 // Owner: interactive TUI

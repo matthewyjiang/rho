@@ -313,9 +313,13 @@ impl Config {
     }
 
     fn parse_file(path: PathBuf) -> anyhow::Result<Self> {
-        let mut cfg = Config::default();
         let text = fs::read_to_string(&path)?;
-        let file = toml::from_str::<PartialConfig>(&text)?.normalize_legacy()?;
+        Self::parse_settings(&text)
+    }
+
+    pub(crate) fn parse_settings(text: &str) -> anyhow::Result<Self> {
+        let mut cfg = Config::default();
+        let file = toml::from_str::<PartialConfig>(text)?.normalize_legacy()?;
         if let Some(v) = file.prompt_templates {
             crate::prompt_templates::validate(&v)?;
             cfg.prompt_templates = v;

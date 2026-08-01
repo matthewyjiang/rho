@@ -102,6 +102,9 @@ fn bind_subagent_parent(
             storage.and_then(StoredSession::subagents_dir),
         ));
     }
+    tools
+        .workflow_tracker()
+        .bind_parent_session(session_id.to_string());
 }
 
 enum TurnPrelude {
@@ -164,7 +167,9 @@ impl InteractiveRuntime {
             tools: tools.tools(),
             workspace: workspace.clone(),
             workspace_policy: AppPolicy::for_mode(permission_mode),
-            approval_handler: approval_handler.clone(),
+            approval_session: approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: system_prompt.clone(),
             reasoning: sdk_options.runtime.reasoning,
             service_tier: sdk_options.runtime.service_tier,
@@ -173,6 +178,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: hooks.as_ref(),
         })?;
         let session_options =
@@ -253,7 +259,9 @@ impl InteractiveRuntime {
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(mode),
-            approval_handler: approval_handler.clone(),
+            approval_session: approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -262,6 +270,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
@@ -687,7 +696,10 @@ impl InteractiveRuntime {
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(self.permission_mode),
-            approval_handler: self.approval_handler.clone(),
+            approval_session: self
+                .approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -696,6 +708,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
@@ -827,8 +840,22 @@ impl InteractiveRuntime {
         self.tools.contains(name)
     }
 
+    /// Returns the tool ceiling for workflow agents started by this session.
+    pub(crate) fn workflow_host_capabilities(&self) -> crate::agent::AgentCapabilities {
+        crate::agent::AgentCapabilities::new(
+            self.tools
+                .unfiltered_names()
+                .map(crate::agent::ToolCapability::parse)
+                .collect(),
+        )
+    }
+
     pub(crate) fn subagents(&self) -> Option<&crate::tools::agent::SubagentManager> {
         self.tools.subagents()
+    }
+
+    pub(crate) fn workflow_tracker(&self) -> &crate::tools::workflow_tracker::WorkflowRunTracker {
+        self.tools.workflow_tracker()
     }
 
     #[cfg(test)]
@@ -911,7 +938,10 @@ impl InteractiveRuntime {
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(self.permission_mode),
-            approval_handler: self.approval_handler.clone(),
+            approval_session: self
+                .approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: self.system_prompt.clone(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -920,6 +950,7 @@ impl InteractiveRuntime {
             usage_purpose: "agent",
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = match lifecycle {

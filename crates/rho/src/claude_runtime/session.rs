@@ -60,17 +60,31 @@ pub(crate) struct ClaudeSessionRequest {
     pub(crate) overrides: ClaudeSessionOverrides,
 }
 
+impl ClaudeSessionRequest {
+    /// Replace generated Claude arguments with the exact frozen workflow argv.
+    pub(crate) fn set_frozen_argv(&mut self, arguments: Vec<String>) {
+        self.overrides.frozen_argv = Some(arguments);
+    }
+}
+
 /// Seams a session may replace. Production leaves every field unset.
 #[derive(Default)]
 pub(crate) struct ClaudeSessionOverrides {
     /// Claude binary to run instead of the resolved one.
     pub(crate) executable: Option<ClaudeExecutable>,
+    /// Exact workflow arguments to use instead of generated Claude arguments.
+    pub(crate) frozen_argv: Option<Vec<String>>,
     /// Auth preflight result. When set, production `auth::query` is not called.
     pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
     /// Rate-limit cache path. Tests inject a temp path so settle never touches
     /// the host default cache.
     pub(crate) rate_limit_state_path: Option<std::path::PathBuf>,
+    /// A frozen caller can verify process facts and configure the child at the spawn boundary.
+    pub(crate) before_spawn: Option<BeforeSpawn>,
 }
+
+pub(crate) type BeforeSpawn =
+    Box<dyn Fn(&mut tokio::process::Command) -> std::io::Result<()> + Send + Sync>;
 
 struct OwnedChild {
     child: Child,
@@ -274,10 +288,15 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         None => executable::resolve().map_err(|error| error.to_string())?,
     };
 
-    let plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
+    let frozen_arguments = request.overrides.frozen_argv.take();
+    let mut plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
         system_prompt: request.system_prompt.clone(),
         model: request.model.clone(),
-        tools: request.tools.clone(),
+        tools: if frozen_arguments.is_some() {
+            Vec::new()
+        } else {
+            request.tools.clone()
+        },
         inherit_claude_config: request.inherit_claude_config,
         permission_mode: request.permission_mode,
         cwd: request.cwd.clone(),
@@ -285,6 +304,9 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         effort: request.effort,
     })
     .map_err(|error| error.to_string())?;
+    if let Some(arguments) = frozen_arguments {
+        plan.args = arguments;
+    }
 
     // Materialize the system prompt next to the status file (kept as a run
     // artifact). File flags keep multiline prompt bytes out of shell/cmd argv.
@@ -312,7 +334,7 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
 
 /// Spawn the child and drain it, leaving no live process tree behind.
 async fn run_child(
-    request: &ClaudeSessionRequest,
+    request: &mut ClaudeSessionRequest,
     sink: &mut StatusSink,
     launch: Launch,
 ) -> SessionOutcome {
@@ -336,6 +358,14 @@ async fn run_child(
         .stdout(Stdio::piped())
         .stderr(log_file)
         .kill_on_drop(true);
+
+    if let Some(before_spawn) = request.overrides.before_spawn.as_ref() {
+        if let Err(error) = before_spawn(&mut command) {
+            return SessionOutcome::Failed(format!(
+                "claude code: frozen executable changed before spawn: {error}"
+            ));
+        }
+    }
 
     let mut child = match OwnedChild::spawn(command) {
         Ok(child) => child,

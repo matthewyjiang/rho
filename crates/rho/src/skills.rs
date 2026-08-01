@@ -31,6 +31,7 @@ const BUILTIN_SKILLS: &[&str] = &[
     include_str!("builtin_skills/rho-config/SKILL.md"),
     include_str!("builtin_skills/rho-diagnostics/SKILL.md"),
     include_str!("builtin_skills/rho-agent-creator/SKILL.md"),
+    include_str!("builtin_skills/rho-workflow-authoring/SKILL.md"),
 ];
 
 pub fn discover(cwd: &Path) -> Vec<Skill> {
@@ -366,6 +367,7 @@ mod tests {
                 "rho-config",
                 "rho-diagnostics",
                 "rho-skill",
+                "rho-workflow-authoring",
             ]
         );
     }

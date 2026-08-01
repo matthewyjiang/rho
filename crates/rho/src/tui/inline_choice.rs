@@ -76,6 +76,8 @@ pub(super) enum InlineChoicePending {
     ClaudeCodeRelogin,
     ClaudeCodeLogout,
     DeleteSession { session_id: String },
+    DeleteWorkflowPlan { plan_id: String },
+    DeleteWorkflowRun { run_id: String },
 }
 
 impl InlineChoiceModal {

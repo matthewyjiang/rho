@@ -102,8 +102,10 @@ async fn run_with_fake(
         started_status: None,
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
+            frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
+            before_spawn: None,
         },
     })
     .await
@@ -142,8 +144,10 @@ async fn run_with_fake_prompt(
         started_status: None,
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
+            frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
+            before_spawn: None,
         },
     })
     .await

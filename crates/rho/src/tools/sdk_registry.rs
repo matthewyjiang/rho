@@ -27,12 +27,12 @@ pub(super) trait ToolBundle: Send + Sync {
 }
 
 /// A bundle for features which need no shutdown work.
-pub(super) struct StaticToolBundle {
+pub(crate) struct StaticToolBundle {
     tools: Vec<Arc<dyn Tool>>,
 }
 
 impl StaticToolBundle {
-    pub(super) fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
+    pub(crate) fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
         Self { tools }
     }
 }
@@ -60,10 +60,12 @@ impl DelegationConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ToolSetOptions {
     capabilities: AgentCapabilities,
     delegation: Option<DelegationConfig>,
+    workflow: Option<Arc<dyn super::workflow::WorkflowToolService>>,
+    workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
 }
 
 impl Default for ToolSetOptions {
@@ -77,11 +79,29 @@ impl ToolSetOptions {
         Self {
             capabilities,
             delegation: None,
+            workflow: None,
+            workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
         }
     }
 
     pub fn delegation(mut self, config: DelegationConfig) -> Self {
         self.delegation = Some(config);
+        self
+    }
+
+    pub(crate) fn workflow(
+        mut self,
+        service: Arc<dyn super::workflow::WorkflowToolService>,
+    ) -> Self {
+        self.workflow = Some(service);
+        self
+    }
+
+    pub(crate) fn workflow_tracker(
+        mut self,
+        tracker: super::workflow_tracker::WorkflowRunTracker,
+    ) -> Self {
+        self.workflow_tracker = tracker;
         self
     }
 }
@@ -90,6 +110,7 @@ pub struct AppToolSet {
     tools: Vec<Arc<dyn Tool>>,
     bundles: Vec<Box<dyn ToolBundle>>,
     subagents: Option<SubagentManager>,
+    workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
 }
@@ -100,6 +121,7 @@ impl AppToolSet {
             tools: Vec::new(),
             bundles: Vec::new(),
             subagents: None,
+            workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             checkpoint_tracker: Arc::new(
                 crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(false),
             ),
@@ -111,8 +133,11 @@ impl AppToolSet {
         let ToolSetOptions {
             capabilities,
             delegation,
+            workflow,
+            workflow_tracker,
         } = options;
         let mut tool_set = Self::disabled();
+        tool_set.workflow_tracker = workflow_tracker;
         tool_set.checkpoint_tracker = Arc::new(
             crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
                 config.experimental_workspace_rewind,
@@ -146,6 +171,13 @@ impl AppToolSet {
         }
         if capabilities.contains(&ToolCapability::Questionnaire) {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
+        }
+        if let (true, Some(service)) = (capabilities.contains(&ToolCapability::Workflow), workflow)
+        {
+            tool_set.add_bundle(super::workflow::sdk_bundle(
+                service,
+                config.max_output_bytes,
+            ));
         }
         #[cfg(debug_assertions)]
         if capabilities.contains(&ToolCapability::Extension(super::tui_fixture::NAME.into())) {
@@ -204,6 +236,10 @@ impl AppToolSet {
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
+    }
+
+    pub fn workflow_tracker(&self) -> &super::workflow_tracker::WorkflowRunTracker {
+        &self.workflow_tracker
     }
 
     pub fn checkpoint_tracker(

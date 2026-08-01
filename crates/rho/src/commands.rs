@@ -24,6 +24,7 @@ pub enum CommandId {
     Export,
     Title,
     Fast,
+    Workflow,
     Exit,
 }
 
@@ -250,6 +251,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "tree",
         usage: "/tree",
         description: "navigate this session's conversation tree",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Workflow,
+        name: "workflow",
+        usage: "/workflow",
+        description: "start a workflow or check runs",
         argument_choices: &[],
     },
 ];

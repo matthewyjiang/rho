@@ -21,8 +21,8 @@ mod preparation;
 use preparation::call_prepared_for;
 pub use preparation::{
     call_prepared, AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode,
-    ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture, ToolResource,
-    ToolResourceAccess, ToolResourceKind,
+    ToolCancellationPolicy, ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture,
+    ToolResource, ToolResourceAccess, ToolResourceKind,
 };
 
 /// Future returned by [`Tool`] implementations.
@@ -403,6 +403,15 @@ impl ToolContext {
                     message: "tool context is not attached to an active run".into(),
                 })?;
         requester.request(request).await
+    }
+
+    /// Creates child-run approval state routed through this call's active host.
+    ///
+    /// Call this once at the child-run boundary, then share the returned value
+    /// across every child executor. The child uses this host call's handler,
+    /// exact-request memory, and audit log.
+    pub fn child_approval_session(&self) -> crate::ApprovalSession {
+        self.authorization.approval_session()
     }
 
     pub fn workspace(&self) -> Option<&Workspace> {

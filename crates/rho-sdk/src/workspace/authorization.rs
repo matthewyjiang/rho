@@ -87,6 +87,14 @@ impl AuthorizationServices {
     pub(crate) fn audit(&self) -> &Arc<ApprovalAuditLog> {
         &self.audit
     }
+
+    pub(crate) fn approval_session(&self) -> super::ApprovalSession {
+        super::ApprovalSession::from_parts(
+            Arc::clone(&self.approvals),
+            Arc::clone(&self.remembered),
+            Arc::clone(&self.audit),
+        )
+    }
 }
 
 impl fmt::Debug for AuthorizationServices {

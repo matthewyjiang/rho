@@ -1,0 +1,371 @@
+---
+name: rho-workflow-authoring
+description: Write, validate, plan, run, inspect, cancel, and resume deterministic Rho workflows in Starlark. Use when a task needs a fixed multi-step graph, parallel nodes, typed outputs, or durable resume.
+---
+
+# Author Rho workflows
+
+Use this skill to write a `.star` file and operate it with `rho workflow` or the
+`workflow` tool. CLI and tool help are the source of truth. This skill helps you
+author a workflow, but it is not a security boundary.
+
+## Safe authoring flow
+
+1. Put the workflow under the current workspace or project root.
+2. Keep one workflow and its helper scripts in one folder when the graph needs
+   companion code. Do not drop helper scripts loose next to unrelated workflows.
+3. Declare each external value as an explicit input.
+4. Build a finite directed acyclic graph in one `build(inputs)` call.
+5. Choose agents from the catalog. Prefer built-ins when tools and role fit.
+   If none fit, add a custom agent **inside the workflow folder** at
+   `<workflow_dir>/agents/<id>.md` and set `agent = "<id>"`. Do not create
+   workflow specialists under `~/.rho/agents` or project `.agents/agents`
+   unless the user asks for a shared catalog agent.
+6. Use typed output schemas before a later node reads an output.
+7. Use `command` for direct argv. Use `shell` only when shell syntax is needed.
+8. Declare `access = "read_only"` only for a Rho agent whose frozen tools
+   enforce read-only work.
+9. Validate the source.
+10. Create and inspect a frozen plan.
+11. Confirm and run that plan ID.
+12. Inspect status and artifact references. Cancel or resume by run ID.
+
+## Project layout
+
+Prefer a per-workflow directory under `.rho/workflows/` whenever the graph owns
+helper scripts, fixtures, local agents, or shared Starlark modules:
+
+```text
+.rho/workflows/
+  review/
+    workflow.star
+    agents/
+      boundary-reviewer.md
+    collect_context.py
+  release/
+    workflow.star
+    common.star
+    prepare_notes.py
+```
+
+Rules of thumb:
+
+- Entry file: `workflow.star` inside the workflow folder.
+- Helper scripts and local modules: same folder as that entry file.
+- Workflow-local agents: `agents/*.md` next to the entry file. Planning loads
+  that directory in addition to built-ins and user/project catalogs. Local
+  agents win on id conflicts for that plan only.
+- Shared pure-Starlark helpers used by many workflows: a sibling module such as
+  `.rho/workflows/common.star`, or a small `shared/` folder with explicit loads.
+- Point `command` / `shell` argv at the helper with a workspace-relative path
+  under that folder, for example
+  `.rho/workflows/review/collect_context.py`.
+
+A single standalone `.star` file is fine when there are no companion files. As
+soon as you add a script, local module, or local agent, move the graph into a
+folder and keep the set together.
+
+### Workflow-local agents
+
+When a node needs tools or a role that built-ins do not provide:
+
+1. Create `<workflow_dir>/agents/<id>.md` (Markdown + frontmatter, same schema
+   as other Rho agents).
+2. Keep tools minimal. Use `access = "read_only"` only when every tool is
+   non-mutating.
+3. Reference it from Starlark with `agent = "<id>"`.
+4. Do not place that specialist in `~/.rho/agents` or `.agents/agents` just for
+   one workflow.
+
+Example agent file `.rho/workflows/review/agents/boundary-reviewer.md`:
+
+```markdown
+---
+description: Architecture boundary review for this workflow only
+reasoning: high
+tools: [list_dir, read_file, grep, glob, skill]
+---
+Review module boundaries only. Do not modify files.
+```
+
+```starlark
+inspect = agent(
+    name = "boundaries",
+    agent = "boundary-reviewer",
+    access = "read_only",
+    prompt = template(["Review boundaries in ", inputs["target"]]),
+    timeout_seconds = 1800,
+    max_output_bytes = 12000,
+)
+```
+
+Starlark runs during `validate` and `plan`. It does not run during `run` or
+`resume`. Run and resume use the frozen graph only. Plan approval accepts one
+graph digest for one run. It does not grant any node capability. Each node still
+uses current policy, hooks, and approval rules.
+
+Workflow inputs are persisted and shown in the plan. They are not a secret
+store. Keep credentials in Rho credential stores or provider authentication.
+
+## Complete example
+
+```starlark
+def build(inputs):
+    inspect = agent(
+        name = "inspect",
+        agent = "reviewer",
+        prompt = template([
+            "Inspect ",
+            inputs["target"],
+            ". Return the required JSON value only.",
+        ]),
+        access = "read_only",
+        output = schema.record({
+            "decision": schema.enum_(["approve", "revise"]),
+            "summary": schema.string(),
+            "note": schema.optional(schema.string()),
+        }),
+        timeout_seconds = 1800,
+        max_output_bytes = 12000,
+    )
+
+    test = command(
+        name = "test",
+        argv = ["cargo", "test", "-p", inputs["package"]],
+        cwd = ".",
+        needs = ["inspect"],
+        when = condition.equals(output("inspect", ["decision"]), "approve"),
+        timeout_seconds = 1800,
+        max_output_bytes = 12000,
+        allow_failure = True,
+        output = schema.stdout_json(schema.record({"passed": schema.bool()})),
+    )
+
+    report = agent(
+        name = "report",
+        agent = "writer",
+        needs = ["inspect", "test"],
+        when = condition.is_one_of(status("test"), ["success", "failure"]),
+        prompt = template([
+            "Write the report. Inspection summary: ",
+            output("inspect", ["summary"]),
+        ]),
+        access = "mutating",
+        timeout_seconds = 1800,
+        max_output_bytes = 12000,
+    )
+
+    return workflow(name = "review", nodes = [inspect, test, report])
+
+WORKFLOW = define(
+    inputs = {
+        "target": input.string(default = "."),
+        "package": input.string(),
+    },
+    build = build,
+)
+```
+
+Supply input values as JSON:
+
+```bash
+rho workflow validate .rho/workflows/review.star \
+  --input 'package="rho-coding-agent"'
+rho workflow plan .rho/workflows/review.star \
+  --input 'package="rho-coding-agent"' --output json
+```
+
+With the model-facing tool, pass an input object:
+
+```json
+{"action":"validate","file":".rho/workflows/review.star","inputs":{"package":"rho-coding-agent"}}
+```
+
+## Entry and modules
+
+The entry module must export exactly one `WORKFLOW` value from `define`. Rho
+validates inputs before it calls `build`, and calls `build` once. Loaded modules
+may define macros and helper functions.
+
+Load a module by a root label:
+
+```starlark
+load("//.rho/workflows/common.star", "review_nodes")
+```
+
+All modules must be `.star` files below the module root. Labels cannot contain
+an absolute path, `..`, an empty path part, a platform prefix, or a symlink.
+Rho loads each module once and rejects import cycles. Starlark has no process,
+filesystem, network, environment, clock, or random API.
+
+Accepted values are `None`, booleans, signed 64-bit integers, strings, lists,
+and dictionaries with string keys. Floats and sets are not supported.
+
+## Inputs
+
+Use these input constructors:
+
+```starlark
+input.string(default = "optional default")
+input.integer(default = 3)
+input.bool(default = False)
+input.enum(["fast", "full"], default = "fast")
+```
+
+An input with no default is required. Rho rejects missing inputs, unknown
+inputs, wrong types, and values outside an enum.
+
+## Nodes
+
+Every node has a portable unique `name`. Every node must set positive
+`timeout_seconds` and `max_output_bytes` limits. A node can also set:
+
+- `needs`: node names that must reach a terminal state first
+- `when`: a typed condition
+- `allow_failure`: whether failure can still permit workflow success
+- `output`: a typed output contract
+
+### Agent node
+
+```starlark
+agent(
+    name = "review",
+    agent = "reviewer",
+    prompt = template(["Review ", inputs["target"]]),
+    access = "read_only",
+    needs = [],
+    when = None,
+    allow_failure = False,
+    output = schema.record({"summary": schema.string()}),
+    timeout_seconds = 1800,
+    max_output_bytes = 12000,
+)
+```
+
+An agent with an output schema must return exactly one JSON value as its final
+answer. Rho parses the complete answer and validates it. It does not search for
+JSON in prose or code fences. An agent with no schema may return prose, but a
+condition or template cannot inspect that prose.
+
+### Direct argv command
+
+```starlark
+command(
+    name = "check",
+    argv = ["cargo", "check", "-p", "rho-coding-agent"],
+    cwd = ".",
+    output = schema.stdout_json(schema.record({"passed": schema.bool()})),
+    timeout_seconds = 1800,
+    max_output_bytes = 12000,
+)
+```
+
+The first argv item is the executable. Later items may include typed output
+references. Rho resolves and freezes the executable during planning. Command
+nodes are always mutating because Rho has no OS sandbox that can enforce a
+read-only claim for an arbitrary command.
+
+### Explicit shell command
+
+```starlark
+shell(
+    name = "check",
+    executable = "bash",
+    arguments = ["-lc"],
+    command = "set -euo pipefail; cargo check",
+    cwd = ".",
+    timeout_seconds = 1800,
+    max_output_bytes = 12000,
+)
+```
+
+Shell execution is always explicit. Rho does not infer a shell from one string.
+The shell executable, arguments, and command text are static. Do not place an
+output reference in shell source.
+
+## Schemas and output
+
+Use these output schema constructors:
+
+```starlark
+schema.null()
+schema.bool()
+schema.integer()
+schema.string()
+schema.enum_(["approve", "revise"])
+schema.list(schema.string())
+schema.optional(schema.string())
+schema.record({
+    "required": schema.string(),
+    "optional": schema.optional(schema.integer()),
+})
+schema.stdout_json(schema.record({"passed": schema.bool()}))
+```
+
+Enum members must be scalar values. `schema.stdout_json` parses the complete bounded
+stdout after a direct or shell command ends. Invalid JSON or a schema mismatch
+is a typed node failure.
+
+## References and conditions
+
+References must point to an ancestor node and a path allowed by its frozen
+schema:
+
+```starlark
+output("inspect", ["decision"])
+status("test")
+exit_code("test")
+```
+
+Build conditions with:
+
+```starlark
+condition.equals(output("inspect", ["decision"]), "approve")
+condition.is_one_of(status("test"), ["success", "failure"])
+condition.all([condition_a, condition_b])
+condition.any([condition_a, condition_b])
+condition.not(condition_a)
+```
+
+Node status values are `success`, `failure`, `denial`, `cancellation`,
+`skipped`, and `blocked`. Exit conditions use an integer code or a supported
+exit predicate. Do not branch on assistant prose, stdout text, substrings, or
+regular expressions.
+
+## Run and inspect
+
+```bash
+# Freeze a new immutable plan and record its ID and digest.
+rho workflow plan .rho/workflows/review.star \
+  --input 'package="rho-coding-agent"' --output text
+
+# Run only by plan ID. In non-interactive use, consent must be explicit.
+rho workflow run <PLAN_ID> --yes --output jsonl
+
+# Read a durable snapshot without taking run ownership.
+rho workflow status <RUN_ID> --output json
+
+# Request cancellation. The owner stops active work before it marks it stopped.
+rho workflow cancel <RUN_ID>
+
+# Resume the frozen run. Successful nodes do not run again.
+rho workflow resume <RUN_ID> --yes --output jsonl
+```
+
+The tool forms are:
+
+```json
+{"action":"plan","file":".rho/workflows/review.star","inputs":{"package":"rho-coding-agent"}}
+{"action":"run","plan_id":"..."}
+{"action":"status","run_id":"..."}
+{"action":"cancel","run_id":"..."}
+{"action":"resume","run_id":"..."}
+```
+
+Tool results contain bounded summaries, IDs, typed states, and artifact
+references. They do not contain full source or logs. Read an artifact through
+the normal file tools only when needed.
+
+If a process ended without a clean owner handoff, the run enters
+`needs_recovery`. Do not guess whether the process completed. Inspect the
+attempt and use the recovery action shown by CLI help before resume.

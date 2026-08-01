@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::*;
 
@@ -75,7 +75,7 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "reviewer",
-            "b83ec2ab30d6b667ba8813165ad141b7ef3e7bd53b189f6eb8f04ee0c08b9de0",
+            "d1d123fac162706d7a40921acbef3af30d6737932afc6fbec4f39ec3e16c76ea",
         ),
         (
             "worker",
@@ -209,5 +209,52 @@ fn project_definitions_require_explicit_trust() {
     assert_eq!(
         trusted.find("project").unwrap().metadata.origin,
         AgentOrigin::Project
+    );
+}
+
+// Covers: workflow planning must see agents shipped beside the entry file.
+// Owner: agent catalog discovery.
+#[test]
+fn workflow_entry_loads_local_agents_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let workflow_dir = root.path().join("review");
+    let agents = workflow_dir.join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let entry = workflow_dir.join("workflow.star");
+    std::fs::write(&entry, "def build(inputs):\n    pass\n").unwrap();
+    std::fs::write(
+        agents.join("boundary-reviewer.md"),
+        "---\ndescription: workflow-local specialist\ntools: [read_file, grep, glob, list_dir]\n---\nReview boundaries only.\n",
+    )
+    .unwrap();
+
+    let without =
+        AgentCatalog::discover_with_home_and_trust(root.path(), None, ProjectTrust::Untrusted)
+            .unwrap();
+    assert!(without.find("boundary-reviewer").is_err());
+
+    let with = AgentCatalog::discover_for_workflow_entry(
+        root.path(),
+        &entry,
+        None,
+        ProjectTrust::Untrusted,
+    )
+    .unwrap();
+    let entry = with.find("boundary-reviewer").unwrap();
+    assert_eq!(entry.metadata.origin, AgentOrigin::Workflow);
+    assert_eq!(entry.definition.description, "workflow-local specialist");
+}
+
+// Covers: path helper keeps agents next to the workflow entry parent.
+// Owner: agent catalog discovery.
+#[test]
+fn workflow_local_agents_root_is_sibling_agents_dir() {
+    assert_eq!(
+        workflow_local_agents_root(Path::new(".rho/workflows/review/workflow.star")),
+        PathBuf::from(".rho/workflows/review/agents")
+    );
+    assert_eq!(
+        workflow_local_agents_root(Path::new("workflow.star")),
+        PathBuf::from("agents")
     );
 }

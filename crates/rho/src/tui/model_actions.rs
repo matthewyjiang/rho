@@ -226,6 +226,7 @@ impl App {
                 | PickerAction::EditAgent
                 | PickerAction::SelectRewindCheckpoint
                 | PickerAction::ConfirmRewindCheckpoint
+                | PickerAction::Workflow
         ) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
@@ -350,6 +351,10 @@ impl App {
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
             PickerAction::ViewAgent => self.submit_view_agent_selection(&value),
             PickerAction::EditAgent => self.submit_edit_agent_selection(&value, terminal).await,
+            PickerAction::Workflow => {
+                self.submit_workflow_selection(&value, terminal, agent)
+                    .await
+            }
             PickerAction::Dismiss => Ok(()),
         };
         if let (true, Some((picker, selected_value))) = (result.is_ok(), other_return_picker) {
@@ -490,6 +495,7 @@ impl App {
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Config
             | PickerAction::EditAgent
+            | PickerAction::Workflow
             | PickerAction::Dismiss => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
@@ -555,6 +561,7 @@ impl App {
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Config
             | PickerAction::EditAgent
+            | PickerAction::Workflow
             | PickerAction::Dismiss => return None,
         };
         match self.input_ui.composer_mut() {

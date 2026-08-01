@@ -18,6 +18,89 @@ use super::{
     HookSource,
 };
 
+/// App-owned events that use the hook runtime without extending the SDK model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkflowHookEventKind {
+    Started,
+    NodeStarted,
+    NodeFinished,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl WorkflowHookEventKind {
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::Started,
+        Self::NodeStarted,
+        Self::NodeFinished,
+        Self::Completed,
+        Self::Failed,
+        Self::Cancelled,
+    ];
+
+    pub(crate) const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Started => "workflow_started",
+            Self::NodeStarted => "workflow_node_started",
+            Self::NodeFinished => "workflow_node_finished",
+            Self::Completed => "workflow_completed",
+            Self::Failed => "workflow_failed",
+            Self::Cancelled => "workflow_cancelled",
+        }
+    }
+
+    pub(crate) fn from_wire_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|event| event.wire_name() == name)
+    }
+}
+
+/// Configured event vocabulary. Generic SDK events stay in the SDK; workflow
+/// lifecycle events stay in the app that owns workflow policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConfiguredHookEvent {
+    Sdk(HookEventKind),
+    Workflow(WorkflowHookEventKind),
+}
+
+impl ConfiguredHookEvent {
+    fn from_wire_name(name: &str) -> Option<Self> {
+        HookEventKind::from_wire_name(name)
+            .map(Self::Sdk)
+            .or_else(|| WorkflowHookEventKind::from_wire_name(name).map(Self::Workflow))
+    }
+
+    pub(crate) const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Sdk(event) => event.wire_name(),
+            Self::Workflow(event) => event.wire_name(),
+        }
+    }
+
+    pub(crate) const fn is_blocking(self) -> bool {
+        match self {
+            Self::Sdk(event) => event.is_blocking(),
+            Self::Workflow(_) => false,
+        }
+    }
+
+    const fn has_tool(self) -> bool {
+        matches!(
+            self,
+            Self::Sdk(HookEventKind::BeforeToolUse | HookEventKind::AfterToolUse)
+        )
+    }
+}
+
+impl std::fmt::Display for ConfiguredHookEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.wire_name())
+    }
+}
+
 /// The only schema version this build understands.
 pub(crate) const HOOKS_SCHEMA_VERSION: u32 = 1;
 
@@ -51,7 +134,7 @@ struct RawHook {
 pub struct HookDefinition {
     pub(crate) source: HookSource,
     pub(crate) id: String,
-    pub(crate) event: HookEventKind,
+    pub(crate) event: ConfiguredHookEvent,
     pub(crate) tools: ToolMatcher,
     /// Argv with the program resolved to an absolute path where determinable.
     pub(crate) command: Vec<String>,
@@ -71,7 +154,7 @@ impl HookDefinition {
         format!("{}:{}", self.source.label(), self.id)
     }
 
-    pub fn event(&self) -> HookEventKind {
+    pub(crate) fn event(&self) -> ConfiguredHookEvent {
         self.event
     }
 
@@ -212,7 +295,7 @@ fn validate(
         ));
     }
 
-    let event = HookEventKind::from_wire_name(&raw.on).ok_or_else(|| {
+    let event = ConfiguredHookEvent::from_wire_name(&raw.on).ok_or_else(|| {
         HookConfigError::at_hook(
             path,
             &id,
@@ -248,17 +331,14 @@ fn validate(
 fn build_matcher(
     path: &Path,
     id: &str,
-    event: HookEventKind,
+    event: ConfiguredHookEvent,
     tools: Option<Vec<String>>,
     canonical_tools: &[&str],
 ) -> Result<ToolMatcher, HookConfigError> {
     let Some(patterns) = tools else {
         return Ok(ToolMatcher::any());
     };
-    if !matches!(
-        event,
-        HookEventKind::BeforeToolUse | HookEventKind::AfterToolUse
-    ) {
+    if !event.has_tool() {
         return Err(HookConfigError::at_hook(
             path,
             id,
@@ -426,6 +506,11 @@ fn known_events() -> String {
     HookEventKind::ALL
         .iter()
         .map(|event| event.wire_name())
+        .chain(
+            WorkflowHookEventKind::ALL
+                .iter()
+                .map(|event| event.wire_name()),
+        )
         .collect::<Vec<_>>()
         .join(", ")
 }

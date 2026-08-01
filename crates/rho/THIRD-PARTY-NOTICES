@@ -1,3 +1,15 @@
+Starlark in Rust
+================
+
+Workflow source parsing and prototype evaluation use starlark 0.14.2:
+
+  https://github.com/facebook/starlark-rust
+
+Copyright 2018 The Starlark in Rust Authors.
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Licensed under the Apache License, Version 2.0.
+
+
 mermaid-rs-renderer
 ===================
 

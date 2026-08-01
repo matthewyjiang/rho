@@ -3,15 +3,15 @@ use std::{
     sync::Arc,
 };
 
-use crate::{RunId, SessionId};
+use crate::{RunId, SessionId, ToolCallId};
 
 use super::{
     bounds::HookPayloadBounds,
-    envelope::{HookEnvelope, HookEnvelopeBuilder, HookIdentity},
+    envelope::{HookEnvelope, HookEnvelopeBuilder, HookHostLabels, HookIdentity},
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
     payload::{
-        bounded_failure, BoundedFailure, HookFailure, HookPayload, SessionCompletedPayload,
-        SessionFailedPayload,
+        bounded_failure, AfterToolUsePayload, BoundedFailure, HookFailure, HookPayload, HookTool,
+        HookToolStatus, SessionCompletedPayload, SessionFailedPayload,
     },
 };
 
@@ -55,6 +55,7 @@ pub(crate) struct HookWiring {
     gate: Option<Arc<dyn PreToolUseGate>>,
     bounds: HookPayloadBounds,
     delegation: HookDelegation,
+    host_labels: HookHostLabels,
 }
 
 impl HookWiring {
@@ -69,7 +70,13 @@ impl HookWiring {
             gate,
             bounds,
             delegation,
+            host_labels: HookHostLabels::default(),
         }
+    }
+
+    pub(crate) fn with_host_labels(mut self, host_labels: HookHostLabels) -> Self {
+        self.host_labels = host_labels;
+        self
     }
 
     pub(crate) fn bounds(&self) -> HookPayloadBounds {
@@ -102,8 +109,9 @@ impl HookWiring {
         run_id: Option<&RunId>,
         workspace_root: Option<&Path>,
     ) -> HookEnvelopeBuilder {
-        HookEnvelopeBuilder::new(
+        HookEnvelopeBuilder::with_host_labels(
             self.identity(session_id, run_id),
+            self.host_labels.clone(),
             workspace_root,
             self.bounds,
         )
@@ -136,6 +144,44 @@ impl HookWiring {
             None => HookDecision::Continue,
         }
     }
+
+    pub(crate) fn observe_after_tool_use(
+        &self,
+        identity: HookToolIdentity<'_>,
+        status: HookToolStatus,
+        failure: Option<BoundedFailure<'_>>,
+        duration_ms: Option<u64>,
+    ) {
+        let bounds = self.bounds();
+        self.observe(
+            identity.session_id,
+            identity.run_id,
+            identity.workspace_root,
+            |builder| {
+                let tool = HookTool::new(
+                    identity.tool_name,
+                    Some(identity.call_id.as_str().to_owned()),
+                    bounds,
+                    builder.truncation(),
+                );
+                HookPayload::AfterToolUse(AfterToolUsePayload {
+                    tool,
+                    status,
+                    failure: failure
+                        .map(|failure| bounded_failure(failure, bounds, builder.truncation())),
+                    duration_ms,
+                })
+            },
+        );
+    }
+}
+
+pub(crate) struct HookToolIdentity<'a> {
+    pub(crate) session_id: Option<&'a SessionId>,
+    pub(crate) run_id: Option<&'a RunId>,
+    pub(crate) workspace_root: Option<&'a Path>,
+    pub(crate) tool_name: &'a str,
+    pub(crate) call_id: &'a ToolCallId,
 }
 
 impl std::fmt::Debug for HookWiring {
@@ -146,6 +192,7 @@ impl std::fmt::Debug for HookWiring {
             .field("gate", &self.gate.is_some())
             .field("bounds", &self.bounds)
             .field("delegation", &self.delegation)
+            .field("host_labels", &self.host_labels)
             .finish()
     }
 }

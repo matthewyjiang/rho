@@ -22,7 +22,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
     pub(crate) workspace: Workspace,
     pub(crate) workspace_policy: P,
-    pub(crate) approval_handler: Option<Arc<dyn rho_sdk::ApprovalHandler>>,
+    pub(crate) approval_session: Option<rho_sdk::ApprovalSession>,
     pub(crate) system_prompt: SystemPrompt,
     pub(crate) reasoning: rho_sdk::ReasoningLevel,
     pub(crate) service_tier: Option<rho_sdk::model::ServiceTier>,
@@ -31,6 +31,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) usage_purpose: &'static str,
     pub(crate) usage_parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) usage_recording: ProviderRequestUsageRecording,
+    pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
     /// Shared hook pipeline, or `None` when no hooks are configured.
     ///
     /// Borrowed rather than owned because the interactive host rebuilds its
@@ -61,7 +62,7 @@ where
         tools,
         workspace,
         workspace_policy,
-        approval_handler,
+        approval_session,
         system_prompt,
         reasoning,
         service_tier,
@@ -70,6 +71,7 @@ where
         usage_purpose,
         usage_parent_session_id,
         usage_recording,
+        hook_host_labels,
         hooks,
     } = options;
     let (compactor, policy) = build_compaction(
@@ -90,6 +92,7 @@ where
         .max_parallel_tools(super::sdk_config::parallel_tool_limit())
         .usage_purpose(usage_purpose)
         .usage_recording(usage_recording)
+        .hook_host_labels(hook_host_labels)
         .compactor(compactor);
     if let Some(service_tier) = service_tier {
         builder = builder.service_tier(service_tier);
@@ -104,8 +107,8 @@ where
             ))
             .usage_parent_session_id(parent_session_id);
     }
-    if let Some(handler) = approval_handler {
-        builder = builder.approval_handler_shared(handler);
+    if let Some(session) = approval_session {
+        builder = builder.approval_session(session);
     }
     if let Some(policy) = policy {
         builder = builder.compaction_policy(policy);

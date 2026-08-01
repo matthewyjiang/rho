@@ -59,6 +59,7 @@ define_tool_capabilities! {
     Shell => "shell",
     Skill => "skill",
     WebSearch => "web_search",
+    Workflow => "workflow",
     WriteFile => "write_file",
 }
 
@@ -508,3 +509,23 @@ impl fmt::Display for AgentFingerprint {
         Ok(())
     }
 }
+
+impl FromStr for AgentFingerprint {
+    type Err = AgentFingerprintParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(AgentFingerprintParseError);
+        }
+        let mut bytes = [0_u8; 32];
+        for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+            let text = std::str::from_utf8(chunk).map_err(|_| AgentFingerprintParseError)?;
+            bytes[index] = u8::from_str_radix(text, 16).map_err(|_| AgentFingerprintParseError)?;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+#[error("agent fingerprint must contain exactly 64 hexadecimal characters")]
+pub struct AgentFingerprintParseError;

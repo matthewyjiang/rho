@@ -124,6 +124,11 @@ mod turn_prompt;
 mod usage_cost;
 mod view;
 mod view_composer;
+mod workflow_discover;
+mod workflow_hub;
+// Separate full-screen mode for an active workflow run. The chat hub hands off
+// through terminal suspend when starting or resuming a run.
+pub(crate) mod workflow;
 mod workspace;
 
 mod types;

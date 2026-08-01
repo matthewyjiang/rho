@@ -196,7 +196,8 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         super::PickerAction::ResumeSession
         | super::PickerAction::SelectTreeNode
         | super::PickerAction::SelectRewindCheckpoint
-        | super::PickerAction::ConfirmRewindCheckpoint => 60,
+        | super::PickerAction::ConfirmRewindCheckpoint
+        | super::PickerAction::Workflow => 60,
         super::PickerAction::Config
         | super::PickerAction::Dismiss
         | super::PickerAction::LoginGroup

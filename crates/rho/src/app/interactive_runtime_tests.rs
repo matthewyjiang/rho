@@ -48,7 +48,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         tools: tools.tools(),
         workspace,
         workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
-        approval_handler: None,
+        approval_session: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
         service_tier: None,
@@ -61,6 +61,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         usage_purpose: "agent",
         usage_parent_session_id: None,
         usage_recording: Default::default(),
+        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         hooks: None,
     })
     .unwrap();

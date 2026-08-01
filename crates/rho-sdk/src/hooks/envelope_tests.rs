@@ -20,8 +20,11 @@ fn identity() -> HookIdentity {
 }
 
 fn envelope(payload: HookPayload) -> HookEnvelope {
-    HookEnvelopeBuilder::new(
+    HookEnvelopeBuilder::with_host_labels(
         identity(),
+        HookHostLabels::new()
+            .label("run", "workflow-run-1")
+            .label("node", "test"),
         Some(std::path::Path::new("/work")),
         HookPayloadBounds::default(),
     )
@@ -66,7 +69,7 @@ fn before_tool_use_wire_shape_is_stable() {
     assert_eq!(
         wire_shape(&envelope(payload)),
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "event": "before_tool_use",
             "event_id": "<id>",
             "timestamp_unix_ms": 0,
@@ -74,6 +77,10 @@ fn before_tool_use_wire_shape_is_stable() {
                 "session_id": "session-1",
                 "parent_session_id": "session-parent",
                 "run_id": "run-1",
+            },
+            "host_labels": {
+                "node": "test",
+                "run": "workflow-run-1",
             },
             "workspace": { "root": "/work" },
             "bounds": { "truncated": false, "fields": [] },
@@ -142,6 +149,7 @@ fn a_workspaceless_runtime_reports_a_null_root() {
 
     let value = wire_shape(&envelope);
     assert_eq!(value["workspace"], json!({ "root": null }));
+    assert_eq!(value["host_labels"], json!({}));
     assert_eq!(
         value["identity"],
         json!({
@@ -149,6 +157,39 @@ fn a_workspaceless_runtime_reports_a_null_root() {
             "parent_session_id": null,
             "run_id": null,
         })
+    );
+}
+
+// Covers: app-owned capability attribution must stay bounded and report every cut field.
+// Owner: SDK hook envelope construction.
+#[test]
+fn host_labels_are_bounded_and_reported() {
+    let labels = HookHostLabels::new()
+        .label("attempt", "123456789")
+        .label("node_identifier", "node-123456789")
+        .label("node_identity", "must-not-replace");
+    let envelope = HookEnvelopeBuilder::with_host_labels(
+        HookIdentity::default(),
+        labels,
+        None,
+        HookPayloadBounds::new(8, 4096),
+    )
+    .finish(HookPayload::SessionCompleted(
+        crate::hooks::SessionCompletedPayload { runs: 1 },
+    ));
+
+    assert_eq!(
+        serde_json::to_value(envelope.host_labels()).unwrap(),
+        json!({ "attempt": "12345678", "node_ide": "node-123" })
+    );
+    assert_eq!(
+        envelope.truncation().fields().collect::<Vec<_>>(),
+        vec![
+            "host_labels.attempt",
+            "host_labels.keys[1]",
+            "host_labels.keys[2]",
+            "host_labels.node_ide"
+        ]
     );
 }
 

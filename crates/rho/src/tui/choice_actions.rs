@@ -38,6 +38,12 @@ impl App {
                     InlineChoicePending::DeleteSession { session_id } => {
                         self.submit_delete_session_choice(&value, &session_id)?;
                     }
+                    InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
+                        self.submit_delete_workflow_plan_choice(&value, &plan_id)?;
+                    }
+                    InlineChoicePending::DeleteWorkflowRun { run_id } => {
+                        self.submit_delete_workflow_run_choice(&value, &run_id)?;
+                    }
                 }
             }
             InlineChoiceKeyOutcome::Cancelled => {
@@ -56,6 +62,10 @@ impl App {
                     }
                     InlineChoicePending::DeleteSession { .. } => {
                         self.open_resume_picker()?;
+                    }
+                    InlineChoicePending::DeleteWorkflowPlan { .. }
+                    | InlineChoicePending::DeleteWorkflowRun { .. } => {
+                        self.open_workflow_hub_or_report();
                     }
                 }
             }

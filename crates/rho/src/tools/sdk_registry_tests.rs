@@ -25,6 +25,33 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
+struct RegistryWorkflowService;
+
+impl super::super::workflow::WorkflowToolService for RegistryWorkflowService {
+    fn execute<'a>(
+        &'a self,
+        _request: super::super::workflow::WorkflowToolRequest,
+        _context: &'a rho_sdk::tool::ToolContext,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        super::super::workflow::WorkflowToolResult,
+                        rho_sdk::tool::ToolError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Ok(super::super::workflow::WorkflowToolResult::Validate {
+                valid: true,
+                diagnostics: Vec::new(),
+            })
+        })
+    }
+}
+
 // Covers: hook matcher names must not drift from the application tool registry.
 // Owner: application tool registry.
 #[test]
@@ -44,15 +71,25 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
 
     let root = tempfile::tempdir().unwrap();
     let config = Config::default();
-    let options = ToolSetOptions::default().delegation(DelegationConfig::new(
-        root.path().to_owned(),
-        root.path().join("config.toml"),
-        BackgroundSubagents::Enabled,
-    ));
+    let options = ToolSetOptions::default()
+        .delegation(DelegationConfig::new(
+            root.path().to_owned(),
+            root.path().join("config.toml"),
+            BackgroundSubagents::Enabled,
+        ))
+        .workflow(Arc::new(RegistryWorkflowService));
     let tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
 
+    let model_names = tools.unfiltered_names().collect::<Vec<_>>();
+    assert!(!model_names.iter().any(|name| name == "workflow_command"));
+    let registry_names = model_names.into_iter().chain(
+        super::super::HOST_ONLY_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_owned()),
+    );
+
     assert_eq!(
-        normalized(tools.unfiltered_names()),
+        normalized(registry_names),
         normalized(
             super::super::CANONICAL_TOOL_NAMES
                 .iter()

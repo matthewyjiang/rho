@@ -166,17 +166,31 @@ impl App {
         // Background completions pending at this turn boundary ride in the
         // same model request. This runs after retry delays too, while the
         // persisted display remains the real user-visible prompt.
-        let notification_batch = agent
-            .subagents()
-            .cloned()
-            .map(|manager| manager.take_notifications(agent.session_id().as_str()))
-            .filter(|notifications| !notifications.is_empty())
-            .map(|notifications| crate::tools::agent::notification_prompts(&notifications));
-        if let Some((batch_model, batch_display)) = notification_batch {
+        let mut model_parts = Vec::new();
+        let mut display_parts = Vec::new();
+        if let Some(manager) = agent.subagents().cloned() {
+            let notifications = manager.take_notifications(agent.session_id().as_str());
+            if !notifications.is_empty() {
+                let (model, display) = crate::tools::agent::notification_prompts(&notifications);
+                model_parts.push(model);
+                display_parts.push(display);
+            }
+        }
+        let workflow_notifications = agent
+            .workflow_tracker()
+            .take_notifications(agent.session_id().as_str());
+        if !workflow_notifications.is_empty() {
+            let (model, display) =
+                crate::tools::workflow_tracker::notification_prompts(&workflow_notifications);
+            model_parts.push(model);
+            display_parts.push(display);
+        }
+        if !model_parts.is_empty() {
             self.insert_entry(&Entry::Notice(format!(
-                "delivered with this message:\n{batch_display}"
+                "delivered with this message:\n{}",
+                display_parts.join("\n")
             )));
-            failed_turn.attach_notification_context(batch_model);
+            failed_turn.attach_notification_context(model_parts.join("\n\n"));
         }
         let model_input = failed_turn.model_input()?;
         self.turn.set_current_turn_start(Some(self.history.len()));

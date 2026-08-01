@@ -42,6 +42,9 @@
 //! are included because a deny hook exists to inspect them. Credentials,
 //! authorization headers, environment values, and URL query strings are not.
 //! Every envelope reports what was shortened in [`HookTruncation`].
+//! Hosts can add generic, non-secret [`HookHostLabels`] for their own execution
+//! IDs. Label keys and values use the same field and envelope bounds, and every
+//! shortened label appears in the truncation report.
 
 mod bounds;
 mod dispatch;
@@ -51,7 +54,7 @@ mod gate;
 mod payload;
 pub mod testing;
 
-pub(crate) use dispatch::HookWiring;
+pub(crate) use dispatch::{HookToolIdentity, HookWiring};
 pub(crate) use payload::{bounded_failure, error_label, summarize_capability, BoundedFailure};
 
 pub use bounds::{
@@ -59,7 +62,8 @@ pub use bounds::{
 };
 pub use dispatch::{HookDelegation, HookDispatcher, HookObserver, HookSessionFailureKind};
 pub use envelope::{
-    HookEnvelope, HookEnvelopeError, HookEnvelopeTooLarge, HookIdentity, HOOK_SCHEMA_VERSION,
+    HookEnvelope, HookEnvelopeError, HookEnvelopeTooLarge, HookHostLabels, HookIdentity,
+    HOOK_SCHEMA_VERSION,
 };
 pub use event::HookEventKind;
 pub use gate::{AllowAllGate, HookDecision, HookGateFuture, PreToolUseGate, PreToolUseRequest};

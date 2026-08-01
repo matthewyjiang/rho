@@ -32,6 +32,8 @@ pub enum AgentOrigin {
     AgentsHome,
     RhoHome,
     Project,
+    /// Agents shipped beside a workflow entry (`<workflow_dir>/agents/*.md`).
+    Workflow,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +53,14 @@ pub struct AgentCatalogEntry {
 pub struct AgentCatalog {
     entries: BTreeMap<AgentId, AgentCatalogEntry>,
     internal_entries: BTreeMap<AgentId, AgentCatalogEntry>,
+}
+
+#[derive(Default)]
+pub(crate) struct AgentCatalogSources {
+    pub(crate) agents_home: Vec<(PathBuf, String)>,
+    pub(crate) rho_home: Vec<(PathBuf, String)>,
+    pub(crate) project: Vec<Vec<(PathBuf, String)>>,
+    pub(crate) workflow: Vec<(PathBuf, String)>,
 }
 
 impl AgentCatalog {
@@ -91,6 +101,37 @@ impl AgentCatalog {
                 .collect();
             catalog.load_tier(AgentOrigin::Project, &project_roots)?;
         }
+        catalog.load_internals();
+        Ok(catalog)
+    }
+
+    /// Catalog for planning one workflow entry, including `<dir>/agents/*.md`.
+    pub fn discover_for_workflow_entry(
+        cwd: &Path,
+        workflow_entry: &Path,
+        home: Option<&Path>,
+        project_trust: ProjectTrust,
+    ) -> Result<Self, AgentCatalogError> {
+        let mut catalog = Self::discover_with_home_and_trust(cwd, home, project_trust)?;
+        catalog.load_tier(
+            AgentOrigin::Workflow,
+            &[workflow_local_agents_root(workflow_entry)],
+        )?;
+        Ok(catalog)
+    }
+
+    /// Builds a catalog from file bytes whose reads the caller already authorized.
+    pub(crate) fn from_authorized_sources(
+        sources: AgentCatalogSources,
+    ) -> Result<Self, AgentCatalogError> {
+        let mut catalog = Self::default();
+        catalog.load_builtins()?;
+        catalog.load_sources(AgentOrigin::AgentsHome, sources.agents_home)?;
+        catalog.load_sources(AgentOrigin::RhoHome, sources.rho_home)?;
+        for tier in sources.project {
+            catalog.load_sources(AgentOrigin::Project, tier)?;
+        }
+        catalog.load_sources(AgentOrigin::Workflow, sources.workflow)?;
         catalog.load_internals();
         Ok(catalog)
     }
@@ -161,6 +202,36 @@ impl AgentCatalog {
                 }
                 insert_in_tier(&mut tier, definition, &path)?;
             }
+        }
+        self.merge_tier(tier, origin);
+        Ok(())
+    }
+
+    fn load_sources(
+        &mut self,
+        origin: AgentOrigin,
+        sources: Vec<(PathBuf, String)>,
+    ) -> Result<(), AgentCatalogError> {
+        let mut tier = BTreeMap::new();
+        for (path, contents) in sources {
+            let fallback_id = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| {
+                    AgentCatalogError::at_field(path.clone(), "id", "filename is not valid UTF-8")
+                })?;
+            let definition = parse_definition(&path, fallback_id, &contents)?;
+            if is_internal_agent_id(&definition.id) {
+                return Err(AgentCatalogError::at_field(
+                    path.clone(),
+                    "id",
+                    format!(
+                        "agent ID '{}' is reserved for an internal agent and cannot be overridden",
+                        definition.id
+                    ),
+                ));
+            }
+            insert_in_tier(&mut tier, definition, &path)?;
         }
         self.merge_tier(tier, origin);
         Ok(())
@@ -247,6 +318,16 @@ fn markdown_paths(root: &Path) -> Result<Vec<PathBuf>, AgentCatalogError> {
     }
     paths.sort();
     Ok(paths)
+}
+
+/// Directory that holds agents shipped with one workflow entry file.
+///
+/// Layout: `<parent-of-entry>/agents/*.md`.
+pub fn workflow_local_agents_root(workflow_entry: &Path) -> PathBuf {
+    match workflow_entry.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join("agents"),
+        _ => PathBuf::from("agents"),
+    }
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

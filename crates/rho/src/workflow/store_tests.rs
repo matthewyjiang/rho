@@ -1,0 +1,1145 @@
+use std::{collections::BTreeMap, fs::OpenOptions, io::Write};
+
+use super::*;
+use crate::workflow::{
+    graph_digest,
+    store_replay::derive_snapshot,
+    test_support::{agent_node, id, state, workflow},
+    ArtifactObservation, ArtifactRef, AttemptArtifacts, AttemptNumber, CommandExit, CommandNode,
+    Digest, ExternalOwner, NodeCompletion, NodeTerminalState, PlanConsent, RunLifecycle,
+    RunStateRecord, WorkflowEvent, WorkflowState, WorkspaceAccess, EVENT_VERSION,
+    RUN_STATE_VERSION,
+};
+
+fn plan(store: &WorkflowStore) -> StoredPlan {
+    let workflow = workflow(vec![agent_node("inspect", &[], WorkspaceAccess::Mutating)]);
+    store
+        .create_plan(
+            &workflow,
+            "workspace-id".to_owned(),
+            &BTreeMap::from([("//workflow.star".to_owned(), "WORKFLOW = None".to_owned())]),
+        )
+        .unwrap()
+}
+
+fn run(store: &WorkflowStore, plan: &StoredPlan) -> StoredRun {
+    store
+        .create_run(
+            plan,
+            PlanConsent {
+                graph_digest: plan.manifest.graph_digest.clone(),
+                confirmed: true,
+            },
+            RunStateRecord {
+                schema_version: RUN_STATE_VERSION,
+                last_event_sequence: 0,
+                state: initial_state(&plan.graph),
+            },
+        )
+        .unwrap()
+}
+
+fn initial_state(workflow: &FrozenWorkflow) -> WorkflowState {
+    let mut state = state(workflow);
+    state.lifecycle = RunLifecycle::Planned;
+    state
+}
+
+// Covers: plan deletion or source edits must not break run status and resume data.
+// Owner: workflow durable store.
+#[test]
+fn run_keeps_an_independent_frozen_graph() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let state = RunStateRecord {
+        schema_version: RUN_STATE_VERSION,
+        last_event_sequence: 0,
+        state: initial_state(&plan.graph),
+    };
+    let run = store
+        .create_run(
+            &plan,
+            PlanConsent {
+                graph_digest: plan.manifest.graph_digest.clone(),
+                confirmed: true,
+            },
+            state,
+        )
+        .unwrap();
+    std::fs::remove_dir_all(store.layout.plan(plan.manifest.plan_id)).unwrap();
+    assert_eq!(store.load_run(run.manifest.run_id).unwrap(), run);
+}
+
+// Covers: a crash-truncated journal tail could block resume and every later append.
+// Owner: workflow durable store.
+#[test]
+fn repairs_one_truncated_final_event_and_appends_from_the_prefix() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = store
+        .create_run(
+            &plan,
+            PlanConsent {
+                graph_digest: plan.manifest.graph_digest.clone(),
+                confirmed: true,
+            },
+            RunStateRecord {
+                schema_version: RUN_STATE_VERSION,
+                last_event_sequence: 0,
+                state: initial_state(&plan.graph),
+            },
+        )
+        .unwrap();
+    let event = WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: 1,
+        event: WorkflowEvent::CancellationRequested {
+            request_id: "00000000-0000-0000-0000-000000000001".into(),
+        },
+    };
+    let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+    store.append_event(&mut guard, &event).unwrap();
+    drop(guard);
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(store.layout.run_events(run.manifest.run_id))
+        .unwrap();
+    file.write_all(b"{\"schema_version\":").unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+
+    let second = WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: 2,
+        event: WorkflowEvent::CancellationAcknowledged {
+            request_id: "00000000-0000-0000-0000-000000000001".into(),
+        },
+    };
+    let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+    store.append_event(&mut guard, &second).unwrap();
+    drop(guard);
+
+    assert_eq!(
+        store.read_events(run.manifest.run_id).unwrap(),
+        vec![event, second]
+    );
+    let bytes = std::fs::read(store.layout.run_events(run.manifest.run_id)).unwrap();
+    assert!(bytes.ends_with(b"\n"));
+}
+
+// Covers: accepting a journal that starts after sequence one would hide state transitions.
+// Owner: workflow durable store.
+#[test]
+fn rejects_a_journal_whose_first_sequence_is_not_one() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let record = WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: 2,
+        event: WorkflowEvent::CancellationRequested {
+            request_id: "00000000-0000-0000-0000-000000000002".into(),
+        },
+    };
+    std::fs::write(
+        store.layout.run_events(run.manifest.run_id),
+        format!("{}\n", serde_json::to_string(&record).unwrap()),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        store.read_events(run.manifest.run_id),
+        Err(WorkflowError::Corrupt { .. })
+    ));
+    assert!(matches!(
+        store.lock_run(run.manifest.run_id),
+        Err(WorkflowError::Corrupt { .. })
+    ));
+}
+
+// Covers: treating a malformed complete record as a torn tail would erase corruption on resume.
+// Owner: workflow durable store.
+#[test]
+fn rejects_malformed_complete_journal_records() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    std::fs::write(
+        store.layout.run_events(run.manifest.run_id),
+        b"{not-json}\n",
+    )
+    .unwrap();
+
+    assert!(matches!(
+        store.read_events(run.manifest.run_id),
+        Err(WorkflowError::Corrupt { .. })
+    ));
+    assert!(matches!(
+        store.lock_run(run.manifest.run_id),
+        Err(WorkflowError::Corrupt { .. })
+    ));
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DurableCorruption {
+    PlanId,
+    PlanGraphDigest,
+    PlanWorkspace,
+    SourceMetadata,
+    SourceBlob,
+    InvalidGraph,
+    RunId,
+    RunGraphDigest,
+    RunConsent,
+    RunWorkspace,
+    NodeKeys,
+    SnapshotSequence,
+}
+
+// Covers: tampered duplicate durable fields could make status and resume trust different plans.
+// Owner: workflow durable store boundary.
+#[test]
+fn rejects_tampered_durable_records_at_load() {
+    for corruption in [
+        DurableCorruption::PlanId,
+        DurableCorruption::PlanGraphDigest,
+        DurableCorruption::PlanWorkspace,
+        DurableCorruption::SourceMetadata,
+        DurableCorruption::SourceBlob,
+        DurableCorruption::InvalidGraph,
+        DurableCorruption::RunId,
+        DurableCorruption::RunGraphDigest,
+        DurableCorruption::RunConsent,
+        DurableCorruption::RunWorkspace,
+        DurableCorruption::NodeKeys,
+        DurableCorruption::SnapshotSequence,
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let store = WorkflowStore::new(home.path()).unwrap();
+        let plan = plan(&store);
+        let run = run(&store, &plan);
+        let result = match corruption {
+            DurableCorruption::PlanId => {
+                let mut manifest = plan.manifest.clone();
+                manifest.plan_id = PlanId::new();
+                write_json(
+                    &store.layout.plan_manifest(plan.manifest.plan_id),
+                    &manifest,
+                )
+                .unwrap();
+                store.load_plan(plan.manifest.plan_id).map(|_| ())
+            }
+            DurableCorruption::PlanGraphDigest => {
+                let mut manifest = plan.manifest.clone();
+                manifest.graph_digest = Digest("sha256:00".to_owned());
+                write_json(
+                    &store.layout.plan_manifest(plan.manifest.plan_id),
+                    &manifest,
+                )
+                .unwrap();
+                store.load_plan(plan.manifest.plan_id).map(|_| ())
+            }
+            DurableCorruption::PlanWorkspace => {
+                let mut manifest = plan.manifest.clone();
+                manifest.workspace_identity.clear();
+                write_json(
+                    &store.layout.plan_manifest(plan.manifest.plan_id),
+                    &manifest,
+                )
+                .unwrap();
+                store.load_plan(plan.manifest.plan_id).map(|_| ())
+            }
+            DurableCorruption::SourceMetadata => {
+                let mut graph = plan.graph.clone();
+                graph
+                    .sources
+                    .modules
+                    .get_mut("//workflow.star")
+                    .unwrap()
+                    .bytes += 1;
+                graph.graph_digest = graph_digest(&graph).unwrap();
+                let mut manifest = plan.manifest.clone();
+                manifest.graph_digest = graph.graph_digest.clone();
+                write_json(&store.layout.plan_graph(plan.manifest.plan_id), &graph).unwrap();
+                write_json(
+                    &store.layout.plan_manifest(plan.manifest.plan_id),
+                    &manifest,
+                )
+                .unwrap();
+                store.load_plan(plan.manifest.plan_id).map(|_| ())
+            }
+            DurableCorruption::SourceBlob => {
+                let digest = plan
+                    .manifest
+                    .source_digests
+                    .values()
+                    .next()
+                    .unwrap()
+                    .0
+                    .strip_prefix("sha256:")
+                    .unwrap();
+                std::fs::write(
+                    store
+                        .layout
+                        .plan_sources(plan.manifest.plan_id)
+                        .join(format!("{digest}.star")),
+                    b"tampered",
+                )
+                .unwrap();
+                store.load_plan(plan.manifest.plan_id).map(|_| ())
+            }
+            DurableCorruption::InvalidGraph => {
+                let mut graph = plan.graph.clone();
+                graph.graph.nodes.get_mut(&id("inspect")).unwrap().needs = vec![id("inspect")];
+                graph.graph_digest = graph_digest(&graph).unwrap();
+                let mut manifest = plan.manifest.clone();
+                manifest.graph_digest = graph.graph_digest.clone();
+                write_json(&store.layout.plan_graph(plan.manifest.plan_id), &graph).unwrap();
+                write_json(
+                    &store.layout.plan_manifest(plan.manifest.plan_id),
+                    &manifest,
+                )
+                .unwrap();
+                store.load_plan(plan.manifest.plan_id).map(|_| ())
+            }
+            DurableCorruption::RunId => {
+                let mut manifest = run.manifest.clone();
+                manifest.run_id = RunId::new();
+                write_json(&store.layout.run_manifest(run.manifest.run_id), &manifest).unwrap();
+                store.load_run(run.manifest.run_id).map(|_| ())
+            }
+            DurableCorruption::RunGraphDigest => {
+                let mut manifest = run.manifest.clone();
+                manifest.graph_digest = Digest("sha256:00".to_owned());
+                write_json(&store.layout.run_manifest(run.manifest.run_id), &manifest).unwrap();
+                store.load_run(run.manifest.run_id).map(|_| ())
+            }
+            DurableCorruption::RunConsent => {
+                let mut manifest = run.manifest.clone();
+                manifest.consent.confirmed = false;
+                write_json(&store.layout.run_manifest(run.manifest.run_id), &manifest).unwrap();
+                store.load_run(run.manifest.run_id).map(|_| ())
+            }
+            DurableCorruption::RunWorkspace => {
+                let mut manifest = run.manifest.clone();
+                manifest.workspace_identity.clear();
+                write_json(&store.layout.run_manifest(run.manifest.run_id), &manifest).unwrap();
+                store.load_run(run.manifest.run_id).map(|_| ())
+            }
+            DurableCorruption::NodeKeys => {
+                let mut state = run.state.clone();
+                let node_state = state.state.nodes.remove(&id("inspect")).unwrap();
+                state.state.nodes.insert(id("other"), node_state);
+                write_json(&store.layout.run_state(run.manifest.run_id), &state).unwrap();
+                store.load_run(run.manifest.run_id).map(|_| ())
+            }
+            DurableCorruption::SnapshotSequence => {
+                let mut state = run.state.clone();
+                state.last_event_sequence = 1;
+                write_json(&store.layout.run_state(run.manifest.run_id), &state).unwrap();
+                store.load_run(run.manifest.run_id).map(|_| ())
+            }
+        };
+        assert!(result.is_err(), "corruption was accepted: {corruption:?}");
+    }
+}
+
+// Covers: a valid journal tail must not authenticate a snapshot with different state.
+// Owner: workflow durable store replay boundary.
+#[test]
+fn rejects_snapshot_state_that_differs_from_its_journal_prefix() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+    let events = [
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 1,
+            event: WorkflowEvent::RunLifecycle {
+                lifecycle: RunLifecycle::Running,
+            },
+        },
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 2,
+            event: WorkflowEvent::CancellationRequested {
+                request_id: "00000000-0000-0000-0000-000000000003".into(),
+            },
+        },
+    ];
+    for event in &events {
+        store.append_event(&mut guard, event).unwrap();
+    }
+    let mut snapshot = run.state;
+    snapshot.last_event_sequence = 2;
+    snapshot.state = derive_snapshot(
+        &plan.graph,
+        &events,
+        2,
+        &store.layout.run_state(run.manifest.run_id),
+    )
+    .unwrap();
+    store.save_state(&mut guard, &snapshot).unwrap();
+    snapshot.state.cancellation_requested = false;
+    write_json(&store.layout.run_state(run.manifest.run_id), &snapshot).unwrap();
+    drop(guard);
+
+    assert!(matches!(
+        store.load_run(run.manifest.run_id),
+        Err(WorkflowError::Corrupt { .. })
+    ));
+}
+
+// Covers: journal replay must not reopen a completed run as cancelling.
+// Owner: workflow durable store replay boundary.
+#[test]
+fn replay_rejects_cancellation_request_after_completion() {
+    let workflow = workflow(Vec::new());
+    let events = [
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 1,
+            event: WorkflowEvent::RunLifecycle {
+                lifecycle: RunLifecycle::Running,
+            },
+        },
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 2,
+            event: WorkflowEvent::RunLifecycle {
+                lifecycle: RunLifecycle::Completed,
+            },
+        },
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 3,
+            event: WorkflowEvent::CancellationRequested {
+                request_id: "00000000-0000-0000-0000-000000000004".into(),
+            },
+        },
+    ];
+
+    assert!(matches!(
+        derive_snapshot(
+            &workflow,
+            &events,
+            3,
+            std::path::Path::new("run-state.json"),
+        ),
+        Err(WorkflowError::Scheduler(message))
+            if message
+                == "illegal workflow lifecycle transition from Completed to Cancelling"
+    ));
+}
+
+fn artifact(run: &std::path::Path, name: &str, bytes: &[u8]) -> ArtifactRef {
+    use sha2::{Digest as _, Sha256};
+
+    std::fs::write(run.join(name), bytes).unwrap();
+    ArtifactRef {
+        relative_path: name.to_owned(),
+        retained_bytes: bytes.len() as u64,
+        observed: ArtifactObservation::Complete {
+            observed_bytes: bytes.len() as u64,
+        },
+        digest: Digest(format!("sha256:{:x}", Sha256::digest(bytes))),
+    }
+}
+
+// Covers: each state save must not rehash artifacts from prior completions.
+// Owner: workflow durable store write path.
+#[test]
+fn save_state_hashes_only_new_or_changed_completions() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let mut run = run(&store, &plan);
+    let run_directory = store.layout.run(run.manifest.run_id);
+    let attempt = AttemptNumber::new(1).unwrap();
+    let answer = artifact(&run_directory, "answer.txt", b"answer");
+    let completion = NodeCompletion {
+        attempt: Some(attempt),
+        outcome: NodeTerminalState::Success,
+        cancellation_resume: None,
+        command_exit: None,
+        structured_output: None,
+        artifacts: AttemptArtifacts {
+            answer: Some(answer),
+            ..AttemptArtifacts::default()
+        },
+    };
+    let events = vec![
+        WorkflowEvent::RunLifecycle {
+            lifecycle: RunLifecycle::Running,
+        },
+        WorkflowEvent::NodeReady {
+            node: id("inspect"),
+        },
+        WorkflowEvent::AttemptStarted {
+            node: id("inspect"),
+            attempt,
+            owner: ExternalOwner::Process { pid: 1 },
+        },
+        WorkflowEvent::NodeFinished {
+            node: id("inspect"),
+            completion: Box::new(completion),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, event)| WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: index as u64 + 1,
+        event,
+    })
+    .collect::<Vec<_>>();
+    run.state.last_event_sequence = events.len() as u64;
+    run.state.state = derive_snapshot(
+        &run.graph,
+        &events,
+        run.state.last_event_sequence,
+        &store.layout.run_state(run.manifest.run_id),
+    )
+    .unwrap();
+
+    let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+    for event in &events {
+        store.append_event(&mut guard, event).unwrap();
+    }
+    store.save_state(&mut guard, &run.state).unwrap();
+
+    // A later save with no completion change skips the old artifact. A full
+    // load still detects that the durable artifact was changed on disk.
+    std::fs::write(run_directory.join("answer.txt"), b"change").unwrap();
+    let event = WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: run.state.last_event_sequence + 1,
+        event: WorkflowEvent::HookObserved {
+            event: "after_node".to_owned(),
+            node: Some(id("inspect")),
+            attempt: Some(attempt),
+        },
+    };
+    store.append_event(&mut guard, &event).unwrap();
+    run.state.last_event_sequence = event.sequence;
+    store.save_state(&mut guard, &run.state).unwrap();
+    drop(guard);
+
+    assert!(matches!(
+        store.load_run(run.manifest.run_id),
+        Err(WorkflowError::Corrupt { .. })
+    ));
+}
+
+fn command_stream_fixture(
+    run_directory: &std::path::Path,
+    stream_bytes: usize,
+    workflow_total: u64,
+) -> (FrozenWorkflow, RunStateRecord, Vec<WorkflowEventRecord>) {
+    let mut workflow = workflow(vec![agent_node("inspect", &[], WorkspaceAccess::Mutating)]);
+    let node = workflow.graph.nodes.get_mut(&id("inspect")).unwrap();
+    node.execution = NodeExecution::Command(CommandNode::Direct {
+        executable: "/frozen/command".into(),
+        arguments: Vec::new(),
+        cwd: ".".into(),
+        output: None,
+    });
+    node.max_output_bytes = 4;
+    workflow.runtime_limits.retained_output_per_stream_bytes = 4;
+    workflow.runtime_limits.retained_output_total_bytes = workflow_total;
+    let attempt = AttemptNumber::new(1).unwrap();
+    let stdout = artifact(run_directory, "stdout", &vec![b'o'; stream_bytes]);
+    let stderr = artifact(run_directory, "stderr", b"eeee");
+    let command_outcome = artifact(run_directory, "command.json", b"outcome");
+    let completion = NodeCompletion {
+        attempt: Some(attempt),
+        outcome: NodeTerminalState::Success,
+        cancellation_resume: None,
+        command_exit: Some(CommandExit::Code { code: 0 }),
+        structured_output: None,
+        artifacts: AttemptArtifacts {
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+            command_outcome: Some(command_outcome),
+            ..AttemptArtifacts::default()
+        },
+    };
+    let events = vec![
+        WorkflowEvent::RunLifecycle {
+            lifecycle: RunLifecycle::Running,
+        },
+        WorkflowEvent::NodeReady {
+            node: id("inspect"),
+        },
+        WorkflowEvent::AttemptStarted {
+            node: id("inspect"),
+            attempt,
+            owner: ExternalOwner::Process { pid: 1 },
+        },
+        WorkflowEvent::NodeFinished {
+            node: id("inspect"),
+            completion: Box::new(completion),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, event)| WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: index as u64 + 1,
+        event,
+    })
+    .collect::<Vec<_>>();
+    let state = derive_snapshot(
+        &workflow,
+        &events,
+        events.len() as u64,
+        &run_directory.join("state.json"),
+    )
+    .unwrap();
+    (
+        workflow,
+        RunStateRecord {
+            schema_version: RUN_STATE_VERSION,
+            last_event_sequence: events.len() as u64,
+            state,
+        },
+        events,
+    )
+}
+
+// Covers: each command stream owns the full per-stream budget, while their sum owns the total.
+// Owner: workflow durable output contract.
+#[test]
+fn validates_two_stream_boundaries_and_workflow_total() {
+    let cases = [(4, 8, true), (5, 9, false), (4, 7, false)];
+    for (stream_bytes, workflow_total, accepted) in cases {
+        let run = tempfile::tempdir().unwrap();
+        let (workflow, state, events) =
+            command_stream_fixture(run.path(), stream_bytes, workflow_total);
+        let root = crate::workflow::secure_fs::SecureDirectory::open(run.path()).unwrap();
+        let result = validate_state(
+            &workflow,
+            &state,
+            &events,
+            &run.path().join("state.json"),
+            &root,
+            Path::new(""),
+        );
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "case: {stream_bytes}/{workflow_total}"
+        );
+    }
+}
+
+// Covers: control-file symlinks and broad Unix modes must not reach durable workflow data.
+// Owner: workflow durable store filesystem boundary.
+#[cfg(unix)]
+#[test]
+fn rejects_untrusted_control_files() {
+    use std::os::unix::fs::{symlink, PermissionsExt as _};
+
+    for target in ["mutation.lock", "events.jsonl", "state.json"] {
+        let home = tempfile::tempdir().unwrap();
+        let store = WorkflowStore::new(home.path()).unwrap();
+        let plan = plan(&store);
+        let run = run(&store, &plan);
+        let path = store.layout.run(run.manifest.run_id).join(target);
+        let outside = home.path().join("outside");
+        std::fs::write(&outside, b"outside").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        symlink(&outside, &path).unwrap();
+        let result = if target == "mutation.lock" {
+            store.lock_run(run.manifest.run_id).map(|_| ())
+        } else if target == "events.jsonl" {
+            store.read_events(run.manifest.run_id).map(|_| ())
+        } else {
+            store.load_run(run.manifest.run_id).map(|_| ())
+        };
+        assert!(result.is_err(), "accepted symlink for {target}");
+        assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+    }
+
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let source_plan = plan(&store);
+    let digest = source_plan
+        .manifest
+        .source_digests
+        .values()
+        .next()
+        .unwrap()
+        .0
+        .strip_prefix("sha256:")
+        .unwrap();
+    let source = store
+        .layout
+        .plan_sources(source_plan.manifest.plan_id)
+        .join(format!("{digest}.star"));
+    let outside = home.path().join("outside-source");
+    std::fs::write(&outside, b"WORKFLOW = None").unwrap();
+    std::fs::remove_file(&source).unwrap();
+    symlink(&outside, &source).unwrap();
+    assert!(store.load_plan(source_plan.manifest.plan_id).is_err());
+
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let events = store.layout.run_events(run.manifest.run_id);
+    std::fs::set_permissions(&events, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(store.read_events(run.manifest.run_id).is_err());
+}
+
+#[cfg(any(unix, windows))]
+fn substitute_directory(path: &Path) -> std::io::Result<()> {
+    let held = path.with_extension("held");
+    std::fs::rename(path, &held)?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&held, path)?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&held, path)?;
+    Ok(())
+}
+
+// Covers: status, run, and mutation must not follow a substituted durable ID directory.
+// Owner: workflow durable store filesystem boundary.
+#[cfg(any(unix, windows))]
+#[test]
+fn rejects_substituted_plan_and_run_directories() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+
+    if substitute_directory(&store.layout.plan(plan.manifest.plan_id)).is_err() {
+        return;
+    }
+    assert!(store.load_plan(plan.manifest.plan_id).is_err());
+
+    if substitute_directory(&store.layout.run(run.manifest.run_id)).is_err() {
+        return;
+    }
+    assert!(store.load_run(run.manifest.run_id).is_err());
+    assert!(store.lock_run(run.manifest.run_id).is_err());
+}
+
+// Covers: no durable operation may start below a substituted plans or runs ancestor.
+// Owner: workflow durable store filesystem boundary.
+#[cfg(any(unix, windows))]
+#[test]
+fn rejects_substituted_store_ancestors() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+
+    if substitute_directory(&store.layout.plans()).is_err() {
+        return;
+    }
+    assert!(store.load_plan(plan.manifest.plan_id).is_err());
+    assert!(store
+        .resolve_plan(&plan.manifest.plan_id.to_string())
+        .is_err());
+
+    if substitute_directory(&store.layout.runs()).is_err() {
+        return;
+    }
+    assert!(store.load_run(run.manifest.run_id).is_err());
+    assert!(store.resolve_run(&run.manifest.run_id.to_string()).is_err());
+    assert!(store.lock_run(run.manifest.run_id).is_err());
+}
+
+// Covers: prefix lookup must enumerate the held workflows root, not its mutable pathname.
+// Owner: workflow durable store filesystem boundary.
+#[cfg(any(unix, windows))]
+#[test]
+fn prefix_lookup_ignores_a_substituted_workflows_path() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let held = home.path().join("workflows-held");
+    std::fs::rename(store.layout.root(), &held).unwrap();
+    let attacker = home.path().join("attacker-workflows");
+    let run = RunId::new();
+    std::fs::create_dir_all(attacker.join("plans")).unwrap();
+    std::fs::create_dir_all(attacker.join("runs").join(run.to_string())).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&attacker, store.layout.root()).unwrap();
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_dir(&attacker, store.layout.root()).is_err() {
+        return;
+    }
+
+    assert!(store.resolve_run(&run.to_string()).is_err());
+}
+
+// Covers: cancellation markers must stay in the held workflow root after its
+// pathname is replaced.
+// Owner: workflow durable store filesystem boundary.
+#[cfg(unix)]
+#[test]
+fn cancellation_marker_uses_the_held_workflows_root() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let held = home.path().join("workflows-held");
+    std::fs::rename(store.layout.root(), &held).unwrap();
+    let attacker = home.path().join("attacker-workflows");
+    std::fs::create_dir_all(attacker.join("plans")).unwrap();
+    std::fs::create_dir_all(attacker.join("runs").join(run.manifest.run_id.to_string())).unwrap();
+    std::os::unix::fs::symlink(&attacker, store.layout.root()).unwrap();
+
+    let request = b"00000000-0000-4000-8000-000000000000";
+    assert!(store
+        .install_cancellation_request(run.manifest.run_id, request)
+        .unwrap());
+    assert_eq!(
+        store
+            .read_cancellation_request(run.manifest.run_id)
+            .unwrap(),
+        Some(request.to_vec())
+    );
+    assert!(!attacker
+        .join("runs")
+        .join(run.manifest.run_id.to_string())
+        .join("cancel.request")
+        .exists());
+
+    store
+        .clear_cancellation_request(run.manifest.run_id)
+        .unwrap();
+    assert_eq!(
+        store
+            .read_cancellation_request(run.manifest.run_id)
+            .unwrap(),
+        None
+    );
+}
+
+// Covers: hub and status UIs need a workspace-scoped inventory of plans and runs.
+// Owner: workflow durable store.
+#[test]
+fn lists_plan_and_run_inventory_skipping_unreadable_entries() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let first = plan(&store);
+    let second = plan(&store);
+    let run = run(&store, &first);
+
+    let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans.len(), 2);
+    assert!(plans
+        .iter()
+        .any(|plan| plan.plan_id == first.manifest.plan_id));
+    assert!(plans
+        .iter()
+        .any(|plan| plan.plan_id == second.manifest.plan_id));
+
+    let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].run_id, run.manifest.run_id);
+
+    // Corrupt one plan directory name so list skips it.
+    std::fs::create_dir_all(store.layout.plans().join("not-a-uuid")).unwrap();
+    assert_eq!(store.list_plan_inventory().unwrap().len(), 2);
+}
+
+// Covers: inventory uses durable creation order and an ID tie-break for legacy zero times.
+// Owner: workflow durable store inventory.
+#[test]
+fn inventory_orders_plans_and_runs_by_persisted_creation_time() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let first_plan = plan(&store);
+    let second_plan = plan(&store);
+    let first_run = run(&store, &first_plan);
+    let second_run = run(&store, &first_plan);
+
+    let (newer_plan, older_plan) = if first_plan.manifest.plan_id < second_plan.manifest.plan_id {
+        (&first_plan, &second_plan)
+    } else {
+        (&second_plan, &first_plan)
+    };
+    for (stored, created_at_unix_nanos) in [(older_plan, 1), (newer_plan, 2)] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = created_at_unix_nanos;
+        write_json(&store.layout.plan_manifest(manifest.plan_id), &manifest).unwrap();
+    }
+
+    let (newer_run, older_run) = if first_run.manifest.run_id < second_run.manifest.run_id {
+        (&first_run, &second_run)
+    } else {
+        (&second_run, &first_run)
+    };
+    for (stored, created_at_unix_nanos) in [(older_run, 1), (newer_run, 2)] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = created_at_unix_nanos;
+        write_json(&store.layout.run_manifest(manifest.run_id), &manifest).unwrap();
+    }
+
+    assert_eq!(
+        store
+            .list_plan_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|plan| (plan.plan_id, plan.created_at_unix_nanos))
+            .collect::<Vec<_>>(),
+        vec![
+            (newer_plan.manifest.plan_id, 2),
+            (older_plan.manifest.plan_id, 1),
+        ]
+    );
+    assert_eq!(
+        store
+            .list_run_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|run| (run.run_id, run.created_at_unix_nanos))
+            .collect::<Vec<_>>(),
+        vec![
+            (newer_run.manifest.run_id, 2),
+            (older_run.manifest.run_id, 1),
+        ]
+    );
+
+    for stored in [&first_plan, &second_plan] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = 0;
+        write_json(&store.layout.plan_manifest(manifest.plan_id), &manifest).unwrap();
+    }
+    for stored in [&first_run, &second_run] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = 0;
+        write_json(&store.layout.run_manifest(manifest.run_id), &manifest).unwrap();
+    }
+
+    assert_eq!(
+        store
+            .list_plan_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|plan| plan.plan_id)
+            .collect::<Vec<_>>(),
+        vec![older_plan.manifest.plan_id, newer_plan.manifest.plan_id]
+    );
+    assert_eq!(
+        store
+            .list_run_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|run| run.run_id)
+            .collect::<Vec<_>>(),
+        vec![older_run.manifest.run_id, newer_run.manifest.run_id]
+    );
+}
+
+// Covers: hub plan/run cleanup must remove only the targeted store entry.
+// Owner: workflow durable store.
+#[test]
+fn deletes_plans_and_runs() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let first = plan(&store);
+    let second = plan(&store);
+    let run = run(&store, &first);
+
+    store.delete_plan(first.manifest.plan_id).unwrap();
+    assert!(store.load_plan(first.manifest.plan_id).is_err());
+    assert!(store.load_plan(second.manifest.plan_id).is_ok());
+    // Run still loads after its plan is gone (graph was copied into the run).
+    assert_eq!(
+        store.load_run(run.manifest.run_id).unwrap().manifest.run_id,
+        run.manifest.run_id
+    );
+
+    store.delete_run(run.manifest.run_id).unwrap();
+    assert!(store.load_run(run.manifest.run_id).is_err());
+}
+
+// Covers: delete must hold the exclusive lock across the destructive rename so
+// a concurrent owner cannot lock_run and drive a half-removed tree.
+// Owner: workflow durable store.
+#[test]
+fn delete_run_fails_while_writer_lock_is_held() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let _guard = store.lock_run(run.manifest.run_id).unwrap();
+    let err = store.delete_run(run.manifest.run_id).unwrap_err();
+    assert!(
+        matches!(err, WorkflowError::Corrupt { .. }),
+        "expected locked-run refusal, got {err:?}"
+    );
+    // Run remains intact for the owner that still holds the lock.
+    drop(_guard);
+    assert_eq!(
+        store.load_run(run.manifest.run_id).unwrap().manifest.run_id,
+        run.manifest.run_id
+    );
+}
+
+// Covers: delete refuses live lifecycle under the lock even when the writer
+// lock is free (for example after a crash left Running without a holder).
+// Owner: workflow durable store.
+#[test]
+fn delete_run_refuses_running_lifecycle() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    // Bypass journal validation: crash-like durable state left as Running.
+    let mut record = run.state.clone();
+    record.state.lifecycle = RunLifecycle::Running;
+    write_json(&store.layout.run_state(run.manifest.run_id), &record).unwrap();
+
+    let err = store.delete_run(run.manifest.run_id).unwrap_err();
+    assert!(
+        matches!(err, WorkflowError::Corrupt { .. }),
+        "expected live-run refusal, got {err:?}"
+    );
+    assert!(store.read_run_lifecycle(run.manifest.run_id).is_ok());
+}
+
+// Covers: watch polling must read revision without journal replay.
+// Owner: workflow durable store.
+#[test]
+fn read_run_revision_skips_journal_replay() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+    let expected = run.state.state.revision;
+
+    // Corrupt the journal so full load_run fails.
+    std::fs::write(store.layout.run_events(run.manifest.run_id), b"{not-json\n").unwrap();
+    assert!(store.load_run(run.manifest.run_id).is_err());
+    assert_eq!(
+        store.read_run_revision(run.manifest.run_id).unwrap(),
+        expected
+    );
+    assert_eq!(
+        store.read_run_lifecycle(run.manifest.run_id).unwrap(),
+        RunLifecycle::Planned
+    );
+}
+
+// Covers: hub inventory must list plans/runs without full validation.
+// Owner: workflow durable store.
+#[test]
+fn plan_and_run_inventory_skips_journal_replay() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+
+    // Corrupt the journal so full load_run fails.
+    std::fs::write(store.layout.run_events(run.manifest.run_id), b"{not-json\n").unwrap();
+    assert!(store.load_run(run.manifest.run_id).is_err());
+
+    // Inventory must not need graph.json either (name/steps live on manifests).
+    std::fs::remove_file(store.layout.plan_graph(plan.manifest.plan_id)).unwrap();
+    std::fs::remove_file(store.layout.run_graph(run.manifest.run_id)).unwrap();
+
+    let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].plan_id, plan.manifest.plan_id);
+    assert_eq!(plans[0].name, plan.graph.graph.name.as_str());
+    assert_eq!(plans[0].step_count, plan.graph.graph.nodes.len());
+    assert_eq!(
+        plans[0].workspace_identity,
+        plan.manifest.workspace_identity
+    );
+
+    let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].run_id, run.manifest.run_id);
+    assert_eq!(runs[0].name, run.graph.graph.name.as_str());
+    assert_eq!(runs[0].lifecycle, run.state.state.lifecycle);
+    assert_eq!(runs[0].total_steps, run.graph.graph.nodes.len());
+    assert_eq!(runs[0].done_steps, 0);
+
+    // Delete must not require journal replay either.
+    store.delete_run(run.manifest.run_id).unwrap();
+    assert!(store.read_run_inventory(run.manifest.run_id).is_err());
+}
+
+// Covers: pre-field manifests still get name/steps via graph, else (unnamed).
+// Owner: workflow durable store.
+#[test]
+fn inventory_falls_back_for_legacy_manifests() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let run = run(&store, &plan);
+
+    // Strip inventory fields as if the manifests predate them.
+    let mut plan_manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(store.layout.plan_manifest(plan.manifest.plan_id)).unwrap(),
+    )
+    .unwrap();
+    let plan_fields = plan_manifest.as_object_mut().unwrap();
+    plan_fields.remove("name");
+    plan_fields.remove("step_count");
+    plan_fields.remove("created_at_unix_nanos");
+    std::fs::write(
+        store.layout.plan_manifest(plan.manifest.plan_id),
+        serde_json::to_vec_pretty(&plan_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let mut run_manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(store.layout.run_manifest(run.manifest.run_id)).unwrap(),
+    )
+    .unwrap();
+    let run_fields = run_manifest.as_object_mut().unwrap();
+    run_fields.remove("name");
+    run_fields.remove("step_count");
+    run_fields.remove("created_at_unix_nanos");
+    std::fs::write(
+        store.layout.run_manifest(run.manifest.run_id),
+        serde_json::to_vec_pretty(&run_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans[0].created_at_unix_nanos, 0);
+    assert_eq!(plans[0].name, plan.graph.graph.name.as_str());
+    assert_eq!(plans[0].step_count, plan.graph.graph.nodes.len());
+
+    let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs[0].created_at_unix_nanos, 0);
+    assert_eq!(runs[0].name, run.graph.graph.name.as_str());
+    assert_eq!(runs[0].total_steps, run.graph.graph.nodes.len());
+
+    // Without graph either, label is stable and listing still works.
+    std::fs::remove_file(store.layout.plan_graph(plan.manifest.plan_id)).unwrap();
+    std::fs::remove_file(store.layout.run_graph(run.manifest.run_id)).unwrap();
+    let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans[0].name, "(unnamed)");
+    assert_eq!(plans[0].step_count, 0);
+    let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs[0].name, "(unnamed)");
+    assert_eq!(runs[0].total_steps, 0);
+}
+
+// Covers: a valid plan ID with unreadable contents must fail the list closed,
+// not vanish into an empty hub.
+// Owner: workflow durable store.
+#[test]
+fn list_plan_inventory_fails_closed_on_corrupt_uuid_entry() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    // Truncate the manifest so read fails for a real UUID directory.
+    std::fs::write(store.layout.plan_manifest(plan.manifest.plan_id), b"{").unwrap();
+    assert!(store.list_plan_inventory().is_err());
+}

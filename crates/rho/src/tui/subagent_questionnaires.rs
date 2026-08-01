@@ -278,17 +278,32 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<TurnOutcome>> {
-        let Some(manager) = agent.subagents().cloned() else {
-            return Ok(None);
-        };
-        let notifications = manager.take_notifications(agent.session_id().as_str());
-        if notifications.is_empty() {
+        let mut model_parts = Vec::new();
+        let mut display_parts = Vec::new();
+        if let Some(manager) = agent.subagents().cloned() {
+            let notifications = manager.take_notifications(agent.session_id().as_str());
+            if !notifications.is_empty() {
+                let (model, display) = crate::tools::agent::notification_prompts(&notifications);
+                model_parts.push(model);
+                display_parts.push(display);
+            }
+        }
+        let workflow_notifications = agent
+            .workflow_tracker()
+            .take_notifications(agent.session_id().as_str());
+        if !workflow_notifications.is_empty() {
+            let (model, display) =
+                crate::tools::workflow_tracker::notification_prompts(&workflow_notifications);
+            model_parts.push(model);
+            display_parts.push(display);
+        }
+        if model_parts.is_empty() {
             return Ok(None);
         }
         // The whole drained batch is one message and one model request, no
         // matter how many runs finished while the parent was busy.
-        let (model_prompt, display_prompt) =
-            crate::tools::agent::notification_prompts(&notifications);
+        let model_prompt = model_parts.join("\n\n");
+        let display_prompt = display_parts.join("\n");
         self.run_prompt_turn(
             TurnPrompt::standard(model_prompt, display_prompt),
             Vec::new(),

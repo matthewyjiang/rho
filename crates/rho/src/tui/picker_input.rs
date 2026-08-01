@@ -65,7 +65,7 @@ fn apply_picker_key(
     key: KeyEvent,
     page_target: Option<OverlayPageTarget>,
     model_picker_open: bool,
-    resume_picker_open: bool,
+    row_delete_enabled: bool,
     space_confirms: bool,
 ) -> PickerKeyEffect {
     match (key.modifiers, key.code) {
@@ -112,7 +112,7 @@ fn apply_picker_key(
         (KeyModifiers::CONTROL, KeyCode::Char('p')) if model_picker_open => {
             PickerKeyEffect::ToggleFavorite
         }
-        (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete) if resume_picker_open => {
+        (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete) if row_delete_enabled => {
             PickerKeyEffect::DeleteRow
         }
         (KeyModifiers::NONE, KeyCode::Char(' ')) if space_confirms => PickerKeyEffect::Submit,
@@ -138,7 +138,7 @@ impl App {
         }
 
         let model_picker_open = self.model_picker_is_open();
-        let resume_picker_open = self.resume_picker_is_open();
+        let row_delete_enabled = self.resume_picker_is_open() || self.workflow_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
         let effect = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
@@ -150,7 +150,7 @@ impl App {
                 key,
                 page_target,
                 model_picker_open,
-                resume_picker_open,
+                row_delete_enabled,
                 space_confirms,
             )
         };
@@ -183,7 +183,11 @@ impl App {
             PickerKeyEffect::DeleteRow => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                self.prompt_delete_selected_session()?;
+                if self.resume_picker_is_open() {
+                    self.prompt_delete_selected_session()?;
+                } else if self.workflow_picker_is_open() {
+                    self.prompt_delete_selected_workflow_item()?;
+                }
                 Ok(true)
             }
         }
@@ -199,7 +203,7 @@ impl App {
         }
 
         let model_picker_open = self.model_picker_is_open();
-        let resume_picker_open = self.resume_picker_is_open();
+        let row_delete_enabled = self.resume_picker_is_open() || self.workflow_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
         let effect = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
@@ -211,7 +215,7 @@ impl App {
                 key,
                 page_target,
                 model_picker_open,
-                resume_picker_open,
+                row_delete_enabled,
                 space_confirms,
             )
         };

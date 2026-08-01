@@ -62,7 +62,7 @@ fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerI
     let selection_verb = match entry.metadata.origin {
         AgentOrigin::Internal => Some("configure"),
         AgentOrigin::RhoHome | AgentOrigin::Project => Some("edit"),
-        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome => Some("close"),
+        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => Some("close"),
     };
     PickerItem {
         section: None,
@@ -87,7 +87,7 @@ fn agent_badge(origin: AgentOrigin) -> Option<PickerBadge> {
             text: "(editable)".to_string(),
             tone: PickerBadgeTone::Editable,
         }),
-        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome => None,
+        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => None,
     }
 }
 
@@ -99,6 +99,7 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         AgentOrigin::AgentsHome => "~/.agents/agents".to_string(),
         AgentOrigin::RhoHome => "~/.rho/agents".to_string(),
         AgentOrigin::Project => "project".to_string(),
+        AgentOrigin::Workflow => "workflow".to_string(),
     };
     let path = entry
         .metadata

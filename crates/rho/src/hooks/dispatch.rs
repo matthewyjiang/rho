@@ -17,18 +17,23 @@ use rho_sdk::{
     },
     CancellationToken,
 };
+use serde::Serialize;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
 
+#[path = "workflow_event.rs"]
+mod workflow_event;
+
 use super::{
     activity::{HookActivity, HookActivityLog, HookOutcome},
     catalog::HookCatalog,
     command::{run_hook, HookRunOutput},
-    config::HookDefinition,
+    config::{ConfiguredHookEvent, HookDefinition, WorkflowHookEventKind},
     protocol::parse_decision,
 };
+use workflow_event::{AppHookEnvelope, WorkflowPayload};
 
 /// Ceiling on the total time one `before_tool_use` dispatch may take.
 ///
@@ -57,6 +62,7 @@ pub struct HookEngine {
     catalog: RwLock<Arc<HookCatalog>>,
     activity: HookActivityLog,
     bounds: HookPayloadBounds,
+    observational_sender: RwLock<Option<mpsc::Sender<ObservationalEvent>>>,
 }
 
 impl HookEngine {
@@ -65,6 +71,7 @@ impl HookEngine {
             catalog: RwLock::new(Arc::new(catalog)),
             activity: HookActivityLog::default(),
             bounds,
+            observational_sender: RwLock::new(None),
         }
     }
 
@@ -91,6 +98,282 @@ impl HookEngine {
 
     fn record(&self, activity: HookActivity) {
         self.activity.record(activity);
+    }
+
+    fn install_observational_sender(&self, sender: mpsc::Sender<ObservationalEvent>) {
+        *self
+            .observational_sender
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(sender);
+    }
+
+    fn enqueue(&self, event: ObservationalEvent) {
+        let event_name = event.wire_name();
+        if let Some(sender) = self
+            .observational_sender
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+        {
+            if sender.try_send(event).is_ok() {
+                return;
+            }
+        }
+        // A missing, full, or stopped queue cannot affect app state. Keep a
+        // diagnostic record and return without waiting.
+        self.record(HookActivity {
+            hook_id: "<queue>".into(),
+            event: event_name,
+            outcome: HookOutcome::Dropped,
+            duration: None,
+            truncated: false,
+        });
+    }
+
+    /// Notifies hooks that a frozen workflow run started.
+    pub fn observe_workflow_started(&self, workflow_run_id: &str, plan_digest: &str) {
+        self.enqueue_workflow(
+            WorkflowHookEventKind::Started,
+            WorkflowPayload::Run {
+                workflow_run_id,
+                plan_digest,
+                outcome: None,
+                duration_ms: None,
+                artifacts: &[],
+            },
+        );
+    }
+
+    /// Notifies hooks that one workflow node attempt started.
+    pub fn observe_workflow_node_started(
+        &self,
+        workflow_run_id: &str,
+        plan_digest: &str,
+        node_id: &str,
+        attempt: u32,
+    ) {
+        self.enqueue_workflow(
+            WorkflowHookEventKind::NodeStarted,
+            WorkflowPayload::Node {
+                workflow_run_id,
+                plan_digest,
+                node_id,
+                attempt,
+                outcome: None,
+                duration_ms: None,
+                artifacts: &[],
+            },
+        );
+    }
+
+    /// Notifies hooks that one workflow node attempt reached a terminal state.
+    ///
+    /// The workflow layer supplies its own serde enum. Only the six frozen node
+    /// outcomes are accepted on the wire; invalid values are dropped and logged.
+    pub fn observe_workflow_node_finished<O: Serialize>(
+        &self,
+        observation: WorkflowNodeFinished<'_, O>,
+    ) {
+        let WorkflowNodeFinished {
+            workflow_run_id,
+            plan_digest,
+            node_id,
+            attempt,
+            outcome,
+            duration,
+            artifacts,
+        } = observation;
+        let Some(outcome) =
+            self.workflow_outcome(WorkflowHookEventKind::NodeFinished, outcome, NODE_OUTCOMES)
+        else {
+            return;
+        };
+        self.enqueue_workflow(
+            WorkflowHookEventKind::NodeFinished,
+            WorkflowPayload::Node {
+                workflow_run_id,
+                plan_digest,
+                node_id,
+                attempt,
+                outcome: Some(&outcome),
+                duration_ms: Some(duration_millis(duration)),
+                artifacts,
+            },
+        );
+    }
+
+    /// Notifies hooks that a workflow completed successfully.
+    pub fn observe_workflow_completed(
+        &self,
+        workflow_run_id: &str,
+        plan_digest: &str,
+        duration: Duration,
+        artifacts: &[crate::workflow::DurableArtifactReference],
+    ) {
+        self.enqueue_workflow(
+            WorkflowHookEventKind::Completed,
+            WorkflowPayload::Run {
+                workflow_run_id,
+                plan_digest,
+                outcome: Some("success"),
+                duration_ms: Some(duration_millis(duration)),
+                artifacts,
+            },
+        );
+    }
+
+    /// Notifies hooks that a workflow ended with a non-cancellation failure.
+    pub fn observe_workflow_failed<O: Serialize>(
+        &self,
+        workflow_run_id: &str,
+        plan_digest: &str,
+        outcome: &O,
+        duration: Duration,
+        artifacts: &[crate::workflow::DurableArtifactReference],
+    ) {
+        let Some(outcome) = self.workflow_outcome(
+            WorkflowHookEventKind::Failed,
+            outcome,
+            WORKFLOW_FAILURE_OUTCOMES,
+        ) else {
+            return;
+        };
+        self.enqueue_workflow(
+            WorkflowHookEventKind::Failed,
+            WorkflowPayload::Run {
+                workflow_run_id,
+                plan_digest,
+                outcome: Some(&outcome),
+                duration_ms: Some(duration_millis(duration)),
+                artifacts,
+            },
+        );
+    }
+
+    /// Notifies hooks that cancellation intent ended a workflow.
+    pub fn observe_workflow_cancelled(
+        &self,
+        workflow_run_id: &str,
+        plan_digest: &str,
+        duration: Duration,
+        artifacts: &[crate::workflow::DurableArtifactReference],
+    ) {
+        self.enqueue_workflow(
+            WorkflowHookEventKind::Cancelled,
+            WorkflowPayload::Run {
+                workflow_run_id,
+                plan_digest,
+                outcome: Some("cancellation"),
+                duration_ms: Some(duration_millis(duration)),
+                artifacts,
+            },
+        );
+    }
+
+    fn enqueue_workflow(&self, event: WorkflowHookEventKind, payload: WorkflowPayload<'_>) {
+        if self.catalog().matching_workflow(event).is_empty() {
+            return;
+        }
+        match AppHookEnvelope::new(event, payload, self.bounds) {
+            Ok(envelope) => self.enqueue(ObservationalEvent::Workflow(envelope)),
+            Err(reason) => self.record_app_event_failure(event, reason, true),
+        }
+    }
+
+    fn workflow_outcome<O: Serialize>(
+        &self,
+        event: WorkflowHookEventKind,
+        outcome: &O,
+        accepted: &[&str],
+    ) -> Option<String> {
+        let serialized = serde_json::to_value(outcome).ok();
+        let outcome = serialized.as_ref().and_then(serde_json::Value::as_str);
+        if let Some(outcome) = outcome.filter(|outcome| accepted.contains(outcome)) {
+            return Some((*outcome).to_owned());
+        }
+        self.record_app_event_failure(
+            event,
+            "workflow hook outcome was not a supported typed outcome".into(),
+            false,
+        );
+        None
+    }
+
+    fn record_app_event_failure(
+        &self,
+        event: WorkflowHookEventKind,
+        reason: String,
+        truncated: bool,
+    ) {
+        self.record(HookActivity {
+            hook_id: "<queue>".into(),
+            event: event.wire_name(),
+            outcome: HookOutcome::Failed { reason },
+            duration: None,
+            truncated,
+        });
+    }
+}
+
+/// App-owned data for one terminal workflow node attempt.
+pub(crate) struct WorkflowNodeFinished<'a, O> {
+    pub workflow_run_id: &'a str,
+    pub plan_digest: &'a str,
+    pub node_id: &'a str,
+    pub attempt: u32,
+    pub outcome: &'a O,
+    pub duration: Duration,
+    pub artifacts: &'a [crate::workflow::DurableArtifactReference],
+}
+
+const NODE_OUTCOMES: &[&str] = &[
+    "success",
+    "failure",
+    "denial",
+    "cancellation",
+    "skipped",
+    "blocked",
+];
+const WORKFLOW_FAILURE_OUTCOMES: &[&str] = &["denial", "failure", "blocked"];
+
+fn duration_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+enum ObservationalEvent {
+    Sdk(HookEnvelope),
+    Workflow(AppHookEnvelope),
+}
+
+impl ObservationalEvent {
+    fn wire_name(&self) -> &'static str {
+        match self {
+            Self::Sdk(envelope) => envelope.event().wire_name(),
+            Self::Workflow(envelope) => envelope.wire_name(),
+        }
+    }
+
+    fn configured_event(&self) -> ConfiguredHookEvent {
+        match self {
+            Self::Sdk(envelope) => ConfiguredHookEvent::Sdk(envelope.event()),
+            Self::Workflow(envelope) => ConfiguredHookEvent::Workflow(envelope.event()),
+        }
+    }
+
+    fn tool_name(&self) -> Option<&str> {
+        match self {
+            Self::Sdk(envelope) => envelope.payload().tool_name(),
+            Self::Workflow(_) => None,
+        }
+    }
+
+    fn to_bounded_json(&self, bounds: HookPayloadBounds) -> Result<String, String> {
+        match self {
+            Self::Sdk(envelope) => envelope
+                .to_bounded_json(bounds)
+                .map_err(|error| error.to_string()),
+            Self::Workflow(envelope) => envelope.to_bounded_json(),
+        }
     }
 }
 
@@ -175,7 +458,7 @@ async fn evaluate_one(
                     None,
                     false,
                     format!("hook `{id}` was stopped: the blocking hook budget was exhausted"),
-                )
+                );
             }
         };
     let output = match result {
@@ -188,7 +471,7 @@ async fn evaluate_one(
                 None,
                 false,
                 format!("denied: hook `{id}` {error}"),
-            )
+            );
         }
     };
     interpret(engine, &id, hook, output)
@@ -208,7 +491,7 @@ fn interpret(
             return record_denial(
                 engine,
                 id,
-                hook.event(),
+                HookEventKind::BeforeToolUse,
                 duration,
                 output.truncated,
                 format!("denied by hook `{id}`: {reason}"),
@@ -218,7 +501,7 @@ fn interpret(
         return record_denial(
             engine,
             id,
-            hook.event(),
+            HookEventKind::BeforeToolUse,
             duration,
             output.truncated,
             format!("denied: hook `{id}` {detail}"),
@@ -238,7 +521,7 @@ fn interpret(
         Ok(HookDecision::Deny { reason }) => record_denial(
             engine,
             id,
-            hook.event(),
+            HookEventKind::BeforeToolUse,
             duration,
             output.truncated,
             format!("denied by hook `{id}`: {reason}"),
@@ -246,7 +529,7 @@ fn interpret(
         Ok(_) => record_denial(
             engine,
             id,
-            hook.event(),
+            HookEventKind::BeforeToolUse,
             duration,
             output.truncated,
             format!("denied: hook `{id}` returned an unsupported decision"),
@@ -254,7 +537,7 @@ fn interpret(
         Err(error) => record_denial(
             engine,
             id,
-            hook.event(),
+            HookEventKind::BeforeToolUse,
             duration,
             output.truncated,
             format!("denied: hook `{id}` {error}"),
@@ -313,17 +596,17 @@ fn deny_all(engine: &HookEngine, hooks: &[&HookDefinition], detail: &str) -> Hoo
 /// Observational sink that enqueues and returns.
 pub struct QueuedHookObserver {
     engine: Arc<HookEngine>,
-    sender: mpsc::Sender<HookEnvelope>,
+    sender: mpsc::Sender<ObservationalEvent>,
 }
 
 impl HookObserver for QueuedHookObserver {
     fn observe(&self, envelope: HookEnvelope) {
-        if self.sender.try_send(envelope).is_err() {
-            // Full queue or a stopped worker. Dropping keeps the turn free;
-            // the drop is recorded so it is never silent.
+        let event = ObservationalEvent::Sdk(envelope);
+        let event_name = event.wire_name();
+        if self.sender.try_send(event).is_err() {
             self.engine.record(HookActivity {
                 hook_id: "<queue>".into(),
-                event: "observational",
+                event: event_name,
                 outcome: HookOutcome::Dropped,
                 duration: None,
                 truncated: false,
@@ -376,6 +659,7 @@ pub fn observational_channel(
     cancellation: CancellationToken,
 ) -> (QueuedHookObserver, ObservationalWorker) {
     let (sender, mut receiver) = mpsc::channel(OBSERVATIONAL_QUEUE_CAPACITY);
+    engine.install_observational_sender(sender.clone());
     let (shutdown, mut shutdown_requested) = oneshot::channel();
     let worker_engine = Arc::clone(&engine);
     let worker_cancellation = cancellation.clone();
@@ -387,10 +671,10 @@ pub fn observational_channel(
                 () = cancellation.cancelled() => break,
                 _ = &mut shutdown_requested => {
                     receiver.close();
-                    while let Some(envelope) = receiver.recv().await {
+                    while let Some(event) = receiver.recv().await {
                         dispatch_observational(
                             &worker_engine,
-                            envelope,
+                            event,
                             &cancellation,
                             &mut tasks,
                         ).await;
@@ -398,14 +682,14 @@ pub fn observational_channel(
                     while tasks.join_next().await.is_some() {}
                     break;
                 }
-                envelope = receiver.recv() => {
-                    let Some(envelope) = envelope else {
+                event = receiver.recv() => {
+                    let Some(event) = event else {
                         while tasks.join_next().await.is_some() {}
                         break;
                     };
                     dispatch_observational(
                         &worker_engine,
-                        envelope,
+                        event,
                         &cancellation,
                         &mut tasks,
                     ).await;
@@ -427,23 +711,23 @@ pub fn observational_channel(
 
 async fn dispatch_observational(
     engine: &Arc<HookEngine>,
-    envelope: HookEnvelope,
+    event: ObservationalEvent,
     cancellation: &CancellationToken,
     tasks: &mut JoinSet<()>,
 ) {
     let catalog = engine.catalog();
     let hooks = catalog
-        .matching(envelope.event(), envelope.payload().tool_name())
+        .matching_configured(event.configured_event(), event.tool_name())
         .into_iter()
         .cloned()
         .collect::<Vec<_>>();
     if hooks.is_empty() {
         return;
     }
-    let Ok(encoded) = envelope.to_bounded_json(engine.bounds) else {
+    let Ok(encoded) = event.to_bounded_json(engine.bounds) else {
         engine.record(HookActivity {
             hook_id: "<queue>".into(),
-            event: envelope.event().wire_name(),
+            event: event.wire_name(),
             outcome: HookOutcome::Failed {
                 reason: "event payload exceeded its size bound".into(),
             },

@@ -184,6 +184,63 @@ assert_eq!(session.complete("hi").await?.text(), "pong");
 # }
 ```
 
+## Provider-free tool calls
+
+`ToolHost` runs registered SDK tools without creating a provider or model
+session. One host and its clones form one authorization session: they share
+exact `AllowForSession` decisions and the bounded approval audit. Each
+capability request uses this fixed order:
+
+```text
+workspace policy
+-> before_tool_use hook
+-> host approval when policy requires it
+-> execution
+```
+
+A policy `Allow` result still runs `before_tool_use`, but it does not ask the
+approval handler. A policy `Deny` result stops before the hook. A
+`RequireApproval` result runs the hook before it asks the host.
+
+```rust
+use rho_sdk::{
+    tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
+    model::ToolSpec,
+    ToolHost, ToolHostCall,
+};
+use serde_json::json;
+
+# async fn example() -> Result<(), rho_sdk::Error> {
+let host = ToolHost::builder()
+    .tool(ScriptedTool::new(
+        ToolSpec {
+            name: "status".into(),
+            description: "return status".into(),
+            input_schema: json!({"type": "object"}),
+        },
+        ScriptedToolOutcome::Success(ToolOutput::text("ready")),
+    ))
+    .build()?;
+
+let output = host
+    .invoke(ToolHostCall::new("status", json!({})))
+    .await?;
+assert_eq!(output.content(), "ready");
+# Ok(())
+# }
+```
+
+Use `ToolHost::start` when a tool can emit progress or request host input. The
+returned `ToolHostRun` supports event reads, typed host responses, cooperative
+cancellation, and a final typed output. Dropping the run cancels its work.
+
+Hook envelopes can carry app-owned `HookHostLabels`. Both `RhoBuilder` and
+`ToolHostBuilder` accept them. Labels are generic strings, not workflow types.
+The SDK bounds every key and value, reports each shortened field in
+`HookTruncation`, and applies the final envelope byte bound. Do not put prompts,
+credentials, environment values, or tool output in labels. The `host_labels`
+wire field is part of hook schema version 2.
+
 ## Session snapshots
 
 `Session::snapshot` returns a versioned, JSON-serializable boundary that can be
