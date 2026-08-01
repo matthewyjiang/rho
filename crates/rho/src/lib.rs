@@ -1,5 +1,6 @@
 mod agent;
 mod app;
+mod changelog;
 mod claude_runtime;
 mod cli;
 mod clipboard;

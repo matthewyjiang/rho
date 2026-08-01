@@ -17,6 +17,7 @@ pub enum CommandId {
     Skills,
     Hooks,
     Agents,
+    Changelog,
     Diff,
     Doctor,
     Limits,
@@ -83,6 +84,12 @@ const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
+const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
+    completion: "/changelog latest",
+    usage: "/changelog latest",
+    description: "fetch notes for the latest published release",
+}];
+
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
@@ -91,6 +98,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/agents",
         description: "reload agents and show runtime, tools, and other details",
         argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Changelog,
+        name: "changelog",
+        usage: "/changelog [latest]",
+        description: "show release notes for this install, or the latest published release",
+        argument_choices: CHANGELOG_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Compact,

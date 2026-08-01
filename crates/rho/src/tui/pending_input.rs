@@ -429,7 +429,7 @@ impl App {
         matches!(self.input_ui.composer(), ComposerMode::Input)
             && self.input_ui.text().is_empty()
             && self.input_ui.paste_segments().is_empty()
-            && self.input_ui.pending_media().is_empty()
+            && self.input_ui.attachments().is_empty()
             && self.input_ui.shell_mode().is_none()
     }
 

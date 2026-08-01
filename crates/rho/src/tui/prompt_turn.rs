@@ -265,6 +265,9 @@ impl App {
             if self.poll_limits_command().await? {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
+            if self.poll_changelog_command().await? {
+                self.draw_running_frame(terminal, &mut frame_scheduler)?;
+            }
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
             let approval_ready = approval_receiver_open;

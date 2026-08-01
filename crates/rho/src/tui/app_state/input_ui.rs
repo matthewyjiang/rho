@@ -3,9 +3,12 @@
 use crate::tui::{
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
-    ChatMedia, ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode, PasteSegment,
-    SkillMatchCache,
+    ChatMedia, ComposerAttachment, ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode,
+    MediaAttachId, PasteSegment, SkillMatchCache,
 };
+
+#[derive(Debug)]
+pub(in crate::tui) struct AttachmentsPending;
 
 /// Composer text, paste handling, command/file palettes, and input history.
 #[derive(Default)]
@@ -13,7 +16,7 @@ pub(in crate::tui) struct InputUi {
     text: String,
     cursor: usize,
     shell_mode: Option<InlineShellMode>,
-    pending_media: Vec<ChatMedia>,
+    attachments: Vec<ComposerAttachment>,
     history: Vec<String>,
     history_cursor: Option<usize>,
     history_draft: Option<InputDraft>,
@@ -38,7 +41,7 @@ impl InputUi {
         self.paste_segments.clear();
         self.shell_mode = None;
         self.cursor = 0;
-        self.pending_media.clear();
+        self.attachments.clear();
     }
 
     pub(in crate::tui) fn expanded_text(&self) -> String {
@@ -48,7 +51,7 @@ impl InputUi {
     pub(in crate::tui) fn has_pending_draft(&self) -> bool {
         !self.text.is_empty()
             || self.shell_mode.is_some()
-            || !self.pending_media.is_empty()
+            || !self.attachments.is_empty()
             || self.paste_burst.has_pending()
     }
 
@@ -165,16 +168,77 @@ impl InputUi {
         self.shell_mode.take()
     }
 
-    pub(in crate::tui) fn pending_media(&self) -> &[ChatMedia] {
-        &self.pending_media
+    pub(in crate::tui) fn attachments(&self) -> &[ComposerAttachment] {
+        &self.attachments
     }
 
-    pub(in crate::tui) fn pending_media_mut(&mut self) -> &mut Vec<ChatMedia> {
-        &mut self.pending_media
+    pub(in crate::tui) fn push_ready_attachment(&mut self, media: ChatMedia) {
+        self.attachments.push(ComposerAttachment::Ready(media));
     }
 
-    pub(in crate::tui) fn clear_pending_media(&mut self) {
-        self.pending_media.clear();
+    pub(in crate::tui) fn push_pending_attachment(&mut self, id: MediaAttachId, name: String) {
+        self.attachments
+            .push(ComposerAttachment::Pending { id, name });
+    }
+
+    pub(in crate::tui) fn pop_attachment(&mut self) -> Option<ComposerAttachment> {
+        self.attachments.pop()
+    }
+
+    pub(in crate::tui) fn has_pending_attachments(&self) -> bool {
+        self.attachments
+            .iter()
+            .any(|attachment| attachment.pending_id().is_some())
+    }
+
+    pub(in crate::tui) fn pending_attachment_count(&self) -> usize {
+        self.attachments
+            .iter()
+            .filter(|attachment| attachment.pending_id().is_some())
+            .count()
+    }
+
+    pub(in crate::tui) fn remove_pending_attachment(&mut self, id: MediaAttachId) -> Option<usize> {
+        let index = self
+            .attachments
+            .iter()
+            .position(|attachment| attachment.pending_id() == Some(id))?;
+        self.attachments.remove(index);
+        Some(index)
+    }
+
+    pub(in crate::tui) fn replace_pending_attachment(
+        &mut self,
+        id: MediaAttachId,
+        media: ChatMedia,
+    ) -> Option<usize> {
+        let index = self
+            .attachments
+            .iter()
+            .position(|attachment| attachment.pending_id() == Some(id))?;
+        self.attachments[index] = ComposerAttachment::Ready(media);
+        Some(index)
+    }
+
+    pub(in crate::tui) fn take_ready_media(
+        &mut self,
+    ) -> Result<Vec<ChatMedia>, AttachmentsPending> {
+        if self.has_pending_attachments() {
+            return Err(AttachmentsPending);
+        }
+        Ok(std::mem::take(&mut self.attachments)
+            .into_iter()
+            .map(|attachment| match attachment {
+                ComposerAttachment::Ready(media) => media,
+                ComposerAttachment::Pending { .. } => {
+                    unreachable!("pending attachments checked before submission")
+                }
+            })
+            .collect())
+    }
+
+    pub(in crate::tui) fn clear_attachments(&mut self) {
+        self.attachments.clear();
     }
 
     pub(in crate::tui) fn history(&self) -> &[String] {

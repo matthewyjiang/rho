@@ -2,6 +2,7 @@
 
 mod apply_patch_diff;
 mod background_agents;
+mod changelog;
 mod config;
 mod conversation_tree;
 mod document_attachment;
@@ -22,6 +23,7 @@ use apply_patch_diff::APPLY_PATCH_DIFF_SCENARIO;
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
+use changelog::CHANGELOG_STEPS;
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
@@ -669,6 +671,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Show grouped runtime details and keep them readable after a narrow resize",
         DEFAULT_SIZE,
         RUNTIME_INFO_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "changelog",
+        "Show bundled release notes for the installed version in chat",
+        DEFAULT_SIZE,
+        CHANGELOG_STEPS,
         false,
     ),
     Scenario::new(

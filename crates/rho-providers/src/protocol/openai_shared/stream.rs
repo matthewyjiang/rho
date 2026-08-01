@@ -242,6 +242,12 @@ pub(crate) struct CodexSseState {
     pub(crate) response_id: Option<String>,
     pub(crate) service_tier: Option<String>,
     pub(crate) output_items: Vec<serde_json::Value>,
+    /// True after a `response.completed` event was applied.
+    completed: bool,
+    /// Provider `response.status` from the completed envelope, when present.
+    response_status: Option<String>,
+    /// Distinct SSE event `type` values observed on this stream.
+    event_types: BTreeSet<String>,
     /// Tool-call argument text already published as [`ModelEvent::ToolCallDelta`],
     /// keyed by provider output index.
     ///
@@ -260,8 +266,15 @@ pub(crate) struct CodexSseState {
 
 impl CodexSseState {
     pub(crate) fn into_response(self) -> Result<CodexSseResponse, ModelError> {
-        let response_id = self.response_id;
-        let service_tier = self.service_tier;
+        let has_text = !self.text.is_empty()
+            || self
+                .completed_text
+                .as_ref()
+                .is_some_and(|text| !text.is_empty());
+        if !has_text && self.tool_calls.is_empty() {
+            return Err(self.missing_response_content_error());
+        }
+
         let mut blocks = Vec::new();
         let text = if self.text.is_empty() {
             self.completed_text.unwrap_or_default()
@@ -272,18 +285,80 @@ impl CodexSseState {
             blocks.push(ContentBlock::Text(text));
         }
         blocks.extend(self.tool_calls.into_iter().map(ContentBlock::ToolCall));
-        if blocks.is_empty() {
-            Err(ModelError::InvalidResponse(
-                "missing response content in SSE".into(),
-            ))
-        } else {
-            Ok(CodexSseResponse {
-                response: ModelResponse::Assistant(blocks),
-                response_id,
-                service_tier,
-            })
-        }
+        Ok(CodexSseResponse {
+            response: ModelResponse::Assistant(blocks),
+            response_id: self.response_id,
+            service_tier: self.service_tier,
+        })
     }
+
+    /// Build a debug-friendly empty-content error from the stream summary.
+    ///
+    /// Includes only structural fields (ids, statuses, item/event types). Does
+    /// not attach raw SSE payloads or item bodies, which may carry user data.
+    fn missing_response_content_error(&self) -> ModelError {
+        ModelError::InvalidResponse(format!(
+            "missing response content in SSE ({})",
+            self.empty_content_diagnostic()
+        ))
+    }
+
+    fn empty_content_diagnostic(&self) -> String {
+        let mut parts = Vec::new();
+        parts.push(format!("completed={}", self.completed));
+        if let Some(response_id) = &self.response_id {
+            parts.push(format!("response_id={response_id}"));
+        }
+        if let Some(status) = &self.response_status {
+            parts.push(format!("status={status}"));
+        }
+        if let Some(service_tier) = &self.service_tier {
+            parts.push(format!("service_tier={service_tier}"));
+        }
+        parts.push(format!("streamed_text_chars={}", self.text.chars().count()));
+        parts.push(format!("tool_calls={}", self.tool_calls.len()));
+        let item_types = summarize_output_item_types(&self.output_items);
+        if item_types.is_empty() {
+            parts.push("output_items=none".into());
+        } else {
+            parts.push(format!("output_items=[{}]", item_types.join(", ")));
+        }
+        if self.event_types.is_empty() {
+            parts.push("events=none".into());
+        } else {
+            parts.push(format!(
+                "events=[{}]",
+                self.event_types
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        parts.join("; ")
+    }
+}
+
+/// Stable, count-collapsed list of output item `type` values for diagnostics.
+fn summarize_output_item_types(items: &[serde_json::Value]) -> Vec<String> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for item in items {
+        let kind = item
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown");
+        *counts.entry(kind.to_owned()).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(kind, count)| {
+            if count == 1 {
+                kind
+            } else {
+                format!("{kind}:{count}")
+            }
+        })
+        .collect()
 }
 
 /// Hosted-search item shapes on Responses streams.
@@ -566,6 +641,9 @@ pub(crate) fn handle_codex_sse_value(
         .get("type")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
+    if !event_type.is_empty() {
+        state.event_types.insert(event_type.to_owned());
+    }
     if event_type == "response.output_text.delta" {
         if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
             state.text.push_str(delta);
@@ -688,6 +766,7 @@ pub(crate) fn handle_codex_sse_value(
             state.tool_calls.push(call);
         }
     } else if event_type == "response.completed" {
+        state.completed = true;
         state.service_tier = value
             .get("response")
             .and_then(|response| response.get("service_tier"))
@@ -702,6 +781,12 @@ pub(crate) fn handle_codex_sse_value(
         {
             state.response_id = Some(response_id.to_string());
         }
+        state.response_status = value
+            .get("response")
+            .and_then(|response| response.get("status"))
+            .and_then(|status| status.as_str())
+            .filter(|status| !status.is_empty())
+            .map(str::to_owned);
         if let Some(usage) = value
             .get("response")
             .and_then(extract_usage)
@@ -739,11 +824,18 @@ pub(crate) fn handle_codex_sse_value(
                 }
             }
         }
-        if state.text.is_empty() && state.tool_calls.is_empty() {
+        // When no text deltas streamed, recover assistant text from the completed
+        // envelope even if function calls are already present. `into_response`
+        // still prefers streamed text over this fallback. Leave completed_text
+        // unset on empty content so empty assemblies can emit a stream-summary
+        // diagnostic instead of the bare "missing response text" error.
+        if state.text.is_empty() {
             if let Ok(response) =
                 serde_json::from_value::<ResponsesResponse>(value["response"].clone())
             {
-                state.completed_text = Some(extract_response_text(response)?);
+                if let Ok(text) = extract_response_text(response) {
+                    state.completed_text = Some(text);
+                }
             }
         }
     }

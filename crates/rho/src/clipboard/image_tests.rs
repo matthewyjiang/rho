@@ -52,7 +52,7 @@ fn remote_sessions_do_not_read_host_image_clipboards() {
 }
 
 #[test]
-fn paste_text_recognizes_absolute_and_relative_image_paths() {
+fn paste_text_recognizes_supported_file_path_forms() {
     let (_dir, path) = write_temp_png();
     let cwd = path.parent().unwrap();
 
@@ -66,14 +66,48 @@ fn paste_text_recognizes_absolute_and_relative_image_paths() {
         Some(path.clone())
     );
     assert_eq!(paste_text_as_file_path("shot.png\nextra", cwd), None);
-    assert_eq!(
-        paste_text_as_file_path("missing.txt", cwd),
-        Some(cwd.join("missing.txt"))
-    );
+    assert_eq!(paste_text_as_file_path("missing.txt", cwd), None);
+    assert_eq!(paste_text_as_file_path("/", cwd), None);
+
+    let unsupported_path = cwd.join("archive.bin");
+    fs::write(&unsupported_path, [0, 1, 2, 3]).unwrap();
+    assert_eq!(paste_text_as_file_path("archive.bin", cwd), None);
 
     let text_path = cwd.join("notes.txt");
     fs::write(&text_path, "hello").unwrap();
     assert_eq!(paste_text_as_file_path("notes.txt", cwd), Some(text_path));
+
+    let spaced_path = cwd.join("drop report.txt");
+    fs::write(&spaced_path, "dropped").unwrap();
+    assert_eq!(
+        paste_text_as_file_path(&spaced_path.to_string_lossy(), cwd),
+        Some(spaced_path.clone())
+    );
+    let file_url = url::Url::from_file_path(&spaced_path).unwrap();
+    assert_eq!(
+        paste_text_as_file_path(file_url.as_str(), cwd),
+        Some(spaced_path.clone())
+    );
+    #[cfg(unix)]
+    {
+        let shell_escaped = spaced_path.to_string_lossy().replace(' ', "\\ ");
+        assert_eq!(
+            paste_text_as_file_path(&shell_escaped, cwd),
+            Some(spaced_path)
+        );
+        let quoted_shell_escaped = format!("\"{shell_escaped}\"");
+        assert_eq!(paste_text_as_file_path(&quoted_shell_escaped, cwd), None);
+    }
+
+    #[cfg(unix)]
+    {
+        let colon_dir = cwd.join("drop:");
+        fs::create_dir(&colon_dir).unwrap();
+        let colon_path = colon_dir.join("report.txt");
+        fs::write(&colon_path, "dropped").unwrap();
+        let colon_input = format!("{}/drop://report.txt", cwd.display());
+        assert_eq!(paste_text_as_file_path(&colon_input, cwd), Some(colon_path));
+    }
 }
 
 #[test]

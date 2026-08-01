@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.25.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.25.0...rho-coding-agent-v1.25.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **tui:** suppress false fast notice and preserve pasted commands ([#675](https://github.com/matthewyjiang/rho/issues/675)) ([5a354f0](https://github.com/matthewyjiang/rho/commit/5a354f04dea76de50cd784652bec4f42e2b36fb4))
+* **tui:** validate dropped file attachments ([#677](https://github.com/matthewyjiang/rho/issues/677)) ([1c62a3d](https://github.com/matthewyjiang/rho/commit/1c62a3d638328bc829350f1cf32649fd58f7abcb))
+
 ## [1.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.24.1...rho-coding-agent-v1.25.0) (2026-07-31)
 
 

@@ -3968,7 +3968,7 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "calamine",
@@ -3996,7 +3996,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "1.25.0"
+version = "1.25.1"
 dependencies = [
  "anyhow",
  "arboard",

@@ -80,6 +80,7 @@ impl App {
             CommandId::Hooks => self.execute_hooks_command(agent),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
+            CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command_with_probes(terminal).await,
             CommandId::Export => self.execute_export_command(&invocation),
@@ -214,7 +215,8 @@ impl App {
         self.input_ui.clear_paste_segments();
         self.input_ui.set_shell_mode(None);
         self.input_ui.set_cursor(0);
-        self.input_ui.clear_pending_media();
+        self.cancel_all_pending_attachments();
+        self.input_ui.clear_attachments();
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
         self.pending.clear_follow_ups();

@@ -209,6 +209,11 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         std::fs::write(path, script).unwrap();
     }
 
+    // Healthy Windows CI runs complete these PowerShell probes in 4 to 6 seconds.
+    // A loaded runner exceeded 15 seconds, so use 10 times the measured healthy
+    // upper bound as a hang tripwire rather than a startup-speed assertion.
+    const WINDOWS_SHIM_PROCESS_EXIT_BUDGET: Duration = Duration::from_secs(60);
+
     async fn run_and_read(command: &mut tokio::process::Command, out: &std::path::Path) -> String {
         let _ = std::fs::remove_file(out);
         command
@@ -216,9 +221,13 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let status = tokio::time::timeout(Duration::from_secs(15), command.status())
+        let status = tokio::time::timeout(WINDOWS_SHIM_PROCESS_EXIT_BUDGET, command.status())
             .await
-            .expect("shim timed out")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Windows shim process did not exit within the {WINDOWS_SHIM_PROCESS_EXIT_BUDGET:?} test budget"
+                )
+            })
             .expect("shim spawn failed");
         assert!(status.success(), "shim exit {status}");
         std::fs::read_to_string(out).expect("shim output missing")

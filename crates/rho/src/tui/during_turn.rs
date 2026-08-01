@@ -103,7 +103,6 @@ impl App {
                     self.clear_submitted_input();
                     self.input_ui
                         .set_submission_mode(InputSubmissionMode::ParseCommands);
-                    self.input_ui.clear_pending_media();
                     self.notify_status("input cleared; press esc to interrupt model");
                     self.ctrl_c_streak = 1;
                 } else {
@@ -375,6 +374,7 @@ impl App {
             CommandId::Help => self.execute_help_command(),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
+            CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::Export => self.execute_export_command(&invocation),

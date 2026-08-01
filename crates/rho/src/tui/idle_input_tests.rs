@@ -12,14 +12,14 @@ fn attached_document() -> ChatMedia {
 
 fn assert_goal_command_takes_media(command: &str) {
     let mut app = test_app();
-    app.input_ui.pending_media_mut().push(attached_document());
+    app.input_ui.push_ready_attachment(attached_document());
     app.input_ui.with_text_mut(|text| text.push_str(command));
     let invocation = commands::parse_command(command).unwrap().unwrap();
 
     let submission = app.take_command_submission(invocation, command.to_owned());
 
     assert_eq!(submission.media_len(), 1);
-    assert!(app.input_ui.pending_media().is_empty());
+    assert!(app.input_ui.attachments().is_empty());
     assert!(app.input_ui.text().is_empty());
 }
 
