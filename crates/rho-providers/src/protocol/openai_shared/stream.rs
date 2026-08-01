@@ -824,11 +824,12 @@ pub(crate) fn handle_codex_sse_value(
                 }
             }
         }
-        // Prefer streamed text/tools. When both are absent, try the completed
-        // envelope. Leave completed_text unset on empty content so
-        // `into_response` can emit a stream-summary diagnostic instead of the
-        // bare "missing response text" error.
-        if state.text.is_empty() && state.tool_calls.is_empty() {
+        // When no text deltas streamed, recover assistant text from the completed
+        // envelope even if function calls are already present. `into_response`
+        // still prefers streamed text over this fallback. Leave completed_text
+        // unset on empty content so empty assemblies can emit a stream-summary
+        // diagnostic instead of the bare "missing response text" error.
+        if state.text.is_empty() {
             if let Ok(response) =
                 serde_json::from_value::<ResponsesResponse>(value["response"].clone())
             {
