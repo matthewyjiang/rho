@@ -92,6 +92,31 @@ impl HistoryScrollChrome {
         }
     }
 
+    /// Pin a top line for document-style reading.
+    ///
+    /// Unlike [`Self::set_top_line`], a top-of-document position stays top-anchored
+    /// even when the content currently fits in the viewport. That keeps resize from
+    /// flipping a short finished answer to bottom-stickiness.
+    ///
+    /// Does not clear drag/hover chrome; callers that change position from the
+    /// keyboard should clear drag themselves if needed.
+    pub(super) fn pin_top_line(
+        &mut self,
+        content_len: usize,
+        viewport_len: usize,
+        top_line: usize,
+    ) {
+        let max_start = content_len.saturating_sub(viewport_len);
+        let top_line = top_line.min(max_start);
+        self.scroll = if top_line == 0 {
+            HistoryScroll::Manual { top_line: 0 }
+        } else if top_line >= max_start {
+            HistoryScroll::Bottom
+        } else {
+            HistoryScroll::Manual { top_line }
+        };
+    }
+
     pub(super) fn clamp(&mut self, content_len: usize, viewport_len: usize) {
         if matches!(self.scroll, HistoryScroll::Bottom) {
             self.drag = None;

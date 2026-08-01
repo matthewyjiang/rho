@@ -1,5 +1,7 @@
+use std::time::Instant;
+
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
@@ -7,8 +9,7 @@ use ratatui::{
 };
 
 use crate::workflow::{
-    ArtifactKind, CommandExit, NodeState, NodeTerminalState, RunLifecycle, WorkflowOutcome,
-    WorkspaceAccess,
+    CommandExit, NodeState, NodeTerminalState, RunLifecycle, WorkflowOutcome, WorkspaceAccess,
 };
 
 use super::{
@@ -18,7 +19,7 @@ use super::{
     state::WorkflowUiState,
 };
 
-pub(super) fn draw(frame: &mut Frame<'_>, state: &WorkflowUiState) {
+pub(super) fn draw(frame: &mut Frame<'_>, state: &mut WorkflowUiState) {
     let area = frame.area();
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -39,7 +40,16 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &WorkflowUiState) {
     draw_footer(frame, vertical[2], state);
 }
 
-fn draw_header(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
+pub(super) fn handle_mouse(
+    state: &mut WorkflowUiState,
+    kind: crossterm::event::MouseEventKind,
+    column: u16,
+    row: u16,
+) -> bool {
+    state.details_mut().handle_mouse(kind, column, row)
+}
+
+fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     let snapshot = state.snapshot();
     let progress = progress_summary(state);
     let status = run_status_label(snapshot.lifecycle, snapshot.outcome, snapshot.cancellation);
@@ -56,7 +66,7 @@ fn draw_header(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &Workf
     );
 }
 
-fn draw_dag(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
+fn draw_dag(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     let inner_width = area.width.saturating_sub(2);
     let activities = state
         .snapshot()
@@ -79,20 +89,56 @@ fn draw_dag(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &Workflow
     );
 }
 
-fn draw_details(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
-    let lines = state
-        .selected_node()
-        .map(|node| detail_lines(node, state))
-        .unwrap_or_else(|| vec![Line::from("No steps")]);
+fn draw_details(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) {
+    let block = Block::default().title(" Selected ").borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some(node) = state.selected_node().cloned() else {
+        frame.render_widget(Paragraph::new("No steps"), inner);
+        state.details_mut().sync_geometry(Rect::default(), 0, 0);
+        return;
+    };
+
+    let meta = detail_meta_lines(&node, state);
+    let meta_height = meta.len().min(inner.height as usize) as u16;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(meta_height), Constraint::Min(0)])
+        .split(inner);
+
+    frame.render_widget(Paragraph::new(meta).wrap(Wrap { trim: false }), chunks[0]);
+
+    let body_area = chunks[1];
+    let body_width = body_area.width.saturating_sub(1) as usize; // room for scrollbar
+    let content_len = state.details_mut().prepare_body_lines(body_width);
+    let viewport = body_area.height as usize;
+    state
+        .details_mut()
+        .sync_geometry(body_area, content_len, viewport);
+    if body_area.height == 0 || content_len == 0 {
+        return;
+    }
+
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(Block::default().title(" Selected ").borders(Borders::ALL))
-            .wrap(Wrap { trim: false }),
-        area,
+        Paragraph::new(state.details().visible_body_lines()),
+        body_area,
     );
+
+    let now = Instant::now();
+    if let Some(scrollbar) = state
+        .details()
+        .scrollbar()
+        .filter(|_| state.details().should_render_scrollbar(now))
+    {
+        scrollbar.render(frame, state.details().dragging_scrollbar());
+    }
 }
 
-fn detail_lines<'a>(node: &'a WorkflowNodeSnapshot, state: &'a WorkflowUiState) -> Vec<Line<'a>> {
+fn detail_meta_lines<'a>(
+    node: &'a WorkflowNodeSnapshot,
+    state: &'a WorkflowUiState,
+) -> Vec<Line<'a>> {
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
@@ -160,13 +206,11 @@ fn detail_lines<'a>(node: &'a WorkflowNodeSnapshot, state: &'a WorkflowUiState) 
         )));
     }
 
-    if let Some(path) = primary_artifact_path(node) {
-        lines.push(Line::from(format!("output {path}")));
-    }
-
-    // Keep structured output only when short and terminal-interesting.
-    if let Some(output) = interesting_output(node) {
-        lines.push(Line::from(format!("result {output}")));
+    // When the full body is available, skip the short one-line dump.
+    if !state.details().has_body() {
+        if let Some(output) = interesting_output(node) {
+            lines.push(Line::from(format!("result {output}")));
+        }
     }
 
     lines
@@ -195,10 +239,13 @@ fn progress_now_line(progress: &super::event_adapter::WorkflowProgress) -> Strin
     }
 }
 
-fn draw_footer(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
+fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     let snapshot = state.snapshot();
     let policy = state.policy();
     let mut keys = vec!["j/k move".to_owned()];
+    if state.details().is_scrollable() || state.details().has_body() {
+        keys.push("pgup/pgdn scroll".into());
+    }
     if matches!(
         state.session(),
         super::event_adapter::WorkflowSession::Watcher
@@ -351,24 +398,9 @@ fn waiting_on(node: &WorkflowNodeSnapshot, state: &WorkflowUiState) -> String {
         .join(", ")
 }
 
-fn primary_artifact_path(node: &WorkflowNodeSnapshot) -> Option<&str> {
-    let preferred = [
-        ArtifactKind::AgentAnswer,
-        ArtifactKind::StructuredOutput,
-        ArtifactKind::Stdout,
-        ArtifactKind::Stderr,
-    ];
-    for kind in preferred {
-        if let Some(artifact) = node.artifacts.iter().find(|item| item.kind == kind) {
-            return Some(artifact.artifact.relative_path.as_str());
-        }
-    }
-    None
-}
-
 fn interesting_output(node: &WorkflowNodeSnapshot) -> Option<String> {
     let output = node.validated_output.as_ref()?;
-    // Only show short results; full dumps belong in artifacts.
+    // Only show short results; full dumps belong in the scrollable body.
     let text = output.to_string();
     if text.chars().count() > 120 {
         return None;

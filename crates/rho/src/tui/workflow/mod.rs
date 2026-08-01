@@ -14,8 +14,10 @@
 mod app;
 mod control;
 mod dag;
+mod details;
 mod event_adapter;
 mod input;
+mod output;
 pub(crate) mod snapshot;
 mod state;
 mod view;

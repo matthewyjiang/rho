@@ -155,6 +155,14 @@ pub(crate) trait WorkflowEventAdapter: Send {
 
     fn initial_snapshot(&self) -> WorkflowSnapshot;
 
+    /// Durable run directory used to load finished node output artifacts.
+    ///
+    /// Watch/owner adapters return the store path. Synthetic adapters may
+    /// return `None`, in which case the details pane shows metadata only.
+    fn run_directory(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     fn next_event(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<WorkflowEvent>>> + Send + '_>>;

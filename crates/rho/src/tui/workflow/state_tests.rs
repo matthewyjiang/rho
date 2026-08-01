@@ -60,7 +60,11 @@ fn running_node(id: &str, name: &str, work: &str) -> WorkflowNodeSnapshot {
 fn progress_is_visible_for_current_attempt() {
     let node = running_node("review", "Review", "audit the change");
     let attempt = node.current_attempt.unwrap();
-    let mut state = WorkflowUiState::new(WorkflowSession::Owner, snapshot(vec![node]));
+    let mut state = WorkflowUiState::new(
+        WorkflowSession::Owner,
+        snapshot(vec![node]),
+        /*run_directory*/ None,
+    );
     state.apply(WorkflowEvent::Progress {
         node: NodeId::new("review").unwrap(),
         progress: WorkflowProgress {

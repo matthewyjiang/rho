@@ -40,6 +40,7 @@ fn live_state(session: WorkflowSession) -> WorkflowUiState {
             cancellation: CancellationState::NotRequested,
             recovery_requirement: None,
         },
+        /*run_directory*/ None,
     )
 }
 

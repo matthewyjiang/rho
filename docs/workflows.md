@@ -46,8 +46,11 @@ In the chat TUI, run `/workflow` to open one list:
 
 Keep chatting while a run continues. Reopen `/workflow` and Enter a run to **watch**
 the DAG without taking ownership of the driver. Press `q` to leave watch; `c` requests
-stop on a live run. Press `d` on a **RUNS** or **SAVED PLANS** row to delete it after
-confirm. Local `.star` source files are not deleted from disk.
+stop on a live run. On a finished step, the right pane shows that node's formatted
+output (agent answers as markdown, command streams as text). Use `PgUp`/`PgDn`,
+`Home`/`End`, mouse wheel, or the scrollbar to scroll long output. Press `d` on a
+**RUNS** or **SAVED PLANS** row to delete it after confirm. Local `.star` source
+files are not deleted from disk.
 
 The model `workflow` tool also starts `run` and `resume` in the background and
 returns a run id immediately. Completions are delivered automatically to the

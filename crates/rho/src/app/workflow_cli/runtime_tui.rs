@@ -27,6 +27,7 @@ pub(crate) async fn watch_run(run: StoredRun) -> anyhow::Result<()> {
 pub(super) struct RunnerTuiAdapter {
     runner: Arc<WorkflowRunner>,
     store: WorkflowStore,
+    rho_home: std::path::PathBuf,
     run_id: RunId,
     initial: WorkflowSnapshot,
     events: tokio::sync::mpsc::UnboundedReceiver<RuntimeEvent>,
@@ -49,6 +50,7 @@ impl RunnerTuiAdapter {
         Ok(Self {
             runner,
             store: WorkflowStore::new(&rho_home)?,
+            rho_home,
             run_id,
             initial,
             events,
@@ -79,6 +81,10 @@ impl WorkflowEventAdapter for RunnerTuiAdapter {
 
     fn initial_snapshot(&self) -> WorkflowSnapshot {
         self.initial.clone()
+    }
+
+    fn run_directory(&self) -> Option<std::path::PathBuf> {
+        Some(crate::workflow::WorkflowLayout::new(&self.rho_home).run(self.run_id))
     }
 
     fn next_event(
@@ -187,6 +193,10 @@ impl WorkflowEventAdapter for WatchAdapter {
 
     fn initial_snapshot(&self) -> WorkflowSnapshot {
         self.initial.clone()
+    }
+
+    fn run_directory(&self) -> Option<std::path::PathBuf> {
+        Some(crate::workflow::WorkflowLayout::new(&self.rho_home).run(self.run_id))
     }
 
     fn next_event(
