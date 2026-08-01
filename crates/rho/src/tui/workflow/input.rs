@@ -16,6 +16,10 @@ pub(super) fn handle_key(state: &mut WorkflowUiState, key: KeyEvent) -> InputRes
         return InputResult::Ignore;
     }
 
+    let lifecycle = state.lifecycle();
+    let detachable = state.snapshot().detachable;
+    let running = matches!(lifecycle, RunLifecycle::Running | RunLifecycle::Cancelling);
+
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => {
             state.select_previous();
@@ -34,23 +38,31 @@ pub(super) fn handle_key(state: &mut WorkflowUiState, key: KeyEvent) -> InputRes
             }
             super::PlanApprovalState::Approved => InputResult::Ignore,
         },
-        KeyCode::Char('c') | KeyCode::Esc
-            if !state.can_exit()
-                && matches!(
-                    state.lifecycle(),
-                    RunLifecycle::Running | RunLifecycle::Cancelling
-                ) =>
+        // Watch mode: leave with Esc/q; cancel only with plain `c`.
+        KeyCode::Esc if detachable || state.can_exit() => InputResult::Exit,
+        KeyCode::Char('q') if detachable || state.can_exit() => InputResult::Exit,
+        KeyCode::Char('c')
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && (detachable || state.can_exit()) =>
+        {
+            InputResult::Exit
+        }
+        KeyCode::Char('c')
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(state.approval(), super::PlanApprovalState::Approved)
+                && running =>
         {
             InputResult::Action(WorkflowAction::Cancel)
         }
         KeyCode::Char('c')
-            if key.modifiers.contains(KeyModifiers::CONTROL) && !state.can_exit() =>
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && !state.can_exit()
+                && !detachable =>
         {
             InputResult::Action(WorkflowAction::Cancel)
         }
-        KeyCode::Char('q') | KeyCode::Esc if state.can_exit() => InputResult::Exit,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) && state.can_exit() => {
-            InputResult::Exit
+        KeyCode::Esc if !state.can_exit() && !detachable && running => {
+            InputResult::Action(WorkflowAction::Cancel)
         }
         _ => InputResult::Ignore,
     }

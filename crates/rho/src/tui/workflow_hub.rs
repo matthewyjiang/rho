@@ -16,8 +16,8 @@ use crate::{
         workflow_runtime::RecoveryDecision,
     },
     workflow::{
-        derive_workflow_outcome, NodeState, NodeTerminalState, PlanId, RunId, RunLifecycle,
-        StoredPlan, StoredRun, WorkflowOutcome, WorkflowValue,
+        derive_workflow_outcome, PlanId, RunId, RunLifecycle, StoredPlan, StoredRun,
+        WorkflowOutcome, WorkflowValue,
     },
 };
 
@@ -83,22 +83,6 @@ fn outcome_label(outcome: Option<WorkflowOutcome>) -> String {
         Some(WorkflowOutcome::Cancellation) => "cancelled".into(),
         Some(WorkflowOutcome::Blocked) => "blocked".into(),
         None => "pending".into(),
-    }
-}
-
-fn node_state_label(state: &NodeState) -> String {
-    match state {
-        NodeState::Pending => "waiting".into(),
-        NodeState::Ready => "ready".into(),
-        NodeState::Running { attempt } => format!("running (try {})", attempt),
-        NodeState::Terminal { outcome } => match outcome {
-            NodeTerminalState::Success => "done".into(),
-            NodeTerminalState::Failure => "failed".into(),
-            NodeTerminalState::Denial => "denied".into(),
-            NodeTerminalState::Cancellation => "cancelled".into(),
-            NodeTerminalState::Skipped => "skipped".into(),
-            NodeTerminalState::Blocked => "blocked".into(),
-        },
     }
 }
 
@@ -179,14 +163,14 @@ pub(super) fn hub_picker(
             let name = run.graph.graph.name.as_str();
             items.push(item(
                 Some("RUNS"),
-                format!("Open  {life}  ·  {short}"),
+                format!("Watch  {life}  ·  {short}"),
                 format!(
-                    "{name}\n{life} · {}\nEnter opens the live graph. Press d to delete.\nRun id {short}",
+                    "{name}\n{life} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}",
                     run_progress(run)
                 ),
                 format!("{RUN_PREFIX}{id}"),
                 Some((life.into(), lifecycle_tone(run.state.state.lifecycle))),
-                Some("open"),
+                Some("watch"),
             ));
         }
         for run in finished {
@@ -197,14 +181,14 @@ pub(super) fn hub_picker(
             let tone = outcome_tone(&outcome);
             items.push(item(
                 Some("RUNS"),
-                format!("Status  {outcome}  ·  {short}"),
+                format!("Watch  {outcome}  ·  {short}"),
                 format!(
-                    "{name}\nFinished · {outcome} · {}\nEnter shows step status. Press d to delete.\nRun id {short}",
+                    "{name}\nFinished · {outcome} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}",
                     run_progress(run)
                 ),
                 format!("{RUN_PREFIX}{id}"),
                 Some((outcome, tone)),
-                Some("show"),
+                Some("watch"),
             ));
         }
     }
@@ -251,50 +235,6 @@ fn outcome_tone(outcome: &str) -> PickerBadgeTone {
         "failed" | "denied" | "blocked" | "cancelled" => PickerBadgeTone::Warning,
         _ => PickerBadgeTone::Internal,
     }
-}
-
-fn status_overlay(run: &StoredRun) -> UiPicker {
-    let outcome = derive_workflow_outcome(&run.graph, &run.state.state);
-    let mut items = vec![item(
-        Some("Summary"),
-        run.graph.graph.name.to_string(),
-        format!(
-            "{} · {} · id {}",
-            lifecycle_label(run.state.state.lifecycle),
-            outcome_label(outcome),
-            short_id(&run.manifest.run_id.to_string())
-        ),
-        "status:summary",
-        Some((
-            lifecycle_label(run.state.state.lifecycle).into(),
-            lifecycle_tone(run.state.state.lifecycle),
-        )),
-        Some("close"),
-    )];
-    for (node_id, state) in &run.state.state.nodes {
-        let label = node_state_label(state);
-        items.push(item(
-            Some("Steps"),
-            node_id.to_string(),
-            label.clone(),
-            format!("status:node:{node_id}"),
-            Some((label, PickerBadgeTone::Internal)),
-            Some("close"),
-        ));
-    }
-    UiPicker::new(
-        format!("Status · {}", short_id(&run.manifest.run_id.to_string())),
-        "enter or esc closes",
-        items,
-        PickerAction::Dismiss,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " STEPS".into(),
-        detail_label: Some(" DETAIL".into()),
-        nav_keys_hint: "↑↓ steps".into(),
-    })
-    .with_confirm_verb("close")
 }
 
 impl App {
@@ -514,28 +454,71 @@ impl App {
         let parsed = RunId::from_str(run_id)?;
         let run = self.workflow_ops()?.load_run_id(parsed)?;
         match run.state.state.lifecycle {
-            RunLifecycle::Completed => {
-                self.open_child_picker(status_overlay(&run));
-                self.status = "run status".into();
-                Ok(())
-            }
             RunLifecycle::NeedsRecovery => {
+                // Recover in the background, then open the watch screen.
                 self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal)
-                    .await
+                    .await?;
+                let run = self.workflow_ops()?.load_run_id(parsed)?;
+                self.open_workflow_watch(run, terminal).await
             }
-            // Live runs stay in-process in the background. Show status instead of
-            // taking over the terminal.
-            RunLifecycle::Planned | RunLifecycle::Running | RunLifecycle::Cancelling => {
-                self.open_child_picker(status_overlay(&run));
-                self.status = match run.state.state.lifecycle {
-                    RunLifecycle::Running => "run in background".into(),
-                    RunLifecycle::Cancelling => "run stopping".into(),
-                    RunLifecycle::Planned => "run queued".into(),
-                    _ => "run status".into(),
-                };
-                Ok(())
+            RunLifecycle::Planned
+            | RunLifecycle::Running
+            | RunLifecycle::Cancelling
+            | RunLifecycle::Completed => self.open_workflow_watch(run, terminal).await,
+        }
+    }
+
+    async fn open_workflow_watch(
+        &mut self,
+        run: StoredRun,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let run_id = run.manifest.run_id;
+        self.input_ui.set_composer(ComposerMode::Input);
+        let mut terminal_session = match self.terminal_session.take() {
+            Some(session) => session,
+            None => {
+                self.insert_entry(&Entry::Error(
+                    "Terminal session is unavailable for workflow watch.".into(),
+                ));
+                self.status = "watch failed".into();
+                return Ok(());
+            }
+        };
+        let suspended = terminal_session
+            .run_suspended(terminal, "Opening workflow watch…", || async move {
+                workflow_cli::watch_run(run).await
+            })
+            .await;
+        self.terminal_session = Some(terminal_session);
+
+        if let Err(resume_error) = suspended.resume_result {
+            self.insert_entry(&Entry::Error(format!(
+                "Failed to return to chat after workflow watch: {resume_error:#}"
+            )));
+            if let Err(operation_error) = suspended.operation_result {
+                self.insert_entry(&Entry::Error(format!(
+                    "Watch also failed: {operation_error:#}"
+                )));
+            }
+            self.status = "watch handoff failed".into();
+            return Ok(());
+        }
+        self.ctrl_c_streak = 0;
+        match suspended.operation_result {
+            Ok(()) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "Left watch for run {}.",
+                    short_id(&run_id.to_string())
+                )));
+                self.status = "ready".into();
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("Workflow watch failed: {error:#}")));
+                self.status = "watch failed".into();
             }
         }
+        Ok(())
     }
 
     async fn start_workflow_source(

@@ -107,6 +107,9 @@ pub(crate) struct WorkflowSnapshot {
     pub(crate) nodes: Vec<WorkflowNodeSnapshot>,
     pub(crate) cancellation: CancellationState,
     pub(crate) recovery_requirement: Option<RecoveryRequirement>,
+    /// True when the TUI is only observing a run and does not own the driver.
+    /// Leave with q anytime; cancel still requests a stop when the run is live.
+    pub(crate) detachable: bool,
     /// True only after the runner has saved state and stopped active handles.
     pub(crate) exit_is_safe: bool,
 }
@@ -483,6 +486,7 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
         ],
         cancellation: CancellationState::NotRequested,
         recovery_requirement: None,
+        detachable: false,
         exit_is_safe: true,
     }
 }

@@ -346,6 +346,7 @@ fn effective_permission_mode_for<'a>(
     Ok(effective)
 }
 
+#[allow(dead_code)]
 pub(super) async fn execute_tool_run(
     run: StoredRun,
     recovery: RecoveryDecision,
@@ -539,6 +540,98 @@ impl WorkflowEventAdapter for RunnerTuiAdapter {
     }
 }
 
+/// Poll interval for read-only watch of a durable run snapshot.
+const WATCH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Opens the workflow DAG screen in read-only watch mode for an existing run.
+pub(crate) async fn watch_run(run: StoredRun) -> anyhow::Result<()> {
+    let adapter = WatchAdapter::new(crate::paths::rho_dir()?, run)?;
+    crate::tui::workflow::run(Box::new(adapter)).await?;
+    Ok(())
+}
+
+struct WatchAdapter {
+    rho_home: std::path::PathBuf,
+    run_id: RunId,
+    initial: WorkflowSnapshot,
+    last_revision: u64,
+    interval: tokio::time::Interval,
+}
+
+impl WatchAdapter {
+    fn new(rho_home: std::path::PathBuf, run: StoredRun) -> anyhow::Result<Self> {
+        let run_id = run.manifest.run_id;
+        let last_revision = run.state.state.revision;
+        let mut interval = tokio::time::interval(WATCH_POLL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Ok(Self {
+            rho_home,
+            run_id,
+            initial: watch_snapshot(&run),
+            last_revision,
+            interval,
+        })
+    }
+
+    fn load(&self) -> anyhow::Result<(WorkflowSnapshot, u64)> {
+        let store = WorkflowStore::new(&self.rho_home)?;
+        let run = store.load_run(self.run_id)?;
+        let revision = run.state.state.revision;
+        Ok((watch_snapshot(&run), revision))
+    }
+}
+
+impl WorkflowEventAdapter for WatchAdapter {
+    fn initial_snapshot(&self) -> WorkflowSnapshot {
+        self.initial.clone()
+    }
+
+    fn next_event(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<TuiEvent>>> + Send + '_>> {
+        Box::pin(async move {
+            loop {
+                self.interval.tick().await;
+                let (snapshot, revision) = self.load()?;
+                if revision != self.last_revision {
+                    self.last_revision = revision;
+                    return Ok(Some(TuiEvent::Snapshot(snapshot)));
+                }
+            }
+        })
+    }
+
+    fn send(
+        &mut self,
+        action: WorkflowAction,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            match action {
+                WorkflowAction::Cancel => {
+                    let store = WorkflowStore::new(&self.rho_home)?;
+                    let lifecycle = store.load_run(self.run_id)?.state.state.lifecycle;
+                    super::request_cancellation(&self.rho_home, self.run_id, lifecycle).await?;
+                }
+                WorkflowAction::ConfirmPlan | WorkflowAction::ConfirmResume => {
+                    anyhow::bail!("watch mode cannot start or resume a plan")
+                }
+            }
+            Ok(())
+        })
+    }
+
+    fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move { Ok(()) })
+    }
+}
+
+fn watch_snapshot(run: &StoredRun) -> WorkflowSnapshot {
+    let mut snapshot = tui_snapshot(run);
+    snapshot.detachable = true;
+    snapshot.exit_is_safe = true;
+    snapshot
+}
+
 fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
     let state = &run.state.state;
     let nodes = run
@@ -608,6 +701,7 @@ fn tui_snapshot(run: &StoredRun) -> WorkflowSnapshot {
             CancellationState::NotRequested
         },
         recovery_requirement: None,
+        detachable: false,
         exit_is_safe: matches!(
             lifecycle,
             RunLifecycle::Completed | RunLifecycle::NeedsRecovery

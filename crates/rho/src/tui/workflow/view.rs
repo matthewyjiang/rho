@@ -200,20 +200,32 @@ fn progress_now_line(progress: &super::event_adapter::WorkflowProgress) -> Strin
 fn draw_footer(frame: &mut Frame<'_>, area: ratatui::layout::Rect, state: &WorkflowUiState) {
     let snapshot = state.snapshot();
     let mut keys = vec!["j/k move".to_owned()];
-    match snapshot.approval {
-        PlanApprovalState::AwaitingPlan => keys.push("enter start".into()),
-        PlanApprovalState::AwaitingResume => keys.push("enter continue".into()),
-        PlanApprovalState::Approved
-            if !snapshot.exit_is_safe
-                && matches!(
-                    snapshot.lifecycle,
-                    RunLifecycle::Running | RunLifecycle::Cancelling
-                ) =>
+    if snapshot.detachable {
+        keys.push("watch".into());
+        if matches!(
+            snapshot.lifecycle,
+            RunLifecycle::Running | RunLifecycle::Cancelling
+        ) && !matches!(snapshot.cancellation, CancellationState::Requested)
         {
             keys.push("c stop".into());
         }
-        PlanApprovalState::Approved if snapshot.exit_is_safe => keys.push("q leave".into()),
-        PlanApprovalState::Approved => {}
+        keys.push("q leave".into());
+    } else {
+        match snapshot.approval {
+            PlanApprovalState::AwaitingPlan => keys.push("enter start".into()),
+            PlanApprovalState::AwaitingResume => keys.push("enter continue".into()),
+            PlanApprovalState::Approved
+                if !snapshot.exit_is_safe
+                    && matches!(
+                        snapshot.lifecycle,
+                        RunLifecycle::Running | RunLifecycle::Cancelling
+                    ) =>
+            {
+                keys.push("c stop".into());
+            }
+            PlanApprovalState::Approved if snapshot.exit_is_safe => keys.push("q leave".into()),
+            PlanApprovalState::Approved => {}
+        }
     }
     if matches!(snapshot.cancellation, CancellationState::Requested) {
         keys.push("stopping…".into());
