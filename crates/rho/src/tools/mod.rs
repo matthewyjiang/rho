@@ -10,6 +10,7 @@ pub mod skill;
 pub(crate) mod tui_fixture;
 pub mod web;
 pub(crate) mod workflow;
+pub(crate) mod workflow_tracker;
 
 /// Stable union of model-facing and host-only built-in tool names.
 ///

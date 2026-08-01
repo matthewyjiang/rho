@@ -180,12 +180,14 @@ pub(crate) async fn execute_run(
 ///
 /// The caller keeps chatting or returns a tool result while the run continues.
 /// Inspect progress with status; stop it with cancel. The owner process must
-/// stay alive for the run to make progress.
+/// stay alive for the run to make progress. When `tracker` is set, the parent
+/// session receives a completion notification after the driver finishes.
 pub(crate) async fn spawn_background_run(
     run: StoredRun,
     recovery: RecoveryDecision,
     config_path: Option<std::path::PathBuf>,
     approvals: ApprovalSession,
+    tracker: Option<crate::tools::workflow_tracker::WorkflowRunTracker>,
 ) -> anyhow::Result<StoredRun> {
     let run_id = run.manifest.run_id;
     let runtime = WorkflowRuntime::build(&run, config_path, approvals)?;
@@ -194,6 +196,47 @@ pub(crate) async fn spawn_background_run(
         let result = runner.drive(run_id, recovery, None).await;
         drop(runner);
         runtime.shutdown().await;
+        if let Some(tracker) = tracker {
+            match crate::paths::rho_dir() {
+                Ok(home) => match crate::workflow::WorkflowStore::new(&home) {
+                    Ok(store) => match store.load_run(run_id) {
+                        Ok(final_run) => tracker.mark_finished_from_stored(&final_run),
+                        Err(error) => match &result {
+                            Ok(_) => tracker.mark_failed(
+                                &run_id.to_string(),
+                                format!(
+                                    "workflow finished but status could not be loaded: {error}"
+                                ),
+                            ),
+                            Err(drive_error) => tracker.mark_failed(
+                                &run_id.to_string(),
+                                format!("{drive_error}; status load failed: {error}"),
+                            ),
+                        },
+                    },
+                    Err(error) => match &result {
+                        Ok(_) => tracker.mark_failed(
+                            &run_id.to_string(),
+                            format!("workflow finished but store could not be opened: {error}"),
+                        ),
+                        Err(drive_error) => tracker.mark_failed(
+                            &run_id.to_string(),
+                            format!("{drive_error}; store open failed: {error}"),
+                        ),
+                    },
+                },
+                Err(error) => match &result {
+                    Ok(_) => tracker.mark_failed(
+                        &run_id.to_string(),
+                        format!("workflow finished but rho home is unavailable: {error}"),
+                    ),
+                    Err(drive_error) => tracker.mark_failed(
+                        &run_id.to_string(),
+                        format!("{drive_error}; rho home unavailable: {error}"),
+                    ),
+                },
+            }
+        }
         match result {
             Ok(_) => tracing::info!(%run_id, "background workflow completed"),
             Err(error) => {
@@ -202,7 +245,7 @@ pub(crate) async fn spawn_background_run(
         }
     });
     // Return the pre-spawn snapshot immediately. Progress is eventually consistent
-    // via status / watch; do not sleep or yield hoping the driver advanced.
+    // via status / watch / automatic completion notification.
     Ok(run)
 }
 

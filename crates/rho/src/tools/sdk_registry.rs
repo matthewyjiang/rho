@@ -65,6 +65,7 @@ pub struct ToolSetOptions {
     capabilities: AgentCapabilities,
     delegation: Option<DelegationConfig>,
     workflow: Option<Arc<dyn super::workflow::WorkflowToolService>>,
+    workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
 }
 
 impl Default for ToolSetOptions {
@@ -79,6 +80,7 @@ impl ToolSetOptions {
             capabilities,
             delegation: None,
             workflow: None,
+            workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
         }
     }
 
@@ -94,12 +96,21 @@ impl ToolSetOptions {
         self.workflow = Some(service);
         self
     }
+
+    pub(crate) fn workflow_tracker(
+        mut self,
+        tracker: super::workflow_tracker::WorkflowRunTracker,
+    ) -> Self {
+        self.workflow_tracker = tracker;
+        self
+    }
 }
 
 pub struct AppToolSet {
     tools: Vec<Arc<dyn Tool>>,
     bundles: Vec<Box<dyn ToolBundle>>,
     subagents: Option<SubagentManager>,
+    workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
 }
@@ -110,6 +121,7 @@ impl AppToolSet {
             tools: Vec::new(),
             bundles: Vec::new(),
             subagents: None,
+            workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             checkpoint_tracker: Arc::new(
                 crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(false),
             ),
@@ -122,8 +134,10 @@ impl AppToolSet {
             capabilities,
             delegation,
             workflow,
+            workflow_tracker,
         } = options;
         let mut tool_set = Self::disabled();
+        tool_set.workflow_tracker = workflow_tracker;
         tool_set.checkpoint_tracker = Arc::new(
             crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
                 config.experimental_workspace_rewind,
@@ -222,6 +236,10 @@ impl AppToolSet {
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
+    }
+
+    pub fn workflow_tracker(&self) -> &super::workflow_tracker::WorkflowRunTracker {
+        &self.workflow_tracker
     }
 
     pub fn checkpoint_tracker(

@@ -33,7 +33,7 @@ web_search          when hosted = true and the chat path supports it, use provid
 fetch_content       fetch pages, GitHub URLs, local files, PDFs, and video targets
 get_search_content  retrieve stored content from a prior web_search or fetch_content call
 process             start, poll, or stop a managed background shell process
-workflow            validate, freeze, run, inspect, cancel, or resume a durable workflow
+workflow            validate, freeze, run, inspect, cancel, or resume a durable workflow; run/resume complete via automatic parent notification
 bash                macOS and Linux
 powershell          Windows
 ```

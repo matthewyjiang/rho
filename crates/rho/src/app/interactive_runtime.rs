@@ -102,6 +102,9 @@ fn bind_subagent_parent(
             storage.and_then(StoredSession::subagents_dir),
         ));
     }
+    tools
+        .workflow_tracker()
+        .bind_parent_session(session_id.to_string());
 }
 
 enum TurnPrelude {
@@ -839,6 +842,10 @@ impl InteractiveRuntime {
 
     pub(crate) fn subagents(&self) -> Option<&crate::tools::agent::SubagentManager> {
         self.tools.subagents()
+    }
+
+    pub(crate) fn workflow_tracker(&self) -> &crate::tools::workflow_tracker::WorkflowRunTracker {
+        self.tools.workflow_tracker()
     }
 
     #[cfg(test)]

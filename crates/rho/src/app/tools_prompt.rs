@@ -54,6 +54,8 @@ pub(crate) fn assemble_tools_and_prompt(
         AppToolSet::disabled()
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities);
+        let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
+        tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if delegation_enabled {
             tool_options = tool_options.delegation(DelegationConfig::new(
                 options.cwd.to_path_buf(),
@@ -69,6 +71,7 @@ pub(crate) fn assemble_tools_and_prompt(
             tool_options = tool_options.workflow(super::workflow_cli::workflow_tool_service(
                 options.cwd.to_path_buf(),
                 Some(options.config_path),
+                workflow_tracker,
             ));
         }
         AppToolSet::new(options.config, options.diagnostics.clone(), tool_options)

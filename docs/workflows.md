@@ -39,7 +39,8 @@ The main steps are:
 
 In the chat TUI, run `/workflow` to open one list:
 
-1. **START** - `Start <name>` starts a new run in the background and returns to chat.
+1. **START** - `Start <name>` starts a new run in the background, appends the
+   run id to chat context, and returns to chat without starting a model turn.
 2. **RUNS** - `Watch <state> · <id>` opens the DAG watch screen (live or finished).
 3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan in the background.
 
@@ -49,7 +50,14 @@ stop on a live run. Press `d` on a **RUNS** or **SAVED PLANS** row to delete it 
 confirm. Local `.star` source files are not deleted from disk.
 
 The model `workflow` tool also starts `run` and `resume` in the background and
-returns a run id immediately. Use `status` and `cancel` for follow-up.
+returns a run id immediately. Completions are delivered automatically to the
+parent session at the next turn boundary (batched with other background
+completions). Use `status` for a live check or after delivery, and `cancel` to
+stop. Do not poll in a loop.
+
+Starting a workflow from `/workflow` appends the run id to the chat context so
+the agent can watch or cancel it, without starting a model turn. When the run
+finishes, Rho kicks a completion message into the parent session the same way.
 
 The right pane explains the highlighted row. Enter runs that action.
 

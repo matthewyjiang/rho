@@ -78,7 +78,10 @@ impl App {
             }
             let subagents_active = agent.subagents().is_some_and(|manager| {
                 manager.has_active_or_pending_notification(agent.session_id().as_str())
-            }) || self.pending_subagent_questionnaire.is_some()
+            }) || agent
+                .workflow_tracker()
+                .has_active_or_pending_notification(agent.session_id().as_str())
+                || self.pending_subagent_questionnaire.is_some()
                 || !self.queued_subagent_questionnaires.is_empty();
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()

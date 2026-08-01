@@ -15,10 +15,13 @@ use rho_sdk::{
 use crate::{
     agent::AgentCapabilities,
     app::workflow_runtime::RecoveryDecision,
-    tools::workflow::{
-        WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
-        WorkflowNodeStateSummary, WorkflowNodeSummary, WorkflowRunStateSummary,
-        WorkflowToolRequest, WorkflowToolResult, WorkflowToolService,
+    tools::{
+        workflow::{
+            WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
+            WorkflowNodeStateSummary, WorkflowNodeSummary, WorkflowRunStateSummary,
+            WorkflowToolRequest, WorkflowToolResult, WorkflowToolService,
+        },
+        workflow_tracker::WorkflowRunTracker,
     },
     workflow::{
         InputName, NodeState, NodeTerminalState, PlanningLimits, RunLifecycle, SourceBytes,
@@ -33,13 +36,19 @@ mod capabilities;
 pub(in crate::app) fn workflow_tool_service(
     cwd: PathBuf,
     config_path: Option<PathBuf>,
+    tracker: WorkflowRunTracker,
 ) -> Arc<dyn WorkflowToolService> {
-    Arc::new(AppWorkflowToolService { cwd, config_path })
+    Arc::new(AppWorkflowToolService {
+        cwd,
+        config_path,
+        tracker,
+    })
 }
 
 struct AppWorkflowToolService {
     cwd: PathBuf,
     config_path: Option<PathBuf>,
+    tracker: WorkflowRunTracker,
 }
 
 impl WorkflowToolService for AppWorkflowToolService {
@@ -264,11 +273,18 @@ impl AppWorkflowToolService {
                 let plan = ops.prepare_run_id(plan_id).map_err(tool_error)?;
                 confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
                 let run = ops.create_confirmed_run(&plan).map_err(tool_error)?;
+                self.tracker.register_start(
+                    run.manifest.run_id.to_string(),
+                    run.graph.graph.name.as_str(),
+                    run.manifest.graph_digest.0.clone(),
+                    None,
+                );
                 let started = runtime::spawn_background_run(
                     run,
                     RecoveryDecision::NormalResume,
                     self.config_path.clone(),
                     context.child_approval_session(),
+                    Some(self.tracker.clone()),
                 )
                 .await
                 .map_err(tool_error)?;
@@ -276,10 +292,9 @@ impl AppWorkflowToolService {
             }
             WorkflowToolRequest::Status { run_id } => {
                 let ops = self.ops().map_err(tool_error)?;
-                run_result(
-                    ops.load_run_id(run_id).map_err(tool_error)?,
-                    RunResultKind::Status,
-                )
+                let run = ops.load_run_id(run_id).map_err(tool_error)?;
+                observe_if_terminal(&self.tracker, &run);
+                run_result(run, RunResultKind::Status)
             }
             WorkflowToolRequest::Cancel { run_id } => {
                 let ops = self.ops().map_err(tool_error)?;
@@ -288,6 +303,12 @@ impl AppWorkflowToolService {
                     .cancel(run.manifest.run_id, run.state.state.lifecycle)
                     .await
                     .map_err(tool_error)?;
+                if matches!(
+                    outcome.lifecycle,
+                    RunLifecycle::Completed | RunLifecycle::NeedsRecovery
+                ) {
+                    self.tracker.observe(&run.manifest.run_id.to_string());
+                }
                 Ok(WorkflowToolResult::Cancel {
                     run_id: run.manifest.run_id.to_string(),
                     request_id: outcome.request_id,
@@ -324,11 +345,18 @@ impl AppWorkflowToolService {
                         }
                     })?;
                 confirm_exact_plan(context, "Resume", &run.manifest.graph_digest.0).await?;
+                self.tracker.register_start(
+                    run.manifest.run_id.to_string(),
+                    run.graph.graph.name.as_str(),
+                    run.manifest.graph_digest.0.clone(),
+                    None,
+                );
                 let started = runtime::spawn_background_run(
                     run,
                     recovery,
                     self.config_path.clone(),
                     context.child_approval_session(),
+                    Some(self.tracker.clone()),
                 )
                 .await
                 .map_err(tool_error)?;
@@ -530,6 +558,17 @@ enum RunResultKind {
     Run,
     Status,
     Resume,
+}
+
+fn observe_if_terminal(tracker: &WorkflowRunTracker, run: &StoredRun) {
+    if matches!(
+        run.state.state.lifecycle,
+        RunLifecycle::Completed | RunLifecycle::NeedsRecovery
+    ) {
+        // Status that already saw the terminal durable state counts as delivery.
+        tracker.mark_finished_from_stored(run);
+        tracker.observe(&run.manifest.run_id.to_string());
+    }
 }
 
 fn run_result(run: StoredRun, kind: RunResultKind) -> Result<WorkflowToolResult, ToolError> {

@@ -407,6 +407,7 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
+        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if value.starts_with("noop:") {
             return Ok(());
@@ -414,15 +415,15 @@ impl App {
         match value {
             // Enter on a workflow starts it. No extra menu.
             value if let Some(path) = value.strip_prefix(SOURCE_PREFIX) => {
-                self.start_workflow_source(path, terminal).await
+                self.start_workflow_source(path, terminal, agent).await
             }
             // Enter on a saved plan runs it.
             value if let Some(id) = value.strip_prefix(PLAN_PREFIX) => {
-                self.run_workflow_plan(id, terminal).await
+                self.run_workflow_plan(id, terminal, agent).await
             }
             // Enter on a run opens the live screen or finished status.
             value if let Some(id) = value.strip_prefix(RUN_PREFIX) => {
-                self.open_workflow_run_primary(id, terminal).await
+                self.open_workflow_run_primary(id, terminal, agent).await
             }
             other => {
                 self.insert_entry(&Entry::Error(format!(
@@ -443,13 +444,14 @@ impl App {
         &mut self,
         run_id: &str,
         terminal: &mut DefaultTerminal,
+        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let parsed = RunId::from_str(run_id)?;
         let run = self.workflow_ops()?.load_run_id(parsed)?;
         match run.state.state.lifecycle {
             RunLifecycle::NeedsRecovery => {
                 // Recover in the background, then open the watch screen.
-                self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal)
+                self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal, agent)
                     .await?;
                 let run = self.workflow_ops()?.load_run_id(parsed)?;
                 self.open_workflow_watch(run, terminal).await
@@ -518,6 +520,7 @@ impl App {
         &mut self,
         relative_path: &str,
         _terminal: &mut DefaultTerminal,
+        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let absolute = self.info.runtime.cwd.join(relative_path);
         self.status = format!("starting {relative_path}");
@@ -559,7 +562,7 @@ impl App {
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
-            "Starting '{}' in the background (run {}). Default inputs only. Reopen /workflow for status.",
+            "Starting '{}' in the background (run {}). Default inputs only. Completion is delivered automatically.",
             plan.graph.graph.name,
             short_id(&run_id.to_string())
         )));
@@ -570,6 +573,7 @@ impl App {
                 "workflow {} running in background",
                 short_id(&run_id.to_string())
             ),
+            agent,
         )
         .await
     }
@@ -596,6 +600,7 @@ impl App {
         &mut self,
         plan_id: &str,
         _terminal: &mut DefaultTerminal,
+        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let plan_id = PlanId::from_str(plan_id)?;
         let ops = self.workflow_ops()?;
@@ -618,7 +623,7 @@ impl App {
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
-            "Starting plan {} in the background (run {}). Reopen /workflow for status.",
+            "Starting plan {} in the background (run {}). Completion is delivered automatically.",
             short_id(&plan_id.to_string()),
             short_id(&run_id.to_string())
         )));
@@ -629,6 +634,7 @@ impl App {
                 "workflow {} running in background",
                 short_id(&run_id.to_string())
             ),
+            agent,
         )
         .await
     }
@@ -638,6 +644,7 @@ impl App {
         run_id: &str,
         recover_uncertain: bool,
         _terminal: &mut DefaultTerminal,
+        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let run_id = RunId::from_str(run_id)?;
         let ops = self.workflow_ops()?;
@@ -659,7 +666,7 @@ impl App {
         };
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
-            "Resuming run {} in the background. Reopen /workflow for status.",
+            "Resuming run {} in the background. Completion is delivered automatically.",
             short_id(&run_id.to_string())
         )));
         self.launch_workflow_execution(
@@ -669,6 +676,7 @@ impl App {
                 "workflow {} running in background",
                 short_id(&run_id.to_string())
             ),
+            agent,
         )
         .await
     }
@@ -678,14 +686,44 @@ impl App {
         run: StoredRun,
         recovery: RecoveryDecision,
         success_status: String,
+        agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let run_id = run.manifest.run_id;
+        let workflow_name = run.graph.graph.name.as_str().to_owned();
+        let graph_digest = run.manifest.graph_digest.0.clone();
         let config_path = self.info.services.config_repository.configured_path().ok();
         // Background runs keep the chat TUI. Approvals for rare supervised needs
         // are denied; auto/plan modes are the intended path for /workflow starts.
         let approvals = rho_sdk::ApprovalSession::new(rho_sdk::DenyApprovals);
-        match workflow_cli::spawn_background_run(run, recovery, config_path, approvals).await {
+        let tracker = agent.workflow_tracker().clone();
+        tracker.register_start(
+            run_id.to_string(),
+            workflow_name.clone(),
+            graph_digest.clone(),
+            Some(agent.session_id().to_string()),
+        );
+        match workflow_cli::spawn_background_run(
+            run,
+            recovery,
+            config_path,
+            approvals,
+            Some(tracker),
+        )
+        .await
+        {
             Ok(_) => {
+                let (model, display) = crate::tools::workflow_tracker::start_context_prompts(
+                    &run_id.to_string(),
+                    &workflow_name,
+                    &graph_digest,
+                );
+                if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
+                    self.insert_entry(&Entry::Error(format!(
+                        "Workflow started, but could not add run id to context: {error:#}"
+                    )));
+                } else {
+                    self.insert_entry(&Entry::Notice(display));
+                }
                 self.insert_entry(&Entry::Notice(format!(
                     "Workflow run {} is running in the background.",
                     short_id(&run_id.to_string())

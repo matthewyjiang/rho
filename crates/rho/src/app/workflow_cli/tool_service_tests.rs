@@ -15,6 +15,7 @@ fn service() -> AppWorkflowToolService {
     AppWorkflowToolService {
         cwd: "/workspace".into(),
         config_path: None,
+        tracker: crate::tools::workflow_tracker::WorkflowRunTracker::new(),
     }
 }
 
