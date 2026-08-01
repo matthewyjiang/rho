@@ -60,17 +60,24 @@ fn run_to_completion(
     let plan = workflow_plan(runner, home, &["workflow", "run", PLAN_ID]);
     let mut harness = spawn(runner, &plan, WORKFLOW_RUN_ID)?;
     let result = (|| -> Result<()> {
-        harness.wait_for_text("awaiting plan confirmation", STARTUP)?;
+        // Owner plan gate: footer shows start; header is ready.
+        harness.wait_for_text("enter start", STARTUP)?;
+        harness.wait_for_text("matrix workflow", STARTUP)?;
         harness.assert_raw_contains(b"\x1b[?1049h")?;
         harness.inject_key(&Key::Enter)?;
-        harness.wait_for_text("inspect [running] read only attempt 1", UPDATE)?;
-        harness.wait_for_text("test [running] read only attempt 1", UPDATE)?;
+        // Parallel agents start after confirm.
+        harness.wait_for_text("running · try 1", UPDATE)?;
+        harness.wait_for_text("Inspect workspace", UPDATE)?;
+        harness.wait_for_text("Run checks", UPDATE)?;
         harness.inject_key(&Key::Down)?;
-        harness.wait_for_text("progress: 2/2 checks complete", UPDATE)?;
+        // Progress event on the test node, then apply becomes live.
+        harness.wait_for_text("checks complete", UPDATE)?;
         harness.resize(20, 72)?;
-        harness.wait_for_text("apply [running] mutating", UPDATE)?;
+        harness.wait_for_text("Apply result", UPDATE)?;
         harness.resize(SIZE.rows, SIZE.cols)?;
-        harness.wait_for_text("states  pending:0 ready:0 running:0 success:3", UPDATE)?;
+        harness.wait_for_text("finished · success", UPDATE)?;
+        harness.wait_for_text("workflow completed", UPDATE)?;
+        // Leave is allowed once the run is durable; footer may truncate with notices.
         harness.wait_for_quiet(Duration::from_millis(150), UPDATE)?;
         harness.inject_key(&Key::Char('q'))?;
         let code = harness.wait_for_exit(UPDATE)?;
@@ -89,12 +96,13 @@ fn cancel_then_resume(
     let run_plan = workflow_plan(runner, home, &["workflow", "run", PLAN_ID]);
     let mut first = spawn(runner, &run_plan, "workflow_cancel")?;
     let first_result = (|| -> Result<()> {
-        first.wait_for_text("awaiting plan confirmation", STARTUP)?;
+        first.wait_for_text("enter start", STARTUP)?;
         first.inject_key(&Key::Enter)?;
-        first.wait_for_text("inspect [running] read only attempt 1", UPDATE)?;
+        first.wait_for_text("running · try 1", UPDATE)?;
         first.inject_key(&Key::Char('c'))?;
-        first.wait_for_text("cancellation: saved and resumable", UPDATE)?;
+        first.wait_for_text("finished · cancelled", UPDATE)?;
         first.wait_for_text("rho workflow resume", UPDATE)?;
+        first.wait_for_quiet(Duration::from_millis(150), UPDATE)?;
         first.inject_key(&Key::Char('q'))?;
         let code = first.wait_for_exit(UPDATE)?;
         if code != 0 {
@@ -107,11 +115,16 @@ fn cancel_then_resume(
     let resume_plan = workflow_plan(runner, home, &["workflow", "resume", RUN_ID]);
     let mut resumed = spawn(runner, &resume_plan, "workflow_resume")?;
     let resume_result = (|| -> Result<()> {
-        resumed.wait_for_text("awaiting resume confirmation", STARTUP)?;
-        resumed.wait_for_text("inspect [success] read only attempt 1", UPDATE)?;
+        resumed.wait_for_text("enter continue", STARTUP)?;
+        // Completed inspect is preserved on the resume matrix path.
+        resumed.wait_for_text("Inspect workspace", UPDATE)?;
         resumed.inject_key(&Key::Enter)?;
-        resumed.wait_for_text("test [running] read only attempt 2", UPDATE)?;
-        resumed.wait_for_text("states  pending:0 ready:0 running:0 success:3", UPDATE)?;
+        resumed.wait_for_text("running", UPDATE)?;
+        // Attempt 2 is only in the selected-node detail pane.
+        resumed.inject_key(&Key::Down)?;
+        resumed.wait_for_text("running · try 2", UPDATE)?;
+        resumed.wait_for_text("finished · success", UPDATE)?;
+        resumed.wait_for_quiet(Duration::from_millis(150), UPDATE)?;
         resumed.inject_key(&Key::Char('q'))?;
         let code = resumed.wait_for_exit(UPDATE)?;
         if code != 0 {

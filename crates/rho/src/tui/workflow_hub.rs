@@ -414,15 +414,24 @@ impl App {
         }
         match value {
             // Enter on a workflow starts it. No extra menu.
-            value if let Some(path) = value.strip_prefix(SOURCE_PREFIX) => {
+            value if value.starts_with(SOURCE_PREFIX) => {
+                let path = value
+                    .strip_prefix(SOURCE_PREFIX)
+                    .expect("prefix checked above");
                 self.start_workflow_source(path, terminal, agent).await
             }
             // Enter on a saved plan runs it.
-            value if let Some(id) = value.strip_prefix(PLAN_PREFIX) => {
+            value if value.starts_with(PLAN_PREFIX) => {
+                let id = value
+                    .strip_prefix(PLAN_PREFIX)
+                    .expect("prefix checked above");
                 self.run_workflow_plan(id, terminal, agent).await
             }
             // Enter on a run opens the live screen or finished status.
-            value if let Some(id) = value.strip_prefix(RUN_PREFIX) => {
+            value if value.starts_with(RUN_PREFIX) => {
+                let id = value
+                    .strip_prefix(RUN_PREFIX)
+                    .expect("prefix checked above");
                 self.open_workflow_run_primary(id, terminal, agent).await
             }
             other => {
