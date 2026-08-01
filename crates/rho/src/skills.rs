@@ -427,10 +427,7 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 3);
-        assert_eq!(skills[0].name, "rho-agent-creator");
-        assert_eq!(skills[1].name, "rho-config");
-        assert_eq!(skills[2].name, "rho-diagnostics");
+        assert_only_builtins_excluding(&skills, "bad-skill");
     }
 
     #[test]
@@ -440,10 +437,7 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 3);
-        assert_eq!(skills[0].name, "rho-agent-creator");
-        assert_eq!(skills[1].name, "rho-config");
-        assert_eq!(skills[2].name, "rho-diagnostics");
+        assert_only_builtins_excluding(&skills, "other-name");
     }
 
     #[test]
@@ -453,10 +447,7 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 3);
-        assert_eq!(skills[0].name, "rho-agent-creator");
-        assert_eq!(skills[1].name, "rho-config");
-        assert_eq!(skills[2].name, "rho-diagnostics");
+        assert_only_builtins_excluding(&skills, "bad--skill");
     }
 
     #[test]
@@ -466,10 +457,7 @@ mod tests {
 
         let skills = discover_with_home(root.path(), Some(root.path()));
 
-        assert_eq!(skills.len(), 3);
-        assert_eq!(skills[0].name, "rho-agent-creator");
-        assert_eq!(skills[1].name, "rho-config");
-        assert_eq!(skills[2].name, "rho-diagnostics");
+        assert_only_builtins_excluding(&skills, "bad-skill");
     }
 
     #[test]
@@ -537,6 +525,23 @@ mod tests {
             .collect();
         assert_eq!(duplicates.len(), 1);
         assert_eq!(duplicates[0].description, "first desc");
+    }
+
+    /// Asserts the discovered skills are exactly the built-ins, minus the one
+    /// rejected skill. Derived from `builtin_skills()` so this stays correct
+    /// as built-ins are added or removed without editing every rejection test.
+    fn assert_only_builtins_excluding(skills: &[Skill], rejected: &str) {
+        let mut expected: Vec<_> = builtin_skills()
+            .into_iter()
+            .filter(|skill| skill.name != rejected)
+            .map(|skill| skill.name)
+            .collect();
+        expected.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+
+        let mut actual: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
+        actual.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+
+        assert_eq!(actual, expected);
     }
 
     fn write_skill(root: &Path, relative_dir: &str, name: &str, description: &str) {
