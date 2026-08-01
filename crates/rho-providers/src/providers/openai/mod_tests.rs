@@ -723,6 +723,54 @@ fn codex_sse_completed_processes_unstreamed_items_individually() {
     assert_eq!(state.tool_calls[0].id, "call_1");
 }
 
+// Covers: empty SSE completions must surface a stream summary, not a bare label.
+// Owner: openai_shared stream diagnostics
+#[test]
+fn empty_codex_sse_content_error_includes_stream_summary() {
+    let mut state = CodexSseState::default();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1"}}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"rho"}}}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"id":"resp_empty","status":"completed","service_tier":"default","output":[{"type":"reasoning","id":"rs_1"},{"type":"web_search_call","id":"ws_1"}]}}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap();
+
+    let err = state.into_response().unwrap_err();
+    let message = match err {
+        ModelError::InvalidResponse(message) => message,
+        other => panic!("expected InvalidResponse, got {other:?}"),
+    };
+
+    assert!(
+        message.starts_with("missing response content in SSE ("),
+        "{message}"
+    );
+    for needle in [
+        "completed=true",
+        "response_id=resp_empty",
+        "status=completed",
+        "service_tier=default",
+        "streamed_text_chars=0",
+        "tool_calls=0",
+        "output_items=[reasoning, web_search_call]",
+        "events=[response.completed, response.output_item.done]",
+    ] {
+        assert!(message.contains(needle), "missing {needle:?} in {message}");
+    }
+}
+
 #[test]
 fn codex_sse_search_without_detail_still_emits_activity() {
     let mut state = CodexSseState::default();
