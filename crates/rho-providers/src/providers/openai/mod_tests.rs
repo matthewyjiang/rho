@@ -723,6 +723,89 @@ fn codex_sse_completed_processes_unstreamed_items_individually() {
     assert_eq!(state.tool_calls[0].id, "call_1");
 }
 
+// Covers: completed envelope with tool call + message must keep text when no deltas streamed.
+// Owner: openai_shared stream assembly
+#[test]
+fn completed_envelope_keeps_message_text_beside_function_call_without_deltas() {
+    let mut state = CodexSseState::default();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"id":"resp_mixed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"},{"type":"message","id":"msg_1","content":[{"type":"output_text","text":"here is the file"}]}]}}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap();
+
+    let response = state.into_response().unwrap().response;
+    assert!(
+        matches!(
+            response,
+            ModelResponse::Assistant(ref blocks)
+                if matches!(
+                    blocks.as_slice(),
+                    [
+                        ContentBlock::Text(text),
+                        ContentBlock::ToolCall(ToolCall {
+                            id,
+                            name,
+                            ..
+                        })
+                    ] if text == "here is the file"
+                        && id == "call_1"
+                        && name == "read_file"
+                )
+        ),
+        "{response:?}"
+    );
+}
+
+// Covers: empty SSE completions must surface a stream summary, not a bare label.
+// Owner: openai_shared stream diagnostics
+#[test]
+fn empty_codex_sse_content_error_includes_stream_summary() {
+    let mut state = CodexSseState::default();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1"}}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"rho"}}}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap();
+    handle_codex_sse_line(
+        r#"data: {"type":"response.completed","response":{"id":"resp_empty","status":"completed","service_tier":"default","output":[{"type":"reasoning","id":"rs_1"},{"type":"web_search_call","id":"ws_1"}]}}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap();
+
+    let err = state.into_response().unwrap_err();
+    let message = match err {
+        ModelError::InvalidResponse(message) => message,
+        other => panic!("expected InvalidResponse, got {other:?}"),
+    };
+
+    assert!(
+        message.starts_with("missing response content in SSE ("),
+        "{message}"
+    );
+    for needle in [
+        "completed=true",
+        "response_id=resp_empty",
+        "status=completed",
+        "service_tier=default",
+        "streamed_text_chars=0",
+        "tool_calls=0",
+        "output_items=[reasoning, web_search_call]",
+        "events=[response.completed, response.output_item.done]",
+    ] {
+        assert!(message.contains(needle), "missing {needle:?} in {message}");
+    }
+}
+
 #[test]
 fn codex_sse_search_without_detail_still_emits_activity() {
     let mut state = CodexSseState::default();
