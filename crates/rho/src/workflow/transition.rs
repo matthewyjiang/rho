@@ -87,15 +87,14 @@ pub(crate) fn derive_workflow_outcome(
         let outcome = state.nodes.get(&node.id).and_then(NodeState::terminal)?;
         outcomes.push(outcome);
     }
-    let mut cancellation = state.cancellation_requested
-        && state.nodes.values().any(|node| {
-            matches!(
-                node,
-                NodeState::Terminal {
-                    outcome: NodeTerminalState::Cancellation
-                }
-            )
-        });
+    let mut cancellation = state.nodes.values().any(|node| {
+        matches!(
+            node,
+            NodeState::Terminal {
+                outcome: NodeTerminalState::Cancellation
+            }
+        )
+    });
     let mut denial = false;
     let mut failure = false;
     let mut blocked = false;

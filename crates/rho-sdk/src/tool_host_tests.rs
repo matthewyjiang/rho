@@ -126,6 +126,75 @@ async fn cancellation_cleanup_deadline_resolves_the_host_run() {
     );
 }
 
+struct BlockedProgressCancellationTool {
+    progress_blocked: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+impl Tool for BlockedProgressCancellationTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "blocked_progress_cancel".into(),
+            description: "complete cancellation while progress delivery is blocked".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        _invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            let progress_blocked = self.progress_blocked.lock().unwrap().take();
+            Ok(PreparedToolInvocation::resource_aware(
+                [],
+                [],
+                ToolMetadata::new(),
+                move |context| {
+                    Box::pin(async move {
+                        let progress = context.progress().clone();
+                        let progress_task = tokio::spawn(async move {
+                            for text in ["first", "second", "third"] {
+                                progress.send(ToolProgress::message(text)).await;
+                            }
+                            if let Some(progress_blocked) = progress_blocked {
+                                let _ = progress_blocked.send(());
+                            }
+                        });
+                        context.cancellation().cancelled().await;
+                        progress_task.await.expect("progress producer task");
+                        Ok(ToolOutput::text("cleanup complete"))
+                    })
+                },
+            )
+            .complete_after_cancellation(std::time::Duration::from_secs(1)))
+        })
+    }
+}
+
+// Covers: cancellation during blocked event delivery must preserve a bounded
+// cleanup result from a tool that opted in to completion.
+// Owner: SDK ToolHost cancellation orchestration.
+#[tokio::test]
+async fn cancellation_during_blocked_event_delivery_can_complete() {
+    let (progress_blocked, ready) = tokio::sync::oneshot::channel();
+    let host = ToolHost::builder()
+        .tool(BlockedProgressCancellationTool {
+            progress_blocked: Mutex::new(Some(progress_blocked)),
+        })
+        .event_capacity(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let mut run = host
+        .start(ToolHostCall::new("blocked_progress_cancel", json!({})))
+        .unwrap();
+    ready.await.unwrap();
+
+    run.cancel();
+
+    assert_eq!(run.outcome().await.unwrap().content(), "cleanup complete");
+}
+
 #[derive(Clone)]
 struct OrderedPolicy {
     order: Arc<Mutex<Vec<&'static str>>>,

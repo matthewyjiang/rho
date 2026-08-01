@@ -65,10 +65,10 @@ fn completed_lifecycle_requires_every_node_to_be_terminal() {
     ));
 }
 
-// Covers: cancellation of optional waiting work must still cancel the workflow.
+// Covers: executor cancellation of optional work must still cancel the workflow.
 // Owner: workflow outcome core.
 #[test]
-fn requested_cancellation_is_derived_from_all_nodes() {
+fn optional_node_cancellation_derives_cancellation_without_request() {
     let mut optional = agent_node("optional", &[], WorkspaceAccess::Mutating);
     optional.allow_failure = true;
     let workflow = workflow(vec![
@@ -77,7 +77,6 @@ fn requested_cancellation_is_derived_from_all_nodes() {
     ]);
     let mut state = state(&workflow);
     state.lifecycle = RunLifecycle::Completed;
-    state.cancellation_requested = true;
     state.nodes.insert(
         id("required"),
         NodeState::Terminal {

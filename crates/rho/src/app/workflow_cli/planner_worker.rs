@@ -86,7 +86,7 @@ pub(super) async fn run_supervised_planner(
     let mut command = tokio::process::Command::new(std::env::current_exe()?);
     command
         .args([crate::cli::WORKFLOW_PLANNER_WORKER_COMMAND])
-        .env_remove(PLANNER_WORKER_ENV)
+        .env_clear()
         .env(PLANNER_WORKER_ENV, &request.token)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -116,10 +116,9 @@ pub(super) async fn run_supervised_planner(
     .await
     .map_err(|_| {
         anyhow::anyhow!(
-            "{} budget exceeded: accepted limit {}, requested or measured {}",
+            "{} budget exceeded: planning worker did not finish within {} ms",
             limits.worker_wall_millis.name,
-            limits.worker_wall_millis.limit,
-            limits.worker_wall_millis.limit.saturating_add(1)
+            limits.worker_wall_millis.limit
         )
     })??;
     let (response_bytes, diagnostics, status) = completed;

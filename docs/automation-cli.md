@@ -34,7 +34,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | --- | --- |
 | `rho` | Start an interactive TUI session in the current working directory. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
-| `rho workflow <COMMAND>` | Validate, plan, run, inspect, cancel, or resume a [durable workflow](/workflows). |
+| `rho workflow <COMMAND>` | Use `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects]` | List saved sessions for the current workspace, or every workspace with cwd context. |
 | `rho sessions rename <ID> <TITLE>...` | Rename a session by UUID or prefix. See [sessions](/sessions#listing-renaming-and-deleting-sessions). |
 | `rho sessions rm <ID>...` | Delete sessions by UUID or prefix. Cascades parent-linked subagent runs. See [sessions](/sessions#listing-renaming-and-deleting-sessions). |

@@ -68,6 +68,8 @@ const PLANNER_STDERR_BYTES: usize = 64 * 1024;
 #[cfg(any(unix, windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 16 * 64 * 1024 * 1024;
 const WORKFLOW_WIRE_VERSION: u32 = 1;
+// The workflow freeze-policy test keeps this identity aligned with Cargo.toml.
+const STARLARK_VERSION: &str = "0.14.2";
 
 pub(super) fn planner_worker_requested(cli: &Cli) -> bool {
     matches!(
@@ -411,7 +413,21 @@ pub(super) fn write_json_document(value: &impl Serialize) -> anyhow::Result<()> 
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum DiagnosticAudience {
+    LocalCli,
+    Model,
+}
+
 pub(super) fn diagnostic_for_error(error: &anyhow::Error) -> Diagnostic {
+    diagnostic_for_error_for(error, DiagnosticAudience::LocalCli)
+}
+
+pub(super) fn diagnostic_for_model_error(error: &anyhow::Error) -> Diagnostic {
+    diagnostic_for_error_for(error, DiagnosticAudience::Model)
+}
+
+fn diagnostic_for_error_for(error: &anyhow::Error, audience: DiagnosticAudience) -> Diagnostic {
     if let Some(error) = error.downcast_ref::<WorkflowError>() {
         let code = match error {
             WorkflowError::InvalidId { .. } => "invalid_id",
@@ -445,8 +461,25 @@ pub(super) fn diagnostic_for_error(error: &anyhow::Error) -> Diagnostic {
         let span = None;
         Diagnostic {
             code: code.to_owned(),
-            message: error.to_string(),
+            message: workflow_error_message(error, audience),
             span,
+        }
+    } else if matches!(audience, DiagnosticAudience::Model) {
+        if error
+            .downcast_ref::<crate::agent::AgentCatalogError>()
+            .is_some()
+        {
+            Diagnostic {
+                code: "agent_catalog".to_owned(),
+                message: "agent catalog is invalid at <redacted>".to_owned(),
+                span: None,
+            }
+        } else {
+            Diagnostic {
+                code: "workflow_cli".to_owned(),
+                message: "workflow operation failed".to_owned(),
+                span: None,
+            }
         }
     } else {
         Diagnostic {
@@ -455,6 +488,56 @@ pub(super) fn diagnostic_for_error(error: &anyhow::Error) -> Diagnostic {
             span: None,
         }
     }
+}
+
+fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -> String {
+    if matches!(audience, DiagnosticAudience::Model) {
+        return match error {
+            WorkflowError::SourceOutsideRoot { .. } => {
+                "workflow source path is outside module root: <redacted>".to_owned()
+            }
+            WorkflowError::SourceSymlink { .. } => {
+                "workflow source path contains a symlink: <redacted>".to_owned()
+            }
+            WorkflowError::Corrupt { .. } => {
+                // Corruption reasons can wrap lower-level errors whose text contains
+                // paths. Treat the full reason as path-bearing rather than trying to
+                // identify every host path syntax in arbitrary text.
+                "workflow data is corrupt at <redacted>: <redacted>".to_owned()
+            }
+            WorkflowError::UntrustedDirectory(_) => {
+                "workflow store boundary is not a trusted directory: <redacted>".to_owned()
+            }
+            // These variants contain only static labels, validated portable
+            // identifiers, or measured numbers.
+            WorkflowError::BudgetExceeded { .. }
+            | WorkflowError::Cycle { .. }
+            | WorkflowError::MissingDependency { .. }
+            | WorkflowError::NonAncestorReference { .. }
+            | WorkflowError::MissingWorkflow
+            | WorkflowError::UnsupportedVersion { .. } => error.to_string(),
+            WorkflowError::Starlark(_) => "workflow evaluation failed".to_owned(),
+            // Keep these cases opaque. Their strings can contain source text,
+            // lower-level diagnostics, or local paths.
+            WorkflowError::InvalidId { .. }
+            | WorkflowError::InvalidAccess { .. }
+            | WorkflowError::Schema { .. }
+            | WorkflowError::Condition(_)
+            | WorkflowError::IllegalTransition { .. }
+            | WorkflowError::Scheduler(_)
+            | WorkflowError::InvalidModuleLabel { .. }
+            | WorkflowError::ImportCycle { .. }
+            | WorkflowError::UnsupportedValue { .. }
+            | WorkflowError::MissingInput(_)
+            | WorkflowError::UnknownInput(_)
+            | WorkflowError::InvalidInput { .. }
+            | WorkflowError::AmbiguousId { .. }
+            | WorkflowError::UnknownId(_)
+            | WorkflowError::Io(_)
+            | WorkflowError::Json(_) => "workflow operation failed".to_owned(),
+        };
+    }
+    error.to_string()
 }
 
 fn workflow_exit(message: &str) -> anyhow::Error {

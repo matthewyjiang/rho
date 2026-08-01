@@ -9,15 +9,19 @@ use super::{secure_fs::identity_drift, WorkflowResult};
 
 pub(super) fn validate_opened_windows_path(file: &File, expected: &Path) -> WorkflowResult<()> {
     let opened = opened_windows_path(file)?;
-    let opened_key = windows_path_compare_key(&opened);
-    let expected_key = windows_path_compare_key(expected);
-    if !opened_key.eq_ignore_ascii_case(&expected_key) {
+    if !windows_paths_match(&opened, expected) {
         return Err(identity_drift(
             expected,
             "opened Windows handle resolves outside the requested path",
         ));
     }
     Ok(())
+}
+
+pub(crate) fn windows_paths_match(left: &Path, right: &Path) -> bool {
+    let opened_key = windows_path_compare_key(left);
+    let expected_key = windows_path_compare_key(right);
+    wide_eq_ignore_ascii_case(&opened_key, &expected_key)
 }
 
 pub(super) fn opened_windows_path(file: &File) -> WorkflowResult<PathBuf> {
@@ -44,17 +48,48 @@ pub(super) fn opened_windows_path(file: &File) -> WorkflowResult<PathBuf> {
         ));
     }
     buffer.truncate(length as usize);
-    let opened = OsString::from_wide(&buffer).to_string_lossy().into_owned();
-    Ok(PathBuf::from(windows_path_compare_key(Path::new(&opened))))
+    Ok(PathBuf::from(OsString::from_wide(&buffer)))
 }
 
-fn windows_path_compare_key(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(raw.as_ref());
-    let normalized = if let Some(unc) = stripped.strip_prefix(r"UNC\") {
-        format!(r"\\{unc}")
+pub(super) fn windows_path_compare_key(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    let mut raw: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let verbatim_prefix = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    if raw.starts_with(&verbatim_prefix) {
+        raw.drain(..verbatim_prefix.len());
+    }
+    let unc_prefix = [b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16];
+    let mut normalized = if raw.starts_with(&unc_prefix) {
+        let mut unc = vec![b'\\' as u16, b'\\' as u16];
+        unc.extend_from_slice(&raw[unc_prefix.len()..]);
+        unc
     } else {
-        stripped.replace('/', "\\")
+        raw
     };
-    normalized.trim_end_matches(['\\', '/']).to_owned()
+    for unit in &mut normalized {
+        if *unit == b'/' as u16 {
+            *unit = b'\\' as u16;
+        }
+    }
+    while normalized.last() == Some(&(b'\\' as u16)) {
+        normalized.pop();
+    }
+    normalized
+}
+
+fn wide_eq_ignore_ascii_case(left: &[u16], right: &[u16]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| ascii_lowercase(*left) == ascii_lowercase(*right))
+}
+
+fn ascii_lowercase(unit: u16) -> u16 {
+    if (b'A' as u16..=b'Z' as u16).contains(&unit) {
+        unit + (b'a' - b'A') as u16
+    } else {
+        unit
+    }
 }

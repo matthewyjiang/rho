@@ -387,15 +387,20 @@ enum RhoCondition {
     Not { condition: Box<RhoCondition> },
 }
 
+enum Comparison {
+    Equals(serde_json::Value),
+    IsOneOf(Vec<serde_json::Value>),
+}
+
 impl RhoCondition {
     fn into_condition(self, limits: &PlanningLimits, depth: u64) -> WorkflowResult<Condition> {
         limits.condition_depth.check(depth)?;
         match self {
             Self::Equals { reference, value } => {
-                reference.into_predicate_condition(limits, true, value, Vec::new())
+                reference.into_predicate_condition(Comparison::Equals(value))
             }
             Self::IsOneOf { reference, values } => {
-                reference.into_predicate_condition(limits, false, serde_json::Value::Null, values)
+                reference.into_predicate_condition(Comparison::IsOneOf(values))
             }
             Self::All { conditions } => Ok(Condition::All {
                 conditions: conditions
@@ -428,24 +433,19 @@ enum RhoConditionReference {
 }
 
 impl RhoConditionReference {
-    fn into_predicate_condition(
-        self,
-        _limits: &PlanningLimits,
-        equals: bool,
-        value: serde_json::Value,
-        values: Vec<serde_json::Value>,
-    ) -> WorkflowResult<Condition> {
+    fn into_predicate_condition(self, comparison: Comparison) -> WorkflowResult<Condition> {
         match self {
             Self::Output { node, path } => {
-                let predicate = if equals {
-                    ValuePredicate::Equals(WorkflowValue::from_json(value)?)
-                } else {
-                    ValuePredicate::IsOneOf(
+                let predicate = match comparison {
+                    Comparison::Equals(value) => {
+                        ValuePredicate::Equals(WorkflowValue::from_json(value)?)
+                    }
+                    Comparison::IsOneOf(values) => ValuePredicate::IsOneOf(
                         values
                             .into_iter()
                             .map(WorkflowValue::from_json)
                             .collect::<WorkflowResult<_>>()?,
-                    )
+                    ),
                 };
                 Ok(Condition::Output {
                     node: NodeId::new(node)?,
@@ -454,7 +454,10 @@ impl RhoConditionReference {
                 })
             }
             Self::Status { node } => {
-                let matches = if equals { vec![value] } else { values };
+                let matches = match comparison {
+                    Comparison::Equals(value) => vec![value],
+                    Comparison::IsOneOf(values) => values,
+                };
                 Ok(Condition::NodeStatus {
                     node: NodeId::new(node)?,
                     matches: matches
@@ -464,15 +467,16 @@ impl RhoConditionReference {
                 })
             }
             Self::ExitCode { node } => {
-                let predicate = if equals {
-                    ExitCodePredicate::Equals(json_i32(&value, "value")?)
-                } else {
-                    ExitCodePredicate::IsOneOf(
+                let predicate = match comparison {
+                    Comparison::Equals(value) => {
+                        ExitCodePredicate::Equals(json_i32(&value, "value")?)
+                    }
+                    Comparison::IsOneOf(values) => ExitCodePredicate::IsOneOf(
                         values
                             .iter()
                             .map(|value| json_i32(value, "command exit condition"))
                             .collect::<WorkflowResult<_>>()?,
-                    )
+                    ),
                 };
                 Ok(Condition::CommandExit {
                     node: NodeId::new(node)?,

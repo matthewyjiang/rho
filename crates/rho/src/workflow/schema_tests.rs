@@ -58,3 +58,28 @@ fn rejects_non_scalar_enum_members() {
         Err(WorkflowError::Schema { .. })
     ));
 }
+
+// Covers: a stored graph must not bypass the planner's schema-depth budget.
+// Owner: workflow schema core.
+#[test]
+fn rejects_stored_schema_over_depth_budget() {
+    let mut schema = OutputSchema::String;
+    for _ in 0..OUTPUT_SCHEMA_DEPTH_LIMIT {
+        schema = OutputSchema::List {
+            item: Box::new(schema),
+        };
+    }
+    let stored = serde_json::to_value(schema).unwrap();
+    let loaded: OutputSchema = serde_json::from_value(stored).unwrap();
+
+    assert!(matches!(
+        loaded.validate_definition(),
+        Err(WorkflowError::BudgetExceeded {
+            budget,
+            limit,
+            actual,
+        }) if budget == "output schema depth"
+            && limit == OUTPUT_SCHEMA_DEPTH_LIMIT as u64
+            && actual == OUTPUT_SCHEMA_DEPTH_LIMIT as u64 + 1
+    ));
+}

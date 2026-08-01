@@ -65,7 +65,7 @@ impl App {
                     }
                     InlineChoicePending::DeleteWorkflowPlan { .. }
                     | InlineChoicePending::DeleteWorkflowRun { .. } => {
-                        self.open_workflow_hub()?;
+                        self.open_workflow_hub_or_report();
                     }
                 }
             }

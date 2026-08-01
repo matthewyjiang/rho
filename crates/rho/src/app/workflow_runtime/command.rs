@@ -68,7 +68,7 @@ impl WorkflowCommandExecutor {
             )));
         }
         let executable = Path::new(&resolved.executable).canonicalize()?;
-        if executable != Path::new(&resolved.executable) {
+        if !canonical_paths_match(&executable, Path::new(&resolved.executable)) {
             return Err(RuntimeError::Data(format!(
                 "node '{}' executable path is not canonical",
                 request.node
@@ -224,6 +224,16 @@ impl WorkflowCommandExecutor {
             },
         })
     }
+}
+
+#[cfg(not(windows))]
+fn canonical_paths_match(left: &Path, right: &Path) -> bool {
+    left == right
+}
+
+#[cfg(windows)]
+fn canonical_paths_match(left: &Path, right: &Path) -> bool {
+    crate::workflow::windows_paths_match(left, right)
 }
 
 fn stream_observation(

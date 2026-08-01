@@ -17,6 +17,9 @@ pub(crate) const ATTEMPT_VERSION: u32 = 2;
 pub(crate) struct PlanManifest {
     pub(crate) schema_version: u32,
     pub(crate) plan_id: PlanId,
+    /// Creation time used for durable newest-first inventory ordering.
+    #[serde(default)]
+    pub(crate) created_at_unix_nanos: u64,
     pub(crate) graph_digest: Digest,
     pub(crate) workspace_identity: String,
     pub(crate) source_digests: BTreeMap<String, Digest>,
@@ -44,6 +47,9 @@ pub(crate) struct PlanConsent {
 pub(crate) struct RunManifest {
     pub(crate) schema_version: u32,
     pub(crate) run_id: RunId,
+    /// Creation time used for durable newest-first inventory ordering.
+    #[serde(default)]
+    pub(crate) created_at_unix_nanos: u64,
     pub(crate) plan_id: PlanId,
     pub(crate) graph_digest: Digest,
     pub(crate) workspace_identity: String,

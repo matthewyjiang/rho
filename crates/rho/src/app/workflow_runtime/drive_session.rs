@@ -85,7 +85,7 @@ impl<'a> DriveSession<'a> {
         let drive_started_at = Instant::now();
         let run_directory = run_directory(&runner.rho_home, run_id);
         if super::journal::replay_journal(&store, &run_directory, &mut run)? {
-            store.save_state(&guard, &run.state)?;
+            store.save_state(&mut guard, &run.state)?;
         }
         recover_completed_transitions(&store, &mut guard, &run_directory, &mut run)?;
         let first_start = run.state.state.lifecycle == RunLifecycle::Planned;
@@ -416,9 +416,13 @@ impl<'a> DriveSession<'a> {
         };
         self.tasks.spawn(async move {
             let cancellation = request.cancellation.clone();
-            let permit = tokio::select! {
-                biased;
-                () = cancellation.cancelled() => {
+            let wait_limit_seconds = request.workflow.graph.nodes[&node].timeout_seconds;
+            let permit = match gate
+                .acquire(access, &cancellation, wait_limit_seconds)
+                .await
+            {
+                Ok(permit) => permit,
+                Err(RuntimeError::Cancelled) => {
                     return Ok(NodeTaskOutput {
                         node,
                         attempt,
@@ -427,7 +431,14 @@ impl<'a> DriveSession<'a> {
                         )),
                     });
                 }
-                permit = gate.acquire(access) => permit?,
+                Err(error @ RuntimeError::CheckoutLockTimeout { .. }) => {
+                    return Ok(NodeTaskOutput {
+                        node,
+                        attempt,
+                        result: Err(error),
+                    });
+                }
+                Err(error) => return Err(error),
             };
             let _permit = permit;
             let result = executor.execute(request).await;

@@ -1,6 +1,6 @@
 //! In-app `/workflow` hub: start workflows and check runs from the chat TUI.
 
-use std::{collections::BTreeMap, str::FromStr};
+use std::{cmp::Reverse, collections::BTreeMap, str::FromStr};
 
 use ratatui::DefaultTerminal;
 
@@ -128,15 +128,13 @@ pub(super) fn hub_picker(
         .iter()
         .filter(|run| run.lifecycle != RunLifecycle::Completed)
         .collect::<Vec<_>>();
-    active.sort_by_key(|run| run.run_id);
-    active.reverse();
+    active.sort_by_key(|run| Reverse((run.created_at_unix_nanos, run.run_id)));
 
     let mut finished = runs
         .iter()
         .filter(|run| run.lifecycle == RunLifecycle::Completed)
         .collect::<Vec<_>>();
-    finished.sort_by_key(|run| run.run_id);
-    finished.reverse();
+    finished.sort_by_key(|run| Reverse((run.created_at_unix_nanos, run.run_id)));
     finished.truncate(MAX_FINISHED_RUNS);
 
     if active.is_empty() && finished.is_empty() {
@@ -171,7 +169,7 @@ pub(super) fn hub_picker(
             let short = short_id(&id);
             let outcome = outcome_label(run.outcome);
             let name = run.name.as_str();
-            let tone = outcome_tone(&outcome);
+            let tone = outcome_tone(run.outcome);
             items.push(item(
                 Some("RUNS"),
                 format!("Watch  {outcome}  ·  {short}"),
@@ -222,11 +220,16 @@ pub(super) fn hub_picker(
     .with_confirm_verb("open")
 }
 
-fn outcome_tone(outcome: &str) -> PickerBadgeTone {
+fn outcome_tone(outcome: Option<WorkflowOutcome>) -> PickerBadgeTone {
     match outcome {
-        "success" => PickerBadgeTone::Healthy,
-        "failed" | "denied" | "blocked" | "cancelled" => PickerBadgeTone::Warning,
-        _ => PickerBadgeTone::Internal,
+        Some(WorkflowOutcome::Success) => PickerBadgeTone::Healthy,
+        Some(
+            WorkflowOutcome::Failure
+            | WorkflowOutcome::Denial
+            | WorkflowOutcome::Cancellation
+            | WorkflowOutcome::Blocked,
+        ) => PickerBadgeTone::Warning,
+        None => PickerBadgeTone::Internal,
     }
 }
 
@@ -235,15 +238,16 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        match self.open_workflow_hub() {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Error(format!("could not open workflows: {error}")));
-                self.status = "workflow hub failed".into();
-                let _ = terminal;
-                Ok(())
-            }
+        self.open_workflow_hub_or_report();
+        let _ = terminal;
+        Ok(())
+    }
+
+    pub(super) fn open_workflow_hub_or_report(&mut self) {
+        if let Err(error) = self.open_workflow_hub() {
+            self.input_ui.set_composer(ComposerMode::Input);
+            self.insert_entry(&Entry::Error(format!("could not open workflows: {error}")));
+            self.status = "workflow hub failed".into();
         }
     }
 
@@ -534,7 +538,8 @@ impl App {
         let absolute = self.info.runtime.cwd.join(relative_path);
         self.status = format!("starting {relative_path}");
         let ops = self.workflow_ops()?;
-        let prepared = match self.prepare_source(&absolute).await {
+        let available_tools = agent.workflow_host_capabilities();
+        let prepared = match self.prepare_source(&absolute, &available_tools).await {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -590,19 +595,14 @@ impl App {
     async fn prepare_source(
         &self,
         absolute: &std::path::Path,
+        available_tools: &AgentCapabilities,
     ) -> anyhow::Result<workflow_cli::PreparedPlan> {
         let ops = self.workflow_ops()?;
         let config = self.info.services.config_repository.load()?;
         let limits = workflow_cli::planning_limits()?;
         let inputs: BTreeMap<_, WorkflowValue> = BTreeMap::new();
-        ops.prepare_local(
-            absolute,
-            inputs,
-            &config,
-            &AgentCapabilities::all_host_tools(),
-            &limits,
-        )
-        .await
+        ops.prepare_local(absolute, inputs, &config, available_tools, &limits)
+            .await
     }
 
     async fn run_workflow_plan(

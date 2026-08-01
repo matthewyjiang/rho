@@ -62,7 +62,7 @@ async fn captures_separate_bounded_streams_and_exit_code() {
 async fn maps_cancellation_to_typed_exit() {
     let cancellation = rho_sdk::CancellationToken::new();
     cancellation.cancel();
-    let execution = shell_execution("cat", 16);
+    let execution = shell_execution("while :; do :; done", 16);
     let (executable, cwd) = identities(&execution);
     let output = run_exact_process(execution, &executable, &cwd, &cancellation)
         .await
@@ -225,7 +225,17 @@ async fn launches_all_identity_paths_from_verified_handles() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     rho_tools::apply_process_environment(&mut command, execution.environment()).unwrap();
-    let output = command.output().await.unwrap();
+    crate::workflow::configure_handle_inheritance(
+        &mut command,
+        &[
+            &verified_executable.executable.file,
+            &verified_executable.interpreter.as_ref().unwrap().file,
+            &verified_cwd.file,
+        ],
+    )
+    .unwrap();
+    let child = command.spawn().unwrap();
+    let output = child.wait_with_output().await.unwrap();
 
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, b"original:verified");

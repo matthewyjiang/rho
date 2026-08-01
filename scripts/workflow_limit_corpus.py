@@ -45,7 +45,8 @@ def _workflow(body: str, *, inputs: str = "{}") -> str:
 
 def _write(path: Path, source: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source)
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(source)
 
 
 def _source_module_case(root: Path) -> CorpusCase:
@@ -70,7 +71,9 @@ def _source_module_case(root: Path) -> CorpusCase:
     padding = target_bytes - current
     if padding < 2:
         raise RuntimeError("source module fixture exceeds its byte target")
-    with (case / "module_73.star").open("a") as output:
+    with (case / "module_73.star").open(
+        "a", encoding="utf-8", newline="\n"
+    ) as output:
         output.write("#" + ("p" * (padding - 2)) + "\n")
     actual = sum(path.stat().st_size for path in paths)
     if actual != target_bytes:
@@ -132,16 +135,16 @@ def _graph_edges_case(root: Path) -> CorpusCase:
 
 def _schema_condition_case(root: Path) -> CorpusCase:
     case = root / "schema_condition"
-    deep_schema = "string()"
-    condition = 'equals(status("root"), "success")'
+    deep_schema = "schema.string()"
+    condition = 'condition.equals(status("root"), "success")'
     for _ in range(3):
-        deep_schema = f"list({deep_schema})"
+        deep_schema = f"schema.list({deep_schema})"
     source = (
-        "FIELDS = {\"field_\" + str(index) + \"_\" + (\"k\" * 41): string() "
+        "FIELDS = {\"field_\" + str(index) + \"_\" + (\"k\" * 41): schema.string() "
         "for index in range(7500)}\n"
         f'FIELDS["deep"] = {deep_schema}\n'
         "NODES = [\n"
-        "    " + _node("root", output="stdout_json(record(FIELDS))") + ",\n"
+        "    " + _node("root", output="schema.stdout_json(schema.record(FIELDS))") + ",\n"
         "    " + _node("conditional", needs='["root"]', when=condition) + ",\n"
         "]\n"
     )
@@ -182,15 +185,15 @@ def _runtime_output_case(root: Path) -> CorpusCase:
 def _prompt_schema_case(root: Path) -> CorpusCase:
     case = root / "prompt_schema"
     source = (
-        "FIELDS = {\"prompt_\" + str(index) + \"_\" + (\"p\" * 41): string() "
+        "FIELDS = {\"prompt_\" + str(index) + \"_\" + (\"p\" * 41): schema.string() "
         "for index in range(7500)}\n"
         "NODES = [\n"
         "command(name = \"prompt_source\", argv = [\"./wait.sh\"], cwd = \".\", "
-        "output = stdout_json(string()), timeout_seconds = 60, max_output_bytes = 3145728),\n"
+        "output = schema.stdout_json(schema.string()), timeout_seconds = 60, max_output_bytes = 3145728),\n"
         "agent(\n"
         "    name = \"prompt\", agent = \"reviewer\", needs = [\"prompt_source\"],\n"
         "    prompt = template([output(\"prompt_source\", [])]), access = \"mutating\",\n"
-        "    output = record(FIELDS), timeout_seconds = 60, max_output_bytes = 1,\n"
+        "    output = schema.record(FIELDS), timeout_seconds = 60, max_output_bytes = 1,\n"
         ")]\n"
     )
     entry = case / "entry.star"
@@ -203,7 +206,7 @@ def _argv_case(root: Path) -> CorpusCase:
     source = (
         "NODES = [\n"
         "command(name = \"argv_source\", argv = [\"./wait.sh\"], cwd = \".\", "
-        "output = stdout_json(string()), timeout_seconds = 60, max_output_bytes = 3145700),\n"
+        "output = schema.stdout_json(schema.string()), timeout_seconds = 60, max_output_bytes = 3145700),\n"
         + _node(
             "argv",
             argv='["./wait.sh", template([output("argv_source", [])]), template([output("argv_source", [])])]',
@@ -231,7 +234,7 @@ def _input_case(root: Path) -> CorpusCase:
 def generate_corpus(root: Path) -> list[CorpusCase]:
     root.mkdir(parents=True, exist_ok=True)
     executable = root / "wait.sh"
-    executable.write_text("#!/bin/sh\nexit 0\n")
+    _write(executable, "#!/bin/sh\nexit 0\n")
     os.chmod(executable, 0o700)
     return [
         _source_module_case(root),
@@ -252,7 +255,7 @@ def source_request(case: CorpusCase, corpus_root: Path) -> tuple[str, dict[str, 
     for path in sorted(case.entry.parent.glob("*.star")):
         relative = path.relative_to(corpus_root).as_posix()
         label = f"//{relative}"
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         sources[label] = source
         modules[label] = {
             "digest": f"sha256:{hashlib.sha256(source.encode()).hexdigest()}",

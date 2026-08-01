@@ -106,7 +106,7 @@ impl<'a> StarlarkPlanner<'a> {
             let schemas = parse_input_schemas(input_specs)?;
             let inputs = validate_inputs(&schemas, supplied_inputs)?;
             check_input_limits(&inputs, self.limits)?;
-            let input_value = alloc_workflow_map(module.heap(), &inputs);
+            let input_value = alloc_workflow_map(&module.heap(), &inputs);
             let built = eval
                 .eval_function(build, &[input_value], &[])
                 .map_err(starlark_error)?;
@@ -284,7 +284,7 @@ fn starlark_error(error: impl std::fmt::Display) -> WorkflowError {
 }
 
 fn alloc_workflow_map<'v>(
-    heap: Heap<'v>,
+    heap: &Heap<'v>,
     values: &BTreeMap<InputName, WorkflowValue>,
 ) -> Value<'v> {
     heap.alloc(AllocDict(values.iter().map(|(key, value)| {
@@ -292,7 +292,7 @@ fn alloc_workflow_map<'v>(
     })))
 }
 
-fn alloc_workflow_value<'v>(heap: Heap<'v>, value: &WorkflowValue) -> Value<'v> {
+fn alloc_workflow_value<'v>(heap: &Heap<'v>, value: &WorkflowValue) -> Value<'v> {
     match value {
         WorkflowValue::Null => Value::new_none(),
         WorkflowValue::Bool(value) => heap.alloc(*value),

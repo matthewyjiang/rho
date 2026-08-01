@@ -215,6 +215,10 @@ pub(crate) enum RuntimeError {
     Denied(String),
     #[error("workflow operation was cancelled")]
     Cancelled,
+    #[error(
+        "workflow checkout lock wait budget exceeded: limit {wait_limit_seconds} seconds, waited at least {wait_limit_seconds} seconds"
+    )]
+    CheckoutLockTimeout { wait_limit_seconds: u64 },
     #[error("workflow executor cleanup did not confirm termination after {cause:?}")]
     CleanupUncertain { cause: CleanupCause },
     #[error("workflow artifact path is unsafe: {0}")]

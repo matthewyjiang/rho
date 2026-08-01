@@ -17,15 +17,16 @@ impl AppWorkflowToolService {
     ) -> anyhow::Result<crate::config::Config> {
         self.authorize_read(context, path, PathScope::UnrestrictedFilesystem)
             .await?;
-        let opened = match crate::workflow::VerifiedPath::open(path, false) {
-            Ok(opened) => opened,
-            Err(crate::workflow::WorkflowError::Io(error))
-                if error.kind() == std::io::ErrorKind::NotFound =>
-            {
-                return Ok(crate::config::Config::default());
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let opened =
+            match crate::workflow::VerifiedPath::open(path, crate::workflow::ContentHash::Skip) {
+                Ok(opened) => opened,
+                Err(crate::workflow::WorkflowError::Io(error))
+                    if error.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(crate::config::Config::default());
+                }
+                Err(error) => return Err(error.into()),
+            };
         self.authorize_opened_identity(context, &opened.identity)
             .await?;
         let text = opened.read_utf8()?;
@@ -73,7 +74,10 @@ impl AppWorkflowToolService {
         if resolved.path() != lexical {
             return Err(crate::workflow::WorkflowError::SourceSymlink { path: lexical }.into());
         }
-        let opened = crate::workflow::VerifiedPath::open(resolved.path(), false)?;
+        let opened = crate::workflow::VerifiedPath::open(
+            resolved.path(),
+            crate::workflow::ContentHash::Skip,
+        )?;
         self.authorize_opened_identity(context, &opened.identity)
             .await?;
         if Path::new(&opened.identity.canonical_path) != resolved.path() {
@@ -156,7 +160,7 @@ impl AppWorkflowToolService {
             let opened = crate::workflow::open_verified_file_in_directory(
                 &opened_root,
                 Path::new(&name),
-                false,
+                crate::workflow::ContentHash::Skip,
             )?;
             self.authorize_opened_identity(context, &opened.identity)
                 .await?;

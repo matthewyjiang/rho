@@ -321,9 +321,9 @@ inspect = agent(
         " and return the required JSON value.",
     ]),
     access = "read_only",
-    output = record({
-        "decision": enum(["approve", "revise"]),
-        "summary": string(),
+    output = schema.record({
+        "decision": schema.enum_(["approve", "revise"]),
+        "summary": schema.string(),
     }),
     timeout_seconds = 1800,
     max_output_bytes = 12000,
@@ -388,25 +388,25 @@ records an integer code, signal, timeout, cancellation, or abnormal end.
 Rho supports a small first-party schema language. It is not JSON Schema.
 
 ```starlark
-null()
-bool()
-integer()
-string()
-enum(["approve", "revise"])
-list(string())
-optional(string())
-record({
-    "required_field": string(),
-    "optional_field": optional(integer()),
+schema.null()
+schema.bool()
+schema.integer()
+schema.string()
+schema.enum_(["approve", "revise"])
+schema.list(schema.string())
+schema.optional(schema.string())
+schema.record({
+    "required_field": schema.string(),
+    "optional_field": schema.optional(schema.integer()),
 })
 ```
 
 Enum members must be scalar values: null, bool, integer, or string.
 
-For a direct or shell command, wrap the schema with `stdout_json`:
+For a direct or shell command, wrap the schema with `schema.stdout_json`:
 
 ```starlark
-output = stdout_json(record({"passed": bool()}))
+output = schema.stdout_json(schema.record({"passed": schema.bool()}))
 ```
 
 Rho parses the complete bounded stdout value after the process exits. Invalid
@@ -436,12 +436,12 @@ node capabilities narrow and treat interpolated text as untrusted data.
 Conditions can read only typed node state, a command exit, or validated output:
 
 ```starlark
-equals(output("inspect", ["decision"]), "approve")
-is_one_of(status("check"), ["success", "failure"])
-equals(exit_code("check"), 0)
-all([condition_a, condition_b])
-any([condition_a, condition_b])
-not(condition_a)
+condition.equals(output("inspect", ["decision"]), "approve")
+condition.is_one_of(status("check"), ["success", "failure"])
+condition.equals(exit_code("check"), 0)
+condition.all([condition_a, condition_b])
+condition.any([condition_a, condition_b])
+condition.not(condition_a)
 ```
 
 Conditions cannot read assistant prose, stdout substrings, or regular
@@ -601,6 +601,7 @@ Workflow data lives below the Rho data directory:
 
 ```text
 ~/.rho/workflows/
+  checkout-locks/<WORKSPACE_KEY>.lock
   plans/<PLAN_ID>/
     manifest.json
     graph.json
@@ -671,6 +672,10 @@ at least 2,097,152 free bytes. This margin is small because
 the debug allocator reserves virtual address space near the enforced limit;
 resident memory is much lower. If the worker needs more than the checked
 amount, the check reports its measured value and the hard limit.
+
+The `environment_expansion_bytes` zero baseline in the receipt is a schema
+sentinel, not a corpus measurement. Workflow schema v1 forbids
+source-controlled environment entries and keeps a one-byte accepted floor.
 
 The receipt and corpus map are in
 `crates/rho/src/workflow/fixtures/limit_receipt.json` and

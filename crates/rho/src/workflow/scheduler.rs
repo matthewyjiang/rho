@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
 use super::{
-    evaluate_condition, validate_reset_transition, validate_transition, ConditionContext,
-    FrozenWorkflow, NodeExecution, NodeId, NodeState, NodeTerminalState, RunLifecycle,
-    SchedulerAction, SchedulerCapacity, SchedulerEvent, TruthValue, WorkflowError, WorkflowResult,
-    WorkflowState, WorkspaceAccess,
+    evaluate_condition, validate_lifecycle_transition, validate_reset_transition,
+    validate_transition, ConditionContext, FrozenWorkflow, NodeExecution, NodeId, NodeState,
+    NodeTerminalState, RunLifecycle, SchedulerAction, SchedulerCapacity, SchedulerEvent,
+    TruthValue, WorkflowError, WorkflowResult, WorkflowState, WorkspaceAccess,
 };
 
 pub(crate) fn next_actions(
@@ -75,15 +75,21 @@ pub(crate) fn next_actions(
         .commands
         .min(workflow.scheduler.max_parallel_commands);
     for node in runnable {
+        if use_total >= total_limit {
+            break;
+        }
         let kind_fits = match node.execution {
             NodeExecution::Agent(_) => use_agents < agent_limit,
             NodeExecution::Command(_) => use_commands < command_limit,
         };
+        if !kind_fits {
+            continue;
+        }
         let access_fits = match node.access {
             WorkspaceAccess::ReadOnly => !writer,
             WorkspaceAccess::Mutating => !writer && readers == 0,
         };
-        if use_total >= total_limit || !kind_fits || !access_fits {
+        if !access_fits {
             break;
         }
         actions.push(SchedulerAction::Launch {
@@ -200,6 +206,7 @@ pub(crate) fn apply_event(
             next.completions.insert(node, *completion);
         }
         SchedulerEvent::CancellationRequested => {
+            validate_lifecycle_transition(workflow, state, RunLifecycle::Cancelling)?;
             next.cancellation_requested = true;
             next.lifecycle = RunLifecycle::Cancelling;
         }

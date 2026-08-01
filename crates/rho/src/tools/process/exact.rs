@@ -3,10 +3,7 @@
 use std::{
     path::Path,
     process::{ExitStatus, Stdio},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -215,6 +212,12 @@ async fn run_exact_process(
     rho_tools::apply_process_environment(&mut command, execution.environment())
         .map_err(execution_error)?;
 
+    let mut inherited_files = vec![&verified_executable.executable.file, &verified_cwd.file];
+    if let Some(interpreter) = &verified_executable.interpreter {
+        inherited_files.push(&interpreter.file);
+    }
+    crate::workflow::configure_handle_inheritance(&mut command, &inherited_files)
+        .map_err(|error| execution_error(error.to_string()))?;
     let mut child = command
         .spawn()
         .map_err(|error| execution_error(error.to_string()))?;
@@ -228,22 +231,10 @@ async fn run_exact_process(
         .take()
         .ok_or_else(|| execution_error("stderr was not captured"))?;
     let limit = execution.output_limits().max_output_bytes();
-    let total_limit = limit.saturating_mul(2);
-    let total_remaining = Arc::new(AtomicUsize::new(total_limit));
     let stdout_state = Arc::new(Mutex::new(BoundedReadState::new(limit)));
     let stderr_state = Arc::new(Mutex::new(BoundedReadState::new(limit)));
-    let mut stdout_task = tokio::spawn(read_bounded(
-        stdout,
-        limit,
-        Arc::clone(&total_remaining),
-        Arc::clone(&stdout_state),
-    ));
-    let mut stderr_task = tokio::spawn(read_bounded(
-        stderr,
-        limit,
-        total_remaining,
-        Arc::clone(&stderr_state),
-    ));
+    let mut stdout_task = tokio::spawn(read_bounded(stdout, limit, Arc::clone(&stdout_state)));
+    let mut stderr_task = tokio::spawn(read_bounded(stderr, limit, Arc::clone(&stderr_state)));
 
     let exited = child.try_wait();
     let exit = if let Some(status) = exited.transpose() {
@@ -357,7 +348,6 @@ fn command_from_execution(
 async fn read_bounded(
     mut stream: impl AsyncRead + Unpin,
     limit: usize,
-    total_remaining: Arc<AtomicUsize>,
     state: Arc<Mutex<BoundedReadState>>,
 ) -> std::io::Result<()> {
     let mut buffer = [0_u8; 8 * 1024];
@@ -369,13 +359,7 @@ async fn read_bounded(
         let mut state = state.lock().expect("bounded workflow stream lock");
         state.observed_bytes = state.observed_bytes.saturating_add(read as u64);
         let remaining = limit.saturating_sub(state.retained.len());
-        let wanted = read.min(remaining);
-        let keep = total_remaining
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
-                Some(total.saturating_sub(wanted))
-            })
-            .unwrap_or(0)
-            .min(wanted);
+        let keep = read.min(remaining);
         state.retained.extend_from_slice(&buffer[..keep]);
         state.truncated |= keep < read;
     }

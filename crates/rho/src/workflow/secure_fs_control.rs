@@ -1,8 +1,10 @@
 use std::path::Path;
 
+#[cfg(unix)]
+use super::WorkflowError;
 use super::{
     secure_fs::{identity_drift, SecureDirectory},
-    WorkflowError, WorkflowResult,
+    WorkflowResult,
 };
 
 impl SecureDirectory {
@@ -150,7 +152,8 @@ fn write_file_if_absent_in(
             return Err(error.into());
         }
     };
-    std::fs::remove_file(temporary_path)?;
+    // The installed hard link keeps the completed bytes, so cleanup is best effort.
+    let _ = std::fs::remove_file(temporary_path);
     super::secure_fs::validate_opened_windows_path(
         &parent_handle,
         &root.expected_path.join(parent),

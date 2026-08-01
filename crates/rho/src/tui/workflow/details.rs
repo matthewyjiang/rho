@@ -8,13 +8,15 @@ use ratatui::{
     text::{Line, Span},
 };
 
+use crate::workflow::NodeId;
+
 use super::super::{
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     theme::Theme,
     HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 use super::{
-    event_adapter::WorkflowNodeSnapshot,
+    event_adapter::{ArtifactReference, WorkflowNodeSnapshot},
     output::{self, NodeOutputBody},
 };
 
@@ -23,6 +25,8 @@ use super::{
 pub(super) struct DetailPane {
     run_directory: Option<PathBuf>,
     body: Option<NodeOutputBody>,
+    /// Node and artifacts from the last load attempt, including a cache miss.
+    loaded_key: Option<(NodeId, Vec<ArtifactReference>)>,
     scroll: HistoryScrollChrome,
     area: Rect,
     content_len: usize,
@@ -37,6 +41,7 @@ impl DetailPane {
         self.clear_body(/*reset_scroll*/ true);
     }
 
+    #[cfg(test)]
     pub(super) fn body(&self) -> Option<&NodeOutputBody> {
         self.body.as_ref()
     }
@@ -67,13 +72,11 @@ impl DetailPane {
             self.clear_body(reset_scroll);
             return;
         };
-        if self
-            .body
-            .as_ref()
-            .is_some_and(|body| output::body_matches_node(body, node))
-        {
+        let key = (node.id.clone(), node.artifacts.clone());
+        if self.loaded_key.as_ref() == Some(&key) {
             return;
         }
+        self.loaded_key = Some(key);
         self.body = output::load_finished_output(run_directory, node);
         self.invalidate_line_cache();
         if reset_scroll {
@@ -218,6 +221,7 @@ impl DetailPane {
 
     fn clear_body(&mut self, reset_scroll: bool) {
         self.body = None;
+        self.loaded_key = None;
         self.invalidate_line_cache();
         if reset_scroll {
             self.scroll = HistoryScrollChrome::default();

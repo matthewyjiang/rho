@@ -894,11 +894,12 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
             .await
     });
     loop {
-        if matches!(
-            competing_events_rx.recv().await,
-            Some(RuntimeEvent::NodeStarted { .. })
-        ) {
-            break;
+        match competing_events_rx.recv().await {
+            Some(RuntimeEvent::NodeStarted { .. }) => break,
+            Some(_) => {}
+            None => {
+                panic!("competing run ended before it started a node");
+            }
         }
     }
     assert!(matches!(
@@ -1174,6 +1175,43 @@ fn checkout_gate_rejects_symlink_lock() {
 
     assert!(CheckoutGate::new(home.path(), workspace.path()).is_err());
     assert_eq!(std::fs::read_to_string(target).unwrap(), "do not open");
+}
+
+// Covers: cancellation while another owner holds the checkout lock must not park runtime exit.
+// Owner: checkout gate cross-process wait.
+#[tokio::test]
+async fn checkout_gate_lock_wait_honors_cancellation() {
+    use fs2::FileExt;
+    use sha2::{Digest as _, Sha256};
+
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let gate = CheckoutGate::new(home.path(), workspace.path()).unwrap();
+    let canonical = workspace.path().canonicalize().unwrap();
+    let key = format!(
+        "{:x}",
+        Sha256::digest(canonical.to_string_lossy().as_bytes())
+    );
+    let contender = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            home.path()
+                .join("workflows/checkout-locks")
+                .join(format!("{key}.lock")),
+        )
+        .unwrap();
+    FileExt::lock_exclusive(&contender).unwrap();
+    let cancellation = rho_sdk::CancellationToken::new();
+    cancellation.cancel();
+    let wait_limit_seconds = test_workflow().graph.nodes[&node_id("inspect")].timeout_seconds;
+
+    let result = gate
+        .acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds)
+        .await;
+
+    assert!(matches!(result, Err(RuntimeError::Cancelled)));
+    FileExt::unlock(&contender).unwrap();
 }
 
 // Covers: a prior running attempt must stop resume until the caller confirms no process exists.

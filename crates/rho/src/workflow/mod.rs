@@ -15,8 +15,14 @@ mod secure_fs;
 mod secure_fs_control;
 mod secure_fs_directory;
 mod secure_fs_opened;
+mod secure_fs_spawn;
 #[cfg(windows)]
 mod secure_fs_windows;
+#[cfg(windows)]
+pub(crate) use secure_fs_windows::windows_paths_match;
+#[cfg(all(test, windows))]
+#[path = "secure_fs_windows_tests.rs"]
+mod secure_fs_windows_tests;
 mod service;
 mod starlark;
 mod starlark_api;
@@ -46,13 +52,14 @@ pub(crate) use schema::*;
 pub(crate) use secure_fs::{
     ensure_directory_beneath, freeze_directory_identity, freeze_executable_identity,
     freeze_opened_executable, open_executable, open_executable_candidate,
-    open_private_file_beneath, read_source_beneath, verified_handle_path,
-    verify_directory_identity, verify_executable_identity, write_file_beneath,
-    ExecutableInterpreterRequest, OpenedExecutable, VerifiedExecutable, VerifiedPath,
+    open_private_file_beneath, read_source_beneath, verify_directory_identity,
+    verify_executable_identity, write_file_beneath, ContentHash, ExecutableInterpreterRequest,
+    OpenedExecutable, VerifiedExecutable, VerifiedPath,
 };
 pub(crate) use secure_fs_directory::{
     open_verified_directory, open_verified_file_in_directory, opened_directory_names,
 };
+pub(crate) use secure_fs_spawn::{configure_handle_inheritance, verified_handle_path};
 
 pub(crate) use service::WorkflowService;
 pub(crate) use starlark::StarlarkPlanner;

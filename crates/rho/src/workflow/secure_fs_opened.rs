@@ -1,13 +1,13 @@
 use std::{io::Read as _, path::Path};
 
 use super::{
-    secure_fs::{identity_drift, inspect_absolute, OpenedExecutable, VerifiedPath},
+    secure_fs::{identity_drift, inspect_absolute, ContentHash, OpenedExecutable, VerifiedPath},
     Budget, FrozenPathIdentity, FrozenPathKind, WorkflowError, WorkflowResult,
 };
 
 impl VerifiedPath {
-    pub(crate) fn open(path: &Path, hash: bool) -> WorkflowResult<Self> {
-        inspect_absolute(path, FrozenPathKind::File, hash)
+    pub(crate) fn open(path: &Path, content_hash: ContentHash) -> WorkflowResult<Self> {
+        inspect_absolute(path, FrozenPathKind::File, content_hash)
     }
 
     pub(crate) fn read_utf8(mut self) -> WorkflowResult<String> {

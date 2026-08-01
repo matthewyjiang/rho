@@ -1,14 +1,15 @@
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use pretty_assertions::assert_eq;
-use rho_sdk::{CapabilityKind, CapabilityOperation, PathScope};
+use rho_sdk::{tool::ToolErrorKind, CapabilityKind, CapabilityOperation, PathScope};
 #[cfg(any(unix, windows))]
 use sha2::Digest as _;
 
 use crate::workflow::{PlanId, RunId};
 
 use super::{
-    agent_catalog_roots_for, executable_candidates_in, AppWorkflowToolService, WorkflowToolRequest,
+    agent_catalog_roots_for, executable_candidates_in, model_workflow_tool_error,
+    AppWorkflowToolService, WorkflowToolRequest,
 };
 
 fn service() -> AppWorkflowToolService {
@@ -25,6 +26,97 @@ fn plan_id(value: &str) -> PlanId {
 
 fn run_id(value: &str) -> RunId {
     RunId::from_str(value).expect("canonical run id")
+}
+
+// Covers: Plan, Run, Status, Cancel, and Resume failures must all use the
+// model-safe adapter, including a nested corruption reason with another path.
+// Owner: model-facing workflow tool adapter.
+#[test]
+fn operation_errors_use_nested_model_safe_workflow_diagnostics() {
+    let data_path = Path::new("/home/alice/private/run/state.json");
+    let nested_path = "C:\\Users\\alice\\private\\events.jsonl";
+
+    for operation in ["Plan", "Run", "Status", "Cancel", "Resume"] {
+        let error = anyhow::Error::from(crate::workflow::WorkflowError::Corrupt {
+            path: data_path.to_owned(),
+            reason: format!("failed to parse {nested_path}"),
+        })
+        .context(format!(
+            "{operation} failed while loading {}",
+            data_path.display()
+        ));
+        let error = model_workflow_tool_error(error);
+
+        assert_eq!(error.kind(), ToolErrorKind::Execution);
+        assert_eq!(
+            error.message(),
+            "workflow data is corrupt at <redacted>: <redacted>"
+        );
+    }
+}
+
+// Covers: a malformed private agent file must not expose its absolute path to
+// the model, while the local CLI diagnostic must still identify that file.
+// Owner: model-facing workflow tool adapter.
+#[test]
+fn malformed_agent_catalog_error_redacts_private_absolute_path() {
+    let private_path = Path::new("/home/alice/private/agents/worker.md");
+    let error =
+        crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
+            rho_home: vec![(
+                private_path.to_owned(),
+                "---\ndescription: demo\nruntime: malformed\n---\n".to_owned(),
+            )],
+            ..Default::default()
+        })
+        .unwrap_err();
+    let local_error = anyhow::Error::from(error.clone());
+
+    assert!(super::super::diagnostic_for_error(&local_error)
+        .message
+        .contains(private_path.to_str().unwrap()));
+    let model_error = model_workflow_tool_error(anyhow::Error::from(error));
+    assert_eq!(model_error.kind(), ToolErrorKind::Execution);
+    assert_eq!(
+        model_error.message(),
+        "agent catalog is invalid at <redacted>"
+    );
+}
+
+// Covers: generic nested anyhow errors and untrusted workflow text must not
+// bypass the opaque model-facing fallback.
+// Owner: model-facing workflow tool adapter.
+#[test]
+fn opaque_fallback_redacts_nested_and_untrusted_workflow_error_text() {
+    let private_path = "/home/alice/private/workflow.star";
+    let generic_error = anyhow::anyhow!("read failed at {private_path}")
+        .context(format!("could not load {private_path}"));
+    assert!(super::super::diagnostic_for_error(&generic_error)
+        .message
+        .contains(private_path));
+    let cases = [
+        (generic_error, "workflow operation failed"),
+        (
+            anyhow::Error::from(crate::workflow::WorkflowError::Schema {
+                path: private_path.to_owned(),
+                reason: format!("invalid source at {private_path}"),
+            }),
+            "workflow operation failed",
+        ),
+        (
+            anyhow::Error::from(crate::workflow::WorkflowError::Starlark(format!(
+                "evaluation failed in {private_path}"
+            ))),
+            "workflow evaluation failed",
+        ),
+    ];
+
+    for (error, expected) in cases {
+        let error = model_workflow_tool_error(error);
+        assert_eq!(error.kind(), ToolErrorKind::Execution);
+        assert_eq!(error.message(), expected);
+        assert!(!error.message().contains(private_path));
+    }
 }
 
 // Covers: each model workflow action must declare its durable and process
@@ -95,6 +187,7 @@ fn action_preparation_declares_exact_capabilities() {
                 Path::new("/rho"),
                 Some(Path::new("/home/test")),
                 Path::new("/bin/rho"),
+                false,
             )
             .unwrap();
         assert_eq!(
@@ -124,6 +217,7 @@ fn preparation_keeps_exact_durable_and_process_facts() {
             Path::new("/rho"),
             Some(Path::new("/home/test")),
             Path::new("/bin/rho"),
+            false,
         )
         .unwrap();
     assert!(matches!(
@@ -161,6 +255,10 @@ fn preparation_keeps_exact_durable_and_process_facts() {
             if process.invocation().executable_path() == Path::new("/bin/rho")
                 && process.invocation().arguments()
                     == [crate::cli::WORKFLOW_PLANNER_WORKER_COMMAND]
+                && process.environment()
+                    == &rho_sdk::ProcessEnvironment::InheritListed {
+                        variable_names: vec![super::super::PLANNER_WORKER_ENV.to_owned()],
+                    }
     ));
     assert!(matches!(
         plan[6].operation(),
@@ -178,6 +276,7 @@ fn preparation_keeps_exact_durable_and_process_facts() {
             Path::new("/rho"),
             Some(Path::new("/home/test")),
             Path::new("/bin/rho"),
+            false,
         )
         .unwrap();
     assert!(matches!(
@@ -194,6 +293,7 @@ fn preparation_keeps_exact_durable_and_process_facts() {
             Path::new("/rho"),
             Some(Path::new("/home/test")),
             Path::new("/bin/rho"),
+            false,
         )
         .is_err());
 }
@@ -260,7 +360,8 @@ fn config_parse_uses_the_authorized_open_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config.toml");
     std::fs::write(&path, "provider = 'openai'\nmodel = 'authorized'\n").unwrap();
-    let opened = crate::workflow::VerifiedPath::open(&path, false).unwrap();
+    let opened =
+        crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
 
     replace_opened_file(&path, "provider = 'openai'\nmodel = 'replacement'\n");
     let text = opened.read_utf8().unwrap();
@@ -278,7 +379,8 @@ fn workflow_source_read_uses_the_authorized_open_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("workflow.star");
     std::fs::write(&path, "authorized source").unwrap();
-    let opened = crate::workflow::VerifiedPath::open(&path, false).unwrap();
+    let opened =
+        crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
     let budget = crate::workflow::Budget::measured("source bytes", 64, "test").unwrap();
 
     replace_opened_file(&path, "replacement source");
@@ -299,7 +401,8 @@ fn agent_parse_uses_the_authorized_open_file() {
         "---\ndescription: authorized\n---\nauthorized prompt\n",
     )
     .unwrap();
-    let opened = crate::workflow::VerifiedPath::open(&path, false).unwrap();
+    let opened =
+        crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
 
     replace_opened_file(
         &path,
@@ -348,7 +451,7 @@ fn agent_discovery_stays_on_the_authorized_directory_handle() {
     let opened = crate::workflow::open_verified_file_in_directory(
         &opened_root,
         Path::new("worker.md"),
-        false,
+        crate::workflow::ContentHash::Skip,
     )
     .unwrap();
     let source = opened.read_utf8().unwrap();

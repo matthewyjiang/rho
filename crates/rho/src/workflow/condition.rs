@@ -103,10 +103,24 @@ fn exit_matches(exit: &CommandExit, predicate: &ExitCodePredicate) -> bool {
         (CommandExit::Code { code }, ExitCodePredicate::IsOneOf(expected)) => {
             expected.contains(code)
         }
-        (CommandExit::Code { code: 0 }, ExitCodePredicate::Succeeded) => true,
+        (CommandExit::Code { code }, ExitCodePredicate::Succeeded) => *code == 0,
         (CommandExit::Code { code }, ExitCodePredicate::Failed) => *code != 0,
-        (_, ExitCodePredicate::Failed) => true,
-        _ => false,
+        (
+            CommandExit::Signal { .. }
+            | CommandExit::Timeout
+            | CommandExit::Cancellation
+            | CommandExit::Abnormal,
+            ExitCodePredicate::Failed,
+        ) => true,
+        (
+            CommandExit::Signal { .. }
+            | CommandExit::Timeout
+            | CommandExit::Cancellation
+            | CommandExit::Abnormal,
+            ExitCodePredicate::Equals(_)
+            | ExitCodePredicate::IsOneOf(_)
+            | ExitCodePredicate::Succeeded,
+        ) => false,
     }
 }
 

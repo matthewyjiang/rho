@@ -1,5 +1,8 @@
 use super::*;
-use crate::workflow::test_support::{agent_node, id, state, workflow};
+use crate::workflow::{
+    test_support::{agent_node, id, state, workflow},
+    CommandNode, Node,
+};
 
 fn capacity() -> SchedulerCapacity {
     SchedulerCapacity {
@@ -7,6 +10,17 @@ fn capacity() -> SchedulerCapacity {
         agents: 8,
         commands: 8,
     }
+}
+
+fn command_node(name: &str, access: WorkspaceAccess) -> Node {
+    let mut node = agent_node(name, &[], access);
+    node.execution = NodeExecution::Command(CommandNode::Direct {
+        executable: "command".to_owned(),
+        arguments: Vec::new(),
+        cwd: ".".to_owned(),
+        output: None,
+    });
+    node
 }
 
 // Covers: map or completion order could change which ready nodes launch first.
@@ -40,6 +54,33 @@ fn pending_nodes_transition_to_ready_before_launch() {
         next_actions(&workflow, &state(&workflow), capacity()).unwrap(),
         vec![SchedulerAction::MarkReady {
             node: id("inspect")
+        }]
+    );
+}
+
+// Covers: a full agent lane must not leave command capacity idle.
+// Owner: pure workflow scheduler.
+#[test]
+fn full_kind_lane_does_not_block_other_kind() {
+    let workflow = workflow(vec![
+        agent_node("agent", &[], WorkspaceAccess::ReadOnly),
+        command_node("command", WorkspaceAccess::ReadOnly),
+    ]);
+    let mut state = state(&workflow);
+    for node_state in state.nodes.values_mut() {
+        *node_state = NodeState::Ready;
+    }
+    let capacity = SchedulerCapacity {
+        total: 2,
+        agents: 0,
+        commands: 1,
+    };
+
+    assert_eq!(
+        next_actions(&workflow, &state, capacity).unwrap(),
+        vec![SchedulerAction::Launch {
+            node: id("command"),
+            access: WorkspaceAccess::ReadOnly,
         }]
     );
 }

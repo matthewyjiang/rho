@@ -46,9 +46,7 @@ pub(super) fn load_finished_output(
     run_directory: &Path,
     node: &WorkflowNodeSnapshot,
 ) -> Option<NodeOutputBody> {
-    if node.state.terminal().is_none() {
-        return None;
-    }
+    node.state.terminal()?;
     let reference = primary_artifact(node)?;
     let relative = reference.artifact.relative_path.as_str();
     let (text, read_notices) = match read_artifact_text(run_directory, relative) {
@@ -82,6 +80,7 @@ pub(super) fn load_finished_output(
     })
 }
 
+#[cfg(test)]
 pub(super) fn body_matches_node(body: &NodeOutputBody, node: &WorkflowNodeSnapshot) -> bool {
     primary_artifact(node).is_some_and(|reference| {
         body.node_id == node.id
@@ -181,14 +180,16 @@ fn read_artifact_text(
 ) -> Result<(String, Vec<String>), String> {
     let relative_path = validated_relative(relative)
         .ok_or_else(|| "output path is not safe to read from the run directory".to_owned())?;
-    let mut file = crate::workflow::open_private_file_beneath(
+    let file = crate::workflow::open_private_file_beneath(
         run_directory,
         &relative_path,
         /*writable*/ false,
     )
     .map_err(|error| format!("could not open output: {error}"))?;
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
+    // Read one extra byte so decoding can report that the display cap was hit.
+    file.take(MAX_DISPLAY_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("could not read output: {error}"))?;
     Ok(decode_artifact_bytes(&bytes))
 }

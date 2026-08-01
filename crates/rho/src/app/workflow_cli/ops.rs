@@ -21,6 +21,7 @@ use super::{
     cancel::CancellationOutcome,
     plan_host::{resolve_nodes_with_host, DiscoveringPlanHost, PlanHost},
     planner_worker::{self, run_supervised_planner, PlannerWorkerPlan},
+    STARLARK_VERSION,
 };
 
 // Receipt: matches agent_executor::DEFAULT_TOTAL_CONCURRENCY. Kind limits
@@ -257,7 +258,7 @@ pub(crate) fn freeze_planned_workflow(
         planner: PlannerIdentity {
             name: "rho".to_owned(),
             format_version: PLANNER_FORMAT_VERSION,
-            starlark_version: "0.14.2".to_owned(),
+            starlark_version: STARLARK_VERSION.to_owned(),
         },
         graph_digest: Digest(String::new()),
         sources: sources.manifest.clone(),
@@ -275,6 +276,10 @@ pub(crate) fn freeze_planned_workflow(
     validate_runtime_budgets(&workflow, limits)?;
     Ok(PreparedPlan { sources, workflow })
 }
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod tests;
 
 pub(crate) fn workspace_identity(path: &Path) -> anyhow::Result<String> {
     Ok(crate::paths::display(&path.canonicalize()?))

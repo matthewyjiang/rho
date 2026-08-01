@@ -19,6 +19,9 @@ use super::{
     state::WorkflowUiState,
 };
 
+// Receipt: three rows show one output row plus enough context to make scrolling clear.
+const MIN_DETAILS_BODY_ROWS: u16 = 3;
+
 pub(super) fn draw(frame: &mut Frame<'_>, state: &mut WorkflowUiState) {
     let area = frame.area();
     let vertical = Layout::default()
@@ -101,7 +104,7 @@ fn draw_details(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) 
     };
 
     let meta = detail_meta_lines(&node, state);
-    let meta_height = meta.len().min(inner.height as usize) as u16;
+    let (meta_height, _) = detail_pane_heights(&meta, inner, state.details().has_body());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(meta_height), Constraint::Min(0)])
@@ -133,6 +136,29 @@ fn draw_details(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) 
     {
         scrollbar.render(frame, state.details().dragging_scrollbar());
     }
+}
+
+fn detail_pane_heights(meta: &[Line<'_>], inner: Rect, has_body: bool) -> (u16, u16) {
+    let width = inner.width.max(1) as usize;
+    let wrapped_height = meta
+        .iter()
+        .map(|line| {
+            let text = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            super::super::render::wrap_line_at_whitespace(&text, width).len()
+        })
+        .sum::<usize>()
+        .min(inner.height as usize) as u16;
+    let body_reserve = if has_body {
+        MIN_DETAILS_BODY_ROWS.min(inner.height)
+    } else {
+        0
+    };
+    let meta_height = wrapped_height.min(inner.height.saturating_sub(body_reserve));
+    (meta_height, inner.height.saturating_sub(meta_height))
 }
 
 fn detail_meta_lines<'a>(
@@ -435,3 +461,7 @@ fn reason_text(reason: &TerminalReason) -> &str {
         | TerminalReason::Blocked(reason) => reason,
     }
 }
+
+#[cfg(test)]
+#[path = "view_tests.rs"]
+mod tests;

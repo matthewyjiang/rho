@@ -19,8 +19,10 @@ pub(super) struct DiscoveredWorkflow {
 /// - `.rho/workflows/<name>.star`
 /// - `.rho/workflows/<name>/workflow.star`
 ///
-/// Nested helpers such as `common.star` are skipped unless they are the only
-/// entry shape for a folder named after the file.
+/// Other `.star` files inside a workflow folder, such as `common.star`, are
+/// always treated as helpers and skipped. Symlink entries are also skipped to
+/// match source loading, which rejects symlinks so frozen source digests cannot
+/// escape the workspace.
 pub(super) fn discover_workflow_sources(workspace: &Path) -> Vec<DiscoveredWorkflow> {
     let root = workspace.join(".rho").join("workflows");
     if !root.is_dir() {
@@ -47,7 +49,7 @@ pub(super) fn discover_workflow_sources(workspace: &Path) -> Vec<DiscoveredWorkf
             continue;
         }
         let entry_star = path.join("workflow.star");
-        if entry_star.is_file() {
+        if std::fs::symlink_metadata(&entry_star).is_ok_and(|metadata| metadata.is_file()) {
             push_discovered(workspace, entry_star, &mut found);
         }
     }

@@ -373,55 +373,6 @@ pub(super) fn effective_permission_mode_for<'a>(
     Ok(effective)
 }
 
-#[allow(dead_code)]
-pub(super) async fn execute_tool_run(
-    run: StoredRun,
-    recovery: RecoveryDecision,
-    config_path: Option<std::path::PathBuf>,
-    context: &rho_sdk::tool::ToolContext,
-) -> anyhow::Result<StoredRun> {
-    let runtime = WorkflowRuntime::build(&run, config_path, context.child_approval_session())?;
-    let runner = Arc::clone(&runtime.runner);
-    let cancellation = runner.cancellation_request(run.manifest.run_id);
-    let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
-    let result = {
-        let drive = runner.drive(run.manifest.run_id, recovery, Some(sender));
-        tokio::pin!(drive);
-        let mut cancellation_requested = false;
-        loop {
-            tokio::select! {
-                biased;
-                () = context.cancellation().cancelled(), if !cancellation_requested => {
-                    if let Err(error) = cancellation.request() {
-                        break Err(anyhow::Error::from(error));
-                    }
-                    cancellation_requested = true;
-                }
-                result = &mut drive => {
-                    while let Ok(event) = events.try_recv() {
-                        let _ = context
-                            .progress()
-                            .send(rho_sdk::tool::ToolProgress::message(event.message()))
-                            .await;
-                    }
-                    break result.map_err(anyhow::Error::from);
-                }
-                event = events.recv() => {
-                    if let Some(event) = event {
-                        let _ = context
-                            .progress()
-                            .send(rho_sdk::tool::ToolProgress::message(event.message()))
-                            .await;
-                    }
-                }
-            }
-        }
-    };
-    drop(runner);
-    runtime.shutdown().await;
-    result
-}
-
 #[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod tests;

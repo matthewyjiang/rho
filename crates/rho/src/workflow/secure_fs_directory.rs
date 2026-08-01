@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use super::secure_fs::{open_beneath_from_file, verified_from_open_file};
 use super::{
-    secure_fs::{identity_drift, inspect_absolute, SecureDirectory, VerifiedPath},
+    secure_fs::{identity_drift, inspect_absolute, ContentHash, SecureDirectory, VerifiedPath},
     FrozenPathKind, WorkflowResult,
 };
 use std::{ffi::OsString, fs::File, io, path::Path};
@@ -18,7 +18,7 @@ pub(super) fn opened_names(file: &File) -> io::Result<Vec<OsString>> {
 }
 
 pub(crate) fn open_verified_directory(path: &Path) -> WorkflowResult<VerifiedPath> {
-    inspect_absolute(path, FrozenPathKind::Directory, false)
+    inspect_absolute(path, FrozenPathKind::Directory, ContentHash::Skip)
 }
 
 pub(crate) fn opened_directory_names(directory: &VerifiedPath) -> WorkflowResult<Vec<OsString>> {
@@ -35,7 +35,7 @@ pub(crate) fn opened_directory_names(directory: &VerifiedPath) -> WorkflowResult
 pub(crate) fn open_verified_file_in_directory(
     directory: &VerifiedPath,
     relative: &Path,
-    hash: bool,
+    content_hash: ContentHash,
 ) -> WorkflowResult<VerifiedPath> {
     if directory.identity.kind != FrozenPathKind::Directory {
         return Err(identity_drift(
@@ -53,7 +53,7 @@ pub(crate) fn open_verified_file_in_directory(
         file,
         Path::new(&directory.identity.canonical_path).join(relative),
         FrozenPathKind::File,
-        hash,
+        content_hash,
     )
 }
 
@@ -61,7 +61,7 @@ pub(crate) fn open_verified_file_in_directory(
 pub(crate) fn open_verified_file_in_directory(
     directory: &VerifiedPath,
     relative: &Path,
-    _hash: bool,
+    _content_hash: ContentHash,
 ) -> WorkflowResult<VerifiedPath> {
     Err(identity_drift(
         &Path::new(&directory.identity.canonical_path).join(relative),
@@ -83,10 +83,18 @@ fn names(file: &File) -> io::Result<Vec<OsString>> {
     }
     let mut names = Vec::new();
     loop {
+        // SAFETY: errno is thread-local and this pointer is valid on supported Unix targets.
+        unsafe { *readdir_errno_location() = 0 };
         // SAFETY: directory remains valid until closedir below.
         let entry = unsafe { libc::readdir(directory) };
         if entry.is_null() {
-            break;
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(0) {
+                break;
+            }
+            // SAFETY: directory was returned by fdopendir and has not been closed.
+            unsafe { libc::closedir(directory) };
+            return Err(error);
         }
         // SAFETY: d_name is NUL-terminated for the entry returned by readdir.
         let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
@@ -99,6 +107,59 @@ fn names(file: &File) -> io::Result<Vec<OsString>> {
         return Err(io::Error::last_os_error());
     }
     Ok(names)
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "fuchsia",
+    target_os = "hurd",
+    target_os = "redox"
+))]
+unsafe fn readdir_errno_location() -> *mut libc::c_int {
+    // SAFETY: libc returns the current thread's errno pointer.
+    unsafe { libc::__errno_location() }
+}
+
+#[cfg(any(
+    target_os = "android",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "nuttx"
+))]
+unsafe fn readdir_errno_location() -> *mut libc::c_int {
+    // SAFETY: libc returns the current thread's errno pointer.
+    unsafe { libc::__errno() }
+}
+
+#[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+unsafe fn readdir_errno_location() -> *mut libc::c_int {
+    // SAFETY: libc returns the current thread's errno pointer.
+    unsafe { libc::__error() }
+}
+
+#[cfg(any(target_os = "solaris", target_os = "illumos"))]
+unsafe fn readdir_errno_location() -> *mut libc::c_int {
+    // SAFETY: libc returns the current thread's errno pointer.
+    unsafe { libc::___errno() }
+}
+
+#[cfg(target_os = "haiku")]
+unsafe fn readdir_errno_location() -> *mut libc::c_int {
+    // SAFETY: libc returns the current thread's errno pointer.
+    unsafe { libc::_errnop() }
+}
+
+#[cfg(target_os = "aix")]
+unsafe fn readdir_errno_location() -> *mut libc::c_int {
+    // SAFETY: libc returns the current thread's errno pointer.
+    unsafe { libc::_Errno() }
+}
+
+#[cfg(target_os = "nto")]
+unsafe fn readdir_errno_location() -> *mut libc::c_int {
+    // SAFETY: libc returns the current thread's errno pointer.
+    unsafe { libc::__get_errno_ptr() }
 }
 
 #[cfg(windows)]

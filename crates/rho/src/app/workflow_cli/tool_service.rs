@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-use super::{diagnostic_for_error, ops::WorkflowOps, plan_host::AuthorizedPlanHost, runtime};
+use super::{diagnostic_for_model_error, ops::WorkflowOps, plan_host::AuthorizedPlanHost, runtime};
 
 mod capabilities;
 
@@ -53,7 +53,8 @@ struct AppWorkflowToolService {
 
 impl WorkflowToolService for AppWorkflowToolService {
     fn prepare(&self, request: &WorkflowToolRequest) -> Result<Vec<CapabilityRequest>, ToolError> {
-        self.capabilities_for(request).map_err(tool_error)
+        self.capabilities_for(request)
+            .map_err(model_workflow_tool_error)
     }
 
     fn execute<'a>(
@@ -77,6 +78,7 @@ impl AppWorkflowToolService {
             &rho_home,
             crate::paths::home_dir().as_deref(),
             &executable,
+            project_agent_catalogs_trusted(),
         )
     }
 
@@ -86,13 +88,15 @@ impl AppWorkflowToolService {
         rho_home: &Path,
         home: Option<&Path>,
         executable: &Path,
+        project_agents_trusted: bool,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
         let plans = rho_home.join("workflows/plans");
         let runs = rho_home.join("workflows/runs");
         let capabilities = match request {
             WorkflowToolRequest::Validate { file, .. } | WorkflowToolRequest::Plan { file, .. } => {
-                let mut requests = self.planning_read_capabilities(file, rho_home, home)?;
+                let mut requests =
+                    self.planning_read_capabilities(file, rho_home, home, project_agents_trusted)?;
                 requests.push(CapabilityRequest::process(
                     self.planner_process_request(executable)?,
                     source(),
@@ -154,6 +158,7 @@ impl AppWorkflowToolService {
         file: &str,
         rho_home: &Path,
         home: Option<&Path>,
+        project_agents_trusted: bool,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
         let mut requests = vec![
@@ -168,7 +173,7 @@ impl AppWorkflowToolService {
                 source(),
             ),
         ];
-        for path in agent_catalog_roots(&self.cwd, home) {
+        for path in agent_catalog_roots_for(&self.cwd, home, project_agents_trusted) {
             let scope = if path.starts_with(&self.cwd) {
                 PathScope::PrimaryWorkspace
             } else {
@@ -225,7 +230,9 @@ impl AppWorkflowToolService {
                 executable,
                 vec![crate::cli::WORKFLOW_PLANNER_WORKER_COMMAND.into()],
             ),
-            ProcessEnvironment::InheritAll,
+            ProcessEnvironment::InheritListed {
+                variable_names: vec![super::PLANNER_WORKER_ENV.to_owned()],
+            },
             ProcessOutputLimits::new(
                 usize::try_from(super::PLANNER_RESPONSE_FRAME_BYTES + 8)
                     .map_err(|_| anyhow::anyhow!("planner response limit does not fit platform"))?,
@@ -250,7 +257,7 @@ impl AppWorkflowToolService {
                     }),
                     Err(error) => Ok(WorkflowToolResult::Validate {
                         valid: false,
-                        diagnostics: vec![diagnostic_summary(diagnostic_for_error(&error))],
+                        diagnostics: vec![diagnostic_summary(diagnostic_for_model_error(&error))],
                     }),
                 }
             }
@@ -258,9 +265,11 @@ impl AppWorkflowToolService {
                 let prepared = self
                     .prepare(Path::new(&file), inputs, context)
                     .await
-                    .map_err(tool_error)?;
-                let ops = self.ops().map_err(tool_error)?;
-                let stored = ops.store_plan(&prepared).map_err(tool_error)?;
+                    .map_err(model_workflow_tool_error)?;
+                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let stored = ops
+                    .store_plan(&prepared)
+                    .map_err(model_workflow_tool_error)?;
                 Ok(WorkflowToolResult::Plan {
                     plan_id: stored.manifest.plan_id.to_string(),
                     graph_digest: stored.manifest.graph_digest.0.clone(),
@@ -269,10 +278,14 @@ impl AppWorkflowToolService {
                 })
             }
             WorkflowToolRequest::Run { plan_id } => {
-                let ops = self.ops().map_err(tool_error)?;
-                let plan = ops.prepare_run_id(plan_id).map_err(tool_error)?;
+                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let plan = ops
+                    .prepare_run_id(plan_id)
+                    .map_err(model_workflow_tool_error)?;
                 confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
-                let run = ops.create_confirmed_run(&plan).map_err(tool_error)?;
+                let run = ops
+                    .create_confirmed_run(&plan)
+                    .map_err(model_workflow_tool_error)?;
                 self.tracker.register_start(
                     run.manifest.run_id.to_string(),
                     run.graph.graph.name.as_str(),
@@ -287,22 +300,22 @@ impl AppWorkflowToolService {
                     Some(self.tracker.clone()),
                 )
                 .await
-                .map_err(tool_error)?;
+                .map_err(model_workflow_tool_error)?;
                 run_result(started, RunResultKind::Run)
             }
             WorkflowToolRequest::Status { run_id } => {
-                let ops = self.ops().map_err(tool_error)?;
-                let run = ops.load_run_id(run_id).map_err(tool_error)?;
+                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let run = ops.load_run_id(run_id).map_err(model_workflow_tool_error)?;
                 observe_if_terminal(&self.tracker, &run);
                 run_result(run, RunResultKind::Status)
             }
             WorkflowToolRequest::Cancel { run_id } => {
-                let ops = self.ops().map_err(tool_error)?;
-                let run = ops.load_run_id(run_id).map_err(tool_error)?;
+                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let run = ops.load_run_id(run_id).map_err(model_workflow_tool_error)?;
                 let outcome = ops
                     .cancel(run.manifest.run_id, run.state.state.lifecycle)
                     .await
-                    .map_err(tool_error)?;
+                    .map_err(model_workflow_tool_error)?;
                 if matches!(
                     outcome.lifecycle,
                     RunLifecycle::Completed | RunLifecycle::NeedsRecovery
@@ -330,8 +343,8 @@ impl AppWorkflowToolService {
                 run_id,
                 recover_uncertain,
             } => {
-                let ops = self.ops().map_err(tool_error)?;
-                let run = ops.load_run_id(run_id).map_err(tool_error)?;
+                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let run = ops.load_run_id(run_id).map_err(model_workflow_tool_error)?;
                 let recovery = ops
                     .prepare_resume(&run, recover_uncertain)
                     .map_err(|error| {
@@ -341,7 +354,7 @@ impl AppWorkflowToolService {
                                 "the run has uncertain attempts; confirm that no prior process remains and set recover_uncertain to true",
                             )
                         } else {
-                            tool_error(error)
+                            model_workflow_tool_error(error)
                         }
                     })?;
                 confirm_exact_plan(context, "Resume", &run.manifest.graph_digest.0).await?;
@@ -359,7 +372,7 @@ impl AppWorkflowToolService {
                     Some(self.tracker.clone()),
                 )
                 .await
-                .map_err(tool_error)?;
+                .map_err(model_workflow_tool_error)?;
                 run_result(started, RunResultKind::Resume)
             }
         }
@@ -448,10 +461,6 @@ fn workflow_error_from_anyhow(error: anyhow::Error) -> WorkflowError {
         Ok(error) => error,
         Err(error) => WorkflowError::Starlark(error.to_string()),
     }
-}
-
-fn agent_catalog_roots(cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
-    agent_catalog_roots_for(cwd, home, project_agent_catalogs_trusted())
 }
 
 fn project_agent_catalogs_trusted() -> bool {
@@ -670,8 +679,9 @@ fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagno
     }
 }
 
-fn tool_error(error: impl std::fmt::Display) -> ToolError {
-    ToolError::new(ToolErrorKind::Execution, error.to_string())
+fn model_workflow_tool_error(error: anyhow::Error) -> ToolError {
+    let diagnostic = diagnostic_for_model_error(&error);
+    ToolError::new(ToolErrorKind::Execution, diagnostic.message)
 }
 
 fn host_input_error(error: impl std::fmt::Display) -> ToolError {

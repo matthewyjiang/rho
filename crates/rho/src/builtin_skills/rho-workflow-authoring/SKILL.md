@@ -120,10 +120,10 @@ def build(inputs):
             ". Return the required JSON value only.",
         ]),
         access = "read_only",
-        output = record({
-            "decision": enum(["approve", "revise"]),
-            "summary": string(),
-            "note": optional(string()),
+        output = schema.record({
+            "decision": schema.enum_(["approve", "revise"]),
+            "summary": schema.string(),
+            "note": schema.optional(schema.string()),
         }),
         timeout_seconds = 1800,
         max_output_bytes = 12000,
@@ -134,18 +134,18 @@ def build(inputs):
         argv = ["cargo", "test", "-p", inputs["package"]],
         cwd = ".",
         needs = ["inspect"],
-        when = equals(output("inspect", ["decision"]), "approve"),
+        when = condition.equals(output("inspect", ["decision"]), "approve"),
         timeout_seconds = 1800,
         max_output_bytes = 12000,
         allow_failure = True,
-        output = stdout_json(record({"passed": bool()})),
+        output = schema.stdout_json(schema.record({"passed": schema.bool()})),
     )
 
     report = agent(
         name = "report",
         agent = "writer",
         needs = ["inspect", "test"],
-        when = is_one_of(status("test"), ["success", "failure"]),
+        when = condition.is_one_of(status("test"), ["success", "failure"]),
         prompt = template([
             "Write the report. Inspection summary: ",
             output("inspect", ["summary"]),
@@ -236,7 +236,7 @@ agent(
     needs = [],
     when = None,
     allow_failure = False,
-    output = record({"summary": string()}),
+    output = schema.record({"summary": schema.string()}),
     timeout_seconds = 1800,
     max_output_bytes = 12000,
 )
@@ -254,7 +254,7 @@ command(
     name = "check",
     argv = ["cargo", "check", "-p", "rho-coding-agent"],
     cwd = ".",
-    output = stdout_json(record({"passed": bool()})),
+    output = schema.stdout_json(schema.record({"passed": schema.bool()})),
     timeout_seconds = 1800,
     max_output_bytes = 12000,
 )
@@ -288,21 +288,21 @@ output reference in shell source.
 Use these output schema constructors:
 
 ```starlark
-null()
-bool()
-integer()
-string()
-enum(["approve", "revise"])
-list(string())
-optional(string())
-record({
-    "required": string(),
-    "optional": optional(integer()),
+schema.null()
+schema.bool()
+schema.integer()
+schema.string()
+schema.enum_(["approve", "revise"])
+schema.list(schema.string())
+schema.optional(schema.string())
+schema.record({
+    "required": schema.string(),
+    "optional": schema.optional(schema.integer()),
 })
-stdout_json(record({"passed": bool()}))
+schema.stdout_json(schema.record({"passed": schema.bool()}))
 ```
 
-Enum members must be scalar values. `stdout_json` parses the complete bounded
+Enum members must be scalar values. `schema.stdout_json` parses the complete bounded
 stdout after a direct or shell command ends. Invalid JSON or a schema mismatch
 is a typed node failure.
 
@@ -320,11 +320,11 @@ exit_code("test")
 Build conditions with:
 
 ```starlark
-equals(output("inspect", ["decision"]), "approve")
-is_one_of(status("test"), ["success", "failure"])
-all([condition_a, condition_b])
-any([condition_a, condition_b])
-not(condition_a)
+condition.equals(output("inspect", ["decision"]), "approve")
+condition.is_one_of(status("test"), ["success", "failure"])
+condition.all([condition_a, condition_b])
+condition.any([condition_a, condition_b])
+condition.not(condition_a)
 ```
 
 Node status values are `success`, `failure`, `denial`, `cancellation`,

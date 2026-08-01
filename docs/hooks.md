@@ -73,7 +73,7 @@ configuration error names the file, the hook ID, and the field.
 
 ## Events
 
-Delivered at schema version 1:
+Delivered at schema version 2:
 
 | Event | Kind | Fires |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ One bounded JSON document on stdin:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "event": "before_tool_use",
   "event_id": "0d1f…",
   "timestamp_unix_ms": 1730000000000,
@@ -123,6 +123,7 @@ One bounded JSON document on stdin:
     "parent_session_id": null,
     "run_id": "…"
   },
+  "host_labels": {},
   "workspace": { "root": "/home/you/project" },
   "bounds": { "truncated": false, "fields": [] },
   "payload": {
@@ -143,6 +144,12 @@ One bounded JSON document on stdin:
 `parent_session_id` is filled in for delegated Rho subagents. A
 `runtime: claude-cli` child does not run Rho's tool loop, so it produces
 session-boundary events only.
+
+`host_labels` contains bounded, non-secret labels from the embedding host. It
+is empty for standard session events. Tool events from workflow command and
+agent nodes include `workflow_run_id`, `plan_digest`, `node_id`, and `attempt`.
+SDK hosts can supply other labels, so handlers must allow unknown keys. A label
+that exceeds a bound is shortened and named in `bounds.fields`.
 
 Workflow lifecycle events come from the app, not `rho-sdk`. They use the same
 trusted command runner, queue, bounds, diagnostics, and project trust rules as

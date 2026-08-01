@@ -59,6 +59,78 @@ fn confirmation_policy_requires_yes_only_when_not_interactive() {
     );
 }
 
+// Covers: model workflow diagnostics must not expose local paths, while local
+// CLI diagnostics keep the full path needed to fix the error.
+// Owner: workflow CLI diagnostic adapter.
+#[test]
+fn model_diagnostics_redact_workflow_error_paths() {
+    let private_path = PathBuf::from("/home/alice/private/workflow.star");
+    let reason_path = "C:\\Users\\alice\\private\\state.json";
+    let cases = [
+        (
+            WorkflowError::SourceOutsideRoot {
+                path: private_path.clone(),
+            },
+            "workflow source path is outside module root: <redacted>",
+        ),
+        (
+            WorkflowError::SourceSymlink {
+                path: private_path.clone(),
+            },
+            "workflow source path contains a symlink: <redacted>",
+        ),
+        (
+            WorkflowError::Corrupt {
+                path: private_path.clone(),
+                reason: format!("failed to read {reason_path}"),
+            },
+            "workflow data is corrupt at <redacted>: <redacted>",
+        ),
+        (
+            WorkflowError::UntrustedDirectory(private_path.clone()),
+            "workflow store boundary is not a trusted directory: <redacted>",
+        ),
+    ];
+
+    for (error, expected_model_message) in cases {
+        let full_message = error.to_string();
+        let error = anyhow::Error::from(error);
+        assert_eq!(diagnostic_for_error(&error).message, full_message);
+        assert_eq!(
+            diagnostic_for_model_error(&error).message,
+            expected_model_message
+        );
+    }
+
+    let error = anyhow::Error::from(WorkflowError::MissingWorkflow);
+    assert_eq!(
+        diagnostic_for_model_error(&error).message,
+        diagnostic_for_error(&error).message
+    );
+}
+
+// Covers: anyhow context must not bypass model path redaction when the owned
+// WorkflowError is lower in the error chain.
+// Owner: workflow CLI diagnostic adapter.
+#[test]
+fn model_diagnostics_redact_nested_workflow_errors() {
+    let data_path = PathBuf::from("/home/alice/private/run/state.json");
+    let reason_path = "/mnt/secret/run-events.jsonl";
+    let error = anyhow::Error::from(WorkflowError::Corrupt {
+        path: data_path.clone(),
+        reason: format!("nested read failed at {reason_path}"),
+    })
+    .context(format!("failed to load {}", data_path.display()));
+
+    assert_eq!(
+        diagnostic_for_model_error(&error).message,
+        "workflow data is corrupt at <redacted>: <redacted>"
+    );
+    let local_message = diagnostic_for_error(&error).message;
+    assert!(local_message.contains(data_path.to_str().unwrap()));
+    assert!(local_message.contains(reason_path));
+}
+
 // Covers: an oversized worker frame must fail before allocating or deserializing its body.
 // Owner: supervised planner IPC framing.
 #[test]

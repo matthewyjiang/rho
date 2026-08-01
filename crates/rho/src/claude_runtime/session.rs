@@ -79,9 +79,12 @@ pub(crate) struct ClaudeSessionOverrides {
     /// Rate-limit cache path. Tests inject a temp path so settle never touches
     /// the host default cache.
     pub(crate) rate_limit_state_path: Option<std::path::PathBuf>,
-    /// A frozen caller can fail closed on changed process facts at the spawn boundary.
-    pub(crate) before_spawn: Option<Box<dyn Fn() -> std::io::Result<()> + Send + Sync>>,
+    /// A frozen caller can verify process facts and configure the child at the spawn boundary.
+    pub(crate) before_spawn: Option<BeforeSpawn>,
 }
+
+pub(crate) type BeforeSpawn =
+    Box<dyn Fn(&mut tokio::process::Command) -> std::io::Result<()> + Send + Sync>;
 
 struct OwnedChild {
     child: Child,
@@ -357,7 +360,7 @@ async fn run_child(
         .kill_on_drop(true);
 
     if let Some(before_spawn) = request.overrides.before_spawn.as_ref() {
-        if let Err(error) = before_spawn() {
+        if let Err(error) = before_spawn(&mut command) {
             return SessionOutcome::Failed(format!(
                 "claude code: frozen executable changed before spawn: {error}"
             ));

@@ -840,6 +840,16 @@ impl InteractiveRuntime {
         self.tools.contains(name)
     }
 
+    /// Returns the tool ceiling for workflow agents started by this session.
+    pub(crate) fn workflow_host_capabilities(&self) -> crate::agent::AgentCapabilities {
+        crate::agent::AgentCapabilities::new(
+            self.tools
+                .unfiltered_names()
+                .map(crate::agent::ToolCapability::parse)
+                .collect(),
+        )
+    }
+
     pub(crate) fn subagents(&self) -> Option<&crate::tools::agent::SubagentManager> {
         self.tools.subagents()
     }

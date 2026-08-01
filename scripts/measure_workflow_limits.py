@@ -56,8 +56,10 @@ DETERMINISTIC_FIELDS = {
     "node_timeout_seconds",
     "prompt_expansion_bytes",
     "argv_expansion_bytes",
-    "environment_expansion_bytes",
 }
+# Workflow schema v1 forbids source-controlled environment entries. The
+# receipt's zero baseline is a schema sentinel, not a corpus measurement.
+UNMEASURED_FIELDS = {"environment_expansion_bytes"}
 
 
 def compact_json(value: Any) -> bytes:
@@ -313,7 +315,6 @@ def plan_measurements(plan: dict[str, Any]) -> dict[str, int]:
         "node_timeout_seconds": timeout_max,
         "prompt_expansion_bytes": prompt_max,
         "argv_expansion_bytes": argv_max,
-        "environment_expansion_bytes": 0,
     }
 
 
@@ -441,6 +442,9 @@ def verify_arithmetic(receipt: dict) -> None:
 
 def compare_measurements(receipt: dict, measured: dict, process: dict) -> None:
     checked = receipt["planning"]["measured"]
+    receipt_fields = set(checked) - {"worker_wall_millis"}
+    if receipt_fields != DETERMINISTIC_FIELDS | UNMEASURED_FIELDS:
+        raise SystemExit("planning receipt measurement fields do not match the verifier")
     for name in sorted(DETERMINISTIC_FIELDS):
         if measured[name] != checked[name]:
             raise SystemExit(

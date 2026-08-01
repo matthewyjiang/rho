@@ -67,6 +67,12 @@ pub(crate) struct VerifiedPath {
     pub(crate) identity: FrozenPathIdentity,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ContentHash {
+    Compute,
+    Skip,
+}
+
 pub(crate) struct VerifiedExecutable {
     pub(crate) executable: VerifiedPath,
     pub(crate) interpreter: Option<VerifiedPath>,
@@ -80,13 +86,13 @@ pub(crate) struct OpenedExecutable {
 }
 
 pub(crate) fn open_executable(path: &Path) -> WorkflowResult<OpenedExecutable> {
-    let executable = inspect_absolute(path, FrozenPathKind::File, true)?;
+    let executable = inspect_absolute(path, FrozenPathKind::File, ContentHash::Compute)?;
     validate_executable_file(path, &executable.file)?;
     opened_executable(executable)
 }
 
 pub(crate) fn open_executable_candidate(path: &Path) -> WorkflowResult<Option<OpenedExecutable>> {
-    let executable = inspect_absolute(path, FrozenPathKind::File, true)?;
+    let executable = inspect_absolute(path, FrozenPathKind::File, ContentHash::Compute)?;
     if !is_executable_file(&executable.file)? {
         return Ok(None);
     }
@@ -382,12 +388,13 @@ pub(crate) fn read_source_beneath(
 }
 
 pub(crate) fn freeze_executable_identity(path: &Path) -> WorkflowResult<ExecutableIdentity> {
-    let executable = inspect_absolute(path, FrozenPathKind::File, true)?;
+    let executable = inspect_absolute(path, FrozenPathKind::File, ContentHash::Compute)?;
     let interpreter = shebang_interpreter(&executable.file)?;
     let interpreter_identity = interpreter
         .as_ref()
         .map(|spec| {
-            let verified = inspect_absolute(&spec.path, FrozenPathKind::File, true)?;
+            let verified =
+                inspect_absolute(&spec.path, FrozenPathKind::File, ContentHash::Compute)?;
             if shebang_interpreter(&verified.file)?.is_some() {
                 return Err(WorkflowError::Corrupt {
                     path: spec.path.clone(),
@@ -421,7 +428,8 @@ pub(crate) fn verify_executable_identity(
         (Some(expected_interpreter), Some(spec))
             if spec.arguments == expected.interpreter_arguments =>
         {
-            let measured = inspect_absolute(&spec.path, FrozenPathKind::File, true)?;
+            let measured =
+                inspect_absolute(&spec.path, FrozenPathKind::File, ContentHash::Compute)?;
             if measured.identity != *expected_interpreter {
                 return Err(identity_drift(
                     Path::new(&expected.file.canonical_path),
@@ -445,7 +453,7 @@ pub(crate) fn verify_executable_identity(
 }
 
 pub(crate) fn freeze_directory_identity(path: &Path) -> WorkflowResult<FrozenPathIdentity> {
-    Ok(inspect_absolute(path, FrozenPathKind::Directory, false)?.identity)
+    Ok(inspect_absolute(path, FrozenPathKind::Directory, ContentHash::Skip)?.identity)
 }
 
 pub(crate) fn verify_directory_identity(
@@ -454,36 +462,15 @@ pub(crate) fn verify_directory_identity(
     verify_path_identity(expected)
 }
 
-pub(crate) fn verified_handle_path(
-    file: &File,
-    _fallback: &Path,
-) -> WorkflowResult<std::path::PathBuf> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        use std::os::fd::AsRawFd;
-        let fd = file.as_raw_fd();
-        // The child must retain script and directory descriptors until exec resolves /proc.
-        // SAFETY: fcntl only changes flags on this valid owned descriptor.
-        if unsafe { libc::fcntl(fd, libc::F_SETFD, 0) } == -1 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        Ok(std::path::PathBuf::from(format!("/proc/self/fd/{fd}")))
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        let _ = file;
-        Err(WorkflowError::Corrupt {
-            path: _fallback.to_owned(),
-            reason: "frozen workflow launch requires handle-based executable and working-directory support on this platform".to_owned(),
-        })
-    }
-}
-
 fn verify_path_identity(expected: &FrozenPathIdentity) -> WorkflowResult<VerifiedPath> {
     let measured = inspect_absolute(
         Path::new(&expected.canonical_path),
         expected.kind,
-        expected.content_digest.is_some(),
+        if expected.content_digest.is_some() {
+            ContentHash::Compute
+        } else {
+            ContentHash::Skip
+        },
     )?;
     if &measured.identity != expected {
         return Err(identity_drift(
@@ -497,7 +484,7 @@ fn verify_path_identity(expected: &FrozenPathIdentity) -> WorkflowResult<Verifie
 pub(super) fn inspect_absolute(
     path: &Path,
     kind: FrozenPathKind,
-    hash: bool,
+    content_hash: ContentHash,
 ) -> WorkflowResult<VerifiedPath> {
     if !path.is_absolute() {
         return Err(WorkflowError::Corrupt {
@@ -510,17 +497,17 @@ pub(super) fn inspect_absolute(
         .strip_prefix(canonical_root(&canonical))
         .map_err(|_| identity_drift(path, "cannot select a filesystem root"))?;
     let file = open_beneath(canonical_root(&canonical), relative, kind)?;
-    verified_from_open_file(file, canonical, kind, hash)
+    verified_from_open_file(file, canonical, kind, content_hash)
 }
 
 pub(super) fn verified_from_open_file(
     mut file: File,
     canonical: PathBuf,
     kind: FrozenPathKind,
-    hash: bool,
+    content_hash: ContentHash,
 ) -> WorkflowResult<VerifiedPath> {
     let metadata = file.metadata()?;
-    let content_digest = if hash {
+    let content_digest = if content_hash == ContentHash::Compute {
         let mut hasher = Sha256::new();
         std::io::copy(&mut file, &mut hasher)?;
         file.seek(SeekFrom::Start(0))?;
@@ -924,27 +911,41 @@ fn shebang_interpreter(file: &File) -> WorkflowResult<Option<Shebang>> {
 
 fn raw_shebang(file: &File) -> WorkflowResult<Option<Shebang>> {
     let mut file = file.try_clone()?;
+    let original_position = file.stream_position()?;
     file.seek(SeekFrom::Start(0))?;
-    // Receipt: Linux BINPRM_BUF_SIZE is 256 bytes; longer shebangs are not portable.
-    let mut bytes = [0_u8; 256];
-    let read = file.read(&mut bytes)?;
-    if !bytes[..read].starts_with(b"#!") {
-        return Ok(None);
+    let result = (|| {
+        // Receipt: Linux BINPRM_BUF_SIZE is 256 bytes; longer shebangs are not portable.
+        let mut bytes = [0_u8; 256];
+        let read = file.read(&mut bytes)?;
+        if !bytes[..read].starts_with(b"#!") {
+            return Ok(None);
+        }
+        let line = bytes[2..read]
+            .split(|byte| *byte == b'\n')
+            .next()
+            .unwrap_or_default();
+        let line = std::str::from_utf8(line)
+            .map_err(|_| identity_drift(Path::new("<script>"), "shebang is not UTF-8"))?;
+        let mut words = line.split_ascii_whitespace();
+        let interpreter = words
+            .next()
+            .ok_or_else(|| identity_drift(Path::new("<script>"), "shebang has no interpreter"))?;
+        Ok(Some(Shebang {
+            path: Path::new(interpreter).to_owned(),
+            arguments: words.map(str::to_owned).collect(),
+        }))
+    })();
+    let restore_result = file.seek(SeekFrom::Start(original_position));
+    match result {
+        Ok(shebang) => {
+            restore_result?;
+            Ok(shebang)
+        }
+        Err(error) => {
+            let _ = restore_result;
+            Err(error)
+        }
     }
-    let line = bytes[2..read]
-        .split(|byte| *byte == b'\n')
-        .next()
-        .unwrap_or_default();
-    let line = std::str::from_utf8(line)
-        .map_err(|_| identity_drift(Path::new("<script>"), "shebang is not UTF-8"))?;
-    let mut words = line.split_ascii_whitespace();
-    let interpreter = words
-        .next()
-        .ok_or_else(|| identity_drift(Path::new("<script>"), "shebang has no interpreter"))?;
-    Ok(Some(Shebang {
-        path: Path::new(interpreter).to_owned(),
-        arguments: words.map(str::to_owned).collect(),
-    }))
 }
 
 pub(super) fn identity_drift(path: &Path, reason: &str) -> WorkflowError {
@@ -953,3 +954,7 @@ pub(super) fn identity_drift(path: &Path, reason: &str) -> WorkflowError {
         reason: format!("frozen filesystem identity drift: {reason}"),
     }
 }
+
+#[cfg(test)]
+#[path = "secure_fs_tests.rs"]
+mod tests;

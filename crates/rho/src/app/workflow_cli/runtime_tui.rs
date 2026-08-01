@@ -43,13 +43,14 @@ impl RunnerTuiAdapter {
     ) -> anyhow::Result<Self> {
         let run_id = run.manifest.run_id;
         let initial = snapshot::from_stored_run(&run);
+        let store = WorkflowStore::new(&rho_home)?;
         let (sender, events) = tokio::sync::mpsc::unbounded_channel();
         let worker_runner = Arc::clone(&runner);
         let worker =
             tokio::spawn(async move { worker_runner.drive(run_id, recovery, Some(sender)).await });
         Ok(Self {
             runner,
-            store: WorkflowStore::new(&rho_home)?,
+            store,
             rho_home,
             run_id,
             initial,

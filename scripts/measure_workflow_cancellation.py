@@ -37,7 +37,7 @@ def wait_for_ready(server: socket.socket, owner: subprocess.Popen[str]) -> None:
     while time.monotonic() < deadline:
         try:
             connection, _ = server.accept()
-        except TimeoutError:
+        except (TimeoutError, socket.timeout):
             connection = None
         if connection is not None:
             with connection:

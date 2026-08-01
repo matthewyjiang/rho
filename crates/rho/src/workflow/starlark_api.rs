@@ -9,6 +9,8 @@ pub(crate) fn globals() -> Globals {
     let mut builder = GlobalsBuilder::standard();
     workflow_api(&mut builder);
     builder.namespace("input", input_api);
+    builder.namespace("condition", condition_api);
+    builder.namespace("schema", schema_api);
     builder.build()
 }
 
@@ -162,150 +164,6 @@ fn workflow_api(builder: &mut GlobalsBuilder) {
         ))
     }
 
-    fn equals<'v>(
-        reference: Value<'v>,
-        value: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("equals")),
-                ("reference", reference),
-                ("value", value),
-            ],
-        ))
-    }
-
-    fn is_one_of<'v>(
-        reference: Value<'v>,
-        values: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("is_one_of")),
-                ("reference", reference),
-                ("values", values),
-            ],
-        ))
-    }
-
-    fn all<'v>(
-        conditions: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("all")),
-                ("conditions", conditions),
-            ],
-        ))
-    }
-
-    fn any<'v>(
-        conditions: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("any")),
-                ("conditions", conditions),
-            ],
-        ))
-    }
-
-    fn not<'v>(
-        condition: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("not")),
-                ("condition", condition),
-            ],
-        ))
-    }
-
-    fn null<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
-        Ok(tagged(eval, "schema_null"))
-    }
-    fn bool<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
-        Ok(tagged(eval, "schema_bool"))
-    }
-    fn integer<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
-        Ok(tagged(eval, "schema_integer"))
-    }
-    fn string<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
-        Ok(tagged(eval, "schema_string"))
-    }
-
-    fn enum_<'v>(
-        members: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("schema_enum")),
-                ("members", members),
-            ],
-        ))
-    }
-
-    fn list<'v>(item: Value<'v>, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("schema_list")),
-                ("item", item),
-            ],
-        ))
-    }
-
-    fn optional<'v>(
-        schema: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("schema_optional")),
-                ("schema", schema),
-            ],
-        ))
-    }
-
-    fn record<'v>(
-        fields: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("schema_record")),
-                ("fields", fields),
-            ],
-        ))
-    }
-
-    fn stdout_json<'v>(
-        schema: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<Value<'v>> {
-        Ok(object(
-            eval,
-            vec![
-                ("__rho_type", eval.heap().alloc("stdout_json")),
-                ("schema", schema),
-            ],
-        ))
-    }
-
     // Keep named workflow fields explicit for readable source.
     #[allow(clippy::too_many_arguments)]
     fn agent<'v>(
@@ -399,6 +257,156 @@ fn workflow_api(builder: &mut GlobalsBuilder) {
                 ("command", eval.heap().alloc(command)),
                 ("cwd", eval.heap().alloc(cwd)),
                 ("output", output),
+            ],
+        ))
+    }
+}
+
+#[starlark_module]
+fn condition_api(builder: &mut GlobalsBuilder) {
+    fn equals<'v>(
+        reference: Value<'v>,
+        value: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("equals")),
+                ("reference", reference),
+                ("value", value),
+            ],
+        ))
+    }
+
+    fn is_one_of<'v>(
+        reference: Value<'v>,
+        values: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("is_one_of")),
+                ("reference", reference),
+                ("values", values),
+            ],
+        ))
+    }
+
+    fn all<'v>(
+        conditions: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("all")),
+                ("conditions", conditions),
+            ],
+        ))
+    }
+
+    fn any<'v>(
+        conditions: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("any")),
+                ("conditions", conditions),
+            ],
+        ))
+    }
+
+    fn not<'v>(
+        condition: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("not")),
+                ("condition", condition),
+            ],
+        ))
+    }
+}
+
+#[starlark_module]
+fn schema_api(builder: &mut GlobalsBuilder) {
+    fn null<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        Ok(tagged(eval, "schema_null"))
+    }
+    fn bool<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        Ok(tagged(eval, "schema_bool"))
+    }
+    fn integer<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        Ok(tagged(eval, "schema_integer"))
+    }
+    fn string<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        Ok(tagged(eval, "schema_string"))
+    }
+
+    fn enum_<'v>(
+        members: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("schema_enum")),
+                ("members", members),
+            ],
+        ))
+    }
+
+    fn list<'v>(item: Value<'v>, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("schema_list")),
+                ("item", item),
+            ],
+        ))
+    }
+
+    fn optional<'v>(
+        schema: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("schema_optional")),
+                ("schema", schema),
+            ],
+        ))
+    }
+
+    fn record<'v>(
+        fields: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("schema_record")),
+                ("fields", fields),
+            ],
+        ))
+    }
+
+    fn stdout_json<'v>(
+        schema: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(object(
+            eval,
+            vec![
+                ("__rho_type", eval.heap().alloc("stdout_json")),
+                ("schema", schema),
             ],
         ))
     }

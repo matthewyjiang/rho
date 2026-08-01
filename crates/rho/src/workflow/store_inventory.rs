@@ -30,6 +30,8 @@ const UNNAMED_WORKFLOW: &str = "(unnamed)";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlanInventoryItem {
     pub(crate) plan_id: PlanId,
+    /// Persisted creation time. Legacy manifests use zero.
+    pub(crate) created_at_unix_nanos: u64,
     pub(crate) workspace_identity: String,
     pub(crate) name: String,
     pub(crate) step_count: usize,
@@ -39,6 +41,8 @@ pub(crate) struct PlanInventoryItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RunInventoryItem {
     pub(crate) run_id: RunId,
+    /// Persisted creation time. Legacy manifests use zero.
+    pub(crate) created_at_unix_nanos: u64,
     pub(crate) workspace_identity: String,
     pub(crate) name: String,
     pub(crate) lifecycle: RunLifecycle,
@@ -124,7 +128,7 @@ impl WorkflowStore {
             };
             plans.push(self.read_plan_inventory(id)?);
         }
-        plans.sort_by_key(|plan| std::cmp::Reverse(plan.plan_id));
+        plans.sort_by_key(|plan| std::cmp::Reverse((plan.created_at_unix_nanos, plan.plan_id)));
         Ok(plans)
     }
 
@@ -143,7 +147,7 @@ impl WorkflowStore {
             };
             runs.push(self.read_run_inventory(id)?);
         }
-        runs.sort_by_key(|run| std::cmp::Reverse(run.run_id));
+        runs.sort_by_key(|run| std::cmp::Reverse((run.created_at_unix_nanos, run.run_id)));
         Ok(runs)
     }
 
@@ -195,6 +199,7 @@ impl WorkflowStore {
             .count();
         Ok(RunInventoryItem {
             run_id: id,
+            created_at_unix_nanos: manifest.created_at_unix_nanos,
             workspace_identity: manifest.workspace_identity,
             name,
             lifecycle: state.state.lifecycle,
@@ -221,6 +226,7 @@ impl WorkflowStore {
         );
         Ok(PlanInventoryItem {
             plan_id: id,
+            created_at_unix_nanos: manifest.created_at_unix_nanos,
             workspace_identity: manifest.workspace_identity,
             name,
             step_count,

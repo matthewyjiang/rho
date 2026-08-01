@@ -10,6 +10,7 @@ from pathlib import Path
 
 from measure_workflow_limits import (
     DETERMINISTIC_FIELDS,
+    UNMEASURED_FIELDS,
     verify_arithmetic,
     verify_rust_constants,
 )
@@ -52,7 +53,7 @@ class WorkflowLimitReceiptTests(unittest.TestCase):
         verify_rust_constants(receipt)
         self.assertEqual(
             set(receipt["planning"]["measured"]) - {"worker_wall_millis"},
-            DETERMINISTIC_FIELDS,
+            DETERMINISTIC_FIELDS | UNMEASURED_FIELDS,
         )
 
 

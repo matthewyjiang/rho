@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{WorkflowError, WorkflowResult, WorkflowValue};
 
+// Receipt: limit_receipt.json planning.accepted.schema_depth. This matches the
+// planning budget, so stored data cannot bypass the planning contract.
+const OUTPUT_SCHEMA_DEPTH_LIMIT: usize = 6;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum OutputSchema {
@@ -46,6 +50,15 @@ impl OutputSchema {
     }
 
     pub(crate) fn validate_definition(&self) -> WorkflowResult<()> {
+        let actual = self.depth() as u64;
+        let limit = OUTPUT_SCHEMA_DEPTH_LIMIT as u64;
+        if actual > limit {
+            return Err(WorkflowError::BudgetExceeded {
+                budget: "output schema depth",
+                limit,
+                actual,
+            });
+        }
         self.validate_definition_at("$")
     }
 

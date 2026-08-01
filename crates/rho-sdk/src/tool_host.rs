@@ -535,7 +535,16 @@ impl ToolHostWorker {
                 next = progress.recv(), if progress_open && !cancellation.is_cancelled() => {
                     if let Some(progress) = next {
                         if !send_event(&events, ToolHostEvent::Progress(progress), &cancellation).await {
-                            break Err(ToolError::cancelled());
+                            let timeout = *cancellation_cleanup_timeout
+                                .lock()
+                                .expect("tool cancellation policy lock");
+                            if let Err(error) = begin_cancellation_cleanup(
+                                timeout,
+                                &mut cancellation_cleanup_deadline,
+                                &mut cancellation_deferred,
+                            ) {
+                                break Err(error);
+                            }
                         }
                     } else {
                         progress_open = false;
@@ -554,7 +563,16 @@ impl ToolHostWorker {
                         )
                         .await
                         {
-                            break Err(ToolError::cancelled());
+                            let timeout = *cancellation_cleanup_timeout
+                                .lock()
+                                .expect("tool cancellation policy lock");
+                            if let Err(error) = begin_cancellation_cleanup(
+                                timeout,
+                                &mut cancellation_cleanup_deadline,
+                                &mut cancellation_deferred,
+                            ) {
+                                break Err(error);
+                            }
                         }
                     } else {
                         host_input_open = false;
@@ -580,11 +598,13 @@ impl ToolHostWorker {
                     let timeout = *cancellation_cleanup_timeout
                         .lock()
                         .expect("tool cancellation policy lock");
-                    let Some(timeout) = timeout else {
-                        break Err(ToolError::cancelled());
-                    };
-                    cancellation_cleanup_deadline = Some(Box::pin(tokio::time::sleep(timeout)));
-                    cancellation_deferred = true;
+                    if let Err(error) = begin_cancellation_cleanup(
+                        timeout,
+                        &mut cancellation_cleanup_deadline,
+                        &mut cancellation_deferred,
+                    ) {
+                        break Err(error);
+                    }
                 }
             }
         };
@@ -596,6 +616,19 @@ impl ToolHostWorker {
         observe_after_tool_use(&core, &call, &run_id, &result, started);
         result.map_err(Error::Tool)
     }
+}
+
+fn begin_cancellation_cleanup(
+    timeout: Option<std::time::Duration>,
+    deadline: &mut Option<Pin<Box<tokio::time::Sleep>>>,
+    deferred: &mut bool,
+) -> Result<(), ToolError> {
+    let Some(timeout) = timeout else {
+        return Err(ToolError::cancelled());
+    };
+    *deadline = Some(Box::pin(tokio::time::sleep(timeout)));
+    *deferred = true;
+    Ok(())
 }
 
 async fn send_event(

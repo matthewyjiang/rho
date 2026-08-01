@@ -10,7 +10,9 @@ use sha2::{Digest, Sha256};
 
 use crate::workflow::WorkspaceAccess;
 
-use super::{artifacts::ensure_private_directory, RuntimeError};
+use super::{
+    artifacts::ensure_private_directory, cancellation::CROSS_PROCESS_CANCEL_POLL, RuntimeError,
+};
 
 type LocalGate = tokio::sync::RwLock<()>;
 
@@ -58,21 +60,37 @@ impl CheckoutGate {
     pub(crate) async fn acquire(
         &self,
         access: WorkspaceAccess,
+        cancellation: &rho_sdk::CancellationToken,
+        wait_limit_seconds: u64,
     ) -> Result<CheckoutPermit, RuntimeError> {
-        let local = match access {
-            WorkspaceAccess::ReadOnly => LocalPermit::Read {
-                _guard: self.local.clone().read_owned().await,
-            },
-            WorkspaceAccess::Mutating => LocalPermit::Write {
-                _guard: self.local.clone().write_owned().await,
-            },
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(wait_limit_seconds);
+        let local_wait = async {
+            match access {
+                WorkspaceAccess::ReadOnly => LocalPermit::Read {
+                    _guard: self.local.clone().read_owned().await,
+                },
+                WorkspaceAccess::Mutating => LocalPermit::Write {
+                    _guard: self.local.clone().write_owned().await,
+                },
+            }
         };
-        let lock_path = Arc::clone(&self.lock_path);
-        let file = tokio::task::spawn_blocking(move || lock_file(&lock_path, access))
-            .await
-            .map_err(|error| {
-                RuntimeError::Executor(format!("checkout lock task failed: {error}"))
-            })??;
+        let local = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Err(RuntimeError::Cancelled),
+            () = tokio::time::sleep_until(deadline) => {
+                return Err(RuntimeError::CheckoutLockTimeout { wait_limit_seconds });
+            }
+            local = local_wait => local,
+        };
+        let file = lock_file(
+            &self.lock_path,
+            access,
+            cancellation,
+            deadline,
+            wait_limit_seconds,
+        )
+        .await?;
         Ok(CheckoutPermit {
             _local: local,
             file,
@@ -100,18 +118,46 @@ impl Drop for CheckoutPermit {
     }
 }
 
-fn lock_file(path: &Path, access: WorkspaceAccess) -> Result<File, RuntimeError> {
+async fn lock_file(
+    path: &Path,
+    access: WorkspaceAccess,
+    cancellation: &rho_sdk::CancellationToken,
+    deadline: tokio::time::Instant,
+    wait_limit_seconds: u64,
+) -> Result<File, RuntimeError> {
     let file = open_lock_no_follow(path)?;
     if !file.metadata()?.is_file() {
         return Err(RuntimeError::Data(
             "checkout lock descriptor is not a regular file".to_owned(),
         ));
     }
-    match access {
-        WorkspaceAccess::ReadOnly => file.lock_shared()?,
-        WorkspaceAccess::Mutating => file.lock_exclusive()?,
+    loop {
+        if cancellation.is_cancelled() {
+            return Err(RuntimeError::Cancelled);
+        }
+        let result = match access {
+            WorkspaceAccess::ReadOnly => FileExt::try_lock_shared(&file),
+            WorkspaceAccess::Mutating => FileExt::try_lock_exclusive(&file),
+        };
+        match result {
+            Ok(()) if cancellation.is_cancelled() => {
+                let _ = FileExt::unlock(&file);
+                return Err(RuntimeError::Cancelled);
+            }
+            Ok(()) => return Ok(file),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error.into()),
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(RuntimeError::CheckoutLockTimeout { wait_limit_seconds });
+        }
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Err(RuntimeError::Cancelled),
+            () = tokio::time::sleep_until((now + CROSS_PROCESS_CANCEL_POLL).min(deadline)) => {}
+        }
     }
-    Ok(file)
 }
 
 fn open_lock_no_follow(path: &Path) -> Result<File, RuntimeError> {

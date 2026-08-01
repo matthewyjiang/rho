@@ -344,10 +344,14 @@ impl AgentExecutor {
                         ),
                     );
                     session.set_frozen_argv(frozen.arguments);
-                    session.overrides.before_spawn = Some(Box::new(move || {
-                        let _keep_handles_open = &verified_executable;
+                    session.overrides.before_spawn = Some(Box::new(move |command| {
                         crate::workflow::verify_executable_identity(&expected_identity)
-                            .map(|_| ())
+                            .map_err(std::io::Error::other)?;
+                        let mut files = vec![&verified_executable.executable.file];
+                        if let Some(interpreter) = &verified_executable.interpreter {
+                            files.push(&interpreter.file);
+                        }
+                        crate::workflow::configure_handle_inheritance(command, &files)
                             .map_err(std::io::Error::other)
                     }));
                 }

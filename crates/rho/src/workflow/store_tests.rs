@@ -3,10 +3,12 @@ use std::{collections::BTreeMap, fs::OpenOptions, io::Write};
 use super::*;
 use crate::workflow::{
     graph_digest,
+    store_replay::derive_snapshot,
     test_support::{agent_node, id, state, workflow},
-    ArtifactRef, AttemptArtifacts, AttemptNumber, CommandExit, CommandNode, Digest, ExternalOwner,
-    NodeCompletion, NodeTerminalState, PlanConsent, RunStateRecord, WorkflowEvent, WorkflowState,
-    WorkspaceAccess, EVENT_VERSION, RUN_STATE_VERSION,
+    ArtifactObservation, ArtifactRef, AttemptArtifacts, AttemptNumber, CommandExit, CommandNode,
+    Digest, ExternalOwner, NodeCompletion, NodeTerminalState, PlanConsent, RunLifecycle,
+    RunStateRecord, WorkflowEvent, WorkflowState, WorkspaceAccess, EVENT_VERSION,
+    RUN_STATE_VERSION,
 };
 
 fn plan(store: &WorkflowStore) -> StoredPlan {
@@ -355,24 +357,35 @@ fn rejects_snapshot_state_that_differs_from_its_journal_prefix() {
     let plan = plan(&store);
     let run = run(&store, &plan);
     let mut guard = store.lock_run(run.manifest.run_id).unwrap();
-    let event = WorkflowEventRecord {
-        schema_version: EVENT_VERSION,
-        sequence: 1,
-        event: WorkflowEvent::CancellationRequested {
-            request_id: "00000000-0000-0000-0000-000000000003".into(),
+    let events = [
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 1,
+            event: WorkflowEvent::RunLifecycle {
+                lifecycle: RunLifecycle::Running,
+            },
         },
-    };
-    store.append_event(&mut guard, &event).unwrap();
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 2,
+            event: WorkflowEvent::CancellationRequested {
+                request_id: "00000000-0000-0000-0000-000000000003".into(),
+            },
+        },
+    ];
+    for event in &events {
+        store.append_event(&mut guard, event).unwrap();
+    }
     let mut snapshot = run.state;
-    snapshot.last_event_sequence = 1;
+    snapshot.last_event_sequence = 2;
     snapshot.state = derive_snapshot(
         &plan.graph,
-        std::slice::from_ref(&event),
-        1,
+        &events,
+        2,
         &store.layout.run_state(run.manifest.run_id),
     )
     .unwrap();
-    store.save_state(&guard, &snapshot).unwrap();
+    store.save_state(&mut guard, &snapshot).unwrap();
     snapshot.state.cancellation_requested = false;
     write_json(&store.layout.run_state(run.manifest.run_id), &snapshot).unwrap();
     drop(guard);
@@ -380,6 +393,48 @@ fn rejects_snapshot_state_that_differs_from_its_journal_prefix() {
     assert!(matches!(
         store.load_run(run.manifest.run_id),
         Err(WorkflowError::Corrupt { .. })
+    ));
+}
+
+// Covers: journal replay must not reopen a completed run as cancelling.
+// Owner: workflow durable store replay boundary.
+#[test]
+fn replay_rejects_cancellation_request_after_completion() {
+    let workflow = workflow(Vec::new());
+    let events = [
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 1,
+            event: WorkflowEvent::RunLifecycle {
+                lifecycle: RunLifecycle::Running,
+            },
+        },
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 2,
+            event: WorkflowEvent::RunLifecycle {
+                lifecycle: RunLifecycle::Completed,
+            },
+        },
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 3,
+            event: WorkflowEvent::CancellationRequested {
+                request_id: "00000000-0000-0000-0000-000000000004".into(),
+            },
+        },
+    ];
+
+    assert!(matches!(
+        derive_snapshot(
+            &workflow,
+            &events,
+            3,
+            std::path::Path::new("run-state.json"),
+        ),
+        Err(WorkflowError::Scheduler(message))
+            if message
+                == "illegal workflow lifecycle transition from Completed to Cancelling"
     ));
 }
 
@@ -395,6 +450,91 @@ fn artifact(run: &std::path::Path, name: &str, bytes: &[u8]) -> ArtifactRef {
         },
         digest: Digest(format!("sha256:{:x}", Sha256::digest(bytes))),
     }
+}
+
+// Covers: each state save must not rehash artifacts from prior completions.
+// Owner: workflow durable store write path.
+#[test]
+fn save_state_hashes_only_new_or_changed_completions() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan = plan(&store);
+    let mut run = run(&store, &plan);
+    let run_directory = store.layout.run(run.manifest.run_id);
+    let attempt = AttemptNumber::new(1).unwrap();
+    let answer = artifact(&run_directory, "answer.txt", b"answer");
+    let completion = NodeCompletion {
+        attempt: Some(attempt),
+        outcome: NodeTerminalState::Success,
+        cancellation_resume: None,
+        command_exit: None,
+        structured_output: None,
+        artifacts: AttemptArtifacts {
+            answer: Some(answer),
+            ..AttemptArtifacts::default()
+        },
+    };
+    let events = vec![
+        WorkflowEvent::RunLifecycle {
+            lifecycle: RunLifecycle::Running,
+        },
+        WorkflowEvent::NodeReady {
+            node: id("inspect"),
+        },
+        WorkflowEvent::AttemptStarted {
+            node: id("inspect"),
+            attempt,
+            owner: ExternalOwner::Process { pid: 1 },
+        },
+        WorkflowEvent::NodeFinished {
+            node: id("inspect"),
+            completion: Box::new(completion),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, event)| WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: index as u64 + 1,
+        event,
+    })
+    .collect::<Vec<_>>();
+    run.state.last_event_sequence = events.len() as u64;
+    run.state.state = derive_snapshot(
+        &run.graph,
+        &events,
+        run.state.last_event_sequence,
+        &store.layout.run_state(run.manifest.run_id),
+    )
+    .unwrap();
+
+    let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+    for event in &events {
+        store.append_event(&mut guard, event).unwrap();
+    }
+    store.save_state(&mut guard, &run.state).unwrap();
+
+    // A later save with no completion change skips the old artifact. A full
+    // load still detects that the durable artifact was changed on disk.
+    std::fs::write(run_directory.join("answer.txt"), b"change").unwrap();
+    let event = WorkflowEventRecord {
+        schema_version: EVENT_VERSION,
+        sequence: run.state.last_event_sequence + 1,
+        event: WorkflowEvent::HookObserved {
+            event: "after_node".to_owned(),
+            node: Some(id("inspect")),
+            attempt: Some(attempt),
+        },
+    };
+    store.append_event(&mut guard, &event).unwrap();
+    run.state.last_event_sequence = event.sequence;
+    store.save_state(&mut guard, &run.state).unwrap();
+    drop(guard);
+
+    assert!(matches!(
+        store.load_run(run.manifest.run_id),
+        Err(WorkflowError::Corrupt { .. })
+    ));
 }
 
 fn command_stream_fixture(
@@ -712,6 +852,95 @@ fn lists_plan_and_run_inventory_skipping_unreadable_entries() {
     assert_eq!(store.list_plan_inventory().unwrap().len(), 2);
 }
 
+// Covers: inventory uses durable creation order and an ID tie-break for legacy zero times.
+// Owner: workflow durable store inventory.
+#[test]
+fn inventory_orders_plans_and_runs_by_persisted_creation_time() {
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let first_plan = plan(&store);
+    let second_plan = plan(&store);
+    let first_run = run(&store, &first_plan);
+    let second_run = run(&store, &first_plan);
+
+    let (newer_plan, older_plan) = if first_plan.manifest.plan_id < second_plan.manifest.plan_id {
+        (&first_plan, &second_plan)
+    } else {
+        (&second_plan, &first_plan)
+    };
+    for (stored, created_at_unix_nanos) in [(older_plan, 1), (newer_plan, 2)] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = created_at_unix_nanos;
+        write_json(&store.layout.plan_manifest(manifest.plan_id), &manifest).unwrap();
+    }
+
+    let (newer_run, older_run) = if first_run.manifest.run_id < second_run.manifest.run_id {
+        (&first_run, &second_run)
+    } else {
+        (&second_run, &first_run)
+    };
+    for (stored, created_at_unix_nanos) in [(older_run, 1), (newer_run, 2)] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = created_at_unix_nanos;
+        write_json(&store.layout.run_manifest(manifest.run_id), &manifest).unwrap();
+    }
+
+    assert_eq!(
+        store
+            .list_plan_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|plan| (plan.plan_id, plan.created_at_unix_nanos))
+            .collect::<Vec<_>>(),
+        vec![
+            (newer_plan.manifest.plan_id, 2),
+            (older_plan.manifest.plan_id, 1),
+        ]
+    );
+    assert_eq!(
+        store
+            .list_run_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|run| (run.run_id, run.created_at_unix_nanos))
+            .collect::<Vec<_>>(),
+        vec![
+            (newer_run.manifest.run_id, 2),
+            (older_run.manifest.run_id, 1),
+        ]
+    );
+
+    for stored in [&first_plan, &second_plan] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = 0;
+        write_json(&store.layout.plan_manifest(manifest.plan_id), &manifest).unwrap();
+    }
+    for stored in [&first_run, &second_run] {
+        let mut manifest = stored.manifest.clone();
+        manifest.created_at_unix_nanos = 0;
+        write_json(&store.layout.run_manifest(manifest.run_id), &manifest).unwrap();
+    }
+
+    assert_eq!(
+        store
+            .list_plan_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|plan| plan.plan_id)
+            .collect::<Vec<_>>(),
+        vec![older_plan.manifest.plan_id, newer_plan.manifest.plan_id]
+    );
+    assert_eq!(
+        store
+            .list_run_inventory()
+            .unwrap()
+            .into_iter()
+            .map(|run| run.run_id)
+            .collect::<Vec<_>>(),
+        vec![older_run.manifest.run_id, newer_run.manifest.run_id]
+    );
+}
+
 // Covers: hub plan/run cleanup must remove only the targeted store entry.
 // Owner: workflow durable store.
 #[test]
@@ -852,25 +1081,29 @@ fn inventory_falls_back_for_legacy_manifests() {
     let plan = plan(&store);
     let run = run(&store, &plan);
 
-    // Strip inventory fields as if the manifests predate name/step_count.
-    let mut plan_manifest: crate::workflow::PlanManifest = serde_json::from_slice(
+    // Strip inventory fields as if the manifests predate them.
+    let mut plan_manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(store.layout.plan_manifest(plan.manifest.plan_id)).unwrap(),
     )
     .unwrap();
-    plan_manifest.name.clear();
-    plan_manifest.step_count = 0;
+    let plan_fields = plan_manifest.as_object_mut().unwrap();
+    plan_fields.remove("name");
+    plan_fields.remove("step_count");
+    plan_fields.remove("created_at_unix_nanos");
     std::fs::write(
         store.layout.plan_manifest(plan.manifest.plan_id),
         serde_json::to_vec_pretty(&plan_manifest).unwrap(),
     )
     .unwrap();
 
-    let mut run_manifest: crate::workflow::RunManifest = serde_json::from_slice(
+    let mut run_manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(store.layout.run_manifest(run.manifest.run_id)).unwrap(),
     )
     .unwrap();
-    run_manifest.name.clear();
-    run_manifest.step_count = 0;
+    let run_fields = run_manifest.as_object_mut().unwrap();
+    run_fields.remove("name");
+    run_fields.remove("step_count");
+    run_fields.remove("created_at_unix_nanos");
     std::fs::write(
         store.layout.run_manifest(run.manifest.run_id),
         serde_json::to_vec_pretty(&run_manifest).unwrap(),
@@ -878,10 +1111,12 @@ fn inventory_falls_back_for_legacy_manifests() {
     .unwrap();
 
     let plans = store.list_plan_inventory().unwrap();
+    assert_eq!(plans[0].created_at_unix_nanos, 0);
     assert_eq!(plans[0].name, plan.graph.graph.name.as_str());
     assert_eq!(plans[0].step_count, plan.graph.graph.nodes.len());
 
     let runs = store.list_run_inventory().unwrap();
+    assert_eq!(runs[0].created_at_unix_nanos, 0);
     assert_eq!(runs[0].name, run.graph.graph.name.as_str());
     assert_eq!(runs[0].total_steps, run.graph.graph.nodes.len());
 
