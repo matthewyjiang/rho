@@ -42,6 +42,7 @@ fn action_preparation_declares_exact_capabilities() {
                 CapabilityKind::Read,
                 CapabilityKind::Read,
                 CapabilityKind::Read,
+                CapabilityKind::Read,
                 CapabilityKind::Process,
             ],
         ),
@@ -51,6 +52,7 @@ fn action_preparation_declares_exact_capabilities() {
                 inputs: BTreeMap::new(),
             },
             vec![
+                CapabilityKind::Read,
                 CapabilityKind::Read,
                 CapabilityKind::Read,
                 CapabilityKind::Read,
@@ -148,13 +150,19 @@ fn preparation_keeps_exact_durable_and_process_facts() {
     ));
     assert!(matches!(
         plan[4].operation(),
+        CapabilityOperation::ReadPath { path, scope }
+            if path == Path::new("/workspace/agents")
+                && *scope == PathScope::PrimaryWorkspace
+    ));
+    assert!(matches!(
+        plan[5].operation(),
         CapabilityOperation::ExecuteProcess(process)
             if process.invocation().executable_path() == Path::new("/bin/rho")
                 && process.invocation().arguments()
                     == [crate::cli::WORKFLOW_PLANNER_WORKER_COMMAND]
     ));
     assert!(matches!(
-        plan[5].operation(),
+        plan[6].operation(),
         CapabilityOperation::WritePath { path, scope }
             if path == Path::new("/rho/workflows/plans")
                 && *scope == PathScope::UnrestrictedFilesystem
