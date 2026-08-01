@@ -205,11 +205,12 @@ impl WorkflowEventAdapter for WatchAdapter {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<TuiEvent>>> + Send + '_>> {
         Box::pin(async move {
             loop {
-                self.interval.tick().await;
+                // Check first so a just-changed revision is not delayed by a full poll tick.
                 if let Some((snapshot, revision)) = self.load_if_changed()? {
                     self.last_revision = revision;
                     return Ok(Some(TuiEvent::Snapshot(snapshot)));
                 }
+                self.interval.tick().await;
             }
         })
     }

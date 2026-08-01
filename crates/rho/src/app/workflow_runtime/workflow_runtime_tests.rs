@@ -50,7 +50,8 @@ impl super::agent::AgentCleanupHandle for NeverCompletingAgentExecutor {
 struct UncertainCleanupExecutor {
     started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     cleanup_started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    release_cleanup: Arc<tokio::sync::Notify>,
+    // oneshot (not Notify): Notify can lose a wake if sent before wait is registered.
+    release_cleanup: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
 impl WorkflowNodeExecutor for UncertainCleanupExecutor {
@@ -63,7 +64,15 @@ impl WorkflowNodeExecutor for UncertainCleanupExecutor {
             if let Some(cleanup_started) = self.cleanup_started.lock().unwrap().take() {
                 let _ = cleanup_started.send(());
             }
-            self.release_cleanup.notified().await;
+            let release = self
+                .release_cleanup
+                .lock()
+                .unwrap()
+                .take()
+                .expect("release signal installed before execute");
+            release
+                .await
+                .expect("cleanup release signal closed before release");
             Err(RuntimeError::CleanupUncertain {
                 cause: CleanupCause::Cancellation,
             })
@@ -148,7 +157,9 @@ fn test_workflow() -> FrozenWorkflow {
         }),
         access: WorkspaceAccess::Mutating,
         allow_failure: false,
-        timeout_seconds: 60,
+        // Keep fixture timeouts short: this is a failure bound for product
+        // paths (command/agent/checkout wait), not a synchronization signal.
+        timeout_seconds: 5,
         max_output_bytes: 1024,
     };
     let graph = WorkflowGraph {
@@ -251,9 +262,10 @@ fn command_workflow(
     let executable = std::path::Path::new("/bin/sh").canonicalize().unwrap();
     let cwd = workspace.canonicalize().unwrap();
     let quote = |path: &std::path::Path| shell_words::quote(&path.to_string_lossy()).into_owned();
+    // Park on sleep (not a CPU spin) until the runtime cancels the process tree.
     let script = format!(
         "if test -f {marker}; then printf resumed; printf done >&2; exit 0; fi; \
-         : > {marker}; printf first; printf err >&2; printf x > {fifo}; while :; do :; done",
+         : > {marker}; printf first; printf err >&2; printf x > {fifo}; exec sleep 1000",
         marker = quote(marker),
         fifo = quote(ready_fifo),
     );
@@ -706,9 +718,37 @@ fn artifact_writes_do_not_follow_symlinks() {
         .is_symlink());
 }
 
+// Failure bound around event-driven worker completion. Not used for synchronization.
+const WORKER_COMPLETION_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn within_budget<T>(label: &str, future: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(WORKER_COMPLETION_BUDGET, future)
+        .await
+        .unwrap_or_else(|_| panic!("{label} exceeded the worker completion budget"))
+}
+
+/// Like [`within_budget`], but aborts a detached task on timeout so it cannot
+/// keep run/checkout locks after the test has failed.
+async fn join_within_budget<T: 'static>(
+    label: &str,
+    handle: tokio::task::JoinHandle<T>,
+) -> T {
+    tokio::pin!(handle);
+    tokio::select! {
+        result = &mut handle => result.unwrap_or_else(|error| {
+            panic!("{label} task failed: {error}");
+        }),
+        () = tokio::time::sleep(WORKER_COMPLETION_BUDGET) => {
+            handle.abort();
+            let _ = handle.await;
+            panic!("{label} exceeded the worker completion budget");
+        }
+    }
+}
+
 // Covers: a separate CLI process can cancel an active node through the durable request file.
 // Owner: durable workflow runner cancellation.
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn cross_process_request_cancels_active_node() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
@@ -726,13 +766,14 @@ async fn cross_process_request_cancels_active_node() {
             .await
     });
 
-    started_rx.await.unwrap();
-    let receipt = request_cross_process_cancel(home.path(), run_id).unwrap();
-    // Receipt: this is a generous tripwire above the measured 87 ms CLI cancellation.
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), worker)
+    within_budget("cross-process worker start", started_rx)
         .await
-        .expect("cross-process cancellation exceeded the 2 second test budget")
-        .unwrap()
+        .unwrap();
+    let receipt = request_cross_process_cancel(home.path(), run_id).unwrap();
+    // Durable request is file-based; wake the in-process owner without waiting
+    // for CROSS_PROCESS_CANCEL_POLL (production separate-process path still polls).
+    active_runner.wake_cancel_check();
+    let completed = join_within_budget("cross-process cancellation", worker).await
         .unwrap();
 
     assert_eq!(completed.state.state.lifecycle, RunLifecycle::Completed);
@@ -758,10 +799,16 @@ async fn cross_process_request_cancels_active_node() {
     assert!(cross_process_cancel_acknowledged(home.path(), run_id).unwrap());
     assert!(cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
 
-    let resumed = runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
-        .drive(run_id, RecoveryDecision::NormalResume, None)
-        .await
-        .unwrap();
+    let resumed = within_budget(
+        "cross-process resume after cancel",
+        runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor)).drive(
+            run_id,
+            RecoveryDecision::NormalResume,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
     assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
     assert!(resumed
         .state
@@ -791,7 +838,7 @@ async fn cross_process_request_cancels_active_node() {
 // Covers: concurrent cancellation retries must name one durable request rather
 // than replace a receipt that the runner can no longer acknowledge.
 // Owner: durable workflow cancellation request creation.
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn concurrent_cancellation_requests_share_the_active_receipt() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
@@ -808,7 +855,11 @@ async fn concurrent_cancellation_requests_share_the_active_receipt() {
     let first = request(Arc::clone(&barrier));
     let second = request(Arc::clone(&barrier));
     barrier.wait();
-    let (first, second) = tokio::join!(first, second);
+    let (first, second) = within_budget(
+        "concurrent cancellation receipts",
+        async { tokio::join!(first, second) },
+    )
+    .await;
 
     assert_eq!(first.unwrap(), second.unwrap());
 }
@@ -817,7 +868,7 @@ async fn concurrent_cancellation_requests_share_the_active_receipt() {
 // retain exclusion while cleanup runs, persist uncertainty, and require a
 // recovery confirmation before its exact cancellation receipt is acknowledged.
 // Owner: durable workflow agent cancellation cleanup.
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
     for (reason, expected_cause) in [
         (
@@ -847,11 +898,11 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
     let competing_run = create_run(home.path(), workspace.path());
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let (cleanup_started_tx, cleanup_started_rx) = tokio::sync::oneshot::channel();
-    let release_cleanup = Arc::new(tokio::sync::Notify::new());
+    let (release_cleanup_tx, release_cleanup_rx) = tokio::sync::oneshot::channel();
     let executor = Arc::new(UncertainCleanupExecutor {
         started: std::sync::Mutex::new(Some(started_tx)),
         cleanup_started: std::sync::Mutex::new(Some(cleanup_started_tx)),
-        release_cleanup: Arc::clone(&release_cleanup),
+        release_cleanup: std::sync::Mutex::new(Some(release_cleanup_rx)),
     });
     let active_runner = Arc::new(runner(home.path(), workspace.path(), executor));
     let worker_runner = Arc::clone(&active_runner);
@@ -862,18 +913,24 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
             .await
     });
 
-    started_rx.await.unwrap();
+    within_budget("uncertain cleanup worker start", started_rx)
+        .await
+        .unwrap();
     let receipt = active_runner
         .cancellation_request(run_id)
         .request()
         .unwrap();
-    cleanup_started_rx.await.unwrap();
+    within_budget("uncertain cleanup started", cleanup_started_rx)
+        .await
+        .unwrap();
     let retry = request_cross_process_cancel(home.path(), run_id).unwrap();
     assert_eq!(retry, receipt);
     assert!(matches!(
-        active_runner
-            .drive(run_id, RecoveryDecision::NormalResume, None)
-            .await,
+        within_budget(
+            "active-owner check while cleanup holds lock",
+            active_runner.drive(run_id, RecoveryDecision::NormalResume, None)
+        )
+        .await,
         Err(RuntimeError::ActiveOwner)
     ));
 
@@ -894,7 +951,7 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
             .await
     });
     loop {
-        match competing_events_rx.recv().await {
+        match within_budget("competing run start events", competing_events_rx.recv()).await {
             Some(RuntimeEvent::NodeStarted { .. }) => break,
             Some(_) => {}
             None => {
@@ -907,15 +964,24 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
         Err(tokio::sync::oneshot::error::TryRecvError::Empty)
     ));
 
-    release_cleanup.notify_one();
-    let worker_result = worker.await.unwrap();
+    release_cleanup_tx
+        .send(())
+        .expect("cleanup worker still waiting for release");
+    let worker_result = join_within_budget("uncertain cleanup worker", worker).await;
     assert!(
         matches!(worker_result, Err(RuntimeError::NeedsRecovery { .. })),
         "unexpected cleanup result: {worker_result:?}"
     );
-    competing_executor_rx.await.unwrap();
+    within_budget("competing executor start", competing_executor_rx)
+        .await
+        .unwrap();
     assert_eq!(
-        competing_worker.await.unwrap().unwrap().state.state.outcome,
+        join_within_budget("competing worker", competing_worker)
+            .await
+            .unwrap()
+            .state
+            .state
+            .outcome,
         Some(WorkflowOutcome::Success)
     );
 
@@ -944,16 +1010,28 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
     ));
     assert!(!cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
     assert!(matches!(
-        runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
-            .drive(run_id, RecoveryDecision::NormalResume, None)
-            .await,
+        within_budget(
+            "normal resume rejected while uncertain",
+            runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor)).drive(
+                run_id,
+                RecoveryDecision::NormalResume,
+                None,
+            )
+        )
+        .await,
         Err(RuntimeError::NeedsRecovery { .. })
     ));
 
-    let resumed = runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor))
-        .drive(run_id, RecoveryDecision::ConfirmNoProcess, None)
-        .await
-        .unwrap();
+    let resumed = within_budget(
+        "confirm-no-process resume after uncertain cleanup",
+        runner(home.path(), workspace.path(), Arc::new(SuccessfulExecutor)).drive(
+            run_id,
+            RecoveryDecision::ConfirmNoProcess,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
     assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
     assert!(cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
 }
@@ -998,7 +1076,7 @@ async fn uncertain_timeout_cleanup_does_not_become_cancellation() {
 // Covers: cancelling a real process must retain both streams and its typed result across resume.
 // Owner: durable workflow command runtime.
 #[cfg(unix)]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
     use std::{ffi::CString, io::Read as _, os::unix::ffi::OsStrExt as _};
 
@@ -1044,12 +1122,17 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
             .drive(run_id, RecoveryDecision::NormalResume, None)
             .await
     });
-    assert_eq!(ready.await.unwrap(), [b'x']);
+    assert_eq!(
+        within_budget("command ready signal", ready).await.unwrap(),
+        [b'x']
+    );
     active_runner
         .cancellation_request(run_id)
         .request()
         .unwrap();
-    let cancelled = worker.await.unwrap().unwrap();
+    let cancelled = join_within_budget("real command cancellation", worker)
+        .await
+        .unwrap();
     let loaded = WorkflowStore::new(home.path())
         .unwrap()
         .load_run(run_id)
@@ -1091,10 +1174,12 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
         Arc::new(SuccessfulExecutor),
         command_executor,
     );
-    let resumed = resumed_runner
-        .drive(run_id, RecoveryDecision::NormalResume, None)
-        .await
-        .unwrap();
+    let resumed = within_budget(
+        "command resume",
+        resumed_runner.drive(run_id, RecoveryDecision::NormalResume, None),
+    )
+    .await
+    .unwrap();
     assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
     assert_eq!(
         resumed.state.state.command_exits[&node_id("inspect")],
@@ -1179,7 +1264,7 @@ fn checkout_gate_rejects_symlink_lock() {
 
 // Covers: cancellation while another owner holds the checkout lock must not park runtime exit.
 // Owner: checkout gate cross-process wait.
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn checkout_gate_lock_wait_honors_cancellation() {
     use fs2::FileExt;
     use sha2::{Digest as _, Sha256};
@@ -1206,9 +1291,11 @@ async fn checkout_gate_lock_wait_honors_cancellation() {
     cancellation.cancel();
     let wait_limit_seconds = test_workflow().graph.nodes[&node_id("inspect")].timeout_seconds;
 
-    let result = gate
-        .acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds)
-        .await;
+    let result = within_budget(
+        "checkout gate cancellation",
+        gate.acquire(WorkspaceAccess::Mutating, &cancellation, wait_limit_seconds),
+    )
+    .await;
 
     assert!(matches!(result, Err(RuntimeError::Cancelled)));
     FileExt::unlock(&contender).unwrap();

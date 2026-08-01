@@ -34,7 +34,8 @@ pub(crate) fn agent_node(name: &str, needs: &[&str], access: WorkspaceAccess) ->
         }),
         access,
         allow_failure: false,
-        timeout_seconds: 60,
+        // Fixture bound only; tests must not wait on this wall clock.
+        timeout_seconds: 5,
         max_output_bytes: 1024,
     }
 }

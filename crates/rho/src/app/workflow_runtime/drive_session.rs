@@ -456,7 +456,17 @@ impl<'a> DriveSession<'a> {
             self.tasks.join_next().await
         } else {
             tokio::select! {
+                biased;
                 joined = self.tasks.join_next() => joined,
+                // In-process cancel must not wait for the cross-process poll tick.
+                () = self.runner.cancellation.cancelled() => {
+                    return Ok(TaskWait::Continue);
+                }
+                // Same-process durable cancel writers can wake the loop immediately.
+                () = self.runner.cancel_check.notified() => {
+                    return Ok(TaskWait::Continue);
+                }
+                // Fallback for true cross-process cancel request files.
                 () = tokio::time::sleep(CROSS_PROCESS_CANCEL_POLL) => {
                     return Ok(TaskWait::Continue);
                 }

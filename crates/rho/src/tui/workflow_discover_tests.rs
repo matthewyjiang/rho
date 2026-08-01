@@ -1,19 +1,8 @@
-use super::{discover_workflow_sources, workflow_label};
+use super::discover_workflow_sources;
 use pretty_assertions::assert_eq;
 
-#[test]
-fn folder_workflow_star_uses_folder_name() {
-    assert_eq!(
-        workflow_label(".rho/workflows/thermo_nuclear_review/workflow.star"),
-        "thermo_nuclear_review"
-    );
-}
-
-#[test]
-fn flat_star_uses_stem() {
-    assert_eq!(workflow_label(".rho/workflows/review.star"), "review");
-}
-
+// Covers: discovery must surface folder and flat workflow sources with stable paths.
+// Owner: workflow source discovery.
 #[test]
 fn discover_finds_folder_and_flat_entries() {
     let root = tempfile::tempdir().unwrap();
@@ -36,10 +25,13 @@ fn discover_finds_folder_and_flat_entries() {
             ".rho/workflows/solo.star",
         ]
     );
+    // Labels are derived from path shape; keep the rule, not chrome prose.
     assert_eq!(found[0].label, "review");
     assert_eq!(found[1].label, "solo");
 }
 
+// Covers: missing workflows directory is a valid empty inventory, not an error path.
+// Owner: workflow source discovery.
 #[test]
 fn missing_workflows_dir_is_empty() {
     let root = tempfile::tempdir().unwrap();

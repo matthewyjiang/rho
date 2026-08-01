@@ -1,7 +1,7 @@
 use std::{future::Future, pin::Pin};
 
 #[cfg(debug_assertions)]
-use std::{collections::VecDeque, str::FromStr, time::Duration};
+use std::{collections::VecDeque, str::FromStr};
 
 pub(crate) use crate::workflow::ArtifactKind;
 #[cfg(debug_assertions)]
@@ -387,9 +387,10 @@ impl WorkflowEventAdapter for MatrixAdapter {
                 self.stage,
                 MatrixStage::AwaitingApproval | MatrixStage::Complete
             ) {
+                // Wait for send() to enqueue work; never sleep-sync.
                 std::future::pending::<()>().await;
             }
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            // Stage transitions are fully determined by prior actions/events.
             Ok(self.advance())
         })
     }

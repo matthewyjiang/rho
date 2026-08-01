@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::workflow::{
     NodeState, NodeTerminalState, RunId, RunMutationGuard, RunStateRecord, WorkflowEvent,
@@ -20,6 +23,7 @@ pub(crate) struct CancellationRequest {
     pub(super) rho_home: PathBuf,
     pub(super) run_id: RunId,
     pub(super) cancellation: rho_sdk::CancellationToken,
+    pub(super) cancel_check: Arc<tokio::sync::Notify>,
 }
 
 impl CancellationRequest {
@@ -27,6 +31,8 @@ impl CancellationRequest {
         let store = WorkflowStore::new(&self.rho_home)?;
         let receipt = create_or_read_cancellation_request(&store, self.run_id)?;
         self.cancellation.cancel();
+        // Wake the drive loop immediately for same-process owners.
+        self.cancel_check.notify_one();
         Ok(receipt)
     }
 }

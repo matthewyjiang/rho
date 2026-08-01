@@ -39,7 +39,7 @@ def build(inputs):
         agent = "reviewer",
         prompt = template(["Inspect ", inputs["target"]]),
         access = "read_only",
-        timeout_seconds = 60,
+        timeout_seconds = 5,
         max_output_bytes = 4096,
     )])
 WORKFLOW = define(inputs = {"target": input.string(default = ".")}, build = build)
@@ -106,7 +106,7 @@ def build(inputs):
         command(
             name = check_name,
             argv = ["git", "status"],
-            timeout_seconds = 60,
+            timeout_seconds = 5,
             max_output_bytes = 4096,
         ),
         agent(
@@ -122,7 +122,7 @@ def build(inputs):
                 "items": schema.list(schema.integer()),
                 "note": schema.optional(schema.string()),
             }),
-            timeout_seconds = 60,
+            timeout_seconds = 5,
             max_output_bytes = 4096,
         ),
     ])
@@ -192,14 +192,14 @@ fn builds_typed_command_exit_condition() {
     let source = r#"
 def build(inputs):
     return workflow(name = "checks", nodes = [
-        command(name = "check", argv = ["git", "status"], cwd = ".", timeout_seconds = 60, max_output_bytes = 4096),
+        command(name = "check", argv = ["git", "status"], cwd = ".", timeout_seconds = 5, max_output_bytes = 4096),
         agent(
             name = "review",
             agent = "reviewer",
             prompt = "review",
             needs = ["check"],
             when = condition.equals(exit_code("check"), 0),
-            timeout_seconds = 60,
+            timeout_seconds = 5,
             max_output_bytes = 4096,
         ),
     ])

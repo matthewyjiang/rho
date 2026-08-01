@@ -527,7 +527,7 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
                 ),
                 access: crate::workflow::WorkspaceAccess::Mutating,
                 allow_failure: false,
-                timeout_seconds: 60,
+                timeout_seconds: 5,
                 max_output_bytes: 1024,
             },
         )]),

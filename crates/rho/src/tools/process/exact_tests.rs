@@ -58,15 +58,20 @@ async fn captures_separate_bounded_streams_and_exit_code() {
 // Covers: cancellation before process progress must yield the typed cancellation exit.
 // Owner: exact workflow process adapter.
 #[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn maps_cancellation_to_typed_exit() {
     let cancellation = rho_sdk::CancellationToken::new();
     cancellation.cancel();
-    let execution = shell_execution("while :; do :; done", 16);
+    // Park (do not spin) until the adapter observes cancel and kills the tree.
+    let execution = shell_execution("exec sleep 1000", 16);
     let (executable, cwd) = identities(&execution);
-    let output = run_exact_process(execution, &executable, &cwd, &cancellation)
-        .await
-        .unwrap();
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        run_exact_process(execution, &executable, &cwd, &cancellation),
+    )
+    .await
+    .expect("cancelled exact process exceeded the completion budget")
+    .unwrap();
 
     assert_eq!(output.exit, ExactProcessExit::Cancellation);
 }

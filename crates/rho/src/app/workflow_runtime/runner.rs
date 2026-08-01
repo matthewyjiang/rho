@@ -23,6 +23,10 @@ pub(crate) struct WorkflowRunner {
     pub(super) agents: Arc<dyn WorkflowNodeExecutor>,
     pub(super) commands: Arc<dyn WorkflowNodeExecutor>,
     pub(super) cancellation: rho_sdk::CancellationToken,
+    /// Wakes the drive loop to re-check durable cancellation without waiting for
+    /// the cross-process poll interval. Production CLI cancel still relies on the
+    /// poll as a fallback when the owner process is separate.
+    pub(super) cancel_check: Arc<tokio::sync::Notify>,
     pub(super) hooks: Option<Arc<crate::hooks::HookEngine>>,
 }
 
@@ -41,6 +45,7 @@ impl WorkflowRunner {
             agents,
             commands,
             cancellation: rho_sdk::CancellationToken::new(),
+            cancel_check: Arc::new(tokio::sync::Notify::new()),
             hooks: None,
         }
     }
@@ -50,11 +55,17 @@ impl WorkflowRunner {
         self
     }
 
+    /// Ask the drive loop to re-read the durable cancellation request file now.
+    pub(crate) fn wake_cancel_check(&self) {
+        self.cancel_check.notify_one();
+    }
+
     pub(crate) fn cancellation_request(&self, run_id: RunId) -> CancellationRequest {
         CancellationRequest {
             rho_home: self.rho_home.clone(),
             run_id,
             cancellation: self.cancellation.clone(),
+            cancel_check: Arc::clone(&self.cancel_check),
         }
     }
 
