@@ -325,11 +325,9 @@ fn create_run_with_workflow(
     let plan = store
         .create_plan(
             &graph,
-            workspace
-                .canonicalize()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned(),
+            // Match production workspace_identity: canonicalize then paths::display
+            // so Windows slash/`\\?\` forms compare equal in validate_security.
+            crate::paths::display(&workspace.canonicalize().unwrap()),
             &BTreeMap::from([("//workflow.star".to_owned(), "WORKFLOW = None".to_owned())]),
         )
         .unwrap();

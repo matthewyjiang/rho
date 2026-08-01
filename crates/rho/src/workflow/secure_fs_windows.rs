@@ -54,7 +54,13 @@ pub(super) fn opened_windows_path(file: &File) -> WorkflowResult<PathBuf> {
 pub(super) fn windows_path_compare_key(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt as _;
 
+    // Normalize separators first so display-form `//?/` and native `\\?\` match.
     let mut raw: Vec<u16> = path.as_os_str().encode_wide().collect();
+    for unit in &mut raw {
+        if *unit == b'/' as u16 {
+            *unit = b'\\' as u16;
+        }
+    }
     let verbatim_prefix = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
     if raw.starts_with(&verbatim_prefix) {
         raw.drain(..verbatim_prefix.len());
@@ -67,11 +73,6 @@ pub(super) fn windows_path_compare_key(path: &Path) -> Vec<u16> {
     } else {
         raw
     };
-    for unit in &mut normalized {
-        if *unit == b'/' as u16 {
-            *unit = b'\\' as u16;
-        }
-    }
     while normalized.last() == Some(&(b'\\' as u16)) {
         normalized.pop();
     }

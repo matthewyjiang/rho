@@ -80,8 +80,23 @@ impl WorkflowRunner {
     }
 
     pub(super) fn validate_security(&self, run: &StoredRun) -> Result<(), RuntimeError> {
-        let current = crate::paths::display(&self.workspace.canonicalize()?);
-        if current != run.manifest.workspace_identity {
+        let current_path = self.workspace.canonicalize()?;
+        let current = crate::paths::display(&current_path);
+        let identity_matches = {
+            #[cfg(windows)]
+            {
+                current == run.manifest.workspace_identity
+                    || crate::workflow::windows_paths_match(
+                        std::path::Path::new(&run.manifest.workspace_identity),
+                        &current_path,
+                    )
+            }
+            #[cfg(not(windows))]
+            {
+                current == run.manifest.workspace_identity
+            }
+        };
+        if !identity_matches {
             return Err(RuntimeError::WorkspaceChanged {
                 planned: run.manifest.workspace_identity.clone(),
                 current,

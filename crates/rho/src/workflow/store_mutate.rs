@@ -49,17 +49,29 @@ impl WorkflowStore {
             });
         }
 
-        // Rename while locked so the original ID path disappears before release.
-        // Writers open mutation.lock by run ID path and cannot attach after this.
+        // Move the run ID path aside so lock_run cannot attach by the original path.
+        // Unix can rename under the open lock handle; Windows cannot rename a
+        // directory while any file inside it is open, so drop the handle first.
+        // After unlock, a concurrent lock_run either loses the path (rename won)
+        // or keeps open handles that make rename fail closed.
         let trash_name = format!(".trash-run-{id}-{}", uuid::Uuid::new_v4());
         let run_path = self.layout.run(id);
         let trash_path = self.layout.runs().join(&trash_name);
-        if let Err(error) = std::fs::rename(&run_path, &trash_path) {
+        #[cfg(windows)]
+        {
             let _ = lock.unlock();
-            return Err(WorkflowError::Io(error));
+            drop(lock);
+            std::fs::rename(&run_path, &trash_path).map_err(WorkflowError::Io)?;
         }
-        let _ = lock.unlock();
-        drop(lock);
+        #[cfg(not(windows))]
+        {
+            if let Err(error) = std::fs::rename(&run_path, &trash_path) {
+                let _ = lock.unlock();
+                return Err(WorkflowError::Io(error));
+            }
+            let _ = lock.unlock();
+            drop(lock);
+        }
         delete_child_directory(&self.layout.runs(), &trash_path)
     }
 }
