@@ -139,14 +139,14 @@ fn sanitizes_document_names_and_bounds_their_length() {
 }
 
 #[cfg(feature = "document-pdf")]
-// Covers: the shipped PDF backend must extract text-layer content from memory.
+// Covers: the shipped PDF backend must extract text-layer content as structured Markdown.
 // Owner: PDF extractor
 #[test]
-fn extracts_pdf_text_and_warns_for_empty_pages() {
+fn extracts_pdf_markdown_and_warns_for_empty_pages() {
     let text_document =
         extract_document_from_bytes("renamed.bin", &pdf_fixture("(Hello PDF) Tj")).unwrap();
     assert_eq!(text_document.mime, "application/pdf");
-    assert_eq!(text_document.text.trim(), "Hello PDF");
+    assert_eq!(text_document.text.trim(), "## Hello PDF");
     assert_eq!(text_document.warnings, Vec::<String>::new());
 
     let empty_document = extract_document_from_bytes("blank.pdf", &pdf_fixture("")).unwrap();
@@ -161,10 +161,10 @@ fn extracts_pdf_text_and_warns_for_empty_pages() {
 }
 
 #[cfg(feature = "document-pdf")]
-// Covers: the PDF backend must stop writing when the facade's output budget is exhausted.
-// Owner: PDF extractor
+// Covers: the facade must cap the PDF backend's Markdown at its output budget.
+// Owner: document facade
 #[test]
-fn bounds_pdf_output_during_extraction() {
+fn bounds_pdf_markdown_output() {
     let operation = format!("({}) Tj", "A".repeat(MAX_EXTRACTED_CHARACTERS + 1));
 
     let document = extract_document_from_bytes("large.pdf", &pdf_fixture(&operation)).unwrap();
@@ -211,6 +211,45 @@ fn rejects_pdf_cross_reference_streams_before_loading() {
     let error = extract_document_from_bytes("xref-stream.pdf", bytes).unwrap_err();
 
     assert!(error.to_string().contains("cross-reference streams"));
+}
+
+#[cfg(feature = "document-pdf")]
+// Covers: untrusted PDFs with excessive object nesting must fail before the extraction parser.
+// Owner: PDF preflight
+#[test]
+fn rejects_excessive_pdf_object_nesting_before_extraction() {
+    let excessive_depth = pdf::MAX_PDF_OBJECT_NESTING_DEPTH + 1;
+    let nested = format!(
+        "{}0{}",
+        "[".repeat(excessive_depth),
+        "]".repeat(excessive_depth)
+    );
+    let bytes = pdf_fixture_with_catalog_entry("(content) Tj", &format!("/Nested {nested}"));
+
+    let error = extract_document_from_bytes("nested.pdf", &bytes).unwrap_err();
+
+    assert!(matches!(
+        error,
+        DocumentExtractionError::Extraction { format: "PDF", .. }
+    ));
+}
+
+#[cfg(feature = "document-pdf")]
+// Covers: object-like bytes in PDF comments, strings, and streams must not trigger the nesting cap.
+// Owner: PDF preflight
+#[test]
+fn ignores_pdf_object_tokens_outside_object_syntax() {
+    let nested = "[".repeat(pdf::MAX_PDF_OBJECT_NESTING_DEPTH + 1);
+    let cases = [
+        "/stream".to_owned(),
+        format!("% {nested}\n"),
+        format!("({nested})"),
+        format!("<<>>\nstream\n{nested}\nendstream"),
+    ];
+
+    for bytes in cases {
+        assert_eq!(pdf::validate_object_nesting(bytes.as_bytes()), Ok(()));
+    }
 }
 
 #[cfg(feature = "document-docx")]
@@ -387,19 +426,28 @@ fn spreadsheet_column_name(mut column: usize) -> String {
 
 #[cfg(feature = "document-pdf")]
 fn pdf_fixture(text_operation: &str) -> Vec<u8> {
-    pdf_fixture_with_stream_dictionary(text_operation, "")
+    pdf_fixture_with_catalog_entry(text_operation, "")
+}
+
+#[cfg(feature = "document-pdf")]
+fn pdf_fixture_with_catalog_entry(text_operation: &str, catalog_entry: &str) -> Vec<u8> {
+    pdf_fixture_with_stream_dictionary(text_operation, catalog_entry, "")
 }
 
 #[cfg(feature = "document-pdf")]
 fn pdf_fixture_with_filter(text_operation: &str, filters: &str) -> Vec<u8> {
-    pdf_fixture_with_stream_dictionary(text_operation, &format!("/Filter [{filters}] "))
+    pdf_fixture_with_stream_dictionary(text_operation, "", &format!("/Filter [{filters}] "))
 }
 
 #[cfg(feature = "document-pdf")]
-fn pdf_fixture_with_stream_dictionary(text_operation: &str, extra_dictionary: &str) -> Vec<u8> {
+fn pdf_fixture_with_stream_dictionary(
+    text_operation: &str,
+    catalog_entry: &str,
+    extra_dictionary: &str,
+) -> Vec<u8> {
     let stream = format!("BT /F1 12 Tf 72 720 Td {text_operation} ET");
     let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        format!("<< /Type /Catalog /Pages 2 0 R {catalog_entry} >>"),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_owned(),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),

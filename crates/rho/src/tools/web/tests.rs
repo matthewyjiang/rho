@@ -434,8 +434,8 @@ async fn fetch_url_text_refuses_redirect_responses() {
     );
 }
 
-// Covers: local and remote PDF fetches must return extracted text instead of a placeholder or a
-// UTF-8 decode error.
+// Covers: local and remote PDF fetches must return structured Markdown instead of a placeholder or
+// a UTF-8 decode error.
 // Owner: fetch_content transport integration
 #[tokio::test]
 async fn fetch_content_extracts_local_and_remote_pdf_text() {
@@ -512,8 +512,8 @@ async fn fetch_content_extracts_local_and_remote_pdf_text() {
     .unwrap();
     server.join().unwrap();
 
-    assert_eq!(local.content.trim(), "Fetched PDF");
-    assert_eq!(remote.content.trim(), "Fetched PDF");
+    assert_eq!(local.content.trim(), "## Fetched PDF");
+    assert_eq!(remote.content.trim(), "## Fetched PDF");
     assert_eq!(local.metadata["mode"], "document_extract");
     assert_eq!(remote.metadata["mode"], "document_extract");
 }

@@ -170,7 +170,7 @@ impl BoundedText {
         }
     }
 
-    #[cfg(any(feature = "document-docx", feature = "document-pdf"))]
+    #[cfg(feature = "document-docx")]
     pub(super) fn truncated(&self) -> bool {
         self.truncated
     }

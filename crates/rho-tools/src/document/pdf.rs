@@ -1,25 +1,22 @@
 use std::io::Read as _;
 
 use flate2::read::ZlibDecoder;
-use pdf_extract::xref::XrefEntry;
+use lopdf::xref::XrefEntry;
 
 use super::{BoundedText, ExtractedText};
 
 const MAX_PDF_EXPANDED_STREAM_BYTES: usize = 64 * 1024 * 1024;
-
-impl<'a> pdf_extract::ConvertToFmt for &'a mut BoundedText {
-    type Writer = &'a mut BoundedText;
-
-    fn convert(self) -> Self::Writer {
-        self
-    }
-}
+// Match lopdf 0.42's parser limit so older transitive parsers never receive deeper objects.
+pub(super) const MAX_PDF_OBJECT_NESTING_DEPTH: usize = 100;
 
 pub(super) fn extract(bytes: &[u8], max_characters: usize) -> Result<ExtractedText, String> {
+    // Keep this preflight on a lopdf release that bounds nested objects. pdf-inspector does not
+    // accept a preloaded document, so only pass it the same bytes after all Rho limits succeed.
+    validate_object_nesting(bytes)?;
     validate_classic_cross_reference(bytes)?;
-    let mut document = pdf_extract::Document::load_mem_with_options(
+    let mut document = lopdf::Document::load_mem_with_options(
         bytes,
-        pdf_extract::LoadOptions {
+        lopdf::LoadOptions {
             filter: Some(drop_object_streams),
             strict: true,
             ..Default::default()
@@ -40,17 +37,105 @@ pub(super) fn extract(bytes: &[u8], max_characters: usize) -> Result<ExtractedTe
         document.decrypt("").map_err(|error| error.to_string())?;
     }
     validate_stream_expansion(&document)?;
+    drop(document);
+
+    // pdf-inspector builds Markdown in memory. The preflight above caps all expanded source streams
+    // at 64 MiB, and the facade bounds the returned text by Unicode character count here.
+    let result = pdf_inspector::process_pdf_mem(bytes).map_err(|error| error.to_string())?;
+    let markdown = result.markdown.unwrap_or_default();
     let mut text = BoundedText::new(max_characters);
-    let result = {
-        let mut output = pdf_extract::PlainTextOutput::new(&mut text);
-        pdf_extract::output_doc(&document, &mut output)
-    };
-    if let Err(error) = result {
-        if !text.truncated() {
-            return Err(error.to_string());
+    text.push_str(&markdown);
+    Ok(text.into_extracted())
+}
+
+pub(super) fn validate_object_nesting(bytes: &[u8]) -> Result<(), String> {
+    let mut index = 0;
+    let mut depth = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                index += 1;
+                while index < bytes.len() && !matches!(bytes[index], b'\r' | b'\n') {
+                    index += 1;
+                }
+            }
+            b'(' => {
+                let mut string_depth = 1;
+                index += 1;
+                while index < bytes.len() && string_depth > 0 {
+                    match bytes[index] {
+                        b'\\' => index = (index + 2).min(bytes.len()),
+                        b'(' => {
+                            string_depth += 1;
+                            index += 1;
+                        }
+                        b')' => {
+                            string_depth -= 1;
+                            index += 1;
+                        }
+                        _ => index += 1,
+                    }
+                }
+            }
+            b'<' if bytes.get(index + 1) == Some(&b'<') => {
+                depth += 1;
+                check_object_nesting_depth(depth)?;
+                index += 2;
+            }
+            b'>' if bytes.get(index + 1) == Some(&b'>') => {
+                depth = depth.saturating_sub(1);
+                index += 2;
+            }
+            b'<' => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'>' {
+                    index += 1;
+                }
+                index += usize::from(index < bytes.len());
+            }
+            b'[' => {
+                depth += 1;
+                check_object_nesting_depth(depth)?;
+                index += 1;
+            }
+            b']' => {
+                depth = depth.saturating_sub(1);
+                index += 1;
+            }
+            b's' if stream_keyword_at(bytes, index) => {
+                let search_start = index + b"stream".len();
+                let Some(end_offset) = bytes[search_start..]
+                    .windows(b"endstream".len())
+                    .position(|window| window == b"endstream")
+                else {
+                    return Err("PDF stream is missing an endstream marker".to_owned());
+                };
+                index = search_start + end_offset + b"endstream".len();
+            }
+            _ => index += 1,
         }
     }
-    Ok(text.into_extracted())
+    Ok(())
+}
+
+fn check_object_nesting_depth(depth: usize) -> Result<(), String> {
+    if depth > MAX_PDF_OBJECT_NESTING_DEPTH {
+        return Err(format!(
+            "PDF object nesting depth {depth} exceeds the {MAX_PDF_OBJECT_NESTING_DEPTH} level limit"
+        ));
+    }
+    Ok(())
+}
+
+fn stream_keyword_at(bytes: &[u8], index: usize) -> bool {
+    let keyword = b"stream";
+    let Some(end) = index.checked_add(keyword.len()) else {
+        return false;
+    };
+    bytes.get(index..end) == Some(keyword)
+        && index > 0
+        && bytes[index - 1].is_ascii_whitespace()
+        && bytes.get(end).is_some_and(u8::is_ascii_whitespace)
 }
 
 fn validate_classic_cross_reference(bytes: &[u8]) -> Result<(), String> {
@@ -88,8 +173,8 @@ fn validate_classic_cross_reference(bytes: &[u8]) -> Result<(), String> {
 
 fn drop_object_streams(
     id: (u32, u16),
-    object: &mut pdf_extract::Object,
-) -> Option<((u32, u16), pdf_extract::Object)> {
+    object: &mut lopdf::Object,
+) -> Option<((u32, u16), lopdf::Object)> {
     if object
         .as_stream()
         .is_ok_and(|stream| stream.dict.has_type(b"ObjStm"))
@@ -100,7 +185,7 @@ fn drop_object_streams(
     }
 }
 
-fn validate_stream_expansion(document: &pdf_extract::Document) -> Result<(), String> {
+fn validate_stream_expansion(document: &lopdf::Document) -> Result<(), String> {
     let mut remaining = MAX_PDF_EXPANDED_STREAM_BYTES;
     for object in document.objects.values() {
         let Ok(stream) = object.as_stream() else {
