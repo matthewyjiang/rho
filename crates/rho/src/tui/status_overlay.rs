@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use ratatui::{
     layout::{Alignment, Rect},
     style::Style,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -58,6 +58,15 @@ impl StatusOverlay {
     }
 }
 
+/// Idle mode labels stay out of the toast so they do not flash after every turn
+/// or leave box-drawing chrome in the corner during resize checks.
+pub(super) fn should_toast(message: &str) -> bool {
+    !matches!(
+        message,
+        "ready" | "running" | "config" | "skills" | "workflows"
+    )
+}
+
 /// Classify toast color from message text: error, success, else warning/busy.
 pub(super) fn tone_for_message(message: &str) -> StatusTone {
     let message = message.to_ascii_lowercase();
@@ -85,7 +94,6 @@ pub(super) fn tone_for_message(message: &str) -> StatusTone {
             "attached",
             "loaded",
             "cleared",
-            "ready",
             "done",
             "inserted",
             "updated",
@@ -113,7 +121,9 @@ fn tone_style(tone: StatusTone) -> Style {
     }
 }
 
-/// Draw a top-right toast, stacked under `top_offset` rows (for the copy notice).
+/// Draw a one-line top-right toast, stacked under `top_offset` rows (copy notice).
+///
+/// No box borders: mermaid and other art detectors treat `┌` as diagram chrome.
 pub(super) fn render_status_overlay(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -128,41 +138,27 @@ pub(super) fn render_status_overlay(
         return;
     }
 
-    let available_height = area.height.saturating_sub(top_offset);
     let max_width = area.width as usize;
-    // Leave room for border padding when the box fits; one-line fallback otherwise.
-    let text = truncate_one_line(overlay.message(), max_width.saturating_sub(4).max(1));
+    let text = truncate_one_line(overlay.message(), max_width.saturating_sub(2).max(1));
     let popup_width = UnicodeWidthStr::width(text.as_str())
-        .saturating_add(4)
+        .saturating_add(2)
         .min(max_width)
         .max(1) as u16;
-    let popup_height = available_height.min(3);
     let popup = Rect::new(
         area.x
             .saturating_add(area.width.saturating_sub(popup_width)),
         area.y.saturating_add(top_offset),
         popup_width,
-        popup_height,
+        1,
     );
-    let style = tone_style(overlay.tone());
 
     frame.render_widget(Clear, popup);
-    if popup.width >= 3 && popup.height >= 3 {
-        frame.render_widget(
-            Paragraph::new(text)
-                .alignment(Alignment::Center)
-                .style(style)
-                .block(Block::default().borders(Borders::ALL).border_style(style)),
-            popup,
-        );
-    } else {
-        frame.render_widget(
-            Paragraph::new(text)
-                .alignment(Alignment::Right)
-                .style(style),
-            popup,
-        );
-    }
+    frame.render_widget(
+        Paragraph::new(format!(" {text} "))
+            .alignment(Alignment::Right)
+            .style(tone_style(overlay.tone())),
+        popup,
+    );
 }
 
 #[cfg(test)]

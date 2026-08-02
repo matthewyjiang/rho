@@ -60,6 +60,7 @@ impl App {
             pending_subagent_questionnaire: None,
             input_ui: InputUi::default(),
             status_overlay: None,
+            last_status: String::new(),
             should_quit: false,
             ctrl_c_streak: 0,
             streams: StreamUi::default(),

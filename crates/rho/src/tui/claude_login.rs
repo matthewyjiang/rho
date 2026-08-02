@@ -329,7 +329,6 @@ impl App {
             | ClaudeLoginAuthOutcome::Failed { message } => {
                 self.insert_entry(&Entry::Error(message.clone()));
                 self.set_status(outcome.status_line());
-                return;
             }
         }
     }

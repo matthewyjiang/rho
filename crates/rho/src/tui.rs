@@ -341,6 +341,8 @@ struct App {
     /// Tiny disappearing feedback toast. Write only through [`App::set_status`]
     /// / [`App::notify_status`].
     status_overlay: Option<status_overlay::StatusOverlay>,
+    /// Last status text for callers that inspect mode feedback.
+    last_status: String,
     should_quit: bool,
     ctrl_c_streak: u8,
     streams: StreamUi,

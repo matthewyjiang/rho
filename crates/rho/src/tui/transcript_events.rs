@@ -496,29 +496,31 @@ impl App {
         self.record_inserted_entry(entry.clone());
     }
 
-    /// Show a tiny disappearing status toast.
+    /// Show ephemeral status feedback.
     ///
-    /// This is the write path for ephemeral action feedback. Prefer
-    /// [`Self::notify_status`] at call sites that used to push the same text
-    /// into the transcript; toast-only keeps the feed free of chrome noise.
+    /// Always records the latest status text. User-facing feedback also opens a
+    /// short-lived top-right toast; idle mode labels such as `ready` and
+    /// `running` stay silent so they do not spam the corner or confuse chrome
+    /// that scans for box-drawing art.
     pub(super) fn set_status(&mut self, status: impl AsRef<str>) {
         let status = status.as_ref();
         if status.is_empty() {
+            self.last_status.clear();
             self.status_overlay = None;
             return;
         }
-        self.status_overlay = Some(super::status_overlay::StatusOverlay::new(
-            status,
-            Instant::now(),
-        ));
+        self.last_status = status.to_string();
+        if super::status_overlay::should_toast(status) {
+            self.status_overlay = Some(super::status_overlay::StatusOverlay::new(
+                status,
+                Instant::now(),
+            ));
+        }
     }
 
-    /// Latest status toast text, or empty when none is set.
+    /// Latest status text, or empty when none is set.
     pub(super) fn status(&self) -> &str {
-        self.status_overlay
-            .as_ref()
-            .map(super::status_overlay::StatusOverlay::message)
-            .unwrap_or("")
+        &self.last_status
     }
 
     /// Show ephemeral feedback as a status toast only (no transcript notice).
