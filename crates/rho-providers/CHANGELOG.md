@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.3](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.15.2...rho-providers-v0.15.3) (2026-08-02)
+
+
+### Bug Fixes
+
+* **providers:** enrich empty SSE content diagnostic ([#684](https://github.com/matthewyjiang/rho/issues/684)) ([79e4d48](https://github.com/matthewyjiang/rho/commit/79e4d48c735de05e1ceccde7cd3ae72a8e31e62f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.14.0 to 1.15.0
+
 ## [0.15.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.15.1...rho-providers-v0.15.2) (2026-07-31)
 
 

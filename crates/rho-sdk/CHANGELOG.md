@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.14.0...rho-sdk-v1.15.0) (2026-08-02)
+
+
+### Features
+
+* **workflow:** add deterministic DAG workflows ([#680](https://github.com/matthewyjiang/rho/issues/680)) ([77f36f9](https://github.com/matthewyjiang/rho/commit/77f36f9cc6992f78ab59ac481a1f2dc4e00350a0))
+
 ## [1.14.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.13.1...rho-sdk-v1.14.0) (2026-07-31)
 
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.26.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.25.1...rho-coding-agent-v1.26.0) (2026-08-02)
+
+
+### Features
+
+* **skills:** add built-in rho-config skill ([#685](https://github.com/matthewyjiang/rho/issues/685)) ([91abfaf](https://github.com/matthewyjiang/rho/commit/91abfaf2c3bbca4a21a9aac32ff53f30f918dfee))
+* **tools:** extract pdf content with pdf-inspector ([#687](https://github.com/matthewyjiang/rho/issues/687)) ([ce92355](https://github.com/matthewyjiang/rho/commit/ce92355e74a56ab11d7f2cf35ff3d246e34310d2))
+* **tui:** add /changelog for recent release notes ([#681](https://github.com/matthewyjiang/rho/issues/681)) ([4269020](https://github.com/matthewyjiang/rho/commit/4269020cc967173ab7efbc2a30a65677658baa65))
+* **tui:** show provider label next to model in statusline ([#686](https://github.com/matthewyjiang/rho/issues/686)) ([274c18b](https://github.com/matthewyjiang/rho/commit/274c18b805074d9cce0c0ea95db0ec48c876ece9))
+* **workflow:** add deterministic DAG workflows ([#680](https://github.com/matthewyjiang/rho/issues/680)) ([77f36f9](https://github.com/matthewyjiang/rho/commit/77f36f9cc6992f78ab59ac481a1f2dc4e00350a0))
+
+
+### Bug Fixes
+
+* **workflow:** gate RLIMIT_AS to linux so the planner runs on macOS ([#689](https://github.com/matthewyjiang/rho/issues/689)) ([dabbf99](https://github.com/matthewyjiang/rho/commit/dabbf99fe1825cd1a3966aa333d0ab759f9884c4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.14.0 to 1.15.0
+    * rho-providers bumped from 0.15.2 to 0.15.3
+
 ## [1.25.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.25.0...rho-coding-agent-v1.25.1) (2026-07-31)
 
 
