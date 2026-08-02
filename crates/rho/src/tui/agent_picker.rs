@@ -234,7 +234,7 @@ impl super::App {
                     "could not reload agents: {error}"
                 )));
                 self.input_ui.set_composer(super::ComposerMode::Input);
-                self.status = "agent reload failed".into();
+                self.set_status("agent reload failed");
                 return Ok(());
             }
         };
@@ -244,7 +244,7 @@ impl super::App {
         }
         self.input_ui
             .set_composer(super::ComposerMode::Picker(picker));
-        self.status = "loaded agents".into();
+        self.set_status("loaded agents");
         Ok(())
     }
 }

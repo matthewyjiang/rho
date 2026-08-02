@@ -267,6 +267,21 @@ impl App {
         if let Some(notice) = &self.history.copy_notice() {
             render_copy_notice(frame, area, notice, now);
         }
+        if let Some(overlay) = self.status_overlay.as_ref() {
+            let copy_offset = self
+                .history
+                .copy_notice()
+                .filter(|notice| notice.is_visible(now))
+                .map(|_| area.height.min(3))
+                .unwrap_or(0);
+            super::status_overlay::render_status_overlay(
+                frame,
+                area,
+                overlay,
+                now,
+                /*top_offset*/ copy_offset,
+            );
+        }
     }
 
     fn draw_cursor(&self, frame: &mut Frame<'_>, surface: DrawSurface<'_>) {
@@ -841,20 +856,6 @@ impl App {
         self.history.set_entries(transcript);
         self.history.images_mut().clear();
         self.history.invalidate_from(0);
-        self.history
-            .set_last_status_notice(self.history.entries().iter().rev().find_map(
-                |entry| match entry {
-                    Entry::Notice(text) => Some(text.clone()),
-                    Entry::User(_)
-                    | Entry::Assistant(_)
-                    | Entry::Reasoning(_)
-                    | Entry::RuntimeInfo(_)
-                    | Entry::Changelog(_)
-                    | Entry::UsageLimits(_)
-                    | Entry::Tool(_)
-                    | Entry::Error(_) => None,
-                },
-            ));
         Ok(())
     }
 }

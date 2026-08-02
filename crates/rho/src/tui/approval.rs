@@ -124,7 +124,7 @@ impl App {
     pub(super) async fn open_approval(&mut self, pending: PendingApproval) {
         self.input_ui
             .set_composer(ComposerMode::Approval(ApprovalComposer::new(pending)));
-        self.status = "approval requested".into();
+        self.set_status("approval requested");
         self.report_herdr_waiting_for_user(HerdrUserWait::Approval)
             .await;
     }
@@ -194,7 +194,7 @@ impl App {
         if let ComposerMode::Approval(mut approval) = composer {
             let decision = decision.unwrap_or_else(|| approval.active.decision());
             approval.respond(decision);
-            self.status = "running".into();
+            self.set_status("running");
         }
     }
 }

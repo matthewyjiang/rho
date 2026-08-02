@@ -10,13 +10,12 @@ impl App {
     pub(super) fn execute_skills_command(&mut self) -> anyhow::Result<()> {
         let picker = skill_picker::skill_picker(crate::skills::discover(&self.info.runtime.cwd));
         if picker.items.is_empty() {
-            self.insert_entry(&Entry::Notice("no skills loaded".into()));
-            self.status = "skills".into();
+            self.set_status("no skills loaded");
             return Ok(());
         }
 
         self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.status = "select skill".into();
+        self.set_status("select skill");
         Ok(())
     }
 
@@ -34,7 +33,7 @@ impl App {
             self.insert_entry(&Entry::Error(
                 "skill commands are unavailable because the active agent has no skill tool".into(),
             ));
-            self.status = "skill unavailable".into();
+            self.set_status("skill unavailable");
             return Ok(SkillCommandAction::Rejected);
         }
         let Some(skill) = crate::skills::discover(&self.info.runtime.cwd)

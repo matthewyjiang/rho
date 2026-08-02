@@ -25,7 +25,7 @@ impl App {
             edit_buffer_in_external_editor(self, terminal, &composer_text, "composer").await?
         {
             self.replace_composer_from_editor(text);
-            self.status = "composer updated from editor".into();
+            self.set_status("composer updated from editor");
         }
         self.input_ui.clear_paste_burst();
         Ok(())

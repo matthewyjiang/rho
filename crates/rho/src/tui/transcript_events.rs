@@ -243,7 +243,7 @@ impl App {
                 self.begin_provider_turn_ui();
                 self.turn.clear_tool_calls();
                 self.turn.start_loading_if_needed();
-                self.status = format!("running step {step}");
+                self.set_status(format!("running step {step}"));
                 None
             }
             ViewModelEvent::SteeringApplied(ids) => {
@@ -392,10 +392,6 @@ impl App {
                 }
             },
             other => {
-                self.history.set_last_status_notice(match &other {
-                    Entry::Notice(text) => Some(text.clone()),
-                    _ => None,
-                });
                 let index = self.history.len();
                 self.history.lines_mut().invalidate_from(index);
                 self.history.push(other);
@@ -500,27 +496,43 @@ impl App {
         self.record_inserted_entry(entry.clone());
     }
 
-    pub(super) fn notify_status(&mut self, status: impl Into<String>) {
-        let status = status.into();
-        self.status = status.clone();
-        if self.history.last_status_notice() == Some(status.as_str()) {
+    /// Show ephemeral status feedback.
+    ///
+    /// Always records the latest status text. User-facing feedback also opens a
+    /// short-lived top-right toast; idle mode labels such as `ready` and
+    /// `running` stay silent so they do not spam the corner or confuse chrome
+    /// that scans for box-drawing art.
+    pub(super) fn set_status(&mut self, status: impl AsRef<str>) {
+        let status = status.as_ref();
+        if status.is_empty() {
+            self.last_status.clear();
+            self.status_overlay = None;
             return;
         }
-        self.insert_entry(&Entry::Notice(status));
+        self.last_status = status.to_string();
+        if super::status_overlay::should_toast(status) {
+            self.status_overlay = Some(super::status_overlay::StatusOverlay::new(
+                status,
+                super::status_overlay::tone_for_message(status),
+                Instant::now(),
+            ));
+        } else {
+            // Drop a prior toast when entering a silent mode label.
+            self.status_overlay = None;
+        }
+    }
+
+    /// Latest status text, or empty when none is set.
+    pub(super) fn status(&self) -> &str {
+        &self.last_status
+    }
+
+    /// Show ephemeral feedback as a status toast only (no transcript notice).
+    pub(super) fn notify_status(&mut self, status: impl AsRef<str>) {
+        self.set_status(status);
     }
 
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
-        self.history.set_last_status_notice(match &entry {
-            Entry::Notice(text) => Some(text.clone()),
-            Entry::User(_)
-            | Entry::Assistant(_)
-            | Entry::Reasoning(_)
-            | Entry::RuntimeInfo(_)
-            | Entry::Changelog(_)
-            | Entry::UsageLimits(_)
-            | Entry::Tool(_)
-            | Entry::Error(_) => None,
-        });
         self.push_transcript_entry(entry);
     }
 
@@ -592,7 +604,7 @@ impl App {
             self.history.images_mut().clear();
             self.history.invalidate_from(start);
         }
-        self.status = "retrying provider response".into();
+        self.set_status("retrying provider response");
     }
 }
 

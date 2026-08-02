@@ -51,11 +51,12 @@ fn clearing_goal_removes_active_indicator() {
     app.clear_goal();
 
     assert!(app.goal.is_none());
-    assert_eq!(app.status, "goal cleared");
-    assert!(matches!(
-        app.history.last(),
-        Some(Entry::Notice(message)) if message == "goal cleared"
-    ));
+    assert_eq!(app.status(), "goal cleared");
+    assert!(app
+        .history
+        .entries()
+        .iter()
+        .all(|entry| !matches!(entry, Entry::Notice(message) if message == "goal cleared")));
 }
 
 #[test]

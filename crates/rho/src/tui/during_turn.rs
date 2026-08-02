@@ -227,7 +227,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "unknown or unavailable command '/{name}' while a model turn is running"
                 )));
-                self.status = "command unavailable while running".into();
+                self.set_status("command unavailable while running");
             }
         }
         Ok(())
@@ -247,11 +247,10 @@ impl App {
             paste_segments,
         });
         self.select_pending_recall_target();
-        self.insert_entry(&Entry::Notice(format!(
+        self.set_status(format!(
             "queued steer {} for after the current assistant turn",
             self.pending.steering_prompts().len()
-        )));
-        self.status = format!("queued {} steer(s)", self.pending.steering_prompts().len());
+        ));
         Ok(())
     }
 
@@ -280,11 +279,10 @@ impl App {
             paste_segments,
         });
         self.select_pending_recall_target();
-        self.insert_entry(&Entry::Notice(format!(
+        self.set_status(format!(
             "queued message {} for after the current turn",
             self.pending.queued_prompts().len()
-        )));
-        self.status = format!("queued {} message(s)", self.pending.queued_prompts().len());
+        ));
         Ok(())
     }
 
@@ -303,14 +301,12 @@ impl App {
                 &self.available_auths,
             );
             if picker.items.is_empty() {
-                self.insert_entry(&Entry::Notice(
-                    "no cached API models. refresh model lists from /config after the current run ends."
-                        .into(),
-                ));
-                self.status = "running".into();
+                self.set_status(
+                    "no cached API models. refresh model lists from /config after the current run ends.",
+                );
             } else {
                 self.input_ui.set_composer(ComposerMode::Picker(picker));
-                self.status = "select model for next turn".into();
+                self.set_status("select model for next turn");
             }
             return Ok(());
         }
@@ -324,7 +320,7 @@ impl App {
             Ok(selection) => self.queue_model_selection(selection),
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "model switch failed".into();
+                self.set_status("model switch failed");
                 Ok(())
             }
         }
@@ -339,11 +335,9 @@ impl App {
             selection.selection.provider, selection.selection.model
         );
         self.pending_model_selection = Some(selection);
-        self.insert_entry(&Entry::Notice(format!(
-                "model change to {provider_model} queued; the current agent run will finish on its existing model, and the change will apply after the full run ends"
-            )),
-        );
-        self.status = format!("model queued: {provider_model}");
+        self.set_status(format!(
+            "model change to {provider_model} queued for after this run"
+        ));
         Ok(())
     }
 
@@ -395,11 +389,10 @@ impl App {
             | CommandId::Rewind
             | CommandId::Tree
             | CommandId::Workflow => {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "/{} is unavailable while a model turn is running",
                     invocation.name
-                )));
-                self.status = "command unavailable while running".into();
+                ));
                 Ok(())
             }
         }
@@ -465,7 +458,7 @@ impl App {
     pub(super) fn submit_picker_selection_during_turn(&mut self) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             self.input_ui.set_composer(ComposerMode::Input);
-            self.status = "running".into();
+            self.set_status("running");
             return Ok(());
         };
 
@@ -478,28 +471,23 @@ impl App {
                 self.input_ui
                     .set_text_and_cursor(format!("/skill:{value}"), self.input_char_len());
                 self.input_ui.set_command_palette_dismissed(true);
-                self.status = "skill command inserted".into();
+                self.set_status("skill command inserted");
             }
             PickerAction::ResumeSession
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Workflow => {
-                self.insert_entry(&Entry::Notice(
-                    "workflow and session navigation are unavailable while a model turn is running"
-                        .into(),
-                ));
-                self.status = "navigation unavailable while running".into();
+                self.set_status(
+                    "workflow and session navigation are unavailable while a model turn is running",
+                );
             }
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
             PickerAction::Dismiss | PickerAction::ViewAgent => {
-                self.status = "running".into();
+                self.set_status("running");
             }
             PickerAction::SelectInternalAgentModel | PickerAction::EditAgent => {
-                self.insert_entry(&Entry::Notice(
-                    "agent editing is unavailable while a model turn is running".into(),
-                ));
-                self.status = "agent editing unavailable while running".into();
+                self.set_status("agent editing is unavailable while a model turn is running");
             }
             PickerAction::SelectModel => {
                 self.refresh_available_auths();
@@ -511,7 +499,7 @@ impl App {
                     Ok(selection) => self.queue_model_selection(selection)?,
                     Err(err) => {
                         self.insert_entry(&Entry::Error(err.to_string()));
-                        self.status = "model switch failed".into();
+                        self.set_status("model switch failed");
                     }
                 }
             }
@@ -520,10 +508,7 @@ impl App {
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList => {
-                self.insert_entry(&Entry::Notice(
-                    "that picker action is unavailable while a model turn is running".into(),
-                ));
-                self.status = "picker action unavailable while running".into();
+                self.set_status("that picker action is unavailable while a model turn is running");
             }
         }
         if let Some((picker, selected_value)) = return_picker {
@@ -547,10 +532,9 @@ impl App {
             | config_picker::PROVIDER_LOGIN_VALUE
             | config_picker::PROVIDER_LOGOUT_VALUE
             | config_picker::SWITCH_AUTH_MODE_VALUE => {
-                self.insert_entry(&Entry::Notice(
-                    "provider configuration is unavailable while a model turn is running".into(),
-                ));
-                self.status = "config action unavailable while running".into();
+                self.set_status(
+                    "provider configuration is unavailable while a model turn is running",
+                );
             }
             config_picker::PERMISSION_MODE_VALUE => {
                 self.reject_permission_mode_change();
@@ -566,7 +550,7 @@ impl App {
                         config.max_output_bytes,
                     ),
                 ));
-                self.status = "edit max output bytes".into();
+                self.set_status("edit max output bytes");
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
                 let config = self.info.services.config_repository.load()?;
@@ -576,13 +560,10 @@ impl App {
                         config.max_tool_output_lines,
                     ),
                 ));
-                self.status = "edit max tool output lines".into();
+                self.set_status("edit max tool output lines");
             }
             config_picker::REASONING_VALUE => {
-                self.insert_entry(&Entry::Notice(
-                    "reasoning changes are unavailable while a model turn is running".into(),
-                ));
-                self.status = "config action unavailable while running".into();
+                self.set_status("reasoning changes are unavailable while a model turn is running");
             }
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
                 self.toggle_reasoning_output()?;
@@ -604,7 +585,7 @@ impl App {
                         config.compact_threshold_percent as usize,
                     ),
                 ));
-                self.status = "edit compact threshold percent".into();
+                self.set_status("edit compact threshold percent");
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
@@ -614,12 +595,12 @@ impl App {
                         config.compact_target_percent as usize,
                     ),
                 ));
-                self.status = "edit compact target percent".into();
+                self.set_status("edit compact target percent");
             }
             config_picker::INLINE_SHELL_VALUE => {
                 let config = self.info.services.config_repository.load()?;
                 self.open_child_picker(config_picker::inline_shell_picker(&config));
-                self.status = "select inline shell".into();
+                self.set_status("select inline shell");
             }
             value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
                 let shell = value[config_picker::INLINE_SHELL_PREFIX.len()..].to_string();
@@ -627,7 +608,7 @@ impl App {
                     config.inline_shell.clone_from(&shell);
                 })?;
                 self.open_main_config_picker_selected(config_picker::INLINE_SHELL_VALUE)?;
-                self.status = format!("inline shell: {shell}");
+                self.set_status(format!("inline shell: {shell}"));
             }
             config_picker::WEB_SEARCH_VALUE => {
                 let config = self.info.services.config_repository.load()?;
@@ -635,7 +616,7 @@ impl App {
                     &config,
                     self.credential_store.as_ref(),
                 ));
-                self.status = "web search config".into();
+                self.set_status("web search config");
             }
             config_picker::WEB_SEARCH_HOSTED_VALUE => self.toggle_web_search_hosted()?,
             config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider()?,
@@ -815,7 +796,7 @@ impl App {
     ) -> StreamControl {
         interrupt_requested.store(true, Ordering::SeqCst);
         if tool_call_active.load(Ordering::SeqCst) {
-            self.status = "interrupting tool".into();
+            self.set_status("interrupting tool");
         }
         StreamControl::Interrupt
     }

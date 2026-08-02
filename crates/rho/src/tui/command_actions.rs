@@ -100,7 +100,7 @@ impl App {
                 .collect::<Vec<_>>()
                 .join(", ")
         )));
-        self.status = "unknown command".into();
+        self.set_status("unknown command");
     }
 
     pub(super) async fn execute_compact_command(
@@ -114,7 +114,7 @@ impl App {
 
         self.pending.steering_prompts_mut().clear();
         self.pending_input_changed();
-        self.status = "compacting context".into();
+        self.set_status("compacting context");
         self.begin_compact_ui();
         self.turn.set_activity_phase(ActivityPhase::Compacting);
         self.turn.start_loading();
@@ -192,14 +192,13 @@ impl App {
             expanded,
             image: None,
         }));
-        self.status = status.into();
+        self.set_status(status);
         Ok(succeeded)
     }
 
     pub(super) fn execute_exit_command(&mut self) -> anyhow::Result<()> {
-        self.insert_entry(&Entry::Notice("exiting rho".into()));
         self.should_quit = true;
-        self.status = "exiting".into();
+        self.set_status("exiting rho");
         Ok(())
     }
 
@@ -238,7 +237,7 @@ impl App {
         self.history.lines_mut().invalidate_from(0);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
-        self.status = "new session".into();
+        self.set_status("new session");
         Ok(())
     }
 }

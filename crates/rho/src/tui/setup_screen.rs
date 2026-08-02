@@ -158,11 +158,11 @@ impl App {
             // Nothing to choose between: keep the configured model rather than
             // showing an empty step.
             self.setup_screen = None;
-            self.status = "ready".into();
+            self.set_status("ready");
             return;
         };
         self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.status = "select model".into();
+        self.set_status("select model");
         let _ = terminal.draw(|frame| self.draw(frame));
     }
 
@@ -197,7 +197,7 @@ impl App {
             // Between two pickers the composer is briefly plain. Report what
             // the session is doing instead of the "type a message" prompt.
             ComposerMode::Input => vec![Line::from(Span::styled(
-                truncate_one_line(&self.status, width),
+                truncate_one_line(self.status(), width),
                 Theme::dim(),
             ))],
             _ => self.composer_lines(width, height as usize),

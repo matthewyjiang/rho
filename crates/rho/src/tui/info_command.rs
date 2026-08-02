@@ -109,7 +109,7 @@ impl App {
             subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
         };
         self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
-        self.status = "runtime info".into();
+        self.set_status("runtime info");
         Ok(())
     }
 

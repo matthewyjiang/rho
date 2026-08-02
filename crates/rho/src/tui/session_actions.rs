@@ -27,10 +27,7 @@ impl App {
         match Session::list(&self.info.runtime.cwd) {
             Ok(sessions) if sessions.is_empty() => {
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Notice(
-                    "no saved sessions for this workspace".into(),
-                ));
-                self.status = "no sessions".into();
+                self.set_status("no saved sessions for this workspace");
             }
             Ok(sessions) => {
                 let picker = session_picker::session_picker(
@@ -39,19 +36,16 @@ impl App {
                 );
                 if picker.items.is_empty() {
                     self.input_ui.set_composer(ComposerMode::Input);
-                    self.insert_entry(&Entry::Notice(
-                        "no other saved sessions for this workspace".into(),
-                    ));
-                    self.status = "no sessions".into();
+                    self.set_status("no other saved sessions for this workspace");
                     return Ok(());
                 }
                 self.input_ui.set_composer(ComposerMode::Picker(picker));
-                self.status = "select session".into();
+                self.set_status("select session");
             }
             Err(err) => {
                 self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Error(format!("could not list sessions: {err}")));
-                self.status = "resume failed".into();
+                self.set_status("resume failed");
             }
         }
         Ok(())
@@ -86,7 +80,7 @@ impl App {
                 choice,
                 pending: InlineChoicePending::DeleteSession { session_id },
             }));
-        self.status = "confirm delete".into();
+        self.set_status("confirm delete");
         Ok(())
     }
 
@@ -121,14 +115,13 @@ impl App {
                         }
                     ));
                 }
-                self.insert_entry(&Entry::Notice(notice));
-                self.status = "session deleted".into();
                 self.open_resume_picker()?;
+                self.set_status(notice);
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!("could not delete session: {err}")));
-                self.status = "delete failed".into();
                 self.open_resume_picker()?;
+                self.set_status("delete failed");
             }
         }
         Ok(())
@@ -154,7 +147,7 @@ impl App {
             Err(err) => {
                 self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Error(format!("could not resume session: {err}")));
-                self.status = "resume failed".into();
+                self.set_status("resume failed");
                 Ok(())
             }
         }

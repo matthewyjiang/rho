@@ -43,15 +43,14 @@ impl App {
         let using_unavailable_provider = info.services.auth_unavailable.is_some();
         let mut info = info;
         info.runtime.max_tool_output_lines = info.runtime.max_tool_output_lines.max(1);
-        let status = info
+        let initial_status = info
             .services
             .auth_unavailable
             .as_ref()
-            .map(|_| "no providers configured; run /login to sign in".into())
-            .unwrap_or_else(|| "ready".into());
+            .map(|_| "no providers configured; run /login to sign in".to_string());
         let pending_update_notice = info.services.pending_update_notice.take();
         let statusline = StatusLine::new(&info.runtime);
-        Self {
+        let mut app = Self {
             info,
             terminal_session: None,
             statusline,
@@ -60,7 +59,8 @@ impl App {
             queued_subagent_questionnaires: VecDeque::new(),
             pending_subagent_questionnaire: None,
             input_ui: InputUi::default(),
-            status,
+            status_overlay: None,
+            last_status: String::new(),
             should_quit: false,
             ctrl_c_streak: 0,
             streams: StreamUi::default(),
@@ -94,6 +94,10 @@ impl App {
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
             screen_selection: None,
+        };
+        if let Some(status) = initial_status {
+            app.set_status(status);
         }
+        app
     }
 }

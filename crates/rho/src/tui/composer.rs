@@ -380,14 +380,17 @@ impl App {
                     Some(ComposerAttachment::Pending { id, .. }) => {
                         self.cancel_pending_attachment(id);
                         let pending_count = self.input_ui.pending_attachment_count();
-                        self.status = if pending_count == 0 {
-                            "document extraction cancelled".into()
+                        self.set_status(if pending_count == 0 {
+                            "document extraction cancelled".to_string()
                         } else {
                             format!("extracting files: {pending_count}")
-                        };
+                        });
                     }
                     Some(ComposerAttachment::Ready(_)) => {
-                        self.status = format!("attachments: {}", self.input_ui.attachments().len());
+                        self.set_status(format!(
+                            "attachments: {}",
+                            self.input_ui.attachments().len()
+                        ));
                     }
                     None => {}
                 }

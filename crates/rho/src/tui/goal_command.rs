@@ -27,26 +27,12 @@ impl App {
         invocation: CommandInvocation,
     ) -> anyhow::Result<()> {
         if invocation.args.trim().is_empty() {
+            // Multi-line status belongs in history for scroll-back.
             self.insert_entry(&Entry::Notice(self.goal_status_message()));
-            self.status = self
-                .goal
-                .as_ref()
-                .map(|goal| {
-                    if goal.is_blocked() {
-                        "goal blocked"
-                    } else {
-                        "goal active"
-                    }
-                })
-                .unwrap_or("running")
-                .into();
         } else if is_goal_clear_alias(&invocation.args) {
             self.clear_goal();
         } else {
-            self.insert_entry(&Entry::Notice(
-                "/goal can only be inspected or cleared while a model turn is running".into(),
-            ));
-            self.status = "goal command unavailable while running".into();
+            self.set_status("/goal can only be inspected or cleared while a model turn is running");
         }
         Ok(())
     }
@@ -85,16 +71,9 @@ impl App {
 
     pub(super) fn clear_goal(&mut self) {
         if self.goal.take().is_some() {
-            self.insert_entry(&Entry::Notice("goal cleared".into()));
-            self.status = if self.is_ui_busy() {
-                "running"
-            } else {
-                "goal cleared"
-            }
-            .into();
+            self.set_status("goal cleared");
         } else {
-            self.insert_entry(&Entry::Notice("no active goal".into()));
-            self.status = self.busy_status_label().into();
+            self.set_status("no active goal");
         }
     }
 
@@ -108,18 +87,6 @@ impl App {
         let condition = invocation.args.trim();
         if condition.is_empty() {
             self.insert_entry(&Entry::Notice(self.goal_status_message()));
-            self.status = self
-                .goal
-                .as_ref()
-                .map(|goal| {
-                    if goal.is_blocked() {
-                        "goal blocked"
-                    } else {
-                        "goal active"
-                    }
-                })
-                .unwrap_or("ready")
-                .into();
             return Ok(());
         }
         if is_goal_clear_alias(condition) {
@@ -135,7 +102,7 @@ impl App {
                 "goal conditions cannot exceed {} characters",
                 goal::MAX_GOAL_CHARS
             )));
-            self.status = "goal not set".into();
+            self.set_status("goal not set");
             return Ok(());
         }
 
@@ -143,7 +110,6 @@ impl App {
         self.insert_entry(&Entry::Notice(format!(
             "goal set: {condition}\nrho will keep working until the goal is met. use /goal clear to cancel."
         )));
-        self.status = "goal active".into();
         let outcome = self
             .run_prompt_turn(
                 TurnPrompt::command(initial_goal_prompt(condition), format!("/goal {condition}")),
@@ -175,8 +141,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(goal) = self.goal.as_mut() else {
-            self.insert_entry(&Entry::Notice("no active goal to resume".into()));
-            self.status = "ready".into();
+            self.set_status("no active goal to resume");
             return Ok(());
         };
 
@@ -185,10 +150,7 @@ impl App {
             let pending_steps = goal.pending_steps().to_vec();
             goal.begin_verification();
             let prompt = blocked_goal_resumption_prompt(&condition, &pending_steps, None);
-            self.insert_entry(&Entry::Notice(
-                "goal resumed; verifying the previously blocked steps".into(),
-            ));
-            self.status = "goal active".into();
+            self.set_status("goal resumed; verifying the previously blocked steps");
             let outcome = self
                 .run_prompt_turn(
                     TurnPrompt::command(prompt, "/goal resume".into()),
@@ -213,7 +175,7 @@ impl App {
                 self.continue_goal(terminal, agent, pending_retries).await?;
             }
         } else {
-            self.insert_entry(&Entry::Notice("goal is already active".into()));
+            self.set_status("goal is already active");
             self.continue_goal(terminal, agent, VecDeque::new()).await?;
         }
         Ok(())
@@ -230,10 +192,7 @@ impl App {
         let condition = goal.condition.clone();
         let pending_steps = goal.pending_steps().to_vec();
         goal.begin_verification();
-        self.insert_entry(&Entry::Notice(
-            "goal resumed by user message; verifying the previously blocked steps".into(),
-        ));
-        self.status = "goal active".into();
+        self.set_status("goal resumed by user message; verifying the previously blocked steps");
         if prompt.persisted_display.is_none() {
             prompt.persisted_display = Some(prompt.display.clone());
         }
@@ -297,7 +256,7 @@ impl App {
                 }
                 continue;
             }
-            self.status = "evaluating goal".into();
+            self.set_status("evaluating goal");
             self.turn.start_loading();
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -385,7 +344,7 @@ impl App {
                     self.insert_entry(&Entry::Error(format!(
                         "goal evaluation failed; retrying while goal remains active: {err}"
                     )));
-                    self.status = "goal retrying".into();
+                    self.set_status("goal retrying");
                     if !self.wait_for_goal_retry(terminal, agent).await? {
                         break;
                     }
@@ -405,7 +364,6 @@ impl App {
                         "goal achieved after {turns} turn(s) and {elapsed}: {}",
                         evaluation.reason()
                     )));
-                    self.status = "goal achieved".into();
                     break;
                 }
                 goal::GoalDisposition::Pause => {
@@ -414,7 +372,6 @@ impl App {
                         evaluation.reason(),
                         format_human_steps(evaluation.pending_steps())
                     )));
-                    self.status = "goal blocked".into();
                     break;
                 }
                 goal::GoalDisposition::Continue => {}
@@ -462,7 +419,7 @@ impl App {
             return Ok(true);
         }
 
-        self.status = "waiting for delegated agents".into();
+        self.set_status("waiting for delegated agents");
         self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
@@ -522,10 +479,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<TurnOutcome>> {
-        self.insert_entry(&Entry::Notice(
-            "goal still active; retrying after the run stopped before the goal was met".into(),
-        ));
-        self.status = "goal retrying".into();
+        self.set_status(
+            "goal still active; retrying after the run stopped before the goal was met",
+        );
         if !self.wait_for_goal_retry(terminal, agent).await? {
             return Ok(None);
         }

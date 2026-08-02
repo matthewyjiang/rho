@@ -247,7 +247,7 @@ impl App {
         if let Err(error) = self.open_workflow_hub() {
             self.input_ui.set_composer(ComposerMode::Input);
             self.insert_entry(&Entry::Error(format!("could not open workflows: {error}")));
-            self.status = "workflow hub failed".into();
+            self.set_status("workflow hub failed");
         }
     }
 
@@ -258,7 +258,7 @@ impl App {
         let runs = ops.list_workspace_runs()?;
         let picker = hub_picker(&sources, &plans, &runs);
         self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.status = "workflows".into();
+        self.set_status("workflows");
         Ok(())
     }
 
@@ -301,7 +301,7 @@ impl App {
                         plan_id: plan_id.to_owned(),
                     },
                 }));
-            self.status = "confirm delete plan".into();
+            self.set_status("confirm delete plan");
             return Ok(());
         }
         if let Some(run_id) = value.strip_prefix(RUN_PREFIX) {
@@ -332,14 +332,12 @@ impl App {
                         run_id: run_id.to_owned(),
                     },
                 }));
-            self.status = "confirm delete run".into();
+            self.set_status("confirm delete run");
             return Ok(());
         }
-        self.insert_entry(&Entry::Notice(
-            "Only saved plans and runs can be deleted here. Local workflow files stay on disk."
-                .into(),
-        ));
-        self.status = "nothing to delete".into();
+        self.set_status(
+            "Only saved plans and runs can be deleted here. Local workflow files stay on disk.",
+        );
         Ok(())
     }
 
@@ -353,17 +351,16 @@ impl App {
         }
         let short = short_id(plan_id);
         let parsed = PlanId::from_str(plan_id)?;
-        match self.workflow_ops()?.delete_workspace_plan(parsed) {
-            Ok(()) => {
-                self.insert_entry(&Entry::Notice(format!("Deleted plan {short}.")));
-                self.status = "plan deleted".into();
-            }
+        let status = match self.workflow_ops()?.delete_workspace_plan(parsed) {
+            Ok(()) => format!("Deleted plan {short}."),
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not delete plan: {error:#}")));
-                self.status = "delete failed".into();
+                "delete failed".into()
             }
-        }
-        self.open_workflow_hub()
+        };
+        self.open_workflow_hub()?;
+        self.set_status(status);
+        Ok(())
     }
 
     pub(super) fn submit_delete_workflow_run_choice(
@@ -376,17 +373,16 @@ impl App {
         }
         let short = short_id(run_id);
         let parsed = RunId::from_str(run_id)?;
-        match self.workflow_ops()?.delete_workspace_run(parsed) {
-            Ok(()) => {
-                self.insert_entry(&Entry::Notice(format!("Deleted run {short}.")));
-                self.status = "run deleted".into();
-            }
+        let status = match self.workflow_ops()?.delete_workspace_run(parsed) {
+            Ok(()) => format!("Deleted run {short}."),
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not delete run: {error:#}")));
-                self.status = "delete failed".into();
+                "delete failed".into()
             }
-        }
-        self.open_workflow_hub()
+        };
+        self.open_workflow_hub()?;
+        self.set_status(status);
+        Ok(())
     }
 
     fn selected_workflow_value(&self) -> Option<String> {
@@ -433,7 +429,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "unknown workflow selection '{other}'"
                 )));
-                self.status = "workflow selection failed".into();
+                self.set_status("workflow selection failed");
                 Ok(())
             }
         }
@@ -480,7 +476,7 @@ impl App {
                 self.insert_entry(&Entry::Error(
                     "Terminal session is unavailable for workflow watch.".into(),
                 ));
-                self.status = "watch failed".into();
+                self.set_status("watch failed");
                 return Ok(());
             }
         };
@@ -500,21 +496,20 @@ impl App {
                     "Watch also failed: {operation_error:#}"
                 )));
             }
-            self.status = "watch handoff failed".into();
+            self.set_status("watch handoff failed");
             return Ok(());
         }
         self.ctrl_c_streak = 0;
         match suspended.operation_result {
             Ok(()) => {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "Left watch for run {}.",
                     short_id(&run_id.to_string())
-                )));
-                self.status = "ready".into();
+                ));
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Workflow watch failed: {error:#}")));
-                self.status = "watch failed".into();
+                self.set_status("watch failed");
             }
         }
         Ok(())
@@ -527,7 +522,7 @@ impl App {
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let absolute = self.info.runtime.cwd.join(relative_path);
-        self.status = format!("starting {relative_path}");
+        self.set_status(format!("starting {relative_path}"));
         let ops = self.workflow_ops()?;
         let available_tools = agent.workflow_host_capabilities();
         let prepared = match self.prepare_source(&absolute, &available_tools).await {
@@ -536,7 +531,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "Could not start {relative_path}: {error:#}"
                 )));
-                self.status = "start failed".into();
+                self.set_status("start failed");
                 return Ok(());
             }
         };
@@ -544,7 +539,7 @@ impl App {
             Ok(plan) => plan,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not save plan: {error:#}")));
-                self.status = "start failed".into();
+                self.set_status("start failed");
                 return Ok(());
             }
         };
@@ -552,7 +547,7 @@ impl App {
             Ok(plan) => plan,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not prepare run: {error:#}")));
-                self.status = "start failed".into();
+                self.set_status("start failed");
                 return Ok(());
             }
         };
@@ -560,7 +555,7 @@ impl App {
             Ok(run) => run,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not create run: {error:#}")));
-                self.status = "start failed".into();
+                self.set_status("start failed");
                 return Ok(());
             }
         };
@@ -571,16 +566,8 @@ impl App {
             plan.graph.graph.name,
             short_id(&run_id.to_string())
         )));
-        self.launch_workflow_execution(
-            run,
-            RecoveryDecision::NormalResume,
-            format!(
-                "workflow {} running in background",
-                short_id(&run_id.to_string())
-            ),
-            agent,
-        )
-        .await
+        self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
+            .await
     }
 
     async fn prepare_source(
@@ -608,7 +595,7 @@ impl App {
             Ok(plan) => plan,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not prepare plan: {error:#}")));
-                self.status = "run failed".into();
+                self.set_status("run failed");
                 return Ok(());
             }
         };
@@ -616,7 +603,7 @@ impl App {
             Ok(run) => run,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not create run: {error:#}")));
-                self.status = "run failed".into();
+                self.set_status("run failed");
                 return Ok(());
             }
         };
@@ -627,16 +614,8 @@ impl App {
             short_id(&plan_id.to_string()),
             short_id(&run_id.to_string())
         )));
-        self.launch_workflow_execution(
-            run,
-            RecoveryDecision::NormalResume,
-            format!(
-                "workflow {} running in background",
-                short_id(&run_id.to_string())
-            ),
-            agent,
-        )
-        .await
+        self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
+            .await
     }
 
     async fn resume_workflow_run(
@@ -652,7 +631,7 @@ impl App {
             Ok(run) => run,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not load run: {error:#}")));
-                self.status = "open failed".into();
+                self.set_status("open failed");
                 return Ok(());
             }
         };
@@ -660,7 +639,7 @@ impl App {
             Ok(recovery) => recovery,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not open run: {error:#}")));
-                self.status = "open failed".into();
+                self.set_status("open failed");
                 return Ok(());
             }
         };
@@ -669,23 +648,13 @@ impl App {
             "Resuming run {} in the background. Completion is delivered automatically.",
             short_id(&run_id.to_string())
         )));
-        self.launch_workflow_execution(
-            run,
-            recovery,
-            format!(
-                "workflow {} running in background",
-                short_id(&run_id.to_string())
-            ),
-            agent,
-        )
-        .await
+        self.launch_workflow_execution(run, recovery, agent).await
     }
 
     async fn launch_workflow_execution(
         &mut self,
         run: StoredRun,
         recovery: RecoveryDecision,
-        success_status: String,
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let run_id = run.manifest.run_id;
@@ -724,17 +693,16 @@ impl App {
                 } else {
                     self.insert_entry(&Entry::Notice(display));
                 }
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "Workflow run {} is running in the background.",
                     short_id(&run_id.to_string())
-                )));
-                self.status = success_status;
+                ));
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
                     "Could not start workflow in the background: {error:#}"
                 )));
-                self.status = "workflow failed".into();
+                self.set_status("workflow failed");
             }
         }
         Ok(())

@@ -74,7 +74,7 @@ impl App {
         self.replace_input_range(mention.start, mention.end, &insertion);
         self.input_ui.set_file_palette_dismissed(true);
         self.input_ui.set_file_selection(0);
-        self.status = "file path inserted".into();
+        self.set_status("file path inserted");
     }
 
     pub(super) fn file_matches(&self) -> Arc<Vec<String>> {

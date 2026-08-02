@@ -542,13 +542,10 @@ impl App {
         self.refresh_available_auths();
         let picker = model_picker::model_picker(&self.info.runtime, &self.available_auths);
         if picker.items.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no cached provider models. use Config > Refresh model lists.".into(),
-            ));
-            self.status = "config".into();
+            self.set_status("no cached provider models. use Config > Refresh model lists.");
         } else {
             self.open_child_picker(picker);
-            self.status = "select model".into();
+            self.set_status("select model");
         }
     }
 
@@ -562,14 +559,12 @@ impl App {
             &self.available_auths,
         );
         if picker.items.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no cached provider models. refresh model lists after the current turn ends."
-                    .into(),
-            ));
-            self.status = "running".into();
+            self.set_status(
+                "no cached provider models. refresh model lists after the current turn ends.",
+            );
         } else {
             self.open_child_picker(picker);
-            self.status = "select model for next turn".into();
+            self.set_status("select model for next turn");
         }
     }
 
@@ -577,12 +572,12 @@ impl App {
         self.refresh_available_auths();
         let picker = provider_picker::refresh_model_list_picker(&self.available_auths);
         self.open_child_picker(picker);
-        self.status = "select provider to refresh".into();
+        self.set_status("select provider to refresh");
     }
 
     pub(super) fn open_config_login_picker(&mut self) {
         self.open_child_picker(provider_picker::login_group_picker());
-        self.status = "select provider to login".into();
+        self.set_status("select provider to login");
     }
 
     pub(super) fn open_config_auth_mode_picker(&mut self) -> anyhow::Result<()> {
@@ -597,21 +592,20 @@ impl App {
                     .iter()
                     .any(|item| item.value != self.info.runtime.auth) =>
             {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "{} does not have another available auth mode. Log in to another mode first.",
                     self.info.runtime.provider
-                )));
-                self.status = "config".into();
+                ));
             }
             Ok(picker) => {
                 self.open_child_picker(picker);
-                self.status = "select active auth mode".into();
+                self.set_status("select active auth mode");
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not check provider credentials: {err}"
                 )));
-                self.status = "provider credentials unavailable".into();
+                self.set_status("provider credentials unavailable");
             }
         }
         Ok(())
@@ -624,18 +618,15 @@ impl App {
             claude_signed_in,
         ) {
             Ok(picker) if picker.items.is_empty() => {
-                self.insert_entry(&Entry::Notice(
-                    "no stored provider credentials to delete".into(),
-                ));
-                self.status = "config".into();
+                self.set_status("no stored provider credentials to delete");
             }
             Ok(picker) => {
                 self.open_child_picker(picker);
-                self.status = "select provider to logout".into();
+                self.set_status("select provider to logout");
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "provider credentials unavailable".into();
+                self.set_status("provider credentials unavailable");
             }
         }
         Ok(())

@@ -39,10 +39,7 @@ impl App {
 
     pub(super) fn start_limits_command(&mut self) -> bool {
         if self.pending_usage_limits.is_some() {
-            self.insert_entry(&Entry::Notice(
-                "an OAuth usage limit check is already in progress".into(),
-            ));
-            self.status = "checking OAuth usage limits".into();
+            self.set_status("an OAuth usage limit check is already in progress");
             return false;
         }
 
@@ -51,7 +48,7 @@ impl App {
         self.pending_usage_limits = Some(tokio::spawn(async move {
             fetch_connected_usage_limits(credential_store.as_ref(), client).await
         }));
-        self.status = "checking OAuth usage limits".into();
+        self.set_status("checking OAuth usage limits");
         true
     }
 
@@ -84,7 +81,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not check OAuth usage limits: background task failed: {error}"
                 )));
-                self.status = "OAuth usage limit check failed".into();
+                self.set_status("OAuth usage limit check failed");
             }
         }
         Ok(())
@@ -106,7 +103,7 @@ impl App {
                 LimitsViewItem::Error(text) => self.insert_entry(&Entry::Error(text)),
             }
         }
-        self.status = view.status;
+        self.set_status(view.status);
     }
 }
 

@@ -24,19 +24,14 @@ impl App {
         agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if !agent.workspace_rewind_enabled() {
-            self.insert_entry(&Entry::Notice(
-                "workspace rewind is experimental; set behavior.experimental_workspace_rewind = true and restart Rho"
-                    .into(),
-            ));
-            self.status = "workspace rewind disabled".into();
+            self.set_status(
+                "workspace rewind is experimental; set behavior.experimental_workspace_rewind = true and restart Rho",
+            );
             return Ok(());
         }
         let checkpoints = agent.workspace_checkpoints()?;
         if checkpoints.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "this session has no workspace checkpoints".into(),
-            ));
-            self.status = "no workspace checkpoints".into();
+            self.set_status("this session has no workspace checkpoints");
             return Ok(());
         }
         if !invocation.args.is_empty() {
@@ -106,7 +101,7 @@ impl App {
         })
         .with_confirm_verb("preview");
         self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.status = "select workspace checkpoint".into();
+        self.set_status("select workspace checkpoint");
         Ok(())
     }
 
@@ -162,7 +157,7 @@ impl App {
         })
         .with_confirm_verb("rewind");
         self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.status = "confirm workspace rewind".into();
+        self.set_status("confirm workspace rewind");
         Ok(())
     }
 
@@ -195,13 +190,6 @@ impl App {
             agent.workspace_path(),
             conversation_selected,
         )));
-        self.status = if selection_error.is_some() {
-            "workspace restored; conversation selection failed".into()
-        } else if incomplete {
-            "workspace rewind completed with skipped paths".into()
-        } else {
-            "workspace rewind complete".into()
-        };
         if let Some(error) = selection_error {
             return Err(error);
         }

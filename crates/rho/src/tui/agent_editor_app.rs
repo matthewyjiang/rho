@@ -24,7 +24,7 @@ impl App {
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not load agents: {error}")));
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.status = "agent load failed".into();
+                self.set_status("agent load failed");
                 return Ok(());
             }
         };
@@ -33,7 +33,7 @@ impl App {
             Err(error) => {
                 self.insert_entry(&Entry::Error(error.to_string()));
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.status = "agent load failed".into();
+                self.set_status("agent load failed");
                 return Ok(());
             }
         };
@@ -44,7 +44,7 @@ impl App {
         if !editable {
             self.agent_editor_session = None;
             self.input_ui.set_composer(ComposerMode::Input);
-            self.status = "ready".into();
+            self.set_status("ready");
             return Ok(());
         }
 
@@ -60,7 +60,7 @@ impl App {
                     self.insert_entry(&Entry::Error(format!(
                         "agent source is not safe to edit: {error}"
                     )));
-                    self.status = "agent is read-only".into();
+                    self.set_status("agent is read-only");
                     return Ok(());
                 }
             };
@@ -70,7 +70,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not read agent source: {error}"
                 )));
-                self.status = "agent load failed".into();
+                self.set_status("agent load failed");
                 return Ok(());
             }
         };
@@ -80,7 +80,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "agent changed while opening it: {error}"
                 )));
-                self.status = "agent load failed".into();
+                self.set_status("agent load failed");
                 return Ok(());
             }
         };
@@ -93,7 +93,7 @@ impl App {
             original_contents,
         ));
         self.open_child_picker(picker);
-        self.status = format!("edit agent {}", draft.id);
+        self.set_status(format!("edit agent {}", draft.id));
         Ok(())
     }
 
@@ -183,14 +183,13 @@ impl App {
         }
         let picker = agent_choice_picker(field, draft);
         self.open_child_picker(picker);
-        self.status = match field {
+        self.set_status(match field {
             AgentChoiceField::PromptPolicy => "prompt policy",
             AgentChoiceField::Runtime => "runtime",
             AgentChoiceField::ModelPolicy => "model policy",
             AgentChoiceField::Reasoning => "reasoning",
             AgentChoiceField::InheritClaudeConfig => "inherit Claude config",
-        }
-        .into();
+        });
     }
 
     fn submit_agent_field_choice(&mut self, field: AgentChoiceField, value: &str) {
@@ -254,8 +253,8 @@ impl App {
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "agent model switch failed".into();
                 self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
+                self.set_status("agent model switch failed");
                 return;
             }
         }
@@ -283,7 +282,7 @@ impl App {
             session.set_phase(AgentEditPhase::PickingModel);
         }
         self.open_child_picker(picker);
-        self.status = "select model".into();
+        self.set_status("select model");
     }
 
     fn open_agent_text_input(&mut self, field: AgentField, value: String) {
@@ -299,7 +298,7 @@ impl App {
             input = input.with_return_picker(picker);
         }
         self.input_ui.set_composer(ComposerMode::TextInput(input));
-        self.status = format!("edit {}", field.label());
+        self.set_status(format!("edit {}", field.label()));
     }
 
     pub(in crate::tui) fn reopen_agent_field_picker(&mut self, selected_value: &str) {
@@ -336,7 +335,7 @@ impl App {
             picker = picker.with_parent(parent);
         }
         self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.status = format!("edit agent {}", draft.id);
+        self.set_status(format!("edit agent {}", draft.id));
     }
 
     fn save_agent_editor(&mut self) -> anyhow::Result<()> {
@@ -351,8 +350,8 @@ impl App {
         let original_contents = session.original_contents.clone();
         if let Some(message) = draft.validate_for_edit() {
             self.insert_entry(&Entry::Error(message));
-            self.status = "agent validation failed".into();
             self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+            self.set_status("agent validation failed");
             return Ok(());
         }
         let current_root = authorize_editable_path(origin, &path, &self.info.runtime.cwd);
@@ -360,14 +359,13 @@ impl App {
             self.insert_entry(&Entry::Error(
                 "agent source is no longer safe to edit; save cancelled".into(),
             ));
-            self.status = "agent save failed".into();
             self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+            self.set_status("agent save failed");
             return Ok(());
         }
         match save_definition(&draft, &path, &original_contents) {
             Ok(_contents) => {
                 let id = draft.id.to_string();
-                self.insert_entry(&Entry::Notice(format!("agent {id} saved")));
                 self.agent_editor_session = None;
                 let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
                     Ok(catalog) => catalog,
@@ -376,7 +374,7 @@ impl App {
                             "agent saved, but could not reload agents: {error}"
                         )));
                         self.input_ui.set_composer(ComposerMode::Input);
-                        self.status = "agent reload failed".into();
+                        self.set_status("agent reload failed");
                         return Ok(());
                     }
                 };
@@ -386,26 +384,26 @@ impl App {
                 );
                 Self::restore_picker_position(&mut picker, &id, String::new());
                 self.input_ui.set_composer(ComposerMode::Picker(picker));
-                self.status = format!("agent {id} saved");
+                self.set_status(format!("agent {id} saved"));
             }
             Err(SaveDefinitionError::Validation(message)) => {
                 self.insert_entry(&Entry::Error(format!("agent validation failed: {message}")));
-                self.status = "agent validation failed".into();
                 self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+                self.set_status("agent validation failed");
             }
             Err(SaveDefinitionError::Conflict) => {
                 self.insert_entry(&Entry::Error(
                     "agent file changed since editing began; reload it before saving".into(),
                 ));
-                self.status = "agent save conflict".into();
                 self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+                self.set_status("agent save conflict");
             }
             Err(SaveDefinitionError::Write(message)) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not write agent file: {message}"
                 )));
-                self.status = "agent save failed".into();
                 self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+                self.set_status("agent save failed");
             }
         }
         Ok(())
@@ -415,8 +413,8 @@ impl App {
         self.agent_editor_session = None;
         self.input_ui.set_composer(ComposerMode::Input);
         let _ = self.execute_agents_command();
-        if self.status != "agent reload failed" {
-            self.status = "agent edit cancelled".into();
+        if self.status() != "agent reload failed" {
+            self.set_status("agent edit cancelled");
         }
     }
 
@@ -448,7 +446,7 @@ impl App {
                     session.with_draft_mut(|draft| draft.set_prompt_body(text));
                 }
                 self.reopen_agent_field_picker(AGENT_FIELD_PROMPT_BODY);
-                self.status = "prompt body updated".into();
+                self.set_status("prompt body updated");
             }
             None => {
                 self.reopen_agent_field_picker(AGENT_FIELD_PROMPT_BODY);
@@ -488,7 +486,8 @@ impl App {
             }
             Err(message) => {
                 self.insert_entry(&Entry::Error(format!("tools: {message}")));
-                self.status = "tools edit failed".into();
+                self.reopen_agent_field_picker(field.value());
+                self.set_status("tools edit failed");
             }
         }
         Ok(())

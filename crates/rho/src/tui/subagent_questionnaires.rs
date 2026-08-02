@@ -196,11 +196,11 @@ impl App {
     ) {
         match parent_activity {
             ParentActivity::Idle => {
-                self.status = "ready".into();
+                self.set_status("ready");
                 self.report_resting_herdr_state().await;
             }
             ParentActivity::Working(status) => {
-                self.status = status.into();
+                self.set_status(status);
                 self.report_herdr_working().await;
             }
         }

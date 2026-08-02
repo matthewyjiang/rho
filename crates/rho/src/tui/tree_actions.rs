@@ -5,8 +5,8 @@ use crate::session::tree::{NodeId, SessionTreeItem};
 use super::{
     message_history::{recovered_history_tail, transcript_entries_from_messages},
     picker_overlay::OverlayChrome,
-    App, ComposerMode, Entry, InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker, ViewModelEvent, RECOVERED_HISTORY_LINE_LIMIT,
+    App, ComposerMode, InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker, ViewModelEvent, RECOVERED_HISTORY_LINE_LIMIT,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
@@ -81,23 +81,17 @@ impl App {
         agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(storage) = agent.stored_session() else {
-            self.insert_entry(&Entry::Notice(
-                "no active session tree; send a message first".into(),
-            ));
-            self.status = "no session tree".into();
+            self.set_status("no active session tree; send a message first");
             return Ok(());
         };
         let items = storage.tree_items()?;
         if items.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "this session tree has no completed turns".into(),
-            ));
-            self.status = "empty session tree".into();
+            self.set_status("this session tree has no completed turns");
             return Ok(());
         }
         self.input_ui
             .set_composer(ComposerMode::Picker(tree_picker(items)));
-        self.status = "select conversation state".into();
+        self.set_status("select conversation state");
         Ok(())
     }
 
@@ -141,11 +135,10 @@ impl App {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
         self.insert_runtime_notices(agent);
-        self.insert_entry(&Entry::Notice(format!(
+        self.set_status(format!(
             "restored conversation state {}",
             &target_id.as_str()[..target_id.as_str().len().min(8)]
-        )));
-        self.status = "conversation state restored".into();
+        ));
         Ok(())
     }
 }

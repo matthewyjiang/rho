@@ -54,7 +54,7 @@ impl App {
                     InlineChoicePending::CredentialStore { .. }
                     | InlineChoicePending::ClaudeCodeRelogin
                     | InlineChoicePending::ClaudeCodeLogout => {
-                        self.status = self.busy_status_label().into();
+                        self.set_status(self.busy_status_label());
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(None, *pending, terminal, agent)

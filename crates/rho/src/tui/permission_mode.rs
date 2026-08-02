@@ -1,4 +1,4 @@
-use super::{App, Entry, InteractiveRuntime};
+use super::{App, InteractiveRuntime};
 use crate::permission::PermissionMode;
 
 impl App {
@@ -20,16 +20,11 @@ impl App {
             return Err(error);
         }
         self.info.runtime.permission_mode = mode;
-        let notice = format!("permission mode: {}", mode.as_str());
-        self.insert_entry(&Entry::Notice(notice.clone()));
-        self.status = notice;
+        self.set_status(format!("permission mode: {}", mode.as_str()));
         Ok(())
     }
 
     pub(super) fn reject_permission_mode_change(&mut self) {
-        self.insert_entry(&Entry::Notice(
-            "permission mode cannot change until the current turn finishes".into(),
-        ));
-        self.status = "permission mode unavailable while running".into();
+        self.set_status("permission mode cannot change until the current turn finishes");
     }
 }

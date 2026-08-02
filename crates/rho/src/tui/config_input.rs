@@ -18,16 +18,11 @@ impl App {
         }
 
         if key.code == KeyCode::Esc {
-            let provider = if let Some(pending) = self.pending_interactive_login.take() {
-                let provider = pending.target.provider;
+            if let Some(pending) = self.pending_interactive_login.take() {
                 pending.handle.abort();
-                provider
-            } else {
-                "OAuth".into()
-            };
+            }
             self.input_ui.set_composer(ComposerMode::Input);
-            self.status = "login cancelled".into();
-            self.insert_entry(&Entry::Notice(format!("{provider} login cancelled")));
+            self.set_status("login cancelled");
             self.clear_transient_key_state();
         }
         Ok(true)
@@ -52,7 +47,7 @@ impl App {
             }
             (_, KeyCode::Esc) => {
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.status = "login cancelled".into();
+                self.set_status("login cancelled");
                 None
             }
             (_, KeyCode::Backspace) => {
@@ -113,7 +108,7 @@ impl App {
                     Ok(saved) => saved,
                     Err(err) => {
                         self.insert_entry(&Entry::Error(err.to_string()));
-                        self.status = "config save failed".into();
+                        self.set_status("config save failed");
                         return Ok(true);
                     }
                 };
@@ -122,9 +117,9 @@ impl App {
                         self.open_main_config_picker_selected(
                             config_picker::MAX_OUTPUT_BYTES_VALUE,
                         )?;
-                        self.insert_entry(&Entry::Notice(format!(
+                        self.set_status(format!(
                             "max output bytes set to {value}; applies next session"
-                        )));
+                        ));
                     }
                     ConfigNumberSave::MaxToolOutputLines(value) => {
                         self.info.runtime.max_tool_output_lines = value;
@@ -136,28 +131,21 @@ impl App {
                             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
                         )?;
                         self.clamp_history_scroll_for_terminal(terminal)?;
-                        self.insert_entry(&Entry::Notice(format!(
-                            "max tool output lines set to {value}"
-                        )));
+                        self.set_status(format!("max tool output lines set to {value}"));
                     }
                     ConfigNumberSave::CompactThresholdPercent(value) => {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
                         )?;
-                        self.insert_entry(&Entry::Notice(format!(
-                            "compact threshold set to {value}%"
-                        )));
+                        self.set_status(format!("compact threshold set to {value}%"));
                     }
                     ConfigNumberSave::CompactTargetPercent(value) => {
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_TARGET_PERCENT_VALUE,
                         )?;
-                        self.insert_entry(&Entry::Notice(format!(
-                            "compact target set to {value}%"
-                        )));
+                        self.set_status(format!("compact target set to {value}%"));
                     }
                 }
-                self.status = "config saved".into();
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
@@ -249,14 +237,14 @@ impl App {
                 match save_result {
                     Ok(()) => {
                         self.refresh_web_search_config_picker(key.picker_value())?;
-                        self.status = format!("{} saved", key.label());
+                        self.set_status(format!("{} saved", key.label()));
                     }
                     Err(err) => {
                         self.insert_entry(&Entry::Error(format!(
                             "could not save {}: {err}",
                             key.label()
                         )));
-                        self.status = "config save failed".into();
+                        self.set_status("config save failed");
                     }
                 }
             }
@@ -275,7 +263,7 @@ impl App {
         match input.target {
             super::text_input::TextInputTarget::ConfigApiKey(key) => {
                 self.refresh_web_search_config_picker(key.picker_value())?;
-                self.status = "web search config".into();
+                self.set_status("web search config");
             }
             super::text_input::TextInputTarget::AgentField(field) => {
                 self.reopen_agent_field_picker(field.value());
@@ -316,7 +304,7 @@ impl App {
                 &self.info.runtime,
                 &config,
             )));
-        self.status = "config".into();
+        self.set_status("config");
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())
     }

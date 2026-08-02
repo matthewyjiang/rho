@@ -167,7 +167,7 @@ impl App {
         self.input_ui.set_composer(ComposerMode::Picker(help_picker(
             &self.info.runtime.keybindings,
         )));
-        self.status = "keyboard shortcuts".into();
+        self.set_status("keyboard shortcuts");
         Ok(())
     }
 }

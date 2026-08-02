@@ -145,8 +145,10 @@ impl super::App {
     ) -> anyhow::Result<()> {
         self.input_ui.set_text(turn.display);
         self.input_ui.set_cursor(self.input_ui.char_len());
-        self.notify_status("not signed in yet; your prompt is still in the composer");
+        // Open the picker first; it sets its own chrome status, then replace
+        // the toast with the held-prompt notice the user needs to see.
         self.open_login_picker();
+        self.notify_status("not signed in yet; your prompt is still in the composer");
         Ok(())
     }
 

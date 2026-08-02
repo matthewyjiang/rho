@@ -69,14 +69,14 @@ impl App {
             self.insert_entry(&Entry::Error(format!(
                 "unsupported provider '{provider_name}'"
             )));
-            self.status = "auth switch failed".into();
+            self.set_status("auth switch failed");
             return Ok(());
         };
         let Some(mode) = descriptor.auth_mode(auth) else {
             self.insert_entry(&Entry::Error(format!(
                 "auth mode '{auth}' does not belong to {provider_name}"
             )));
-            self.status = "auth switch failed".into();
+            self.set_status("auth switch failed");
             return Ok(());
         };
         if !ProviderAuthentication::has_credentials(self.credential_store.as_ref(), mode.id)? {
@@ -84,11 +84,11 @@ impl App {
                 "credentials for {} are unavailable. Run /login {} to sign in again.",
                 mode.login_label, mode.id
             )));
-            self.status = "auth switch failed".into();
+            self.set_status("auth switch failed");
             return Ok(());
         }
         if self.info.runtime.auth == mode.id {
-            self.status = format!("active auth: {}", mode.login_label);
+            self.set_status(format!("active auth: {}", mode.login_label));
             return Ok(());
         }
 
@@ -102,7 +102,7 @@ impl App {
                         "could not switch to {}: {err}. Run /login {} to sign in again.",
                         mode.login_label, mode.id
                     )));
-                    self.status = "auth switch failed".into();
+                    self.set_status("auth switch failed");
                     return Ok(());
                 }
             };
@@ -121,17 +121,16 @@ impl App {
         self.refresh_available_auths();
         match outcome {
             ProviderActivationOutcome::Saved => {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "switched {} to {}",
                     descriptor.display_name, mode.login_label
-                )));
-                self.status = format!("active auth: {}", mode.login_label);
+                ));
             }
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "auth mode switched, but saving config failed: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
         }
         Ok(())

@@ -17,7 +17,7 @@ impl App {
                     if let Some(questionnaire) = self.questionnaire_mut() {
                         questionnaire.clear_active_answer();
                     }
-                    self.status = "answer cleared; press ctrl-c again to cancel".into();
+                    self.set_status("answer cleared; press ctrl-c again to cancel");
                     self.ctrl_c_streak = 1;
                 } else {
                     self.cancel_questionnaire_answer();
@@ -176,13 +176,13 @@ impl App {
             Ok(submitted) => {
                 let display = submitted.display;
                 self.clear_submitted_input();
-                self.status = "answers submitted".into();
+                self.set_status("answers submitted");
                 Ok(Some(display))
             }
             Err(error) => {
                 self.input_ui
                     .set_composer(ComposerMode::Questionnaire(questionnaire));
-                self.status = error;
+                self.set_status(error);
                 Ok(None)
             }
         }
@@ -195,7 +195,7 @@ impl App {
         questionnaire.cancel_by_user();
         self.ctrl_c_streak = 0;
         self.clear_submitted_input();
-        self.status = "answer cancelled".into();
+        self.set_status("answer cancelled");
     }
 
     pub(super) async fn open_questionnaire(
@@ -213,7 +213,7 @@ impl App {
                 request.request,
                 request.response,
             )));
-        self.status = HerdrUserWait::Questionnaire.message().into();
+        self.set_status(HerdrUserWait::Questionnaire.message());
         self.report_herdr_waiting_for_user(HerdrUserWait::Questionnaire)
             .await;
         Ok(())
