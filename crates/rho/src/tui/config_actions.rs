@@ -170,6 +170,17 @@ impl App {
         self.open_main_config_picker(selected_value, filter)
     }
 
+    /// Refresh the open config picker after a toggle, if the user is still in it.
+    fn refresh_main_config_picker_if_open(&mut self, selected_value: &str) -> anyhow::Result<()> {
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+        ) {
+            self.refresh_main_config_picker(selected_value)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn open_main_config_picker_selected(
         &mut self,
         selected_value: &str,
@@ -247,12 +258,7 @@ impl App {
                 if !check_for_updates {
                     self.info.services.update_notice = None;
                 }
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(config_picker::CHECK_FOR_UPDATES_VALUE)?;
                 self.set_status(if check_for_updates {
                     "check for updates: on"
                 } else {
@@ -263,12 +269,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save update check setting: {err}"
                 )));
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(config_picker::CHECK_FOR_UPDATES_VALUE)?;
                 self.set_status("config save failed");
             }
             Ok(
@@ -288,12 +289,7 @@ impl App {
             ConfigToggle::EnableSubagents,
         ) {
             Ok(ConfigMutation::EnableSubagents(enable_subagents)) => {
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    self.refresh_main_config_picker(config_picker::ENABLE_SUBAGENTS_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(config_picker::ENABLE_SUBAGENTS_VALUE)?;
                 self.set_status(if enable_subagents {
                     "subagents: on next session"
                 } else {
@@ -304,12 +300,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save subagent setting: {err}"
                 )));
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    self.refresh_main_config_picker(config_picker::ENABLE_SUBAGENTS_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(config_picker::ENABLE_SUBAGENTS_VALUE)?;
                 self.set_status("config save failed");
             }
             Ok(
@@ -329,12 +320,7 @@ impl App {
             ConfigToggle::AutoCompact,
         ) {
             Ok(ConfigMutation::AutoCompact(auto_compact)) => {
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    self.refresh_main_config_picker(config_picker::AUTO_COMPACT_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(config_picker::AUTO_COMPACT_VALUE)?;
                 self.set_status(if auto_compact {
                     "auto compact: on"
                 } else {
@@ -345,12 +331,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save auto compact setting: {err}"
                 )));
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    self.refresh_main_config_picker(config_picker::AUTO_COMPACT_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(config_picker::AUTO_COMPACT_VALUE)?;
                 self.set_status("config save failed");
             }
             Ok(
@@ -372,19 +353,9 @@ impl App {
             Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
                 self.info.runtime.show_reasoning_output = show_reasoning_output;
                 self.apply_reasoning_output_visibility();
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    let config = self
-                        .info
-                        .services
-                        .config_repository
-                        .load()
-                        .unwrap_or_default();
-                    self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-                    self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(
+                    config_picker::SHOW_REASONING_OUTPUT_VALUE,
+                )?;
                 self.set_status(if show_reasoning_output {
                     "reasoning output: shown"
                 } else {
@@ -395,19 +366,9 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save reasoning output setting: {err}"
                 )));
-                if matches!(
-                    self.input_ui.composer(),
-                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-                ) {
-                    let config = self
-                        .info
-                        .services
-                        .config_repository
-                        .load()
-                        .unwrap_or_default();
-                    self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-                    self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
-                }
+                self.refresh_main_config_picker_if_open(
+                    config_picker::SHOW_REASONING_OUTPUT_VALUE,
+                )?;
                 self.set_status("config save failed");
             }
             Ok(
