@@ -115,13 +115,13 @@ impl App {
                         }
                     ));
                 }
-                self.set_status(notice);
                 self.open_resume_picker()?;
+                self.set_status(notice);
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!("could not delete session: {err}")));
-                self.set_status("delete failed");
                 self.open_resume_picker()?;
+                self.set_status("delete failed");
             }
         }
         Ok(())

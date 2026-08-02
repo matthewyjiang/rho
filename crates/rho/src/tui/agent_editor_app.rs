@@ -253,8 +253,8 @@ impl App {
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("agent model switch failed");
                 self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
+                self.set_status("agent model switch failed");
                 return;
             }
         }
@@ -350,8 +350,8 @@ impl App {
         let original_contents = session.original_contents.clone();
         if let Some(message) = draft.validate_for_edit() {
             self.insert_entry(&Entry::Error(message));
-            self.set_status("agent validation failed");
             self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+            self.set_status("agent validation failed");
             return Ok(());
         }
         let current_root = authorize_editable_path(origin, &path, &self.info.runtime.cwd);
@@ -359,8 +359,8 @@ impl App {
             self.insert_entry(&Entry::Error(
                 "agent source is no longer safe to edit; save cancelled".into(),
             ));
-            self.set_status("agent save failed");
             self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+            self.set_status("agent save failed");
             return Ok(());
         }
         match save_definition(&draft, &path, &original_contents) {
@@ -388,22 +388,22 @@ impl App {
             }
             Err(SaveDefinitionError::Validation(message)) => {
                 self.insert_entry(&Entry::Error(format!("agent validation failed: {message}")));
-                self.set_status("agent validation failed");
                 self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+                self.set_status("agent validation failed");
             }
             Err(SaveDefinitionError::Conflict) => {
                 self.insert_entry(&Entry::Error(
                     "agent file changed since editing began; reload it before saving".into(),
                 ));
-                self.set_status("agent save conflict");
                 self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+                self.set_status("agent save conflict");
             }
             Err(SaveDefinitionError::Write(message)) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not write agent file: {message}"
                 )));
-                self.set_status("agent save failed");
                 self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+                self.set_status("agent save failed");
             }
         }
         Ok(())
@@ -486,6 +486,7 @@ impl App {
             }
             Err(message) => {
                 self.insert_entry(&Entry::Error(format!("tools: {message}")));
+                self.reopen_agent_field_picker(field.value());
                 self.set_status("tools edit failed");
             }
         }

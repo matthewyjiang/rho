@@ -513,8 +513,12 @@ impl App {
         if super::status_overlay::should_toast(status) {
             self.status_overlay = Some(super::status_overlay::StatusOverlay::new(
                 status,
+                super::status_overlay::tone_for_message(status),
                 Instant::now(),
             ));
+        } else {
+            // Drop a prior toast when entering a silent mode label.
+            self.status_overlay = None;
         }
     }
 

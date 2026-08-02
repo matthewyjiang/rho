@@ -351,16 +351,16 @@ impl App {
         }
         let short = short_id(plan_id);
         let parsed = PlanId::from_str(plan_id)?;
-        match self.workflow_ops()?.delete_workspace_plan(parsed) {
-            Ok(()) => {
-                self.set_status(format!("Deleted plan {short}."));
-            }
+        let status = match self.workflow_ops()?.delete_workspace_plan(parsed) {
+            Ok(()) => format!("Deleted plan {short}."),
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not delete plan: {error:#}")));
-                self.set_status("delete failed");
+                "delete failed".into()
             }
-        }
-        self.open_workflow_hub()
+        };
+        self.open_workflow_hub()?;
+        self.set_status(status);
+        Ok(())
     }
 
     pub(super) fn submit_delete_workflow_run_choice(
@@ -373,16 +373,16 @@ impl App {
         }
         let short = short_id(run_id);
         let parsed = RunId::from_str(run_id)?;
-        match self.workflow_ops()?.delete_workspace_run(parsed) {
-            Ok(()) => {
-                self.set_status(format!("Deleted run {short}."));
-            }
+        let status = match self.workflow_ops()?.delete_workspace_run(parsed) {
+            Ok(()) => format!("Deleted run {short}."),
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("Could not delete run: {error:#}")));
-                self.set_status("delete failed");
+                "delete failed".into()
             }
-        }
-        self.open_workflow_hub()
+        };
+        self.open_workflow_hub()?;
+        self.set_status(status);
+        Ok(())
     }
 
     fn selected_workflow_value(&self) -> Option<String> {

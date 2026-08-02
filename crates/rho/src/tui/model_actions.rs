@@ -352,7 +352,13 @@ impl App {
             PickerAction::Dismiss => Ok(()),
         };
         if let (true, Some((picker, selected_value))) = (result.is_ok(), other_return_picker) {
+            // Restore the parent picker first, then re-apply action feedback so
+            // open_main_config_picker does not clobber refresh/login status.
+            let feedback = self.status().to_string();
             self.open_main_config_picker(selected_value, picker.filter)?;
+            if !feedback.is_empty() {
+                self.set_status(feedback);
+            }
         }
         result
     }

@@ -31,11 +31,9 @@ pub(super) struct StatusOverlay {
 }
 
 impl StatusOverlay {
-    pub(super) fn new(message: impl Into<String>, now: Instant) -> Self {
-        let message = message.into();
-        let tone = tone_for_message(&message);
+    pub(super) fn new(message: impl Into<String>, tone: StatusTone, now: Instant) -> Self {
         Self {
-            message,
+            message: message.into(),
             tone,
             visible_until: now + STATUS_OVERLAY_DURATION,
         }
@@ -67,7 +65,9 @@ pub(super) fn should_toast(message: &str) -> bool {
     )
 }
 
-/// Classify toast color from message text: error, success, else warning/busy.
+/// Map free-form status text to a tone at the `set_status` boundary.
+///
+/// The overlay stores an explicit [`StatusTone`] and does not reclassify text.
 pub(super) fn tone_for_message(message: &str) -> StatusTone {
     let message = message.to_ascii_lowercase();
     if contains_any(

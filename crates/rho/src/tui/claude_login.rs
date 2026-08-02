@@ -193,7 +193,8 @@ impl App {
                         error.sanitized_detail()
                     ));
                 }
-                self.set_status(notice);
+                self.insert_entry(&Entry::Notice(notice));
+                self.set_status("claude code logout complete");
             }
             Ok(status) => {
                 let mut message = format!(

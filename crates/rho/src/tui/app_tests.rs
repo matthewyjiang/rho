@@ -789,3 +789,17 @@ fn status_feedback_sets_visible_overlay() {
     assert_eq!(overlay.tone(), super::status_overlay::StatusTone::Warning);
     assert!(overlay.is_visible(std::time::Instant::now()));
 }
+
+// Covers: silent mode labels must clear a prior toast overlay
+// Owner: tui status surface
+#[test]
+fn silent_status_clears_prior_toast() {
+    let mut app = test_app();
+    app.set_status("interrupting tool");
+    assert!(app.status_overlay.is_some());
+
+    app.set_status("ready");
+
+    assert_eq!(app.status(), "ready");
+    assert!(app.status_overlay.is_none());
+}

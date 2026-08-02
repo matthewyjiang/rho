@@ -247,6 +247,12 @@ impl App {
                 if !check_for_updates {
                     self.info.services.update_notice = None;
                 }
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
+                }
                 self.set_status(if check_for_updates {
                     "check for updates: on"
                 } else {
@@ -257,6 +263,12 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save update check setting: {err}"
                 )));
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
+                }
                 self.set_status("config save failed");
             }
             Ok(
@@ -267,12 +279,6 @@ impl App {
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-        ) {
-            self.refresh_main_config_picker(config_picker::CHECK_FOR_UPDATES_VALUE)?;
-        }
         Ok(())
     }
 
@@ -282,6 +288,12 @@ impl App {
             ConfigToggle::EnableSubagents,
         ) {
             Ok(ConfigMutation::EnableSubagents(enable_subagents)) => {
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    self.refresh_main_config_picker(config_picker::ENABLE_SUBAGENTS_VALUE)?;
+                }
                 self.set_status(if enable_subagents {
                     "subagents: on next session"
                 } else {
@@ -292,6 +304,12 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save subagent setting: {err}"
                 )));
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    self.refresh_main_config_picker(config_picker::ENABLE_SUBAGENTS_VALUE)?;
+                }
                 self.set_status("config save failed");
             }
             Ok(
@@ -302,12 +320,6 @@ impl App {
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-        ) {
-            self.refresh_main_config_picker(config_picker::ENABLE_SUBAGENTS_VALUE)?;
-        }
         Ok(())
     }
 
@@ -317,6 +329,12 @@ impl App {
             ConfigToggle::AutoCompact,
         ) {
             Ok(ConfigMutation::AutoCompact(auto_compact)) => {
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    self.refresh_main_config_picker(config_picker::AUTO_COMPACT_VALUE)?;
+                }
                 self.set_status(if auto_compact {
                     "auto compact: on"
                 } else {
@@ -327,6 +345,12 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save auto compact setting: {err}"
                 )));
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    self.refresh_main_config_picker(config_picker::AUTO_COMPACT_VALUE)?;
+                }
                 self.set_status("config save failed");
             }
             Ok(
@@ -336,12 +360,6 @@ impl App {
                 | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
-        }
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-        ) {
-            self.refresh_main_config_picker(config_picker::AUTO_COMPACT_VALUE)?;
         }
         Ok(())
     }
@@ -354,6 +372,19 @@ impl App {
             Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
                 self.info.runtime.show_reasoning_output = show_reasoning_output;
                 self.apply_reasoning_output_visibility();
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    let config = self
+                        .info
+                        .services
+                        .config_repository
+                        .load()
+                        .unwrap_or_default();
+                    self.info.runtime.show_reasoning_output = config.show_reasoning_output;
+                    self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
+                }
                 self.set_status(if show_reasoning_output {
                     "reasoning output: shown"
                 } else {
@@ -364,6 +395,19 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save reasoning output setting: {err}"
                 )));
+                if matches!(
+                    self.input_ui.composer(),
+                    ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+                ) {
+                    let config = self
+                        .info
+                        .services
+                        .config_repository
+                        .load()
+                        .unwrap_or_default();
+                    self.info.runtime.show_reasoning_output = config.show_reasoning_output;
+                    self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
+                }
                 self.set_status("config save failed");
             }
             Ok(
@@ -373,19 +417,6 @@ impl App {
                 | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
-        }
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
-        ) {
-            let config = self
-                .info
-                .services
-                .config_repository
-                .load()
-                .unwrap_or_default();
-            self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-            self.refresh_main_config_picker(config_picker::SHOW_REASONING_OUTPUT_VALUE)?;
         }
         Ok(())
     }
