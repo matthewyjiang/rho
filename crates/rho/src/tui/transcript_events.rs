@@ -498,19 +498,28 @@ impl App {
 
     /// Show ephemeral status feedback.
     ///
-    /// Always records the latest status text. User-facing feedback also opens a
-    /// short-lived top-right toast; idle mode labels such as `ready` and
-    /// `running` stay silent so they do not spam the corner or confuse chrome
-    /// that scans for box-drawing art.
+    /// Always records the latest status text. Actionable feedback also opens a
+    /// short-lived top-right toast; routine mode labels and progress (for
+    /// example `ready`, `running`, `running step N`) stay silent so they do not
+    /// spam the corner.
     pub(super) fn set_status(&mut self, status: impl AsRef<str>) {
-        let status = status.as_ref();
+        self.write_status(status.as_ref(), /*allow_toast*/ true);
+    }
+
+    /// Record status without a toast. Use for picker titles and other mode
+    /// labels that are already visible in the composer UI.
+    pub(super) fn set_status_quiet(&mut self, status: impl AsRef<str>) {
+        self.write_status(status.as_ref(), /*allow_toast*/ false);
+    }
+
+    fn write_status(&mut self, status: &str, allow_toast: bool) {
         if status.is_empty() {
             self.last_status.clear();
             self.status_overlay = None;
             return;
         }
         self.last_status = status.to_string();
-        if super::status_overlay::should_toast(status) {
+        if allow_toast && super::status_overlay::should_toast(status) {
             self.status_overlay = Some(super::status_overlay::StatusOverlay::new(
                 status,
                 super::status_overlay::tone_for_message(status),
