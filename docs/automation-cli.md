@@ -100,7 +100,7 @@ Options:
 
 `rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. It starts in the current working directory. Relative file paths resolve from that directory, but they can use parent components such as `../`; absolute paths can also read or modify files outside it when the model chooses those tools.
 
-Use `rho --no-tools run "..."` to remove tool access and send only the raw prompt and model response behavior. `rho run --no-tools` fails because `--no-tools` is not a `run` flag.
+Use `rho --no-tools run "..."` to remove tool access. That flag does not suppress Rho's system prompt; add `--no-system-prompt` as well when you want only the raw prompt and model response (`rho --no-tools --no-system-prompt run "..."`). `rho run --no-tools` fails because `--no-tools` is not a `run` flag.
 
 ### Automation output
 
