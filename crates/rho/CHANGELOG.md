@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.26.1...rho-coding-agent-v1.27.0) (2026-08-02)
+
+
+### Features
+
+* **tui:** open a full-screen setup on the first launch ([#715](https://github.com/matthewyjiang/rho/issues/715)) ([19b14b5](https://github.com/matthewyjiang/rho/commit/19b14b53c5693de91de870b4ef6b2a1ca1146e42))
+
+
+### Bug Fixes
+
+* **tui:** surface status feedback as a top-right toast ([#716](https://github.com/matthewyjiang/rho/issues/716)) ([cb4e8a5](https://github.com/matthewyjiang/rho/commit/cb4e8a599203f0d2ab30e36cdbb824e9a0242b8d))
+
 ## [1.26.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.26.0...rho-coding-agent-v1.26.1) (2026-08-02)
 
 
