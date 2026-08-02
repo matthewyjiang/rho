@@ -25,13 +25,45 @@ fn tone_for_message_classifies_success_warning_and_error() {
     }
 }
 
-// Covers: idle mode labels must not open a toast
+// Covers: routine progress and UI chrome must not open a toast
 // Owner: tui status surface
 #[test]
-fn idle_mode_labels_do_not_toast() {
-    assert!(!should_toast("ready"));
-    assert!(!should_toast("running"));
-    assert!(!should_toast("config"));
-    assert!(should_toast("interrupting tool"));
-    assert!(should_toast("config saved"));
+fn routine_status_does_not_toast() {
+    let silent = [
+        "ready",
+        "running",
+        "config",
+        "running step 1",
+        "running bash",
+        "select model",
+        "edit compact threshold percent",
+        "confirm delete",
+        "compacting context",
+        "retrying provider response",
+        "approval requested",
+        "waiting for delegated agents",
+        "Keyboard shortcuts",
+        "Config · saves automatically",
+        "loading models",
+        "extracting report.pdf",
+        "starting plan.rho",
+        "opening a herdr pane for agent run-1",
+    ];
+    for message in silent {
+        assert!(!should_toast(message), "should stay silent: {message}");
+    }
+
+    let toasted = [
+        "interrupting tool",
+        "config saved",
+        "model switch failed",
+        "permission mode: ask",
+        "attached image 1 (png)",
+        "new session",
+        "unknown command",
+        "inline shell: bash",
+    ];
+    for message in toasted {
+        assert!(should_toast(message), "should toast: {message}");
+    }
 }

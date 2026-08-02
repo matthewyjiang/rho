@@ -56,12 +56,92 @@ impl StatusOverlay {
     }
 }
 
-/// Idle mode labels stay out of the toast so they do not flash after every turn
-/// or leave box-drawing chrome in the corner during resize checks.
+/// Decide whether `set_status` should open the corner toast.
+///
+/// Keep outcomes, errors, and actionable feedback. Drop:
+/// - idle / mode labels already mirrored by the composer or activity rail
+/// - routine progress that repeats every step or tool phase
+/// - picker and editor chrome whose title is already on screen
 pub(super) fn should_toast(message: &str) -> bool {
-    !matches!(
+    !is_routine_status(message)
+}
+
+fn is_routine_status(message: &str) -> bool {
+    let message = message.trim();
+    if message.is_empty() {
+        return true;
+    }
+
+    // Exact mode labels and progress already covered by activity / composer UI.
+    if matches!(
         message,
-        "ready" | "running" | "config" | "skills" | "workflows"
+        "ready"
+            | "running"
+            | "config"
+            | "skills"
+            | "workflows"
+            | "error"
+            | "approval requested"
+            | "compacting context"
+            | "retrying provider response"
+            | "evaluating goal"
+            | "goal retrying"
+            | "loading models"
+            | "refreshing model list"
+            | "checking OAuth usage limits"
+            | "checking provider connections"
+            | "fetching latest changelog"
+            | "waiting for delegated agents"
+            | "waiting for approval"
+            | "waiting for your answers"
+            | "keyboard shortcuts"
+            | "runtime info"
+            | "doctor diagnostics"
+            | "web search config"
+            | "changelog usage"
+    ) {
+        return true;
+    }
+
+    let lower = message.to_ascii_lowercase();
+
+    // Prefixes for step/tool progress and open picker/editor chrome.
+    if lower.starts_with("running step ")
+        || lower.starts_with("running ")
+        || lower.starts_with("select ")
+        || lower.starts_with("edit ")
+        || lower.starts_with("confirm ")
+        || lower.starts_with("choose ")
+        || lower.starts_with("extracting ")
+        || lower.starts_with("checking ")
+        || lower.starts_with("fetching ")
+        || lower.starts_with("loading ")
+        || lower.starts_with("refreshing ")
+        || lower.starts_with("waiting for ")
+        || lower.starts_with("starting ")
+        || lower.starts_with("switch ")
+        || lower.starts_with("opening a herdr pane ")
+    {
+        return true;
+    }
+
+    // Picker titles set as status when opening or navigating menus. Compared
+    // case-insensitively because titles use display casing.
+    matches!(
+        lower.as_str(),
+        "config · saves automatically"
+            | "conversation tree"
+            | "doctor diagnostics"
+            | "inline shell"
+            | "keyboard shortcuts"
+            | "loaded agents"
+            | "loaded skills"
+            | "permission mode"
+            | "refresh model lists"
+            | "resume session"
+            | "web search config"
+            | "workspace rewind"
+            | "workflows"
     )
 }
 

@@ -207,7 +207,7 @@ impl App {
             .expect("known config category must have a picker")
             .with_parent(root);
         Self::restore_picker_position(&mut picker, selected_value, filter);
-        self.set_status(picker.title.clone());
+        self.set_status_quiet(picker.title.clone());
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         Ok(())
     }
