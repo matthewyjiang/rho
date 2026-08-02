@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.11.1...rho-agent-tools-v0.12.0) (2026-08-02)
+
+
+### Features
+
+* **tools:** extract pdf content with pdf-inspector ([#687](https://github.com/matthewyjiang/rho/issues/687)) ([ce92355](https://github.com/matthewyjiang/rho/commit/ce92355e74a56ab11d7f2cf35ff3d246e34310d2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.14.0 to 1.15.0
+
 ## [0.11.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.11.0...rho-agent-tools-v0.11.1) (2026-07-31)
 
 
