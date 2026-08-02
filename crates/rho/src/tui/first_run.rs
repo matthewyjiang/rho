@@ -1,10 +1,12 @@
 //! Setup state for a session, and the header copy that follows from it.
 //!
-//! Two facts decide how a session presents itself: whether Rho wrote the config
-//! file during this launch (a first run), and whether the active provider has
-//! usable credentials. Every setup-aware surface reads the same [`SetupState`],
-//! so a login or a logout changes the session header and the statusline badge
-//! together instead of drifting apart.
+//! One fact decides how a running session presents itself: whether the active
+//! provider has usable credentials. The session header and the statusline badge
+//! read the same [`SetupState`], so a login or a logout changes them together
+//! instead of letting them drift apart.
+//!
+//! [`SetupEntry`] is the separate question of whether this launch opens the
+//! full-screen setup at all, and at which step. See [`super::setup_screen`].
 
 use ratatui::{style::Style, text::Span};
 
@@ -75,21 +77,32 @@ const SIGNED_OUT_HINTS: &[Hint] = &[
 /// welcome on the setup screen, so the header never repeats it.
 const SIGNED_OUT_HEADLINE: &str = " Not signed in. Rho needs a provider before it can answer.";
 
+/// Which step a launch opens the first-run setup screen at.
+///
+/// A real first launch asks for [`SetupEntry::Auto`]. The named steps exist so
+/// the flow can be reviewed on a machine that is already configured, where
+/// `Auto` would skip sign-in because models are already available.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SetupEntry {
+    /// Whichever step can do something.
+    Auto,
+    /// Sign-in, even when the session could already list models.
+    SignIn,
+    /// Model choice, even when no login has happened on this machine.
+    ChooseModel,
+}
+
 /// Where a session sits in provider setup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SetupState {
-    /// Rho created the config file during this launch.
-    pub(super) first_run: bool,
     /// The active provider resolved to usable credentials.
     pub(super) signed_in: bool,
 }
 
 impl Default for SetupState {
+    /// A session that can run a turn, which is what most sessions are.
     fn default() -> Self {
-        Self {
-            first_run: false,
-            signed_in: true,
-        }
+        Self { signed_in: true }
     }
 }
 
@@ -114,7 +127,6 @@ impl super::App {
     /// `auth_unavailable`, so every read reflects the current credentials.
     pub(super) fn setup_state(&self) -> SetupState {
         SetupState {
-            first_run: self.info.services.first_run,
             signed_in: self.info.services.auth_unavailable.is_none(),
         }
     }

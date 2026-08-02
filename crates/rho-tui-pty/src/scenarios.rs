@@ -29,8 +29,8 @@ use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use first_run::{
-    setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SKIP_STEPS,
-    SIGNED_OUT_SETUP_STEPS,
+    setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SIGNIN_ENV,
+    FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
 };
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
@@ -746,7 +746,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         FIRST_RUN_SETUP_STEPS,
         /*smoke*/ false,
     )
-    .with_env(FIRST_RUN_ENV),
+    .with_env(FIRST_RUN_SIGNIN_ENV),
     Scenario::new(
         "first_run_setup_skipped",
         "Leave the first-launch setup screen with Esc and land in a session",

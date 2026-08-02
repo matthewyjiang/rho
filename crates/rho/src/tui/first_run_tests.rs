@@ -3,22 +3,8 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::tui::render::session_header_lines;
 
-const READY: SetupState = SetupState {
-    first_run: false,
-    signed_in: true,
-};
-const FIRST_RUN_READY: SetupState = SetupState {
-    first_run: true,
-    signed_in: true,
-};
-const FIRST_RUN_SIGNED_OUT: SetupState = SetupState {
-    first_run: true,
-    signed_in: false,
-};
-const SIGNED_OUT: SetupState = SetupState {
-    first_run: false,
-    signed_in: false,
-};
+const READY: SetupState = SetupState { signed_in: true };
+const SIGNED_OUT: SetupState = SetupState { signed_in: false };
 
 fn header_lines(setup: SetupState) -> Vec<String> {
     session_header_lines(None, setup, 80)
@@ -37,12 +23,7 @@ fn header_lines(setup: SetupState) -> Vec<String> {
 /// would greet the user twice.
 #[test]
 fn only_a_signed_out_session_adds_a_headline() {
-    let cases = [
-        (READY, false),
-        (FIRST_RUN_READY, false),
-        (FIRST_RUN_SIGNED_OUT, true),
-        (SIGNED_OUT, true),
-    ];
+    let cases = [(READY, false), (SIGNED_OUT, true)];
 
     for (setup, expected) in cases {
         assert_eq!(
@@ -57,12 +38,7 @@ fn only_a_signed_out_session_adds_a_headline() {
 /// a turn. A signed-in session must never be told to log in.
 #[test]
 fn login_is_the_next_step_exactly_while_signed_out() {
-    let cases = [
-        (READY, 0),
-        (FIRST_RUN_READY, 0),
-        (FIRST_RUN_SIGNED_OUT, 1),
-        (SIGNED_OUT, 1),
-    ];
+    let cases = [(READY, 0), (SIGNED_OUT, 1)];
 
     for (setup, expected) in cases {
         let next_steps = setup
@@ -85,7 +61,7 @@ fn login_is_the_next_step_exactly_while_signed_out() {
 /// so a state change cannot leave a stale hint block on screen.
 #[test]
 fn the_header_renders_the_hints_the_state_selected() {
-    for setup in [READY, FIRST_RUN_READY, FIRST_RUN_SIGNED_OUT, SIGNED_OUT] {
+    for setup in [READY, SIGNED_OUT] {
         let rendered = header_lines(setup);
         let hints: Vec<&str> = setup.hints().iter().map(|hint| hint.text).collect();
         let rendered_hints: Vec<&str> = rendered

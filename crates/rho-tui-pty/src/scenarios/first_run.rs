@@ -6,8 +6,12 @@ use crate::{keys::Key, scenario::Step, IsolatedHome, PtyHarness};
 
 use super::{SETTLE, STARTUP};
 
-/// Environment that forces the first-run presentation without deleting a config.
+/// Opens setup and lets it choose its own step, as a real first launch does.
 pub(super) const FIRST_RUN_ENV: &[(&str, &str)] = &[("RHO_FIRST_RUN", "1")];
+
+/// Opens setup at sign-in whatever credentials are around, so the provider
+/// menu is reachable on a machine that could already list models.
+pub(super) const FIRST_RUN_SIGNIN_ENV: &[(&str, &str)] = &[("RHO_FIRST_RUN", "signin")];
 
 /// Give the workspace a prompt template, so the signed-out scenario can submit
 /// a prompt that the composer clears while it expands.
@@ -39,6 +43,13 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     Step::AssertText("Choose a model"),
     Step::AssertText("Esc to skip setup"),
     Step::Custom(assert_session_chrome_hidden),
+    // The provider menu is the step's whole point, so it must list providers
+    // to choose between rather than the one this scenario happens to filter to.
+    Step::Phase("provider_menu"),
+    Step::AssertText("select provider to login"),
+    Step::AssertText("Anthropic"),
+    Step::AssertText("GitHub Copilot"),
+    Step::AssertText("Google Gemini"),
     Step::Phase("sign_in"),
     Step::TypeText("openai"),
     Step::WaitText {

@@ -83,11 +83,15 @@ Outside setup, the session shows whether the active provider resolved to usable 
 
 ## Seeing these states without deleting your config
 
-Set `RHO_FIRST_RUN=1` to open the setup screen without deleting anything:
+`RHO_FIRST_RUN` opens the setup screen, and its value picks the step:
 
 ```bash
-RHO_FIRST_RUN=1 rho
+RHO_FIRST_RUN=signin rho   # the provider menu
+RHO_FIRST_RUN=model rho    # the model list
+RHO_FIRST_RUN=1 rho        # whichever step a real first launch would open
 ```
+
+Name the step you want to see. A configured machine already lists models, so `RHO_FIRST_RUN=1` there behaves as it would for a user who has signed in and goes straight to the model step, leaving the provider menu unreachable.
 
 Forcing it this way opens setup on a machine that already has history and a chosen model, so setup is the only thing the flag changes; it neither clears state nor creates a fresh config.
 

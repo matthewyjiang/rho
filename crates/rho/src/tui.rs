@@ -46,6 +46,7 @@ mod goal;
 mod line_editor;
 mod subagent_questionnaires;
 mod text_input;
+pub(crate) use first_run::SetupEntry;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod changelog_command;
 mod chat_media;
@@ -268,9 +269,9 @@ pub struct SessionBootstrap {
 
 pub struct ApplicationServices {
     pub(crate) config_repository: ConfigRepository,
-    /// Rho wrote the config file during this launch, so the session opens with
-    /// first-run copy in the header.
-    pub(crate) first_run: bool,
+    /// Set when this launch should open the first-run setup screen, and at
+    /// which step. `None` for a returning session.
+    pub(crate) first_run: Option<first_run::SetupEntry>,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,

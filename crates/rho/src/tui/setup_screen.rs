@@ -19,6 +19,7 @@ use ratatui::{
 };
 
 use super::{
+    first_run::SetupEntry,
     render::{display_width, truncate_one_line},
     theme::Theme,
     App, ComposerMode,
@@ -82,22 +83,27 @@ impl App {
         self.setup_screen
     }
 
-    /// Open the setup screen at the first step that can do anything.
+    /// Open the setup screen at the step this launch asked for.
     ///
-    /// Models come from the credentials available to the session, stored or
-    /// from the environment, so a launch with none to offer starts at sign-in.
-    /// A launch that can already list models skips the login step rather than
-    /// asking for one that is done.
+    /// [`SetupEntry::Auto`] picks the first step that can do anything: models
+    /// come from the credentials available to the session, stored or from the
+    /// environment, so a launch with none to offer starts at sign-in, and one
+    /// that can already list models skips a login that is done. The named
+    /// entries override that so either step can be opened on demand.
     pub(super) fn start_setup_screen(&mut self, terminal: &mut super::DefaultTerminal) {
-        if !self.setup_state().first_run {
+        let Some(entry) = self.info.services.first_run else {
             return;
-        }
-        if self.setup_model_picker().is_some() {
-            self.setup_screen = Some(SetupStep::ChooseModel);
-            self.open_setup_model_picker(terminal);
-        } else {
-            self.setup_screen = Some(SetupStep::SignIn);
-            self.open_login_picker();
+        };
+        let step = match entry {
+            SetupEntry::SignIn => SetupStep::SignIn,
+            SetupEntry::ChooseModel => SetupStep::ChooseModel,
+            SetupEntry::Auto if self.setup_model_picker().is_some() => SetupStep::ChooseModel,
+            SetupEntry::Auto => SetupStep::SignIn,
+        };
+        self.setup_screen = Some(step);
+        match step {
+            SetupStep::SignIn => self.open_login_picker(),
+            SetupStep::ChooseModel => self.open_setup_model_picker(terminal),
         }
     }
 
