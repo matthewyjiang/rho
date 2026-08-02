@@ -19,6 +19,7 @@ pub(super) struct Startup<'a> {
     pub(super) config_path: PathBuf,
     pub(super) config_repository: ConfigRepository,
     pub(super) cwd: PathBuf,
+    pub(super) first_run: bool,
     pub(super) missing_auth_error: Option<String>,
     pub(super) missing_auth_model_error: Option<rho_providers::model::ModelError>,
     pub(super) pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
@@ -42,6 +43,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         config_path,
         config_repository,
         mut cwd,
+        first_run,
         missing_auth_error,
         missing_auth_model_error,
         pending_update_notice,
@@ -114,6 +116,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
             },
             services: ApplicationServices {
                 config_repository,
+                first_run,
                 auth_unavailable: missing_auth_error,
                 update_notice: None,
                 pending_update_notice,

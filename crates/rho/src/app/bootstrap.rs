@@ -72,6 +72,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         cli,
         mut config,
         config_repository,
+        first_run,
         cwd,
         automation_prompt,
         output_file,
@@ -108,6 +109,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         cli: &cli,
         config,
         config_repository,
+        first_run,
         cwd,
         bound_agent,
         bound_reasoning_source,
@@ -167,6 +169,7 @@ struct PreparedStartup {
     cli: Cli,
     config: crate::config::Config,
     config_repository: ConfigRepository,
+    first_run: bool,
     cwd: std::path::PathBuf,
     automation_prompt: Option<String>,
     output_file: Option<std::path::PathBuf>,
@@ -182,6 +185,8 @@ struct PreparedStartup {
 async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let config_path = cli.config.clone();
     let config_repository = ConfigRepository::new(config_path.clone());
+    // Ask before loading; loading writes the default config when none exists.
+    let first_run = detect_first_run(&config_repository);
     let mut config = config_repository.load()?;
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
@@ -242,6 +247,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         cli,
         config,
         config_repository,
+        first_run,
         cwd,
         automation_prompt,
         output_file,
@@ -301,6 +307,7 @@ struct InteractiveStartup<'a> {
     cli: &'a Cli,
     config: crate::config::Config,
     config_repository: ConfigRepository,
+    first_run: bool,
     cwd: std::path::PathBuf,
     bound_agent: super::agent_binding::BoundAgent,
     bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
@@ -336,6 +343,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         config_path: absolute_config_path(&startup.config_repository)?,
         config_repository: startup.config_repository,
         cwd: startup.cwd,
+        first_run: startup.first_run,
         missing_auth_error,
         missing_auth_model_error,
         pending_update_notice,
@@ -512,6 +520,24 @@ pub(super) fn absolute_config_path(
     } else {
         Ok(std::env::current_dir()?.join(path))
     }
+}
+
+/// Forces the first-run presentation so the flow can be reviewed without
+/// deleting a working config. Any non-empty value other than `0` turns it on.
+const FIRST_RUN_OVERRIDE_VAR: &str = "RHO_FIRST_RUN";
+
+/// True when Rho is about to create the config file, or when the override asks
+/// for the first-run presentation anyway.
+///
+/// Call this before loading the config, because loading writes the defaults.
+fn detect_first_run(repository: &ConfigRepository) -> bool {
+    match std::env::var(FIRST_RUN_OVERRIDE_VAR) {
+        Ok(value) if !value.is_empty() && value != "0" => return true,
+        Ok(_) | Err(_) => {}
+    }
+    repository
+        .configured_path()
+        .is_ok_and(|path| !path.exists())
 }
 
 fn validate_terminal_mode(cli: &Cli) -> anyhow::Result<()> {

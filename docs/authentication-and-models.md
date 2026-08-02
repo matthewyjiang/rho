@@ -49,6 +49,22 @@ On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/k
 
 For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation, and flags that select provider, model, auth, or reasoning also become the saved default.
 
+## First run and signed-out sessions
+
+Rho decides how a session presents itself from two facts: whether it created the config file during this launch, and whether the active provider resolved to usable credentials.
+
+- **First launch.** The session header greets you above the usual hints. Nothing is written into the transcript, so the greeting stays at the top of the session instead of scrolling away with the first answer.
+- **No usable credentials.** The header hints lead with `/login`, in accent rather than dim. The statusline replaces the provider and model with `not signed in · /login`, so the state stays on screen no matter how far the transcript scrolls.
+- **A prompt sent while signed out** opens the login picker instead of failing a turn. Your text stays in the composer; press enter once a provider is live to send it.
+
+Set `RHO_FIRST_RUN=1` to see the first-launch header without deleting your config:
+
+```bash
+RHO_FIRST_RUN=1 rho
+```
+
+To see the signed-out state, run `/logout <provider>` for the active provider. Both states clear as soon as a login succeeds.
+
 ## Login and provider switching
 
 `/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.

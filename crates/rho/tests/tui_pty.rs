@@ -444,6 +444,16 @@ deep = "openai-codex/gpt-5.5"
 }
 
 #[test]
+fn first_launch_opens_with_a_welcome_header() {
+    assert_pass("first_run_welcome");
+}
+
+#[test]
+fn signed_out_session_offers_login_from_header_statusline_and_prompt() {
+    assert_pass("signed_out_setup_state");
+}
+
+#[test]
 fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");
 }

@@ -397,16 +397,21 @@ impl App {
 
     pub(super) fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
         let update_notice = self.info.services.update_notice.clone();
-        let stale = self
-            .history
-            .session_header_cache()
-            .is_none_or(|cache| cache.width != width || cache.update_notice != update_notice);
+        let setup = self.setup_state();
+        let stale = self.history.session_header_cache().is_none_or(|cache| {
+            cache.width != width || cache.update_notice != update_notice || cache.setup != setup
+        });
         if stale {
             self.history
                 .set_session_header_cache(Some(SessionHeaderCache {
                     width,
                     update_notice,
-                    lines: session_header_lines(self.info.services.update_notice.as_deref(), width),
+                    setup,
+                    lines: session_header_lines(
+                        self.info.services.update_notice.as_deref(),
+                        setup,
+                        width,
+                    ),
                 }));
         }
         &self.history.session_header_cache().unwrap().lines
@@ -773,6 +778,8 @@ impl App {
     }
 
     fn refresh_statusline_state(&mut self) {
+        self.statusline
+            .update_signed_in(self.setup_state().signed_in);
         self.statusline.update_model(&self.info.runtime);
         self.statusline.update_usage(
             self.usage.cumulative_usage.as_ref(),
@@ -796,14 +803,6 @@ impl App {
         let goal = self.goal_status();
         self.refresh_statusline_state();
         self.statusline.lines(width, goal)
-    }
-
-    pub(super) fn insert_session_intro(
-        &self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        let _ = terminal.size()?;
-        Ok(())
     }
 
     pub(super) fn insert_recovered_history(

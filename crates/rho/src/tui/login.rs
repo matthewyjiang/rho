@@ -604,6 +604,7 @@ impl App {
             )));
             self.status = "login saved".into();
         }
+        self.announce_held_prompt_after_login();
         self.report_resting_herdr_state().await;
         Ok(())
     }

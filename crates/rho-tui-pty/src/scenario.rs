@@ -50,6 +50,9 @@ pub struct Scenario {
     pub description: &'static str,
     pub size: PtySize,
     pub setup: Option<fn(&IsolatedHome) -> Result<()>>,
+    /// Extra environment pairs layered on the matrix launch plan, for scenarios
+    /// that need a startup state the isolated home cannot express.
+    pub env: &'static [(&'static str, &'static str)],
     pub steps: &'static [Step],
     pub smoke: bool,
 }
@@ -68,6 +71,7 @@ impl Scenario {
             description,
             size,
             setup: None,
+            env: &[],
             steps,
             smoke,
         }
@@ -75,6 +79,11 @@ impl Scenario {
 
     pub const fn with_setup(mut self, setup: fn(&IsolatedHome) -> Result<()>) -> Self {
         self.setup = Some(setup);
+        self
+    }
+
+    pub const fn with_env(mut self, env: &'static [(&'static str, &'static str)]) -> Self {
+        self.env = env;
         self
     }
 }
@@ -124,7 +133,10 @@ impl ScenarioRunner {
         if let Some(setup) = scenario.setup {
             setup(&home)?;
         }
-        let plan = RhoLaunchPlan::matrix(&self.binary, &home, scenario.size);
+        let mut plan = RhoLaunchPlan::matrix(&self.binary, &home, scenario.size);
+        for (key, value) in scenario.env {
+            plan = plan.with_env(*key, *value);
+        }
         let mut harness = PtyHarness::spawn_named(&plan, scenario.id)?;
         harness.enable_timing(self.record_timing);
         if let Some(root) = &self.artifact_root {

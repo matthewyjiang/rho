@@ -40,6 +40,7 @@ mod fast_command;
 mod feed_image;
 mod file_palette;
 mod file_picker;
+mod first_run;
 mod frame_scheduler;
 mod goal;
 mod line_editor;
@@ -266,6 +267,9 @@ pub struct SessionBootstrap {
 
 pub struct ApplicationServices {
     pub(crate) config_repository: ConfigRepository,
+    /// Rho wrote the config file during this launch, so the session opens with
+    /// first-run copy in the header.
+    pub first_run: bool,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
