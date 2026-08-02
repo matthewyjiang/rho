@@ -23,8 +23,10 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `--config <CONFIG>` | Read and save configuration at a specific path instead of `~/.rho/config.toml`. |
 | `--auth <AUTH>` | Select an auth profile and its matching provider profile: `api-key`, `codex`, `anthropic-api-key`, `google-api-key`, `github-copilot`, `xai-api-key`, `xai-oauth`, `moonshot-api-key`, `ollama-cloud-api-key`, `ollama-cloud-device`, `poolside-api-key`, `openrouter-api-key`, `openrouter-oauth`, or `kimi-oauth`. |
 | `--reasoning <LEVEL>` | Select a reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
-| `--no-system-prompt` | Do not send Rho's system prompt, including `AGENTS.md` and skill context. Current invocation only. |
-| `--no-tools` | Do not expose tools to the model. Current invocation only. |
+| `--agent <ID>` | Select the agent definition for this session or automation run. See [subagents](/subagents). |
+| `--no-system-prompt` | Do not send Rho's system prompt, including `AGENTS.md` and skill context. Current invocation only. Place before a subcommand. |
+| `--no-tools` | Do not expose tools to the model. Current invocation only. Place before a subcommand: `rho --no-tools run "..."`. |
+| `--no-subagents` | Do not expose the delegated-agent tools (`agent` / `agents`). Current invocation only. |
 | `-R`, `--resume [<ID>]` | Resume a session by UUID or UUID prefix. Without an ID, open a picker. Interactive sessions only. |
 | `-h`, `--help` | Show help for Rho or a subcommand. |
 
@@ -34,6 +36,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | --- | --- |
 | `rho` | Start an interactive TUI session in the current working directory. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
+| `rho attach <ID>` | Watch a delegated agent run in a read-only TUI. See [subagents](/subagents#attachment-and-artifacts). |
 | `rho workflow <COMMAND>` | Use `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects]` | List saved sessions for the current workspace, or every workspace with cwd context. |
 | `rho sessions rename <ID> <TITLE>...` | Rename a session by UUID or prefix. See [sessions](/sessions#listing-renaming-and-deleting-sessions). |
@@ -47,7 +50,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 
 Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers). For example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
 
-`--no-system-prompt` and `--no-tools` only affect the current invocation and are not written to config. `--resume` cannot be combined with a subcommand such as `run` or `update`. Workflow resume is a separate command: `rho workflow resume <RUN_ID>`.
+`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` only affect the current invocation and are not written to config. `--no-system-prompt` and `--no-tools` are root options, so they must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` are global and may appear before or after the subcommand. `--resume` cannot be combined with a subcommand such as `run` or `update`. Workflow resume is a separate command: `rho workflow resume <RUN_ID>`.
 
 ## `rho login`
 
@@ -85,17 +88,19 @@ Arguments:
   [PROMPT]...  Prompt text to send to the agent
 
 Options:
-      --stdin                 Read additional prompt text from stdin
-      --output <FORMAT>       Output format: text or jsonl [default: text]
-      --max-steps <N>         Override the model-step limit for this run
-      --timeout <DURATION>    Set a wall-clock limit, such as 30s or 20m
-      --output-file <PATH>    Update a delegated-run status file during the run
-  -h, --help                  Print help
+      --stdin               Read additional prompt text from stdin
+      --output-file <PATH>  Stream progress to stdout and write a structured status/result file (JSON) that is updated during the run and finalized on exit
+      --output <OUTPUT>     Select plain final-answer output or a JSON Lines event stream [default: text] [possible values: text, jsonl]
+      --max-steps <N>       Override the model-step budget for this run
+      --timeout <DURATION>  Cancel the run after this wall-clock duration
+      --no-subagents        Do not expose the delegated-agent tools (agent/agents) to the model
+      --agent <ID>          Select the agent definition used for this session or automation run
+  -h, --help                Print help (see more with '--help')
 ```
 
 `rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. It starts in the current working directory. Relative file paths resolve from that directory, but they can use parent components such as `../`; absolute paths can also read or modify files outside it when the model chooses those tools.
 
-Use `--no-tools` to remove tool access and send only the raw prompt and model response behavior.
+Use `rho --no-tools run "..."` to remove tool access and send only the raw prompt and model response behavior. `rho run --no-tools` fails because `--no-tools` is not a `run` flag.
 
 ### Automation output
 
