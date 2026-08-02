@@ -37,6 +37,12 @@ impl App {
     pub(super) fn draw(&mut self, frame: &mut Frame<'_>) {
         let now = Instant::now();
         let area = frame.area();
+        // First-launch setup owns the whole screen: no history, composer,
+        // statusline, or hints until the user has a provider and a model.
+        if let Some(step) = self.setup_step() {
+            self.draw_setup_screen(frame, area, step);
+            return;
+        }
         let width = area.width as usize;
         let live_history = self.history_live_lines(width, now);
         let history_len = self.history_len_with_live(width, &live_history);

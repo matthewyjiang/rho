@@ -96,6 +96,7 @@ mod scrollbar;
 mod session_actions;
 mod session_picker;
 mod session_title;
+mod setup_screen;
 mod transcript_events;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;
 mod app_loop;
@@ -356,6 +357,9 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_interactive_login: Option<PendingInteractiveLogin>,
+    /// Active step of the first-launch setup screen, or `None` for a normal
+    /// session. While set, the screen replaces all session chrome.
+    setup_screen: Option<setup_screen::SetupStep>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
     usage_limits_client: reqwest::Client,

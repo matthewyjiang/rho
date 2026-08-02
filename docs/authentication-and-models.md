@@ -49,21 +49,47 @@ On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/k
 
 For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation, and flags that select provider, model, auth, or reasoning also become the saved default.
 
-## First run and signed-out sessions
+## First run
 
-Rho decides how a session presents itself from two facts: whether it created the config file during this launch, and whether the active provider resolved to usable credentials.
+The first launch on a machine opens a full-screen setup instead of a session. There is no history to read and no model to name yet, so the composer, hints, and statusline stay out of the way until you have both:
 
-- **First launch.** The session header greets you above the usual hints. Nothing is written into the transcript, so the greeting stays at the top of the session instead of scrolling away with the first answer.
+```text
+rho  v1.26.0
+
+Welcome. Two steps and you are ready to work.
+
+▸ Sign in to a provider
+  Choose a model
+
+>
+
+→ Anthropic
+  GitHub Copilot
+  ...
+
+Esc to skip setup
+```
+
+Each step drives the same picker the matching command opens, so sign-in behaves exactly as `/login` does, including method pickers, the credential-store question, and OAuth. Choosing a model ends setup and hands off to a normal session.
+
+Setup opens at whichever step can do something. A launch that already has stored credentials starts at the model step rather than asking for a login that is done, and a launch with no models to offer starts at sign-in. Esc leaves setup at any point.
+
+## Signed-out sessions
+
+Outside setup, the session shows whether the active provider resolved to usable credentials.
+
 - **No usable credentials.** The header hints lead with `/login`, in accent rather than dim. The statusline replaces the provider and model with `not signed in · /login`, so the state stays on screen no matter how far the transcript scrolls.
 - **A prompt sent while signed out** opens the login picker instead of failing a turn. Your text stays in the composer; press enter once a provider is live to send it.
 
-Set `RHO_FIRST_RUN=1` to see the first-launch header without deleting your config:
+## Seeing these states without deleting your config
+
+Set `RHO_FIRST_RUN=1` to open the setup screen on a configured machine:
 
 ```bash
 RHO_FIRST_RUN=1 rho
 ```
 
-To see the signed-out state, run `/logout <provider>` for the active provider. Both states clear as soon as a login succeeds.
+To see the signed-out session state, run `/logout <provider>` for the active provider. Both states clear as soon as a login succeeds.
 
 ## Login and provider switching
 

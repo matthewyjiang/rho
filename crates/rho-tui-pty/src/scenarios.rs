@@ -28,7 +28,9 @@ use changelog::CHANGELOG_STEPS;
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
-use first_run::{FIRST_RUN_ENV, FIRST_RUN_WELCOME_STEPS, SIGNED_OUT_SETUP_STEPS};
+use first_run::{
+    FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
+};
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
@@ -737,10 +739,18 @@ const ALL_SCENARIOS: &[Scenario] = &[
         smoke: false,
     },
     Scenario::new(
-        "first_run_welcome",
-        "Open a first launch with the welcome header and the usual hints",
+        "first_run_setup",
+        "Walk a first launch through the full-screen sign-in and model steps",
         DEFAULT_SIZE,
-        FIRST_RUN_WELCOME_STEPS,
+        FIRST_RUN_SETUP_STEPS,
+        false,
+    )
+    .with_env(FIRST_RUN_ENV),
+    Scenario::new(
+        "first_run_setup_skipped",
+        "Leave the first-launch setup screen with Esc and land in a session",
+        DEFAULT_SIZE,
+        FIRST_RUN_SKIP_STEPS,
         false,
     )
     .with_env(FIRST_RUN_ENV),

@@ -30,9 +30,10 @@ impl App {
         if self.info.session.open_resume_picker {
             self.open_resume_picker()?;
         }
-        // Setup state needs no history entry: the session header and the
-        // statusline badge both read it, so the offer to sign in stays on
-        // screen for the whole session instead of scrolling away.
+        // A first launch opens the full-screen setup instead of a session.
+        // Afterwards the header and statusline carry setup state, so a
+        // signed-out session needs no history entry that would scroll away.
+        self.start_setup_screen(terminal);
         let mut needs_redraw = true;
         while !self.should_quit {
             let background_ready = self
