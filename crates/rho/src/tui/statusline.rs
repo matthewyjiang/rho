@@ -42,6 +42,9 @@ pub(super) struct StatusLineState {
     model_metadata: Option<ModelMetadata>,
     subagent_total_cost_usd_micros: u64,
     average_output_rate: Option<u64>,
+    /// The active provider resolved to usable credentials. When false the row
+    /// names the gap instead of a model the session cannot reach.
+    signed_in: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -82,6 +85,7 @@ impl Default for StatusLineState {
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
             average_output_rate: None,
+            signed_in: true,
         }
     }
 }
@@ -102,6 +106,7 @@ impl StatusLineState {
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
             average_output_rate: None,
+            signed_in: true,
         }
     }
 }
@@ -155,6 +160,13 @@ impl StatusLine {
             self.state.usage = usage.cloned();
             self.state.context_usage = context_usage.cloned();
             self.state.subagent_total_cost_usd_micros = subagent_total_cost_usd_micros;
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn update_signed_in(&mut self, signed_in: bool) {
+        if self.state.signed_in != signed_in {
+            self.state.signed_in = signed_in;
             self.invalidate();
         }
     }
@@ -287,6 +299,19 @@ fn fit_model_right(
     state: &StatusLineState,
     width: usize,
 ) -> String {
+    if !state.signed_in {
+        // Naming the configured model would promise a turn the session cannot
+        // run, so the row points at the fix instead.
+        return fit_right_status(
+            left,
+            &[
+                format!("{permission} · not signed in · /login"),
+                format!("{permission} · not signed in"),
+                "not signed in".to_string(),
+            ],
+            width,
+        );
+    }
     let provider = provider_display_name(&state.provider);
     let full = format!("{permission} · {}", model_segment(&provider, model));
 

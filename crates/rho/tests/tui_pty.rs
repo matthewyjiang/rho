@@ -444,6 +444,21 @@ deep = "openai-codex/gpt-5.5"
 }
 
 #[test]
+fn first_launch_walks_the_full_screen_setup() {
+    assert_pass("first_run_setup");
+}
+
+#[test]
+fn first_launch_setup_can_be_skipped_into_a_session() {
+    assert_pass("first_run_setup_skipped");
+}
+
+#[test]
+fn signed_out_session_offers_login_from_header_statusline_and_prompt() {
+    assert_pass("signed_out_setup_state");
+}
+
+#[test]
 fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");
 }

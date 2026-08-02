@@ -49,6 +49,54 @@ On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/k
 
 For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation, and flags that select provider, model, auth, or reasoning also become the saved default.
 
+## First run
+
+The first launch on a fresh machine opens a full-screen setup instead of a session. There is no history to read and no model you chose yet, so the composer, hints, and statusline stay out of the way until you have both:
+
+```text
+rho  v1.26.0
+
+Welcome. Two steps and you are ready to work.
+
+▸ Sign in to a provider
+  Choose a model
+
+>
+
+→ Anthropic
+  GitHub Copilot
+  ...
+
+Esc to skip setup
+```
+
+Each step drives the same picker the matching command opens, so sign-in behaves exactly as `/login` does, including method pickers, the credential-store question, and OAuth. Choosing a model ends setup and hands off to a normal session.
+
+Setup opens at whichever step can do something. A launch whose available credentials, stored or from the environment, already list models starts at the model step rather than asking for a login that is done; a launch with no models to offer starts at sign-in. Esc leaves setup at any point.
+
+## Signed-out sessions
+
+Outside setup, the session shows whether the active provider resolved to usable credentials.
+
+- **No usable credentials.** The header hints lead with `/login`, in accent rather than dim. The statusline replaces the provider and model with `not signed in · /login`, so the state stays on screen no matter how far the transcript scrolls.
+- **A prompt sent while signed out** opens the login picker instead of failing a turn. Your text stays in the composer; press enter once a provider is live to send it.
+
+## Seeing these states without deleting your config
+
+`RHO_FIRST_RUN` opens the setup screen, and its value picks the step:
+
+```bash
+RHO_FIRST_RUN=signin rho   # the provider menu
+RHO_FIRST_RUN=model rho    # the model list
+RHO_FIRST_RUN=1 rho        # whichever step a real first launch would open
+```
+
+Name the step you want to see. A configured machine already lists models, so `RHO_FIRST_RUN=1` there behaves as it would for a user who has signed in and goes straight to the model step, leaving the provider menu unreachable.
+
+Forcing it this way opens setup on a machine that already has history and a chosen model, so setup is the only thing the flag changes; it neither clears state nor creates a fresh config.
+
+To see the signed-out session state, run `/logout <provider>` for the active provider. A successful login clears the signed-out header and statusline; setup ends when you choose a model, or when you leave it with Esc.
+
 ## Login and provider switching
 
 `/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.

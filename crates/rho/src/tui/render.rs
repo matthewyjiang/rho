@@ -7,6 +7,7 @@ pub(super) use entry_render::{
 use super::{
     changelog_command::changelog_lines,
     feed_image::{reserve_entry_image_rows, reserve_markdown_image_rows},
+    first_run::SetupState,
     info_command::runtime_info_lines,
     limits_command::usage_limit_lines,
     message_render::{render_assistant_content, render_reasoning_content},
@@ -49,15 +50,9 @@ impl LineFill {
     }
 }
 
-const SESSION_HEADER_HINTS: &[&str] = &[
-    " shift+tab    Cycle reasoning level",
-    " ctrl+c       Clear the composer",
-    " /            Show available commands",
-    " !            Run a shell command",
-];
-
 pub(super) fn session_header_lines(
     update_notice: Option<&str>,
+    setup: SetupState,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
@@ -79,17 +74,21 @@ pub(super) fn session_header_lines(
             ),
         ]));
     }
+    if let Some(headline) = setup.headline() {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(headline));
+    }
     lines.push(Line::raw(""));
-    push_session_header_hints(&mut lines, width);
+    push_session_header_hints(&mut lines, setup, width);
     lines.push(Line::raw(""));
     lines
 }
 
-fn push_session_header_hints(lines: &mut Vec<Line<'static>>, width: usize) {
-    for hint in SESSION_HEADER_HINTS {
+fn push_session_header_hints(lines: &mut Vec<Line<'static>>, setup: SetupState, width: usize) {
+    for hint in setup.hints() {
         lines.push(Line::from(Span::styled(
-            truncate_one_line(hint, width),
-            Theme::dim(),
+            truncate_one_line(hint.text, width),
+            hint.style(),
         )));
     }
 }

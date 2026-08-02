@@ -392,6 +392,9 @@ impl App {
         if !self.pop_picker_level() {
             self.input_ui.set_composer(ComposerMode::Input);
             self.status = if running { "running" } else { "ready" }.into();
+            // Backing all the way out of a setup picker leaves setup too,
+            // rather than stranding an empty full-screen shell.
+            self.dismiss_setup_screen();
         }
         Ok(())
     }
@@ -663,6 +666,7 @@ impl App {
                 self.status = "config save failed".into();
             }
         }
+        self.finish_setup_screen();
         Ok(Some(handoff))
     }
 

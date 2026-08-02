@@ -75,6 +75,7 @@ impl App {
             available_auths,
             using_unavailable_provider,
             pending_interactive_login: None,
+            setup_screen: None,
             pending_usage_limits: None,
             pending_changelog: None,
             usage_limits_client: reqwest::Client::new(),
