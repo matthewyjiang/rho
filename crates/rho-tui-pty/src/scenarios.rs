@@ -6,6 +6,7 @@ mod changelog;
 mod config;
 mod conversation_tree;
 mod document_attachment;
+mod first_run;
 mod goal;
 mod hooks;
 mod login;
@@ -27,6 +28,10 @@ use changelog::CHANGELOG_STEPS;
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
+use first_run::{
+    setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SIGNIN_ENV,
+    FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
+};
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
@@ -730,9 +735,34 @@ const ALL_SCENARIOS: &[Scenario] = &[
         description: "Edit and save a user-defined agent through the agents picker",
         size: DEFAULT_SIZE,
         setup: Some(setup_edit_user_agent),
+        env: &[],
         steps: EDIT_USER_AGENT_STEPS,
         smoke: false,
     },
+    Scenario::new(
+        "first_run_setup",
+        "Walk a first launch through the full-screen sign-in and model steps",
+        DEFAULT_SIZE,
+        FIRST_RUN_SETUP_STEPS,
+        /*smoke*/ false,
+    )
+    .with_env(FIRST_RUN_SIGNIN_ENV),
+    Scenario::new(
+        "first_run_setup_skipped",
+        "Leave the first-launch setup screen with Esc and land in a session",
+        DEFAULT_SIZE,
+        FIRST_RUN_SKIP_STEPS,
+        /*smoke*/ false,
+    )
+    .with_env(FIRST_RUN_ENV),
+    Scenario::new(
+        "signed_out_setup_state",
+        "Show the signed-out header and statusline, and route a prompt to login",
+        DEFAULT_SIZE,
+        SIGNED_OUT_SETUP_STEPS,
+        /*smoke*/ false,
+    )
+    .with_setup(setup_prompt_template),
     Scenario::new(
         "login_provider_groups",
         "Group login providers and open readable authentication methods",

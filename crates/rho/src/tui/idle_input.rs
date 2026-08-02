@@ -342,6 +342,10 @@ impl App {
             }
         }
 
+        if !self.setup_state().signed_in {
+            return self.offer_login_instead_of_turn(turn);
+        }
+
         let media = self
             .input_ui
             .take_ready_media()

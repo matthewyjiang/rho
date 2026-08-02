@@ -601,6 +601,8 @@ impl App {
                 target.provider
             ));
         }
+        self.announce_held_prompt_after_login();
+        self.advance_setup_screen_after_login(terminal);
         self.report_resting_herdr_state().await;
         Ok(())
     }

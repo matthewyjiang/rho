@@ -44,6 +44,7 @@ pub(super) struct LiveStreamPreview {
 pub(super) struct SessionHeaderCache {
     pub(in crate::tui) width: usize,
     pub(in crate::tui) update_notice: Option<String>,
+    pub(in crate::tui) setup: super::first_run::SetupState,
     pub(in crate::tui) lines: Vec<Line<'static>>,
 }
 

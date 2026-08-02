@@ -40,11 +40,13 @@ mod fast_command;
 mod feed_image;
 mod file_palette;
 mod file_picker;
+mod first_run;
 mod frame_scheduler;
 mod goal;
 mod line_editor;
 mod subagent_questionnaires;
 mod text_input;
+pub(crate) use first_run::SetupEntry;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod changelog_command;
 mod chat_media;
@@ -95,6 +97,7 @@ mod scrollbar;
 mod session_actions;
 mod session_picker;
 mod session_title;
+mod setup_screen;
 mod transcript_events;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;
 mod app_loop;
@@ -267,6 +270,9 @@ pub struct SessionBootstrap {
 
 pub struct ApplicationServices {
     pub(crate) config_repository: ConfigRepository,
+    /// Set when this launch should open the first-run setup screen, and at
+    /// which step. `None` for a returning session.
+    pub(crate) first_run: Option<first_run::SetupEntry>,
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
@@ -357,6 +363,9 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_interactive_login: Option<PendingInteractiveLogin>,
+    /// Active step of the first-launch setup screen, or `None` for a normal
+    /// session. While set, the screen replaces all session chrome.
+    setup_screen: Option<setup_screen::SetupStep>,
     pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
     pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
     usage_limits_client: reqwest::Client,

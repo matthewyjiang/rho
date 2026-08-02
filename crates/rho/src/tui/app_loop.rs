@@ -6,7 +6,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     clipboard, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
-    ComposerMode, Entry, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
+    ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
 };
 
 pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
@@ -25,17 +25,15 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
         self.start_model_metadata_fetch(agent);
-        self.insert_session_intro(terminal)?;
         self.insert_recovered_history(terminal)?;
         self.maybe_offer_loaded_session_context_handoff(agent)?;
         if self.info.session.open_resume_picker {
             self.open_resume_picker()?;
         }
-        if self.info.services.auth_unavailable.is_some() {
-            self.insert_entry(&Entry::Notice(
-                "no providers configured. run /login to sign in.".into(),
-            ));
-        }
+        // A first launch opens the full-screen setup instead of a session.
+        // Afterwards the header and statusline carry setup state, so a
+        // signed-out session needs no history entry that would scroll away.
+        self.start_setup_screen(terminal);
         let mut needs_redraw = true;
         while !self.should_quit {
             let background_ready = self
