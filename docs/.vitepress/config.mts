@@ -90,13 +90,16 @@ export default defineConfig({
             ]
           },
           { text: 'Interactive TUI', link: '/interactive-tui' },
+          { text: 'Inline shell', link: '/inline-shell' },
           { text: 'Automation and CLI', link: '/automation-cli' },
+          { text: 'Workflows', link: '/workflows' },
           { text: 'Configuration', link: '/configuration' },
           { text: 'Tools and workspace', link: '/tools-workspace' },
           { text: 'Skills', link: '/skills' },
           { text: 'Hooks', link: '/hooks' },
           { text: 'Subagents', link: '/subagents' },
           { text: 'Sessions', link: '/sessions' },
+          { text: 'Usage ledger', link: '/usage-ledger' },
           { text: 'Development', link: '/development' },
           { text: 'App changelog', link: '/changelog' }
         ]
