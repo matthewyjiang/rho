@@ -153,7 +153,7 @@ fn detail_window_starts_at_head_and_grows_with_viewport() {
         "prompt should name the capability class"
     );
     assert!(
-        short.iter().any(|line| line.contains("> Deny")),
+        short.iter().any(|line| line.contains("→ Deny")),
         "prompt should focus Deny by default"
     );
     assert!(

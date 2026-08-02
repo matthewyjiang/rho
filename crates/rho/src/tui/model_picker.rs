@@ -1,10 +1,12 @@
-use super::{PickerAction, PickerBadge, PickerBadgeTone, PickerItem, RuntimeModelView, UiPicker};
+use super::{
+    PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints, RuntimeModelView,
+    UiPicker,
+};
 use rho_providers::model::{catalog, favorites};
 
 pub(super) fn model_picker(info: &RuntimeModelView, available_auths: &[String]) -> UiPicker {
     model_picker_for_current(
         "select model",
-        "type fuzzy search, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
         CurrentModel {
             provider: &info.provider,
             model: &info.model,
@@ -32,7 +34,6 @@ pub(super) fn model_picker_during_run(
         .unwrap_or((&info.provider, &info.model, "selected"));
     model_picker_for_current(
         "select model for next turn",
-        "current run keeps its model; selection applies after it fully ends, ctrl-p pin/unpin, enter confirm, esc cancel",
         CurrentModel {
             provider,
             model,
@@ -56,7 +57,6 @@ pub(super) fn internal_agent_model_picker(
 ) -> UiPicker {
     let mut picker = model_picker_for_current(
         &format!("select model for {agent_id}"),
-        "type fuzzy search, ctrl-p pin/unpin, tab complete, up/down select, enter confirm, esc cancel",
         CurrentModel {
             provider: current_provider,
             model: current_model,
@@ -100,7 +100,6 @@ struct CurrentModel<'a> {
 
 fn model_picker_for_current(
     title: &str,
-    help: &str,
     current: CurrentModel<'_>,
     favorite_models: &[String],
     available_auths: &[String],
@@ -155,7 +154,11 @@ fn model_picker_for_current(
     })
     .collect::<Vec<_>>();
 
-    let mut picker = UiPicker::new(title, help, items, action);
+    let mut picker = UiPicker::new(title, items, action).with_key_hints(PickerKeyHints {
+        pin_toggle: true,
+        tab_complete: true,
+        row_delete: false,
+    });
     if let Some(index) = picker.items.iter().position(|item| item.value == current) {
         picker.selected = index;
     }

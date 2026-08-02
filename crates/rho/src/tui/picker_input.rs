@@ -64,8 +64,6 @@ fn apply_picker_key(
     picker: &mut UiPicker,
     key: KeyEvent,
     page_target: Option<OverlayPageTarget>,
-    model_picker_open: bool,
-    row_delete_enabled: bool,
     space_confirms: bool,
 ) -> PickerKeyEffect {
     match (key.modifiers, key.code) {
@@ -109,10 +107,12 @@ fn apply_picker_key(
             picker.pop_filter_char();
             PickerKeyEffect::Handled
         }
-        (KeyModifiers::CONTROL, KeyCode::Char('p')) if model_picker_open => {
+        (KeyModifiers::CONTROL, KeyCode::Char('p')) if picker.key_hints.pin_toggle => {
             PickerKeyEffect::ToggleFavorite
         }
-        (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete) if row_delete_enabled => {
+        (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete)
+            if picker.key_hints.row_delete =>
+        {
             PickerKeyEffect::DeleteRow
         }
         (KeyModifiers::NONE, KeyCode::Char(' ')) if space_confirms => PickerKeyEffect::Submit,
@@ -137,22 +137,19 @@ impl App {
             return Ok(false);
         }
 
-        let model_picker_open = self.model_picker_is_open();
-        let row_delete_enabled = self.resume_picker_is_open() || self.workflow_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
+        let delete_action = {
+            let super::ComposerMode::Picker(picker) = self.input_ui.composer() else {
+                return Ok(false);
+            };
+            picker.action
+        };
         let effect = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(
-                picker,
-                key,
-                page_target,
-                model_picker_open,
-                row_delete_enabled,
-                space_confirms,
-            )
+            apply_picker_key(picker, key, page_target, space_confirms)
         };
 
         match effect {
@@ -183,10 +180,14 @@ impl App {
             PickerKeyEffect::DeleteRow => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                if self.resume_picker_is_open() {
-                    self.prompt_delete_selected_session()?;
-                } else if self.workflow_picker_is_open() {
-                    self.prompt_delete_selected_workflow_item()?;
+                match delete_action {
+                    super::PickerAction::ResumeSession => {
+                        self.prompt_delete_selected_session()?;
+                    }
+                    super::PickerAction::Workflow => {
+                        self.prompt_delete_selected_workflow_item()?;
+                    }
+                    _ => {}
                 }
                 Ok(true)
             }
@@ -202,22 +203,13 @@ impl App {
             return Ok(false);
         }
 
-        let model_picker_open = self.model_picker_is_open();
-        let row_delete_enabled = self.resume_picker_is_open() || self.workflow_picker_is_open();
         let space_confirms = self.picker_space_confirms_selection();
         let effect = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(
-                picker,
-                key,
-                page_target,
-                model_picker_open,
-                row_delete_enabled,
-                space_confirms,
-            )
+            apply_picker_key(picker, key, page_target, space_confirms)
         };
 
         match effect {

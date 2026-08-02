@@ -157,6 +157,7 @@ struct OverlayContent<'a> {
     show_nav_badges: bool,
     detail_scroll: usize,
     footer: &'a str,
+    empty_match_message: &'a str,
     chrome: OverlayChromeView<'a>,
 }
 
@@ -182,6 +183,7 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         .as_ref()
         .map_or(&empty_detail, |lines| lines.as_slice());
     let footer = picker.action_footer();
+    let empty_match_message = picker.empty_match_message();
     let matching = picker.matching_indices();
     let selected_position = matching
         .iter()
@@ -201,6 +203,7 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         show_nav_badges: picker.badge_placement == PickerBadgePlacement::Navigation,
         detail_scroll: picker.detail_scroll,
         footer: &footer,
+        empty_match_message,
         chrome,
     };
     let lines = overlay_lines(layout, content);
@@ -380,6 +383,7 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
                 layout.nav_width(),
                 nav_rows_budget,
                 content.show_nav_badges,
+                content.empty_match_message,
             );
             if detail_rows_budget > 0 && nav_rows_budget > 0 {
                 vec![detail_rows, nav_rows]
@@ -441,6 +445,7 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
         nav_width,
         nav_viewport_rows,
         content.show_nav_badges,
+        content.empty_match_message,
     );
     let detail_rows = detail_viewport_rows(
         content.detail,
@@ -472,6 +477,7 @@ fn nav_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Lin
         layout.nav_width(),
         layout.nav_viewport_rows(),
         content.show_nav_badges,
+        content.empty_match_message,
     );
     rows.truncate(layout.body_rows);
     while rows.len() < layout.body_rows {
@@ -487,9 +493,20 @@ fn nav_item_rows(
     width: usize,
     viewport_rows: usize,
     show_badges: bool,
+    empty_match_message: &str,
 ) -> Vec<Line<'static>> {
-    if matching.is_empty() || viewport_rows == 0 {
-        return (0..viewport_rows).map(|_| Line::raw("")).collect();
+    if viewport_rows == 0 {
+        return Vec::new();
+    }
+    if matching.is_empty() {
+        let mut rows = vec![styled_line(
+            format!("  {empty_match_message}"),
+            width,
+            Theme::dim(),
+            LineFill::PadToWidth,
+        )];
+        rows.resize_with(viewport_rows, || padded_plain("", width));
+        return rows;
     }
 
     let mut rows = Vec::with_capacity(matching.len());
@@ -540,7 +557,11 @@ fn nav_item_line(
     if width == 0 {
         return Line::raw("");
     }
-    let marker = if selected { "→" } else { " " };
+    let marker = if selected {
+        super::composer_chrome::SELECTION_MARKER_ACTIVE
+    } else {
+        super::composer_chrome::SELECTION_MARKER_INACTIVE
+    };
     let style = if selected {
         Theme::accent()
     } else {
@@ -794,12 +815,7 @@ fn fit_overlay_footer(
 }
 
 fn join_footer_segments<'a>(segments: impl IntoIterator<Item = &'a str>) -> String {
-    let body = segments
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" · ");
-    format!(" {body}")
+    format!(" {}", super::composer_chrome::join_footer_parts(segments))
 }
 
 fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Line<'static> {

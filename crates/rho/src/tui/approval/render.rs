@@ -59,7 +59,15 @@ pub(super) fn approval_lines_for_position(
         let selected = choice == active;
         lines.push(Line::styled(
             truncate_one_line(
-                &format!("{} {}", if selected { ">" } else { " " }, choice.label()),
+                &format!(
+                    "{} {}",
+                    if selected {
+                        crate::tui::composer_chrome::SELECTION_MARKER_ACTIVE
+                    } else {
+                        crate::tui::composer_chrome::SELECTION_MARKER_INACTIVE
+                    },
+                    choice.label()
+                ),
                 width,
             ),
             if selected {
@@ -82,7 +90,7 @@ pub(super) fn approval_lines_for_position(
             ""
         };
         format!(
-            "pgup/pgdn details {}-{}/{}{}{}",
+            "PgUp/PgDn details {}-{}/{}{}{}",
             detail_offset + 1,
             detail_end,
             details.len(),
@@ -97,7 +105,14 @@ pub(super) fn approval_lines_for_position(
         Theme::dim(),
     ));
     lines.push(Line::styled(
-        truncate_one_line("enter confirm · arrows choose · esc deny & cancel", width),
+        truncate_one_line(
+            &crate::tui::composer_chrome::join_footer_parts([
+                "Enter confirm",
+                "arrows choose",
+                "Esc deny & cancel",
+            ]),
+            width,
+        ),
         Theme::dim(),
     ));
     lines

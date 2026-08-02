@@ -487,7 +487,6 @@ async fn logout_provider_picker_propagates_credential_store_errors() {
 fn model_picker_fuzzy_matches_and_autocompletes() {
     let mut picker = UiPicker::new(
         "select model",
-        "enter confirm",
         vec![
             PickerItem {
                 section: None,
@@ -528,7 +527,6 @@ fn model_picker_fuzzy_matches_and_autocompletes() {
 fn picker_selection_wraps() {
     let mut picker = UiPicker::new(
         "select model",
-        "enter confirm",
         vec![
             PickerItem {
                 section: None,
@@ -568,7 +566,6 @@ fn favorite_save_failure_keeps_model_picker_open() {
     app.input_ui
         .set_composer(ComposerMode::Picker(UiPicker::new(
             "select model",
-            "ctrl-p pin/unpin",
             vec![PickerItem {
                 section: None,
                 label: selected_value.into(),

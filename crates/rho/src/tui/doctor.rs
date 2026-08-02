@@ -74,7 +74,6 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
 
     UiPicker::new(
         "Doctor diagnostics",
-        "type regex filter, enter or esc closes",
         checks.into_iter().map(PickerItem::from).collect(),
         PickerAction::Dismiss,
     )

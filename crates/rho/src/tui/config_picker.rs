@@ -83,7 +83,6 @@ fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> 
 pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> UiPicker {
     UiPicker::new(
         "Config · saves automatically",
-        "type to search settings, enter open, esc close",
         vec![
             item(
                 "Models & reasoning",
@@ -299,12 +298,7 @@ pub(super) fn category_picker(
         ),
         _ => return None,
     };
-    Some(UiPicker::new(
-        title,
-        "type to search, enter change, esc back",
-        items,
-        PickerAction::Config,
-    ))
+    Some(UiPicker::new(title, items, PickerAction::Config))
 }
 
 pub(super) fn is_category(value: &str) -> bool {
@@ -343,7 +337,6 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
 pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
     UiPicker::new(
         "Permission mode",
-        "enter select, esc back",
         [
             PermissionMode::Auto,
             PermissionMode::Plan,
@@ -378,7 +371,6 @@ fn permission_mode_description(mode: PermissionMode) -> &'static str {
 pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
     UiPicker::new(
         "Inline shell",
-        "enter select, esc back",
         super::inline_shell::available_shells(&config.inline_shell)
             .into_iter()
             .map(|shell| PickerItem {
@@ -404,7 +396,6 @@ pub(super) fn web_search_config_picker(
 ) -> UiPicker {
     UiPicker::new(
         "Web search config",
-        "type regex filter, enter change, esc back",
         vec![
             PickerItem {
                 section: None,

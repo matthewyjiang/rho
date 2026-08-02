@@ -10,7 +10,6 @@ use super::*;
 fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
     UiPicker::new(
         "loaded agents",
-        "help",
         vec![
             PickerItem {
                 section: None,
@@ -138,4 +137,51 @@ fn overlay_detail_end_scroll_uses_max_without_sentinel() {
     let line_count = overlay_detail_lines(picker.selected_detail(), viewport.width).len();
     let expected = line_count.saturating_sub(viewport.rows.max(1));
     assert_eq!(picker.detail_scroll, expected);
+}
+
+// Covers: empty overlay panes must show a no-match / invalid-regex cue instead
+// of a blank body that looks identical to a render bug.
+// Owner: tui picker_overlay empty state
+#[test]
+fn overlay_empty_match_state_is_visible() {
+    let mut picker = sample_picker("agent detail", "worker detail");
+    picker.filter = "zzzz-no-match".into();
+    picker.select_first_match();
+    let expected = picker.empty_match_message();
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 80, 20));
+    let text = frame
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains(expected),
+        "expected empty-state label {expected:?} in overlay body: {text:?}"
+    );
+
+    picker.filter = "(".into();
+    picker.select_first_match();
+    let expected = picker.empty_match_message();
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 80, 20));
+    let text = frame
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains(expected),
+        "expected empty-state label {expected:?} in overlay body: {text:?}"
+    );
 }

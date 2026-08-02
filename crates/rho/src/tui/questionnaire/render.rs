@@ -300,19 +300,19 @@ fn footer_hint(questionnaire: &QuestionnaireComposer) -> String {
     } else {
         parts.push("↑↓ choose");
         if matches!(question.kind, QuestionnaireQuestionKind::MultiSelect) {
-            parts.push("space toggle");
+            parts.push("Space toggle");
         }
         if question.allow_other {
             parts.push("type for other");
         }
     }
     if questionnaire.on_last_question() {
-        parts.push("enter submit");
+        parts.push("Enter submit");
     } else {
-        parts.push("enter next");
+        parts.push("Enter next");
     }
-    parts.push("esc cancel");
-    parts.join(" · ")
+    parts.push("Esc cancel");
+    crate::tui::composer_chrome::join_footer_parts(parts)
 }
 
 fn questionnaire_choice_style(

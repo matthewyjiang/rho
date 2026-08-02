@@ -27,6 +27,7 @@ mod command_block;
 mod command_palette;
 mod compaction_display;
 mod composer;
+mod composer_chrome;
 mod config_actions;
 mod config_editor;
 mod config_input;
@@ -164,7 +165,7 @@ use login::SecretInput;
 use paste_burst::PasteBurstEnter;
 use picker::{
     sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgePlacement, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker,
+    PickerItem, PickerKeyHints, PickerLayout, UiPicker,
 };
 use prompt_turn::FailedTurn;
 #[cfg(test)]

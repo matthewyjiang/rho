@@ -21,11 +21,25 @@ impl PartialEq<Vec<usize>> for PickerMatches<'_> {
     }
 }
 
+/// Optional key bindings advertised in footers and honored by picker input.
+///
+/// Renderers and input both read these flags so hints cannot drift from keys.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct PickerKeyHints {
+    /// Ctrl-P pins or unpins the selected model.
+    pub(super) pin_toggle: bool,
+    /// Tab fills the filter from the selected row.
+    pub(super) tab_complete: bool,
+    /// `d` / Delete removes the selected row (sessions, workflows).
+    pub(super) row_delete: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 struct PickerMatchCache {
     initialized: bool,
     filter: String,
     _regex: Option<Regex>,
+    invalid_regex: bool,
     indices: Vec<usize>,
 }
 
@@ -41,7 +55,7 @@ struct DetailWrapCache {
 #[derive(Clone, Debug)]
 pub(super) struct UiPicker {
     pub(super) title: String,
-    pub(super) help: String,
+    pub(super) key_hints: PickerKeyHints,
     pub(super) items: Vec<PickerItem>,
     pub(super) selected: usize,
     pub(super) filter: String,
@@ -190,13 +204,12 @@ pub(super) fn sort_items_by_ascii_label(items: &mut [PickerItem]) {
 impl UiPicker {
     pub(super) fn new(
         title: impl Into<String>,
-        help: impl Into<String>,
         items: Vec<PickerItem>,
         action: PickerAction,
     ) -> Self {
         Self {
             title: title.into(),
-            help: help.into(),
+            key_hints: PickerKeyHints::default(),
             items,
             selected: 0,
             filter: String::new(),
@@ -215,6 +228,11 @@ impl UiPicker {
 
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
         self.layout = layout;
+        self
+    }
+
+    pub(super) fn with_key_hints(mut self, key_hints: PickerKeyHints) -> Self {
+        self.key_hints = key_hints;
         self
     }
 
@@ -412,14 +430,77 @@ impl UiPicker {
     }
 
     pub(super) fn action_footer(&self) -> String {
-        let escape = if self.has_parent() { "back" } else { "close" };
+        super::composer_chrome::join_footer_parts(
+            self.action_footer_parts()
+                .iter()
+                .map(std::string::String::as_str),
+        )
+    }
+
+    /// Key-hint segments for overlay and inline footers (no title prefix).
+    pub(super) fn action_footer_parts(&self) -> Vec<String> {
         let confirm = self.confirm_action_label();
-        // Help and other dismiss overlays use Enter and Esc for the same exit.
+        let escape = self.escape_verb();
+        let mut parts = Vec::new();
+        // Dismiss overlays use Enter and Esc for the same exit.
         if confirm == escape {
-            format!("Enter/Esc {confirm}")
+            parts.push(format!("Enter/Esc {confirm}"));
         } else {
-            format!("Enter {confirm} · Esc {escape}")
+            parts.push(format!("Enter {confirm}"));
         }
+        if self.action.space_confirms_selection() {
+            parts.push("Space confirm".into());
+        }
+        if self.key_hints.pin_toggle {
+            parts.push("Ctrl-P pin/unpin".into());
+        }
+        if self.key_hints.tab_complete {
+            parts.push("Tab complete".into());
+        }
+        if self.key_hints.row_delete {
+            parts.push("d delete".into());
+        }
+        if confirm != escape {
+            parts.push(format!("Esc {escape}"));
+        }
+        parts
+    }
+
+    /// Inline list footer: title plus shared action hints and search cue.
+    pub(super) fn list_footer_text(&self) -> String {
+        let mut parts = vec![self.title.as_str(), "Type to search"];
+        let action_parts = self.action_footer_parts();
+        let owned = action_parts
+            .iter()
+            .map(std::string::String::as_str)
+            .collect::<Vec<_>>();
+        parts.extend(owned);
+        format!("  {}", super::composer_chrome::join_footer_parts(parts))
+    }
+
+    fn escape_verb(&self) -> &'static str {
+        if self.has_parent() {
+            return "back";
+        }
+        match self.confirm_action_label() {
+            "close" => "close",
+            _ => "cancel",
+        }
+    }
+
+    /// Empty-match message when the filter yields no rows.
+    pub(super) fn empty_match_message(&self) -> &'static str {
+        if self.filter_is_invalid_regex() {
+            "invalid regex"
+        } else {
+            "no matches"
+        }
+    }
+
+    pub(super) fn filter_is_invalid_regex(&self) -> bool {
+        // Ensure the match cache is current before reading the flag.
+        let _ = self.matching_indices();
+        self.matches.borrow().invalid_regex
     }
 
     pub(super) fn with_confirm_verb(mut self, verb: impl Into<String>) -> Self {
@@ -519,13 +600,13 @@ impl UiPicker {
         };
         if stale {
             let filter = self.filter.trim();
-            let regex = if self.uses_regex_filter() && !filter.is_empty() {
-                RegexBuilder::new(filter)
-                    .case_insensitive(true)
-                    .build()
-                    .ok()
+            let (regex, invalid_regex) = if self.uses_regex_filter() && !filter.is_empty() {
+                match RegexBuilder::new(filter).case_insensitive(true).build() {
+                    Ok(regex) => (Some(regex), false),
+                    Err(_) => (None, true),
+                }
             } else {
-                None
+                (None, false)
             };
             let indices = if self.uses_regex_filter() {
                 picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
@@ -536,6 +617,7 @@ impl UiPicker {
                 initialized: true,
                 filter: self.filter.clone(),
                 _regex: regex,
+                invalid_regex,
                 indices,
             };
         }
@@ -697,3 +779,7 @@ impl super::App {
 fn is_word_boundary(ch: char) -> bool {
     matches!(ch, '/' | '\\' | '_' | '-' | '.' | ' ')
 }
+
+#[cfg(test)]
+#[path = "picker_tests.rs"]
+mod tests;

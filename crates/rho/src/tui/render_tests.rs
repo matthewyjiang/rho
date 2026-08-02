@@ -292,7 +292,7 @@ fn picker_lists_more_items_on_a_taller_viewport() {
             selection_verb: None,
         })
         .collect();
-    let picker = UiPicker::new("models", "help", items, PickerAction::SelectModel);
+    let picker = UiPicker::new("models", items, PickerAction::SelectModel);
 
     let item_rows = |height: usize| {
         picker_lines(&picker, 80, height)

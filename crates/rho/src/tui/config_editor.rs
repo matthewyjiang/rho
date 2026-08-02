@@ -250,7 +250,13 @@ pub(super) fn config_number_input_lines(
     let label = input.key.label();
     vec![
         styled_line(
-            truncate_one_line(&format!("edit {label}  enter save, esc cancel"), width),
+            truncate_one_line(
+                &format!(
+                    "edit {label}  {}",
+                    super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+                ),
+                width,
+            ),
             width,
             Theme::dim(),
             LineFill::Natural,
