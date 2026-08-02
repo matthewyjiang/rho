@@ -102,8 +102,8 @@ pub(super) fn hub_picker(
     if sources.is_empty() {
         items.push(item(
             Some("START"),
-            "No local workflows yet",
-            "Add .rho/workflows/<name>/workflow.star or .rho/workflows/<name>.star, then reopen /workflow.",
+            "No workflows yet",
+            "Ask Rho to create your first workflow.",
             "noop:empty_sources",
             None,
             Some("close"),
@@ -256,15 +256,6 @@ impl App {
         let sources = workflow_discover::discover_workflow_sources(&self.info.runtime.cwd);
         let plans = ops.list_workspace_plans()?;
         let runs = ops.list_workspace_runs()?;
-        if sources.is_empty() && plans.is_empty() && runs.is_empty() {
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.insert_entry(&Entry::Notice(
-                "No workflows yet. Add .rho/workflows/<name>/workflow.star, then run /workflow again."
-                    .into(),
-            ));
-            self.status = "no workflows".into();
-            return Ok(());
-        }
         let picker = hub_picker(&sources, &plans, &runs);
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.status = "workflows".into();

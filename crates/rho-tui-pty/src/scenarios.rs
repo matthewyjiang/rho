@@ -36,7 +36,8 @@ use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
-    setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS,
+    setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPEN_AGENTS_PICKER_STEPS,
+    OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
 };
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
@@ -701,6 +702,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Open and dismiss the model picker",
         DEFAULT_SIZE,
         OPEN_MODEL_PICKER_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "open_workflow_hub_empty",
+        "Open the workflows hub when the workspace has no workflows yet",
+        DEFAULT_SIZE,
+        OPEN_WORKFLOW_HUB_EMPTY_STEPS,
         false,
     ),
     Scenario::new(

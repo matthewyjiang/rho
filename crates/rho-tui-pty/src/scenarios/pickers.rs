@@ -25,6 +25,28 @@ pub(super) const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+/// Empty workspace must still open the workflows overlay instead of a chat notice.
+pub(super) const OPEN_WORKFLOW_HUB_EMPTY_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/workflow"),
+    Step::WaitText {
+        text: "WORKFLOWS",
+        timeout: STARTUP,
+    },
+    Step::AssertText("START"),
+    Step::AssertText("RUNS"),
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 pub(super) fn setup_edit_user_agent(home: &IsolatedHome) -> Result<()> {
     let agents = home.home.join(".rho/agents");
     std::fs::create_dir_all(&agents)?;
