@@ -14,53 +14,26 @@ fn step_text(step: SetupStep) -> Vec<String> {
         .collect()
 }
 
-/// The step list must show one current step and no more, with everything
-/// before it marked done, so the screen always says where the user is.
+/// The rendered step list is what tells the user where they are: one row per
+/// step, in order, each carrying its own marker. Earlier steps read as done,
+/// the active one as current, and later ones as pending.
 #[test]
-fn exactly_one_step_is_current_and_earlier_steps_are_done() {
+fn the_step_list_renders_one_marked_row_per_step() {
     let cases = [
-        (
-            SetupStep::SignIn,
-            vec![StepState::Current, StepState::Pending],
-        ),
+        (SetupStep::SignIn, [StepState::Current, StepState::Pending]),
         (
             SetupStep::ChooseModel,
-            vec![StepState::Done, StepState::Current],
+            [StepState::Done, StepState::Current],
         ),
     ];
 
-    for (step, expected) in cases {
-        let states: Vec<StepState> = (0..STEP_LABELS.len())
-            .map(|index| match index.cmp(&step.index()) {
-                std::cmp::Ordering::Less => StepState::Done,
-                std::cmp::Ordering::Equal => StepState::Current,
-                std::cmp::Ordering::Greater => StepState::Pending,
-            })
+    for (step, states) in cases {
+        let expected: Vec<String> = states
+            .iter()
+            .zip(STEP_LABELS)
+            .map(|(state, label)| format!("{} {label}", state.marker()))
             .collect();
-        assert_eq!(states, expected, "step states at {step:?}");
-    }
-}
-
-/// Every step renders one row carrying its own marker, so a step never goes
-/// missing or borrows another's state.
-#[test]
-fn each_step_renders_one_row_with_its_marker() {
-    for step in [SetupStep::SignIn, SetupStep::ChooseModel] {
-        let rows = step_text(step);
-        assert_eq!(rows.len(), STEP_LABELS.len(), "row count at {step:?}");
-        for (index, row) in rows.iter().enumerate() {
-            assert!(
-                row.contains(STEP_LABELS[index]),
-                "row {index} lost its label at {step:?}: {row}"
-            );
-        }
-        assert_eq!(
-            rows.iter()
-                .filter(|row| row.contains(StepState::Current.marker()))
-                .count(),
-            1,
-            "current marker count at {step:?}"
-        );
+        assert_eq!(step_text(step), expected, "step rows at {step:?}");
     }
 }
 
@@ -71,7 +44,12 @@ fn the_content_column_is_centred_and_bounded() {
     let cases = [(30_u16, 30_u16), (74, 74), (200, CONTENT_WIDTH)];
 
     for (terminal_width, expected_width) in cases {
-        let column = content_column(Rect::new(0, 0, terminal_width, 24));
+        let column = content_column(Rect {
+            x: 0,
+            y: 0,
+            width: terminal_width,
+            height: 24,
+        });
         assert_eq!(column.width, expected_width, "width at {terminal_width}");
         assert!(
             column.x + column.width <= terminal_width,

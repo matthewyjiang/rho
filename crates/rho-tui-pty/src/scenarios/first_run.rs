@@ -2,12 +2,21 @@
 
 use anyhow::Result;
 
-use crate::{keys::Key, scenario::Step, PtyHarness};
+use crate::{keys::Key, scenario::Step, IsolatedHome, PtyHarness};
 
 use super::{SETTLE, STARTUP};
 
 /// Environment that forces the first-run presentation without deleting a config.
 pub(super) const FIRST_RUN_ENV: &[(&str, &str)] = &[("RHO_FIRST_RUN", "1")];
+
+/// Give the workspace a prompt template, so the signed-out scenario can submit
+/// a prompt that the composer clears while it expands.
+pub(super) fn setup_prompt_template(home: &IsolatedHome) -> Result<()> {
+    let prompts = home.workspace.join(".rho").join("prompts");
+    std::fs::create_dir_all(&prompts)?;
+    std::fs::write(prompts.join("greet.md"), "expanded template body")?;
+    Ok(())
+}
 
 /// Setup owns the whole screen, so nothing a session draws may show through.
 fn assert_session_chrome_hidden(harness: &mut PtyHarness) -> Result<()> {
@@ -105,9 +114,9 @@ pub(super) const SIGNED_OUT_SETUP_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     // The statusline names the gap instead of a model the session cannot reach,
-    // and the header hints lead with login.
+    // and the header hints lead with the command that fixes it.
     Step::AssertText("not signed in"),
-    Step::AssertText("Sign in to a provider"),
+    Step::AssertText("/login       Sign in to a provider"),
     Step::Phase("prompt_opens_login_picker"),
     Step::SubmitText("hello"),
     Step::WaitText {
@@ -119,6 +128,20 @@ pub(super) const SIGNED_OUT_SETUP_STEPS: &[Step] = &[
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "hello",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
+    // A template command clears the composer while it expands, so the expanded
+    // prompt must be written back rather than lost with the text that made it.
+    Step::Phase("template_prompt_survives"),
+    Step::SubmitText("/prompt:greet with a trailing note"),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "expanded template body with a trailing note",
         timeout: SETTLE,
     },
     Step::Phase("exit"),

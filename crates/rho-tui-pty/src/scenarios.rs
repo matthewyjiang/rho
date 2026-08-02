@@ -29,7 +29,8 @@ use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use first_run::{
-    FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
+    setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SKIP_STEPS,
+    SIGNED_OUT_SETUP_STEPS,
 };
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
@@ -743,7 +744,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Walk a first launch through the full-screen sign-in and model steps",
         DEFAULT_SIZE,
         FIRST_RUN_SETUP_STEPS,
-        false,
+        /*smoke*/ false,
     )
     .with_env(FIRST_RUN_ENV),
     Scenario::new(
@@ -751,7 +752,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Leave the first-launch setup screen with Esc and land in a session",
         DEFAULT_SIZE,
         FIRST_RUN_SKIP_STEPS,
-        false,
+        /*smoke*/ false,
     )
     .with_env(FIRST_RUN_ENV),
     Scenario::new(
@@ -759,8 +760,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Show the signed-out header and statusline, and route a prompt to login",
         DEFAULT_SIZE,
         SIGNED_OUT_SETUP_STEPS,
-        false,
-    ),
+        /*smoke*/ false,
+    )
+    .with_setup(setup_prompt_template),
     Scenario::new(
         "login_provider_groups",
         "Group login providers and open readable authentication methods",

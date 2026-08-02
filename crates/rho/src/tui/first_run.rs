@@ -120,9 +120,19 @@ impl super::App {
     }
 
     /// A prompt submitted with no credentials opens the login picker instead of
-    /// failing a turn. The composer keeps the text, so one enter sends it once
-    /// a provider is live.
-    pub(super) fn offer_login_instead_of_turn(&mut self) -> anyhow::Result<()> {
+    /// failing a turn, and the composer holds the prompt so one enter sends it
+    /// once a provider is live.
+    ///
+    /// The prompt is written back rather than left alone, because a template or
+    /// skill command clears the composer while it expands. Writing back the
+    /// resolved text keeps that work instead of dropping it, and it is the text
+    /// the turn would have sent.
+    pub(super) fn offer_login_instead_of_turn(
+        &mut self,
+        turn: super::TurnPrompt,
+    ) -> anyhow::Result<()> {
+        self.input_ui.set_text(turn.display);
+        self.input_ui.set_cursor(self.input_ui.char_len());
         self.notify_status("not signed in yet; your prompt is still in the composer");
         self.open_login_picker();
         Ok(())

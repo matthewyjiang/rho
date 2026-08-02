@@ -51,7 +51,7 @@ For normal interactive setup, prefer `/login`. Environment variables are CI/deve
 
 ## First run
 
-The first launch on a machine opens a full-screen setup instead of a session. There is no history to read and no model to name yet, so the composer, hints, and statusline stay out of the way until you have both:
+The first launch on a fresh machine opens a full-screen setup instead of a session. There is no history to read and no model you chose yet, so the composer, hints, and statusline stay out of the way until you have both:
 
 ```text
 rho  v1.26.0
@@ -72,7 +72,7 @@ Esc to skip setup
 
 Each step drives the same picker the matching command opens, so sign-in behaves exactly as `/login` does, including method pickers, the credential-store question, and OAuth. Choosing a model ends setup and hands off to a normal session.
 
-Setup opens at whichever step can do something. A launch that already has stored credentials starts at the model step rather than asking for a login that is done, and a launch with no models to offer starts at sign-in. Esc leaves setup at any point.
+Setup opens at whichever step can do something. A launch whose available credentials, stored or from the environment, already list models starts at the model step rather than asking for a login that is done; a launch with no models to offer starts at sign-in. Esc leaves setup at any point.
 
 ## Signed-out sessions
 
@@ -83,13 +83,15 @@ Outside setup, the session shows whether the active provider resolved to usable 
 
 ## Seeing these states without deleting your config
 
-Set `RHO_FIRST_RUN=1` to open the setup screen on a configured machine:
+Set `RHO_FIRST_RUN=1` to open the setup screen without deleting anything:
 
 ```bash
 RHO_FIRST_RUN=1 rho
 ```
 
-To see the signed-out session state, run `/logout <provider>` for the active provider. Both states clear as soon as a login succeeds.
+Forcing it this way opens setup on a machine that already has history and a chosen model, so setup is the only thing the flag changes; it neither clears state nor creates a fresh config.
+
+To see the signed-out session state, run `/logout <provider>` for the active provider. A successful login clears the signed-out header and statusline; setup ends when you choose a model, or when you leave it with Esc.
 
 ## Login and provider switching
 

@@ -343,7 +343,7 @@ impl App {
         }
 
         if !self.setup_state().signed_in {
-            return self.offer_login_instead_of_turn();
+            return self.offer_login_instead_of_turn(turn);
         }
 
         let media = self

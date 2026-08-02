@@ -84,9 +84,10 @@ impl App {
 
     /// Open the setup screen at the first step that can do anything.
     ///
-    /// Models come from stored credentials, so a launch with none to offer
-    /// starts at sign-in. A launch that can already list models skips the
-    /// login step rather than asking for one that is done.
+    /// Models come from the credentials available to the session, stored or
+    /// from the environment, so a launch with none to offer starts at sign-in.
+    /// A launch that can already list models skips the login step rather than
+    /// asking for one that is done.
     pub(super) fn start_setup_screen(&mut self, terminal: &mut super::DefaultTerminal) {
         if !self.setup_state().first_run {
             return;
@@ -100,36 +101,44 @@ impl App {
         }
     }
 
-    /// Move from sign-in to the model step once credentials are stored.
+    /// Move from sign-in to the model step once a login succeeds.
     pub(super) fn advance_setup_screen_after_login(
         &mut self,
         terminal: &mut super::DefaultTerminal,
     ) {
-        if self.setup_screen != Some(SetupStep::SignIn) {
-            return;
+        match self.setup_screen {
+            Some(SetupStep::SignIn) => {
+                self.setup_screen = Some(SetupStep::ChooseModel);
+                self.open_setup_model_picker(terminal);
+            }
+            // A login from the model step or from a normal session changes
+            // credentials, not which step the user is on.
+            Some(SetupStep::ChooseModel) | None => {}
         }
-        self.setup_screen = Some(SetupStep::ChooseModel);
-        self.open_setup_model_picker(terminal);
     }
 
     /// Close the screen once a model is live. The session takes over from here.
+    ///
+    /// The status is left as the caller set it, so a config-save failure during
+    /// the model switch still reaches the user.
     pub(super) fn finish_setup_screen(&mut self) {
-        if self.setup_screen == Some(SetupStep::ChooseModel) {
-            self.setup_screen = None;
-            self.status = "ready".into();
+        match self.setup_screen {
+            Some(SetupStep::ChooseModel) => self.setup_screen = None,
+            Some(SetupStep::SignIn) | None => {}
         }
     }
 
     /// Leave setup when the user backs out of its picker.
     ///
     /// Called from the one place a picker collapses to the plain composer, so
-    /// Esc always leads somewhere instead of stranding an empty screen.
+    /// Esc always leads somewhere instead of stranding an empty screen. Every
+    /// step exits the same way, so this needs no per-step handling.
     pub(super) fn dismiss_setup_screen(&mut self) {
         self.setup_screen = None;
     }
 
-    /// The model picker for this session, or `None` when stored credentials
-    /// offer no models to choose between.
+    /// The model picker for this session, or `None` when the available
+    /// credentials offer no models to choose between.
     fn setup_model_picker(&mut self) -> Option<super::UiPicker> {
         self.refresh_available_auths();
         let picker = super::model_picker::model_picker(&self.info.runtime, &self.available_auths);
