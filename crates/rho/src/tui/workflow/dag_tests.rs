@@ -1,4 +1,5 @@
-use super::{layer_index_of, render_dag};
+use super::{layer_index_of, render_dag, state_label};
+use crate::workflow::AttemptNumber;
 use crate::{
     tui::workflow::event_adapter::{ExecutionMetadata, WorkflowNodeSnapshot},
     workflow::{AgentRuntime, NodeId, NodeState, WorkspaceAccess},
@@ -53,4 +54,17 @@ fn dependents_render_below_dependencies() {
     let inspect_pos = text.find("Inspect").expect("inspect label");
     let apply_pos = text.find("Apply").expect("apply label");
     assert!(inspect_pos < apply_pos);
+}
+
+// Covers: a running node labels its in-flight attempt so the details pane and
+// DAG distinguish retries (e.g. a resumed run showing `running · try 2`).
+// Owner: workflow run TUI rendering (pure label logic).
+#[test]
+fn running_node_label_reports_attempt() {
+    let attempt = AttemptNumber::new(2).unwrap();
+    assert_eq!(
+        state_label(&NodeState::Running { attempt }),
+        "running · try 2"
+    );
+    assert_eq!(state_label(&NodeState::Pending), "waiting");
 }

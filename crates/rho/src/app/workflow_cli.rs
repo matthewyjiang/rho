@@ -65,7 +65,9 @@ const PLANNER_TOKEN_BYTES: usize = 32;
 const PLANNER_REQUEST_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) const PLANNER_RESPONSE_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 const PLANNER_STDERR_BYTES: usize = 64 * 1024;
-#[cfg(any(unix, windows))]
+// Address-space cap: RLIMIT_AS on unix except macOS (Darwin has no
+// address-space rlimit), or a Windows Job Object memory limit.
+#[cfg(any(all(unix, not(target_os = "macos")), windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 16 * 64 * 1024 * 1024;
 const WORKFLOW_WIRE_VERSION: u32 = 1;
 // The workflow freeze-policy test keeps this identity aligned with Cargo.toml.
