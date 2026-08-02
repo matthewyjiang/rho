@@ -76,7 +76,7 @@ pub(super) fn session_header_lines(
     }
     if let Some(headline) = setup.headline() {
         lines.push(Line::raw(""));
-        lines.push(Line::from(headline.span()));
+        lines.push(Line::from(headline));
     }
     lines.push(Line::raw(""));
     push_session_header_hints(&mut lines, setup, width);

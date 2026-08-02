@@ -32,13 +32,14 @@ fn header_lines(setup: SetupState) -> Vec<String> {
         .collect()
 }
 
-/// A ready session is the only state that adds no copy above the hints. Every
-/// other state has something the user needs before their first turn.
+/// The header announces itself only when the session cannot run a turn. A
+/// first launch says its welcome on the setup screen, so repeating it here
+/// would greet the user twice.
 #[test]
-fn only_a_returning_signed_in_session_skips_the_headline() {
+fn only_a_signed_out_session_adds_a_headline() {
     let cases = [
         (READY, false),
-        (FIRST_RUN_READY, true),
+        (FIRST_RUN_READY, false),
         (FIRST_RUN_SIGNED_OUT, true),
         (SIGNED_OUT, true),
     ];
@@ -94,9 +95,11 @@ fn the_header_renders_the_hints_the_state_selected() {
             .collect();
         assert_eq!(rendered_hints, hints, "rendered hint block for {setup:?}");
 
-        let headline = setup.headline().map(|headline| headline.text);
+        let headline = setup
+            .headline()
+            .map(|headline| headline.content.into_owned());
         assert_eq!(
-            rendered.iter().any(|line| Some(line.as_str()) == headline),
+            rendered.iter().any(|line| Some(line) == headline.as_ref()),
             headline.is_some(),
             "rendered headline for {setup:?}"
         );

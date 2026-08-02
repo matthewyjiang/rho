@@ -71,23 +71,9 @@ const SIGNED_OUT_HINTS: &[Hint] = &[
     Hint::reference(" /            Show available commands"),
 ];
 
-/// The headline above the hint block.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Headline {
-    text: &'static str,
-    warning: bool,
-}
-
-impl Headline {
-    pub(super) fn span(self) -> Span<'static> {
-        let style = if self.warning {
-            Theme::warning()
-        } else {
-            Theme::text_strong()
-        };
-        Span::styled(self.text, style)
-    }
-}
+/// The one headline the session header can carry. A first launch says its
+/// welcome on the setup screen, so the header never repeats it.
+const SIGNED_OUT_HEADLINE: &str = " Not signed in. Rho needs a provider before it can answer.";
 
 /// Where a session sits in provider setup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,22 +94,10 @@ impl Default for SetupState {
 }
 
 impl SetupState {
-    pub(super) fn headline(self) -> Option<Headline> {
-        match (self.signed_in, self.first_run) {
-            (false, true) => Some(Headline {
-                text: " Welcome to Rho. Sign in to a provider to start.",
-                warning: true,
-            }),
-            (false, false) => Some(Headline {
-                text: " Not signed in. Rho needs a provider before it can answer.",
-                warning: true,
-            }),
-            (true, true) => Some(Headline {
-                text: " Welcome to Rho. Type a prompt and press enter.",
-                warning: false,
-            }),
-            (true, false) => None,
-        }
+    /// Copy above the hint block, shown only when the session cannot run a
+    /// turn. A session that works needs no announcement.
+    pub(super) fn headline(self) -> Option<Span<'static>> {
+        (!self.signed_in).then(|| Span::styled(SIGNED_OUT_HEADLINE, Theme::warning()))
     }
 
     pub(super) fn hints(self) -> &'static [Hint] {
