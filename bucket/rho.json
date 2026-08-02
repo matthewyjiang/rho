@@ -1,12 +1,12 @@
 {
-  "version": "1.26.1",
+  "version": "1.27.0",
   "description": "A lightweight agent harness inspired by Pi.",
   "homepage": "https://github.com/matthewyjiang/rho",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/matthewyjiang/rho/releases/download/rho-coding-agent-v1.26.1/rho-x86_64-pc-windows-msvc.zip",
-      "hash": "adb76c000de47772b4505878c41e8b04e4eaa4d8a9a95dd9031c92576ac47345"
+      "url": "https://github.com/matthewyjiang/rho/releases/download/rho-coding-agent-v1.27.0/rho-x86_64-pc-windows-msvc.zip",
+      "hash": "132e304304f0241be73446b1c776b72ce9d41afee584601f853baf7c01171c3d"
     }
   },
   "bin": "rho.exe",
