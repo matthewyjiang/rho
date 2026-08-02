@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(any(feature = "document-pdf", feature = "document-spreadsheets"))]
+#[cfg(feature = "document-spreadsheets")]
 use std::fmt;
 
 use thiserror::Error;
@@ -170,7 +170,7 @@ impl BoundedText {
         }
     }
 
-    #[cfg(any(feature = "document-docx", feature = "document-pdf"))]
+    #[cfg(feature = "document-docx")]
     pub(super) fn truncated(&self) -> bool {
         self.truncated
     }
@@ -183,7 +183,7 @@ impl BoundedText {
     }
 }
 
-#[cfg(any(feature = "document-pdf", feature = "document-spreadsheets"))]
+#[cfg(feature = "document-spreadsheets")]
 impl fmt::Write for BoundedText {
     fn write_str(&mut self, value: &str) -> fmt::Result {
         if self.push_str(value) {

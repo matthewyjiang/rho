@@ -139,14 +139,18 @@ fn sanitizes_document_names_and_bounds_their_length() {
 }
 
 #[cfg(feature = "document-pdf")]
-// Covers: the shipped PDF backend must extract text-layer content from memory.
+// Covers: the shipped PDF backend must extract text-layer content as structured Markdown.
 // Owner: PDF extractor
 #[test]
-fn extracts_pdf_text_and_warns_for_empty_pages() {
+fn extracts_pdf_markdown_and_warns_for_empty_pages() {
     let text_document =
         extract_document_from_bytes("renamed.bin", &pdf_fixture("(Hello PDF) Tj")).unwrap();
     assert_eq!(text_document.mime, "application/pdf");
-    assert_eq!(text_document.text.trim(), "Hello PDF");
+    assert!(
+        text_document.text.contains("Hello PDF"),
+        "structured markdown should keep the text layer: {:?}",
+        text_document.text
+    );
     assert_eq!(text_document.warnings, Vec::<String>::new());
 
     let empty_document = extract_document_from_bytes("blank.pdf", &pdf_fixture("")).unwrap();
@@ -161,10 +165,10 @@ fn extracts_pdf_text_and_warns_for_empty_pages() {
 }
 
 #[cfg(feature = "document-pdf")]
-// Covers: the PDF backend must stop writing when the facade's output budget is exhausted.
-// Owner: PDF extractor
+// Covers: the facade must cap the PDF backend's Markdown at its output budget.
+// Owner: document facade
 #[test]
-fn bounds_pdf_output_during_extraction() {
+fn bounds_pdf_markdown_output() {
     let operation = format!("({}) Tj", "A".repeat(MAX_EXTRACTED_CHARACTERS + 1));
 
     let document = extract_document_from_bytes("large.pdf", &pdf_fixture(&operation)).unwrap();
@@ -182,9 +186,9 @@ fn rejects_flate_streams_that_exceed_the_expanded_budget() {
     encoder.write_all(&vec![b'A'; 2_000]).unwrap();
     let compressed = encoder.finish().unwrap();
 
-    let error = pdf::bounded_flate_size(&compressed, 1_000).unwrap_err();
+    let error = pdf::bounded_flate_size(&compressed, /*remaining*/ 1_000).unwrap_err();
 
-    assert!(error.contains("expands beyond"));
+    assert!(error.contains("remaining 1000 byte budget"));
 }
 
 #[cfg(feature = "document-pdf")]
@@ -202,15 +206,90 @@ fn rejects_pdf_streams_with_chained_flate_filters() {
 }
 
 #[cfg(feature = "document-pdf")]
-// Covers: xref streams must be rejected before lopdf can expand them while loading.
+// Covers: modern PDF 1.5 object and cross-reference streams must extract when Flate stays in budget.
 // Owner: PDF extractor
 #[test]
-fn rejects_pdf_cross_reference_streams_before_loading() {
-    let bytes = b"%PDF-1.5\n1 0 obj\n<< /Type /XRef >>\nendobj\nstartxref\n9\n%%EOF";
+fn extracts_pdf_with_object_and_cross_reference_streams() {
+    let document =
+        extract_document_from_bytes("modern.pdf", &pdf_fixture_with_object_streams()).unwrap();
 
-    let error = extract_document_from_bytes("xref-stream.pdf", bytes).unwrap_err();
+    assert!(
+        document.text.contains("Hello ObjStm"),
+        "modern PDF text layer should extract: {:?}",
+        document.text
+    );
+}
 
-    assert!(error.to_string().contains("cross-reference streams"));
+#[cfg(feature = "document-pdf")]
+// Covers: /Length must skip stream payloads so an embedded endstream marker does not cut the scan.
+// Owner: PDF preflight
+#[test]
+fn accepts_pdf_stream_payload_containing_endstream_marker() {
+    let payload = b"xxxxxendstreamxx";
+    let mut bytes = b"%PDF-1.4\n".to_vec();
+    let object_offset = bytes.len();
+    write!(bytes, "1 0 obj\n<< /Length {} >>\nstream\n", payload.len()).unwrap();
+    bytes.extend_from_slice(payload);
+    bytes.extend_from_slice(b"\nendstream\nendobj\n");
+    let xref_offset = bytes.len();
+    write!(
+        bytes,
+        "xref\n0 2\n0000000000 65535 f \n{object_offset:010} 00000 n \ntrailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    )
+    .unwrap();
+
+    assert_eq!(pdf::validate_object_nesting(&bytes), Ok(()));
+}
+
+#[cfg(feature = "document-pdf")]
+// Covers: a present but invalid /Filter must fail closed instead of counting as unfiltered.
+// Owner: PDF preflight
+#[test]
+fn rejects_pdf_streams_with_malformed_filter_entries() {
+    let bytes = pdf_fixture_with_stream_dictionary("(content) Tj", "", "/Filter 123 ");
+
+    let error = extract_document_from_bytes("bad-filter.pdf", &bytes).unwrap_err();
+
+    assert!(error.to_string().contains("malformed /Filter"));
+}
+
+#[cfg(feature = "document-pdf")]
+// Covers: untrusted PDFs with excessive object nesting must fail before the extraction parser.
+// Owner: PDF preflight
+#[test]
+fn rejects_excessive_pdf_object_nesting_before_extraction() {
+    let excessive_depth = pdf::MAX_PDF_OBJECT_NESTING_DEPTH + 1;
+    let nested = format!(
+        "{}0{}",
+        "[".repeat(excessive_depth),
+        "]".repeat(excessive_depth)
+    );
+    let bytes = pdf_fixture_with_catalog_entry("(content) Tj", &format!("/Nested {nested}"));
+
+    let error = extract_document_from_bytes("nested.pdf", &bytes).unwrap_err();
+
+    assert!(matches!(
+        error,
+        DocumentExtractionError::Extraction { format: "PDF", .. }
+    ));
+}
+
+#[cfg(feature = "document-pdf")]
+// Covers: object-like bytes in PDF comments, strings, and streams must not trigger the nesting cap.
+// Owner: PDF preflight
+#[test]
+fn ignores_pdf_object_tokens_outside_object_syntax() {
+    let nested = "[".repeat(pdf::MAX_PDF_OBJECT_NESTING_DEPTH + 1);
+    let cases = [
+        "/stream".to_owned(),
+        format!("% {nested}\n"),
+        format!("({nested})"),
+        format!("<<>>\nstream\n{nested}\nendstream"),
+    ];
+
+    for bytes in cases {
+        assert_eq!(pdf::validate_object_nesting(bytes.as_bytes()), Ok(()));
+    }
 }
 
 #[cfg(feature = "document-docx")]
@@ -387,19 +466,28 @@ fn spreadsheet_column_name(mut column: usize) -> String {
 
 #[cfg(feature = "document-pdf")]
 fn pdf_fixture(text_operation: &str) -> Vec<u8> {
-    pdf_fixture_with_stream_dictionary(text_operation, "")
+    pdf_fixture_with_catalog_entry(text_operation, "")
+}
+
+#[cfg(feature = "document-pdf")]
+fn pdf_fixture_with_catalog_entry(text_operation: &str, catalog_entry: &str) -> Vec<u8> {
+    pdf_fixture_with_stream_dictionary(text_operation, catalog_entry, "")
 }
 
 #[cfg(feature = "document-pdf")]
 fn pdf_fixture_with_filter(text_operation: &str, filters: &str) -> Vec<u8> {
-    pdf_fixture_with_stream_dictionary(text_operation, &format!("/Filter [{filters}] "))
+    pdf_fixture_with_stream_dictionary(text_operation, "", &format!("/Filter [{filters}] "))
 }
 
 #[cfg(feature = "document-pdf")]
-fn pdf_fixture_with_stream_dictionary(text_operation: &str, extra_dictionary: &str) -> Vec<u8> {
+fn pdf_fixture_with_stream_dictionary(
+    text_operation: &str,
+    catalog_entry: &str,
+    extra_dictionary: &str,
+) -> Vec<u8> {
     let stream = format!("BT /F1 12 Tf 72 720 Td {text_operation} ET");
     let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        format!("<< /Type /Catalog /Pages 2 0 R {catalog_entry} >>"),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_owned(),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
@@ -425,5 +513,91 @@ fn pdf_fixture_with_stream_dictionary(text_operation: &str, extra_dictionary: &s
         objects.len() + 1
     )
     .unwrap();
+    pdf
+}
+
+#[cfg(feature = "document-pdf")]
+fn pdf_fixture_with_object_streams() -> Vec<u8> {
+    fn be(value: u32, width: usize) -> Vec<u8> {
+        value.to_be_bytes()[4 - width..].to_vec()
+    }
+
+    let inner_objects = [
+        (2u32, b"<< /Type /Catalog /Pages 3 0 R >>".as_slice()),
+        (3, b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>"),
+        (
+            4,
+            b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>",
+        ),
+        (5, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+    ];
+
+    let mut header = String::new();
+    let mut data = Vec::new();
+    for (object_number, body) in inner_objects {
+        header.push_str(&format!("{object_number} {} ", data.len()));
+        data.extend_from_slice(body);
+        data.push(b' ');
+    }
+    let first = header.len();
+    let mut object_stream_raw = header.into_bytes();
+    object_stream_raw.extend_from_slice(&data);
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&object_stream_raw).unwrap();
+    let object_stream_compressed = encoder.finish().unwrap();
+
+    let content = b"BT /F1 12 Tf 72 720 Td (Hello ObjStm) Tj ET";
+    let mut pdf = b"%PDF-1.5\n".to_vec();
+    let mut offsets = std::collections::BTreeMap::new();
+
+    offsets.insert(1u32, pdf.len());
+    write!(
+        pdf,
+        "1 0 obj\n<< /Type /ObjStm /N {} /First {first} /Filter /FlateDecode /Length {} >>\nstream\n",
+        inner_objects.len(),
+        object_stream_compressed.len()
+    )
+    .unwrap();
+    pdf.extend_from_slice(&object_stream_compressed);
+    pdf.extend_from_slice(b"\nendstream\nendobj\n");
+
+    offsets.insert(6, pdf.len());
+    write!(pdf, "6 0 obj\n<< /Length {} >>\nstream\n", content.len()).unwrap();
+    pdf.extend_from_slice(content);
+    pdf.extend_from_slice(b"\nendstream\nendobj\n");
+
+    let xref_offset = pdf.len();
+    let mut xref_raw = Vec::new();
+    xref_raw.extend(be(0, 1));
+    xref_raw.extend(be(0, 4));
+    xref_raw.extend(be(65535, 2));
+    xref_raw.extend(be(1, 1));
+    xref_raw.extend(be(offsets[&1] as u32, 4));
+    xref_raw.extend(be(0, 2));
+    for index in 0..4u32 {
+        xref_raw.extend(be(2, 1));
+        xref_raw.extend(be(1, 4));
+        xref_raw.extend(be(index, 2));
+    }
+    xref_raw.extend(be(1, 1));
+    xref_raw.extend(be(offsets[&6] as u32, 4));
+    xref_raw.extend(be(0, 2));
+    xref_raw.extend(be(1, 1));
+    xref_raw.extend(be(xref_offset as u32, 4));
+    xref_raw.extend(be(0, 2));
+
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&xref_raw).unwrap();
+    let xref_compressed = encoder.finish().unwrap();
+
+    write!(
+        pdf,
+        "7 0 obj\n<< /Type /XRef /Size 8 /W [1 4 2] /Root 2 0 R /Filter /FlateDecode /Length {} >>\nstream\n",
+        xref_compressed.len()
+    )
+    .unwrap();
+    pdf.extend_from_slice(&xref_compressed);
+    pdf.extend_from_slice(b"\nendstream\nendobj\n");
+    write!(pdf, "startxref\n{xref_offset}\n%%EOF\n").unwrap();
     pdf
 }
