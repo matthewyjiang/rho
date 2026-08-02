@@ -99,7 +99,7 @@ fn apply_picker_key(
             }
             PickerKeyEffect::Handled
         }
-        (KeyModifiers::NONE, KeyCode::Tab) => {
+        (KeyModifiers::NONE, KeyCode::Tab) if picker.key_hints.tab_complete => {
             picker.complete_filter();
             PickerKeyEffect::Handled
         }
@@ -234,3 +234,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "picker_input_tests.rs"]
+mod tests;

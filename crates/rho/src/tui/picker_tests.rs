@@ -104,3 +104,33 @@ fn dismiss_picker_collapses_enter_and_esc() {
         vec!["Enter/Esc close".to_string()]
     );
 }
+
+// Covers: Tab must not fill the filter from the synthetic conversation-model row.
+// Owner: tui picker filter completion
+#[test]
+fn complete_filter_skips_internal_agent_conversation_model_row() {
+    let mut picker = UiPicker::new(
+        "select model for explorer",
+        vec![
+            PickerItem {
+                section: None,
+                label: "Use conversation model".into(),
+                detail: None,
+                preview: None,
+                badge: None,
+                value: super::super::model_picker::USE_CONVERSATION_MODEL.into(),
+                selection_verb: None,
+            },
+            item("openai/gpt-5.5"),
+        ],
+        PickerAction::SelectInternalAgentModel,
+    );
+    picker.selected = 0;
+    picker.filter = "gpt".into();
+    picker.complete_filter();
+    assert_eq!(picker.filter, "gpt");
+
+    picker.selected = 1;
+    picker.complete_filter();
+    assert_eq!(picker.filter, "openai/gpt-5.5");
+}

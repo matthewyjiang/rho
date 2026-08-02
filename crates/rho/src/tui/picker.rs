@@ -568,13 +568,26 @@ impl UiPicker {
     }
 
     pub(super) fn complete_filter(&mut self) {
-        if let Some(item) = self.selected_item() {
-            self.filter = if self.uses_regex_filter() {
-                regex::escape(&item.value)
-            } else {
-                item.value.clone()
-            };
+        let Some(item) = self.selected_item() else {
+            return;
+        };
+        if !self.row_allows_filter_completion(item) {
+            return;
         }
+        self.filter = if self.uses_regex_filter() {
+            regex::escape(&item.value)
+        } else {
+            item.value.clone()
+        };
+    }
+
+    /// Whether Tab may fill the filter from this row.
+    ///
+    /// Internal-agent model pickers include a synthetic conversation-model row
+    /// that is not a filterable model reference.
+    fn row_allows_filter_completion(&self, item: &PickerItem) -> bool {
+        !(matches!(self.action, PickerAction::SelectInternalAgentModel)
+            && item.value == super::model_picker::USE_CONVERSATION_MODEL)
     }
 
     pub(super) fn select_first_match(&mut self) {
