@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.26.0...rho-coding-agent-v1.26.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* **tui:** open workflow hub when workspace has no workflows ([#693](https://github.com/matthewyjiang/rho/issues/693)) ([ff8d51c](https://github.com/matthewyjiang/rho/commit/ff8d51c680ba91f8e226624aa3c37edce579e543))
+
 ## [1.26.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.25.1...rho-coding-agent-v1.26.0) (2026-08-02)
 
 
