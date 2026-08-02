@@ -392,11 +392,11 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::WaitText {
-        text: "> Deny",
+        text: "→ Deny",
         timeout: SETTLE,
     },
     Step::WaitText {
-        text: "pgup/pgdn details",
+        text: "PgUp/PgDn details",
         timeout: SETTLE,
     },
     Step::WaitText {
