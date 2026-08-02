@@ -87,16 +87,7 @@ Scenarios use `RHO_TUI_TEST_MODE=matrix` automatically. Exact prompts:
 4. Type through harness helpers so paste-burst detection does not swallow Enter.
 5. Keep scenarios independent of the developer HOME, credentials, and host terminal markers.
 6. Mark stable CI cases with `smoke: true`.
-7. Wait only on states that persist until the scenario moves past them. If a fixture advances on a timer (for example the workflow matrix pacing), a transient label such as `running · try 2` can be on screen for only ~150 ms and a loaded macOS runner will miss it. Assert the durable state that follows instead, and cover the pure transient rendering (a label, a chip) with a deterministic unit test next to the renderer.
-
-## Determinism on slow CI
-
-The harness runs under shared runners where scheduling is not under our control. A wait on text that the product can redraw away on its own timer is a race, not a deterministic assertion. Prefer:
-
-- waiting on a stable, durable state (a lifecycle label such as `finished · success`, a persisted node, an exit code), then
-- asserting pure transient rendering (an attempt counter, a live progress string) in a unit test over the pure function that produces it.
-
-If a scenario keeps failing only on slow runners, suspect a transient-state race before tuning timeouts. The fix is usually to assert the durable state, not to lengthen the wait.
+7. Keep scenario sync deterministic under load. Wait only on conditions that stay true until the scenario advances. Intermediate or timer-driven states race on slow CI - wait on the durable outcome instead, and unit-test short-lived rendering next to the pure function. Fix the wait target before you raise the timeout.
 
 ## Failure artifacts
 
