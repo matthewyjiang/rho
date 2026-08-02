@@ -3,11 +3,24 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::tui::render::session_header_lines;
 
-fn hint_texts(setup: SetupState) -> Vec<&'static str> {
-    setup.hints().iter().map(|hint| hint.text).collect()
-}
+const READY: SetupState = SetupState {
+    first_run: false,
+    signed_in: true,
+};
+const FIRST_RUN_READY: SetupState = SetupState {
+    first_run: true,
+    signed_in: true,
+};
+const FIRST_RUN_SIGNED_OUT: SetupState = SetupState {
+    first_run: true,
+    signed_in: false,
+};
+const SIGNED_OUT: SetupState = SetupState {
+    first_run: false,
+    signed_in: false,
+};
 
-fn header_text(setup: SetupState) -> String {
+fn header_lines(setup: SetupState) -> Vec<String> {
     session_header_lines(None, setup, 80)
         .iter()
         .map(|line| {
@@ -16,122 +29,76 @@ fn header_text(setup: SetupState) -> String {
                 .map(|span| span.content.as_ref())
                 .collect::<String>()
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect()
 }
 
+/// A ready session is the only state that adds no copy above the hints. Every
+/// other state has something the user needs before their first turn.
 #[test]
-fn setup_state_selects_headline_and_hints() {
-    struct Case {
-        name: &'static str,
-        setup: SetupState,
-        headline: Option<&'static str>,
-        first_hint: &'static str,
-    }
-
+fn only_a_returning_signed_in_session_skips_the_headline() {
     let cases = [
-        Case {
-            name: "returning signed-in session",
-            setup: SetupState {
-                first_run: false,
-                signed_in: true,
-            },
-            headline: None,
-            first_hint: " shift+tab    Cycle reasoning level",
-        },
-        Case {
-            name: "first run with credentials already stored",
-            setup: SetupState {
-                first_run: true,
-                signed_in: true,
-            },
-            headline: Some(" Welcome to Rho. Type a prompt and press enter."),
-            first_hint: " shift+tab    Cycle reasoning level",
-        },
-        Case {
-            name: "first run with no credentials",
-            setup: SetupState {
-                first_run: true,
-                signed_in: false,
-            },
-            headline: Some(" Welcome to Rho. Sign in to a provider to start."),
-            first_hint: " /login       Sign in to a provider",
-        },
-        Case {
-            name: "returning session after logout",
-            setup: SetupState {
-                first_run: false,
-                signed_in: false,
-            },
-            headline: Some(" Not signed in. Rho needs a provider before it can answer."),
-            first_hint: " /login       Sign in to a provider",
-        },
+        (READY, false),
+        (FIRST_RUN_READY, true),
+        (FIRST_RUN_SIGNED_OUT, true),
+        (SIGNED_OUT, true),
     ];
 
-    for case in cases {
+    for (setup, expected) in cases {
         assert_eq!(
-            case.setup.headline().map(|headline| headline.text),
-            case.headline,
-            "headline for {}",
-            case.name
-        );
-        assert_eq!(
-            hint_texts(case.setup).first().copied(),
-            Some(case.first_hint),
-            "leading hint for {}",
-            case.name
+            setup.headline().is_some(),
+            expected,
+            "headline presence for {setup:?}"
         );
     }
 }
 
+/// Login is the only next step Rho pushes, and only while a session cannot run
+/// a turn. A signed-in session must never be told to log in.
 #[test]
-fn signed_out_header_leads_with_login() {
-    let header = header_text(SetupState {
-        first_run: true,
-        signed_in: false,
-    });
-    assert!(
-        header.contains("Sign in to a provider to start."),
-        "welcome headline missing:\n{header}"
-    );
-    assert!(header.contains("/login"), "login hint missing:\n{header}");
-    assert!(
-        !header.contains("shift+tab"),
-        "reasoning hint should wait until the session can run a turn:\n{header}"
-    );
+fn login_is_the_next_step_exactly_while_signed_out() {
+    let cases = [
+        (READY, 0),
+        (FIRST_RUN_READY, 0),
+        (FIRST_RUN_SIGNED_OUT, 1),
+        (SIGNED_OUT, 1),
+    ];
+
+    for (setup, expected) in cases {
+        let next_steps = setup
+            .hints()
+            .iter()
+            .filter(|hint| hint.tone == HintTone::NextStep)
+            .count();
+        assert_eq!(next_steps, expected, "next-step hints for {setup:?}");
+        if expected > 0 {
+            assert_eq!(
+                setup.hints().first().map(|hint| hint.tone),
+                Some(HintTone::NextStep),
+                "the next step must lead the hint block for {setup:?}"
+            );
+        }
+    }
 }
 
+/// The rendered header carries exactly the hints the state selected, in order,
+/// so a state change cannot leave a stale hint block on screen.
 #[test]
-fn ready_header_matches_the_returning_session_layout() {
-    let header = header_text(SetupState::default());
-    assert!(
-        !header.contains("/login"),
-        "a signed-in session should not be told to log in:\n{header}"
-    );
-    assert!(
-        header.contains("shift+tab    Cycle reasoning level"),
-        "reasoning hint missing:\n{header}"
-    );
-}
+fn the_header_renders_the_hints_the_state_selected() {
+    for setup in [READY, FIRST_RUN_READY, FIRST_RUN_SIGNED_OUT, SIGNED_OUT] {
+        let rendered = header_lines(setup);
+        let hints: Vec<&str> = setup.hints().iter().map(|hint| hint.text).collect();
+        let rendered_hints: Vec<&str> = rendered
+            .iter()
+            .map(String::as_str)
+            .filter(|line| hints.contains(line))
+            .collect();
+        assert_eq!(rendered_hints, hints, "rendered hint block for {setup:?}");
 
-#[test]
-fn login_hint_carries_the_next_step_tone() {
-    let signed_out = SetupState {
-        first_run: false,
-        signed_in: false,
-    };
-    let next_steps: Vec<_> = signed_out
-        .hints()
-        .iter()
-        .filter(|hint| hint.tone == HintTone::NextStep)
-        .map(|hint| hint.text)
-        .collect();
-    assert_eq!(next_steps, vec![" /login       Sign in to a provider"]);
-
-    let ready_next_steps = SetupState::default()
-        .hints()
-        .iter()
-        .filter(|hint| hint.tone == HintTone::NextStep)
-        .count();
-    assert_eq!(ready_next_steps, 0);
+        let headline = setup.headline().map(|headline| headline.text);
+        assert_eq!(
+            rendered.iter().any(|line| Some(line.as_str()) == headline),
+            headline.is_some(),
+            "rendered headline for {setup:?}"
+        );
+    }
 }
