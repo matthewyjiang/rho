@@ -8,23 +8,52 @@ fn line_text(line: &Line<'_>) -> String {
         .collect()
 }
 
-#[test]
-fn statusline_rows_use_display_width_for_alignment() {
-    let line = render_row("项目".into(), "模型".into(), 10);
-    assert_eq!(display_width(&line_text(&line)), 10);
-}
-
-#[test]
-fn model_segment_prefixes_provider_display_name() {
-    assert_eq!(model_segment("OpenAI", "gpt-5.5"), "OpenAI · gpt-5.5");
-    assert_eq!(model_segment("", "gpt-5.5"), "gpt-5.5");
-    assert_eq!(model_segment("", ""), "");
-}
-
 fn span_style(line: &Line<'_>, needle: &str) -> Option<ratatui::style::Style> {
     line.spans
         .iter()
         .find_map(|span| (span.content.as_ref() == needle).then_some(span.style))
+}
+
+fn test_info(cwd: PathBuf) -> RuntimeModelView {
+    let mut info = crate::tui::tests::test_bootstrap().runtime;
+    info.cwd = cwd;
+    info
+}
+
+fn fully_populated_statusline() -> StatusLine {
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+    // Pin hierarchy inputs so pack tests do not depend on models.dev metadata.
+    statusline.state.reasoning_configurable = true;
+    statusline.state.reasoning = ReasoningLevel::Medium;
+    statusline.update_usage(
+        None,
+        Some(&ContextUsage::estimated(1_000, Some(10_000))),
+        12_500,
+    );
+    statusline.update_average_output_rate(Some(42));
+    statusline
+}
+
+#[test]
+fn statusline_rows_use_display_width_for_alignment() {
+    let left = vec![field(
+        FieldKey::Context,
+        Side::Left,
+        RANK_CONTEXT,
+        0,
+        "项目",
+        Theme::dim(),
+    )];
+    let right = vec![field(
+        FieldKey::Model,
+        Side::Right,
+        RANK_MODEL,
+        0,
+        "模型",
+        Theme::dim(),
+    )];
+    let line = render_status_row(left, right, 10);
+    assert_eq!(display_width(&line_text(&line)), 10);
 }
 
 #[test]
@@ -74,12 +103,115 @@ fn auto_permission_and_high_context_use_warning_styles() {
 }
 
 #[test]
+fn bottom_row_drops_fields_by_global_rank() {
+    // Covers: scarce width drops by rank across both sides, not by staged packing
+    // Owner: statusline field hierarchy
+    let statusline = fully_populated_statusline();
+    let state = &statusline.state;
+
+    assert_eq!(
+        packed_keys(state, 100),
+        vec![
+            FieldKey::Context,
+            FieldKey::Cost,
+            FieldKey::Rate,
+            FieldKey::Permission,
+            FieldKey::Provider,
+            FieldKey::Model,
+            FieldKey::Reasoning,
+        ],
+        "wide row keeps every present field"
+    );
+
+    // reasoning drops first
+    let after_reasoning = packed_keys(state, 60);
+    assert!(
+        !after_reasoning.contains(&FieldKey::Reasoning),
+        "reasoning is the first drop: {after_reasoning:?}"
+    );
+    assert!(
+        after_reasoning.contains(&FieldKey::Rate),
+        "rate outranks reasoning: {after_reasoning:?}"
+    );
+
+    // rate before provider
+    let after_rate = packed_keys(state, 45);
+    assert!(
+        !after_rate.contains(&FieldKey::Rate) && !after_rate.contains(&FieldKey::Reasoning),
+        "rate drops next: {after_rate:?}"
+    );
+    assert!(
+        after_rate.contains(&FieldKey::Provider),
+        "provider outranks rate: {after_rate:?}"
+    );
+
+    // provider before cost
+    let after_provider = packed_keys(state, 36);
+    assert!(
+        !after_provider.contains(&FieldKey::Provider),
+        "provider drops before cost: {after_provider:?}"
+    );
+    assert!(
+        after_provider.contains(&FieldKey::Cost),
+        "cost outranks provider: {after_provider:?}"
+    );
+
+    // cost before context
+    let after_cost = packed_keys(state, 27);
+    assert!(
+        !after_cost.contains(&FieldKey::Cost),
+        "cost drops before context: {after_cost:?}"
+    );
+    assert!(
+        after_cost.contains(&FieldKey::Context) && after_cost.contains(&FieldKey::Model),
+        "context and model remain: {after_cost:?}"
+    );
+
+    // context before model (cross-side rank that staged packing inverted)
+    let after_context = packed_keys(state, 20);
+    assert_eq!(
+        after_context,
+        vec![FieldKey::Permission, FieldKey::Model],
+        "context drops before model: {after_context:?}"
+    );
+
+    // model before permission
+    assert_eq!(
+        packed_keys(state, 12),
+        vec![FieldKey::Permission],
+        "permission is kept last"
+    );
+}
+
+#[test]
+fn pack_prefers_model_over_cost_and_context() {
+    // Covers: left metrics must not crowd out the model under the claimed hierarchy
+    // Owner: statusline field hierarchy
+    let statusline = fully_populated_statusline();
+
+    // Width fits permission + model + cost, but not also context-or-provider noise.
+    // cost+perm+model = 6+1+4+3+7 = 21. Force a width where cost and model fight:
+    // perm+model = 14, cost+perm = 11, cost+perm+model = 21.
+    // At width 15 only perm+model should survive (cost rank 4 < model rank 6).
+    assert_eq!(
+        packed_keys(&statusline.state, 15),
+        vec![FieldKey::Permission, FieldKey::Model]
+    );
+
+    // At width 17, context+perm = 17 but context must yield to model.
+    assert_eq!(
+        packed_keys(&statusline.state, 17),
+        vec![FieldKey::Permission, FieldKey::Model]
+    );
+}
+
+#[test]
 fn provider_degrades_before_model_on_narrow_width() {
     // Covers: adding the provider label must not hide the model on narrow terminals
     // Owner: statusline fit logic
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
-    // Wide enough for provider+model but not reasoning, then narrow enough that
-    // provider must drop while the bare model still fits.
+    statusline.state.reasoning_configurable = false;
+
     let wide = statusline.lines(40, None)[1].clone();
     assert!(
         line_text(&wide).contains("OpenAI · gpt-5.5"),
@@ -101,64 +233,29 @@ fn provider_degrades_before_model_on_narrow_width() {
 }
 
 #[test]
-fn bottom_row_drops_optional_fields_in_rank_order() {
-    // Covers: narrow widths must drop rate before cost before context before model
+fn signed_out_keeps_not_signed_in_over_permission() {
+    // Covers: signed-out row must still name the auth gap when space is tight
     // Owner: statusline field hierarchy
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
-    statusline.update_usage(None, Some(&ContextUsage::estimated(1_000, Some(10_000))), 0);
-    statusline.update_average_output_rate(Some(42));
-    // Subagent cost alone is enough to surface a left-side cost field.
-    statusline.update_usage(
-        None,
-        Some(&ContextUsage::estimated(1_000, Some(10_000))),
-        12_500,
-    );
+    statusline.update_signed_in(false);
 
-    let wide = line_text(&statusline.lines(100, None)[1]);
-    assert!(
-        wide.contains("1.0K (10.0%)")
-            && wide.contains("$0.013")
-            && wide.contains("42 tok/s avg")
-            && wide.contains("OpenAI")
-            && wide.contains("gpt-5.5"),
-        "wide row should keep ranked fields: {wide:?}"
+    assert_eq!(
+        packed_keys(&statusline.state, 40),
+        vec![
+            FieldKey::Permission,
+            FieldKey::SignedOut,
+            FieldKey::LoginHint,
+        ]
     );
-
-    let no_rate = line_text(&statusline.lines(56, None)[1]);
-    assert!(
-        no_rate.contains("1.0K (10.0%)") && no_rate.contains("$0.013"),
-        "mid width should keep context and cost: {no_rate:?}"
+    assert_eq!(
+        packed_keys(&statusline.state, 20),
+        vec![FieldKey::Permission, FieldKey::SignedOut]
     );
-    assert!(
-        !no_rate.contains("tok/s"),
-        "rate drops before cost/context: {no_rate:?}"
+    assert_eq!(
+        packed_keys(&statusline.state, 10),
+        vec![FieldKey::SignedOut],
+        "signed-out copy outranks permission"
     );
-
-    let no_cost = line_text(&statusline.lines(32, None)[1]);
-    assert!(
-        no_cost.contains("1.0K (10.0%)") && no_cost.contains("gpt-5.5"),
-        "narrower width should keep context and model: {no_cost:?}"
-    );
-    assert!(
-        !no_cost.contains('$') && !no_cost.contains("OpenAI"),
-        "cost and provider drop before model: {no_cost:?}"
-    );
-
-    let bare = line_text(&statusline.lines(12, None)[1]);
-    assert!(
-        bare.contains("Auto"),
-        "permission is the last kept field: {bare:?}"
-    );
-    assert!(
-        !bare.contains("gpt-5.5") && !bare.contains("1.0K"),
-        "model and context drop before permission: {bare:?}"
-    );
-}
-
-fn test_info(cwd: PathBuf) -> RuntimeModelView {
-    let mut info = crate::tui::tests::test_bootstrap().runtime;
-    info.cwd = cwd;
-    info
 }
 
 #[test]

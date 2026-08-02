@@ -243,49 +243,67 @@ const FIELD_SEP: &str = " · ";
 const CONTEXT_WARNING_PERCENT: f64 = 75.0;
 const CONTEXT_CRITICAL_PERCENT: f64 = 90.0;
 
-/// One painted field on the bottom status row.
+// Drop ranks for the bottom row. Lower values drop first when width is scarce.
+const RANK_REASONING: u8 = 1;
+const RANK_RATE: u8 = 2;
+const RANK_PROVIDER: u8 = 3;
+const RANK_COST: u8 = 4;
+const RANK_CONTEXT: u8 = 5;
+const RANK_MODEL: u8 = 6;
+const RANK_LOGIN_HINT: u8 = 6;
+const RANK_PERMISSION: u8 = 7;
+/// Signed-out copy outranks permission so the row still names the fix.
+const RANK_SIGNED_OUT: u8 = 8;
+
+/// Identity keys used by pack tests and paint order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FieldKey {
+    Context,
+    Cost,
+    Rate,
+    Permission,
+    Provider,
+    Model,
+    Reasoning,
+    SignedOut,
+    LoginHint,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+/// One ranked field on the bottom status row.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct StatusSegment {
+struct StatusField {
+    key: FieldKey,
+    side: Side,
+    /// Lower drops first.
+    rank: u8,
+    /// Paint order within a side (lower = further left).
+    order: u8,
     text: String,
     style: Style,
 }
 
-fn status_segment(text: impl Into<String>, style: Style) -> StatusSegment {
-    StatusSegment {
+fn field(
+    key: FieldKey,
+    side: Side,
+    rank: u8,
+    order: u8,
+    text: impl Into<String>,
+    style: Style,
+) -> StatusField {
+    StatusField {
+        key,
+        side,
+        rank,
+        order,
         text: text.into(),
         style,
     }
-}
-
-fn segments_text(segments: &[StatusSegment]) -> String {
-    segments
-        .iter()
-        .map(|segment| segment.text.as_str())
-        .collect::<Vec<_>>()
-        .join(FIELD_SEP)
-}
-
-fn segments_width(segments: &[StatusSegment]) -> usize {
-    if segments.is_empty() {
-        return 0;
-    }
-    let text_width = segments
-        .iter()
-        .map(|segment| display_width(&segment.text))
-        .sum::<usize>();
-    let sep_width = display_width(FIELD_SEP) * segments.len().saturating_sub(1);
-    text_width + sep_width
-}
-
-fn segments_to_spans(segments: &[StatusSegment]) -> Vec<Span<'static>> {
-    let mut spans = Vec::with_capacity(segments.len().saturating_mul(2).saturating_sub(1).max(1));
-    for (index, segment) in segments.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::styled(FIELD_SEP.to_string(), Theme::dim()));
-        }
-        spans.push(Span::styled(segment.text.clone(), segment.style));
-    }
-    spans
 }
 
 /// Permission mode style. Auto skips every check, so it must not look ambient.
@@ -294,10 +312,6 @@ fn permission_style(mode: PermissionMode) -> Style {
         PermissionMode::Auto => Theme::warning(),
         PermissionMode::Plan | PermissionMode::Supervised => Theme::dim(),
     }
-}
-
-fn permission_segment(mode: PermissionMode) -> StatusSegment {
-    status_segment(mode.label(), permission_style(mode))
 }
 
 /// Context fill style. Escalates only when the window is meaningfully full.
@@ -336,7 +350,7 @@ fn statusline_lines(
         .as_ref()
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
-    let (bottom_left, bottom_right) = bottom_status(state, width);
+    let (bottom_left, bottom_right) = pack_bottom_status(state, width);
     vec![
         render_cwd_row(&cwd_path, cwd_branch, top_right, width),
         render_status_row(bottom_left, bottom_right, width),
@@ -360,122 +374,221 @@ fn statusline_lines(
 ///
 /// Severity is independent of drop rank: high context fill and Auto permission
 /// use warning/error styles so they stay visible while they remain on screen.
-fn bottom_status(
+fn pack_bottom_status(
     state: &StatusLineState,
     width: usize,
-) -> (Vec<StatusSegment>, Vec<StatusSegment>) {
+) -> (Vec<StatusField>, Vec<StatusField>) {
+    let mut fields = bottom_fields(state);
+    drop_to_width(&mut fields, width);
+    split_sides(fields)
+}
+
+fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
+    let mut fields = Vec::with_capacity(8);
+
+    if let Some((text, style)) = format_context_summary(state) {
+        fields.push(field(
+            FieldKey::Context,
+            Side::Left,
+            RANK_CONTEXT,
+            0,
+            text,
+            style,
+        ));
+    }
+    if let Some(cost) = status_cost(state) {
+        fields.push(field(
+            FieldKey::Cost,
+            Side::Left,
+            RANK_COST,
+            1,
+            cost,
+            Theme::dim(),
+        ));
+    }
+    if let Some(rate) = state.average_output_rate {
+        fields.push(field(
+            FieldKey::Rate,
+            Side::Left,
+            RANK_RATE,
+            2,
+            format!("{rate} tok/s avg"),
+            Theme::dim(),
+        ));
+    }
+
+    fields.push(field(
+        FieldKey::Permission,
+        Side::Right,
+        RANK_PERMISSION,
+        0,
+        state.permission_mode.label(),
+        permission_style(state.permission_mode),
+    ));
+
+    if !state.signed_in {
+        // Naming the configured model would promise a turn the session cannot
+        // run, so the row points at the fix instead.
+        fields.push(field(
+            FieldKey::SignedOut,
+            Side::Right,
+            RANK_SIGNED_OUT,
+            1,
+            "not signed in",
+            Theme::warning(),
+        ));
+        fields.push(field(
+            FieldKey::LoginHint,
+            Side::Right,
+            RANK_LOGIN_HINT,
+            2,
+            "/login",
+            Theme::dim(),
+        ));
+        return fields;
+    }
+
+    let provider = provider_display_name(&state.provider);
+    if !provider.is_empty() {
+        fields.push(field(
+            FieldKey::Provider,
+            Side::Right,
+            RANK_PROVIDER,
+            1,
+            provider,
+            Theme::dim(),
+        ));
+    }
+
     let model = if state.fast_mode_active {
         format!("{} (fast)", state.model)
     } else {
         state.model.clone()
     };
+    if !model.is_empty() {
+        fields.push(field(
+            FieldKey::Model,
+            Side::Right,
+            RANK_MODEL,
+            2,
+            model,
+            Theme::dim(),
+        ));
+    }
 
-    let mut left = Vec::new();
-    if let Some(context) = format_context_summary(state) {
-        // Context is only kept when it still fits beside bare permission, the
-        // last right-side field in the drop order.
-        if row_fits(&context.text, state.permission_mode.label(), width) {
-            left.push(context);
+    if state.reasoning_configurable {
+        fields.push(field(
+            FieldKey::Reasoning,
+            Side::Right,
+            RANK_REASONING,
+            3,
+            state.reasoning.to_string(),
+            Theme::dim(),
+        ));
+    }
+
+    fields
+}
+
+/// Drop lowest-rank fields until the row fits. Rank is the hierarchy; sides only
+/// affect paint placement.
+fn drop_to_width(fields: &mut Vec<StatusField>, width: usize) {
+    while fields.len() > 1 && fields_row_width(fields) > width {
+        let drop_at = fields
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                left.rank
+                    .cmp(&right.rank)
+                    // Stable tie-break: drop the rightmost/lowest paint priority first.
+                    .then(right.order.cmp(&left.order))
+                    .then(right.side.order().cmp(&left.side.order()))
+            })
+            .map(|(index, _)| index)
+            .expect("fields is non-empty");
+        fields.remove(drop_at);
+    }
+
+    if fields_row_width(fields) > width {
+        truncate_fields(fields, width);
+    }
+}
+
+impl Side {
+    fn order(self) -> u8 {
+        match self {
+            Side::Left => 0,
+            Side::Right => 1,
         }
     }
-
-    let right = fit_model_right(segments_width(&left), &model, state, width);
-
-    // Optional left metrics after right identity is fixed. Cost outranks rate.
-    if let Some(cost) = status_cost(state) {
-        append_left_if_fits(&mut left, &right, width, status_segment(cost, Theme::dim()));
-    }
-    if let Some(rate) = state.average_output_rate {
-        append_left_if_fits(
-            &mut left,
-            &right,
-            width,
-            status_segment(format!("{rate} tok/s avg"), Theme::dim()),
-        );
-    }
-    (left, right)
 }
 
-/// Right-side candidates in keep order. Each step drops the next field from the
-/// ranked list: reasoning, then provider, then model, leaving permission.
-fn fit_model_right(
-    left_width: usize,
-    model: &str,
-    state: &StatusLineState,
-    width: usize,
-) -> Vec<StatusSegment> {
-    if !state.signed_in {
-        // Naming the configured model would promise a turn the session cannot
-        // run, so the row points at the fix instead.
-        let permission = permission_segment(state.permission_mode);
-        let signed_out = status_segment("not signed in", Theme::warning());
-        return fit_right_segments(
-            left_width,
-            &[
-                vec![
-                    permission.clone(),
-                    signed_out.clone(),
-                    status_segment("/login", Theme::dim()),
-                ],
-                vec![permission, signed_out.clone()],
-                vec![signed_out],
-            ],
-            width,
-        );
-    }
-
-    let permission = permission_segment(state.permission_mode);
-    let provider = provider_display_name(&state.provider);
-    let model_seg = status_segment(model, Theme::dim());
-
-    let mut with_provider = vec![permission.clone()];
-    if !provider.is_empty() {
-        with_provider.push(status_segment(provider.clone(), Theme::dim()));
-    }
-    with_provider.push(model_seg.clone());
-
-    let mut candidates = Vec::with_capacity(4);
-    if state.reasoning_configurable {
-        let mut with_reasoning = with_provider.clone();
-        with_reasoning.push(status_segment(state.reasoning.to_string(), Theme::dim()));
-        candidates.push(with_reasoning);
-    }
-    candidates.push(with_provider);
-    if !provider.is_empty() {
-        candidates.push(vec![permission.clone(), model_seg]);
-    }
-    candidates.push(vec![permission]);
-    fit_right_segments(left_width, &candidates, width)
+fn split_sides(mut fields: Vec<StatusField>) -> (Vec<StatusField>, Vec<StatusField>) {
+    fields.sort_by(|left, right| {
+        left.side
+            .order()
+            .cmp(&right.side.order())
+            .then(left.order.cmp(&right.order))
+    });
+    let right_start = fields
+        .iter()
+        .position(|field| field.side == Side::Right)
+        .unwrap_or(fields.len());
+    let right = fields.split_off(right_start);
+    (fields, right)
 }
 
-#[cfg(test)]
-fn model_segment(provider: &str, model: &str) -> String {
-    if provider.is_empty() {
-        model.to_string()
-    } else {
-        format!("{provider}{FIELD_SEP}{model}")
+fn fields_row_width(fields: &[StatusField]) -> usize {
+    let left_width = side_width(fields.iter().filter(|field| field.side == Side::Left));
+    let right_width = side_width(fields.iter().filter(|field| field.side == Side::Right));
+    let gap = usize::from(left_width > 0 && right_width > 0);
+    left_width + right_width + gap
+}
+
+fn side_width<'a>(fields: impl IntoIterator<Item = &'a StatusField>) -> usize {
+    let mut count = 0usize;
+    let mut text_width = 0usize;
+    for field in fields {
+        text_width += display_width(&field.text);
+        count += 1;
+    }
+    if count == 0 {
+        return 0;
+    }
+    text_width + display_width(FIELD_SEP) * (count - 1)
+}
+
+fn truncate_fields(fields: &mut [StatusField], width: usize) {
+    if fields.is_empty() || width == 0 {
+        for field in fields.iter_mut() {
+            field.text.clear();
+        }
+        return;
+    }
+
+    // After rank drops, at most a couple fields remain. Shrink text from the
+    // lowest-rank survivor until the row fits.
+    while fields_row_width(fields) > width {
+        let index = fields
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                left.rank
+                    .cmp(&right.rank)
+                    .then(right.order.cmp(&left.order))
+            })
+            .map(|(index, _)| index)
+            .expect("fields is non-empty");
+        let current = display_width(&fields[index].text);
+        if current <= 1 {
+            break;
+        }
+        let next = current.saturating_sub(1).max(1);
+        fields[index].text = truncate_one_line(&fields[index].text, next);
     }
 }
 
-fn append_left_if_fits(
-    left: &mut Vec<StatusSegment>,
-    right: &[StatusSegment],
-    width: usize,
-    segment: StatusSegment,
-) {
-    let mut trial = left.clone();
-    trial.push(segment);
-    if row_fits(&segments_text(&trial), &segments_text(right), width) {
-        *left = trial;
-    }
-}
-
-fn row_fits(left: &str, right: &str, width: usize) -> bool {
-    let gap = usize::from(!left.is_empty() && !right.is_empty());
-    display_width(left) + display_width(right) + gap <= width
-}
-
-fn format_context_summary(state: &StatusLineState) -> Option<StatusSegment> {
+fn format_context_summary(state: &StatusLineState) -> Option<(String, Style)> {
     let context = state.context_usage.as_ref()?;
     let window = context
         .context_window
@@ -489,14 +602,12 @@ fn format_context_summary(state: &StatusLineState) -> Option<StatusSegment> {
     let Some(tokens) = context.tokens else {
         return match context.source {
             // Unknown after compaction is a real gap, not ambient chrome.
-            ContextUsageSource::UnknownAfterCompaction => {
-                Some(status_segment("?", Theme::warning()))
-            }
+            ContextUsageSource::UnknownAfterCompaction => Some(("?".into(), Theme::warning())),
             ContextUsageSource::Estimated | ContextUsageSource::ProviderReported => None,
         };
     };
     let percent = tokens as f64 * 100.0 / window as f64;
-    Some(status_segment(
+    Some((
         format!("{} ({percent:.1}%)", format_token_count(tokens)),
         context_usage_style(percent),
     ))
@@ -531,83 +642,12 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
         })
 }
 
-fn fit_right_segments(
-    left_width: usize,
-    candidates: &[Vec<StatusSegment>],
-    width: usize,
-) -> Vec<StatusSegment> {
-    let full = &candidates[0];
-    let full_width = segments_width(full);
-    if left_width + full_width < width {
-        return full.clone();
-    }
-
-    let separator_width = usize::from(left_width > 0);
-    let available = width
-        .saturating_sub(left_width + separator_width)
-        .max(width.saturating_div(2))
-        .max(1);
-    candidates
-        .iter()
-        .find(|candidate| segments_width(candidate) <= available)
-        .cloned()
-        .unwrap_or_else(|| {
-            truncate_segments(candidates.last().expect("status has a value"), available)
-        })
-}
-
-fn truncate_segments(segments: &[StatusSegment], available: usize) -> Vec<StatusSegment> {
-    if segments.is_empty() || available == 0 {
-        return Vec::new();
-    }
-
-    let mut out = segments.to_vec();
-    while out.len() > 1 && segments_width(&out) > available {
-        out.pop();
-    }
-
-    let width = segments_width(&out);
-    if width <= available {
-        return out;
-    }
-
-    if let Some(last) = out.last_mut() {
-        let prefix_width = width.saturating_sub(display_width(&last.text));
-        let budget = available.saturating_sub(prefix_width).max(1);
-        last.text = truncate_one_line(&last.text, budget);
-    }
-    out
-}
-
 fn render_status_row(
-    left: Vec<StatusSegment>,
-    right: Vec<StatusSegment>,
+    left: Vec<StatusField>,
+    right: Vec<StatusField>,
     width: usize,
 ) -> Line<'static> {
-    let left_width = segments_width(&left);
-    let right_width = segments_width(&right);
-    let gap = usize::from(left_width > 0 && right_width > 0);
-    if left_width + right_width + gap <= width {
-        return status_segments_line(left, right, width);
-    }
-
-    // Safety net: identity on the right keeps half the row before left shrinks.
-    let right_budget = right_width.min(width.saturating_div(2).max(1));
-    let right = truncate_segments(&right, right_budget);
-    let right_width = segments_width(&right);
-    let left_budget = width.saturating_sub(right_width + 1).max(1);
-    let left = truncate_segments(&left, left_budget);
-    status_segments_line(left, right, width)
-}
-
-#[cfg(test)]
-fn render_row(left: String, right: String, width: usize) -> Line<'static> {
-    match row_side_fit(display_width(&left), &right, width) {
-        None => status_row_line(left, right, width),
-        Some((left_budget, right)) => {
-            status_row_line(truncate_one_line(&left, left_budget), right, width)
-        }
-    }
+    status_fields_line(&left, &right, width)
 }
 
 fn render_cwd_row(path: &str, branch: Option<&str>, right: String, width: usize) -> Line<'static> {
@@ -650,22 +690,38 @@ fn status_row_line(left: String, right: String, width: usize) -> Line<'static> {
     Line::from(Span::styled(format!("{left}{gap}{right}"), style))
 }
 
-fn status_segments_line(
-    left: Vec<StatusSegment>,
-    right: Vec<StatusSegment>,
-    width: usize,
-) -> Line<'static> {
+fn status_fields_line(left: &[StatusField], right: &[StatusField], width: usize) -> Line<'static> {
     if right.is_empty() {
-        return Line::from(segments_to_spans(&left));
+        return Line::from(fields_to_spans(left));
     }
 
-    let left_width = segments_width(&left);
-    let right_width = segments_width(&right);
+    let left_width = side_width(left);
+    let right_width = side_width(right);
     let gap = " ".repeat(width.saturating_sub(left_width + right_width));
-    let mut spans = segments_to_spans(&left);
+    let mut spans = fields_to_spans(left);
     spans.push(Span::styled(gap, Theme::dim()));
-    spans.extend(segments_to_spans(&right));
+    spans.extend(fields_to_spans(right));
     Line::from(spans)
+}
+
+fn fields_to_spans(fields: &[StatusField]) -> Vec<Span<'static>> {
+    let mut spans = Vec::with_capacity(fields.len().saturating_mul(2).saturating_sub(1).max(1));
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(FIELD_SEP.to_string(), Theme::dim()));
+        }
+        spans.push(Span::styled(field.text.clone(), field.style));
+    }
+    spans
+}
+
+#[cfg(test)]
+fn packed_keys(state: &StatusLineState, width: usize) -> Vec<FieldKey> {
+    let (left, right) = pack_bottom_status(state, width);
+    left.into_iter()
+        .chain(right)
+        .map(|field| field.key)
+        .collect()
 }
 
 #[cfg(test)]
