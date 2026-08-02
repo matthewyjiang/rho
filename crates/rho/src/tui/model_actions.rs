@@ -106,16 +106,13 @@ impl App {
         };
 
         if providers.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                    "no refreshable providers are configured. open Config > Log in to provider to add one."
-                        .into(),
-                ),
+            self.set_status(
+                "no refreshable providers are configured. open Config > Log in to provider to add one.",
             );
-            self.status = "model refresh skipped".into();
             return Ok(());
         }
 
-        self.status = "refreshing model list".into();
+        self.set_status("refreshing model list");
         terminal.draw(|frame| self.draw(frame))?;
         let config = self.info.services.config_repository.load()?;
         for (provider, auth) in providers {
@@ -146,7 +143,7 @@ impl App {
                 }
             }
         }
-        self.status = "model list refresh complete".into();
+        self.set_status("model list refresh complete");
         Ok(())
     }
 
@@ -171,7 +168,7 @@ impl App {
             Ok(selection) => self.request_model_selection(selection, agent),
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "model switch failed".into();
+                self.set_status("model switch failed");
                 Ok(())
             }
         }
@@ -182,21 +179,18 @@ impl App {
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        self.status = "loading models".into();
+        self.set_status("loading models");
         terminal.draw(|frame| self.draw(frame))?;
         self.refresh_available_auths();
         let picker = model_picker::model_picker(&self.info.runtime, &self.available_auths);
 
         if picker.items.is_empty() {
-            self.insert_entry(&Entry::Notice(
-                "no cached provider models. use Config > Refresh model lists.".into(),
-            ));
-            self.status = "ready".into();
+            self.set_status("no cached provider models. use Config > Refresh model lists.");
             return Ok(());
         }
 
         self.input_ui.set_composer(ComposerMode::Picker(picker));
-        self.status = "select model".into();
+        self.set_status("select model");
         Ok(())
     }
 
@@ -207,7 +201,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let Some((action, value)) = self.active_picker_selection() else {
             self.input_ui.set_composer(ComposerMode::Input);
-            self.status = "ready".into();
+            self.set_status("ready");
             return Ok(());
         };
 
@@ -252,14 +246,14 @@ impl App {
                     }
                     Err(err) => {
                         self.insert_entry(&Entry::Error(err.to_string()));
-                        self.status = "model switch failed".into();
+                        self.set_status("model switch failed");
                         Ok(())
                     }
                 }
             }
             PickerAction::SelectInternalAgentModel => {
                 let Some(id) = self.internal_agent_model_target.clone() else {
-                    self.status = "internal agent model selection expired".into();
+                    self.set_status("internal agent model selection expired");
                     return Ok(());
                 };
                 if value == model_picker::USE_CONVERSATION_MODEL {
@@ -273,13 +267,13 @@ impl App {
                         }
                         Err(err) => {
                             self.insert_entry(&Entry::Error(err.to_string()));
-                            self.status = "internal agent model switch failed".into();
+                            self.set_status("internal agent model switch failed");
                         }
                     }
                 }
-                let status = self.status.clone();
+                let status = self.status().to_string();
                 self.execute_agents_command()?;
-                self.status = status;
+                self.set_status(status);
                 Ok(())
             }
             PickerAction::LoginGroup => {
@@ -294,7 +288,7 @@ impl App {
                     self.insert_entry(&Entry::Error(format!(
                         "unsupported login provider group '{value}'"
                     )));
-                    self.status = "login failed".into();
+                    self.set_status("login failed");
                     return Ok(());
                 };
                 match provider_picker::login_group_next(group) {
@@ -334,7 +328,7 @@ impl App {
                 self.input_ui
                     .set_text_and_cursor(format!("/skill:{value}"), self.input_char_len());
                 self.input_ui.set_command_palette_dismissed(true);
-                self.status = "skill command inserted".into();
+                self.set_status("skill command inserted");
                 Ok(())
             }
             PickerAction::ResumeSession => {
@@ -391,7 +385,7 @@ impl App {
         }
         if !self.pop_picker_level() {
             self.input_ui.set_composer(ComposerMode::Input);
-            self.status = if running { "running" } else { "ready" }.into();
+            self.set_status(if running { "running" } else { "ready" });
         }
         Ok(())
     }
@@ -446,7 +440,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save pinned models: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
                 return Ok(());
             }
         };
@@ -501,8 +495,7 @@ impl App {
         Self::restore_picker_position(&mut picker, &value, filter);
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         let action = if pinned { "pinned" } else { "unpinned" };
-        self.insert_entry(&Entry::Notice(format!("{action} {value}")));
-        self.status = format!("{action} model");
+        self.set_status(format!("{action} {value}"));
         Ok(())
     }
 
@@ -612,7 +605,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not switch to {provider_model}: reasoning level '{requested}' is not supported"
                 )));
-                self.status = "model switch rejected".into();
+                self.set_status("model switch rejected");
                 return Ok(None);
             }
         };
@@ -627,7 +620,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not switch to {provider_model}: {err}"
                 )));
-                self.status = "model switch failed".into();
+                self.set_status("model switch failed");
                 return Ok(None);
             }
         };
@@ -649,18 +642,17 @@ impl App {
             config.auth = auth.clone();
         }) {
             Ok(()) => {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "model switched to {provider_model} with reasoning {} and saved to config",
                     reasoning.effective
-                )));
-                self.status = format!("model: {provider_model}");
+                ));
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "model switched to {provider_model} with reasoning {} for this session, but saving config failed: {err}",
                     reasoning.effective
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
         }
         Ok(Some(handoff))
@@ -706,16 +698,15 @@ impl App {
                 None => config.clear_internal_agent_model(id),
             }) {
             Ok(()) => {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "internal agent {id} now uses {label}; saved to config"
-                )));
-                self.status = format!("{id}: {label}");
+                ));
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "internal agent {id} now uses {label} for this session, but saving config failed: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
         }
         Ok(())

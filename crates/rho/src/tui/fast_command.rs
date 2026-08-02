@@ -39,7 +39,7 @@ impl App {
             "off" => false,
             _ => {
                 self.insert_entry(&Entry::Error("usage: /fast [on|off]".into()));
-                self.status = "invalid fast mode".into();
+                self.set_status("invalid fast mode");
                 return Ok(());
             }
         };
@@ -48,7 +48,7 @@ impl App {
             self.insert_entry(&Entry::Error(format!(
                 "fast mode is not available for {provider}/{model}"
             )));
-            self.status = "fast mode unavailable".into();
+            self.set_status("fast mode unavailable");
             return Ok(());
         }
 
@@ -62,7 +62,7 @@ impl App {
             {
                 agent.set_fast_mode(current)?;
                 self.insert_entry(&Entry::Error(format!("could not save fast mode: {error}")));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
                 return Ok(());
             }
             self.info.runtime.service_tier =
@@ -82,8 +82,7 @@ impl App {
             ),
             (false, _) => ("off", "standard response speed and credit rate"),
         };
-        self.insert_entry(&Entry::Notice(format!("fast mode is {mode}: {detail}")));
-        self.status = format!("fast mode {mode}");
+        self.set_status(format!("fast mode is {mode}: {detail}"));
     }
 }
 

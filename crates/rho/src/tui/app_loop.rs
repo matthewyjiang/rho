@@ -196,6 +196,11 @@ impl App {
             .copy_notice()
             .and_then(|notice| notice.visible_until().checked_duration_since(now))
             .map_or(timeout, |remaining| remaining.min(timeout));
+        let timeout = self
+            .status_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.visible_until().checked_duration_since(now))
+            .map_or(timeout, |remaining| remaining.min(timeout));
         if self.history.scrollbar_hovered() || self.history.scrollbar_drag().is_some() {
             return timeout;
         }
@@ -212,6 +217,10 @@ impl App {
                 .history
                 .copy_notice()
                 .is_some_and(|notice| now < notice.visible_until())
+            || self
+                .status_overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.is_visible(now))
             || self.history.scrollbar_hovered()
             || self.history.scrollbar_drag().is_some()
             || self

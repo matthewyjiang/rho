@@ -95,5 +95,5 @@ fn step_started_clears_stream_state_without_clearing_model_performance() {
     let summary = app.usage.model_performance.summary(&profile);
     assert_eq!(summary.average_output_tokens_per_second, Some(50.0));
     assert_eq!(app.turn.session_ui(), SessionUiPhase::ProviderTurn);
-    assert_eq!(app.status, "running step 2");
+    assert_eq!(app.status(), "running step 2");
 }

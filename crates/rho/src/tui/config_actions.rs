@@ -52,7 +52,7 @@ impl App {
                         config.compact_threshold_percent as usize,
                     ),
                 ));
-                self.status = "edit compact threshold percent".into();
+                self.set_status("edit compact threshold percent");
                 Ok(())
             }
             config_picker::COMPACT_TARGET_PERCENT_VALUE => {
@@ -63,7 +63,7 @@ impl App {
                         config.compact_target_percent as usize,
                     ),
                 ));
-                self.status = "edit compact target percent".into();
+                self.set_status("edit compact target percent");
                 Ok(())
             }
             config_picker::MAX_OUTPUT_BYTES_VALUE => {
@@ -74,7 +74,7 @@ impl App {
                         config.max_output_bytes,
                     ),
                 ));
-                self.status = "edit max output bytes".into();
+                self.set_status("edit max output bytes");
                 Ok(())
             }
             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
@@ -85,7 +85,7 @@ impl App {
                         config.max_tool_output_lines,
                     ),
                 ));
-                self.status = "edit max tool output lines".into();
+                self.set_status("edit max tool output lines");
                 Ok(())
             }
             config_picker::INLINE_SHELL_VALUE => {
@@ -100,7 +100,7 @@ impl App {
                     config.inline_shell.clone_from(&shell);
                 })?;
                 self.open_main_config_picker_selected(config_picker::INLINE_SHELL_VALUE)?;
-                self.status = format!("inline shell: {shell}");
+                self.set_status(format!("inline shell: {shell}"));
                 Ok(())
             }
             config_picker::WEB_SEARCH_VALUE => {
@@ -155,7 +155,7 @@ impl App {
             input = input.with_return_picker(picker);
         }
         self.input_ui.set_composer(ComposerMode::TextInput(input));
-        self.status = format!("edit {}", key.label());
+        self.set_status(format!("edit {}", key.label()));
         Ok(())
     }
 
@@ -187,7 +187,7 @@ impl App {
         let Some(category) = config_picker::category_for_setting(selected_value) else {
             Self::restore_picker_position(&mut root, selected_value, filter);
             self.input_ui.set_composer(ComposerMode::Picker(root));
-            self.status = "config".into();
+            self.set_status("config");
             return Ok(());
         };
 
@@ -196,7 +196,7 @@ impl App {
             .expect("known config category must have a picker")
             .with_parent(root);
         Self::restore_picker_position(&mut picker, selected_value, filter);
-        self.status = picker.title.clone();
+        self.set_status(picker.title.clone());
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         Ok(())
     }
@@ -247,17 +247,17 @@ impl App {
                 if !check_for_updates {
                     self.info.services.update_notice = None;
                 }
-                self.status = if check_for_updates {
-                    "check for updates: on".into()
+                self.set_status(if check_for_updates {
+                    "check for updates: on"
                 } else {
-                    "check for updates: off".into()
-                };
+                    "check for updates: off"
+                });
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save update check setting: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
             Ok(
                 ConfigMutation::EnableSubagents(_)
@@ -282,17 +282,17 @@ impl App {
             ConfigToggle::EnableSubagents,
         ) {
             Ok(ConfigMutation::EnableSubagents(enable_subagents)) => {
-                self.status = if enable_subagents {
-                    "subagents: on next session".into()
+                self.set_status(if enable_subagents {
+                    "subagents: on next session"
                 } else {
-                    "subagents: off next session".into()
-                };
+                    "subagents: off next session"
+                });
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save subagent setting: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
             Ok(
                 ConfigMutation::CheckForUpdates(_)
@@ -317,17 +317,17 @@ impl App {
             ConfigToggle::AutoCompact,
         ) {
             Ok(ConfigMutation::AutoCompact(auto_compact)) => {
-                self.status = if auto_compact {
-                    "auto compact: on".into()
+                self.set_status(if auto_compact {
+                    "auto compact: on"
                 } else {
-                    "auto compact: off".into()
-                };
+                    "auto compact: off"
+                });
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save auto compact setting: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
             Ok(
                 ConfigMutation::CheckForUpdates(_)
@@ -354,17 +354,17 @@ impl App {
             Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
                 self.info.runtime.show_reasoning_output = show_reasoning_output;
                 self.apply_reasoning_output_visibility();
-                self.status = if show_reasoning_output {
-                    "reasoning output: shown".into()
+                self.set_status(if show_reasoning_output {
+                    "reasoning output: shown"
                 } else {
-                    "reasoning output: hidden".into()
-                };
+                    "reasoning output: hidden"
+                });
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save reasoning output setting: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
             Ok(
                 ConfigMutation::CheckForUpdates(_)
@@ -396,17 +396,17 @@ impl App {
             ConfigToggle::WebSearchHosted,
         ) {
             Ok(ConfigMutation::WebSearchHosted(hosted)) => {
-                self.status = if hosted {
-                    "hosted web search: on next session".into()
+                self.set_status(if hosted {
+                    "hosted web search: on next session"
                 } else {
-                    "hosted web search: off next session".into()
-                };
+                    "hosted web search: off next session"
+                });
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not save hosted web search setting: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
             Ok(
                 ConfigMutation::CheckForUpdates(_)
@@ -427,7 +427,7 @@ impl App {
             unreachable!("provider cycle returned a mismatched config mutation");
         };
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
-        self.status = format!("backup web search: {provider}");
+        self.set_status(format!("backup web search: {provider}"));
         Ok(())
     }
 

@@ -18,7 +18,6 @@ use crate::tui::{
 pub(in crate::tui) struct HistoryUi {
     transcript: Vec<Entry>,
     lines: HistoryLineCache,
-    last_status_notice: Option<String>,
     images: markdown_image::MarkdownImageCache,
     images_dirty_from: Option<usize>,
     scroll: HistoryScrollChrome,
@@ -172,14 +171,6 @@ impl HistoryUi {
 
     pub(in crate::tui) fn set_images_dirty_from(&mut self, index: Option<usize>) {
         self.images_dirty_from = index;
-    }
-
-    pub(in crate::tui) fn last_status_notice(&self) -> Option<&str> {
-        self.last_status_notice.as_deref()
-    }
-
-    pub(in crate::tui) fn set_last_status_notice(&mut self, notice: Option<String>) {
-        self.last_status_notice = notice;
     }
 
     pub(in crate::tui) fn hovered_code_block_copy(&self) -> Option<usize> {

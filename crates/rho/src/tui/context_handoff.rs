@@ -426,7 +426,7 @@ impl App {
                 choice,
                 pending: InlineChoicePending::ContextHandoff(Box::new(pending)),
             }));
-        self.status = status.into();
+        self.set_status(status);
     }
 
     fn selection_for_identity(
@@ -485,14 +485,14 @@ impl App {
                 .await
             {
                 self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
-                self.status = "model handoff failed".into();
+                self.set_status("model handoff failed");
             }
         } else {
-            self.status = match kind {
-                ContextHandoffKind::ModelSwitch => "model switch cancelled".into(),
-                ContextHandoffKind::Resume => "resume cancelled".into(),
-                ContextHandoffKind::LoadedSession => "ready".into(),
-            };
+            self.set_status(match kind {
+                ContextHandoffKind::ModelSwitch => "model switch cancelled",
+                ContextHandoffKind::Resume => "resume cancelled",
+                ContextHandoffKind::LoadedSession => "ready",
+            });
         }
         self.finish_after_handoff(after, terminal, agent).await
     }
@@ -551,7 +551,7 @@ impl App {
                     if !selection_matches_runtime(self, &target) {
                         self.select_model(target, agent)?;
                     } else if !materialized {
-                        self.status = "ready".into();
+                        self.set_status("ready");
                     }
                 }
             }
@@ -624,8 +624,7 @@ impl App {
         self.history.invalidate_from(0);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
-        self.insert_entry(&Entry::Notice(format!("resumed session {short_id}")));
-        self.status = format!("resumed {short_id}");
+        self.set_status(format!("resumed session {short_id}"));
         self.info
             .services
             .herdr

@@ -105,7 +105,7 @@ impl App {
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(error.to_string()));
-                self.status = "claude code login failed".into();
+                self.set_status("claude code login failed");
                 Ok(())
             }
         }
@@ -119,7 +119,7 @@ impl App {
         match choice.selected_value() {
             RELAY_LOGIN_VALUE => self.run_claude_code_login(terminal).await,
             _ => {
-                self.status = "claude code login unchanged".into();
+                self.set_status("claude code login unchanged");
                 Ok(())
             }
         }
@@ -152,7 +152,7 @@ impl App {
                 choice,
                 pending: InlineChoicePending::ClaudeCodeLogout,
             }));
-        self.status = "confirm claude code logout".into();
+        self.set_status("confirm claude code logout");
     }
 
     pub(super) async fn submit_claude_code_logout_choice(
@@ -162,7 +162,7 @@ impl App {
         match choice.selected_value() {
             CONFIRM_LOGOUT_VALUE => self.run_claude_code_logout().await,
             _ => {
-                self.status = "claude code logout cancelled".into();
+                self.set_status("claude code logout cancelled");
                 Ok(())
             }
         }
@@ -179,7 +179,7 @@ impl App {
         let logout_result = auth::logout().await;
         if let Err(ClaudeAuthError::BinaryMissing) = &logout_result {
             self.insert_entry(&Entry::Error(ClaudeAuthError::BinaryMissing.to_string()));
-            self.status = "claude code logout failed".into();
+            self.set_status("claude code logout failed");
             return Ok(());
         }
 
@@ -193,8 +193,7 @@ impl App {
                         error.sanitized_detail()
                     ));
                 }
-                self.insert_entry(&Entry::Notice(notice));
-                self.status = "claude code logout complete".into();
+                self.set_status(notice);
             }
             Ok(status) => {
                 let mut message = format!(
@@ -205,7 +204,7 @@ impl App {
                     message.push_str(&format!("\nchild detail: {}", error.sanitized_detail()));
                 }
                 self.insert_entry(&Entry::Error(message));
-                self.status = "claude code logout incomplete".into();
+                self.set_status("claude code logout incomplete");
             }
             Err(error) => {
                 let mut message =
@@ -218,7 +217,7 @@ impl App {
                     message.push_str(&format!("\ndetail: {}", error.sanitized_detail()));
                 }
                 self.insert_entry(&Entry::Error(message));
-                self.status = "claude code logout incomplete".into();
+                self.set_status("claude code logout incomplete");
             }
         }
         Ok(())
@@ -254,7 +253,7 @@ impl App {
                 choice,
                 pending: InlineChoicePending::ClaudeCodeRelogin,
             }));
-        self.status = "claude code already signed in".into();
+        self.set_status("claude code already signed in");
     }
 
     async fn run_claude_code_login(
@@ -324,14 +323,15 @@ impl App {
     fn record_claude_login_auth_outcome(&mut self, outcome: &ClaudeLoginAuthOutcome) {
         match outcome {
             ClaudeLoginAuthOutcome::Complete { notice } => {
-                self.insert_entry(&Entry::Notice(notice.clone()));
+                self.set_status(notice);
             }
             ClaudeLoginAuthOutcome::Incomplete { message }
             | ClaudeLoginAuthOutcome::Failed { message } => {
                 self.insert_entry(&Entry::Error(message.clone()));
+                self.set_status(outcome.status_line());
+                return;
             }
         }
-        self.status = outcome.status_line().into();
     }
 }
 

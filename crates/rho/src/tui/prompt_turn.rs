@@ -198,7 +198,7 @@ impl App {
         self.turn
             .reasoning_phase_mut()
             .begin_step(self.info.runtime.show_reasoning_output);
-        self.status = "running".into();
+        self.set_status("running");
         self.begin_provider_turn_ui();
         self.turn.set_activity_phase(ActivityPhase::Starting);
         self.report_herdr_working().await;
@@ -224,7 +224,7 @@ impl App {
             self.turn.stop_loading();
             self.turn.set_current_turn_start(None);
             self.turn.set_activity_phase(ActivityPhase::default());
-            self.status = "ready".into();
+            self.set_status("ready");
             return Err(error.into());
         }
         self.debug_assert_provider_turn_sync(agent);
@@ -518,14 +518,14 @@ impl App {
                 }
                 self.reset_streams();
                 self.turn.set_current_turn_start(None);
-                self.status = if !self.pending.has_follow_ups() {
-                    "ready".into()
+                self.set_status(if !self.pending.has_follow_ups() {
+                    "ready".to_string()
                 } else {
                     format!(
                         "running next queued message ({})",
                         self.pending.follow_up_len()
                     )
-                };
+                });
                 TurnOutcome::Completed
             }
             _ if questionnaire_cancelled_by_user => {
@@ -539,10 +539,9 @@ impl App {
                     "questionnaire cancelled"
                 };
                 self.retain_interrupted_tools(interrupted_tool_entries);
-                self.insert_entry(&Entry::Notice(notice.into()));
                 self.reset_streams();
                 self.turn.set_current_turn_start(None);
-                self.status = "questionnaire cancelled".into();
+                self.set_status(notice);
                 TurnOutcome::Cancelled
             }
             Err(error)
@@ -557,10 +556,9 @@ impl App {
                 self.turn.stop_loading();
                 self.finish_streams();
                 self.retain_interrupted_tools(interrupted_tool_entries);
-                self.insert_entry(&Entry::Notice("model interrupted".into()));
                 self.reset_streams();
                 self.turn.set_current_turn_start(None);
-                self.status = "interrupted".into();
+                self.set_status("model interrupted");
                 TurnOutcome::Interrupted
             }
             result => {
@@ -584,7 +582,7 @@ impl App {
         self.clear_accepted_steering();
         self.apply_pending_model_selection(agent, completed)?;
         if self.pending_subagent_questionnaire.is_some() {
-            self.status = HerdrUserWait::Questionnaire.message().into();
+            self.set_status(HerdrUserWait::Questionnaire.message());
         }
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;
@@ -635,7 +633,7 @@ impl App {
         self.end_busy_ui();
         self.turn.stop_loading();
         self.insert_entry(&Entry::Error(message));
-        self.status = "error".into();
+        self.set_status("error");
         TurnOutcome::Failed(failed_turn)
     }
 }

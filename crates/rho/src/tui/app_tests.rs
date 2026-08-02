@@ -132,7 +132,7 @@ fn interrupt_during_tool_ends_turn_immediately() {
 
     assert!(interrupt_requested.load(Ordering::SeqCst));
     assert!(matches!(control, StreamControl::Interrupt));
-    assert_eq!(app.status, "interrupting tool");
+    assert_eq!(app.status(), "interrupting tool");
 }
 
 #[test]
@@ -757,18 +757,34 @@ fn complete_slash_command_inserts_prefixed_skill_command() {
     assert_eq!(cursor, 14);
 }
 
+// Covers: ephemeral status feedback must not write transcript notices
+// Owner: tui status surface
 #[test]
-fn status_notice_suppresses_consecutive_duplicates() {
+fn notify_status_is_toast_only() {
     let mut app = test_app();
     app.notify_status("notice-a");
     app.notify_status("notice-a");
 
-    assert_eq!(
-        app.history
-            .entries()
-            .iter()
-            .filter(|entry| matches!(entry, Entry::Notice(text) if text == "notice-a"))
-            .count(),
-        1
-    );
+    assert_eq!(app.status(), "notice-a");
+    assert!(app
+        .history
+        .entries()
+        .iter()
+        .all(|entry| !matches!(entry, Entry::Notice(text) if text == "notice-a")));
+}
+
+// Covers: status writes must show as a short-lived overlay toast
+// Owner: tui status surface
+#[test]
+fn status_feedback_sets_visible_overlay() {
+    let mut app = test_app();
+    app.set_status("interrupting tool");
+
+    let overlay = app
+        .status_overlay
+        .as_ref()
+        .expect("status overlay should be set");
+    assert_eq!(overlay.message(), "interrupting tool");
+    assert_eq!(overlay.tone(), super::status_overlay::StatusTone::Warning);
+    assert!(overlay.is_visible(std::time::Instant::now()));
 }

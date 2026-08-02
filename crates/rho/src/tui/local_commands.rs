@@ -18,7 +18,7 @@ impl App {
             Ok(diff) => diff,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("unable to show Git diff: {error}")));
-                self.status = "git diff unavailable".into();
+                self.set_status("git diff unavailable");
                 return Ok(());
             }
         };
@@ -37,11 +37,11 @@ impl App {
             expanded: true,
             image: None,
         }));
-        self.status = if diff.has_changes {
-            "worktree diff".into()
+        self.set_status(if diff.has_changes {
+            "worktree diff"
         } else {
-            "worktree clean".into()
-        };
+            "worktree clean"
+        });
         Ok(())
     }
 
@@ -50,23 +50,16 @@ impl App {
         invocation: &CommandInvocation,
     ) -> anyhow::Result<()> {
         let Some(session_id) = self.info.session.session_id.clone() else {
-            self.insert_entry(&Entry::Notice(
-                "no active session to export; send a message first".into(),
-            ));
-            self.status = "nothing to export".into();
+            self.set_status("no active session to export; send a message first");
             return Ok(());
         };
         match export::write_session_html(&self.info.runtime.cwd, &session_id, &invocation.args) {
             Ok(path) => {
-                self.insert_entry(&Entry::Notice(format!(
-                    "session transcript exported to {}",
-                    path.display()
-                )));
-                self.status = "session exported".into();
+                self.set_status(format!("session transcript exported to {}", path.display()));
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("unable to export session: {error}")));
-                self.status = "export failed".into();
+                self.set_status("export failed");
             }
         }
         Ok(())
@@ -78,15 +71,11 @@ impl App {
     ) -> anyhow::Result<()> {
         let title = invocation.args.trim();
         if title.is_empty() {
-            self.insert_entry(&Entry::Notice("usage: /title <name>".into()));
-            self.status = "title required".into();
+            self.set_status("usage: /title <name>");
             return Ok(());
         }
         let Some(session_id) = self.info.session.session_id.clone() else {
-            self.insert_entry(&Entry::Notice(
-                "no active session to rename; send a message first".into(),
-            ));
-            self.status = "nothing to rename".into();
+            self.set_status("no active session to rename; send a message first");
             return Ok(());
         };
         // Only cancel pending auto-title after the manual write succeeds so a
@@ -95,12 +84,11 @@ impl App {
             Ok(updated) => {
                 self.pending_session_title = None;
                 self.session_title_locked = true;
-                self.insert_entry(&Entry::Notice(format!("session titled: {}", updated.title)));
-                self.status = "session renamed".into();
+                self.set_status(format!("session titled: {}", updated.title));
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("unable to rename session: {error}")));
-                self.status = "rename failed".into();
+                self.set_status("rename failed");
             }
         }
         Ok(())
@@ -111,7 +99,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        self.status = "checking provider connections".into();
+        self.set_status("checking provider connections");
         terminal.draw(|frame| self.draw(frame))?;
 
         let mut provider_health = Vec::new();
@@ -161,7 +149,7 @@ impl App {
         });
         self.input_ui
             .set_composer(super::ComposerMode::Picker(picker));
-        self.status = "doctor diagnostics".into();
+        self.set_status("doctor diagnostics");
         Ok(())
     }
 }

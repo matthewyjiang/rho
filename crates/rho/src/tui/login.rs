@@ -193,11 +193,11 @@ impl App {
             ) {
                 Ok(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(picker));
-                    self.status = "select provider to logout".into();
+                    self.set_status("select provider to logout");
                 }
                 Err(err) => {
                     self.insert_entry(&Entry::Error(err.to_string()));
-                    self.status = "logout failed".into();
+                    self.set_status("logout failed");
                 }
             }
             return Ok(());
@@ -215,7 +215,7 @@ impl App {
         // happens only after a normal provider is selected, never for claude-code.
         self.input_ui
             .set_composer(ComposerMode::Picker(provider_picker::login_group_picker()));
-        self.status = "select provider to login".into();
+        self.set_status("select provider to login");
     }
 
     fn begin_store_choice_if_needed(&mut self, next: StoreChoiceNext) -> bool {
@@ -225,7 +225,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not load config before login: {err}"
                 )));
-                self.status = "login failed".into();
+                self.set_status("login failed");
                 return true;
             }
         };
@@ -239,11 +239,11 @@ impl App {
                         choice,
                         pending: InlineChoicePending::CredentialStore { next },
                     }));
-                self.status = "choose credential store before login".into();
+                self.set_status("choose credential store before login");
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "login failed".into();
+                self.set_status("login failed");
             }
         }
         true
@@ -266,7 +266,7 @@ impl App {
             Ok(path) => Some(path),
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "credential store selection failed".into();
+                self.set_status("credential store selection failed");
                 return Ok(());
             }
         };
@@ -280,7 +280,7 @@ impl App {
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "credential store selection failed".into();
+                self.set_status("credential store selection failed");
                 return Ok(());
             }
         }
@@ -309,10 +309,9 @@ impl App {
         let provider = provider.trim();
         if provider::provider_descriptor(provider).is_some_and(|descriptor| descriptor.is_keyless())
         {
-            self.insert_entry(&Entry::Notice(format!(
+            self.set_status(format!(
                 "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
-            )));
-            self.status = "no login required".into();
+            ));
             return Ok(());
         }
         // Resolve in this order:
@@ -337,14 +336,14 @@ impl App {
                         self.insert_entry(&Entry::Error(format!(
                             "unsupported login provider '{value}'"
                         )));
-                        self.status = "login failed".into();
+                        self.set_status("login failed");
                         return Ok(());
                     };
                     return self.start_login_for_target(target, terminal, agent).await;
                 }
                 super::provider_picker::LoginGroupNext::MethodPicker(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(*picker));
-                    self.status = format!("select {} login method", provider);
+                    self.set_status(format!("select {} login method", provider));
                     return Ok(());
                 }
             }
@@ -360,7 +359,7 @@ impl App {
             "unsupported login provider '{provider}'. Use {providers}, /login {}",
             claude_login::CLAUDE_CODE_TARGET
         )));
-        self.status = "login failed".into();
+        self.set_status("login failed");
         Ok(())
     }
 
@@ -374,17 +373,16 @@ impl App {
             .expect("catalog returned unsupported login provider")
         {
             AuthenticationMethod::None => {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "{} does not require login. Refresh its model list in /config, then choose a model with /model.",
                     target.provider
-                )));
-                self.status = "no login required".into();
+                ));
                 Ok(())
             }
             AuthenticationMethod::ApiKey { entry_label } => {
                 self.input_ui
                     .set_composer(ComposerMode::SecretInput(SecretInput::new(target)));
-                self.status = format!("enter {entry_label}");
+                self.set_status(format!("enter {entry_label}"));
                 Ok(())
             }
             AuthenticationMethod::Interactive { provider_label } => {
@@ -403,7 +401,7 @@ impl App {
     ) -> anyhow::Result<()> {
         if key.trim().is_empty() {
             self.insert_entry(&Entry::Error("API key cannot be empty".into()));
-            self.status = "login failed".into();
+            self.set_status("login failed");
             return Ok(());
         }
         self.cancel_limits_command().await;
@@ -416,7 +414,7 @@ impl App {
             Ok(()) => self.finish_login(target, terminal, agent).await,
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "login failed".into();
+                self.set_status("login failed");
                 Ok(())
             }
         }
@@ -445,17 +443,17 @@ impl App {
             } else {
                 InteractiveLoginMode::Browser
             };
-        self.status = match mode {
+        self.set_status(match mode {
             InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
             InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
-        };
+        });
         terminal.draw(|frame| self.draw(frame))?;
         let login = match ProviderAuthentication::start_interactive_login(&target.auth, mode).await
         {
             Ok(login) => login,
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "login failed".into();
+                self.set_status("login failed");
                 return Ok(());
             }
         };
@@ -500,13 +498,14 @@ impl App {
                 self.insert_entry(&Entry::Notice(instruction.into()));
                 self.input_ui.set_composer(ComposerMode::Input);
                 self.refresh_available_auths();
-                self.status = format!("{provider_label} device setup ready");
                 self.report_resting_herdr_state().await;
                 return Ok(());
             }
         };
         let flow = if device_flow { " device" } else { "" };
-        self.status = format!("waiting for {provider_label}{flow} login; press esc to cancel");
+        self.set_status(format!(
+            "waiting for {provider_label}{flow} login; press esc to cancel"
+        ));
         self.input_ui
             .set_composer(ComposerMode::InteractivePending(target.clone()));
         self.pending_interactive_login = Some(PendingInteractiveLogin {
@@ -542,7 +541,7 @@ impl App {
                     Err(err) => {
                         self.input_ui.set_composer(ComposerMode::Input);
                         self.insert_entry(&Entry::Error(err.to_string()));
-                        self.status = "login failed".into();
+                        self.set_status("login failed");
                         Ok(())
                     }
                 }
@@ -550,12 +549,12 @@ impl App {
             Ok(Err(err)) => {
                 self.input_ui.set_composer(ComposerMode::Input);
                 self.insert_entry(&Entry::Error(err));
-                self.status = "login failed".into();
+                self.set_status("login failed");
                 Ok(())
             }
             Err(err) if err.is_cancelled() => {
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.status = "login cancelled".into();
+                self.set_status("login cancelled");
                 Ok(())
             }
             Err(err) => {
@@ -563,7 +562,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "Interactive login task failed: {err}"
                 )));
-                self.status = "login failed".into();
+                self.set_status("login failed");
                 Ok(())
             }
         }
@@ -580,29 +579,27 @@ impl App {
             .await?;
         if self.using_unavailable_provider {
             if self.activate_provider_after_login(&target, agent)? {
-                self.insert_entry(&Entry::Notice(format!(
+                self.set_status(format!(
                     "stored credentials for {} and selected {}",
                     target.provider,
                     rho_providers::provider::model_reference(
                         &self.info.runtime.provider,
                         &self.info.runtime.model,
                     )
-                )));
+                ));
             }
         } else if target.provider == self.info.runtime.provider {
             if self.reload_active_provider_after_login(&target, agent)? {
-                self.insert_entry(&Entry::Notice(format!(
-                        "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
-                        target.provider
-                    )),
-                );
+                self.set_status(format!(
+                    "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
+                    target.provider
+                ));
             }
         } else {
-            self.insert_entry(&Entry::Notice(format!(
+            self.set_status(format!(
                 "stored credentials for {}. Switch models with /model when you want to use it.",
                 target.provider
-            )));
-            self.status = "login saved".into();
+            ));
         }
         self.report_resting_herdr_state().await;
         Ok(())
@@ -620,7 +617,7 @@ impl App {
             return Ok(());
         }
 
-        self.status = format!("refreshing {} model list", target.provider);
+        self.set_status(format!("refreshing {} model list", target.provider));
         terminal.draw(|frame| self.draw(frame))?;
         let config = self.info.services.config_repository.load()?;
         let endpoint = config.resolved_provider_endpoint(&target.provider);
@@ -671,7 +668,7 @@ impl App {
                     "stored credentials, but reasoning level '{requested}' is not supported by {}",
                     rho_providers::provider::model_reference(provider, model)
                 )));
-                self.status = "login saved".into();
+                self.set_status("login saved");
                 None
             }
         }
@@ -699,7 +696,7 @@ impl App {
                     "stored credentials, but could not refresh {}: {err}",
                     target.provider
                 )));
-                self.status = "login saved".into();
+                self.set_status("login saved");
                 return Ok(false);
             }
         };
@@ -712,12 +709,12 @@ impl App {
             replacement: new_provider,
         };
         match self.activate_provider(activation, agent)? {
-            ProviderActivationOutcome::Saved => self.status = "login saved".into(),
+            ProviderActivationOutcome::Saved => self.set_status("login saved"),
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "login applied, but saving config failed: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
         }
         Ok(true)
@@ -729,12 +726,10 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let Some(model) = catalog::default_model_for_provider(&target.provider) else {
-            self.insert_entry(&Entry::Notice(format!(
-                    "stored credentials for {}, but no cached models are available. Open /config and choose Refresh model lists before switching to it.",
-                    target.provider
-                )),
-            );
-            self.status = "login saved".into();
+            self.set_status(format!(
+                "stored credentials for {}, but no cached models are available. Open /config and choose Refresh model lists before switching to it.",
+                target.provider
+            ));
             return Ok(false);
         };
         let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
@@ -752,7 +747,7 @@ impl App {
                     "stored credentials, but could not activate {}: {err}",
                     target.provider
                 )));
-                self.status = "login saved".into();
+                self.set_status("login saved");
                 return Ok(false);
             }
         };
@@ -766,13 +761,13 @@ impl App {
         };
         match self.activate_provider(activation, agent)? {
             ProviderActivationOutcome::Saved => {
-                self.status = format!(
+                self.set_status(format!(
                     "model: {}",
                     rho_providers::provider::model_reference(
                         &self.info.runtime.provider,
                         &self.info.runtime.model,
                     )
-                );
+                ));
             }
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -782,7 +777,7 @@ impl App {
                         &self.info.runtime.model,
                     )
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
         }
         Ok(true)
@@ -802,7 +797,7 @@ impl App {
                 catalog::implemented_providers().join(", /logout "),
                 claude_login::CLAUDE_CODE_TARGET
             )));
-            self.status = "logout failed".into();
+            self.set_status("logout failed");
             return Ok(());
         };
 
@@ -839,7 +834,7 @@ impl App {
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
-                self.status = "logout failed".into();
+                self.set_status("logout failed");
                 Ok(())
             }
         }
@@ -851,13 +846,13 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> bool {
         if self.info.runtime.provider != target.provider || self.info.runtime.auth != target.auth {
-            self.status = "logout complete".into();
+            self.set_status("logout complete");
             return false;
         }
         if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.auth)
             .unwrap_or(false)
         {
-            self.status = "logout complete".into();
+            self.set_status("logout complete");
             return false;
         }
 
@@ -872,7 +867,7 @@ impl App {
         ) {
             Ok(_) => {
                 self.using_unavailable_provider = true;
-                self.status = "no providers configured; run /login".into();
+                self.set_status("no providers configured; run /login");
             }
             Err(swap_error) => {
                 // Runtime still holds the prior provider object.
@@ -880,7 +875,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not detach the logged-out provider: {swap_error}"
                 )));
-                self.status = "logout complete; provider detach failed".into();
+                self.set_status("logout complete; provider detach failed");
             }
         }
         true

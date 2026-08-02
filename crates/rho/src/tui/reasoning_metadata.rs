@@ -109,7 +109,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not update reasoning to {reasoning}: {err}"
                 )));
-                self.status = "reasoning change failed".into();
+                self.set_status("reasoning change failed");
                 return Ok(());
             }
         };
@@ -133,12 +133,12 @@ impl App {
             self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
         match save_result {
-            Ok(()) => self.status = format!("reasoning: {reasoning}"),
+            Ok(()) => self.set_status(format!("reasoning: {reasoning}")),
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "reasoning set to {reasoning} for this session, but saving config failed: {err}"
                 )));
-                self.status = "config save failed".into();
+                self.set_status("config save failed");
             }
         }
         Ok(())

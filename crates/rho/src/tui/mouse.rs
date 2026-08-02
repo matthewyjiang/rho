@@ -346,21 +346,24 @@ impl App {
             pending_start = pending_end;
         }
         if let Some(target) = target {
-            let pending = match target {
-                PendingToolKey::Preview(index) => {
-                    self.turn.tool_calls_mut().previews.get_mut(&index)
+            let expanded = {
+                let pending = match target {
+                    PendingToolKey::Preview(index) => {
+                        self.turn.tool_calls_mut().previews.get_mut(&index)
+                    }
+                    PendingToolKey::Running(call_id) => {
+                        self.turn.tool_calls_mut().running.get_mut(&call_id)
+                    }
                 }
-                PendingToolKey::Running(call_id) => {
-                    self.turn.tool_calls_mut().running.get_mut(&call_id)
-                }
-            }
-            .expect("pending tool exists");
-            pending.expanded = !pending.expanded;
-            self.status = if pending.expanded {
-                "tool output expanded".into()
-            } else {
-                "tool output collapsed".into()
+                .expect("pending tool exists");
+                pending.expanded = !pending.expanded;
+                pending.expanded
             };
+            self.set_status(if expanded {
+                "tool output expanded"
+            } else {
+                "tool output collapsed"
+            });
             self.clamp_history_scroll_for_terminal(terminal)?;
             return Ok(true);
         }

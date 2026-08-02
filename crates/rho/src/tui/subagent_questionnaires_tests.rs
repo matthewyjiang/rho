@@ -139,7 +139,7 @@ async fn answered_running_questionnaire_reports_parent_working_again() {
 
     let working = server.next_request().await;
     assert_eq!(working["params"]["state"], "working");
-    assert_eq!(app.status, "running");
+    assert_eq!(app.status(), "running");
     assert!(response.await.unwrap().is_ok());
 }
 
@@ -161,7 +161,7 @@ async fn answered_goal_questionnaire_restores_wait_status() {
         .await
         .unwrap();
 
-    assert_eq!(app.status, "waiting for delegated agents");
+    assert_eq!(app.status(), "waiting for delegated agents");
     assert!(response.await.unwrap().is_ok());
 }
 
@@ -187,5 +187,5 @@ async fn cancelled_visible_questionnaire_restores_input_composer() {
 
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
     assert!(app.pending_subagent_questionnaire.is_none());
-    assert_eq!(app.status, "ready");
+    assert_eq!(app.status(), "ready");
 }

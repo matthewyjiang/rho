@@ -243,7 +243,7 @@ impl App {
                 self.begin_provider_turn_ui();
                 self.turn.clear_tool_calls();
                 self.turn.start_loading_if_needed();
-                self.status = format!("running step {step}");
+                self.set_status(format!("running step {step}"));
                 None
             }
             ViewModelEvent::SteeringApplied(ids) => {
@@ -392,10 +392,6 @@ impl App {
                 }
             },
             other => {
-                self.history.set_last_status_notice(match &other {
-                    Entry::Notice(text) => Some(text.clone()),
-                    _ => None,
-                });
                 let index = self.history.len();
                 self.history.lines_mut().invalidate_from(index);
                 self.history.push(other);
@@ -500,27 +496,37 @@ impl App {
         self.record_inserted_entry(entry.clone());
     }
 
-    pub(super) fn notify_status(&mut self, status: impl Into<String>) {
-        let status = status.into();
-        self.status = status.clone();
-        if self.history.last_status_notice() == Some(status.as_str()) {
+    /// Show a tiny disappearing status toast.
+    ///
+    /// This is the write path for ephemeral action feedback. Prefer
+    /// [`Self::notify_status`] at call sites that used to push the same text
+    /// into the transcript; toast-only keeps the feed free of chrome noise.
+    pub(super) fn set_status(&mut self, status: impl AsRef<str>) {
+        let status = status.as_ref();
+        if status.is_empty() {
+            self.status_overlay = None;
             return;
         }
-        self.insert_entry(&Entry::Notice(status));
+        self.status_overlay = Some(super::status_overlay::StatusOverlay::new(
+            status,
+            Instant::now(),
+        ));
+    }
+
+    /// Latest status toast text, or empty when none is set.
+    pub(super) fn status(&self) -> &str {
+        self.status_overlay
+            .as_ref()
+            .map(super::status_overlay::StatusOverlay::message)
+            .unwrap_or("")
+    }
+
+    /// Show ephemeral feedback as a status toast only (no transcript notice).
+    pub(super) fn notify_status(&mut self, status: impl AsRef<str>) {
+        self.set_status(status);
     }
 
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
-        self.history.set_last_status_notice(match &entry {
-            Entry::Notice(text) => Some(text.clone()),
-            Entry::User(_)
-            | Entry::Assistant(_)
-            | Entry::Reasoning(_)
-            | Entry::RuntimeInfo(_)
-            | Entry::Changelog(_)
-            | Entry::UsageLimits(_)
-            | Entry::Tool(_)
-            | Entry::Error(_) => None,
-        });
         self.push_transcript_entry(entry);
     }
 
@@ -592,7 +598,7 @@ impl App {
             self.history.images_mut().clear();
             self.history.invalidate_from(start);
         }
-        self.status = "retrying provider response".into();
+        self.set_status("retrying provider response");
     }
 }
 

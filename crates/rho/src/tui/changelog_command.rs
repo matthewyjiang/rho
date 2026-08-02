@@ -21,7 +21,7 @@ impl App {
             Ok(request) => request,
             Err(error) => {
                 self.insert_entry(&Entry::Error(error.to_string()));
-                self.status = "changelog usage".into();
+                self.set_status("changelog usage");
                 return Ok(());
             }
         };
@@ -31,7 +31,7 @@ impl App {
                 Ok(display) => self.show_changelog(display),
                 Err(message) => {
                     self.insert_entry(&Entry::Error(message));
-                    self.status = "changelog unavailable".into();
+                    self.set_status("changelog unavailable");
                 }
             },
             ChangelogRequest::Latest => {
@@ -47,15 +47,12 @@ impl App {
     /// task was spawned so callers can redraw the "fetching" status at once.
     pub(super) fn start_latest_changelog_command(&mut self) -> bool {
         if self.pending_changelog.is_some() {
-            self.insert_entry(&Entry::Notice(
-                "a latest changelog fetch is already in progress".into(),
-            ));
-            self.status = "fetching latest changelog".into();
+            self.set_status("a latest changelog fetch is already in progress");
             return false;
         }
 
         self.pending_changelog = Some(tokio::spawn(async move { fetch_latest_display().await }));
-        self.status = "fetching latest changelog".into();
+        self.set_status("fetching latest changelog");
         true
     }
 
@@ -88,13 +85,13 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "unable to fetch latest changelog: {error}"
                 )));
-                self.status = "changelog fetch failed".into();
+                self.set_status("changelog fetch failed");
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
                     "unable to fetch latest changelog: background task failed: {error}"
                 )));
-                self.status = "changelog fetch failed".into();
+                self.set_status("changelog fetch failed");
             }
         }
         Ok(())
@@ -103,7 +100,7 @@ impl App {
     fn show_changelog(&mut self, display: ChangelogDisplay) {
         let version = display.section.version.clone();
         self.insert_entry(&Entry::Changelog(Box::new(display)));
-        self.status = format!("changelog v{version}");
+        self.set_status(format!("changelog v{version}"));
     }
 }
 

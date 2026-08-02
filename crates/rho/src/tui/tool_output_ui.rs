@@ -37,24 +37,29 @@ impl App {
             .size()
             .map(|size| size.width as usize)
             .unwrap_or(TOGGLE_WIDTH_FALLBACK);
-        if let Some(pending) = self.turn.latest_tool_mut() {
+        let status = if let Some(pending) = self.turn.latest_tool_mut() {
             if !tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines, width) {
-                self.status = "no truncated tool output".into();
-                return Ok(());
-            }
-            pending.expanded = !pending.expanded;
-            self.status = if pending.expanded {
-                "tool output expanded".into()
+                Some("no truncated tool output")
             } else {
-                "tool output collapsed".into()
-            };
+                pending.expanded = !pending.expanded;
+                Some(if pending.expanded {
+                    "tool output expanded"
+                } else {
+                    "tool output collapsed"
+                })
+            }
+        } else {
+            None
+        };
+        if let Some(status) = status {
+            self.set_status(status);
             return Ok(());
         }
 
         let Some(index) = self.history.entries().iter().rposition(|entry| {
             expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines, width)
         }) else {
-            self.status = "no truncated tool output".into();
+            self.set_status("no truncated tool output");
             return Ok(());
         };
 
@@ -77,10 +82,10 @@ impl App {
             tool.expanded = expand;
             self.history.lines_mut().invalidate_from(dirty_from);
         }
-        self.status = if expand {
-            "tool output expanded".into()
+        self.set_status(if expand {
+            "tool output expanded"
         } else {
-            "tool output collapsed".into()
-        };
+            "tool output collapsed"
+        });
     }
 }

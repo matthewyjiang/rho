@@ -87,8 +87,8 @@ fn alt_up_preserves_nonempty_composer() {
         VecDeque::from([prompt("future turn")])
     );
     assert_eq!(
-        app.history.last_status_notice(),
-        Some("clear the composer before editing pending input")
+        app.status(),
+        "clear the composer before editing pending input"
     );
 }
 
@@ -153,10 +153,8 @@ fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
     assert!(app.pending.steering_prompts().is_empty());
     assert_eq!(*app.pending.queued_prompts(), VecDeque::from([queued]));
     assert_eq!(
-        app.history.last_status_notice(),
-        Some(
-            "steer queued as follow-up: invalid host response: run completed before accepting steering input"
-        )
+        app.status(),
+        "steer queued as follow-up: invalid host response: run completed before accepting steering input"
     );
 }
 

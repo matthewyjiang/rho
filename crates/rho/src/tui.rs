@@ -105,6 +105,7 @@ mod skill_actions;
 mod skill_picker;
 #[cfg(debug_assertions)]
 mod smoke_injection;
+mod status_overlay;
 mod statusline;
 mod stream;
 mod stream_pace;
@@ -337,7 +338,9 @@ struct App {
         VecDeque<crate::app::subagent_host_input::SubagentHostInputRequest>,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,
-    status: String,
+    /// Tiny disappearing feedback toast. Write only through [`App::set_status`]
+    /// / [`App::notify_status`].
+    status_overlay: Option<status_overlay::StatusOverlay>,
     should_quit: bool,
     ctrl_c_streak: u8,
     streams: StreamUi,

@@ -227,5 +227,5 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
     ));
     assert!(!app.is_ui_busy());
     assert!(app.streams.assistant_stream.is_empty());
-    assert_eq!(app.status, "error");
+    assert_eq!(app.status(), "error");
 }

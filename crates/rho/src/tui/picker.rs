@@ -674,7 +674,7 @@ impl super::App {
         let super::ComposerMode::Picker(parent) = previous else {
             unreachable!("child picker requires an active parent picker")
         };
-        self.status = child.title.clone();
+        self.set_status(child.title.clone());
         self.input_ui
             .set_composer(super::ComposerMode::Picker(child.with_parent(parent)));
     }
@@ -687,7 +687,7 @@ impl super::App {
         let Some(parent) = parent else {
             return false;
         };
-        self.status = parent.title.clone();
+        self.set_status(parent.title.clone());
         self.input_ui
             .set_composer(super::ComposerMode::Picker(parent));
         true

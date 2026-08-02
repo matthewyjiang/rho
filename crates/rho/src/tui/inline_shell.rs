@@ -369,7 +369,7 @@ impl super::App {
         command: String,
     ) -> anyhow::Result<()> {
         if command.is_empty() {
-            self.status = "enter a shell command after ! or !!".into();
+            self.set_status("enter a shell command after ! or !!");
             return Ok(());
         }
         let config = self.info.services.config_repository.load()?;
@@ -403,7 +403,7 @@ impl super::App {
                 .await
             }),
         });
-        self.status = format!("running {shell}");
+        self.set_status(format!("running {shell}"));
         Ok(())
     }
 
@@ -428,7 +428,7 @@ impl super::App {
                 image: None,
             }));
         }
-        self.status = "inline shell cancelled".into();
+        self.set_status("inline shell cancelled");
         true
     }
 
@@ -437,7 +437,7 @@ impl super::App {
         if self.input_ui.take_shell_mode().is_none() {
             return false;
         }
-        self.status = self.busy_status_label().into();
+        self.set_status(self.busy_status_label());
         true
     }
 
@@ -533,7 +533,7 @@ impl super::App {
                 self.insert_entry(&super::Entry::Error(format!(
                     "could not run inline shell: {error}"
                 )));
-                self.status = "inline shell failed".into();
+                self.set_status("inline shell failed");
                 return Ok(());
             }
         };
@@ -561,15 +561,15 @@ impl super::App {
             image: None,
         }));
         self.statusline.refresh_git_branch();
-        self.status = if output.ok {
+        self.set_status(if output.ok {
             if task.mode.included_in_context() {
-                "shell output pending context insertion".into()
+                "shell output pending context insertion".to_string()
             } else {
-                "shell output excluded from context".into()
+                "shell output excluded from context".to_string()
             }
         } else {
             format!("shell exited with {}", output.exit_code)
-        };
+        });
         Ok(())
     }
 
@@ -590,7 +590,7 @@ impl super::App {
             agent.append_user_context_with_display(deferred.context, deferred.persisted_display)?;
         }
         if inserted && !self.is_ui_busy() {
-            self.status = "shell output included in context".into();
+            self.set_status("shell output included in context");
         }
         Ok(())
     }
@@ -599,7 +599,7 @@ impl super::App {
         self.insert_entry(&super::Entry::Error(
             "inline shell commands cannot start from collapsed pasted content".into(),
         ));
-        self.status = "inline shell paste blocked".into();
+        self.set_status("inline shell paste blocked");
         Ok(())
     }
 
