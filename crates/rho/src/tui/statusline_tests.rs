@@ -21,6 +21,58 @@ fn model_segment_prefixes_provider_display_name() {
     assert_eq!(model_segment("", ""), "");
 }
 
+fn span_style(line: &Line<'_>, needle: &str) -> Option<ratatui::style::Style> {
+    line.spans
+        .iter()
+        .find_map(|span| (span.content.as_ref() == needle).then_some(span.style))
+}
+
+#[test]
+fn context_usage_style_escalates_with_fill() {
+    // Covers: high context fill must leave ambient dim chrome
+    // Owner: statusline severity policy
+    assert_eq!(context_usage_style(0.0), Theme::dim());
+    assert_eq!(context_usage_style(74.9), Theme::dim());
+    assert_eq!(context_usage_style(75.0), Theme::warning());
+    assert_eq!(context_usage_style(89.9), Theme::warning());
+    assert_eq!(context_usage_style(90.0), Theme::error());
+    assert_eq!(context_usage_style(100.0), Theme::error());
+}
+
+#[test]
+fn permission_style_marks_auto_as_warning() {
+    // Covers: Auto (no checks) must not render like safer permission modes
+    // Owner: statusline severity policy
+    assert_eq!(permission_style(PermissionMode::Auto), Theme::warning());
+    assert_eq!(permission_style(PermissionMode::Plan), Theme::dim());
+    assert_eq!(permission_style(PermissionMode::Supervised), Theme::dim());
+}
+
+#[test]
+fn auto_permission_and_high_context_use_warning_styles() {
+    // Covers: painted spans carry severity, not only plain text
+    // Owner: statusline render
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+    statusline.update_usage(None, Some(&ContextUsage::estimated(9_500, Some(10_000))), 0);
+
+    let line = statusline.lines(80, None)[1].clone();
+    assert_eq!(
+        span_style(&line, "Auto"),
+        Some(Theme::warning()),
+        "Auto permission must warn: {line:?}"
+    );
+    assert_eq!(
+        span_style(&line, "9.5K (95.0%)"),
+        Some(Theme::error()),
+        "critical context fill must error: {line:?}"
+    );
+    assert_eq!(
+        span_style(&line, "gpt-5.5"),
+        Some(Theme::dim()),
+        "model stays ambient: {line:?}"
+    );
+}
+
 #[test]
 fn provider_degrades_before_model_on_narrow_width() {
     // Covers: adding the provider label must not hide the model on narrow terminals
@@ -45,6 +97,61 @@ fn provider_degrades_before_model_on_narrow_width() {
         !line_text(&narrow).contains("OpenAI"),
         "provider should drop before the model: {:?}",
         line_text(&narrow)
+    );
+}
+
+#[test]
+fn bottom_row_drops_optional_fields_in_rank_order() {
+    // Covers: narrow widths must drop rate before cost before context before model
+    // Owner: statusline field hierarchy
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+    statusline.update_usage(None, Some(&ContextUsage::estimated(1_000, Some(10_000))), 0);
+    statusline.update_average_output_rate(Some(42));
+    // Subagent cost alone is enough to surface a left-side cost field.
+    statusline.update_usage(
+        None,
+        Some(&ContextUsage::estimated(1_000, Some(10_000))),
+        12_500,
+    );
+
+    let wide = line_text(&statusline.lines(100, None)[1]);
+    assert!(
+        wide.contains("1.0K (10.0%)")
+            && wide.contains("$0.013")
+            && wide.contains("42 tok/s avg")
+            && wide.contains("OpenAI")
+            && wide.contains("gpt-5.5"),
+        "wide row should keep ranked fields: {wide:?}"
+    );
+
+    let no_rate = line_text(&statusline.lines(56, None)[1]);
+    assert!(
+        no_rate.contains("1.0K (10.0%)") && no_rate.contains("$0.013"),
+        "mid width should keep context and cost: {no_rate:?}"
+    );
+    assert!(
+        !no_rate.contains("tok/s"),
+        "rate drops before cost/context: {no_rate:?}"
+    );
+
+    let no_cost = line_text(&statusline.lines(32, None)[1]);
+    assert!(
+        no_cost.contains("1.0K (10.0%)") && no_cost.contains("gpt-5.5"),
+        "narrower width should keep context and model: {no_cost:?}"
+    );
+    assert!(
+        !no_cost.contains('$') && !no_cost.contains("OpenAI"),
+        "cost and provider drop before model: {no_cost:?}"
+    );
+
+    let bare = line_text(&statusline.lines(12, None)[1]);
+    assert!(
+        bare.contains("Auto"),
+        "permission is the last kept field: {bare:?}"
+    );
+    assert!(
+        !bare.contains("gpt-5.5") && !bare.contains("1.0K"),
+        "model and context drop before permission: {bare:?}"
     );
 }
 

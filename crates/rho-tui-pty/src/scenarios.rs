@@ -15,6 +15,7 @@ mod paste;
 mod pickers;
 mod resume_delete;
 mod runtime_info;
+mod statusline;
 mod subagent_rail;
 mod text_selection;
 mod workflow;
@@ -46,6 +47,7 @@ use pickers::{
 };
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
+use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::{Duration, Instant};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
@@ -677,6 +679,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Show grouped runtime details and keep them readable after a narrow resize",
         DEFAULT_SIZE,
         RUNTIME_INFO_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "statusline_hierarchy",
+        "Keep ranked statusline identity fields as the terminal narrows",
+        DEFAULT_SIZE,
+        STATUSLINE_HIERARCHY_STEPS,
         false,
     ),
     Scenario::new(
