@@ -18,8 +18,8 @@ use std::{
 };
 
 use rho_tui_pty::{
-    all_scenarios, run_named, smoke_scenario_ids, IsolatedHome, Key, PtyHarness, PtySize,
-    RhoLaunchPlan, ScenarioRunner, WaitTimeout,
+    run_named, smoke_scenario_ids, IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan,
+    ScenarioRunner, WaitTimeout,
 };
 
 fn runner() -> ScenarioRunner {
