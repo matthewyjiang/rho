@@ -67,6 +67,7 @@ The right pane explains the highlighted row. Enter runs that action.
 ## CLI reference
 
 ```text
+rho workflow list [--plans|--runs] [--limit N] [--json]
 rho workflow validate <FILE> [--input KEY=JSON]...
 rho workflow plan <FILE> [--input KEY=JSON]... [--output text|json]
 rho workflow run <PLAN_ID> [--yes] [--output text|jsonl]
@@ -76,6 +77,18 @@ rho workflow resume <RUN_ID> [--yes] [--recover-uncertain] [--output text|jsonl]
 ```
 
 CLI help is the source of truth for supported flags and recovery actions.
+
+### List
+
+`list` prints saved plans and runs for the current workspace. Use `--plans` or
+`--runs` to show one section. `--limit` caps each section. `--json` prints one
+JSON document.
+
+```bash
+rho workflow list
+rho workflow list --runs --limit 10
+rho workflow list --json
+```
 
 ### Validate
 

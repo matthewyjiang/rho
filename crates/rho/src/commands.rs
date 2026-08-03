@@ -145,7 +145,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Export,
         name: "export",
         usage: "/export [path]",
-        description: "export the session transcript to an HTML file",
+        description: "export the session transcript (html/md/json; default ~/.rho/exports)",
         argument_choices: &[],
     },
     CommandSpec {

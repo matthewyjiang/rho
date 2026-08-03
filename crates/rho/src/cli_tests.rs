@@ -43,17 +43,53 @@ fn parses_sessions_list_and_rm() {
         list.command,
         Some(Command::Sessions {
             command: SessionsCommand::List {
-                all_projects: false
+                all_projects: false,
+                search: None,
+                limit: None,
+                json: false,
             }
         })
     ));
 
-    let all = Cli::try_parse_from(["rho", "sessions", "list", "--all-projects"]).unwrap();
+    let all = Cli::try_parse_from([
+        "rho",
+        "sessions",
+        "list",
+        "--all-projects",
+        "--search",
+        "login",
+        "--limit",
+        "5",
+        "--json",
+    ])
+    .unwrap();
     assert!(matches!(
         all.command,
         Some(Command::Sessions {
-            command: SessionsCommand::List { all_projects: true }
-        })
+            command: SessionsCommand::List {
+                all_projects: true,
+                search: Some(query),
+                limit: Some(limit),
+                json: true,
+            }
+        }) if query == "login" && limit.get() == 5
+    ));
+
+    let export = Cli::try_parse_from([
+        "rho", "sessions", "export", "abc123", "--output", "notes.md", "--format", "markdown",
+        "--force",
+    ])
+    .unwrap();
+    assert!(matches!(
+        export.command,
+        Some(Command::Sessions {
+            command: SessionsCommand::Export {
+                id_prefix,
+                output: Some(path),
+                format: Some(crate::export::ExportFormat::Markdown),
+                force: true,
+            }
+        }) if id_prefix == "abc123" && path.ends_with("notes.md")
     ));
 
     let rm = Cli::try_parse_from(["rho", "sessions", "rm", "abc", "def", "--force", "-y"]).unwrap();
@@ -180,6 +216,22 @@ fn rejects_zero_steps_and_invalid_durations() {
 // Owner: CLI parser.
 #[test]
 fn parses_all_workflow_commands_and_output_modes() {
+    let list = Cli::try_parse_from([
+        "rho", "workflow", "list", "--runs", "--limit", "3", "--json",
+    ])
+    .unwrap();
+    assert!(matches!(
+        list.command,
+        Some(Command::Workflow {
+            command: WorkflowCommand::List {
+                plans: false,
+                runs: true,
+                limit: Some(limit),
+                json: true,
+            }
+        }) if limit.get() == 3
+    ));
+
     let validate = Cli::try_parse_from([
         "rho",
         "workflow",

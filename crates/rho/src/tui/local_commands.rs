@@ -53,7 +53,15 @@ impl App {
             self.set_status("no active session to export; send a message first");
             return Ok(());
         };
-        match export::write_session_html(&self.info.runtime.cwd, &session_id, &invocation.args) {
+        match export::write_session_export(
+            &self.info.runtime.cwd,
+            &session_id,
+            &export::ExportWriteOptions {
+                path_arg: &invocation.args,
+                format: None,
+                force: false,
+            },
+        ) {
             Ok(path) => {
                 self.set_status(format!("session transcript exported to {}", path.display()));
             }
