@@ -9,7 +9,7 @@ use {
 };
 
 use super::{
-    activity::ActivityPhase,
+    activity::{ActivityPhase, ProviderRetryHint},
     compaction_display::compaction_call_id,
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
@@ -25,10 +25,7 @@ pub(super) enum ViewModelEvent {
         call_id: rho_sdk::ToolCallId,
         card: ToolCard,
     },
-    ProviderStreamReset {
-        rate_limited: bool,
-        retry_after: Option<std::time::Duration>,
-    },
+    ProviderStreamReset(ProviderRetryHint),
     ProviderRetry,
     OutputDelta(String),
     ReasoningDelta(String),
@@ -82,7 +79,7 @@ impl ViewModelEvent {
             Self::ToolCallUpdated { .. } | Self::ToolCallProposed { .. } => {
                 Some(ActivityPhase::PreparingTool)
             }
-            Self::ProviderStreamReset { .. } | Self::ProviderRetry => {
+            Self::ProviderStreamReset(_) | Self::ProviderRetry => {
                 Some(ActivityPhase::RetryingProvider)
             }
             Self::OutputDelta(_) => Some(ActivityPhase::Responding),
@@ -321,16 +318,12 @@ impl SdkEventAdapter {
             } => {
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
-                let rate_limited = matches!(
-                    reason,
-                    rho_sdk::ProviderStreamResetReason::RetryableFailure(
-                        rho_sdk::ProviderErrorKind::RateLimit
-                    )
-                );
-                vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset {
-                    rate_limited,
-                    retry_after,
-                })]
+                vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset(
+                    ProviderRetryHint {
+                        reason,
+                        retry_after,
+                    },
+                ))]
             }
             RunEvent::ProviderContextUpdated { .. } => Vec::new(),
             RunEvent::ProviderDiagnostic { detail } => {

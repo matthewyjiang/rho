@@ -90,7 +90,7 @@ fn provider_retry_resets_the_current_provider_stream() {
                 detail: "retrying".into(),
                 retry_after: None,
             })),
-            ViewEvent::Update(ViewModelEvent::ProviderStreamReset { .. })
+            ViewEvent::Update(ViewModelEvent::ProviderStreamReset(_))
         ));
     }
 }
@@ -767,6 +767,8 @@ fn submit(
 fn rate_limit_stream_reset_carries_retry_after_into_view_model() {
     use std::time::Duration;
 
+    use crate::tui::activity::ProviderRetryHint;
+
     let mut adapter = SdkEventAdapter::default();
     let event = only_event(adapter.translate(RunEvent::ProviderStreamReset {
         reason: ProviderStreamResetReason::RetryableFailure(rho_sdk::ProviderErrorKind::RateLimit),
@@ -776,9 +778,11 @@ fn rate_limit_stream_reset_carries_retry_after_into_view_model() {
 
     assert!(matches!(
         event,
-        ViewEvent::Update(ViewModelEvent::ProviderStreamReset {
-            rate_limited: true,
+        ViewEvent::Update(ViewModelEvent::ProviderStreamReset(ProviderRetryHint {
+            reason: ProviderStreamResetReason::RetryableFailure(
+                rho_sdk::ProviderErrorKind::RateLimit
+            ),
             retry_after: Some(delay),
-        }) if delay == Duration::from_secs(12)
+        })) if delay == Duration::from_secs(12)
     ));
 }

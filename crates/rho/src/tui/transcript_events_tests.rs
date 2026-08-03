@@ -1,8 +1,12 @@
 use std::time::Duration;
 
 use rho_sdk::model::{ContextUsage, ModelUsage};
+use rho_sdk::ProviderStreamResetReason;
 
-use crate::tui::{app_state::SessionUiPhase, event_adapter::ViewModelEvent, tests::test_app};
+use crate::tui::{
+    activity::ProviderRetryHint, app_state::SessionUiPhase, event_adapter::ViewModelEvent,
+    tests::test_app,
+};
 
 fn model_call_metrics() -> rho_sdk::ModelCallMetrics {
     rho_sdk::ModelCallMetrics {
@@ -68,10 +72,10 @@ fn provider_stream_reset_preserves_completed_model_performance() {
         metrics: model_call_metrics(),
     });
 
-    app.record_agent_event(ViewModelEvent::ProviderStreamReset {
-        rate_limited: false,
+    app.record_agent_event(ViewModelEvent::ProviderStreamReset(ProviderRetryHint {
+        reason: ProviderStreamResetReason::InvalidResponse,
         retry_after: None,
-    });
+    }));
 
     let summary = app.usage.model_performance.summary(&profile);
     assert_eq!(summary.average_output_tokens_per_second, Some(50.0));
@@ -103,18 +107,30 @@ fn step_started_clears_stream_state_without_clearing_model_performance() {
 
 #[test]
 fn provider_retry_status_includes_rate_limit_reset_hint() {
-    use std::time::Duration;
+    use rho_sdk::ProviderErrorKind;
 
     assert_eq!(
-        super::provider_retry_status(true, Some(Duration::from_secs(12))),
+        ProviderRetryHint {
+            reason: ProviderStreamResetReason::RetryableFailure(ProviderErrorKind::RateLimit),
+            retry_after: Some(Duration::from_secs(12)),
+        }
+        .status_label(),
         "rate limited · retry in 12s"
     );
     assert_eq!(
-        super::provider_retry_status(true, None),
+        ProviderRetryHint {
+            reason: ProviderStreamResetReason::RetryableFailure(ProviderErrorKind::RateLimit),
+            retry_after: None,
+        }
+        .status_label(),
         "rate limited · retrying"
     );
     assert_eq!(
-        super::provider_retry_status(false, None),
+        ProviderRetryHint {
+            reason: ProviderStreamResetReason::InvalidResponse,
+            retry_after: None,
+        }
+        .status_label(),
         "retrying provider response"
     );
 }

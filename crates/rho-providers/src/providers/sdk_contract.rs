@@ -81,7 +81,7 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
                 ),
                 crate::model::ProviderReportedErrorKind::RateLimit => (
                     ProviderErrorKind::RateLimit,
-                    rate_limit_public_message(None),
+                    "provider reported a rate limit; run /limits for usage windows".to_string(),
                     Retryability::Retryable,
                 ),
                 crate::model::ProviderReportedErrorKind::Unavailable => (
@@ -129,7 +129,9 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
                 _ => (ProviderErrorKind::Other, Retryability::Permanent),
             };
             let message = match kind {
-                ProviderErrorKind::RateLimit => rate_limit_http_message(status_code, retry_after),
+                ProviderErrorKind::RateLimit => {
+                    rate_limit_message(format!("HTTP {status_code}"), retry_after)
+                }
                 _ => format!("HTTP {status_code}"),
             };
             let mut error = ProviderError::new(kind, message, retryability);
@@ -178,23 +180,13 @@ fn sanitize_diagnostic(value: &str) -> String {
     diagnostic
 }
 
-fn rate_limit_public_message(retry_after: Option<std::time::Duration>) -> String {
+fn rate_limit_message(base: String, retry_after: Option<std::time::Duration>) -> String {
     match retry_after.filter(|delay| !delay.is_zero()) {
         Some(delay) => format!(
-            "provider reported a rate limit; retry in {}; run /limits for usage windows",
+            "{base}; retry in {}; run /limits for usage windows",
             rho_sdk::format_retry_after(delay)
         ),
-        None => "provider reported a rate limit; run /limits for usage windows".into(),
-    }
-}
-
-fn rate_limit_http_message(status_code: u16, retry_after: Option<std::time::Duration>) -> String {
-    match retry_after.filter(|delay| !delay.is_zero()) {
-        Some(delay) => format!(
-            "HTTP {status_code}; retry in {}; run /limits for usage windows",
-            rho_sdk::format_retry_after(delay)
-        ),
-        None => format!("HTTP {status_code}; run /limits for usage windows"),
+        None => format!("{base}; run /limits for usage windows"),
     }
 }
 

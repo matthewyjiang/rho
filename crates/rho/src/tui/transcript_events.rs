@@ -41,7 +41,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ToolFinished { .. } => true,
         ViewModelEvent::RunStarted
         | ViewModelEvent::SteeringApplied(_)
-        | ViewModelEvent::ProviderStreamReset { .. }
+        | ViewModelEvent::ProviderStreamReset(_)
         | ViewModelEvent::ProviderRetry
         | ViewModelEvent::OutputDelta(_)
         | ViewModelEvent::ReasoningDelta(_)
@@ -270,11 +270,8 @@ impl App {
                 self.turn.tool_call_proposed(call_id, card);
                 None
             }
-            ViewModelEvent::ProviderStreamReset {
-                rate_limited,
-                retry_after,
-            } => {
-                self.reset_provider_attempt_stream(rate_limited, retry_after);
+            ViewModelEvent::ProviderStreamReset(retry) => {
+                self.reset_provider_attempt_stream(retry);
                 self.reset_attempt_accounting();
                 None
             }
@@ -605,11 +602,7 @@ impl App {
         self.usage.run_usage.attempt_reset();
     }
 
-    fn reset_provider_attempt_stream(
-        &mut self,
-        rate_limited: bool,
-        retry_after: Option<std::time::Duration>,
-    ) {
+    fn reset_provider_attempt_stream(&mut self, retry: super::activity::ProviderRetryHint) {
         self.reset_streams();
         self.turn.clear_tool_calls();
         if let Some(start) = self
@@ -620,24 +613,8 @@ impl App {
             self.history.images_mut().clear();
             self.history.invalidate_from(start);
         }
-        let status = provider_retry_status(rate_limited, retry_after);
-        self.set_status(status.clone());
-        self.turn.set_activity_detail(Some(status));
-    }
-}
-
-fn provider_retry_status(rate_limited: bool, retry_after: Option<std::time::Duration>) -> String {
-    match (rate_limited, retry_after.filter(|delay| !delay.is_zero())) {
-        (true, Some(delay)) => format!(
-            "rate limited · retry in {}",
-            rho_sdk::format_retry_after(delay)
-        ),
-        (true, None) => "rate limited · retrying".into(),
-        (false, Some(delay)) => format!(
-            "retrying provider · in {}",
-            rho_sdk::format_retry_after(delay)
-        ),
-        (false, None) => "retrying provider response".into(),
+        self.set_status(retry.status_label());
+        self.turn.set_provider_retry(retry);
     }
 }
 
