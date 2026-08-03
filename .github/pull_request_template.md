@@ -41,3 +41,18 @@ N/A
 ## Breaking changes
 
 <!-- Delete if none. Otherwise describe the break and migration. -->
+
+## Next-major debt
+
+<!-- Required when this PR ships a worse API shape only to stay minor-compatible. Delete if none. Full rules: rho-next-major-debt skill. -->
+
+- [ ] Followed `rho-next-major-debt` (ideal shape considered; compromise intentional).
+- [ ] Each compromise has a greppable `NEXT_MAJOR(<surface>): <cleanup>` marker on the API.
+- [ ] Preferred end state is named in the marker; helpers cover every arm until major.
+- [ ] Host-facing docs updated when external callers must match the awkward shape.
+
+### Markers added
+
+| Marker | Preferred end state |
+| --- | --- |
+| | |

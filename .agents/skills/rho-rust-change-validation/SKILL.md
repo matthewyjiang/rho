@@ -49,6 +49,18 @@ Short checks while reviewing the diff:
 - Reject sleep-synced or known-flaky tests; wait on explicit signals or use PTY harness waits.
 - Interactive TUI changes default to PTY scenarios (`rho-tui-pty-testing`), not new chrome unit tests.
 
+### Next-major debt
+
+Load the `rho-next-major-debt` skill on every issue implementation and PR that
+touches public contracts, events, errors, or any shape chosen only to stay
+minor-compatible. Before finishing:
+
+- If the ideal API was blocked by minor semver, confirm a greppable
+  `NEXT_MAJOR(<surface>): <cleanup>` marker sits on the compromised API.
+- Prefer helpers that cover every arm until major; update host docs when callers
+  must match carefully.
+- Do not leave dual variants, dual-emits, or temporary splits unmarked.
+
 For bug fixes, reproduce the issue through the closest practical user path before finalizing when feasible.
 
 ## 3. Run validation

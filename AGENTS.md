@@ -31,6 +31,7 @@ For PRs:
 - Clearly summarize what changed and why, list validation, and call out breaking changes with a `BREAKING CHANGE:` section.
 - Update documentation for important user-visible changes.
 - When the diff adds or materially expands tests, follow the `rho-test-selection` skill and fill the test-gate section in the pull request template.
+- When the diff ships a minor-only API compromise, follow the `rho-next-major-debt` skill, leave a `NEXT_MAJOR(...)` marker, and fill the next-major debt section in the pull request template (or delete it if none).
 
 ## Rust code
 
@@ -50,60 +51,25 @@ For PRs:
   - before opening or updating a PR: `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` when the change is broad enough to warrant it
 - Use the `rho-rust-change-validation` skill for the full workflow.
 
-## Next-major cleanup markers
+## Next-major debt
 
-When a change ships a **minor-compatible compromise** that is deliberately worse
-than the ideal API (semver field adds, dual variants, deprecated dual-emits,
-temporary indirection), leave a greppable marker so the next major can clean it
-up in one pass. The marker in code is the source of truth—not a separate
-tracking issue alone.
+When a change must ship a worse API shape only to stay **minor-compatible**
+(semver field adds, dual variants, dual-emits, temporary indirection), mark it
+so the next major can clean it up in one pass.
 
-### Marker line
+**On every issue and PR**, load the `rho-next-major-debt` skill and run its gate
+before finishing implementation or review. That skill is the source of truth for:
 
-Use this exact token so inventory is one search:
+- when debt counts vs ordinary TODOs
+- the greppable `NEXT_MAJOR(<surface>): <cleanup>` marker
+- where to put markers (API rustdoc / private comments / host docs)
+- inventory (`rg 'NEXT_MAJOR\('`) and major cutover
 
-```text
-NEXT_MAJOR(<crate-or-surface>): <imperative cleanup>
-```
+Short defaults:
 
-Examples:
-
-```text
-NEXT_MAJOR(rho-sdk): collapse RetryableFailure and RetryableFailureWithRetryAfter into one shape with optional retry_after
-NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits
-```
-
-### Where to put it
-
-1. **On the compromised API (required).**
-   - Public items: a rustdoc `# Next major` section that includes the `NEXT_MAJOR(...)`
-     line, the preferred end state, and why the compromise exists.
-   - Private implementation: a `// NEXT_MAJOR(...): ...` comment at the site of the split.
-2. **Host-facing docs (preferred when hosts match the awkward shape)** so external
-   callers know the temporary contract and the intended collapse.
-3. Prefer matching/construction helpers that cover every arm of the compromise, and
-   document those helpers as the stable surface until major.
-
-### What to mark
-
-Mark when you chose a worse shape **only** to stay minor-compatible, including:
-
-- Parallel enum variants that should be one variant (or event field) plus `Option`
-- Metadata that belongs on an existing struct variant but could not be added without a major break
-- Deprecated dual-emits or aliases retained solely for 1.x hosts
-- Public helpers that exist only to paper over that temporary split
-
-Do **not** use this for ordinary TODOs, nits, or cleanups that can land in a minor.
-
-### Inventory and major cutover
-
-```bash
-rg 'NEXT_MAJOR\(' -n
-```
-
-When cutting a major release: run that search, land each cleanup, delete the
-markers, and call out the breaks in release notes / the upgrade guide with a
-`BREAKING CHANGE` section.
+- Code marker is required; a tracking issue alone is not enough.
+- Prefer construct/match helpers that cover every arm until major.
+- Do not mark cleanups that can land in a minor.
 
 ## Architecture and module boundaries
 
