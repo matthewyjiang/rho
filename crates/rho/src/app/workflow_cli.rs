@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     io::{self, IsTerminal, Read, Write},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{atomic::AtomicBool, Arc},
@@ -13,9 +14,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
-        derive_workflow_outcome, CollectedSources, Diagnostic, InputName, PlanningLimits,
-        PlanningMeasurements, SourceManifest, StarlarkPlanner, StoredPlan, StoredRun,
-        WorkflowError, WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
+        derive_workflow_outcome, CollectedSources, Diagnostic, InputName, PlanInventoryItem,
+        PlanningLimits, PlanningMeasurements, RunInventoryItem, SourceManifest, StarlarkPlanner,
+        StoredPlan, StoredRun, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore,
+        WorkflowValue,
     },
 };
 
@@ -82,6 +84,12 @@ pub(super) fn planner_worker_requested(cli: &Cli) -> bool {
 
 pub(super) async fn run(command: &WorkflowCommand, cli: &Cli) -> anyhow::Result<()> {
     match command {
+        WorkflowCommand::List {
+            plans,
+            runs,
+            limit,
+            json,
+        } => run_list(*plans, *runs, *limit, *json),
         WorkflowCommand::Validate { file, input } => run_validate(file, input, cli).await,
         WorkflowCommand::Plan {
             file,
@@ -120,6 +128,125 @@ struct ValidationDocument {
     source_manifest: Option<SourceManifest>,
     workflow_name: Option<String>,
     node_count: Option<usize>,
+}
+
+fn run_list(
+    plans_only: bool,
+    runs_only: bool,
+    limit: Option<NonZeroUsize>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let ops = WorkflowOps::open(std::env::current_dir()?, None)?;
+    let include_plans = plans_only || !runs_only;
+    let include_runs = runs_only || !plans_only;
+    let mut plans = if include_plans {
+        ops.list_workspace_plans()?
+    } else {
+        Vec::new()
+    };
+    let mut runs = if include_runs {
+        ops.list_workspace_runs()?
+    } else {
+        Vec::new()
+    };
+    if let Some(limit) = limit {
+        plans.truncate(limit.get());
+        runs.truncate(limit.get());
+    }
+    if json {
+        return write_json_document(&WorkflowListDocument {
+            plans: plans.iter().map(PlanListItem::from).collect(),
+            runs: runs.iter().map(RunListItem::from).collect(),
+        });
+    }
+    if include_runs {
+        println!("RUNS");
+        if runs.is_empty() {
+            println!("  (none)");
+        } else {
+            for run in &runs {
+                println!(
+                    "  {}  {:<12}  {}/{}  {}",
+                    short_uuid(&run.run_id.to_string()),
+                    format!("{:?}", run.lifecycle).to_ascii_lowercase(),
+                    run.done_steps,
+                    run.total_steps,
+                    run.name
+                );
+            }
+        }
+    }
+    if include_plans {
+        if include_runs {
+            println!();
+        }
+        println!("PLANS");
+        if plans.is_empty() {
+            println!("  (none)");
+        } else {
+            for plan in &plans {
+                println!(
+                    "  {}  {} steps  {}",
+                    short_uuid(&plan.plan_id.to_string()),
+                    plan.step_count,
+                    plan.name
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct WorkflowListDocument {
+    plans: Vec<PlanListItem>,
+    runs: Vec<RunListItem>,
+}
+
+#[derive(Serialize)]
+struct PlanListItem {
+    id: String,
+    name: String,
+    step_count: usize,
+    created_at_unix_nanos: u64,
+}
+
+#[derive(Serialize)]
+struct RunListItem {
+    id: String,
+    name: String,
+    lifecycle: String,
+    done_steps: usize,
+    total_steps: usize,
+    created_at_unix_nanos: u64,
+}
+
+impl From<&PlanInventoryItem> for PlanListItem {
+    fn from(plan: &PlanInventoryItem) -> Self {
+        Self {
+            id: plan.plan_id.to_string(),
+            name: plan.name.clone(),
+            step_count: plan.step_count,
+            created_at_unix_nanos: plan.created_at_unix_nanos,
+        }
+    }
+}
+
+impl From<&RunInventoryItem> for RunListItem {
+    fn from(run: &RunInventoryItem) -> Self {
+        Self {
+            id: run.run_id.to_string(),
+            name: run.name.clone(),
+            lifecycle: format!("{:?}", run.lifecycle).to_ascii_lowercase(),
+            done_steps: run.done_steps,
+            total_steps: run.total_steps,
+            created_at_unix_nanos: run.created_at_unix_nanos,
+        }
+    }
+}
+
+fn short_uuid(id: &str) -> String {
+    id.chars().take(8).collect()
 }
 
 async fn run_validate(file: &Path, inputs: &[String], cli: &Cli) -> anyhow::Result<()> {

@@ -1,9 +1,7 @@
-//! Render saved sessions as self-contained HTML transcripts.
+//! Render saved sessions as shareable transcripts.
 //!
-//! Consumes [`SessionExport`] data from the session store and produces a
-//! single HTML file with embedded styles: user prompts as plain text,
-//! assistant text as rendered markdown, and tool calls paired with their
-//! outputs in collapsible blocks.
+//! HTML keeps self-contained styling. Markdown and JSON cover notes and
+//! scripts. Format follows an explicit choice or the output path extension.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -13,6 +11,8 @@ use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use clap::ValueEnum;
 
 use {
     crate::session::{ExportedMessage, Session, SessionExport},
@@ -26,43 +26,116 @@ mod tests;
 
 #[path = "export/markdown.rs"]
 mod markdown;
+#[path = "export/transcript.rs"]
+mod transcript;
 
 /// Tool outputs at most this many lines render expanded; longer ones start
 /// collapsed so the transcript stays skimmable.
 const TOOL_OUTPUT_EXPANDED_MAX_LINES: usize = 24;
 const TOOL_ARGUMENT_PREVIEW_MAX_CHARS: usize = 80;
+const TITLE_SLUG_MAX_CHARS: usize = 40;
 
-/// Load the session matching `id_prefix`, render it, and write the HTML file.
-///
-/// `path_arg` is the raw `/export` argument: empty selects a default file name
-/// in `cwd`, a directory receives the default file name, and anything else is
-/// used as the output file path (relative paths resolve against `cwd`).
-pub fn write_session_html(cwd: &Path, id_prefix: &str, path_arg: &str) -> anyhow::Result<PathBuf> {
-    let export = Session::export_by_id(cwd, id_prefix)?;
-    write_export_html(cwd, path_arg, &export)
+/// Supported session export formats.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum ExportFormat {
+    /// Self-contained HTML transcript with rendered Markdown.
+    #[default]
+    Html,
+    /// Plain Markdown transcript.
+    Markdown,
+    /// Structured JSON document of the active transcript path.
+    Json,
 }
 
+impl ExportFormat {
+    pub(crate) fn extension(self) -> &'static str {
+        match self {
+            Self::Html => "html",
+            Self::Markdown => "md",
+            Self::Json => "json",
+        }
+    }
+
+    pub(crate) fn from_extension(extension: &str) -> Option<Self> {
+        match extension.to_ascii_lowercase().as_str() {
+            "html" | "htm" => Some(Self::Html),
+            "md" | "markdown" => Some(Self::Markdown),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
+}
+
+/// Options for writing a session transcript to disk.
+#[derive(Clone, Debug, Default)]
+pub struct ExportWriteOptions<'a> {
+    /// Raw path from `/export` or `--output`. Empty selects the default file.
+    pub path_arg: &'a str,
+    /// Explicit format. When absent, the path extension selects the format.
+    pub format: Option<ExportFormat>,
+    /// Overwrite an existing file. Without this, an existing target is refused.
+    pub force: bool,
+}
+
+/// Load the session matching `id_prefix`, render it, and write the file.
+///
+/// Empty `path_arg` writes under `~/.rho/exports/` (or `$RHO_HOME/exports/`)
+/// with a timestamped default name. A directory argument receives that default
+/// name. Relative paths resolve against `cwd`.
+pub fn write_session_export(
+    cwd: &Path,
+    id_prefix: &str,
+    options: &ExportWriteOptions<'_>,
+) -> anyhow::Result<PathBuf> {
+    let export = Session::export_by_id(cwd, id_prefix)?;
+    write_export(cwd, options, &export)
+}
+
+pub(crate) fn write_export(
+    cwd: &Path,
+    options: &ExportWriteOptions<'_>,
+    export: &SessionExport,
+) -> anyhow::Result<PathBuf> {
+    let (path, format) = resolve_output_target(cwd, options, export)?;
+    if path.exists() && !options.force {
+        anyhow::bail!(
+            "refusing to overwrite {}; pass --force to replace it",
+            path.display()
+        );
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let rendered = render_export(export, format)?;
+    let mut open_options = fs::OpenOptions::new();
+    open_options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open_options.mode(0o600);
+    }
+    let mut file = open_options.open(&path)?;
+    set_private_file_permissions(&file)?;
+    file.write_all(rendered.as_bytes())?;
+    Ok(path)
+}
+
+/// Test helper that forces HTML and overwrites, matching the old write path.
+#[cfg(test)]
 pub(crate) fn write_export_html(
     cwd: &Path,
     path_arg: &str,
     export: &SessionExport,
 ) -> anyhow::Result<PathBuf> {
-    let path = resolve_output_path(cwd, path_arg, &export.id);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let rendered = render_html(export);
-    let mut options = fs::OpenOptions::new();
-    options.create(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&path)?;
-    set_private_file_permissions(&file)?;
-    file.write_all(rendered.as_bytes())?;
-    Ok(path)
+    write_export(
+        cwd,
+        &ExportWriteOptions {
+            path_arg,
+            format: Some(ExportFormat::Html),
+            force: true,
+        },
+        export,
+    )
 }
 
 fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
@@ -78,23 +151,128 @@ fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn resolve_output_path(cwd: &Path, path_arg: &str, session_id: &str) -> PathBuf {
-    let short_id: String = session_id.chars().take(8).collect();
-    let default_name = format!("rho-session-{short_id}.html");
-    let path_arg = path_arg.trim();
+pub(crate) fn resolve_output_target(
+    cwd: &Path,
+    options: &ExportWriteOptions<'_>,
+    export: &SessionExport,
+) -> anyhow::Result<(PathBuf, ExportFormat)> {
+    let path_arg = options.path_arg.trim();
+    let default_format = options.format.unwrap_or(ExportFormat::Html);
+    let default_name = default_file_name(export, default_format);
+
     if path_arg.is_empty() {
-        return cwd.join(default_name);
+        return Ok((default_export_dir()?.join(default_name), default_format));
     }
+
     let path = PathBuf::from(path_arg);
     let path = if path.is_absolute() {
         path
     } else {
         cwd.join(path)
     };
+
     if path.is_dir() {
-        path.join(default_name)
+        return Ok((
+            path.join(default_file_name(export, default_format)),
+            default_format,
+        ));
+    }
+
+    let extension_format = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(ExportFormat::from_extension);
+
+    let format = match (options.format, extension_format) {
+        (Some(explicit), Some(from_ext)) if explicit != from_ext => {
+            anyhow::bail!(
+                "export format {:?} does not match path extension '.{}'; use .{} or omit --format",
+                explicit,
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or(""),
+                explicit.extension()
+            );
+        }
+        (Some(explicit), _) => explicit,
+        (None, Some(from_ext)) => from_ext,
+        (None, None) if path.extension().is_some() => {
+            anyhow::bail!(
+                "unknown export extension '.{}'; use .html, .md, or .json",
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or("")
+            );
+        }
+        (None, None) => {
+            // No extension: treat the path as a stem and append the default format.
+            let path = path.with_extension(default_format.extension());
+            return Ok((path, default_format));
+        }
+    };
+
+    Ok((path, format))
+}
+
+fn default_export_dir() -> anyhow::Result<PathBuf> {
+    Ok(crate::paths::rho_dir()?.join("exports"))
+}
+
+fn default_file_name(export: &SessionExport, format: ExportFormat) -> String {
+    let short_id: String = export.id.chars().take(8).collect();
+    let stamp = format_file_stamp(export.updated_at);
+    let slug = export
+        .title
+        .as_deref()
+        .and_then(title_slug)
+        .map(|slug| format!("-{slug}"))
+        .unwrap_or_default();
+    format!(
+        "rho-session-{short_id}-{stamp}{slug}.{}",
+        format.extension()
+    )
+}
+
+pub(crate) fn format_file_stamp(unix_secs: u64) -> String {
+    local_datetime(unix_secs).map_or_else(
+        || unix_secs.to_string(),
+        |time| time.format("%Y%m%d-%H%M%S").to_string(),
+    )
+}
+
+fn title_slug(title: &str) -> Option<String> {
+    let mut slug = String::new();
+    let mut previous_dash = false;
+    for ch in title.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            previous_dash = false;
+        } else if !slug.is_empty() && !previous_dash {
+            slug.push('-');
+            previous_dash = true;
+        }
+        if slug.chars().count() >= TITLE_SLUG_MAX_CHARS {
+            break;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        None
     } else {
-        path
+        Some(slug)
+    }
+}
+
+pub(crate) fn render_export(
+    export: &SessionExport,
+    format: ExportFormat,
+) -> anyhow::Result<String> {
+    match format {
+        ExportFormat::Html => Ok(render_html(export)),
+        ExportFormat::Markdown => Ok(transcript::render_markdown(export)),
+        ExportFormat::Json => transcript::render_json(export),
     }
 }
 
@@ -424,7 +602,7 @@ fn escape_html(text: &str) -> String {
     escaped
 }
 
-fn format_datetime(unix_secs: u64) -> String {
+pub(super) fn format_datetime(unix_secs: u64) -> String {
     local_datetime(unix_secs).map_or_else(
         || unix_secs.to_string(),
         |time| time.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -443,7 +621,7 @@ fn local_datetime(unix_secs: u64) -> Option<chrono::DateTime<chrono::Local>> {
     Some(chrono::DateTime::from_timestamp(timestamp, 0)?.with_timezone(&chrono::Local))
 }
 
-fn now_unix_secs() -> u64 {
+pub(super) fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())

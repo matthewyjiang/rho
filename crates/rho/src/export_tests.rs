@@ -95,27 +95,169 @@ fn pairs_tool_results_and_renders_orphans_standalone() {
     assert!(html.contains("dangling"));
 }
 
+// Covers: path resolution picks format from extension and keeps workspace writes explicit.
+// Owner: pure unit
 #[test]
-fn resolve_output_path_covers_default_relative_absolute_and_directory() {
+fn resolve_output_target_covers_extension_relative_absolute_and_directory() {
+    let _env = crate::paths::process_env_lock();
+    let home = tempfile::tempdir().unwrap();
+    std::env::set_var("RHO_HOME", home.path());
+
     let cwd = PathBuf::from("/tmp/workspace");
     let dir = tempfile::tempdir().unwrap();
+    let export = export_with_messages(vec![]);
+    let stamp = format_file_stamp(export.updated_at);
+    let default_name = format!("rho-session-aaaaaaaa-{stamp}-fix-the-login-bug.html");
 
+    let (default_path, default_format) = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: "",
+            format: None,
+            force: false,
+        },
+        &export,
+    )
+    .unwrap();
+    assert_eq!(default_format, ExportFormat::Html);
     assert_eq!(
-        resolve_output_path(&cwd, "", SESSION_ID),
-        cwd.join("rho-session-aaaaaaaa.html")
+        default_path,
+        home.path().join("exports").join(&default_name)
     );
+
+    let (md_path, md_format) = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: "notes/transcript.md",
+            format: None,
+            force: false,
+        },
+        &export,
+    )
+    .unwrap();
+    assert_eq!(md_format, ExportFormat::Markdown);
+    assert_eq!(md_path, cwd.join("notes/transcript.md"));
+
+    let (abs_path, abs_format) = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: "/tmp/out.json",
+            format: None,
+            force: false,
+        },
+        &export,
+    )
+    .unwrap();
+    assert_eq!(abs_format, ExportFormat::Json);
+    assert_eq!(abs_path, PathBuf::from("/tmp/out.json"));
+
+    let (dir_path, dir_format) = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: &dir.path().display().to_string(),
+            format: Some(ExportFormat::Markdown),
+            force: false,
+        },
+        &export,
+    )
+    .unwrap();
+    assert_eq!(dir_format, ExportFormat::Markdown);
     assert_eq!(
-        resolve_output_path(&cwd, "notes/transcript.html", SESSION_ID),
-        cwd.join("notes/transcript.html")
+        dir_path,
+        dir.path()
+            .join(format!("rho-session-aaaaaaaa-{stamp}-fix-the-login-bug.md"))
     );
-    assert_eq!(
-        resolve_output_path(&cwd, "/tmp/out.html", SESSION_ID),
-        PathBuf::from("/tmp/out.html")
-    );
-    assert_eq!(
-        resolve_output_path(&cwd, &dir.path().display().to_string(), SESSION_ID,),
-        dir.path().join("rho-session-aaaaaaaa.html")
-    );
+
+    let mismatch = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: "notes.md",
+            format: Some(ExportFormat::Html),
+            force: false,
+        },
+        &export,
+    )
+    .unwrap_err();
+    assert!(mismatch
+        .to_string()
+        .contains("does not match path extension"));
+
+    let unknown = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: "notes.txt",
+            format: None,
+            force: false,
+        },
+        &export,
+    )
+    .unwrap_err();
+    assert!(unknown.to_string().contains("unknown export extension"));
+
+    std::env::remove_var("RHO_HOME");
+}
+
+// Covers: markdown/json renderers keep tool pairing and refuse silent overwrite.
+// Owner: pure unit
+#[test]
+fn markdown_and_json_export_and_overwrite_guard() {
+    let export = export_with_messages(vec![
+        message(Message::user_text("please list files")),
+        message(tool_call(
+            "call-1",
+            "bash",
+            serde_json::json!({"command": "ls"}),
+        )),
+        message(tool_result("call-1", true, "Cargo.toml")),
+    ]);
+
+    let markdown = render_export(&export, ExportFormat::Markdown).unwrap();
+    assert!(markdown.contains("# Fix the login bug"));
+    assert!(markdown.contains("## You"));
+    assert!(markdown.contains("please list files"));
+    assert!(markdown.contains("### `bash` (ok)"));
+    assert!(markdown.contains("Cargo.toml"));
+
+    let json = render_export(&export, ExportFormat::Json).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["id"], SESSION_ID);
+    assert_eq!(value["title"], "Fix the login bug");
+    assert_eq!(value["messages"].as_array().unwrap().len(), 3);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("once.md");
+    write_export(
+        dir.path(),
+        &ExportWriteOptions {
+            path_arg: "once.md",
+            format: None,
+            force: false,
+        },
+        &export,
+    )
+    .unwrap();
+    assert!(path.is_file());
+    let refused = write_export(
+        dir.path(),
+        &ExportWriteOptions {
+            path_arg: "once.md",
+            format: None,
+            force: false,
+        },
+        &export,
+    )
+    .unwrap_err();
+    assert!(refused.to_string().contains("refusing to overwrite"));
+    write_export(
+        dir.path(),
+        &ExportWriteOptions {
+            path_arg: "once.md",
+            format: None,
+            force: true,
+        },
+        &export,
+    )
+    .unwrap();
 }
 
 #[cfg(unix)]

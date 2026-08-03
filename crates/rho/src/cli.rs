@@ -149,6 +149,21 @@ pub const WORKFLOW_PLANNER_WORKER_COMMAND: &str = "__workflow_planner_worker";
 
 #[derive(Subcommand, Debug)]
 pub enum WorkflowCommand {
+    /// List saved workflow plans and runs for the current workspace.
+    List {
+        /// Include only saved plans.
+        #[arg(long, conflicts_with = "runs")]
+        plans: bool,
+        /// Include only runs.
+        #[arg(long, conflicts_with = "plans")]
+        runs: bool,
+        /// Limit how many rows to print per section.
+        #[arg(long, value_name = "N")]
+        limit: Option<NonZeroUsize>,
+        /// Print one JSON document instead of text rows.
+        #[arg(long)]
+        json: bool,
+    },
     /// Validate a Starlark workflow without creating durable state.
     Validate {
         /// Workflow entry file under the current workspace.
@@ -221,6 +236,30 @@ pub enum SessionsCommand {
         /// Include sessions from every workspace, not only the current directory.
         #[arg(long)]
         all_projects: bool,
+        /// Case-insensitive filter over id, title, and first user message.
+        #[arg(long, short = 'q', value_name = "TEXT")]
+        search: Option<String>,
+        /// Limit how many sessions to print.
+        #[arg(long, value_name = "N")]
+        limit: Option<NonZeroUsize>,
+        /// Print one JSON document instead of text rows.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export a saved session transcript by UUID or UUID prefix.
+    Export {
+        /// Session UUID or unique prefix.
+        #[arg(value_name = "ID")]
+        id_prefix: String,
+        /// Output path. Omit to write under ~/.rho/exports/.
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// Explicit format. When omitted, the path extension selects html, md, or json.
+        #[arg(long, value_enum)]
+        format: Option<crate::export::ExportFormat>,
+        /// Overwrite an existing file.
+        #[arg(long)]
+        force: bool,
     },
     /// Delete one or more sessions by UUID or UUID prefix.
     Rm {
