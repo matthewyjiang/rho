@@ -1,15 +1,19 @@
 //! Built-in Rho TUI PTY scenarios.
 
+mod activity_anchor;
 mod apply_patch_diff;
 mod background_agents;
 mod changelog;
+mod command_palette;
 mod config;
 mod conversation_tree;
 mod document_attachment;
+mod file_palette;
 mod first_run;
 mod goal;
 mod hooks;
 mod login;
+mod markdown_stream;
 mod mermaid;
 mod paste;
 mod pickers;
@@ -21,14 +25,17 @@ mod text_selection;
 mod workflow;
 mod workspace_rewind;
 
+use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
 use apply_patch_diff::APPLY_PATCH_DIFF_SCENARIO;
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
 use changelog::CHANGELOG_STEPS;
+use command_palette::{HELP_OVERLAY_SCENARIO, SLASH_COMMAND_PALETTE_SCENARIO};
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
+use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
 use first_run::{
     setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SIGNIN_ENV,
     FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
@@ -39,6 +46,7 @@ use goal::{
 };
 use hooks::HOOKS_CONTRACT_SCENARIO;
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
+use markdown_stream::{MARKDOWN_HEADINGS_SCENARIO, STREAMING_MARKDOWN_STABILITY_SCENARIO};
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
@@ -535,25 +543,6 @@ const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture markdown headings"),
-    Step::WaitText {
-        text: "Level six",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_markdown_headings_rendered),
-    Step::ExitCommand,
-];
-
 /// All registered scenarios.
 const ALL_SCENARIOS: &[Scenario] = &[
     Scenario::new(
@@ -660,13 +649,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         RETRACT_STEERING_DURING_TOOL_STEPS,
         true,
     ),
-    Scenario::new(
-        "markdown_headings",
-        "Render streamed Markdown heading levels without syntax markers",
-        DEFAULT_SIZE,
-        MARKDOWN_HEADINGS_STEPS,
-        false,
-    ),
+    MARKDOWN_HEADINGS_SCENARIO,
+    STREAMING_MARKDOWN_STABILITY_SCENARIO,
+    SPINNER_ACTIVITY_ANCHOR_SCENARIO,
+    SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
+    HELP_OVERLAY_SCENARIO,
+    SLASH_COMMAND_PALETTE_SCENARIO,
+    FILE_PATH_AUTOCOMPLETE_SCENARIO,
     Scenario::new(
         "mermaid_flowchart_resize",
         "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
@@ -877,29 +866,6 @@ fn assert_inline_shell_cancelled(harness: &mut crate::harness::PtyHarness) -> Re
 fn assert_idle_shell_still_streaming(harness: &mut crate::harness::PtyHarness) -> Result<()> {
     if harness.screen().contains_text("idle-stream-end") {
         anyhow::bail!("idle shell output was not rendered until the command completed");
-    }
-    Ok(())
-}
-
-fn assert_markdown_headings_rendered(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    let screen = harness.screen().contents();
-    for heading in [
-        "Level one",
-        "Level two",
-        "Level three",
-        "Level four",
-        "Level five",
-        "Level six",
-    ] {
-        if !screen.contains(heading) {
-            anyhow::bail!("rendered heading is missing from the screen: {heading}");
-        }
-    }
-    if screen
-        .lines()
-        .any(|line| line.trim_start().starts_with('#'))
-    {
-        anyhow::bail!("rendered heading retained Markdown syntax markers");
     }
     Ok(())
 }

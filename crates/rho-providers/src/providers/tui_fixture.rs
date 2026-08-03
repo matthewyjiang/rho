@@ -190,6 +190,20 @@ async fn fixture_stream(
             }
             completed(response)
         }
+        // Stable prose must stay drawn while later emphasis markers complete.
+        "fixture markdown emphasis stream" => {
+            let mut response = String::new();
+            for delta in [
+                "Stable prose ALPHA remains drawn ",
+                "while **hold",
+                "ing closes** and trailing BETA completes.",
+            ] {
+                events.send(ModelEvent::OutputDelta(delta.into())).await?;
+                response.push_str(delta);
+                fixture_sleep(&request.cancellation, Duration::from_millis(250)).await?;
+            }
+            completed(response)
+        }
         "fixture mermaid flowchart" => {
             let mut response = String::new();
             for delta in [

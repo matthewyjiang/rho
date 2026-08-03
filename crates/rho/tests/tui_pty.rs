@@ -18,7 +18,7 @@ use std::{
 };
 
 use rho_tui_pty::{
-    all_scenarios, run_named, IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan,
+    run_named, smoke_scenario_ids, IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan,
     ScenarioRunner, WaitTimeout,
 };
 
@@ -463,9 +463,21 @@ fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");
 }
 
+// Covers: fragile interactive surfaces from issue #711.
+// Owner: interactive TUI
 #[test]
-fn renders_markdown_headings() {
-    assert_pass("markdown_headings");
+fn fragile_surface_scenarios_pass() {
+    for id in [
+        "markdown_headings",
+        "streaming_markdown_stability",
+        "spinner_activity_anchor",
+        "spinner_activity_jump_rail",
+        "help_overlay",
+        "slash_command_palette",
+        "file_path_autocomplete",
+    ] {
+        assert_pass(id);
+    }
 }
 
 #[test]
@@ -1076,15 +1088,25 @@ fn which_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
 
 #[test]
 fn smoke_subset_is_registered() {
-    let smoke = all_scenarios()
-        .iter()
-        .filter(|scenario| scenario.smoke)
-        .map(|scenario| scenario.id)
-        .collect::<Vec<_>>();
-    assert!(smoke.contains(&"startup_stream_exit"));
-    assert!(smoke.contains(&"cancel_and_resubmit"));
-    assert!(smoke.contains(&"type_during_stream"));
-    assert!(smoke.contains(&"resize_during_stream"));
-    assert!(smoke.contains(&"scroll_during_stream"));
-    assert!(smoke.contains(&"terminal_restoration"));
+    let smoke = smoke_scenario_ids();
+    // Core lifecycle gates kept in CI.
+    for id in [
+        "startup_stream_exit",
+        "cancel_and_resubmit",
+        "type_during_stream",
+        "resize_during_stream",
+        "scroll_during_stream",
+        "terminal_restoration",
+    ] {
+        assert!(smoke.contains(&id), "missing core smoke scenario {id}");
+    }
+    // Fragility champions from issue #711.
+    assert!(
+        smoke.contains(&"streaming_markdown_stability"),
+        "missing markdown stability smoke scenario"
+    );
+    assert!(
+        smoke.contains(&"spinner_activity_anchor"),
+        "missing activity-rail smoke scenario"
+    );
 }

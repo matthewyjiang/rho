@@ -1,0 +1,114 @@
+//! Slash command palette and /help overlay scenarios.
+
+use std::time::Duration;
+
+use anyhow::Result;
+
+use crate::{
+    harness::PtyHarness,
+    keys::Key,
+    pty::PtySize,
+    scenario::{Scenario, Step},
+};
+
+use super::{SETTLE, STARTUP};
+
+const SIZE: PtySize = PtySize {
+    rows: 28,
+    cols: 100,
+};
+
+// Covers: /help opens the shortcuts overlay and Esc returns to the session.
+// Owner: interactive TUI
+const HELP_OVERLAY_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("open_help"),
+    Step::SubmitText("/help"),
+    Step::WaitText {
+        text: "Keyboard shortcuts",
+        timeout: SETTLE,
+    },
+    Step::Phase("dismiss"),
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_help_overlay_dismissed),
+    Step::ExitCommand,
+];
+
+// Covers: typing / opens the command palette; filtering narrows matches.
+// Owner: interactive TUI
+const SLASH_COMMAND_PALETTE_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("open_palette"),
+    Step::TypeText("/"),
+    // The palette shows a short top slice in name order; /agents is first.
+    Step::WaitText {
+        text: "/agents",
+        timeout: SETTLE,
+    },
+    Step::Phase("filter"),
+    Step::TypeText("mod"),
+    Step::WaitText {
+        text: "/model",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_slash_palette_filtered_to_model),
+    Step::Phase("dismiss"),
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
+    Step::ExitCommand,
+];
+
+pub(super) const HELP_OVERLAY_SCENARIO: Scenario = Scenario::new(
+    "help_overlay",
+    "Open the keyboard shortcuts overlay and dismiss it cleanly",
+    SIZE,
+    HELP_OVERLAY_STEPS,
+    /* smoke */ false,
+);
+
+pub(super) const SLASH_COMMAND_PALETTE_SCENARIO: Scenario = Scenario::new(
+    "slash_command_palette",
+    "Open the slash command palette and filter to a matching command",
+    SIZE,
+    SLASH_COMMAND_PALETTE_STEPS,
+    /* smoke */ false,
+);
+
+fn assert_help_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    if screen.contains("Keyboard shortcuts") {
+        anyhow::bail!("help overlay still visible after Esc:\n{screen}");
+    }
+    if !screen.contains("gpt-5.5") {
+        anyhow::bail!("session chrome missing after dismissing help:\n{screen}");
+    }
+    Ok(())
+}
+
+fn assert_slash_palette_filtered_to_model(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    if !screen.contains("/model") {
+        anyhow::bail!("filtered slash palette missing /model:\n{screen}");
+    }
+    // /agents is first in the unfiltered short list; it must leave after /mod.
+    if screen.contains("/agents") {
+        anyhow::bail!("slash palette still listed /agents after /mod filter:\n{screen}");
+    }
+    Ok(())
+}
