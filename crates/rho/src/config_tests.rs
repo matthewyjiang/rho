@@ -13,10 +13,29 @@ fn unknown_permission_mode_is_a_config_error() {
     .unwrap_err();
 
     assert!(
-        error
-            .to_string()
-            .contains("unknown permission mode \"unrestricted\""),
+        format!("{error:#}").contains("unknown permission mode \"unrestricted\""),
         "{error:#}"
+    );
+}
+
+// Covers: invalid config errors must name the config file path
+// Owner: config load
+#[test]
+fn invalid_config_errors_include_file_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("broken-config.toml");
+    std::fs::write(&path, "permission_mode = [\n").unwrap();
+
+    let error = Config::load(Some(path.clone())).unwrap_err();
+    let message = format!("{error:#}");
+
+    assert!(
+        message.contains(&path.display().to_string()),
+        "error must name the config file path: {message}"
+    );
+    assert!(
+        message.contains("failed to parse config file"),
+        "error must mark the parse step: {message}"
     );
 }
 
@@ -94,9 +113,7 @@ jump_to_bottom = "ctrl+g"
     let error = Config::load(Some(path)).unwrap_err();
 
     assert!(
-        error
-            .to_string()
-            .contains("open_editor and jump_to_bottom must use different keys"),
+        format!("{error:#}").contains("open_editor and jump_to_bottom must use different keys"),
         "{error:#}"
     );
 }
@@ -438,9 +455,7 @@ deep = "nonexistent/model-x"
     .unwrap_err();
 
     assert!(
-        error
-            .to_string()
-            .contains("model alias 'deep' targets unknown provider 'nonexistent'"),
+        format!("{error:#}").contains("model alias 'deep' targets unknown provider 'nonexistent'"),
         "{error:#}"
     );
 }
@@ -458,7 +473,7 @@ fn undefined_session_model_alias_names_reference_site() {
     .unwrap_err();
 
     assert!(
-        error.to_string().contains(
+        format!("{error:#}").contains(
             "session model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
         ),
         "{error:#}"
@@ -482,7 +497,7 @@ fn undefined_title_model_alias_names_reference_site() {
     .unwrap_err();
 
     assert!(
-        error.to_string().contains(
+        format!("{error:#}").contains(
             "internal agent 'session-title' model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
         ),
         "{error:#}"
@@ -512,8 +527,7 @@ unused = "nonexistent/model-x"
     .unwrap_err();
 
     assert!(
-        error
-            .to_string()
+        format!("{error:#}")
             .contains("model alias 'unused' targets unknown provider 'nonexistent'"),
         "{error:#}"
     );
@@ -766,7 +780,7 @@ fn ollama_base_url_rejects_invalid_or_unsupported_urls() {
         .unwrap_err();
 
         assert!(
-            error.to_string().contains("providers.ollama.base_url"),
+            format!("{error:#}").contains("providers.ollama.base_url"),
             "{error:#}"
         );
     }

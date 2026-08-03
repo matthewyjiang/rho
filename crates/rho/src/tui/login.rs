@@ -557,11 +557,11 @@ impl App {
                 self.set_status("login cancelled");
                 Ok(())
             }
-            Err(err) => {
+            Err(_) => {
                 self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Error(format!(
-                    "Interactive login task failed: {err}"
-                )));
+                self.insert_entry(&Entry::Error(
+                    "background task failed: interactive login".into(),
+                ));
                 self.set_status("login failed");
                 Ok(())
             }

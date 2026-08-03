@@ -20,7 +20,7 @@ async fn main() -> ExitCode {
                         .map(AutomationInterrupted::exit_code)
                 })
                 .unwrap_or(1);
-            eprintln!("Error: {error:?}");
+            eprintln!("Error: {error:#}");
             ExitCode::from(exit_code)
         }
     }
