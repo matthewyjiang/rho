@@ -209,9 +209,9 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
 
     let store = AppCredentialStore;
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
-    let mut save_config = cli_config::apply_overrides(&mut config, &cli)?;
+    let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
-    save_config |= cli_config::normalize_reasoning_for_cli(
+    cli_config::normalize_reasoning_for_cli(
         &mut config,
         if cli.reasoning.is_some() {
             rho_providers::model::ReasoningRequestSource::Explicit
@@ -219,7 +219,11 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
             rho_providers::model::ReasoningRequestSource::PersistedOrDefault
         },
     )?;
-    if save_config {
+    // CLI overrides are session-only unless the user passes --save and an
+    // override actually changed the selection. Auto-saving rewrote the whole
+    // file and dropped comments. Bare --save, no-op identical overrides, and
+    // reasoning auto-normalization alone must not rewrite config.
+    if cli.save && config_changed {
         config_repository.save(&config)?;
     }
     let reasoning_before_binding = config.reasoning;

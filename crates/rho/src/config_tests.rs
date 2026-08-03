@@ -139,8 +139,8 @@ fn loads_and_normalizes_compaction_percentages() {
 fn unsupported_web_search_config_providers_fall_back_to_auto() {
     for provider in ["parallel", "tavily", "perplexity", "gemini", "unknown"] {
         assert_eq!(
-            super::SearchProvider::from_config_value(provider),
-            super::SearchProvider::Auto
+            super::SearchProvider::parse_config_value(provider),
+            (super::SearchProvider::Auto, true)
         );
     }
 }

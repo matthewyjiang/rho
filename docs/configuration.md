@@ -108,14 +108,17 @@ Inline config templates override files with the same name. Typing `/prompt:revie
 
 ## CLI overrides
 
-Passing `--provider`, `--model`, `--auth`, or `--reasoning` updates the config file and makes the choice the future default.
+Passing `--provider`, `--model`, `--auth`, or `--reasoning` overrides the loaded config for the current invocation only. Add `--save` to write those choices into the config file as the future default.
 
 ```bash
 rho --provider openai --auth api-key --model gpt-5.6-sol
 rho --reasoning high
+rho --provider openai --auth api-key --model gpt-5.6-sol --save
 ```
 
 These values select [authentication and models](/authentication-and-models). For the exact `--provider`/`--auth`/`--model` combination each provider expects, see its [provider page](/authentication-and-models#providers).
+
+Unknown keys in `config.toml` are a load error so typos fail loudly. Values that Rho clamps or normalizes (for example `display.max_tool_output_lines` below 1, or an unsupported `web_search.provider`) warn at load time. Prefer `/config` or a careful hand edit when you want durable settings. Both `--save` and `/config` rewrite only the known schema and discard unknown keys, comments, and formatting.
 
 You can load and save a specific config file with:
 

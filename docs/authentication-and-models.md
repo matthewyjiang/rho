@@ -47,7 +47,7 @@ Backends are `os` and `file` only. When no choice has been saved, Rho uses the O
 
 On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/keychain-access/if-youre-asked-for-access-to-your-keychain-kyca1243/mac) documentation when the OS asks whether to allow a credential-store operation.
 
-For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation, and flags that select provider, model, auth, or reasoning also become the saved default.
+For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation. Pass `--save` with `--provider`, `--model`, `--auth`, or `--reasoning` to make those choices the saved default.
 
 ## First run
 

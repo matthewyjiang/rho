@@ -12,7 +12,7 @@ Use the [interactive TUI](/interactive-tui) when you want an ongoing session. Us
 
 ## CLI reference
 
-Rho accepts global options before an optional subcommand. Provider, model, auth, and reasoning selections update the saved defaults; security and session-control switches apply only to the current invocation.
+Rho accepts global options before an optional subcommand. Provider, model, auth, and reasoning selections apply to the current invocation; add `--save` to write them as the saved defaults. Security and session-control switches apply only to the current invocation.
 
 ### Global options
 
@@ -23,6 +23,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `--config <CONFIG>` | Read and save configuration at a specific path instead of `~/.rho/config.toml`. |
 | `--auth <AUTH>` | Select an auth profile and its matching provider profile: `api-key`, `codex`, `anthropic-api-key`, `google-api-key`, `github-copilot`, `xai-api-key`, `xai-oauth`, `moonshot-api-key`, `ollama-cloud-api-key`, `ollama-cloud-device`, `poolside-api-key`, `openrouter-api-key`, `openrouter-oauth`, or `kimi-oauth`. |
 | `--reasoning <LEVEL>` | Select a reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
+| `--save` | Persist `--provider`/`--model`/`--auth`/`--reasoning` overrides to the config file. |
 | `--agent <ID>` | Select the agent definition for this session or automation run. See [subagents](/subagents). |
 | `--no-system-prompt` | Do not send Rho's system prompt, including `AGENTS.md` and skill context. Current invocation only. Place before a subcommand. |
 | `--no-tools` | Do not expose tools to the model. Current invocation only. Place before a subcommand: `rho --no-tools run "..."`. |

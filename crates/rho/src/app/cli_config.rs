@@ -107,15 +107,22 @@ pub(super) async fn refresh_model_cache(
     })
 }
 
+/// Apply CLI provider/model/auth/reasoning overrides in memory.
+///
+/// Returns whether those overrides changed the effective selection after
+/// normalization. Flag presence alone is not enough: identical overrides do not
+/// count as a change. Persistence is decided by the caller (only when `--save`
+/// is set).
 pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
-    let mut save_config = false;
+    let before = CliSelection::capture(config);
+    let mut flags_present = false;
     if let Some(provider) = &cli.provider {
         apply_provider_override(config, provider, cli.model.is_some())?;
-        save_config = true;
+        flags_present = true;
     }
     if let Some(model) = &cli.model {
         apply_model_override(config, model, cli.provider.as_deref())?;
-        save_config = true;
+        flags_present = true;
     }
     if let Some(profile) = cli_auth_profile(cli)? {
         let auth = cli
@@ -131,14 +138,35 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
             apply_provider_override(config, profile.name, cli.model.is_some())?;
             config.auth = auth.into();
         }
-        save_config = true;
+        flags_present = true;
     }
     if let Some(reasoning) = cli.reasoning {
         config.reasoning = reasoning;
-        save_config = true;
+        flags_present = true;
     }
     config.normalize_provider_profiles()?;
-    Ok(save_config)
+    Ok(flags_present && CliSelection::capture(config) != before)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CliSelection {
+    provider: String,
+    model: String,
+    auth: String,
+    reasoning: rho_providers::reasoning::ReasoningLevel,
+    model_alias: Option<String>,
+}
+
+impl CliSelection {
+    fn capture(config: &Config) -> Self {
+        Self {
+            provider: config.provider.clone(),
+            model: config.model.clone(),
+            auth: config.auth.clone(),
+            reasoning: config.reasoning,
+            model_alias: config.model_alias.clone(),
+        }
+    }
 }
 
 fn cli_auth_profile(cli: &Cli) -> anyhow::Result<Option<&'static provider::ProviderDescriptor>> {

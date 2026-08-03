@@ -32,6 +32,7 @@ impl Default for Keybindings {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct PartialKeybindings {
     reset_conversation: Option<KeyBinding>,
     open_editor: Option<KeyBinding>,
