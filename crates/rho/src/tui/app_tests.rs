@@ -129,7 +129,7 @@ pub(super) fn test_app() -> App {
 fn minimum_terminal_layout_keeps_composer_visible() {
     use ratatui::layout::Rect;
 
-    let mut app = test_app();
+    let app = test_app();
     let area = Rect::new(
         0,
         0,
