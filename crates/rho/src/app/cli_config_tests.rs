@@ -63,6 +63,23 @@ fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
     .unwrap()
 }
 
+fn test_cli() -> Cli {
+    Cli {
+        provider: None,
+        model: None,
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        save: false,
+        resume: None,
+        command: None,
+    }
+}
+
 // Covers: --resume is rejected for non-interactive commands before prompt work starts
 // Owner: cli config validation
 #[test]
@@ -79,18 +96,9 @@ fn validate_cli_rejects_resume_with_non_interactive_commands() {
         Command::Update,
     ] {
         let cli = Cli {
-            provider: None,
-            model: None,
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
             resume: Some(Some("session-id".into())),
             command: Some(command),
+            ..test_cli()
         };
 
         let err = validate(&cli).unwrap_err();
@@ -126,26 +134,32 @@ fn legacy_xai_provider_override_normalizes_to_oauth_mode() {
 fn cli_model_override_with_provider_selects_matching_auth() {
     let mut cfg = Config::default();
     let cli = Cli {
-        provider: None,
         model: Some("openai-codex/gpt-5.4-mini".into()),
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        save: false,
-        resume: None,
-        command: None,
+        ..test_cli()
     };
 
-    let overrides_present = apply_overrides(&mut cfg, &cli).unwrap();
+    let changed = apply_overrides(&mut cfg, &cli).unwrap();
 
-    assert!(overrides_present);
+    assert!(changed);
     assert_eq!(cfg.provider, "openai-codex");
     assert_eq!(cfg.model, "gpt-5.4-mini");
     assert_eq!(cfg.auth, "codex");
+}
+
+// Covers: identical override flags do not count as a config change for --save
+// Owner: cli config overrides
+#[test]
+fn identical_cli_overrides_do_not_report_change() {
+    let mut cfg = Config::default();
+    cfg.normalize_provider_profiles().unwrap();
+    let reasoning = cfg.reasoning;
+    let cli = Cli {
+        reasoning: Some(reasoning),
+        ..test_cli()
+    };
+
+    assert!(!apply_overrides(&mut cfg, &cli).unwrap());
+    assert_eq!(cfg.reasoning, reasoning);
 }
 
 #[test]
@@ -155,17 +169,7 @@ fn cli_anthropic_provider_override_without_cache_uses_builtin_default() {
         let mut cfg = Config::default();
         let cli = Cli {
             provider: Some("anthropic".into()),
-            model: None,
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
-            resume: None,
-            command: None,
+            ..test_cli()
         };
 
         apply_overrides(&mut cfg, &cli).unwrap();
@@ -184,17 +188,7 @@ fn cli_github_copilot_provider_override_requires_cached_default() {
         let mut cfg = Config::default();
         let cli = Cli {
             provider: Some("github-copilot".into()),
-            model: None,
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
-            resume: None,
-            command: None,
+            ..test_cli()
         };
 
         let err = apply_overrides(&mut cfg, &cli).unwrap_err();
@@ -248,17 +242,7 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
     let mut cfg = Config::default();
     let cli = Cli {
         provider: Some("github-copilot".into()),
-        model: None,
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        save: false,
-        resume: None,
-        command: None,
+        ..test_cli()
     };
 
     let refresh = refresh_model_cache(&cli, &cfg, &store).await;
@@ -278,17 +262,7 @@ fn cli_github_copilot_provider_override_uses_cached_default() {
         let mut cfg = Config::default();
         let cli = Cli {
             provider: Some("github-copilot".into()),
-            model: None,
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
-            resume: None,
-            command: None,
+            ..test_cli()
         };
 
         apply_overrides(&mut cfg, &cli).unwrap();
@@ -306,16 +280,7 @@ fn cli_explicit_provider_keeps_slash_containing_model_id() {
         let cli = Cli {
             provider: Some("openrouter".into()),
             model: Some("anthropic/claude-sonnet-4".into()),
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
-            resume: None,
-            command: None,
+            ..test_cli()
         };
 
         apply_overrides(&mut cfg, &cli).unwrap();
@@ -334,18 +299,8 @@ fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
         ..Config::default()
     };
     let cli = Cli {
-        provider: None,
         model: Some("gpt-5.4-mini".into()),
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        save: false,
-        resume: None,
-        command: None,
+        ..test_cli()
     };
 
     apply_overrides(&mut cfg, &cli).unwrap();
@@ -359,18 +314,9 @@ fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
 fn cli_auth_override_wins_after_model_provider_auth() {
     let mut cfg = Config::default();
     let cli = Cli {
-        provider: None,
         model: Some("openai-codex/gpt-5.4-mini".into()),
-        config: None,
         auth: Some("api-key".into()),
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        save: false,
-        resume: None,
-        command: None,
+        ..test_cli()
     };
 
     apply_overrides(&mut cfg, &cli).unwrap();
@@ -572,23 +518,13 @@ fn cli_model_override_resolves_user_defined_alias() {
             ..Config::default()
         };
         let cli = Cli {
-            provider: None,
             model: Some("@deep".into()),
-            config: None,
-            auth: None,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
-            resume: None,
-            command: None,
+            ..test_cli()
         };
 
-        let overrides_present = apply_overrides(&mut cfg, &cli).unwrap();
+        let changed = apply_overrides(&mut cfg, &cli).unwrap();
 
-        assert!(overrides_present);
+        assert!(changed);
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.model, "claude-sonnet-4-5");
         assert_eq!(cfg.current_model_alias(), Some("deep"));
@@ -604,16 +540,7 @@ fn cli_model_alias_conflicting_with_provider_flag_errors() {
     let cli = Cli {
         provider: Some("anthropic".into()),
         model: Some("@deep".into()),
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        save: false,
-        resume: None,
-        command: None,
+        ..test_cli()
     };
 
     let error = apply_overrides(&mut cfg, &cli).unwrap_err();
@@ -630,18 +557,8 @@ fn cli_model_alias_conflicting_with_provider_flag_errors() {
 fn undefined_cli_model_alias_names_flag() {
     let mut cfg = Config::default();
     let cli = Cli {
-        provider: None,
         model: Some("@missing".into()),
-        config: None,
-        auth: None,
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        save: false,
-        resume: None,
-        command: None,
+        ..test_cli()
     };
 
     let error = apply_overrides(&mut cfg, &cli).unwrap_err();
@@ -659,18 +576,8 @@ fn cli_auth_only_selection_resolves_provider_profile() {
     with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
         let mut cfg = Config::default();
         let cli = Cli {
-            provider: None,
-            model: None,
-            config: None,
             auth: Some("openrouter-oauth".into()),
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
-            resume: None,
-            command: None,
+            ..test_cli()
         };
 
         apply_overrides(&mut cfg, &cli).unwrap();
@@ -688,16 +595,8 @@ fn cli_auth_profile_normalizes_compatible_provider() {
         let cli = Cli {
             provider: Some("openrouter".into()),
             model: Some("anthropic/claude-sonnet-4".into()),
-            config: None,
             auth: Some("openrouter-oauth".into()),
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
-            agent: None,
-            reasoning: None,
-            save: false,
-            resume: None,
-            command: None,
+            ..test_cli()
         };
 
         apply_overrides(&mut cfg, &cli).unwrap();

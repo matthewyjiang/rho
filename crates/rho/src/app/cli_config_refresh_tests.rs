@@ -10,6 +10,23 @@ use crate::{cli::Cli, config::Config};
 
 use super::refresh_model_cache;
 
+fn test_cli() -> Cli {
+    Cli {
+        provider: None,
+        model: None,
+        config: None,
+        auth: None,
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        agent: None,
+        reasoning: None,
+        save: false,
+        resume: None,
+        command: None,
+    }
+}
+
 #[derive(Default)]
 struct RecordingStore {
     requested_accounts: Mutex<Vec<String>>,
@@ -37,17 +54,8 @@ async fn cold_cache_refresh_uses_the_cli_auth_profile_credentials() {
     let store = RecordingStore::default();
     let cli = Cli {
         provider: Some("openrouter".into()),
-        model: None,
-        config: None,
         auth: Some("openrouter-oauth".into()),
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        agent: None,
-        reasoning: None,
-        save: false,
-        resume: None,
-        command: None,
+        ..test_cli()
     };
 
     let error = match refresh_model_cache(&cli, &Config::default(), &store).await {

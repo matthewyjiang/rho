@@ -118,7 +118,7 @@ rho --provider openai --auth api-key --model gpt-5.6-sol --save
 
 These values select [authentication and models](/authentication-and-models). For the exact `--provider`/`--auth`/`--model` combination each provider expects, see its [provider page](/authentication-and-models#providers).
 
-Unknown keys in `config.toml` are a load error so typos fail loudly. Values that Rho clamps or normalizes (for example `display.max_tool_output_lines` below 1, or an unsupported `web_search.provider`) warn at load time. Prefer `/config` or a careful hand edit when you want durable settings; a full config save still rewrites the known schema and does not preserve comments.
+Unknown keys in `config.toml` are a load error so typos fail loudly. Values that Rho clamps or normalizes (for example `display.max_tool_output_lines` below 1, or an unsupported `web_search.provider`) warn at load time. Prefer `/config` or a careful hand edit when you want durable settings. Both `--save` and `/config` rewrite only the known schema and discard unknown keys, comments, and formatting.
 
 You can load and save a specific config file with:
 
