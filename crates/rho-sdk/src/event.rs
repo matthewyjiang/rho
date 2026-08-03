@@ -26,17 +26,29 @@ pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
 
 /// Why the current provider attempt was abandoned before a fresh request.
+///
+/// # Next major
+///
+/// `RetryableFailure` and `RetryableFailureWithRetryAfter` are a minor-compatible
+/// split: wait is metadata on a retryable failure, not a distinct reason. Collapse
+/// them to one shape (for example `RetryableFailure { kind, retry_after:
+/// Option<Duration> }`, or move `retry_after` onto [`RunEvent::ProviderStreamReset`])
+/// and prefer matching via [`Self::provider_error_kind`] / [`Self::retry_after`]
+/// until then so both arms stay covered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProviderStreamResetReason {
     /// The provider returned a malformed normalized assistant response.
     InvalidResponse,
-    /// The provider request failed with a retryable error.
+    /// The provider request failed with a retryable error (no wait hint).
     RetryableFailure(crate::ProviderErrorKind),
-    /// Retryable provider failure that includes a provider-supplied wait hint.
+    /// Same as [`Self::RetryableFailure`], with a provider-supplied wait hint.
     ///
-    /// Appended after existing variants so 1.0 discriminants stay stable under
-    /// a minor release. Prefer [`Self::retryable_failure`] when constructing.
+    /// Exists only so wait metadata can land in a minor release without adding a
+    /// field to [`RunEvent::ProviderStreamReset`]. Prefer
+    /// [`Self::retryable_failure`] when constructing and
+    /// [`Self::provider_error_kind`] / [`Self::retry_after`] when matching.
+    /// See the enum-level next-major note.
     RetryableFailureWithRetryAfter {
         kind: crate::ProviderErrorKind,
         retry_after: Duration,
@@ -45,6 +57,9 @@ pub enum ProviderStreamResetReason {
 
 impl ProviderStreamResetReason {
     /// Builds a retryable-failure reason, attaching a wait when the provider supplied one.
+    ///
+    /// Prefer this over constructing [`Self::RetryableFailure`] /
+    /// [`Self::RetryableFailureWithRetryAfter`] directly.
     pub fn retryable_failure(
         kind: crate::ProviderErrorKind,
         retry_after: Option<Duration>,
@@ -56,6 +71,9 @@ impl ProviderStreamResetReason {
     }
 
     /// Provider error kind when this reset was caused by a retryable failure.
+    ///
+    /// Covers both [`Self::RetryableFailure`] and
+    /// [`Self::RetryableFailureWithRetryAfter`].
     pub fn provider_error_kind(self) -> Option<crate::ProviderErrorKind> {
         match self {
             Self::InvalidResponse => None,
