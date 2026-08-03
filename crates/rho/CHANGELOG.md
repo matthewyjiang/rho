@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.27.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.27.0...rho-coding-agent-v1.27.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **errors:** print user-facing errors without Debug dumps ([#728](https://github.com/matthewyjiang/rho/issues/728)) ([e8a98d7](https://github.com/matthewyjiang/rho/commit/e8a98d72e4b8e87ac9320b4efdb8cf07b3fa887f))
+* **tui:** add statusline hierarchy and severity escalation ([#720](https://github.com/matthewyjiang/rho/issues/720)) ([befb91b](https://github.com/matthewyjiang/rho/commit/befb91bdb5b750166cc6d6ebe18790c648c512a8))
+* **tui:** floor terminal size and keep composer visible ([#727](https://github.com/matthewyjiang/rho/issues/727)) ([392aba1](https://github.com/matthewyjiang/rho/commit/392aba18d08e499cfbcf3babc8c2d7f4510d5a74))
+* **tui:** match during-turn ctrl-c quit hint to idle ([#726](https://github.com/matthewyjiang/rho/issues/726)) ([7d8e818](https://github.com/matthewyjiang/rho/commit/7d8e818af4ce1f462c586bfcee2321d1409307ed))
+* **tui:** raise paste collapse threshold to 5 lines ([#729](https://github.com/matthewyjiang/rho/issues/729)) ([7267f54](https://github.com/matthewyjiang/rho/commit/7267f54fd23aabec94a48351c8218bb9795f2ee3))
+* **tui:** show relative age in resume picker ([#723](https://github.com/matthewyjiang/rho/issues/723)) ([a1654d8](https://github.com/matthewyjiang/rho/commit/a1654d85e3cbf9d71b839d05834648d98cd612e7))
+* **tui:** silence routine status toast noise ([#721](https://github.com/matthewyjiang/rho/issues/721)) ([1559dae](https://github.com/matthewyjiang/rho/commit/1559daeee657fe0f96bf3e23fb349273594314b2))
+* **tui:** surface structured picker key hints and empty states ([#724](https://github.com/matthewyjiang/rho/issues/724)) ([3174af7](https://github.com/matthewyjiang/rho/commit/3174af7c69297a3a93c2cbc13620a51d1590f9ea))
+
 ## [1.27.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.26.1...rho-coding-agent-v1.27.0) (2026-08-02)
 
 
