@@ -20,7 +20,7 @@ fn valid_slash_commands_are_added_to_input_history() {
 fn left_and_right_arrows_treat_collapsed_paste_as_one_character() {
     let mut app = test_app();
     app.insert_input_text("a");
-    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    app.insert_pasted_input_text(&collapsible_paste());
     let segment = app.input_ui.paste_segments()[0].clone();
 
     app.move_input_cursor_left();
@@ -38,7 +38,7 @@ fn left_and_right_arrows_treat_collapsed_paste_as_one_character() {
 fn vertical_cursor_movement_focuses_a_collapsed_paste_item() {
     let mut app = test_app();
     app.insert_input_text("first line\n");
-    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    app.insert_pasted_input_text(&collapsible_paste());
     let segment = app.input_ui.paste_segments()[0].clone();
     app.input_ui.set_cursor(5);
 
@@ -50,7 +50,7 @@ fn vertical_cursor_movement_focuses_a_collapsed_paste_item() {
 #[test]
 fn backspace_removes_collapsed_paste_as_one_item() {
     let mut app = test_app();
-    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    app.insert_pasted_input_text(&collapsible_paste());
 
     app.backspace_input();
 
@@ -63,7 +63,7 @@ fn backspace_removes_collapsed_paste_as_one_item() {
 fn delete_removes_collapsed_paste_as_one_item() {
     let mut app = test_app();
     app.insert_input_text("before ");
-    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    app.insert_pasted_input_text(&collapsible_paste());
     app.insert_input_text(" after");
     app.input_ui.set_cursor("before ".chars().count());
 
@@ -77,7 +77,7 @@ fn delete_removes_collapsed_paste_as_one_item() {
 #[test]
 fn editing_from_inside_collapsed_paste_removes_the_whole_item() {
     let mut app = test_app();
-    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    app.insert_pasted_input_text(&collapsible_paste());
     app.input_ui.set_cursor(5);
 
     app.backspace_input();

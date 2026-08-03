@@ -212,8 +212,6 @@ use {
 /// Viewport height used by line-level tests that render without a real terminal.
 #[cfg(test)]
 const DEFAULT_TUI_HEIGHT: u16 = 18;
-const PASTE_COLLAPSE_MIN_LINES: usize = 2;
-const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
 const MIN_COMMAND_DESCRIPTION_WIDTH: usize = 7;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;
