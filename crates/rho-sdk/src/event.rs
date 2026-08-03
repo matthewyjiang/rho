@@ -272,6 +272,8 @@ pub enum RunEvent {
     ProviderStreamReset {
         reason: ProviderStreamResetReason,
         detail: String,
+        /// Provider-supplied wait hint (`Retry-After`) when available.
+        retry_after: Option<Duration>,
     },
     /// Host input requested by a correlated tool call.
     ToolHostInputRequested {

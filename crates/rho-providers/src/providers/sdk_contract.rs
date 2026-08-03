@@ -76,22 +76,22 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             let (provider_kind, public_message, retryability) = match kind {
                 crate::model::ProviderReportedErrorKind::Timeout => (
                     ProviderErrorKind::Timeout,
-                    "provider reported a timeout",
+                    "provider reported a timeout".to_string(),
                     Retryability::Retryable,
                 ),
                 crate::model::ProviderReportedErrorKind::RateLimit => (
                     ProviderErrorKind::RateLimit,
-                    "provider reported a rate limit",
+                    rate_limit_public_message(None),
                     Retryability::Retryable,
                 ),
                 crate::model::ProviderReportedErrorKind::Unavailable => (
                     ProviderErrorKind::Unavailable,
-                    "provider reported a temporary failure",
+                    "provider reported a temporary failure".to_string(),
                     Retryability::Retryable,
                 ),
                 crate::model::ProviderReportedErrorKind::InvalidResponse => (
                     ProviderErrorKind::InvalidResponse,
-                    "provider reported an invalid response",
+                    "provider reported an invalid response".to_string(),
                     Retryability::Permanent,
                 ),
             };
@@ -115,7 +115,11 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             format!("unsupported provider '{provider}'"),
             Retryability::Permanent,
         ),
-        ModelError::HttpStatus { status, body } => {
+        ModelError::HttpStatus {
+            status,
+            body,
+            retry_after,
+        } => {
             let status_code = status.as_u16();
             let (kind, retryability) = match status_code {
                 401 | 403 => (ProviderErrorKind::Authentication, Retryability::Permanent),
@@ -124,7 +128,14 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
                 500..=599 => (ProviderErrorKind::Unavailable, Retryability::Retryable),
                 _ => (ProviderErrorKind::Other, Retryability::Permanent),
             };
-            let error = ProviderError::new(kind, format!("HTTP {status_code}"), retryability);
+            let message = match kind {
+                ProviderErrorKind::RateLimit => rate_limit_http_message(status_code, retry_after),
+                _ => format!("HTTP {status_code}"),
+            };
+            let mut error = ProviderError::new(kind, message, retryability);
+            if let Some(retry_after) = retry_after.filter(|delay| !delay.is_zero()) {
+                error = error.with_retry_after(retry_after);
+            }
             if body.is_empty() {
                 error
             } else {
@@ -165,6 +176,26 @@ fn sanitize_diagnostic(value: &str) -> String {
         diagnostic.push_str("\n[diagnostic truncated]");
     }
     diagnostic
+}
+
+fn rate_limit_public_message(retry_after: Option<std::time::Duration>) -> String {
+    match retry_after.filter(|delay| !delay.is_zero()) {
+        Some(delay) => format!(
+            "provider reported a rate limit; retry in {}; run /limits for usage windows",
+            rho_sdk::format_retry_after(delay)
+        ),
+        None => "provider reported a rate limit; run /limits for usage windows".into(),
+    }
+}
+
+fn rate_limit_http_message(status_code: u16, retry_after: Option<std::time::Duration>) -> String {
+    match retry_after.filter(|delay| !delay.is_zero()) {
+        Some(delay) => format!(
+            "HTTP {status_code}; retry in {}; run /limits for usage windows",
+            rho_sdk::format_retry_after(delay)
+        ),
+        None => format!("HTTP {status_code}; run /limits for usage windows"),
+    }
 }
 
 /// Event buffered by the application callback adapter.

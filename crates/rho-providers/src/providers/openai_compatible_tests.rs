@@ -669,7 +669,7 @@ async fn standard_dialect_converts_tool_calls_and_http_errors() {
     let error = provider.complete_turn(request()).await.unwrap_err();
     assert!(matches!(
         error,
-        ModelError::HttpStatus { status, body }
+        ModelError::HttpStatus { status, body, retry_after: _ }
             if status == reqwest::StatusCode::SERVICE_UNAVAILABLE
                 && body.contains("model unavailable")
     ));

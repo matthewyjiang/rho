@@ -84,6 +84,7 @@ fn is_routine_status(message: &str) -> bool {
             | "approval requested"
             | "compacting context"
             | "retrying provider response"
+            | "rate limited · retrying"
             | "evaluating goal"
             | "goal retrying"
             | "loading models"
@@ -119,6 +120,8 @@ fn is_routine_status(message: &str) -> bool {
         || lower.starts_with("refreshing ")
         || lower.starts_with("waiting for ")
         || lower.starts_with("starting ")
+        || lower.starts_with("retrying provider")
+        || lower.starts_with("rate limited")
         || lower.starts_with("switch ")
         || lower.starts_with("opening a herdr pane ")
     {

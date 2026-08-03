@@ -55,7 +55,10 @@ fn provider_retry_preserves_usage_from_failed_attempt() {
         input_tokens: Some(100),
         ..Default::default()
     }));
-    app.record_agent_event(ViewModelEvent::ProviderStreamReset);
+    app.record_agent_event(ViewModelEvent::ProviderStreamReset {
+        rate_limited: false,
+        retry_after: None,
+    });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(40),
         cost_usd_micros: Some(40),
@@ -103,7 +106,10 @@ fn provider_retry_after_prior_step_does_not_double_count_completed_usage() {
         input_tokens: Some(140),
         ..Default::default()
     }));
-    app.record_agent_event(ViewModelEvent::ProviderStreamReset);
+    app.record_agent_event(ViewModelEvent::ProviderStreamReset {
+        rate_limited: false,
+        retry_after: None,
+    });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(160),
         ..Default::default()

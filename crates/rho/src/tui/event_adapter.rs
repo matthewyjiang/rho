@@ -25,7 +25,10 @@ pub(super) enum ViewModelEvent {
         call_id: rho_sdk::ToolCallId,
         card: ToolCard,
     },
-    ProviderStreamReset,
+    ProviderStreamReset {
+        rate_limited: bool,
+        retry_after: Option<std::time::Duration>,
+    },
     ProviderRetry,
     OutputDelta(String),
     ReasoningDelta(String),
@@ -79,7 +82,7 @@ impl ViewModelEvent {
             Self::ToolCallUpdated { .. } | Self::ToolCallProposed { .. } => {
                 Some(ActivityPhase::PreparingTool)
             }
-            Self::ProviderStreamReset | Self::ProviderRetry => {
+            Self::ProviderStreamReset { .. } | Self::ProviderRetry => {
                 Some(ActivityPhase::RetryingProvider)
             }
             Self::OutputDelta(_) => Some(ActivityPhase::Responding),
@@ -311,10 +314,23 @@ impl SdkEventAdapter {
             // Legacy dual-emitted activity; typed variants above drive the TUI.
             #[allow(deprecated)]
             RunEvent::ProviderActivity { .. } => Vec::new(),
-            RunEvent::ProviderStreamReset { .. } => {
+            RunEvent::ProviderStreamReset {
+                reason,
+                retry_after,
+                ..
+            } => {
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
-                vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset)]
+                let rate_limited = matches!(
+                    reason,
+                    rho_sdk::ProviderStreamResetReason::RetryableFailure(
+                        rho_sdk::ProviderErrorKind::RateLimit
+                    )
+                );
+                vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset {
+                    rate_limited,
+                    retry_after,
+                })]
             }
             RunEvent::ProviderContextUpdated { .. } => Vec::new(),
             RunEvent::ProviderDiagnostic { detail } => {

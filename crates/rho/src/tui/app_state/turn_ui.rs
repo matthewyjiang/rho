@@ -54,6 +54,9 @@ pub(in crate::tui) struct TurnUi {
     reasoning_phase: ReasoningPhase,
     session_ui: SessionUiPhase,
     activity_phase: ActivityPhase,
+    /// Optional spinner detail for the current activity phase (for example a
+    /// rate-limit retry countdown hint).
+    activity_detail: Option<String>,
     loading_spinner: LoadingSpinner,
     tool_calls: ToolCallBatch,
 }
@@ -108,7 +111,18 @@ impl TurnUi {
     }
 
     pub(in crate::tui) fn set_activity_phase(&mut self, phase: ActivityPhase) {
+        if !matches!(phase, ActivityPhase::RetryingProvider) {
+            self.activity_detail = None;
+        }
         self.activity_phase = phase;
+    }
+
+    pub(in crate::tui) fn activity_detail(&self) -> Option<&str> {
+        self.activity_detail.as_deref()
+    }
+
+    pub(in crate::tui) fn set_activity_detail(&mut self, detail: Option<String>) {
+        self.activity_detail = detail;
     }
 
     pub(in crate::tui) fn loading_spinner(&self) -> &LoadingSpinner {

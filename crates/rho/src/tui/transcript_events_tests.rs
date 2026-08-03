@@ -68,7 +68,10 @@ fn provider_stream_reset_preserves_completed_model_performance() {
         metrics: model_call_metrics(),
     });
 
-    app.record_agent_event(ViewModelEvent::ProviderStreamReset);
+    app.record_agent_event(ViewModelEvent::ProviderStreamReset {
+        rate_limited: false,
+        retry_after: None,
+    });
 
     let summary = app.usage.model_performance.summary(&profile);
     assert_eq!(summary.average_output_tokens_per_second, Some(50.0));
@@ -96,4 +99,22 @@ fn step_started_clears_stream_state_without_clearing_model_performance() {
     assert_eq!(summary.average_output_tokens_per_second, Some(50.0));
     assert_eq!(app.turn.session_ui(), SessionUiPhase::ProviderTurn);
     assert_eq!(app.status(), "running step 2");
+}
+
+#[test]
+fn provider_retry_status_includes_rate_limit_reset_hint() {
+    use std::time::Duration;
+
+    assert_eq!(
+        super::provider_retry_status(true, Some(Duration::from_secs(12))),
+        "rate limited · retry in 12s"
+    );
+    assert_eq!(
+        super::provider_retry_status(true, None),
+        "rate limited · retrying"
+    );
+    assert_eq!(
+        super::provider_retry_status(false, None),
+        "retrying provider response"
+    );
 }

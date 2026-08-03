@@ -353,7 +353,11 @@ async fn fetch_github_copilot_models(
                 "github-copilot",
             ))
         } else {
-            Err(ModelError::HttpStatus { status, body })
+            Err(ModelError::HttpStatus {
+                status,
+                body,
+                retry_after: None,
+            })
         };
     }
     let value = response.json::<Value>().await?;

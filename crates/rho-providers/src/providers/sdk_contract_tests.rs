@@ -451,6 +451,7 @@ fn maps_model_errors_to_sanitized_provider_errors() {
             ModelError::HttpStatus {
                 status: StatusCode::UNAUTHORIZED,
                 body: "secret-token-should-not-leak".into(),
+                retry_after: None,
             },
             ProviderErrorKind::Authentication,
             false,
@@ -459,6 +460,7 @@ fn maps_model_errors_to_sanitized_provider_errors() {
             ModelError::HttpStatus {
                 status: StatusCode::TOO_MANY_REQUESTS,
                 body: "retry later".into(),
+                retry_after: None,
             },
             ProviderErrorKind::RateLimit,
             true,
@@ -467,6 +469,7 @@ fn maps_model_errors_to_sanitized_provider_errors() {
             ModelError::HttpStatus {
                 status: StatusCode::BAD_GATEWAY,
                 body: "upstream".into(),
+                retry_after: None,
             },
             ProviderErrorKind::Unavailable,
             true,
@@ -475,6 +478,7 @@ fn maps_model_errors_to_sanitized_provider_errors() {
             ModelError::HttpStatus {
                 status: StatusCode::BAD_REQUEST,
                 body: "nope".into(),
+                retry_after: None,
             },
             ProviderErrorKind::Other,
             false,
@@ -500,6 +504,7 @@ fn http_error_messages_include_status_without_bodies() {
     let converted = provider_error_from_model_error(ModelError::HttpStatus {
         status: StatusCode::FORBIDDEN,
         body: "authorization=super-secret".into(),
+        retry_after: None,
     });
 
     assert_eq!(converted.kind(), ProviderErrorKind::Authentication);
@@ -736,6 +741,7 @@ fn retryability_matches_provider_error_contract() {
     let retryable = provider_error_from_model_error(ModelError::HttpStatus {
         status: StatusCode::TOO_MANY_REQUESTS,
         body: String::new(),
+        retry_after: None,
     });
     let permanent = provider_error_from_model_error(
         crate::model::registry::missing_credentials_error("openai"),
@@ -807,4 +813,39 @@ fn provider_reported_errors_map_by_semantic_kind() {
         assert!(!error.message().contains("wire_error_type"));
         assert!(!format!("{error:?}").contains("details"));
     }
+}
+
+#[test]
+fn rate_limit_http_errors_include_retry_after_and_limits_pointer() {
+    use std::time::Duration;
+
+    let converted = provider_error_from_model_error(ModelError::HttpStatus {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        body: "slow down".into(),
+        retry_after: Some(Duration::from_secs(45)),
+    });
+
+    assert_eq!(converted.kind(), ProviderErrorKind::RateLimit);
+    assert_eq!(converted.retry_after(), Some(Duration::from_secs(45)));
+    assert_eq!(
+        converted.message(),
+        "HTTP 429; retry in 45s; run /limits for usage windows"
+    );
+    assert_eq!(converted.diagnostic(), Some("slow down"));
+    assert!(converted.to_string().contains("/limits"));
+}
+
+#[test]
+fn rate_limit_provider_reported_errors_point_at_limits() {
+    let converted = provider_error_from_model_error(ModelError::ProviderReported {
+        kind: ProviderReportedErrorKind::RateLimit,
+        error_type: "rate_limit_error".into(),
+        message: "too many requests".into(),
+    });
+
+    assert_eq!(converted.kind(), ProviderErrorKind::RateLimit);
+    assert_eq!(
+        converted.message(),
+        "provider reported a rate limit; run /limits for usage windows"
+    );
 }

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::time::Duration;
 
 use crate::tool::ToolError;
 
@@ -154,6 +155,8 @@ pub struct ProviderError {
     message: String,
     retryability: Retryability,
     diagnostic: Option<ProviderDiagnostic>,
+    /// Provider-supplied wait hint from `Retry-After` or an equivalent field.
+    retry_after: Option<Duration>,
 }
 
 impl ProviderError {
@@ -167,6 +170,7 @@ impl ProviderError {
             message: message.into(),
             retryability,
             diagnostic: None,
+            retry_after: None,
         }
     }
 
@@ -176,6 +180,12 @@ impl ProviderError {
     /// to model context, automated reports, or telemetry.
     pub fn with_diagnostic(mut self, diagnostic: impl Into<String>) -> Self {
         self.diagnostic = Some(ProviderDiagnostic::new(diagnostic));
+        self
+    }
+
+    /// Records a provider-supplied wait before the next attempt may succeed.
+    pub fn with_retry_after(mut self, retry_after: Duration) -> Self {
+        self.retry_after = Some(retry_after);
         self
     }
 
@@ -190,6 +200,11 @@ impl ProviderError {
     /// Returns provider details for direct user diagnostics only.
     pub fn diagnostic(&self) -> Option<&str> {
         self.diagnostic.as_ref().map(ProviderDiagnostic::as_str)
+    }
+
+    /// Provider-supplied wait before retrying may succeed.
+    pub fn retry_after(&self) -> Option<Duration> {
+        self.retry_after
     }
 
     pub fn is_retryable(&self) -> bool {
@@ -213,6 +228,7 @@ impl fmt::Debug for ProviderError {
             .field("message", &self.message)
             .field("retryability", &self.retryability)
             .field("diagnostic_available", &self.diagnostic.is_some())
+            .field("retry_after", &self.retry_after)
             .finish()
     }
 }
@@ -224,6 +240,37 @@ impl fmt::Display for ProviderError {
 }
 
 impl std::error::Error for ProviderError {}
+
+/// Formats a provider wait hint for user-facing text (`12s`, `5m`, `1h 30m`).
+pub fn format_retry_after(delay: Duration) -> String {
+    let secs = delay.as_secs();
+    if secs == 0 {
+        return if delay.is_zero() {
+            "now".into()
+        } else {
+            "1s".into()
+        };
+    }
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    let minutes = secs / 60;
+    let rem_secs = secs % 60;
+    if minutes < 60 {
+        return if rem_secs == 0 {
+            format!("{minutes}m")
+        } else {
+            format!("{minutes}m {rem_secs}s")
+        };
+    }
+    let hours = minutes / 60;
+    let rem_minutes = minutes % 60;
+    if rem_minutes == 0 {
+        format!("{hours}h")
+    } else {
+        format!("{hours}h {rem_minutes}m")
+    }
+}
 
 #[cfg(test)]
 #[path = "error_tests.rs"]

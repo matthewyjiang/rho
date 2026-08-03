@@ -24,6 +24,11 @@ const INVALID_RESPONSE_ATTEMPTS: usize = 2;
 const PROVIDER_TURN_ATTEMPTS: usize = 4;
 /// Backoff before the first retryable-failure retry; doubles per retry.
 const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+/// Upper bound when honoring provider `Retry-After` during auto-retry.
+///
+/// Keeps interactive turns from blocking on multi-hour quota resets. The full
+/// provider wait still appears on the reset event and final error.
+const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 mod model_call_timer;
 mod run_hooks;
@@ -455,6 +460,7 @@ async fn request_valid_response(
                     "retrying after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}: {}",
                     failure.error.message()
                 );
+                let retry_after = failure.error.retry_after();
                 let _ = emit(
                     control.events,
                     control.cancellation,
@@ -463,10 +469,21 @@ async fn request_valid_response(
                             failure.error.kind(),
                         ),
                         detail,
+                        retry_after,
                     },
                 )
                 .await;
-                let delay = RETRYABLE_REQUEST_BASE_DELAY * 2u32.pow(failed_requests as u32 - 1);
+                let exponential =
+                    RETRYABLE_REQUEST_BASE_DELAY * 2u32.pow(failed_requests as u32 - 1);
+                // Honor a provider wait when present. Cap so a multi-hour
+                // Retry-After cannot stall the interactive session; the final
+                // error still carries the full provider hint.
+                let delay = match retry_after {
+                    Some(wait) if !wait.is_zero() => {
+                        wait.min(MAX_HONORED_RETRY_AFTER).max(exponential)
+                    }
+                    _ => exponential,
+                };
                 tokio::select! {
                     () = tokio::time::sleep(delay) => {}
                     () = control.cancellation.cancelled() => return Err(failure),
@@ -510,6 +527,7 @@ async fn request_valid_response(
             RunEvent::ProviderStreamReset {
                 reason: crate::ProviderStreamResetReason::InvalidResponse,
                 detail,
+                retry_after: None,
             },
         )
         .await;

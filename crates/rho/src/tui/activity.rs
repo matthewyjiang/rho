@@ -52,21 +52,32 @@ impl ActivityPhase {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ActivityStatus {
-    Parent(ActivityPhase),
+    Parent {
+        phase: ActivityPhase,
+        detail: Option<String>,
+    },
     Subagents(usize),
-    ParentWithSubagents(ActivityPhase, usize),
+    ParentWithSubagents {
+        phase: ActivityPhase,
+        detail: Option<String>,
+        subagent_count: usize,
+    },
 }
 
 impl ActivityStatus {
     pub(super) fn from_parent_and_subagents(
-        parent: Option<ActivityPhase>,
+        parent: Option<(ActivityPhase, Option<String>)>,
         subagent_count: usize,
     ) -> Option<Self> {
         match (parent, subagent_count) {
-            (Some(phase), 0) => Some(Self::Parent(phase)),
-            (Some(phase), count) => Some(Self::ParentWithSubagents(phase, count)),
+            (Some((phase, detail)), 0) => Some(Self::Parent { phase, detail }),
+            (Some((phase, detail)), count) => Some(Self::ParentWithSubagents {
+                phase,
+                detail,
+                subagent_count: count,
+            }),
             (None, 0) => None,
             (None, count) => Some(Self::Subagents(count)),
         }
@@ -75,7 +86,7 @@ impl ActivityStatus {
 
 pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize {
     let first_frame = LoadingSpinner::FRAMES[0];
-    activity_labels(status)
+    activity_labels(&status)
         .into_iter()
         .find(|label| display_width(label) <= available)
         .map_or_else(
@@ -84,11 +95,22 @@ pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize 
         )
 }
 
-fn activity_labels(status: ActivityStatus) -> Vec<String> {
+fn phase_label(phase: ActivityPhase, detail: Option<&str>) -> String {
+    match detail.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(detail) => detail.to_string(),
+        None => phase.label().to_string(),
+    }
+}
+
+fn activity_labels(status: &ActivityStatus) -> Vec<String> {
     let spinner = LoadingSpinner::FRAMES[0];
     let subagent_count = match status {
-        ActivityStatus::Parent(_) => 0,
-        ActivityStatus::Subagents(count) | ActivityStatus::ParentWithSubagents(_, count) => count,
+        ActivityStatus::Parent { .. } => 0,
+        ActivityStatus::Subagents(count)
+        | ActivityStatus::ParentWithSubagents {
+            subagent_count: count,
+            ..
+        } => *count,
     };
     let agents = if subagent_count == 1 {
         "1 agent".into()
@@ -96,15 +118,19 @@ fn activity_labels(status: ActivityStatus) -> Vec<String> {
         format!("{subagent_count} agents")
     };
     match status {
-        ActivityStatus::Parent(phase) => {
-            vec![format!("{spinner} {}", phase.label()), spinner.into()]
+        ActivityStatus::Parent { phase, detail } => {
+            let label = phase_label(*phase, detail.as_deref());
+            vec![format!("{spinner} {label}"), spinner.into()]
         }
-        ActivityStatus::ParentWithSubagents(phase, _) => vec![
-            format!("{spinner} {}  ·  {agents}", phase.label()),
-            format!("{spinner} {} · {subagent_count}", phase.label()),
-            format!("{spinner} {subagent_count}"),
-            spinner.into(),
-        ],
+        ActivityStatus::ParentWithSubagents { phase, detail, .. } => {
+            let label = phase_label(*phase, detail.as_deref());
+            vec![
+                format!("{spinner} {label}  ·  {agents}"),
+                format!("{spinner} {label} · {subagent_count}"),
+                format!("{spinner} {subagent_count}"),
+                spinner.into(),
+            ]
+        }
         ActivityStatus::Subagents(_) => vec![
             format!("{spinner} {agents} working"),
             format!("{spinner} {subagent_count} agents"),
@@ -156,7 +182,7 @@ impl LoadingSpinner {
         available: usize,
         status: ActivityStatus,
     ) -> Line<'static> {
-        let label = activity_labels(status)
+        let label = activity_labels(&status)
             .into_iter()
             .find(|label| display_width(label) <= available)
             .unwrap_or_else(|| Self::FRAMES[0].chars().take(available).collect());

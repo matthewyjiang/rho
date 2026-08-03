@@ -42,3 +42,34 @@ fn provider_diagnostics_are_bounded_and_debug_redacted() {
     let event = crate::RunEvent::ProviderDiagnostic { detail: diagnostic };
     assert!(!format!("{event:?}").contains("secret"));
 }
+
+#[test]
+fn format_retry_after_scales_seconds_minutes_and_hours() {
+    use std::time::Duration;
+
+    assert_eq!(super::format_retry_after(Duration::from_secs(0)), "now");
+    assert_eq!(super::format_retry_after(Duration::from_millis(200)), "1s");
+    assert_eq!(super::format_retry_after(Duration::from_secs(12)), "12s");
+    assert_eq!(super::format_retry_after(Duration::from_secs(60)), "1m");
+    assert_eq!(super::format_retry_after(Duration::from_secs(90)), "1m 30s");
+    assert_eq!(super::format_retry_after(Duration::from_secs(3600)), "1h");
+    assert_eq!(
+        super::format_retry_after(Duration::from_secs(5400)),
+        "1h 30m"
+    );
+}
+
+#[test]
+fn provider_error_carries_retry_after() {
+    use std::time::Duration;
+
+    let error = ProviderError::new(
+        ProviderErrorKind::RateLimit,
+        "rate limited",
+        Retryability::Retryable,
+    )
+    .with_retry_after(Duration::from_secs(15));
+
+    assert_eq!(error.retry_after(), Some(Duration::from_secs(15)));
+    assert!(format!("{error:?}").contains("15s") || format!("{error:?}").contains("15"));
+}

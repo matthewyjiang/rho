@@ -230,7 +230,11 @@ async fn refresh_copilot_token_with_store(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(ModelError::HttpStatus { status, body });
+        return Err(ModelError::HttpStatus {
+            status,
+            body,
+            retry_after: None,
+        });
     }
     let response: CopilotTokenResponse = response.json().await?;
 

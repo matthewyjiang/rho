@@ -158,7 +158,9 @@ pub use compaction::{
     ScriptedCompactor,
 };
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
-pub use error::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
+pub use error::{
+    format_retry_after, Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability,
+};
 pub use event::{
     ModelCallMetrics, ModelCallProfile, ProviderStreamResetReason, RunEvent, RunOutcome,
     StopReason, ToolCompletion, ToolFailure,

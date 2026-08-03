@@ -858,3 +858,54 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     assert_eq!(core.snapshot(), (Vec::new(), Revision::INITIAL));
     assert_eq!(core.state(), SessionState::Idle);
 }
+
+#[tokio::test(start_paused = true)]
+async fn rate_limit_retry_after_is_carried_on_stream_reset() {
+    use std::time::Duration;
+
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("rate-limited", "test", "rate-limited"),
+        [
+            ScriptedTurn::failed(
+                ProviderError::new(
+                    ProviderErrorKind::RateLimit,
+                    "HTTP 429; retry in 3s; run /limits for usage windows",
+                    Retryability::Retryable,
+                )
+                .with_retry_after(Duration::from_secs(3)),
+            ),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "recovered".into(),
+            )])),
+        ],
+    );
+    let session = Rho::builder()
+        .provider(provider)
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+
+    let mut saw_retry_after = false;
+    let outcome = loop {
+        match next_event_virtual(&mut run).await {
+            RunEvent::ProviderStreamReset {
+                reason:
+                    crate::ProviderStreamResetReason::RetryableFailure(ProviderErrorKind::RateLimit),
+                retry_after: Some(delay),
+                ..
+            } => {
+                assert_eq!(delay, Duration::from_secs(3));
+                saw_retry_after = true;
+            }
+            RunEvent::Completed { outcome } => break outcome,
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    };
+
+    assert!(saw_retry_after);
+    assert_eq!(outcome.text(), "recovered");
+}

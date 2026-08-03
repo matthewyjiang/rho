@@ -21,8 +21,14 @@ fn provider_stream_reset_clears_attempt_owned_tool_previews() {
     .unwrap();
     assert_eq!(app.turn.tool_calls().live_entries().count(), 1);
 
-    app.handle_agent_event(ViewModelEvent::ProviderStreamReset, &mut terminal)
-        .unwrap();
+    app.handle_agent_event(
+        ViewModelEvent::ProviderStreamReset {
+            rate_limited: false,
+            retry_after: None,
+        },
+        &mut terminal,
+    )
+    .unwrap();
 
     assert_eq!(app.turn.tool_calls().live_entries().count(), 0);
 }

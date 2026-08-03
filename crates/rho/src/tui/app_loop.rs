@@ -285,8 +285,12 @@ impl App {
             ComposerMode::Questionnaire(_) => ActivityPhase::WaitingForInput,
             _ => self.turn.activity_phase(),
         };
+        let detail = match self.input_ui.composer() {
+            ComposerMode::Approval(_) | ComposerMode::Questionnaire(_) => None,
+            _ => self.turn.activity_detail().map(str::to_owned),
+        };
         ActivityStatus::from_parent_and_subagents(
-            self.loading_active().then_some(phase),
+            self.loading_active().then_some((phase, detail)),
             self.subagent_panel.count(),
         )
     }

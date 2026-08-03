@@ -115,6 +115,7 @@ fn reset_closes_the_old_attempt_and_advances_new_deltas() {
         .event(&RunEvent::ProviderStreamReset {
             reason: ProviderStreamResetReason::InvalidResponse,
             detail: "private provider detail".into(),
+            retry_after: None,
         })
         .unwrap();
     let second = adapter
