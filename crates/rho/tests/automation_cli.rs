@@ -102,6 +102,26 @@ provider = "disabled"
     assert!(!names.contains(&"web_search"));
 
     let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap();
+    // CLI overrides are session-only unless --save is set.
+    assert!(config.contains("reasoning = \"high\""));
+    assert!(!config.contains("reasoning = \"low\""));
+
+    let saved = run(
+        &root,
+        "inspect",
+        &[
+            "--auth",
+            "xai-oauth",
+            "--reasoning",
+            "low",
+            "--save",
+            "run",
+            "inspect",
+        ],
+        None,
+    );
+    assert_success(&saved);
+    let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap();
     assert!(config.contains("provider = \"xai\""));
     assert!(config.contains("model = \"grok-fixture\""));
     assert!(config.contains("auth = \"xai-oauth\""));

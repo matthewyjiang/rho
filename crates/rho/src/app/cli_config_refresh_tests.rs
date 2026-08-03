@@ -45,6 +45,7 @@ async fn cold_cache_refresh_uses_the_cli_auth_profile_credentials() {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        save: false,
         resume: None,
         command: None,
     };

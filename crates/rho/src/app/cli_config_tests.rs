@@ -88,6 +88,7 @@ fn validate_cli_rejects_resume_with_non_interactive_commands() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: Some(Some("session-id".into())),
             command: Some(command),
         };
@@ -134,6 +135,7 @@ fn cli_model_override_with_provider_selects_matching_auth() {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        save: false,
         resume: None,
         command: None,
     };
@@ -161,6 +163,7 @@ fn cli_anthropic_provider_override_without_cache_uses_builtin_default() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: None,
             command: None,
         };
@@ -189,6 +192,7 @@ fn cli_github_copilot_provider_override_requires_cached_default() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: None,
             command: None,
         };
@@ -252,6 +256,7 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        save: false,
         resume: None,
         command: None,
     };
@@ -281,6 +286,7 @@ fn cli_github_copilot_provider_override_uses_cached_default() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: None,
             command: None,
         };
@@ -307,6 +313,7 @@ fn cli_explicit_provider_keeps_slash_containing_model_id() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: None,
             command: None,
         };
@@ -336,6 +343,7 @@ fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        save: false,
         resume: None,
         command: None,
     };
@@ -360,6 +368,7 @@ fn cli_auth_override_wins_after_model_provider_auth() {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        save: false,
         resume: None,
         command: None,
     };
@@ -572,6 +581,7 @@ fn cli_model_override_resolves_user_defined_alias() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: None,
             command: None,
         };
@@ -601,6 +611,7 @@ fn cli_model_alias_conflicting_with_provider_flag_errors() {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        save: false,
         resume: None,
         command: None,
     };
@@ -628,6 +639,7 @@ fn undefined_cli_model_alias_names_flag() {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        save: false,
         resume: None,
         command: None,
     };
@@ -656,6 +668,7 @@ fn cli_auth_only_selection_resolves_provider_profile() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: None,
             command: None,
         };
@@ -682,6 +695,7 @@ fn cli_auth_profile_normalizes_compatible_provider() {
             no_subagents: false,
             agent: None,
             reasoning: None,
+            save: false,
             resume: None,
             command: None,
         };

@@ -76,6 +76,11 @@ pub struct Cli {
     /// Override reasoning level: off, minimal, low, medium, high, xhigh, or max.
     #[arg(long)]
     pub reasoning: Option<ReasoningLevel>,
+    /// Persist --provider/--model/--auth/--reasoning overrides to the config file.
+    ///
+    /// Without this flag, those overrides apply only to the current invocation.
+    #[arg(long)]
+    pub save: bool,
     /// Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker.
     #[arg(short = 'R', long, value_name = "ID", num_args = 0..=1)]
     pub resume: Option<Option<String>>,
