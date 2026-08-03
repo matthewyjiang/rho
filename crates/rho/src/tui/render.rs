@@ -114,14 +114,14 @@ fn list_picker_lines(
 
     if matching_indices.is_empty() {
         lines.push(styled_line(
-            truncate_one_line("  no matches", width),
+            truncate_one_line(&format!("  {}", picker.empty_match_message()), width),
             width,
             Theme::dim(),
             LineFill::Natural,
         ));
         lines.push(Line::raw(""));
         lines.push(styled_line(
-            truncate_one_line(&picker_footer_text(picker), width),
+            truncate_one_line(&picker.list_footer_text(), width),
             width,
             Theme::dim(),
             LineFill::Natural,
@@ -166,7 +166,7 @@ fn list_picker_lines(
         lines.push(Line::raw(""));
     }
     lines.push(styled_line(
-        truncate_one_line(&picker_footer_text(picker), width),
+        truncate_one_line(&picker.list_footer_text(), width),
         width,
         Theme::dim(),
         LineFill::Natural,
@@ -233,7 +233,11 @@ fn picker_item_line(
     label_width: usize,
     width: usize,
 ) -> Line<'static> {
-    let marker = if selected { "→" } else { " " };
+    let marker = if selected {
+        super::composer_chrome::SELECTION_MARKER_ACTIVE
+    } else {
+        super::composer_chrome::SELECTION_MARKER_INACTIVE
+    };
     let row_style = if selected {
         Theme::accent()
     } else {
@@ -275,29 +279,6 @@ fn picker_item_line(
         }
     }
     Line::from(spans)
-}
-
-fn picker_footer_text(picker: &UiPicker) -> String {
-    let action = picker.confirm_action_label();
-    let pin = if picker.help.contains("ctrl-p") {
-        " · Ctrl-P to pin/unpin"
-    } else {
-        ""
-    };
-    let tab = if picker.help.contains("tab") {
-        " · Tab to complete"
-    } else {
-        ""
-    };
-    let escape = if picker.has_parent() {
-        "back"
-    } else {
-        "cancel"
-    };
-    format!(
-        "  {} · Type to search · Enter to {action}{pin}{tab} · Esc to {escape}",
-        picker.title
-    )
 }
 
 pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {

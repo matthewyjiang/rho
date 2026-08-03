@@ -54,7 +54,7 @@ const APPLY_PATCH_DIFF_STEPS: &[Step] = &[
     // active. Wait for the modal controls so Esc cannot race with host-input
     // activation and interrupt the model instead of cancelling the question.
     Step::WaitText {
-        text: "esc cancel",
+        text: "Esc cancel",
         timeout: STREAM,
     },
     Step::Key(crate::keys::Key::Esc),

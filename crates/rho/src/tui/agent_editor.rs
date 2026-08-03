@@ -363,7 +363,6 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
 
     UiPicker::new(
         format!("edit agent {}", draft.id),
-        "type to filter fields, enter edit, esc back",
         items,
         PickerAction::EditAgent,
     )
@@ -389,7 +388,7 @@ fn prompt_body_preview(draft: &AgentDefinition) -> String {
 
 fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPicker {
     let prefix = field.choice_prefix();
-    let (title, detail, items) = match field {
+    let (title, items) = match field {
         AgentChoiceField::PromptPolicy => {
             let current = match &draft.prompt {
                 PromptPolicy::Extend(_) => "extend",
@@ -397,7 +396,6 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
             };
             (
                 "prompt policy",
-                "extend adds the body to the system prompt; replace uses it as the full prompt.",
                 choice_items(
                     &[
                         ("extend", "Add the body to the system prompt."),
@@ -415,7 +413,6 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
             let current = draft.runtime.runtime().as_str();
             (
                 "runtime",
-                "Which harness runs this agent. Switching resets incompatible fields.",
                 choice_items(
                     &[
                         ("rho", "Rho's own loop and tool vocabulary."),
@@ -442,15 +439,7 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
                     ("select", "Pin a model."),
                 ]
             };
-            (
-                "model policy",
-                if is_claude {
-                    "Claude-cli accepts inherit or select (model passed through as --model)."
-                } else {
-                    "inherit uses the conversation model; prefer/require/select pin a model."
-                },
-                choice_items(options, &current, prefix),
-            )
+            ("model policy", choice_items(options, &current, prefix))
         }
         AgentChoiceField::Reasoning => {
             let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
@@ -492,15 +481,7 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
                     selection_verb: None,
                 }
             }));
-            (
-                "reasoning",
-                if is_claude {
-                    "Claude does not accept off or minimal."
-                } else {
-                    "Reasoning level for this agent. inherit omits the field."
-                },
-                items,
-            )
+            ("reasoning", items)
         }
         AgentChoiceField::InheritClaudeConfig => {
             let current = match &draft.runtime {
@@ -509,7 +490,6 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
             };
             (
                 "inherit Claude config",
-                "When yes, widen Claude setting sources to the user's full Claude config.",
                 choice_items(
                     &[
                         ("no", "Closed: only frontmatter settings."),
@@ -521,7 +501,7 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
             )
         }
     };
-    UiPicker::new(title, detail, items, PickerAction::EditAgent).with_confirm_verb("set")
+    UiPicker::new(title, items, PickerAction::EditAgent).with_confirm_verb("set")
 }
 
 fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> Vec<PickerItem> {

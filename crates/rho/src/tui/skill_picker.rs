@@ -15,10 +15,5 @@ pub(super) fn skill_picker(skills: Vec<Skill>) -> UiPicker {
         })
         .collect::<Vec<_>>();
 
-    UiPicker::new(
-        "loaded skills",
-        "enter inserts command, type regex filter, esc cancel",
-        items,
-        PickerAction::InsertSkillCommand,
-    )
+    UiPicker::new("loaded skills", items, PickerAction::InsertSkillCommand)
 }

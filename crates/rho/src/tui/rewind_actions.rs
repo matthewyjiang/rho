@@ -89,7 +89,6 @@ impl App {
             .collect();
         let picker = UiPicker::new(
             "Workspace rewind",
-            "select a completed turn to preview; no files change in this step",
             items,
             PickerAction::SelectRewindCheckpoint,
         )
@@ -145,7 +144,6 @@ impl App {
         };
         let picker = UiPicker::new(
             "Confirm workspace rewind",
-            "review every path, then press enter to restore; esc cancels without writes",
             vec![item],
             PickerAction::ConfirmRewindCheckpoint,
         )

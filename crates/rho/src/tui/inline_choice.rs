@@ -178,9 +178,9 @@ pub(super) fn inline_choice_lines(choice: &InlineChoice, width: usize) -> Vec<Li
     for (index, option) in choice.options.iter().enumerate() {
         let selected = index == choice.active && option.available;
         let marker = if selected {
-            ">"
+            super::composer_chrome::SELECTION_MARKER_ACTIVE
         } else if option.available {
-            " "
+            super::composer_chrome::SELECTION_MARKER_INACTIVE
         } else {
             "·"
         };
@@ -210,7 +210,12 @@ pub(super) fn inline_choice_lines(choice: &InlineChoice, width: usize) -> Vec<Li
 
     lines.push(styled_line(
         truncate_one_line(
-            "enter/space choose · shortcut choose · arrows move · esc cancel",
+            &super::composer_chrome::join_footer_parts([
+                "Enter/Space choose",
+                "shortcut choose",
+                "arrows move",
+                "Esc cancel",
+            ]),
             width,
         ),
         width,

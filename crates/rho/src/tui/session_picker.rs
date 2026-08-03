@@ -10,7 +10,6 @@ pub(super) fn session_picker(
     let now = now_unix_secs();
     UiPicker::new(
         "resume session",
-        "type regex filter, tab complete, up/down select, enter resume, d delete, esc cancel",
         sessions
             .into_iter()
             .filter(|session| current_session_id != Some(session.id.as_str()))
@@ -18,6 +17,12 @@ pub(super) fn session_picker(
             .collect(),
         PickerAction::ResumeSession,
     )
+    .with_key_hints(super::PickerKeyHints {
+        pin_toggle: false,
+        tab_complete: true,
+        row_delete: true,
+    })
+    .with_confirm_verb("resume")
 }
 
 fn session_item(session: SessionSummary, now: u64) -> PickerItem {

@@ -892,7 +892,11 @@ pub(super) fn secret_input_lines(
     vec![
         styled_line(
             truncate_one_line(
-                &format!("enter {}  enter save, esc cancel", secret.target.label),
+                &format!(
+                    "enter {}  {}",
+                    secret.target.label,
+                    super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+                ),
                 width,
             ),
             width,

@@ -32,11 +32,12 @@ pub(super) fn login_group_picker() -> UiPicker {
         })
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut items);
-    UiPicker::new(
-        "select provider to login",
-        "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
-        items,
-        PickerAction::LoginGroup,
+    UiPicker::new("select provider to login", items, PickerAction::LoginGroup).with_key_hints(
+        super::PickerKeyHints {
+            pin_toggle: false,
+            tab_complete: true,
+            row_delete: false,
+        },
     )
 }
 
@@ -84,12 +85,11 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
                 selection_verb: None,
             }),
     );
-    UiPicker::new(
-        title,
-        "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
-        items,
-        PickerAction::LoginProvider,
-    )
+    UiPicker::new(title, items, PickerAction::LoginProvider).with_key_hints(super::PickerKeyHints {
+        pin_toggle: false,
+        tab_complete: true,
+        row_delete: false,
+    })
 }
 
 pub(super) fn auth_mode_picker(
@@ -100,7 +100,6 @@ pub(super) fn auth_mode_picker(
     let Some(descriptor) = provider::provider_descriptor(provider_name) else {
         return Ok(UiPicker::new(
             "Switch active auth mode",
-            "esc back",
             Vec::new(),
             PickerAction::SwitchAuthMode,
         ));
@@ -133,7 +132,6 @@ pub(super) fn auth_mode_picker(
 
     Ok(UiPicker::new(
         format!("Switch {} auth mode", descriptor.display_name),
-        "type regex filter, up/down select, enter switch, esc back",
         items,
         PickerAction::SwitchAuthMode,
     )
@@ -173,12 +171,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut providers);
     items.extend(providers);
-    UiPicker::new(
-        "Refresh model lists",
-        "type regex filter, enter refresh, esc back",
-        items,
-        PickerAction::RefreshModelList,
-    )
+    UiPicker::new("Refresh model lists", items, PickerAction::RefreshModelList)
 }
 
 pub(super) fn logout_provider_picker(
@@ -246,10 +239,11 @@ fn provider_picker_for_targets(
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut items);
 
-    UiPicker::new(
-        format!("select provider to {verb}"),
-        "type regex filter, tab complete, up/down select, enter confirm, esc cancel",
-        items,
-        action,
+    UiPicker::new(format!("select provider to {verb}"), items, action).with_key_hints(
+        super::PickerKeyHints {
+            pin_toggle: false,
+            tab_complete: true,
+            row_delete: false,
+        },
     )
 }

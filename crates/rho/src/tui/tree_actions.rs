@@ -14,7 +14,6 @@ pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
     let picker_items = items.into_iter().map(tree_item).collect();
     let mut picker = UiPicker::new(
         "Conversation tree",
-        "type regex filter, enter restores the selected state, esc closes",
         picker_items,
         PickerAction::SelectTreeNode,
     )

@@ -205,19 +205,19 @@ pub(super) fn hub_picker(
         }
     }
 
-    UiPicker::new(
-        "Workflows",
-        "enter acts · d deletes plan/run · type to filter · esc close",
-        items,
-        PickerAction::Workflow,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " WORKFLOWS".into(),
-        detail_label: Some(" DETAILS".into()),
-        nav_keys_hint: "↑↓ items".into(),
-    })
-    .with_confirm_verb("open")
+    UiPicker::new("Workflows", items, PickerAction::Workflow)
+        .with_key_hints(super::PickerKeyHints {
+            pin_toggle: false,
+            tab_complete: false,
+            row_delete: true,
+        })
+        .with_layout(PickerLayout::Overlay)
+        .with_overlay_chrome(OverlayChrome {
+            nav_label: " WORKFLOWS".into(),
+            detail_label: Some(" DETAILS".into()),
+            nav_keys_hint: "↑↓ items".into(),
+        })
+        .with_confirm_verb("open")
 }
 
 fn outcome_tone(outcome: Option<WorkflowOutcome>) -> PickerBadgeTone {
@@ -260,13 +260,6 @@ impl App {
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.set_status("workflows");
         Ok(())
-    }
-
-    pub(super) fn workflow_picker_is_open(&self) -> bool {
-        matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Workflow
-        )
     }
 
     pub(super) fn prompt_delete_selected_workflow_item(&mut self) -> anyhow::Result<()> {

@@ -102,7 +102,11 @@ pub(super) fn text_input_lines(input: &TextInput, width: usize) -> Vec<Line<'sta
     vec![
         styled_line(
             truncate_one_line(
-                &format!("edit {}  enter save, esc cancel", input.label()),
+                &format!(
+                    "edit {}  {}",
+                    input.label(),
+                    super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+                ),
                 width,
             ),
             width,

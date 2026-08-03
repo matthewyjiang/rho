@@ -43,18 +43,13 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         .iter_with_internal()
         .map(|entry| agent_item(entry, &models))
         .collect();
-    UiPicker::new(
-        "loaded agents",
-        "type regex filter, enter configures internal agents or edits user agents, esc closes",
-        items,
-        PickerAction::ViewAgent,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " AGENTS".into(),
-        detail_label: Some(" DETAILS".into()),
-        nav_keys_hint: "↑↓ agents".into(),
-    })
+    UiPicker::new("loaded agents", items, PickerAction::ViewAgent)
+        .with_layout(PickerLayout::Overlay)
+        .with_overlay_chrome(OverlayChrome {
+            nav_label: " AGENTS".into(),
+            detail_label: Some(" DETAILS".into()),
+            nav_keys_hint: "↑↓ agents".into(),
+        })
 }
 
 fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {

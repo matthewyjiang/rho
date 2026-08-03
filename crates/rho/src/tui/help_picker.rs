@@ -7,19 +7,14 @@ use super::{
 
 pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
     let items = help_items(keybindings);
-    UiPicker::new(
-        "Keyboard shortcuts",
-        "type regex filter, enter or esc closes",
-        items,
-        PickerAction::Dismiss,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " KEYS".into(),
-        detail_label: Some(" DETAILS".into()),
-        nav_keys_hint: "↑↓ keys".into(),
-    })
-    .with_confirm_verb("close")
+    UiPicker::new("Keyboard shortcuts", items, PickerAction::Dismiss)
+        .with_layout(PickerLayout::Overlay)
+        .with_overlay_chrome(OverlayChrome {
+            nav_label: " KEYS".into(),
+            detail_label: Some(" DETAILS".into()),
+            nav_keys_hint: "↑↓ keys".into(),
+        })
+        .with_confirm_verb("close")
 }
 
 fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
