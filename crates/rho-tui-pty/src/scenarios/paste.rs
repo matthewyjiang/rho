@@ -18,7 +18,10 @@ const PASTE_MULTILINE_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("delete_collapsed_paste"),
-    Step::Paste("discard one\ndiscard two\ndiscard three\ndiscard four\ndiscard five"),
+    // Keep well above PASTE_COLLAPSE_MIN_LINES so this stays an atomic marker.
+    Step::Paste(
+        "discard one\ndiscard two\ndiscard three\ndiscard four\ndiscard five\ndiscard six\ndiscard seven\ndiscard eight\ndiscard nine\ndiscard ten",
+    ),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
         timeout: SETTLE,

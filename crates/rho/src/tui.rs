@@ -212,10 +212,6 @@ use {
 /// Viewport height used by line-level tests that render without a real terminal.
 #[cfg(test)]
 const DEFAULT_TUI_HEIGHT: u16 = 18;
-// Keep short multiline pastes editable in the composer; only larger pastes
-// become atomic `[ pasted: N lines ]` markers.
-const PASTE_COLLAPSE_MIN_LINES: usize = 5;
-const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 const MAX_COMMAND_SUGGESTIONS: usize = 5;
 const MIN_COMMAND_DESCRIPTION_WIDTH: usize = 7;
 const RECOVERED_HISTORY_LINE_LIMIT: usize = 200;

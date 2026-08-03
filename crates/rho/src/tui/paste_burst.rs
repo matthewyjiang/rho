@@ -3,6 +3,10 @@ use std::time::{Duration, Instant};
 const PASTE_BURST_GAP: Duration = Duration::from_millis(12);
 const PASTE_ENTER_SUPPRESSION: Duration = Duration::from_millis(120);
 const PASTE_BURST_MIN_CHARS: usize = 2;
+// Keep short multiline pastes editable in the composer; only larger pastes
+// become atomic `[ pasted: N lines ]` markers.
+pub(super) const PASTE_COLLAPSE_MIN_LINES: usize = 5;
+const PASTE_COLLAPSE_MIN_CHARS: usize = 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PasteBurstEnter {
@@ -148,9 +152,9 @@ pub(super) fn normalize_paste(text: &str) -> String {
 pub(super) fn paste_marker_for(text: &str) -> Option<String> {
     let line_count = text.split('\n').count();
     let char_count = text.chars().count();
-    if line_count >= super::PASTE_COLLAPSE_MIN_LINES {
+    if line_count >= PASTE_COLLAPSE_MIN_LINES {
         Some(format!("[ pasted: {line_count} lines ]"))
-    } else if char_count > super::PASTE_COLLAPSE_MIN_CHARS {
+    } else if char_count > PASTE_COLLAPSE_MIN_CHARS {
         Some(format!("[ pasted: {char_count} chars ]"))
     } else {
         None
@@ -238,21 +242,36 @@ mod tests {
         );
     }
 
-    // Covers: short multiline pastes must stay editable; collapse starts at 5 lines
+    fn paste_lines(n: usize) -> String {
+        (1..=n)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    // Covers: short multiline pastes must stay editable; collapse starts at PASTE_COLLAPSE_MIN_LINES
     // Owner: pure unit (paste marker policy)
     #[test]
     fn paste_marker_thresholds() {
         assert_eq!(paste_marker_for("single line"), None);
-        assert_eq!(paste_marker_for("a\nb"), None);
-        assert_eq!(paste_marker_for("a\nb\nc\nd"), None);
         assert_eq!(
-            paste_marker_for("a\nb\nc\nd\ne").as_deref(),
-            Some("[ pasted: 5 lines ]")
+            paste_marker_for(&paste_lines(PASTE_COLLAPSE_MIN_LINES - 1)),
+            None
         );
         assert_eq!(
-            paste_marker_for(&"x".repeat(1001)).as_deref(),
-            Some("[ pasted: 1001 chars ]")
+            paste_marker_for(&paste_lines(PASTE_COLLAPSE_MIN_LINES)),
+            Some(format!("[ pasted: {PASTE_COLLAPSE_MIN_LINES} lines ]"))
         );
-        assert_eq!(paste_marker_for(&"x".repeat(1000)), None);
+        assert_eq!(
+            paste_marker_for(&"x".repeat(PASTE_COLLAPSE_MIN_CHARS + 1)),
+            Some(format!(
+                "[ pasted: {} chars ]",
+                PASTE_COLLAPSE_MIN_CHARS + 1
+            ))
+        );
+        assert_eq!(
+            paste_marker_for(&"x".repeat(PASTE_COLLAPSE_MIN_CHARS)),
+            None
+        );
     }
 }
