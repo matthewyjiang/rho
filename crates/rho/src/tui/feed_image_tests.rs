@@ -130,7 +130,11 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     let entries = vec![image_tool()];
     let mut cache = HistoryLineCache::default();
     let width = 40;
-    let settings = HistoryRenderSettings::new(width, 20, false);
+    let settings = HistoryRenderSettings {
+        width,
+        max_tool_output_lines: 20,
+        zen_mode: false,
+    };
     let line_count = cache.line_count(&entries, settings, &no_images);
 
     // A one-line tool has one text row before its image; the trailing spacer is after.

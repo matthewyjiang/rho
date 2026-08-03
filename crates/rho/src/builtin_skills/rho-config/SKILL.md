@@ -50,7 +50,7 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 ## Common tasks
 
 - **Set the default model or provider**: use `/model provider/model` in the TUI, or `rho --provider <provider> --model <model> --auth <auth>`. For the exact `--provider`/`--auth`/`--model` combination a provider expects, check the provider page.
-- **Change reasoning**: cycle `reasoning` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) in `/config` under Models & reasoning, or set it in config. `reasoning` applies to the current session; `show_reasoning_output` and `zen_mode` apply immediately.
+- **Change reasoning**: cycle `reasoning` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) in `/config` under Models & reasoning, or set it in config. `reasoning` applies to the current session; `show_reasoning_output` and `zen_mode` apply immediately when changed through `/config`. Direct configuration-file edits take effect on the next startup.
 - **Manage credentials**: `/login [provider]` and `/logout [provider]`. The credential backend is `behavior.credential_store` (`os` or `file`). When unset, rho asks where to store secrets at first login.
 - **Model aliases**: define `[model.aliases]` in config and reference them with an `@` prefix, for example `model = "@deep"`. Alias values must be concrete models and cannot begin with `@`. Update the alias table in one place to change the model everywhere it is referenced.
 - **Internal agent models**: use `/agents`, select `session-title` or `goal-judge`, and press `enter` to choose a model, or edit `[internal_agents.<role>]` in config. Pick **Use conversation model** to remove an override.

@@ -270,7 +270,11 @@ impl RuntimeModelView {
         &self,
         width: usize,
     ) -> history_cache::HistoryRenderSettings {
-        history_cache::HistoryRenderSettings::new(width, self.max_tool_output_lines, self.zen_mode)
+        history_cache::HistoryRenderSettings {
+            width,
+            max_tool_output_lines: self.max_tool_output_lines,
+            zen_mode: self.zen_mode,
+        }
     }
 
     fn fast_mode_active(&self) -> bool {

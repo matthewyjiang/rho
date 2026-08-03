@@ -44,14 +44,6 @@ pub(crate) struct HistoryRenderSettings {
 }
 
 impl HistoryRenderSettings {
-    pub(crate) fn new(width: usize, max_tool_output_lines: usize, zen_mode: bool) -> Self {
-        Self {
-            width,
-            max_tool_output_lines,
-            zen_mode,
-        }
-    }
-
     /// Zen mode keeps entry indices stable but contributes no transcript lines for
     /// tool cards or reasoning blocks.
     pub(super) fn hides_entry(self, entry: &Entry) -> bool {

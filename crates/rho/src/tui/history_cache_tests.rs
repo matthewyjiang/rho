@@ -8,7 +8,11 @@ fn no_images(_: usize, _: &[MarkdownImageSource]) -> Vec<(usize, FeedImage)> {
 }
 
 fn settings(width: usize) -> HistoryRenderSettings {
-    HistoryRenderSettings::new(width, 10, false)
+    HistoryRenderSettings {
+        width,
+        max_tool_output_lines: 10,
+        zen_mode: false,
+    }
 }
 
 fn settings_with(
@@ -16,7 +20,11 @@ fn settings_with(
     max_tool_output_lines: usize,
     zen_mode: bool,
 ) -> HistoryRenderSettings {
-    HistoryRenderSettings::new(width, max_tool_output_lines, zen_mode)
+    HistoryRenderSettings {
+        width,
+        max_tool_output_lines,
+        zen_mode,
+    }
 }
 
 #[test]
