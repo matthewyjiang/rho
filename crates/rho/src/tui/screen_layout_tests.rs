@@ -1,0 +1,118 @@
+use pretty_assertions::assert_eq;
+use ratatui::layout::Rect;
+
+use super::{
+    bottom_chrome_heights, terminal_meets_minimum, BottomChrome, MIN_TERMINAL_HEIGHT,
+    MIN_TERMINAL_WIDTH,
+};
+
+// Covers: tiny terminals must not enter the normal chrome layout.
+// Owner: pure layout
+#[test]
+fn terminal_minimum_rejects_short_or_narrow_areas() {
+    let cases = [
+        (MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT, true),
+        (MIN_TERMINAL_WIDTH - 1, MIN_TERMINAL_HEIGHT, false),
+        (MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT - 1, false),
+        (0, 0, false),
+        (80, 24, true),
+    ];
+    for (width, height, expected) in cases {
+        assert_eq!(
+            terminal_meets_minimum(Rect::new(0, 0, width, height)),
+            expected,
+            "area {width}x{height}"
+        );
+    }
+}
+
+// Covers: statusline cannot consume the last composer row on short terminals.
+// Owner: pure layout
+#[test]
+fn bottom_chrome_keeps_composer_row_before_statusline() {
+    let cases = [
+        (
+            4usize,
+            2usize,
+            1usize,
+            0usize,
+            BottomChrome {
+                statusline_height: 2,
+                bottom_divider_height: 1,
+                command_height: 0,
+            },
+        ),
+        (
+            3,
+            2,
+            1,
+            0,
+            BottomChrome {
+                statusline_height: 2,
+                bottom_divider_height: 0,
+                command_height: 0,
+            },
+        ),
+        (
+            2,
+            2,
+            1,
+            0,
+            BottomChrome {
+                statusline_height: 1,
+                bottom_divider_height: 0,
+                command_height: 0,
+            },
+        ),
+        (
+            1,
+            2,
+            1,
+            0,
+            BottomChrome {
+                statusline_height: 0,
+                bottom_divider_height: 0,
+                command_height: 0,
+            },
+        ),
+        (
+            6,
+            2,
+            1,
+            3,
+            BottomChrome {
+                statusline_height: 2,
+                bottom_divider_height: 1,
+                command_height: 2,
+            },
+        ),
+        (
+            4,
+            2,
+            0,
+            0,
+            BottomChrome {
+                statusline_height: 2,
+                bottom_divider_height: 1,
+                command_height: 0,
+            },
+        ),
+    ];
+
+    for (height, desired_statusline, composer_lines, command_lines, expected) in cases {
+        assert_eq!(
+            bottom_chrome_heights(height, desired_statusline, composer_lines, command_lines),
+            expected,
+            "height={height} statusline={desired_statusline} composer={composer_lines} commands={command_lines}"
+        );
+        let reserved =
+            expected.statusline_height + expected.bottom_divider_height + expected.command_height;
+        let available_above = height.saturating_sub(reserved);
+        if composer_lines > 0 {
+            assert!(
+                available_above >= 1,
+                "composer lost its row at height={height}"
+            );
+        }
+    }
+}

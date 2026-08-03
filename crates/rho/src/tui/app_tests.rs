@@ -123,6 +123,37 @@ pub(super) fn test_app() -> App {
     )
 }
 
+// Covers: at the minimum usable size the composer keeps a visible row.
+// Owner: pure layout
+#[test]
+fn minimum_terminal_layout_keeps_composer_visible() {
+    use ratatui::layout::Rect;
+
+    let app = test_app();
+    let area = Rect::new(
+        0,
+        0,
+        super::screen_layout::MIN_TERMINAL_WIDTH,
+        super::screen_layout::MIN_TERMINAL_HEIGHT,
+    );
+    let width = area.width as usize;
+    let composer_lines = app.composer_lines(width, area.height as usize);
+    assert!(!composer_lines.is_empty());
+    let layout = app.screen_layout_for_history_len(
+        area,
+        /*history_len*/ 0,
+        &composer_lines,
+        /*command_line_count*/ 0,
+    );
+    assert!(
+        layout.composer.height >= 1,
+        "composer height at minimum size was {}",
+        layout.composer.height
+    );
+    assert_eq!(layout.statusline.height, 2);
+    assert_eq!(layout.bottom_divider.height, 1);
+}
+
 #[test]
 fn interrupt_during_tool_ends_turn_immediately() {
     let mut app = test_app();
