@@ -87,10 +87,10 @@ impl App {
                 )));
                 self.set_status("changelog fetch failed");
             }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "unable to fetch latest changelog: background task failed: {error}"
-                )));
+            Err(_) => {
+                self.insert_entry(&Entry::Error(
+                    "background task failed: changelog fetch".into(),
+                ));
                 self.set_status("changelog fetch failed");
             }
         }

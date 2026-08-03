@@ -1,3 +1,4 @@
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, fs, path::PathBuf, str::FromStr};
 
@@ -313,8 +314,10 @@ impl Config {
     }
 
     fn parse_file(path: PathBuf) -> anyhow::Result<Self> {
-        let text = fs::read_to_string(&path)?;
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read config file {}", path.display()))?;
         Self::parse_settings(&text)
+            .with_context(|| format!("failed to parse config file {}", path.display()))
     }
 
     pub(crate) fn parse_settings(text: &str) -> anyhow::Result<Self> {

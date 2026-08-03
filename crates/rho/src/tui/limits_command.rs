@@ -77,10 +77,10 @@ impl App {
         };
         match handle.await {
             Ok(result) => self.render_limits_result(result),
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not check OAuth usage limits: background task failed: {error}"
-                )));
+            Err(_) => {
+                self.insert_entry(&Entry::Error(
+                    "background task failed: OAuth usage limit check".into(),
+                ));
                 self.set_status("OAuth usage limit check failed");
             }
         }
