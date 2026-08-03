@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.4](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.15.3...rho-providers-v0.15.4) (2026-08-03)
+
+
+### Bug Fixes
+
+* **providers:** surface rate-limit reset time and /limits pointer ([#733](https://github.com/matthewyjiang/rho/issues/733)) ([b9371fc](https://github.com/matthewyjiang/rho/commit/b9371fc69fb9b195f9f400d872195c91f031a6b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.15.0 to 1.15.1
+
 ## [0.15.3](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.15.2...rho-providers-v0.15.3) (2026-08-02)
 
 
