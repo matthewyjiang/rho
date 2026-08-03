@@ -237,4 +237,22 @@ mod tests {
             PasteBurstEnter::InsertNewline
         );
     }
+
+    // Covers: short multiline pastes must stay editable; collapse starts at 5 lines
+    // Owner: pure unit (paste marker policy)
+    #[test]
+    fn paste_marker_thresholds() {
+        assert_eq!(paste_marker_for("single line"), None);
+        assert_eq!(paste_marker_for("a\nb"), None);
+        assert_eq!(paste_marker_for("a\nb\nc\nd"), None);
+        assert_eq!(
+            paste_marker_for("a\nb\nc\nd\ne").as_deref(),
+            Some("[ pasted: 5 lines ]")
+        );
+        assert_eq!(
+            paste_marker_for(&"x".repeat(1001)).as_deref(),
+            Some("[ pasted: 1001 chars ]")
+        );
+        assert_eq!(paste_marker_for(&"x".repeat(1000)), None);
+    }
 }

@@ -199,8 +199,9 @@ fn recovered_history_tail_limits_initial_redraw() {
 fn key_event_paste_burst_collapses_through_common_paste_path() {
     let start = Instant::now();
     let mut app = test_app();
+    let pasted = "alpha\nbeta\ngamma\ndelta\nepsilon";
 
-    for (index, ch) in "alpha\nbeta".chars().enumerate() {
+    for (index, ch) in pasted.chars().enumerate() {
         let key = if ch == '\n' {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
         } else {
@@ -210,8 +211,8 @@ fn key_event_paste_burst_collapses_through_common_paste_path() {
     }
     app.flush_pending_paste_burst();
 
-    assert_eq!(app.input_ui.text(), "[ pasted: 2 lines ]");
-    assert_eq!(app.expanded_input(), "alpha\nbeta");
+    assert_eq!(app.input_ui.text(), "[ pasted: 5 lines ]");
+    assert_eq!(app.expanded_input(), pasted);
 }
 
 #[test]
@@ -251,16 +252,17 @@ fn single_character_fast_enter_is_buffered_as_paste() {
 #[test]
 fn pasted_multiline_input_collapses_to_marker_and_expands() {
     let mut app = test_app();
+    let pasted = "alpha\nbeta\ngamma\ndelta\nepsilon";
 
-    app.insert_pasted_input_text("alpha\nbeta\ngamma");
+    app.insert_pasted_input_text(pasted);
 
-    assert_eq!(app.input_ui.text(), "[ pasted: 3 lines ]");
+    assert_eq!(app.input_ui.text(), "[ pasted: 5 lines ]");
     assert_eq!(app.input_ui.cursor(), app.input_ui.text().chars().count());
-    assert_eq!(app.expanded_input(), "alpha\nbeta\ngamma");
+    assert_eq!(app.expanded_input(), pasted);
 }
 
 #[test]
-fn pasted_single_line_input_stays_literal_until_large() {
+fn pasted_short_input_stays_literal_until_collapse_threshold() {
     let mut app = test_app();
 
     app.insert_pasted_input_text("hello world");
@@ -268,23 +270,34 @@ fn pasted_single_line_input_stays_literal_until_large() {
     assert_eq!(app.input_ui.text(), "hello world");
     assert!(app.input_ui.paste_segments().is_empty());
     assert_eq!(app.expanded_input(), "hello world");
+
+    app.input_ui.clear_text();
+    app.input_ui.clear_paste_segments();
+    let short_multiline = "alpha\nbeta\ngamma\ndelta";
+    app.insert_pasted_input_text(short_multiline);
+
+    assert_eq!(app.input_ui.text(), short_multiline);
+    assert!(app.input_ui.paste_segments().is_empty());
+    assert_eq!(app.expanded_input(), short_multiline);
 }
 
 #[test]
 fn paste_segments_shift_after_edits_before_marker() {
     let mut app = test_app();
-    app.insert_pasted_input_text("alpha\nbeta");
+    let pasted = "alpha\nbeta\ngamma\ndelta\nepsilon";
+    app.insert_pasted_input_text(pasted);
     app.input_ui.set_cursor(0);
     app.insert_input_text("prefix ");
 
-    assert_eq!(app.input_ui.text(), "prefix [ pasted: 2 lines ]");
-    assert_eq!(app.expanded_input(), "prefix alpha\nbeta");
+    assert_eq!(app.input_ui.text(), "prefix [ pasted: 5 lines ]");
+    assert_eq!(app.expanded_input(), format!("prefix {pasted}"));
 }
 
 #[test]
 fn queued_pasted_prompt_keeps_marker_when_recalled_for_editing() {
     let mut app = test_app();
-    app.insert_pasted_input_text("alpha\nbeta");
+    let pasted = "alpha\nbeta\ngamma\ndelta\nepsilon";
+    app.insert_pasted_input_text(pasted);
     let queued = QueuedPrompt {
         prompt: app.expanded_input(),
         display_prompt: app.input_ui.text().to_string(),
@@ -295,15 +308,16 @@ fn queued_pasted_prompt_keeps_marker_when_recalled_for_editing() {
     app.pending.push_follow_up(queued);
 
     assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
-    assert_eq!(app.input_ui.text(), "[ pasted: 2 lines ]");
-    assert_eq!(app.expanded_input(), "alpha\nbeta");
+    assert_eq!(app.input_ui.text(), "[ pasted: 5 lines ]");
+    assert_eq!(app.expanded_input(), pasted);
 }
 
 #[test]
 fn queued_pasted_prompt_preserves_leading_space_segment_offsets() {
     let mut app = test_app();
+    let pasted = "alpha\nbeta\ngamma\ndelta\nepsilon";
     app.insert_input_text(" ");
-    app.insert_pasted_input_text("alpha\nbeta");
+    app.insert_pasted_input_text(pasted);
     let queued = QueuedPrompt {
         prompt: app.expanded_input().trim().to_string(),
         display_prompt: app.input_ui.text().to_string(),
@@ -314,21 +328,22 @@ fn queued_pasted_prompt_preserves_leading_space_segment_offsets() {
     app.pending.push_follow_up(queued);
 
     assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
-    assert_eq!(app.input_ui.text(), " [ pasted: 2 lines ]");
-    assert_eq!(app.expanded_input().trim(), "alpha\nbeta");
+    assert_eq!(app.input_ui.text(), " [ pasted: 5 lines ]");
+    assert_eq!(app.expanded_input().trim(), pasted);
 }
 
 #[test]
 fn slash_command_args_can_keep_collapsed_display_separate_from_expanded_prompt() {
     let mut app = test_app();
+    let pasted = "alpha\nbeta\ngamma\ndelta\nepsilon";
     app.insert_input_text("/skill:test ");
-    app.insert_pasted_input_text("alpha\nbeta");
+    app.insert_pasted_input_text(pasted);
 
     let expanded_input = app.expanded_input();
-    assert_eq!(slash_command_args(&expanded_input).trim(), "alpha\nbeta");
+    assert_eq!(slash_command_args(&expanded_input).trim(), pasted);
     assert_eq!(
         slash_command_args(app.input_ui.text()).trim(),
-        "[ pasted: 2 lines ]"
+        "[ pasted: 5 lines ]"
     );
 }
 
@@ -719,8 +734,9 @@ fn input_history_recalls_previous_messages_and_restores_draft() {
 #[test]
 fn input_history_clears_paste_segments_and_restores_draft_segments() {
     let mut app = test_app();
+    let pasted = "alpha\nbeta\ngamma\ndelta\nepsilon";
     app.push_input_history("previous message long enough for marker");
-    app.insert_pasted_input_text("alpha\nbeta");
+    app.insert_pasted_input_text(pasted);
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
     assert_eq!(
@@ -734,8 +750,8 @@ fn input_history_clears_paste_segments_and_restores_draft_segments() {
     );
 
     app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
-    assert_eq!(app.input_ui.text(), "[ pasted: 2 lines ]");
-    assert_eq!(app.expanded_input(), "alpha\nbeta");
+    assert_eq!(app.input_ui.text(), "[ pasted: 5 lines ]");
+    assert_eq!(app.expanded_input(), pasted);
 }
 
 #[test]

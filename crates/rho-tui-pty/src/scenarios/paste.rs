@@ -18,7 +18,7 @@ const PASTE_MULTILINE_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("delete_collapsed_paste"),
-    Step::Paste("discard one\ndiscard two\ndiscard three"),
+    Step::Paste("discard one\ndiscard two\ndiscard three\ndiscard four\ndiscard five"),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
         timeout: SETTLE,
