@@ -90,8 +90,14 @@ Arguments:
   [PROMPT]...  Prompt text to send to the agent
 
 Options:
-      --stdin               Read additional prompt text from stdin
-      --output-file <PATH>  Stream progress to stdout and write a structured status/result file (JSON) that is updated during the run and finalized on exit
+      --stdin               Read additional prompt text from stdin. Required when
+                            stdin is a pipe or redirected file; without it, those
+                            redirects are rejected so prompt text is not dropped.
+      --output-file <PATH>  Write a structured status/result file (JSON). With
+                            text output, stream progress and assistant text to
+                            stdout and end with a completion marker; the result
+                            file is the durable final answer. With JSONL output,
+                            stdout stays the event stream.
       --output <OUTPUT>     Select plain final-answer output or a JSON Lines event stream [default: text] [possible values: text, jsonl]
       --max-steps <N>       Override the model-step budget for this run
       --timeout <DURATION>  Cancel the run after this wall-clock duration
@@ -100,6 +106,9 @@ Options:
   -h, --help                Print help (see more with '--help')
 ```
 
+Prompt text can come from arguments, `--stdin`, or both. A redirected pipe or
+file on stdin without `--stdin` is an error (`rho run "review" < diff.txt` needs
+`--stdin`). A terminal or null stdin does not require the flag.
 `rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. It starts in the current working directory. Relative file paths resolve from that directory, but they can use parent components such as `../`; absolute paths can also read or modify files outside it when the model chooses those tools.
 
 Use `rho --no-tools run "..."` to remove tool access. That flag does not suppress Rho's system prompt; add `--no-system-prompt` as well when you want only the raw prompt and model response (`rho --no-tools --no-system-prompt run "..."`). `rho run --no-tools` fails because `--no-tools` is not a `run` flag.
@@ -109,8 +118,9 @@ Use `rho --no-tools run "..."` to remove tool access. That flag does not suppres
 The default `--output text` contract has not changed: `rho run` writes one final
 assistant answer and a trailing newline to stdout. Reasoning, provider activity,
 tool lifecycle events, diagnostics, and errors stay off stdout. Actionable errors
-go to stderr. This keeps command substitution, pipes, and redirected output
-stable.
+go to stderr and keep their detail (for example a spanned TOML parse error).
+Authentication failures stay generic so credentials never appear on stderr or in
+JSONL. This keeps command substitution, pipes, and redirected output stable.
 
 Use `--output jsonl` when a script needs progress or terminal state:
 
@@ -146,6 +156,12 @@ send the JSONL stream to a system that should not receive that data.
 artifact used for delegated runs, while `--output jsonl` writes an immutable
 event stream to stdout. You can use both at once.
 
+With the default `--output text`, `--output-file` streams progress and assistant
+text to stdout and ends with a completion marker such as
+`[subagent run complete]`. That stdout mix is for live watching; scripts that
+need only the final answer should omit `--output-file`, use `--output jsonl`, or
+read the result file. With `--output jsonl`, stdout remains the JSONL event
+stream and the result file is still updated.
 A broken stdout pipe cancels the run and starts normal tool, subagent, and
 managed-process cleanup. A timeout starts after CLI and configuration validation.
 Cleanup can finish shortly after the deadline.
@@ -159,7 +175,7 @@ Exit codes are part of the automation contract:
 | `0` | Normal model completion |
 | `1` | Authentication, provider, tool-host, output, or another run failure |
 | `2` | Invalid invocation or configuration |
-| `124` | Timeout or model-step limit reached |
+| `124` | Timeout or model-step limit reached (default budget or `--max-steps`) |
 | `130` | SIGINT, after cleanup |
 | `143` | SIGTERM, after cleanup |
 
