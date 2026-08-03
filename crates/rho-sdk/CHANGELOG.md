@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.15.0...rho-sdk-v1.15.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **providers:** surface rate-limit reset time and /limits pointer ([#733](https://github.com/matthewyjiang/rho/issues/733)) ([b9371fc](https://github.com/matthewyjiang/rho/commit/b9371fc69fb9b195f9f400d872195c91f031a6b2))
+
 ## [1.15.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.14.0...rho-sdk-v1.15.0) (2026-08-02)
 
 

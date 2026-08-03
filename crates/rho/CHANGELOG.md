@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.28.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.27.1...rho-coding-agent-v1.28.0) (2026-08-03)
+
+
+### Features
+
+* **cli:** expand export formats and session browsing ([#725](https://github.com/matthewyjiang/rho/issues/725)) ([037aaf5](https://github.com/matthewyjiang/rho/commit/037aaf56ed9b2cf60e1020bd18851f8d003b7046))
+* **tui:** add zen mode display policy ([#736](https://github.com/matthewyjiang/rho/issues/736)) ([0f1d4c5](https://github.com/matthewyjiang/rho/commit/0f1d4c5c809240d60af179ca5afdd96096c36580))
+
+
+### Bug Fixes
+
+* **config:** warn on bad keys and stop silent CLI auto-save ([#731](https://github.com/matthewyjiang/rho/issues/731)) ([83cfa9d](https://github.com/matthewyjiang/rho/commit/83cfa9d346b8a6da5af434ce963f6108cbe8ed62))
+* **providers:** surface rate-limit reset time and /limits pointer ([#733](https://github.com/matthewyjiang/rho/issues/733)) ([b9371fc](https://github.com/matthewyjiang/rho/commit/b9371fc69fb9b195f9f400d872195c91f031a6b2))
+* **run:** keep error detail and stabilize automation contracts ([#735](https://github.com/matthewyjiang/rho/issues/735)) ([d7bb0dd](https://github.com/matthewyjiang/rho/commit/d7bb0ddcbc69703b5a8e1f9499792290f83985e3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.15.0 to 1.15.1
+    * rho-providers bumped from 0.15.3 to 0.15.4
+
 ## [1.27.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.27.0...rho-coding-agent-v1.27.1) (2026-08-03)
 
 
