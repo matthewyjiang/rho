@@ -238,67 +238,11 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
             false,
         )
     };
+    let terminal = classify_run_terminal(result, timed_out);
     if let Some(reporter) = reporter.as_mut() {
-        let reached_step_limit = result
-            .as_ref()
-            .is_ok_and(|outcome| outcome.stop_reason() == rho_sdk::StopReason::MaxSteps);
-        if reached_step_limit {
-            let stopped = Err(AutomationExit::new(
-                124,
-                TerminalReason::MaxSteps,
-                "rho run reached its model-step limit",
-            )
-            .into());
-            reporter.finish(&stopped);
-        } else {
-            reporter.finish(&result);
-        }
+        reporter.finish_terminal(&terminal);
     }
-
-    if timed_out {
-        emit_stopped(&mut jsonl, TerminalReason::Timeout)?;
-        return Err(AutomationExit::new(124, TerminalReason::Timeout, "rho run timed out").into());
-    }
-
-    match result {
-        Ok(answer) => {
-            if answer.stop_reason() == rho_sdk::StopReason::MaxSteps {
-                if let Some(adapter) = jsonl.as_mut() {
-                    let text = (!answer.text().is_empty()).then(|| answer.text().into());
-                    let event = adapter.stopped(TerminalReason::MaxSteps, text);
-                    emit(event)?;
-                } else {
-                    write_text_answer(&answer, reporter.is_some())?;
-                }
-                return Err(AutomationExit::new(
-                    124,
-                    TerminalReason::MaxSteps,
-                    "rho run reached its model-step limit",
-                )
-                .into());
-            }
-            if let Some(adapter) = jsonl.as_mut() {
-                let event = adapter.completed(answer.text().into());
-                emit(event)?;
-            } else {
-                write_text_answer(&answer, reporter.is_some())?;
-            }
-            Ok(())
-        }
-        Err(error) => {
-            let (reason, code) = classify_error(&error);
-            if reason == TerminalReason::Interrupted {
-                emit_stopped(&mut jsonl, reason)?;
-            } else if reason != TerminalReason::OutputError {
-                emit_failure(&mut jsonl, reason, &error)?;
-            }
-            let message = terminal_error_message(reason, &error);
-            if error.is::<AutomationInterrupted>() {
-                return Err(error);
-            }
-            Err(AutomationExit::new(code, reason, message).into())
-        }
-    }
+    emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some())
 }
 
 fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow::Result<()> {
@@ -356,6 +300,79 @@ fn emit_failure(
     Ok(())
 }
 
+const MAX_STEPS_MESSAGE: &str = "rho run reached its model-step limit";
+const TIMEOUT_MESSAGE: &str = "rho run timed out";
+
+/// Single classification of a finished automation session before reporter,
+/// JSONL/text emission, and process exit share one decision.
+enum RunTerminal {
+    Completed(rho_sdk::RunOutcome),
+    MaxSteps(rho_sdk::RunOutcome),
+    Timeout,
+    Failed(anyhow::Error),
+}
+
+fn classify_run_terminal(
+    result: anyhow::Result<rho_sdk::RunOutcome>,
+    timed_out: bool,
+) -> RunTerminal {
+    if timed_out {
+        return RunTerminal::Timeout;
+    }
+    match result {
+        Ok(answer) if answer.stop_reason() == rho_sdk::StopReason::MaxSteps => {
+            RunTerminal::MaxSteps(answer)
+        }
+        Ok(answer) => RunTerminal::Completed(answer),
+        Err(error) => RunTerminal::Failed(error),
+    }
+}
+
+fn emit_and_exit_terminal(
+    terminal: RunTerminal,
+    jsonl: &mut Option<JsonlAdapter>,
+    has_reporter: bool,
+) -> anyhow::Result<()> {
+    match terminal {
+        RunTerminal::Timeout => {
+            emit_stopped(jsonl, TerminalReason::Timeout)?;
+            Err(AutomationExit::new(124, TerminalReason::Timeout, TIMEOUT_MESSAGE).into())
+        }
+        RunTerminal::MaxSteps(answer) => {
+            if let Some(adapter) = jsonl.as_mut() {
+                let text = (!answer.text().is_empty()).then(|| answer.text().into());
+                let event = adapter.stopped(TerminalReason::MaxSteps, text);
+                emit(event)?;
+            } else {
+                write_text_answer(&answer, has_reporter)?;
+            }
+            Err(AutomationExit::new(124, TerminalReason::MaxSteps, MAX_STEPS_MESSAGE).into())
+        }
+        RunTerminal::Completed(answer) => {
+            if let Some(adapter) = jsonl.as_mut() {
+                let event = adapter.completed(answer.text().into());
+                emit(event)?;
+            } else {
+                write_text_answer(&answer, has_reporter)?;
+            }
+            Ok(())
+        }
+        RunTerminal::Failed(error) => {
+            let (reason, code) = classify_error(&error);
+            if reason == TerminalReason::Interrupted {
+                emit_stopped(jsonl, reason)?;
+            } else if reason != TerminalReason::OutputError {
+                emit_failure(jsonl, reason, &error)?;
+            }
+            let message = terminal_error_message(reason, &error);
+            if error.is::<AutomationInterrupted>() {
+                return Err(error);
+            }
+            Err(AutomationExit::new(code, reason, message).into())
+        }
+    }
+}
+
 /// Builds the human-readable terminal message for a classified automation error.
 ///
 /// Reason codes stay stable machine labels. The message carries actionable detail
@@ -364,7 +381,15 @@ fn emit_failure(
 fn terminal_error_message(reason: TerminalReason, error: &anyhow::Error) -> String {
     match reason {
         TerminalReason::Authentication => "authentication failed".to_string(),
-        _ => error.to_string(),
+        TerminalReason::ProviderError
+        | TerminalReason::ToolHostError
+        | TerminalReason::ConfigurationError
+        | TerminalReason::OutputError
+        | TerminalReason::OtherError
+        | TerminalReason::Interrupted
+        | TerminalReason::MaxSteps
+        | TerminalReason::Timeout
+        | TerminalReason::Completed => error.to_string(),
     }
 }
 
@@ -699,6 +724,28 @@ impl RunReporter {
         }
     }
 
+    fn finish_terminal(&mut self, terminal: &RunTerminal) {
+        match terminal {
+            RunTerminal::Completed(outcome) => {
+                let usage = outcome.usage();
+                self.sink.status.input_tokens = usage.total_input_tokens();
+                self.sink.status.output_tokens = usage.output_tokens;
+                self.sink.finish_ok(Some(outcome.text().to_string()));
+            }
+            RunTerminal::MaxSteps(_) | RunTerminal::Timeout => {
+                self.sink.finish_stopped("stopped");
+            }
+            RunTerminal::Failed(error)
+                if error.is::<AutomationInterrupted>() || error.is::<SubagentCancelled>() =>
+            {
+                self.sink.finish_stopped("stopped");
+            }
+            RunTerminal::Failed(error) => {
+                self.sink.finish_error(format!("{error:#}"));
+            }
+        }
+    }
+
     fn stream(&self, text: &str) {
         if !self.stream_output {
             return;
@@ -728,7 +775,7 @@ async fn shutdown_signal() -> io::Result<ShutdownSignal> {
 }
 
 fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
-    if !read_stdin && stdin_is_redirected() {
+    if !read_stdin && crate::stdio::stdin_is_redirected() {
         anyhow::bail!(
             "stdin is redirected but --stdin was not set; pass --stdin to include piped input"
         );
@@ -760,47 +807,6 @@ fn prompt_from_reader(
         anyhow::bail!("rho run requires a prompt argument or --stdin");
     }
     Ok(prompt)
-}
-
-/// True when stdin is a pipe, socket, or redirected file rather than a TTY or
-/// null device. Those redirects silently dropped prompt text before `--stdin`.
-fn stdin_is_redirected() -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-
-        let fd = io::stdin().as_raw_fd();
-        // SAFETY: fstat on the process stdin fd is valid for the lifetime of the
-        // call; the returned mode bits only identify the open file type.
-        let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
-        let rc = unsafe { libc::fstat(fd, &mut stat) };
-        if rc != 0 {
-            return false;
-        }
-        let mode = stat.st_mode & libc::S_IFMT;
-        mode == libc::S_IFIFO || mode == libc::S_IFREG || mode == libc::S_IFSOCK
-    }
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::{
-            Storage::FileSystem::{GetFileType, FILE_TYPE_DISK, FILE_TYPE_PIPE, FILE_TYPE_REMOTE},
-            System::Console::{GetStdHandle, STD_INPUT_HANDLE},
-        };
-
-        // SAFETY: GetStdHandle/GetFileType read the process standard handle type
-        // without retaining the handle beyond this call.
-        unsafe {
-            let handle = GetStdHandle(STD_INPUT_HANDLE);
-            matches!(
-                GetFileType(handle),
-                FILE_TYPE_PIPE | FILE_TYPE_DISK | FILE_TYPE_REMOTE
-            )
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        false
-    }
 }
 
 #[cfg(test)]

@@ -24,6 +24,7 @@ mod questionnaire;
 mod run_artifacts;
 mod session;
 mod skills;
+mod stdio;
 mod subagent;
 mod tools;
 mod transcript;

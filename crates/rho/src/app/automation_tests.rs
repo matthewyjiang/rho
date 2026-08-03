@@ -27,8 +27,9 @@ use tokio::{
 };
 
 use super::{
-    classify_error, complete_run, prompt_from_reader, terminal_error_message, AutomationExit,
-    RunArtifactIdentity, RunReporter,
+    classify_error, classify_run_terminal, complete_run, prompt_from_reader,
+    terminal_error_message, AutomationExit, RunArtifactIdentity, RunReporter, RunTerminal,
+    MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::{
@@ -66,11 +67,73 @@ fn terminal_messages_keep_detail_except_authentication() {
         "could not write JSONL output: broken pipe"
     );
 
+    let provider = anyhow::anyhow!("provider unavailable");
+    assert_eq!(
+        terminal_error_message(TerminalReason::ProviderError, &provider),
+        "provider unavailable"
+    );
+
     let authentication = anyhow::anyhow!("token fixture-secret rejected");
     assert_eq!(
         terminal_error_message(TerminalReason::Authentication, &authentication),
         "authentication failed"
     );
+}
+
+// Covers: MaxSteps must become RunTerminal::MaxSteps without output-mode or flag context.
+// Owner: pure unit (run terminal classification)
+#[tokio::test]
+async fn classifies_max_steps_stop_without_cli_flag_context() {
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "max-steps-terminal"),
+            [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                ContentBlock::ToolCall(ToolCall {
+                    id: "call-1".into(),
+                    name: "noop".into(),
+                    arguments: json!({}),
+                }),
+            ]))],
+        ))
+        .tool(ScriptedTool::new(
+            ToolSpec {
+                name: "noop".into(),
+                description: "no-op".into(),
+                input_schema: json!({"type": "object"}),
+            },
+            ScriptedToolOutcome::Success(ToolOutput::text("ok")),
+        ))
+        .max_steps(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let outcome = session.complete("one step").await.unwrap();
+    assert_eq!(outcome.stop_reason(), rho_sdk::StopReason::MaxSteps);
+
+    let terminal = classify_run_terminal(Ok(outcome), /*timed_out*/ false);
+    match terminal {
+        RunTerminal::MaxSteps(_) => {
+            let exit = AutomationExit::new(124, TerminalReason::MaxSteps, MAX_STEPS_MESSAGE);
+            assert_eq!(exit.exit_code(), 124);
+            assert_eq!(exit.reason(), TerminalReason::MaxSteps);
+            assert_eq!(exit.to_string(), MAX_STEPS_MESSAGE);
+        }
+        RunTerminal::Completed(_) | RunTerminal::Timeout | RunTerminal::Failed(_) => {
+            panic!("expected MaxSteps terminal")
+        }
+    }
+    runtime.shutdown();
+}
+
+// Covers: wall-clock timeout wins over the underlying session result when classifying.
+// Owner: pure unit (run terminal classification)
+#[test]
+fn classifies_timeout_ahead_of_session_result() {
+    let terminal = classify_run_terminal(
+        Err(anyhow::anyhow!("ignored when timed out")),
+        /*timed_out*/ true,
+    );
+    assert!(matches!(terminal, RunTerminal::Timeout));
 }
 
 #[test]

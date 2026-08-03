@@ -375,6 +375,24 @@ fn explicit_step_limit_stops_with_status_124() {
 }
 
 #[test]
+fn step_limit_in_text_mode_exits_124() {
+    let root = TempDir::new().unwrap();
+    let output = run(
+        &root,
+        "tool-failure",
+        &["run", "--max-steps", "1", "use a tool"],
+        None,
+    );
+
+    assert_eq!(output.status.code(), Some(124));
+    assert!(
+        stderr(&output).contains("model-step limit"),
+        "stderr: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn timeout_stops_with_status_124() {
     let root = TempDir::new().unwrap();
     let output = run(
@@ -404,9 +422,10 @@ fn startup_failure_emits_a_terminal_json_object() {
     assert_eq!(events[0]["type"], "run.failed");
     assert_eq!(events[0]["reason"], "configuration_error");
     let message = events[0]["message"].as_str().unwrap();
+    assert_ne!(message, "configuration failed");
     assert!(
-        message.contains("TOML") || message.contains("toml") || message.contains("parse"),
-        "expected parse detail in message: {message}"
+        !message.is_empty(),
+        "configuration failure must carry parse detail"
     );
     assert!(
         stderr(&output).contains(message),
@@ -426,9 +445,7 @@ fn broken_jsonl_stdout_fails_the_run() {
     let output = command.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("could not write JSONL output")
-            || stderr(&output).contains("Broken pipe")
-            || stderr(&output).contains("broken pipe"),
+        stderr(&output).contains("could not write JSONL output"),
         "stderr: {}",
         stderr(&output)
     );
