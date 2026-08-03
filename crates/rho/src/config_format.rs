@@ -88,6 +88,7 @@ struct ModelConfig<'a> {
 #[derive(Serialize)]
 struct DisplayConfig {
     show_reasoning_output: bool,
+    zen_mode: bool,
     max_tool_output_lines: usize,
 }
 
@@ -165,6 +166,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 .collect(),
             display: DisplayConfig {
                 show_reasoning_output: config.show_reasoning_output,
+                zen_mode: config.zen_mode,
                 max_tool_output_lines: config.max_tool_output_lines,
             },
             output: OutputConfig {

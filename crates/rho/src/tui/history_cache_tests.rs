@@ -7,6 +7,18 @@ fn no_images(_: usize, _: &[MarkdownImageSource]) -> Vec<(usize, FeedImage)> {
     Vec::new()
 }
 
+fn settings(width: usize) -> HistoryRenderSettings {
+    HistoryRenderSettings::new(width, 10, false)
+}
+
+fn settings_with(
+    width: usize,
+    max_tool_output_lines: usize,
+    zen_mode: bool,
+) -> HistoryRenderSettings {
+    HistoryRenderSettings::new(width, max_tool_output_lines, zen_mode)
+}
+
 #[test]
 fn caches_code_block_copy_target_and_raw_contents() {
     let mut cache = HistoryLineCache::default();
@@ -14,7 +26,7 @@ fn caches_code_block_copy_target_and_raw_contents() {
         "before\n```rust\nlet x = 1;\nprintln!(\"{x}\");\n```\nafter".into(),
     )];
 
-    let blocks = cache.code_blocks(&entries, 40, 10, &no_images);
+    let blocks = cache.code_blocks(&entries, settings(40), &no_images);
 
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0].text.as_ref(), "let x = 1;\nprintln!(\"{x}\");");
@@ -31,8 +43,7 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
     let mut cached_lines = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        12,
-        10,
+        settings(12),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -40,7 +51,7 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
         &mut cached_lines,
         &no_images,
     );
-    let blocks = cache.code_blocks(&entries, 12, 10, &no_images);
+    let blocks = cache.code_blocks(&entries, settings(12), &no_images);
 
     assert_eq!(cached_lines, expected_lines);
     assert_eq!(
@@ -60,8 +71,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     let mut cached_lines = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        32,
-        10,
+        settings(32),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -78,8 +88,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
-        32,
-        10,
+        settings(32),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -97,8 +106,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
-        32,
-        10,
+        settings(32),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -116,8 +124,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
-        32,
-        10,
+        settings(32),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -135,8 +142,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
-        32,
-        10,
+        settings(32),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -146,7 +152,10 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     );
 
     assert_eq!(cached_lines, entry_lines(&entries[0], 32, 10));
-    assert_eq!(cache.code_blocks(&entries, 32, 10, &no_images).len(), 1);
+    assert_eq!(
+        cache.code_blocks(&entries, settings(32), &no_images).len(),
+        1
+    );
     assert!(cache.assistant_caches[0]
         .is_some_and(|cached| cached.stable_source_len > "intro\n\n".len()));
 }
@@ -160,8 +169,7 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
     let mut cached_lines = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        80,
-        10,
+        settings(80),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -179,8 +187,7 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
-        80,
-        10,
+        settings(80),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -191,7 +198,7 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
 
     assert_eq!(cached_lines, entry_lines(&entries[0], 80, 10));
     assert_eq!(
-        cache.code_blocks(&entries, 80, 10, &no_images)[0]
+        cache.code_blocks(&entries, settings(80), &no_images)[0]
             .text
             .as_ref(),
         "flowchart LR\nA[Parse] --> B[Render]"
@@ -200,8 +207,7 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
     let mut narrow_lines = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        36,
-        10,
+        settings(36),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -222,8 +228,7 @@ fn resizing_keeps_mermaid_code_block_source_stable() {
     let mut wide = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        100,
-        10,
+        settings(100),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -234,8 +239,7 @@ fn resizing_keeps_mermaid_code_block_source_stable() {
     let mut narrow = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        40,
-        10,
+        settings(40),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -249,7 +253,7 @@ fn resizing_keeps_mermaid_code_block_source_stable() {
     assert_eq!(narrow, entry_lines(&entries[0], 40, 10));
     for width in [100, 40] {
         assert_eq!(
-            cache.code_blocks(&entries, width, 10, &no_images)[0]
+            cache.code_blocks(&entries, settings(width), &no_images)[0]
                 .text
                 .as_ref(),
             source
@@ -262,7 +266,7 @@ fn invalidating_an_assistant_entry_refreshes_code_block_contents() {
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("```\nfirst\n```".into())];
     assert_eq!(
-        cache.code_blocks(&entries, 30, 10, &no_images)[0]
+        cache.code_blocks(&entries, settings(30), &no_images)[0]
             .text
             .as_ref(),
         "first"
@@ -272,7 +276,7 @@ fn invalidating_an_assistant_entry_refreshes_code_block_contents() {
     cache.invalidate_from(0);
 
     assert_eq!(
-        cache.code_blocks(&entries, 30, 10, &no_images)[0]
+        cache.code_blocks(&entries, settings(30), &no_images)[0]
             .text
             .as_ref(),
         "second"
@@ -287,12 +291,11 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
     let entries = vec![Entry::Assistant("Hello committed line\n".into())];
 
     cache.set_open_stream_tail(true);
-    let open_count = cache.line_count(&entries, 60, 10, &no_images);
+    let open_count = cache.line_count(&entries, settings(60), &no_images);
     let mut open_lines = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        60,
-        10,
+        settings(60),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -307,13 +310,12 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
     );
 
     cache.set_open_stream_tail(false);
-    let closed_count = cache.line_count(&entries, 60, 10, &no_images);
+    let closed_count = cache.line_count(&entries, settings(60), &no_images);
     assert_eq!(closed_count, open_count + 1);
     let mut closed_lines = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        60,
-        10,
+        settings(60),
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -322,4 +324,40 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
         &no_images,
     );
     assert_eq!(closed_lines, entry_lines(&entries[0], 60, 10));
+}
+
+// Covers: zen mode suppresses tool/reasoning lines while keeping entry indices stable.
+// Owner: history line cache display policy.
+#[test]
+fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
+    use crate::tui::{ReasoningEntry, ToolEntry};
+
+    let tool = Entry::Tool(ToolEntry {
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Running,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
+        ),
+        expanded: false,
+        image: None,
+    });
+    let entries = vec![
+        Entry::User("hi".into()),
+        tool,
+        Entry::Reasoning(ReasoningEntry::new("secret plan")),
+        Entry::Assistant("hello".into()),
+    ];
+
+    let mut cache = HistoryLineCache::default();
+    let full = cache.line_count(&entries, settings(40), &no_images);
+    assert!(full > 2);
+
+    let zen_count = cache.line_count(&entries, settings_with(40, 10, true), &no_images);
+    let user_lines = entry_lines(&entries[0], 40, 10).len();
+    let assistant_lines = entry_lines(&entries[3], 40, 10).len();
+    assert_eq!(zen_count, user_lines + assistant_lines);
+
+    // Toggling zen off rebuilds the suppressed entries.
+    let restored = cache.line_count(&entries, settings(40), &no_images);
+    assert_eq!(restored, full);
 }

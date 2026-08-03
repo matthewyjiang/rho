@@ -61,6 +61,8 @@ pub struct Config {
     /// Use the low-latency priority tier for supported Codex models.
     pub fast_mode: bool,
     pub show_reasoning_output: bool,
+    /// Hide tool cards, reasoning, and activity chrome so only message text remains.
+    pub zen_mode: bool,
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
     pub compact_target_percent: u8,
@@ -116,6 +118,7 @@ impl Default for Config {
             reasoning: ReasoningLevel::Medium,
             fast_mode: false,
             show_reasoning_output: true,
+            zen_mode: false,
             auto_compact: false,
             compact_threshold_percent: 85,
             compact_target_percent: 50,

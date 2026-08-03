@@ -236,6 +236,7 @@ pub struct RuntimeModelView {
     pub reasoning_source: ReasoningRequestSource,
     pub permission_mode: PermissionMode,
     pub show_reasoning_output: bool,
+    pub zen_mode: bool,
     pub auth: String,
     pub internal_agents:
         std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig>,
@@ -253,6 +254,23 @@ impl RuntimeModelView {
             reasoning: self.reasoning,
             service_tier: self.service_tier,
         }
+    }
+
+    /// Whether the TUI should render reasoning text for this session.
+    pub(crate) fn displays_reasoning_output(&self) -> bool {
+        self.show_reasoning_output && self.shows_work_chrome()
+    }
+
+    /// Whether tool cards, reasoning blocks, Thinking..., and the activity rail are visible.
+    pub(crate) fn shows_work_chrome(&self) -> bool {
+        !self.zen_mode
+    }
+
+    pub(crate) fn history_render_settings(
+        &self,
+        width: usize,
+    ) -> history_cache::HistoryRenderSettings {
+        history_cache::HistoryRenderSettings::new(width, self.max_tool_output_lines, self.zen_mode)
     }
 
     fn fast_mode_active(&self) -> bool {

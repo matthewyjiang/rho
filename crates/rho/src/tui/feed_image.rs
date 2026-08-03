@@ -244,14 +244,13 @@ impl super::App {
         let transcript_start = start.saturating_sub(header_len);
         let transcript_count = count.saturating_sub(visible_header_lines);
         let cwd = self.info.runtime.cwd.clone();
-        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        let settings = self.info.runtime.history_render_settings(width);
         let mut placements =
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                     history_lines.visible_image_placements(
                         entries,
-                        width,
-                        max_tool_output_lines,
+                        settings,
                         transcript_start,
                         transcript_count,
                         &|entry_index, sources| {

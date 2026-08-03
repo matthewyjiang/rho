@@ -24,6 +24,7 @@ pub(super) const PERMISSION_MODE_VALUE: &str = "permission_mode";
 pub(super) const PERMISSION_MODE_PREFIX: &str = "permission_mode:";
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
+pub(super) const ZEN_MODE_VALUE: &str = "zen_mode";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
@@ -86,7 +87,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
         vec![
             item(
                 "Models & reasoning",
-                "Conversation model, reasoning level, and reasoning output.",
+                "Conversation model, reasoning level, reasoning output, and zen mode.",
                 Some(info.model.clone()),
                 MODELS_CATEGORY_VALUE,
             ),
@@ -177,6 +178,12 @@ pub(super) fn category_picker(
                         "hidden".into()
                     }),
                     SHOW_REASONING_OUTPUT_VALUE,
+                ),
+                item(
+                    "Zen mode",
+                    "Show only message text. Hides tool cards, reasoning, Thinking..., and activity status. Space toggles.",
+                    Some(on_off(info.zen_mode)),
+                    ZEN_MODE_VALUE,
                 ),
             ];
             if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
@@ -315,9 +322,10 @@ pub(super) fn is_category(value: &str) -> bool {
 
 pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
     match value {
-        CONVERSATION_MODEL_VALUE | REASONING_VALUE | SHOW_REASONING_OUTPUT_VALUE => {
-            Some(MODELS_CATEGORY_VALUE)
-        }
+        CONVERSATION_MODEL_VALUE
+        | REASONING_VALUE
+        | SHOW_REASONING_OUTPUT_VALUE
+        | ZEN_MODE_VALUE => Some(MODELS_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE | ENABLE_SUBAGENTS_VALUE => Some(AGENT_CATEGORY_VALUE),
         AUTO_COMPACT_VALUE
         | COMPACT_THRESHOLD_PERCENT_VALUE

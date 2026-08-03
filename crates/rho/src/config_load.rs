@@ -107,6 +107,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.show_reasoning_output {
             cfg.show_reasoning_output = value;
         }
+        if let Some(value) = group.zen_mode {
+            cfg.zen_mode = value;
+        }
         if let Some(value) = group.max_tool_output_lines {
             let clamped = value.max(1);
             if clamped != value {
@@ -272,6 +275,7 @@ struct PartialConfig {
     fast_mode: Option<bool>,
     reasoning_effort: Option<String>,
     show_reasoning_output: Option<bool>,
+    zen_mode: Option<bool>,
     auto_compact: Option<bool>,
     compact_threshold_percent: Option<u8>,
     compact_target_percent: Option<u8>,
@@ -316,17 +320,21 @@ impl PartialConfig {
         }
 
         let show_reasoning_output = self.show_reasoning_output.take();
+        let zen_mode = self.zen_mode.take();
         let max_tool_output_lines = self.max_tool_output_lines.take();
         if show_reasoning_output.is_some()
+            || zen_mode.is_some()
             || max_tool_output_lines.is_some()
             || self.display.is_some()
         {
             let group = self.display.take().unwrap_or(PartialDisplayConfig {
                 show_reasoning_output: None,
+                zen_mode: None,
                 max_tool_output_lines: None,
             });
             self.display = Some(PartialDisplayConfig {
                 show_reasoning_output: group.show_reasoning_output.or(show_reasoning_output),
+                zen_mode: group.zen_mode.or(zen_mode),
                 max_tool_output_lines: group.max_tool_output_lines.or(max_tool_output_lines),
             });
         }
@@ -493,6 +501,7 @@ struct PartialModelConfig {
 #[serde(deny_unknown_fields)]
 struct PartialDisplayConfig {
     show_reasoning_output: Option<bool>,
+    zen_mode: Option<bool>,
     max_tool_output_lines: Option<usize>,
 }
 

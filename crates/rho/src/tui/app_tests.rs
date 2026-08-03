@@ -55,6 +55,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             reasoning_source: ReasoningRequestSource::PersistedOrDefault,
             permission_mode: PermissionMode::Auto,
             show_reasoning_output: true,
+            zen_mode: false,
             auth: "api-key".into(),
             internal_agents: Default::default(),
             favorite_models: Vec::new(),
@@ -200,7 +201,11 @@ fn recovered_history_tail_limits_initial_redraw() {
         .map(|index| Entry::User(format!("message {index}")))
         .collect::<Vec<_>>();
 
-    let (omitted, visible) = recovered_history_tail(&entries, 80, 9, 10);
+    let (omitted, visible) = recovered_history_tail(
+        &entries,
+        9,
+        crate::tui::history_cache::HistoryRenderSettings::new(80, 10, false),
+    );
 
     // Each user entry is one content line + trailing blank (2 rows). A 9-line
     // budget therefore keeps four tail messages.

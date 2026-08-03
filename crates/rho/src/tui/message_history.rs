@@ -5,19 +5,24 @@ use {
     rho_providers::model::{image_summary, ContentBlock, Message, ToolCall},
 };
 
-use super::{render::entry_lines, ChatMedia, Entry, ToolEntry};
+use super::{
+    history_cache::HistoryRenderSettings, render::entry_lines, ChatMedia, Entry, ToolEntry,
+};
 
 pub(super) fn recovered_history_tail(
     entries: &[Entry],
-    width: usize,
     line_limit: usize,
-    max_tool_output_lines: usize,
+    settings: HistoryRenderSettings,
 ) -> (usize, Vec<Entry>) {
     let mut selected_start = entries.len();
     let mut line_count = 0usize;
 
     for (index, entry) in entries.iter().enumerate().rev() {
-        let entry_line_count = entry_lines(entry, width, max_tool_output_lines).len();
+        let entry_line_count = if settings.hides_entry(entry) {
+            0
+        } else {
+            entry_lines(entry, settings.width, settings.max_tool_output_lines).len()
+        };
         if selected_start < entries.len() && line_count + entry_line_count > line_limit {
             break;
         }

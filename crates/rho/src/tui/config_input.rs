@@ -179,6 +179,7 @@ impl App {
                 let selected_value = input.key.picker_value();
                 let config = self.info.services.config_repository.load()?;
                 self.info.runtime.show_reasoning_output = config.show_reasoning_output;
+                self.info.runtime.zen_mode = config.zen_mode;
                 self.open_main_config_picker_selected(selected_value)?;
                 Ok(true)
             }
@@ -299,6 +300,7 @@ impl App {
             .diagnostics
             .update_max_tool_output_lines(self.info.runtime.max_tool_output_lines);
         self.info.runtime.show_reasoning_output = config.show_reasoning_output;
+        self.info.runtime.zen_mode = config.zen_mode;
         self.input_ui
             .set_composer(ComposerMode::Picker(config_picker::config_picker(
                 &self.info.runtime,

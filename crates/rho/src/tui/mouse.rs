@@ -272,17 +272,19 @@ impl App {
         width: usize,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
+        if !self.info.runtime.shows_work_chrome() {
+            return Ok(false);
+        }
         let header_len = self.session_header_lines(width).len();
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
-            let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+            let settings = self.info.runtime.history_render_settings(width);
             self.sync_open_stream_tail();
             let index = self.history.with_lines_and_images_mut(
                 |history_lines, entries, markdown_images| {
                     history_lines.entry_index_at_line(
                         entries,
-                        width,
-                        max_tool_output_lines,
+                        settings,
                         transcript_line,
                         &|entry_index, sources| {
                             markdown_images.ready_images(entry_index, sources, &cwd)

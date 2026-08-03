@@ -6,7 +6,7 @@ use rho_sdk::tool::ToolAsset;
 
 use super::{kitty_graphics_environment, picker_for_environment, FeedImage, IMAGE_HEIGHT};
 use crate::tui::{
-    history_cache::{HistoryLineCache, HistoryLineSlice},
+    history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
     Entry, ToolEntry,
 };
 
@@ -130,24 +130,24 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     let entries = vec![image_tool()];
     let mut cache = HistoryLineCache::default();
     let width = 40;
-    let line_count = cache.line_count(&entries, width, 20, &no_images);
+    let settings = HistoryRenderSettings::new(width, 20, false);
+    let line_count = cache.line_count(&entries, settings, &no_images);
 
     // A one-line tool has one text row before its image; the trailing spacer is after.
-    let full = cache.visible_image_placements(&entries, width, 20, 0, line_count, &no_images);
+    let full = cache.visible_image_placements(&entries, settings, 0, line_count, &no_images);
     assert_eq!(full.len(), 1);
     assert_eq!(full[0].row, 1);
     assert_eq!(full[0].height, IMAGE_HEIGHT as usize);
 
     // Avoid resizing an image into a partial viewport. Reserved rows remain
     // blank until the full image fits in the visible history window.
-    let partial = cache.visible_image_placements(&entries, width, 20, 6, 4, &no_images);
+    let partial = cache.visible_image_placements(&entries, settings, 6, 4, &no_images);
     assert!(partial.is_empty());
 
     let mut visible_lines = Vec::new();
     cache.extend_visible_lines(
         &entries,
-        width,
-        20,
+        settings,
         HistoryLineSlice { start: 6, count: 4 },
         &mut visible_lines,
         &no_images,
