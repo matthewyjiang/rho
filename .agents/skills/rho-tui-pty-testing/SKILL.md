@@ -44,9 +44,14 @@ Smoke scenarios:
 
 - `startup_stream_exit`
 - `cancel_and_resubmit`
+- `type_during_stream`
 - `resize_during_stream`
 - `scroll_during_stream`
 - `terminal_restoration`
+- `streaming_markdown_stability`
+- `spinner_activity_anchor`
+- `help_overlay`
+- `markdown_headings`
 
 ## Run one scenario
 
@@ -76,6 +81,8 @@ Scenarios use `RHO_TUI_TEST_MODE=matrix` automatically. Exact prompts:
 | `fixture questionnaire` | Red/blue questionnaire |
 | `fixture progress tool` | Progress updates then fixed result |
 | `fixture delay` | Partial output, long wait for cancellation |
+| `fixture markdown headings` | Streams ATX headings across split deltas |
+| `fixture markdown emphasis stream` | Streams stable prose, then open emphasis, then close |
 | `fixture bulk one` / `fixture bulk two` | Long transcript for scrolling |
 | other text | `fixture response: <prompt>` |
 

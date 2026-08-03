@@ -468,6 +468,41 @@ fn renders_markdown_headings() {
     assert_pass("markdown_headings");
 }
 
+// Covers: already-drawn stream prose must not vanish while later emphasis closes.
+// Owner: interactive TUI
+#[test]
+fn streaming_markdown_keeps_stable_prefix() {
+    assert_pass("streaming_markdown_stability");
+}
+
+// Covers: activity rail stays above composer and shares the row with jump control.
+// Owner: interactive TUI
+#[test]
+fn spinner_activity_stays_anchored() {
+    assert_pass("spinner_activity_anchor");
+}
+
+// Covers: /help opens and Esc restores the session.
+// Owner: interactive TUI
+#[test]
+fn help_overlay_opens_and_dismisses() {
+    assert_pass("help_overlay");
+}
+
+// Covers: / opens the command palette and filtering narrows matches.
+// Owner: interactive TUI
+#[test]
+fn slash_command_palette_filters() {
+    assert_pass("slash_command_palette");
+}
+
+// Covers: @ opens path autocomplete and Enter inserts the selected file.
+// Owner: interactive TUI
+#[test]
+fn file_path_autocomplete_inserts_selection() {
+    assert_pass("file_path_autocomplete");
+}
+
 #[test]
 fn mermaid_flowchart_survives_narrow_and_restored_panes() {
     assert_pass("mermaid_flowchart_resize");
@@ -1087,4 +1122,8 @@ fn smoke_subset_is_registered() {
     assert!(smoke.contains(&"resize_during_stream"));
     assert!(smoke.contains(&"scroll_during_stream"));
     assert!(smoke.contains(&"terminal_restoration"));
+    assert!(smoke.contains(&"markdown_headings"));
+    assert!(smoke.contains(&"streaming_markdown_stability"));
+    assert!(smoke.contains(&"spinner_activity_anchor"));
+    assert!(smoke.contains(&"help_overlay"));
 }

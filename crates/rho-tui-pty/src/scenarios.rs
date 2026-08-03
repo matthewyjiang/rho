@@ -7,6 +7,7 @@ mod config;
 mod conversation_tree;
 mod document_attachment;
 mod first_run;
+mod fragile_surfaces;
 mod goal;
 mod hooks;
 mod login;
@@ -32,6 +33,10 @@ use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use first_run::{
     setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SIGNIN_ENV,
     FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
+};
+use fragile_surfaces::{
+    FILE_PATH_AUTOCOMPLETE_SCENARIO, HELP_OVERLAY_SCENARIO, SLASH_COMMAND_PALETTE_SCENARIO,
+    SPINNER_ACTIVITY_ANCHOR_SCENARIO, STREAMING_MARKDOWN_STABILITY_SCENARIO,
 };
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
@@ -665,8 +670,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Render streamed Markdown heading levels without syntax markers",
         DEFAULT_SIZE,
         MARKDOWN_HEADINGS_STEPS,
-        false,
+        /* smoke */ true,
     ),
+    STREAMING_MARKDOWN_STABILITY_SCENARIO,
+    SPINNER_ACTIVITY_ANCHOR_SCENARIO,
+    HELP_OVERLAY_SCENARIO,
+    SLASH_COMMAND_PALETTE_SCENARIO,
+    FILE_PATH_AUTOCOMPLETE_SCENARIO,
     Scenario::new(
         "mermaid_flowchart_resize",
         "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
