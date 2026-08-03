@@ -114,11 +114,13 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PartialProviderConfigs {
     pub(super) ollama: Option<PartialOllamaProviderConfig>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PartialOllamaProviderConfig {
     pub(super) base_url: Option<String>,
 }

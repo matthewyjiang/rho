@@ -1,35 +1,33 @@
-use super::{collect_unknown_keys, parse_settings, ConfigWarning};
+use super::{parse_settings, ConfigWarning};
 use pretty_assertions::assert_eq;
 
-// Covers: unknown top-level config keys must surface as warnings
+// Covers: unknown top-level config keys are a hard load error
 // Owner: config load
 #[test]
-fn unknown_top_level_keys_are_reported() {
-    let raw = toml::from_str("provder = \"openai\"\nmodel = \"gpt-5.5\"\n").unwrap();
-    assert_eq!(
-        collect_unknown_keys(&raw),
-        vec![ConfigWarning::UnknownKey {
-            path: "provder".into(),
-        }]
+fn unknown_top_level_keys_are_rejected() {
+    let error = parse_settings("provder = \"openai\"\nmodel = \"gpt-5.5\"\n").unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("unknown field `provder`"),
+        "unexpected error: {message}"
     );
 }
 
-// Covers: unknown nested config keys must surface with a dotted path
+// Covers: unknown nested config keys are a hard load error
 // Owner: config load
 #[test]
-fn unknown_nested_keys_are_reported() {
-    let raw = toml::from_str(
+fn unknown_nested_keys_are_rejected() {
+    let error = parse_settings(
         r#"
 [display]
 max_tool_output_liness = 3
 "#,
     )
-    .unwrap();
-    assert_eq!(
-        collect_unknown_keys(&raw),
-        vec![ConfigWarning::UnknownKey {
-            path: "display.max_tool_output_liness".into(),
-        }]
+    .unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("unknown field `max_tool_output_liness`"),
+        "unexpected error: {message}"
     );
 }
 
@@ -95,5 +93,24 @@ auth = "api-key"
 "#,
     )
     .unwrap();
+    assert_eq!(warnings, Vec::<ConfigWarning>::new());
+}
+
+// Covers: legacy top-level keys remain accepted under deny_unknown_fields
+// Owner: config load
+#[test]
+fn legacy_top_level_keys_still_load() {
+    let (config, warnings) = parse_settings(
+        r#"
+provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+max_tool_output_lines = 4
+"#,
+    )
+    .unwrap();
+    assert_eq!(config.provider, "openai");
+    assert_eq!(config.model, "gpt-5.5");
+    assert_eq!(config.max_tool_output_lines, 4);
     assert_eq!(warnings, Vec::<ConfigWarning>::new());
 }

@@ -19,9 +19,6 @@ use super::{
 /// Non-fatal issue found while loading config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ConfigWarning {
-    UnknownKey {
-        path: String,
-    },
     Clamped {
         key: &'static str,
         from: String,
@@ -37,9 +34,6 @@ pub(crate) enum ConfigWarning {
 impl ConfigWarning {
     pub(crate) fn message(&self) -> String {
         match self {
-            Self::UnknownKey { path } => {
-                format!("unknown config key `{path}` (ignored)")
-            }
             Self::Clamped { key, from, to } => {
                 format!("config `{key}` value {from} is out of range; using {to}")
             }
@@ -57,10 +51,9 @@ pub(super) fn emit_warnings(path_display: &str, warnings: &[ConfigWarning]) {
 }
 
 pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWarning>)> {
-    let raw: toml::Value = toml::from_str(text)?;
-    let mut warnings = collect_unknown_keys(&raw);
-    let file = PartialConfig::deserialize(raw)?.normalize_legacy()?;
+    let file = toml::from_str::<PartialConfig>(text)?.normalize_legacy()?;
     let mut cfg = Config::default();
+    let mut warnings = Vec::new();
 
     if let Some(v) = file.prompt_templates {
         crate::prompt_templates::validate(&v)?;
@@ -266,179 +259,9 @@ fn non_empty_secret(secret: String) -> Option<String> {
     (!secret.is_empty()).then_some(secret)
 }
 
-const TOP_LEVEL_KEYS: &[&str] = &[
-    "provider",
-    "model",
-    "max_output_bytes",
-    "max_tool_output_lines",
-    "auth",
-    "reasoning",
-    "fast_mode",
-    "reasoning_effort",
-    "show_reasoning_output",
-    "auto_compact",
-    "compact_threshold_percent",
-    "compact_target_percent",
-    "title_provider",
-    "title_model",
-    "title_auth",
-    "favorite_models",
-    "web_search_provider",
-    "check_for_updates",
-    "enable_subagents",
-    "permission_mode",
-    "web_search_openai_api_key",
-    "web_search_exa_api_key",
-    "web_search_brave_api_key",
-    "rtk",
-    "inline_shell",
-    "display",
-    "output",
-    "compaction",
-    "title",
-    "internal_agents",
-    "web_search",
-    "behavior",
-    "keybindings",
-    "prompt_templates",
-    "providers",
-];
-
-const MODEL_KEYS: &[&str] = &[
-    "provider",
-    "model",
-    "auth",
-    "reasoning",
-    "fast_mode",
-    "favorite_models",
-    "aliases",
-];
-const DISPLAY_KEYS: &[&str] = &["show_reasoning_output", "max_tool_output_lines"];
-const OUTPUT_KEYS: &[&str] = &["max_output_bytes"];
-const COMPACTION_KEYS: &[&str] = &[
-    "auto_compact",
-    "compact_threshold_percent",
-    "compact_target_percent",
-];
-const TITLE_KEYS: &[&str] = &["provider", "model", "auth"];
-const INTERNAL_AGENT_KEYS: &[&str] = &["provider", "model", "auth"];
-const WEB_SEARCH_KEYS: &[&str] = &[
-    "hosted",
-    "provider",
-    "openai_api_key",
-    "exa_api_key",
-    "brave_api_key",
-];
-const BEHAVIOR_KEYS: &[&str] = &[
-    "check_for_updates",
-    "enable_subagents",
-    "experimental_workspace_rewind",
-    "permission_mode",
-    "credential_store",
-    "rtk",
-    "inline_shell",
-];
-const KEYBINDING_KEYS: &[&str] = &[
-    "reset_conversation",
-    "open_editor",
-    "jump_to_bottom",
-    "toggle_tool_output",
-    "insert_newline",
-    "paste_image",
-    "edit_pending_input",
-    "manage_pending_input",
-];
-const PROVIDER_KEYS: &[&str] = &["ollama"];
-const OLLAMA_KEYS: &[&str] = &["base_url"];
-
-fn collect_unknown_keys(root: &toml::Value) -> Vec<ConfigWarning> {
-    let mut warnings = Vec::new();
-    let Some(table) = root.as_table() else {
-        return warnings;
-    };
-    for (key, value) in table {
-        if !TOP_LEVEL_KEYS.contains(&key.as_str()) {
-            warnings.push(ConfigWarning::UnknownKey { path: key.clone() });
-            continue;
-        }
-        match key.as_str() {
-            "model" => collect_model_keys(value, &mut warnings),
-            "display" => collect_table_keys(value, "display", DISPLAY_KEYS, &mut warnings),
-            "output" => collect_table_keys(value, "output", OUTPUT_KEYS, &mut warnings),
-            "compaction" => collect_table_keys(value, "compaction", COMPACTION_KEYS, &mut warnings),
-            "title" => collect_table_keys(value, "title", TITLE_KEYS, &mut warnings),
-            "web_search" => collect_table_keys(value, "web_search", WEB_SEARCH_KEYS, &mut warnings),
-            "behavior" => collect_table_keys(value, "behavior", BEHAVIOR_KEYS, &mut warnings),
-            "keybindings" => {
-                collect_table_keys(value, "keybindings", KEYBINDING_KEYS, &mut warnings)
-            }
-            "internal_agents" => collect_internal_agent_keys(value, &mut warnings),
-            "providers" => collect_providers_keys(value, &mut warnings),
-            // Free-form user template names, or scalar/legacy top-level keys.
-            _ => {}
-        }
-    }
-    warnings
-}
-
-fn collect_model_keys(value: &toml::Value, warnings: &mut Vec<ConfigWarning>) {
-    match value {
-        toml::Value::Table(_) => collect_table_keys(value, "model", MODEL_KEYS, warnings),
-        toml::Value::String(_) => {}
-        _ => {}
-    }
-}
-
-fn collect_internal_agent_keys(value: &toml::Value, warnings: &mut Vec<ConfigWarning>) {
-    let Some(table) = value.as_table() else {
-        return;
-    };
-    for (id, entry) in table {
-        collect_table_keys(
-            entry,
-            &format!("internal_agents.{id}"),
-            INTERNAL_AGENT_KEYS,
-            warnings,
-        );
-    }
-}
-
-fn collect_providers_keys(value: &toml::Value, warnings: &mut Vec<ConfigWarning>) {
-    let Some(table) = value.as_table() else {
-        return;
-    };
-    for (key, entry) in table {
-        if !PROVIDER_KEYS.contains(&key.as_str()) {
-            warnings.push(ConfigWarning::UnknownKey {
-                path: format!("providers.{key}"),
-            });
-            continue;
-        }
-        if key == "ollama" {
-            collect_table_keys(entry, "providers.ollama", OLLAMA_KEYS, warnings);
-        }
-    }
-}
-
-fn collect_table_keys(
-    value: &toml::Value,
-    path: &str,
-    known: &[&str],
-    warnings: &mut Vec<ConfigWarning>,
-) {
-    let Some(table) = value.as_table() else {
-        return;
-    };
-    for key in table.keys() {
-        if !known.contains(&key.as_str()) {
-            warnings.push(ConfigWarning::UnknownKey {
-                path: format!("{path}.{key}"),
-            });
-        }
-    }
-}
-
+/// Raw file shape. Serde rejects unknown fields so a misspelled key fails loudly.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialConfig {
     provider: Option<String>,
     model: Option<ModelSetting>,
@@ -655,6 +478,7 @@ enum ModelSetting {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialModelConfig {
     provider: Option<String>,
     model: Option<String>,
@@ -666,17 +490,20 @@ struct PartialModelConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialDisplayConfig {
     show_reasoning_output: Option<bool>,
     max_tool_output_lines: Option<usize>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialOutputConfig {
     max_output_bytes: Option<usize>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialCompactionConfig {
     auto_compact: Option<bool>,
     compact_threshold_percent: Option<u8>,
@@ -684,6 +511,7 @@ struct PartialCompactionConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialInternalAgentModelConfig {
     provider: Option<String>,
     model: Option<String>,
@@ -691,6 +519,7 @@ struct PartialInternalAgentModelConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialTitleConfig {
     provider: Option<String>,
     model: Option<String>,
@@ -698,6 +527,7 @@ struct PartialTitleConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialWebSearchConfig {
     hosted: Option<bool>,
     provider: Option<String>,
@@ -707,6 +537,7 @@ struct PartialWebSearchConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialBehaviorConfig {
     check_for_updates: Option<bool>,
     enable_subagents: Option<bool>,

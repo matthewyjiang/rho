@@ -109,17 +109,18 @@ pub(super) async fn refresh_model_cache(
 
 /// Apply CLI provider/model/auth/reasoning overrides in memory.
 ///
-/// Returns whether any override changed config values. Persistence is decided
-/// by the caller (only when `--save` is set).
+/// Returns whether any of those override flags were present (not whether the
+/// resulting values differ from the loaded config). Persistence is decided by
+/// the caller (only when `--save` is set).
 pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
-    let mut changed = false;
+    let mut overrides_present = false;
     if let Some(provider) = &cli.provider {
         apply_provider_override(config, provider, cli.model.is_some())?;
-        changed = true;
+        overrides_present = true;
     }
     if let Some(model) = &cli.model {
         apply_model_override(config, model, cli.provider.as_deref())?;
-        changed = true;
+        overrides_present = true;
     }
     if let Some(profile) = cli_auth_profile(cli)? {
         let auth = cli
@@ -135,14 +136,14 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
             apply_provider_override(config, profile.name, cli.model.is_some())?;
             config.auth = auth.into();
         }
-        changed = true;
+        overrides_present = true;
     }
     if let Some(reasoning) = cli.reasoning {
         config.reasoning = reasoning;
-        changed = true;
+        overrides_present = true;
     }
     config.normalize_provider_profiles()?;
-    Ok(changed)
+    Ok(overrides_present)
 }
 
 fn cli_auth_profile(cli: &Cli) -> anyhow::Result<Option<&'static provider::ProviderDescriptor>> {

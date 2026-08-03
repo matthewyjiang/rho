@@ -140,9 +140,9 @@ fn cli_model_override_with_provider_selects_matching_auth() {
         command: None,
     };
 
-    let save_config = apply_overrides(&mut cfg, &cli).unwrap();
+    let overrides_present = apply_overrides(&mut cfg, &cli).unwrap();
 
-    assert!(save_config);
+    assert!(overrides_present);
     assert_eq!(cfg.provider, "openai-codex");
     assert_eq!(cfg.model, "gpt-5.4-mini");
     assert_eq!(cfg.auth, "codex");
@@ -586,9 +586,9 @@ fn cli_model_override_resolves_user_defined_alias() {
             command: None,
         };
 
-        let save_config = apply_overrides(&mut cfg, &cli).unwrap();
+        let overrides_present = apply_overrides(&mut cfg, &cli).unwrap();
 
-        assert!(save_config);
+        assert!(overrides_present);
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.model, "claude-sonnet-4-5");
         assert_eq!(cfg.current_model_alias(), Some("deep"));
