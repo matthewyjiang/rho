@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use ratatui::text::{Line, Span};
+use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason};
 
 use super::{render::display_width, theme::Theme};
 
@@ -52,21 +53,62 @@ impl ActivityPhase {
     }
 }
 
+/// Structured provider-retry context for spinner/status copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ProviderRetryHint {
+    pub(super) reason: ProviderStreamResetReason,
+}
+
+impl ProviderRetryHint {
+    pub(super) fn status_label(self) -> String {
+        let rate_limited = matches!(
+            self.reason.provider_error_kind(),
+            Some(ProviderErrorKind::RateLimit)
+        );
+        match (
+            rate_limited,
+            self.reason.retry_after().filter(|delay| !delay.is_zero()),
+        ) {
+            (true, Some(delay)) => format!(
+                "rate limited · retry in {}",
+                rho_sdk::format_retry_after(delay)
+            ),
+            (true, None) => "rate limited · retrying".into(),
+            (false, Some(delay)) => format!(
+                "retrying provider · in {}",
+                rho_sdk::format_retry_after(delay)
+            ),
+            (false, None) => "retrying provider response".into(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActivityStatus {
-    Parent(ActivityPhase),
+    Parent {
+        phase: ActivityPhase,
+        retry: Option<ProviderRetryHint>,
+    },
     Subagents(usize),
-    ParentWithSubagents(ActivityPhase, usize),
+    ParentWithSubagents {
+        phase: ActivityPhase,
+        retry: Option<ProviderRetryHint>,
+        subagent_count: usize,
+    },
 }
 
 impl ActivityStatus {
     pub(super) fn from_parent_and_subagents(
-        parent: Option<ActivityPhase>,
+        parent: Option<(ActivityPhase, Option<ProviderRetryHint>)>,
         subagent_count: usize,
     ) -> Option<Self> {
         match (parent, subagent_count) {
-            (Some(phase), 0) => Some(Self::Parent(phase)),
-            (Some(phase), count) => Some(Self::ParentWithSubagents(phase, count)),
+            (Some((phase, retry)), 0) => Some(Self::Parent { phase, retry }),
+            (Some((phase, retry)), count) => Some(Self::ParentWithSubagents {
+                phase,
+                retry,
+                subagent_count: count,
+            }),
             (None, 0) => None,
             (None, count) => Some(Self::Subagents(count)),
         }
@@ -84,11 +126,24 @@ pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize 
         )
 }
 
+fn phase_label(phase: ActivityPhase, retry: Option<ProviderRetryHint>) -> String {
+    if matches!(phase, ActivityPhase::RetryingProvider) {
+        if let Some(retry) = retry {
+            return retry.status_label();
+        }
+    }
+    phase.label().to_string()
+}
+
 fn activity_labels(status: ActivityStatus) -> Vec<String> {
     let spinner = LoadingSpinner::FRAMES[0];
     let subagent_count = match status {
-        ActivityStatus::Parent(_) => 0,
-        ActivityStatus::Subagents(count) | ActivityStatus::ParentWithSubagents(_, count) => count,
+        ActivityStatus::Parent { .. } => 0,
+        ActivityStatus::Subagents(count)
+        | ActivityStatus::ParentWithSubagents {
+            subagent_count: count,
+            ..
+        } => count,
     };
     let agents = if subagent_count == 1 {
         "1 agent".into()
@@ -96,15 +151,19 @@ fn activity_labels(status: ActivityStatus) -> Vec<String> {
         format!("{subagent_count} agents")
     };
     match status {
-        ActivityStatus::Parent(phase) => {
-            vec![format!("{spinner} {}", phase.label()), spinner.into()]
+        ActivityStatus::Parent { phase, retry } => {
+            let label = phase_label(phase, retry);
+            vec![format!("{spinner} {label}"), spinner.into()]
         }
-        ActivityStatus::ParentWithSubagents(phase, _) => vec![
-            format!("{spinner} {}  ·  {agents}", phase.label()),
-            format!("{spinner} {} · {subagent_count}", phase.label()),
-            format!("{spinner} {subagent_count}"),
-            spinner.into(),
-        ],
+        ActivityStatus::ParentWithSubagents { phase, retry, .. } => {
+            let label = phase_label(phase, retry);
+            vec![
+                format!("{spinner} {label}  ·  {agents}"),
+                format!("{spinner} {label} · {subagent_count}"),
+                format!("{spinner} {subagent_count}"),
+                spinner.into(),
+            ]
+        }
         ActivityStatus::Subagents(_) => vec![
             format!("{spinner} {agents} working"),
             format!("{spinner} {subagent_count} agents"),

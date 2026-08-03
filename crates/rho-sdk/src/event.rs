@@ -9,30 +9,94 @@ use crate::{
 /// Legacy provider activity kind emitted when a malformed response is retried.
 ///
 /// Prefer [`RunEvent::ProviderStreamReset`]. Still emitted before the typed reset
-/// for 1.0 hosts; will be removed in the next major release.
+/// for 1.0 hosts.
+///
+/// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
 #[deprecated(since = "1.11.0", note = "use RunEvent::ProviderStreamReset")]
 pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
 /// Legacy provider activity kind emitted when a physical provider request is retried.
 ///
-/// Prefer [`RunEvent::ProviderRequestRetry`]. Still dual-emitted for 1.0 hosts;
-/// will be removed in the next major release.
+/// Prefer [`RunEvent::ProviderRequestRetry`]. Still dual-emitted for 1.0 hosts.
+///
+/// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
 #[deprecated(since = "1.11.0", note = "use RunEvent::ProviderRequestRetry")]
 pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
 /// Legacy provider activity kind emitted for provider-native web searches.
 ///
-/// Prefer [`RunEvent::WebSearch`]. Still dual-emitted for 1.0 hosts; will be
-/// removed in the next major release.
+/// Prefer [`RunEvent::WebSearch`]. Still dual-emitted for 1.0 hosts.
+///
+/// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
 #[deprecated(since = "1.11.0", note = "use RunEvent::WebSearch")]
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
 
 /// Why the current provider attempt was abandoned before a fresh request.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): collapse RetryableFailure and RetryableFailureWithRetryAfter
+/// into one shape with optional retry_after (or move retry_after onto
+/// [`RunEvent::ProviderStreamReset`]).
+///
+/// Wait is metadata on a retryable failure, not a distinct reason. The split exists
+/// only so a minor release can carry the wait without adding a field to
+/// [`RunEvent::ProviderStreamReset`]. Prefer matching via
+/// [`Self::provider_error_kind`] / [`Self::retry_after`] until major so both arms
+/// stay covered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProviderStreamResetReason {
     /// The provider returned a malformed normalized assistant response.
     InvalidResponse,
-    /// The provider request failed with a retryable error.
+    /// The provider request failed with a retryable error (no wait hint).
     RetryableFailure(crate::ProviderErrorKind),
+    /// Same as [`Self::RetryableFailure`], with a provider-supplied wait hint.
+    ///
+    /// Exists only so wait metadata can land in a minor release without adding a
+    /// field to [`RunEvent::ProviderStreamReset`]. Prefer
+    /// [`Self::retryable_failure`] when constructing and
+    /// [`Self::provider_error_kind`] / [`Self::retry_after`] when matching.
+    /// See the enum-level next-major note.
+    RetryableFailureWithRetryAfter {
+        kind: crate::ProviderErrorKind,
+        retry_after: Duration,
+    },
+}
+
+impl ProviderStreamResetReason {
+    /// Builds a retryable-failure reason, attaching a wait when the provider supplied one.
+    ///
+    /// Prefer this over constructing [`Self::RetryableFailure`] /
+    /// [`Self::RetryableFailureWithRetryAfter`] directly.
+    pub fn retryable_failure(
+        kind: crate::ProviderErrorKind,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        match retry_after.filter(|delay| !delay.is_zero()) {
+            Some(retry_after) => Self::RetryableFailureWithRetryAfter { kind, retry_after },
+            None => Self::RetryableFailure(kind),
+        }
+    }
+
+    /// Provider error kind when this reset was caused by a retryable failure.
+    ///
+    /// Covers both [`Self::RetryableFailure`] and
+    /// [`Self::RetryableFailureWithRetryAfter`].
+    pub fn provider_error_kind(self) -> Option<crate::ProviderErrorKind> {
+        match self {
+            Self::InvalidResponse => None,
+            Self::RetryableFailure(kind) | Self::RetryableFailureWithRetryAfter { kind, .. } => {
+                Some(kind)
+            }
+        }
+    }
+
+    /// Provider-supplied wait before the next attempt may succeed.
+    pub fn retry_after(self) -> Option<Duration> {
+        match self {
+            Self::RetryableFailureWithRetryAfter { retry_after, .. } => Some(retry_after),
+            Self::InvalidResponse | Self::RetryableFailure(_) => None,
+        }
+    }
 }
 
 /// Reason a successful run stopped producing model turns.
@@ -225,7 +289,9 @@ pub enum RunEvent {
     /// [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], and
     /// [`RunEvent::ProviderStreamReset`] for 1.0 hosts. New activity such as
     /// [`RunEvent::HostedToolActivity`] is typed-only and does not dual-emit
-    /// here. Will be removed in the next major release.
+    /// here.
+    ///
+    /// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
     #[deprecated(
         since = "1.11.0",
         note = "use WebSearch, ProviderRequestRetry, or ProviderStreamReset"

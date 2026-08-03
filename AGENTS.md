@@ -31,6 +31,7 @@ For PRs:
 - Clearly summarize what changed and why, list validation, and call out breaking changes with a `BREAKING CHANGE:` section.
 - Update documentation for important user-visible changes.
 - When the diff adds or materially expands tests, follow the `rho-test-selection` skill and fill the test-gate section in the pull request template.
+- When the diff ships a minor-only API compromise, follow the `rho-next-major-debt` skill, leave a `NEXT_MAJOR(...)` marker, and fill the next-major debt section in the pull request template (or delete it if none).
 
 ## Rust code
 
@@ -49,6 +50,26 @@ For PRs:
   - when touching `rho-sdk`, fixtures, or SDK packaging: `python3 scripts/check_sdk_compatibility.py --test-features` and `python3 scripts/check_sdk_compatibility.py --test-downstream`
   - before opening or updating a PR: `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` when the change is broad enough to warrant it
 - Use the `rho-rust-change-validation` skill for the full workflow.
+
+## Next-major debt
+
+When a change must ship a worse API shape only to stay **minor-compatible**
+(semver field adds, dual variants, dual-emits, temporary indirection), mark it
+so the next major can clean it up in one pass.
+
+**On every issue and PR**, load the `rho-next-major-debt` skill and run its gate
+before finishing implementation or review. That skill is the source of truth for:
+
+- when debt counts vs ordinary TODOs
+- the greppable `NEXT_MAJOR(<surface>): <cleanup>` marker
+- where to put markers (API rustdoc / private comments / host docs)
+- inventory (`rg 'NEXT_MAJOR\('`) and major cutover
+
+Short defaults:
+
+- Code marker is required; a tracking issue alone is not enough.
+- Prefer construct/match helpers that cover every arm until major.
+- Do not mark cleanups that can land in a minor.
 
 ## Architecture and module boundaries
 

@@ -3,8 +3,10 @@ use tokio::{
     net::TcpListener,
 };
 
-use super::{error_for_status, MAX_ERROR_BODY_BYTES};
+use super::{error_for_status, parse_retry_after, MAX_ERROR_BODY_BYTES};
 use crate::model::ModelError;
+use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+use std::time::Duration;
 
 #[tokio::test]
 async fn captures_and_truncates_error_response_bodies() {
@@ -31,7 +33,12 @@ async fn captures_and_truncates_error_response_bodies() {
     let error = error_for_status(response).await.unwrap_err();
     server.await.unwrap();
 
-    let ModelError::HttpStatus { status, body } = error else {
+    let ModelError::HttpStatus {
+        status,
+        body,
+        retry_after: _,
+    } = error
+    else {
         panic!("expected HTTP status error");
     };
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
@@ -57,10 +64,63 @@ async fn preserves_status_when_reading_the_error_body_fails() {
     let error = error_for_status(response).await.unwrap_err();
     server.await.unwrap();
 
-    let ModelError::HttpStatus { status, body } = error else {
+    let ModelError::HttpStatus {
+        status,
+        body,
+        retry_after: _,
+    } = error
+    else {
         panic!("expected HTTP status error");
     };
     assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
     assert!(body.starts_with("partial"));
     assert!(body.ends_with("[response body read failed]"));
+}
+
+#[test]
+fn parse_retry_after_reads_delay_seconds() {
+    let mut headers = HeaderMap::new();
+    headers.insert(RETRY_AFTER, HeaderValue::from_static("12"));
+    assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(12)));
+}
+
+#[test]
+fn parse_retry_after_ignores_non_numeric_values() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        RETRY_AFTER,
+        HeaderValue::from_static("Tue, 15 Nov 1994 08:12:31 GMT"),
+    );
+    assert_eq!(parse_retry_after(&headers), None);
+}
+
+#[tokio::test]
+async fn captures_retry_after_from_error_responses() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 1024];
+        let _ = socket.read(&mut request).await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\nContent-Length: 4\r\n\r\nslow")
+            .await
+            .unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{address}")).await.unwrap();
+    let error = error_for_status(response).await.unwrap_err();
+    server.await.unwrap();
+
+    let ModelError::HttpStatus {
+        status,
+        body,
+        retry_after,
+    } = error
+    else {
+        panic!("expected HTTP status error");
+    };
+    assert_eq!(status, reqwest::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(body, "slow");
+    assert_eq!(retry_after, Some(Duration::from_secs(7)));
 }

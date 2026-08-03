@@ -41,7 +41,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ToolFinished { .. } => true,
         ViewModelEvent::RunStarted
         | ViewModelEvent::SteeringApplied(_)
-        | ViewModelEvent::ProviderStreamReset
+        | ViewModelEvent::ProviderStreamReset(_)
         | ViewModelEvent::ProviderRetry
         | ViewModelEvent::OutputDelta(_)
         | ViewModelEvent::ReasoningDelta(_)
@@ -270,8 +270,8 @@ impl App {
                 self.turn.tool_call_proposed(call_id, card);
                 None
             }
-            ViewModelEvent::ProviderStreamReset => {
-                self.reset_provider_attempt_stream();
+            ViewModelEvent::ProviderStreamReset(retry) => {
+                self.reset_provider_attempt_stream(retry);
                 self.reset_attempt_accounting();
                 None
             }
@@ -602,7 +602,7 @@ impl App {
         self.usage.run_usage.attempt_reset();
     }
 
-    fn reset_provider_attempt_stream(&mut self) {
+    fn reset_provider_attempt_stream(&mut self, retry: super::activity::ProviderRetryHint) {
         self.reset_streams();
         self.turn.clear_tool_calls();
         if let Some(start) = self
@@ -613,7 +613,8 @@ impl App {
             self.history.images_mut().clear();
             self.history.invalidate_from(start);
         }
-        self.set_status("retrying provider response");
+        self.set_status(retry.status_label());
+        self.turn.set_provider_retry(retry);
     }
 }
 

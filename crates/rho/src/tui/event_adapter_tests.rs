@@ -89,7 +89,7 @@ fn provider_retry_resets_the_current_provider_stream() {
                 reason,
                 detail: "retrying".into(),
             })),
-            ViewEvent::Update(ViewModelEvent::ProviderStreamReset)
+            ViewEvent::Update(ViewModelEvent::ProviderStreamReset(_))
         ));
     }
 }
@@ -760,4 +760,30 @@ fn submit(
         panic!("expected questionnaire answer");
     };
     (response, submitted.display)
+}
+
+#[test]
+fn rate_limit_stream_reset_carries_retry_after_into_view_model() {
+    use std::time::Duration;
+
+    use crate::tui::activity::ProviderRetryHint;
+
+    let mut adapter = SdkEventAdapter::default();
+    let event = only_event(adapter.translate(RunEvent::ProviderStreamReset {
+        reason: ProviderStreamResetReason::retryable_failure(
+            rho_sdk::ProviderErrorKind::RateLimit,
+            Some(Duration::from_secs(12)),
+        ),
+        detail: "retrying".into(),
+    }));
+
+    assert!(matches!(
+        event,
+        ViewEvent::Update(ViewModelEvent::ProviderStreamReset(ProviderRetryHint {
+            reason: ProviderStreamResetReason::RetryableFailureWithRetryAfter {
+                kind: rho_sdk::ProviderErrorKind::RateLimit,
+                retry_after: delay,
+            },
+        })) if delay == Duration::from_secs(12)
+    ));
 }

@@ -166,7 +166,11 @@ pub async fn refresh_xai_tokens(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(ModelError::HttpStatus { status, body });
+        return Err(ModelError::HttpStatus {
+            status,
+            body,
+            retry_after: None,
+        });
     }
     let response = response.json::<XaiRefreshResponse>().await?;
     merge_refreshed_tokens(response, refresh_token, previous, now_unix())

@@ -4,7 +4,7 @@ use rho_sdk::ToolCallId;
 use rho_tools::tool_card::ToolCard;
 
 use crate::tui::{
-    activity::{ActivityPhase, LoadingSpinner},
+    activity::{ActivityPhase, LoadingSpinner, ProviderRetryHint},
     provider_attempt::ProviderAttempt,
     reasoning_phase::ReasoningPhase,
     tool_call_batch::ToolCallBatch,
@@ -54,6 +54,8 @@ pub(in crate::tui) struct TurnUi {
     reasoning_phase: ReasoningPhase,
     session_ui: SessionUiPhase,
     activity_phase: ActivityPhase,
+    /// Structured retry context while [`ActivityPhase::RetryingProvider`].
+    provider_retry: Option<ProviderRetryHint>,
     loading_spinner: LoadingSpinner,
     tool_calls: ToolCallBatch,
 }
@@ -108,7 +110,18 @@ impl TurnUi {
     }
 
     pub(in crate::tui) fn set_activity_phase(&mut self, phase: ActivityPhase) {
+        if !matches!(phase, ActivityPhase::RetryingProvider) {
+            self.provider_retry = None;
+        }
         self.activity_phase = phase;
+    }
+
+    pub(in crate::tui) fn provider_retry(&self) -> Option<ProviderRetryHint> {
+        self.provider_retry
+    }
+
+    pub(in crate::tui) fn set_provider_retry(&mut self, retry: ProviderRetryHint) {
+        self.provider_retry = Some(retry);
     }
 
     pub(in crate::tui) fn loading_spinner(&self) -> &LoadingSpinner {

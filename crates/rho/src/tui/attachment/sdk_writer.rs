@@ -117,7 +117,7 @@ fn attachment_update(
         // This acknowledgement reconciles the interactive TUI's pending-input
         // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,
-        ViewModelEvent::ProviderStreamReset => {
+        ViewModelEvent::ProviderStreamReset(_) => {
             adapter.clear_attachment_preview_keys();
             Some(AttachmentEvent::ProviderStreamReset)
         }

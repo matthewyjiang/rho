@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 pub use rho_sdk::model::AbortedAssistant;
 pub use rho_sdk::model::{
     AssistantMessage, ContentBlock, ImageContent, Message, ModelEvent, ModelIdentity, ModelRequest,
@@ -30,6 +32,8 @@ pub enum ModelError {
     HttpStatus {
         status: reqwest::StatusCode,
         body: String,
+        /// Parsed from the response `Retry-After` header when present.
+        retry_after: Option<Duration>,
     },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
