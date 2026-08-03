@@ -397,15 +397,20 @@ fn startup_failure_emits_a_terminal_json_object() {
     let output = run(&root, "fixed", &["run", "--output", "jsonl", "hello"], None);
 
     assert_eq!(output.status.code(), Some(2));
-    assert_eq!(
-        jsonl_events(&output),
-        vec![serde_json::json!({
-            "schema_version": 1,
-            "seq": 1,
-            "type": "run.failed",
-            "reason": "configuration_error",
-            "message": "configuration failed"
-        })]
+    let events = jsonl_events(&output);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["schema_version"], 1);
+    assert_eq!(events[0]["seq"], 1);
+    assert_eq!(events[0]["type"], "run.failed");
+    assert_eq!(events[0]["reason"], "configuration_error");
+    let message = events[0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("TOML") || message.contains("toml") || message.contains("parse"),
+        "expected parse detail in message: {message}"
+    );
+    assert!(
+        stderr(&output).contains(message),
+        "stderr should carry the same configuration detail"
     );
 }
 
@@ -420,7 +425,62 @@ fn broken_jsonl_stdout_fails_the_run() {
 
     let output = command.output().unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(stderr(&output).contains("output failed"));
+    assert!(
+        stderr(&output).contains("could not write JSONL output")
+            || stderr(&output).contains("Broken pipe")
+            || stderr(&output).contains("broken pipe"),
+        "stderr: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn redirected_stdin_without_flag_is_an_error() {
+    let root = TempDir::new().unwrap();
+    let output = run(
+        &root,
+        "fixed",
+        &["run", "review this"],
+        Some("this diff would be lost"),
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("--stdin"),
+        "stderr: {}",
+        stderr(&output)
+    );
+    assert!(!stdout(&output).contains("this diff would be lost"));
+}
+
+#[test]
+fn output_file_text_mode_streams_answer_and_ends_with_completion_marker() {
+    let root = TempDir::new().unwrap();
+    let output_file = root.path().join("result.json");
+    let mut command = command(&root, "fixed");
+    command
+        .env(RESPONSE_ENV, "answer stays in the result file")
+        .args([
+            "run",
+            "--output-file",
+            output_file.to_str().unwrap(),
+            "complete the task",
+        ]);
+    let output = command.output().unwrap();
+    assert_success(&output);
+    let stdout = stdout(&output);
+    assert!(
+        stdout.contains("answer stays in the result file"),
+        "stdout streams assistant text for live watching: {stdout}"
+    );
+    assert!(
+        stdout.contains("[subagent run complete]"),
+        "stdout: {stdout}"
+    );
+    let result: Value =
+        serde_json::from_str(&std::fs::read_to_string(&output_file).unwrap()).unwrap();
+    assert_eq!(result["state"], "ok");
+    assert_eq!(result["result"], "answer stays in the result file");
 }
 
 #[test]
@@ -544,6 +604,10 @@ fn run(root: &TempDir, mode: &str, args: &[&str], input: Option<&str>) -> Output
     command.args(args);
     if input.is_some() {
         command.stdin(Stdio::piped());
+    } else {
+        // Avoid inheriting a redirected parent stdin, which `rho run` now rejects
+        // unless `--stdin` is set.
+        command.stdin(Stdio::null());
     }
     let mut child = command.spawn().unwrap();
     if let Some(input) = input {
@@ -569,6 +633,7 @@ fn command(root: &TempDir, mode: &str) -> Command {
         .env_remove("HERDR_ENV")
         .env_remove("HERDR_SOCKET_PATH")
         .env_remove("HERDR_PANE_ID")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .arg("--config")

@@ -27,8 +27,8 @@ use tokio::{
 };
 
 use super::{
-    classify_error, complete_run, prompt_from_reader, AutomationExit, RunArtifactIdentity,
-    RunReporter,
+    classify_error, complete_run, prompt_from_reader, terminal_error_message, AutomationExit,
+    RunArtifactIdentity, RunReporter,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::{
@@ -50,6 +50,27 @@ fn classifies_automation_exit_without_parsing_its_message() {
     ));
 
     assert_eq!(classify_error(&error), (TerminalReason::OutputError, 1));
+}
+
+#[test]
+fn terminal_messages_keep_detail_except_authentication() {
+    let configuration = anyhow::anyhow!("TOML parse error at line 1, column 5");
+    assert_eq!(
+        terminal_error_message(TerminalReason::ConfigurationError, &configuration),
+        "TOML parse error at line 1, column 5"
+    );
+
+    let output = anyhow::anyhow!("could not write JSONL output: broken pipe");
+    assert_eq!(
+        terminal_error_message(TerminalReason::OutputError, &output),
+        "could not write JSONL output: broken pipe"
+    );
+
+    let authentication = anyhow::anyhow!("token fixture-secret rejected");
+    assert_eq!(
+        terminal_error_message(TerminalReason::Authentication, &authentication),
+        "authentication failed"
+    );
 }
 
 #[test]

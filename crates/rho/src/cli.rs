@@ -93,10 +93,16 @@ pub enum Command {
     /// Run one non-interactive automation prompt and print the final answer.
     Run {
         /// Read additional prompt text from stdin.
+        ///
+        /// Required when stdin is a pipe or redirected file. Without this flag,
+        /// redirected stdin is rejected so prompt text is not silently dropped.
         #[arg(long)]
         stdin: bool,
-        /// Stream progress to stdout and write a structured status/result
-        /// file (JSON) that is updated during the run and finalized on exit.
+        /// Write a structured status/result file (JSON) that is updated during
+        /// the run and finalized on exit. With `--output text` (the default),
+        /// progress and streamed assistant text go to stdout and the run ends
+        /// with a completion marker; the result file is the durable final
+        /// answer. With `--output jsonl`, stdout stays the JSONL event stream.
         #[arg(long, value_name = "PATH")]
         output_file: Option<PathBuf>,
         /// Select plain final-answer output or a JSON Lines event stream.

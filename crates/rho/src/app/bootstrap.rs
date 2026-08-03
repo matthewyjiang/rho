@@ -44,11 +44,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         return Err(error);
     }
     if run_output == Some(OutputFormat::Jsonl) {
-        automation::emit_startup_failure()?;
+        let message = error.to_string();
+        automation::emit_startup_failure(message.clone())?;
         return Err(automation::AutomationExit::new(
             2,
             automation_protocol::TerminalReason::ConfigurationError,
-            "configuration failed",
+            message,
         )
         .into());
     }

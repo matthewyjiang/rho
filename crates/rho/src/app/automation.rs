@@ -166,13 +166,9 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
     }
 }
 
-pub(super) fn emit_startup_failure() -> anyhow::Result<()> {
+pub(super) fn emit_startup_failure(message: impl Into<String>) -> anyhow::Result<()> {
     let mut adapter = JsonlAdapter::new();
-    let event = adapter.failed(
-        TerminalReason::ConfigurationError,
-        "configuration failed".into(),
-        None,
-    );
+    let event = adapter.failed(TerminalReason::ConfigurationError, message.into(), None);
     emit(event)
 }
 
@@ -243,10 +239,9 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         )
     };
     if let Some(reporter) = reporter.as_mut() {
-        let reached_step_limit = result.as_ref().is_ok_and(|outcome| {
-            outcome.stop_reason() == rho_sdk::StopReason::MaxSteps
-                && (jsonl.is_some() || startup.max_steps.is_some())
-        });
+        let reached_step_limit = result
+            .as_ref()
+            .is_ok_and(|outcome| outcome.stop_reason() == rho_sdk::StopReason::MaxSteps);
         if reached_step_limit {
             let stopped = Err(AutomationExit::new(
                 124,
@@ -267,8 +262,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
 
     match result {
         Ok(answer) => {
-            let max_steps = answer.stop_reason() == rho_sdk::StopReason::MaxSteps;
-            if max_steps && (jsonl.is_some() || startup.max_steps.is_some()) {
+            if answer.stop_reason() == rho_sdk::StopReason::MaxSteps {
                 if let Some(adapter) = jsonl.as_mut() {
                     let text = (!answer.text().is_empty()).then(|| answer.text().into());
                     let event = adapter.stopped(TerminalReason::MaxSteps, text);
@@ -362,12 +356,14 @@ fn emit_failure(
     Ok(())
 }
 
+/// Builds the human-readable terminal message for a classified automation error.
+///
+/// Reason codes stay stable machine labels. The message carries actionable detail
+/// except for authentication failures, which stay generic so credentials and
+/// token material never leave the process through stdout, stderr, or JSONL.
 fn terminal_error_message(reason: TerminalReason, error: &anyhow::Error) -> String {
     match reason {
         TerminalReason::Authentication => "authentication failed".to_string(),
-        TerminalReason::ConfigurationError => "configuration failed".to_string(),
-        TerminalReason::OutputError => "output failed".to_string(),
-        TerminalReason::OtherError => "run failed".to_string(),
         _ => error.to_string(),
     }
 }
@@ -732,6 +728,11 @@ async fn shutdown_signal() -> io::Result<ShutdownSignal> {
 }
 
 fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
+    if !read_stdin && stdin_is_redirected() {
+        anyhow::bail!(
+            "stdin is redirected but --stdin was not set; pass --stdin to include piped input"
+        );
+    }
     prompt_from_reader(parts, read_stdin, &mut io::stdin())
 }
 
@@ -759,6 +760,47 @@ fn prompt_from_reader(
         anyhow::bail!("rho run requires a prompt argument or --stdin");
     }
     Ok(prompt)
+}
+
+/// True when stdin is a pipe, socket, or redirected file rather than a TTY or
+/// null device. Those redirects silently dropped prompt text before `--stdin`.
+fn stdin_is_redirected() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+
+        let fd = io::stdin().as_raw_fd();
+        // SAFETY: fstat on the process stdin fd is valid for the lifetime of the
+        // call; the returned mode bits only identify the open file type.
+        let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+        let rc = unsafe { libc::fstat(fd, &mut stat) };
+        if rc != 0 {
+            return false;
+        }
+        let mode = stat.st_mode & libc::S_IFMT;
+        mode == libc::S_IFIFO || mode == libc::S_IFREG || mode == libc::S_IFSOCK
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::{
+            Storage::FileSystem::{GetFileType, FILE_TYPE_DISK, FILE_TYPE_PIPE, FILE_TYPE_REMOTE},
+            System::Console::{GetStdHandle, STD_INPUT_HANDLE},
+        };
+
+        // SAFETY: GetStdHandle/GetFileType read the process standard handle type
+        // without retaining the handle beyond this call.
+        unsafe {
+            let handle = GetStdHandle(STD_INPUT_HANDLE);
+            matches!(
+                GetFileType(handle),
+                FILE_TYPE_PIPE | FILE_TYPE_DISK | FILE_TYPE_REMOTE
+            )
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
 }
 
 #[cfg(test)]
