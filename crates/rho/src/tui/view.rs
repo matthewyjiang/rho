@@ -19,8 +19,10 @@ use super::{
     highlight_selection,
     message_history::{recovered_history_tail, transcript_entries_from_messages},
     picker_overlay::picker_overlay_frame,
-    render::{pad_display_line, padded_content_width},
-    render_copy_notice, session_header_lines, styled_line, tool_entry_lines,
+    render::{pad_display_line, padded_content_width, truncate_one_line},
+    render_copy_notice,
+    screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
+    session_header_lines, styled_line, tool_entry_lines,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -33,10 +35,34 @@ struct DrawSurface<'a> {
     layout: &'a super::screen_layout::ScreenLayout,
 }
 
+fn draw_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(Clear, area);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let width = area.width as usize;
+    let message = format!("terminal too small (need {MIN_TERMINAL_WIDTH}x{MIN_TERMINAL_HEIGHT})");
+    let line = styled_line(
+        truncate_one_line(&message, width),
+        width,
+        Theme::warning(),
+        LineFill::Natural,
+    );
+    let y = area.y.saturating_add(area.height.saturating_sub(1) / 2);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default()),
+        Rect::new(area.x, y, area.width, 1),
+    );
+}
+
 impl App {
     pub(super) fn draw(&mut self, frame: &mut Frame<'_>) {
         let now = Instant::now();
         let area = frame.area();
+        if !terminal_meets_minimum(area) {
+            draw_terminal_too_small(frame, area);
+            return;
+        }
         // First-launch setup owns the whole screen: no history, composer,
         // statusline, or hints until the user has a provider and a model.
         if let Some(step) = self.setup_step() {
@@ -309,13 +335,17 @@ impl App {
             return;
         }
 
+        // A zero-high composer owns no row; do not park the cursor on foreign chrome.
+        if layout.composer.height == 0 {
+            return;
+        }
+
         let full_cursor = self.composer_cursor_position(width);
         let max_cursor_x = width.max(1).saturating_sub(1) as u16;
-        let composer_height = layout.composer.height.max(1);
         let cursor_y = full_cursor
             .y
             .saturating_sub(layout.composer_start as u16)
-            .min(composer_height.saturating_sub(1));
+            .min(layout.composer.height.saturating_sub(1));
         frame.set_cursor_position(Position {
             x: layout
                 .composer

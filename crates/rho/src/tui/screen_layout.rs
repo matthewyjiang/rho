@@ -4,6 +4,55 @@ use ratatui::{layout::Rect, text::Line};
 
 use super::{activity, render::display_width, scrollbar::HistoryScrollbar, App, HistoryScroll};
 
+/// Smallest width that still keeps prompt chrome and short status fields legible.
+///
+/// Below this, width helpers collapse to bare glyphs such as `>` / `→`.
+pub(super) const MIN_TERMINAL_WIDTH: u16 = 10;
+
+/// Smallest height that still fits composer (1) + bottom divider (1) + statusline (2).
+///
+/// Must stay aligned with [`super::statusline::StatusLine::height`].
+pub(super) const MIN_TERMINAL_HEIGHT: u16 = 4;
+
+/// True when the terminal can host the normal chrome layout.
+pub(super) fn terminal_meets_minimum(area: Rect) -> bool {
+    area.width >= MIN_TERMINAL_WIDTH && area.height >= MIN_TERMINAL_HEIGHT
+}
+
+/// Fixed bottom stack heights. Composer keeps a row before the statusline can grow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct BottomChrome {
+    pub(super) statusline_height: usize,
+    pub(super) bottom_divider_height: usize,
+    pub(super) command_height: usize,
+}
+
+/// Allocate the fixed bottom chrome so a non-empty composer keeps at least one row.
+///
+/// Priority order (bottom-up after the composer reserve):
+/// 1. reserve one composer row when the composer has content
+/// 2. give the statusline up to its desired height from the remainder
+/// 3. place the bottom divider only when the statusline is visible and a free row remains
+/// 4. fill leftover bottom rows with command suggestions
+pub(super) fn bottom_chrome_heights(
+    height: usize,
+    desired_statusline_height: usize,
+    composer_line_count: usize,
+    command_line_count: usize,
+) -> BottomChrome {
+    let minimum_composer_height = usize::from(composer_line_count > 0);
+    let statusline_height =
+        desired_statusline_height.min(height.saturating_sub(minimum_composer_height));
+    let leftover = height.saturating_sub(minimum_composer_height + statusline_height);
+    let bottom_divider_height = usize::from(statusline_height > 0 && leftover > 0);
+    let command_height = command_line_count.min(leftover.saturating_sub(bottom_divider_height));
+    BottomChrome {
+        statusline_height,
+        bottom_divider_height,
+        command_height,
+    }
+}
+
 pub(super) fn visible_composer_start(
     cursor_line: usize,
     line_count: usize,
@@ -61,10 +110,15 @@ impl App {
         let height = area.height as usize;
         let full_cursor = self.composer_cursor_position(width);
         let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
-        let statusline_height = self.statusline.height().min(height);
-        let bottom_divider_height = usize::from(height > statusline_height);
-        let command_height = command_line_count
-            .min(height.saturating_sub(statusline_height + bottom_divider_height));
+        let chrome = bottom_chrome_heights(
+            height,
+            self.statusline.height(),
+            composer_lines.len(),
+            command_line_count,
+        );
+        let statusline_height = chrome.statusline_height;
+        let bottom_divider_height = chrome.bottom_divider_height;
+        let command_height = chrome.command_height;
         let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
         let available_above_bottom = height.saturating_sub(bottom_fixed_height);
         let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
@@ -230,10 +284,15 @@ impl App {
         composer_line_count: usize,
         command_line_count: usize,
     ) -> usize {
-        let statusline_height = self.statusline.height().min(height);
-        let bottom_divider_height = usize::from(height > statusline_height);
-        let command_height = command_line_count
-            .min(height.saturating_sub(statusline_height + bottom_divider_height));
+        let chrome = bottom_chrome_heights(
+            height,
+            self.statusline.height(),
+            composer_line_count,
+            command_line_count,
+        );
+        let statusline_height = chrome.statusline_height;
+        let bottom_divider_height = chrome.bottom_divider_height;
+        let command_height = chrome.command_height;
         let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
         let available_above_bottom = height.saturating_sub(bottom_fixed_height);
         let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
@@ -261,3 +320,7 @@ impl App {
             .saturating_sub(visible_composer_len + pending_input_height + subagent_height)
     }
 }
+
+#[cfg(test)]
+#[path = "screen_layout_tests.rs"]
+mod tests;
