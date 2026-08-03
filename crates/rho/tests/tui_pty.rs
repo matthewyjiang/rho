@@ -18,8 +18,8 @@ use std::{
 };
 
 use rho_tui_pty::{
-    all_scenarios, run_named, IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan,
-    ScenarioRunner, WaitTimeout,
+    all_scenarios, run_named, smoke_scenario_ids, IsolatedHome, Key, PtyHarness, PtySize,
+    RhoLaunchPlan, ScenarioRunner, WaitTimeout,
 };
 
 fn runner() -> ScenarioRunner {
@@ -463,44 +463,21 @@ fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");
 }
 
-#[test]
-fn renders_markdown_headings() {
-    assert_pass("markdown_headings");
-}
-
-// Covers: already-drawn stream prose must not vanish while later emphasis closes.
+// Covers: fragile interactive surfaces from issue #711.
 // Owner: interactive TUI
 #[test]
-fn streaming_markdown_keeps_stable_prefix() {
-    assert_pass("streaming_markdown_stability");
-}
-
-// Covers: activity rail stays above composer and shares the row with jump control.
-// Owner: interactive TUI
-#[test]
-fn spinner_activity_stays_anchored() {
-    assert_pass("spinner_activity_anchor");
-}
-
-// Covers: /help opens and Esc restores the session.
-// Owner: interactive TUI
-#[test]
-fn help_overlay_opens_and_dismisses() {
-    assert_pass("help_overlay");
-}
-
-// Covers: / opens the command palette and filtering narrows matches.
-// Owner: interactive TUI
-#[test]
-fn slash_command_palette_filters() {
-    assert_pass("slash_command_palette");
-}
-
-// Covers: @ opens path autocomplete and Enter inserts the selected file.
-// Owner: interactive TUI
-#[test]
-fn file_path_autocomplete_inserts_selection() {
-    assert_pass("file_path_autocomplete");
+fn fragile_surface_scenarios_pass() {
+    for id in [
+        "markdown_headings",
+        "streaming_markdown_stability",
+        "spinner_activity_anchor",
+        "spinner_activity_jump_rail",
+        "help_overlay",
+        "slash_command_palette",
+        "file_path_autocomplete",
+    ] {
+        assert_pass(id);
+    }
 }
 
 #[test]
@@ -1111,19 +1088,25 @@ fn which_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
 
 #[test]
 fn smoke_subset_is_registered() {
-    let smoke = all_scenarios()
-        .iter()
-        .filter(|scenario| scenario.smoke)
-        .map(|scenario| scenario.id)
-        .collect::<Vec<_>>();
-    assert!(smoke.contains(&"startup_stream_exit"));
-    assert!(smoke.contains(&"cancel_and_resubmit"));
-    assert!(smoke.contains(&"type_during_stream"));
-    assert!(smoke.contains(&"resize_during_stream"));
-    assert!(smoke.contains(&"scroll_during_stream"));
-    assert!(smoke.contains(&"terminal_restoration"));
-    assert!(smoke.contains(&"markdown_headings"));
-    assert!(smoke.contains(&"streaming_markdown_stability"));
-    assert!(smoke.contains(&"spinner_activity_anchor"));
-    assert!(smoke.contains(&"help_overlay"));
+    let smoke = smoke_scenario_ids();
+    // Core lifecycle gates kept in CI.
+    for id in [
+        "startup_stream_exit",
+        "cancel_and_resubmit",
+        "type_during_stream",
+        "resize_during_stream",
+        "scroll_during_stream",
+        "terminal_restoration",
+    ] {
+        assert!(smoke.contains(&id), "missing core smoke scenario {id}");
+    }
+    // Fragility champions from issue #711.
+    assert!(
+        smoke.contains(&"streaming_markdown_stability"),
+        "missing markdown stability smoke scenario"
+    );
+    assert!(
+        smoke.contains(&"spinner_activity_anchor"),
+        "missing activity-rail smoke scenario"
+    );
 }

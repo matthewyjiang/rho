@@ -42,16 +42,9 @@ cargo test -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
 
 Smoke scenarios:
 
-- `startup_stream_exit`
-- `cancel_and_resubmit`
-- `type_during_stream`
-- `resize_during_stream`
-- `scroll_during_stream`
-- `terminal_restoration`
-- `streaming_markdown_stability`
-- `spinner_activity_anchor`
-- `help_overlay`
-- `markdown_headings`
+- see `Scenario.smoke` / `rho-pty-scenario --list` for the live set
+- core lifecycle: `startup_stream_exit`, `cancel_and_resubmit`, `type_during_stream`, `resize_during_stream`, `scroll_during_stream`, `terminal_restoration`
+- fragility champions: `streaming_markdown_stability`, `spinner_activity_anchor`
 
 ## Run one scenario
 
