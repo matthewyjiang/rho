@@ -41,6 +41,7 @@ impl App {
             }
             config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
+            config_picker::ZEN_MODE_VALUE => self.toggle_zen_mode(),
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
             config_picker::ENABLE_SUBAGENTS_VALUE => self.toggle_enable_subagents(),
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
@@ -276,6 +277,7 @@ impl App {
                 ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
@@ -307,6 +309,7 @@ impl App {
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
@@ -338,6 +341,7 @@ impl App {
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
@@ -375,6 +379,40 @@ impl App {
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ZenMode(_)
+                | ConfigMutation::WebSearchHosted(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
+        }
+        Ok(())
+    }
+
+    pub(super) fn toggle_zen_mode(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(&self.info.services.config_repository, ConfigToggle::ZenMode) {
+            Ok(ConfigMutation::ZenMode(zen_mode)) => {
+                self.info.runtime.zen_mode = zen_mode;
+                // Zen is pure display policy over existing history; rebuild layout.
+                self.history.invalidate_from(0);
+                self.apply_reasoning_output_visibility();
+                self.refresh_main_config_picker_if_open(config_picker::ZEN_MODE_VALUE)?;
+                self.set_status(if zen_mode {
+                    "zen mode: on"
+                } else {
+                    "zen mode: off"
+                });
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save zen mode setting: {err}"
+                )));
+                self.refresh_main_config_picker_if_open(config_picker::ZEN_MODE_VALUE)?;
+                self.set_status("config save failed");
+            }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::WebSearchHosted(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
@@ -405,6 +443,7 @@ impl App {
                 | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchProvider(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }

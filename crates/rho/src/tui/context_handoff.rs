@@ -615,9 +615,8 @@ impl App {
         let width = terminal.size()?.width as usize;
         let (_omitted, visible_entries) = recovered_history_tail(
             &entries,
-            width,
             RECOVERED_HISTORY_LINE_LIMIT,
-            self.info.runtime.max_tool_output_lines,
+            self.info.runtime.history_render_settings(width),
         );
         self.history.set_entries(visible_entries);
         self.history.images_mut().clear();

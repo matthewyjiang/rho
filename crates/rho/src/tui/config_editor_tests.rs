@@ -56,6 +56,18 @@ fn subagent_toggle_persists_for_the_next_session() {
 }
 
 #[test]
+fn zen_mode_toggle_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let repository = ConfigRepository::new(Some(path));
+
+    let mutation = toggle(&repository, ConfigToggle::ZenMode).unwrap();
+
+    assert_eq!(mutation, ConfigMutation::ZenMode(true));
+    assert!(repository.load().unwrap().zen_mode);
+}
+
+#[test]
 fn editor_preserves_legacy_web_search_key_when_store_is_unavailable() {
     let store_error = rho_providers::credentials::CredentialError::StoreUnavailable("test".into());
 

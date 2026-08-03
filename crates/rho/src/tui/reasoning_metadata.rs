@@ -130,6 +130,7 @@ impl App {
                 .load()
                 .unwrap_or_default();
             self.info.runtime.show_reasoning_output = config.show_reasoning_output;
+            self.info.runtime.zen_mode = config.zen_mode;
             self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
         match save_result {

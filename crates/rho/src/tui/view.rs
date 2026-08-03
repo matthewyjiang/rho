@@ -516,8 +516,7 @@ impl App {
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                     history_lines.extend_visible_lines(
                         entries,
-                        width,
-                        self.info.runtime.max_tool_output_lines,
+                        self.info.runtime.history_render_settings(width),
                         HistoryLineSlice {
                             start: transcript_start,
                             count: transcript_count,
@@ -548,10 +547,13 @@ impl App {
         let open = match self.streams.current_stream_kind {
             None => false,
             Some(StreamKind::Assistant) => matches!(self.history.last(), Some(Entry::Assistant(_))),
-            Some(StreamKind::Reasoning) => matches!(
-                self.history.last(),
-                Some(Entry::Reasoning(reasoning)) if !reasoning.text.is_empty()
-            ),
+            Some(StreamKind::Reasoning) => {
+                self.info.runtime.shows_work_chrome()
+                    && matches!(
+                        self.history.last(),
+                        Some(Entry::Reasoning(reasoning)) if !reasoning.text.is_empty()
+                    )
+            }
         };
         self.history.lines_mut().set_open_stream_tail(open);
     }
@@ -565,17 +567,12 @@ impl App {
     pub(super) fn cached_transcript_line_count(&mut self, width: usize) -> usize {
         self.sync_open_stream_tail();
         let cwd = self.info.runtime.cwd.clone();
-        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        let settings = self.info.runtime.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
-                history_lines.line_count(
-                    entries,
-                    width,
-                    max_tool_output_lines,
-                    &|entry_index, sources| {
-                        markdown_images.ready_images(entry_index, sources, &cwd)
-                    },
-                )
+                history_lines.line_count(entries, settings, &|entry_index, sources| {
+                    markdown_images.ready_images(entry_index, sources, &cwd)
+                })
             })
     }
 
@@ -583,18 +580,13 @@ impl App {
         self.sync_open_stream_tail();
         let header_len = self.session_header_lines(width).len();
         let cwd = self.info.runtime.cwd.clone();
-        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        let settings = self.info.runtime.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                 history_lines
-                    .code_blocks(
-                        entries,
-                        width,
-                        max_tool_output_lines,
-                        &|entry_index, sources| {
-                            markdown_images.ready_images(entry_index, sources, &cwd)
-                        },
-                    )
+                    .code_blocks(entries, settings, &|entry_index, sources| {
+                        markdown_images.ready_images(entry_index, sources, &cwd)
+                    })
                     .iter()
                     .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
                         line: header_len.saturating_add(block.line),
@@ -607,8 +599,17 @@ impl App {
 
     pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        let shells = self.running_inline_shell_entries().collect::<Vec<_>>();
-        let tools = self.turn.tool_calls().live_entries().collect::<Vec<_>>();
+        let show_tools = self.info.runtime.shows_work_chrome();
+        let shells = if show_tools {
+            self.running_inline_shell_entries().collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let tools = if show_tools {
+            self.turn.tool_calls().live_entries().collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let has_pending_tools = !shells.is_empty() || !tools.is_empty();
         // Open stream tails omit the history trailing blank so previews can abut
         // committed text. Live tools still need one row of separation above them.
@@ -631,7 +632,13 @@ impl App {
             ));
         }
         if let Some(preview) = &self.streams.live_stream_preview {
-            lines.extend(self.render_stream_preview_lines(preview, width));
+            let show_preview = match preview.kind {
+                StreamKind::Assistant => true,
+                StreamKind::Reasoning => self.info.runtime.displays_reasoning_output(),
+            };
+            if show_preview {
+                lines.extend(self.render_stream_preview_lines(preview, width));
+            }
         }
         if self.turn.reasoning_phase().hidden_placeholder() {
             lines.push(Line::raw(""));
@@ -871,9 +878,8 @@ impl App {
         let width = terminal.size()?.width as usize;
         let (omitted, visible_entries) = recovered_history_tail(
             &entries,
-            width,
             RECOVERED_HISTORY_LINE_LIMIT,
-            self.info.runtime.max_tool_output_lines,
+            self.info.runtime.history_render_settings(width),
         );
         let mut transcript = Vec::new();
         if omitted > 0 {

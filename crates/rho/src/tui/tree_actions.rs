@@ -109,9 +109,8 @@ impl App {
         let width = terminal.size()?.width as usize;
         let (_, visible_entries) = recovered_history_tail(
             &entries,
-            width,
             RECOVERED_HISTORY_LINE_LIMIT,
-            self.info.runtime.max_tool_output_lines,
+            self.info.runtime.history_render_settings(width),
         );
         agent.select_tree_node(storage, &target_id).await?;
 

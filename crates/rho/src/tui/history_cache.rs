@@ -35,9 +35,25 @@ pub(super) struct HistoryLineSlice {
     pub(super) count: usize,
 }
 
+/// Layout/display inputs that invalidate the history line cache when they change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryRenderSettings {
+    pub width: usize,
+    pub max_tool_output_lines: usize,
+    pub zen_mode: bool,
+}
+
+impl HistoryRenderSettings {
+    /// Zen mode keeps entry indices stable but contributes no transcript lines for
+    /// tool cards or reasoning blocks.
+    pub(super) fn hides_entry(self, entry: &Entry) -> bool {
+        self.zen_mode && matches!(entry, Entry::Tool(_) | Entry::Reasoning(_))
+    }
+}
+
 #[derive(Default)]
 pub(super) struct HistoryLineCache {
-    settings: Option<HistoryLineCacheSettings>,
+    settings: Option<HistoryRenderSettings>,
     lines: Vec<Line<'static>>,
     entry_ranges: Vec<Range<usize>>,
     assistant_caches: Vec<Option<IncrementalAssistantCache>>,
@@ -47,12 +63,6 @@ pub(super) struct HistoryLineCache {
     appended_assistant: Option<usize>,
     /// When set, the last entry is still being streamed and must not own a trailing blank.
     open_stream_tail: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct HistoryLineCacheSettings {
-    width: usize,
-    max_tool_output_lines: usize,
 }
 
 impl HistoryLineCache {
@@ -93,34 +103,31 @@ impl HistoryLineCache {
     pub(super) fn line_count(
         &mut self,
         entries: &[Entry],
-        width: usize,
-        max_tool_output_lines: usize,
+        settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
     ) -> usize {
-        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
+        self.ensure_current(entries, settings, image_resolver);
         self.lines.len()
     }
 
     pub(super) fn code_blocks(
         &mut self,
         entries: &[Entry],
-        width: usize,
-        max_tool_output_lines: usize,
+        settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
     ) -> &[CachedCodeBlock] {
-        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
+        self.ensure_current(entries, settings, image_resolver);
         &self.code_blocks
     }
 
     pub(super) fn entry_index_at_line(
         &mut self,
         entries: &[Entry],
-        width: usize,
-        max_tool_output_lines: usize,
+        settings: HistoryRenderSettings,
         line: usize,
         image_resolver: EntryImageResolver<'_>,
     ) -> Option<usize> {
-        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
+        self.ensure_current(entries, settings, image_resolver);
         self.entry_ranges
             .iter()
             .position(|range| range.contains(&line))
@@ -129,8 +136,7 @@ impl HistoryLineCache {
     pub(super) fn extend_visible_lines(
         &mut self,
         entries: &[Entry],
-        width: usize,
-        max_tool_output_lines: usize,
+        settings: HistoryRenderSettings,
         slice: HistoryLineSlice,
         target: &mut Vec<Line<'static>>,
         image_resolver: EntryImageResolver<'_>,
@@ -139,7 +145,7 @@ impl HistoryLineCache {
             return;
         }
 
-        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
+        self.ensure_current(entries, settings, image_resolver);
         let end = slice
             .start
             .saturating_add(slice.count)
@@ -153,13 +159,12 @@ impl HistoryLineCache {
     pub(super) fn visible_image_placements(
         &mut self,
         entries: &[Entry],
-        width: usize,
-        max_tool_output_lines: usize,
+        settings: HistoryRenderSettings,
         start: usize,
         count: usize,
         image_resolver: EntryImageResolver<'_>,
     ) -> Vec<super::feed_image::VisibleImagePlacement> {
-        self.ensure_current(entries, width, max_tool_output_lines, image_resolver);
+        self.ensure_current(entries, settings, image_resolver);
         let end = start.saturating_add(count);
         self.image_placements
             .iter()
@@ -181,14 +186,9 @@ impl HistoryLineCache {
     fn ensure_current(
         &mut self,
         entries: &[Entry],
-        width: usize,
-        max_tool_output_lines: usize,
+        settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
     ) {
-        let settings = HistoryLineCacheSettings {
-            width,
-            max_tool_output_lines,
-        };
         if self.settings != Some(settings) {
             self.settings = Some(settings);
             self.lines.clear();
@@ -211,7 +211,7 @@ impl HistoryLineCache {
         };
         let rebuild_from = dirty_from.min(entries.len()).min(self.entry_ranges.len());
         if self.appended_assistant.take() == Some(rebuild_from)
-            && self.try_extend_last_assistant(entries, rebuild_from, width)
+            && self.try_extend_last_assistant(entries, rebuild_from, settings.width)
         {
             return;
         }
@@ -232,17 +232,28 @@ impl HistoryLineCache {
 
         for (entry_index, entry) in entries.iter().enumerate().skip(rebuild_from) {
             let range_start = self.lines.len();
+            if settings.hides_entry(entry) {
+                // Keep a zero-height range so entry indices stay aligned with history.
+                self.entry_ranges.push(range_start..range_start);
+                self.assistant_caches.push(None);
+                continue;
+            }
+
             let entry_start = self.lines.len();
             let trailing_blank = if self.open_stream_tail && entry_index + 1 == entries.len() {
                 TrailingBlank::Omit
             } else {
                 TrailingBlank::Include
             };
-            let mut rendered =
-                render_entry_with_options(entry, width, max_tool_output_lines, trailing_blank);
+            let mut rendered = render_entry_with_options(
+                entry,
+                settings.width,
+                settings.max_tool_output_lines,
+                trailing_blank,
+            );
             if !rendered.image_sources.is_empty() {
                 let images = image_resolver(entry_index, &rendered.image_sources);
-                apply_markdown_images(&mut rendered, &images, width);
+                apply_markdown_images(&mut rendered, &images, settings.width);
             }
             self.code_blocks
                 .extend(
@@ -275,7 +286,7 @@ impl HistoryLineCache {
                     let stable_line_count = if stable_source_len == 0 {
                         0
                     } else {
-                        render_assistant_content(&text[..stable_source_len], width)
+                        render_assistant_content(&text[..stable_source_len], settings.width)
                             .lines
                             .len()
                     };

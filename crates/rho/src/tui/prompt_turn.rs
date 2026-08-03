@@ -197,7 +197,7 @@ impl App {
         self.reset_streams();
         self.turn
             .reasoning_phase_mut()
-            .begin_step(self.info.runtime.show_reasoning_output);
+            .begin_step(self.info.runtime.displays_reasoning_output());
         self.set_status("running");
         self.begin_provider_turn_ui();
         self.turn.set_activity_phase(ActivityPhase::Starting);

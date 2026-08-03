@@ -151,6 +151,57 @@ max_tool_output_lines = 4
     assert_eq!(warnings, Vec::<ConfigWarning>::new());
 }
 
+// Covers: display.zen_mode loads and defaults off
+// Owner: config load
+#[test]
+fn zen_mode_loads_from_display_group() {
+    let (config, warnings) = parse_settings(
+        r#"
+[display]
+zen_mode = true
+"#,
+    )
+    .unwrap();
+    assert!(config.zen_mode);
+    assert_eq!(warnings, Vec::<ConfigWarning>::new());
+
+    let (defaulted, default_warnings) = parse_settings(
+        r#"
+[display]
+show_reasoning_output = true
+"#,
+    )
+    .unwrap();
+    assert!(!defaulted.zen_mode);
+    assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
+}
+
+// Covers: top-level zen_mode folds into [display]; grouped value wins
+// Owner: config load
+#[test]
+fn legacy_top_level_zen_mode_loads() {
+    let (config, warnings) = parse_settings(
+        r#"
+zen_mode = true
+"#,
+    )
+    .unwrap();
+    assert!(config.zen_mode);
+    assert_eq!(warnings, Vec::<ConfigWarning>::new());
+
+    let (grouped_wins, grouped_warnings) = parse_settings(
+        r#"
+zen_mode = true
+
+[display]
+zen_mode = false
+"#,
+    )
+    .unwrap();
+    assert!(!grouped_wins.zen_mode);
+    assert_eq!(grouped_warnings, Vec::<ConfigWarning>::new());
+}
+
 // Covers: [model] group provider wins over a top-level provider
 // Owner: config load
 #[test]

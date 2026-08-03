@@ -75,7 +75,7 @@ impl App {
                 Ok(switched || drained)
             }
             ViewModelEvent::ReasoningDelta(text) => {
-                let show_reasoning = self.info.runtime.show_reasoning_output;
+                let show_reasoning = self.info.runtime.displays_reasoning_output();
                 self.turn
                     .reasoning_phase_mut()
                     .on_reasoning_delta(show_reasoning);
@@ -239,7 +239,7 @@ impl App {
                 self.turn.provider_attempt_mut().begin(self.history.len());
                 self.turn
                     .reasoning_phase_mut()
-                    .begin_step(self.info.runtime.show_reasoning_output);
+                    .begin_step(self.info.runtime.displays_reasoning_output());
                 self.begin_provider_turn_ui();
                 self.turn.clear_tool_calls();
                 self.turn.start_loading_if_needed();
@@ -545,9 +545,9 @@ impl App {
         self.push_transcript_entry(entry);
     }
 
-    /// Apply the live `show_reasoning_output` setting to in-flight turn UI.
+    /// Apply the live transcript chrome settings to in-flight turn UI.
     pub(super) fn apply_reasoning_output_visibility(&mut self) {
-        if self.info.runtime.show_reasoning_output {
+        if self.info.runtime.displays_reasoning_output() {
             self.turn
                 .reasoning_phase_mut()
                 .set_hidden_placeholder(false);
@@ -555,6 +555,14 @@ impl App {
         }
 
         self.discard_live_reasoning_output();
+
+        // Zen mode hides reasoning text and the Thinking... placeholder.
+        if !self.info.runtime.shows_work_chrome() {
+            self.turn
+                .reasoning_phase_mut()
+                .set_hidden_placeholder(false);
+            return;
+        }
 
         // Keep the Thinking... placeholder while this step is still waiting for
         // or streaming reasoning. Later phases (response, tools) stay clear.

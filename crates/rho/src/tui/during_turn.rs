@@ -568,6 +568,9 @@ impl App {
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
                 self.toggle_reasoning_output()?;
             }
+            config_picker::ZEN_MODE_VALUE => {
+                self.toggle_zen_mode()?;
+            }
             config_picker::CHECK_FOR_UPDATES_VALUE => {
                 self.toggle_check_for_updates()?;
             }

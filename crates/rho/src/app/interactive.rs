@@ -102,6 +102,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 reasoning_source,
                 permission_mode: config.permission_mode,
                 show_reasoning_output: config.show_reasoning_output,
+                zen_mode: config.zen_mode,
                 auth: config.auth,
                 internal_agents: config.internal_agents,
                 favorite_models: config.favorite_models,

@@ -280,6 +280,9 @@ impl App {
     }
 
     pub(super) fn activity_status(&self) -> Option<ActivityStatus> {
+        if !self.info.runtime.shows_work_chrome() {
+            return None;
+        }
         let phase = match self.input_ui.composer() {
             ComposerMode::Approval(_) => ActivityPhase::WaitingForApproval,
             ComposerMode::Questionnaire(_) => ActivityPhase::WaitingForInput,

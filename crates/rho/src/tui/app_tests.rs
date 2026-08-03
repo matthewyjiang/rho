@@ -55,6 +55,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             reasoning_source: ReasoningRequestSource::PersistedOrDefault,
             permission_mode: PermissionMode::Auto,
             show_reasoning_output: true,
+            zen_mode: false,
             auth: "api-key".into(),
             internal_agents: Default::default(),
             favorite_models: Vec::new(),
@@ -200,7 +201,15 @@ fn recovered_history_tail_limits_initial_redraw() {
         .map(|index| Entry::User(format!("message {index}")))
         .collect::<Vec<_>>();
 
-    let (omitted, visible) = recovered_history_tail(&entries, 80, 9, 10);
+    let (omitted, visible) = recovered_history_tail(
+        &entries,
+        9,
+        crate::tui::history_cache::HistoryRenderSettings {
+            width: 80,
+            max_tool_output_lines: 10,
+            zen_mode: false,
+        },
+    );
 
     // Each user entry is one content line + trailing blank (2 rows). A 9-line
     // budget therefore keeps four tail messages.
@@ -211,6 +220,46 @@ fn recovered_history_tail_limits_initial_redraw() {
             Entry::User(c),
             Entry::User(d),
         ] if a == "message 6" && b == "message 7" && c == "message 8" && d == "message 9"));
+}
+
+// Covers: zen-hidden suffix must not drop an oversized latest visible entry.
+// Owner: pure recovery selection policy.
+#[test]
+fn recovered_history_tail_keeps_oversized_visible_before_hidden_suffix() {
+    use crate::tui::{ReasoningEntry, ToolEntry};
+
+    let oversized = Entry::Assistant("line\n".repeat(40));
+    let tool = Entry::Tool(ToolEntry {
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Running,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
+        ),
+        expanded: false,
+        image: None,
+    });
+    let entries = vec![
+        Entry::User("earlier".into()),
+        oversized,
+        tool,
+        Entry::Reasoning(ReasoningEntry::new("hidden plan")),
+    ];
+
+    let (omitted, visible) = recovered_history_tail(
+        &entries,
+        5,
+        crate::tui::history_cache::HistoryRenderSettings {
+            width: 40,
+            max_tool_output_lines: 10,
+            zen_mode: true,
+        },
+    );
+
+    assert_eq!(omitted, 1);
+    assert_eq!(visible.len(), 3);
+    assert!(matches!(visible[0], Entry::Assistant(_)));
+    assert!(matches!(visible[1], Entry::Tool(_)));
+    assert!(matches!(visible[2], Entry::Reasoning(_)));
 }
 
 #[test]
