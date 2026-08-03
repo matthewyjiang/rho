@@ -50,6 +50,61 @@ For PRs:
   - before opening or updating a PR: `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` when the change is broad enough to warrant it
 - Use the `rho-rust-change-validation` skill for the full workflow.
 
+## Next-major cleanup markers
+
+When a change ships a **minor-compatible compromise** that is deliberately worse
+than the ideal API (semver field adds, dual variants, deprecated dual-emits,
+temporary indirection), leave a greppable marker so the next major can clean it
+up in one pass. The marker in code is the source of truth—not a separate
+tracking issue alone.
+
+### Marker line
+
+Use this exact token so inventory is one search:
+
+```text
+NEXT_MAJOR(<crate-or-surface>): <imperative cleanup>
+```
+
+Examples:
+
+```text
+NEXT_MAJOR(rho-sdk): collapse RetryableFailure and RetryableFailureWithRetryAfter into one shape with optional retry_after
+NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits
+```
+
+### Where to put it
+
+1. **On the compromised API (required).**
+   - Public items: a rustdoc `# Next major` section that includes the `NEXT_MAJOR(...)`
+     line, the preferred end state, and why the compromise exists.
+   - Private implementation: a `// NEXT_MAJOR(...): ...` comment at the site of the split.
+2. **Host-facing docs (preferred when hosts match the awkward shape)** so external
+   callers know the temporary contract and the intended collapse.
+3. Prefer matching/construction helpers that cover every arm of the compromise, and
+   document those helpers as the stable surface until major.
+
+### What to mark
+
+Mark when you chose a worse shape **only** to stay minor-compatible, including:
+
+- Parallel enum variants that should be one variant (or event field) plus `Option`
+- Metadata that belongs on an existing struct variant but could not be added without a major break
+- Deprecated dual-emits or aliases retained solely for 1.x hosts
+- Public helpers that exist only to paper over that temporary split
+
+Do **not** use this for ordinary TODOs, nits, or cleanups that can land in a minor.
+
+### Inventory and major cutover
+
+```bash
+rg 'NEXT_MAJOR\(' -n
+```
+
+When cutting a major release: run that search, land each cleanup, delete the
+markers, and call out the breaks in release notes / the upgrade guide with a
+`BREAKING CHANGE` section.
+
 ## Architecture and module boundaries
 
 - Separate generic infrastructure from feature policy. Rendering, transport, storage, parsing, and orchestration should consume explicit generic data rather than know individual commands, menus, providers, or features.
