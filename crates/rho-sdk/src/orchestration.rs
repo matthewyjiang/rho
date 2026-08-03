@@ -465,11 +465,11 @@ async fn request_valid_response(
                     control.events,
                     control.cancellation,
                     RunEvent::ProviderStreamReset {
-                        reason: crate::ProviderStreamResetReason::RetryableFailure(
+                        reason: crate::ProviderStreamResetReason::retryable_failure(
                             failure.error.kind(),
+                            retry_after,
                         ),
                         detail,
-                        retry_after,
                     },
                 )
                 .await;
@@ -527,7 +527,6 @@ async fn request_valid_response(
             RunEvent::ProviderStreamReset {
                 reason: crate::ProviderStreamResetReason::InvalidResponse,
                 detail,
-                retry_after: None,
             },
         )
         .await;

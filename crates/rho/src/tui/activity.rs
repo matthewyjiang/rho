@@ -57,18 +57,17 @@ impl ActivityPhase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ProviderRetryHint {
     pub(super) reason: ProviderStreamResetReason,
-    pub(super) retry_after: Option<Duration>,
 }
 
 impl ProviderRetryHint {
     pub(super) fn status_label(self) -> String {
         let rate_limited = matches!(
-            self.reason,
-            ProviderStreamResetReason::RetryableFailure(ProviderErrorKind::RateLimit)
+            self.reason.provider_error_kind(),
+            Some(ProviderErrorKind::RateLimit)
         );
         match (
             rate_limited,
-            self.retry_after.filter(|delay| !delay.is_zero()),
+            self.reason.retry_after().filter(|delay| !delay.is_zero()),
         ) {
             (true, Some(delay)) => format!(
                 "rate limited · retry in {}",

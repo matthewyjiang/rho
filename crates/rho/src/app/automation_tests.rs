@@ -89,7 +89,6 @@ fn reporter_discards_partial_text_when_provider_attempt_resets() {
             rho_sdk::ProviderErrorKind::Unavailable,
         ),
         detail: "retrying".into(),
-        retry_after: None,
     });
 
     assert_eq!(reporter.status().last_text, None);

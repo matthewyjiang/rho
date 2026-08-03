@@ -893,8 +893,10 @@ async fn rate_limit_retry_after_is_carried_on_stream_reset() {
         match next_event_virtual(&mut run).await {
             RunEvent::ProviderStreamReset {
                 reason:
-                    crate::ProviderStreamResetReason::RetryableFailure(ProviderErrorKind::RateLimit),
-                retry_after: Some(delay),
+                    crate::ProviderStreamResetReason::RetryableFailureWithRetryAfter {
+                        kind: ProviderErrorKind::RateLimit,
+                        retry_after: delay,
+                    },
                 ..
             } => {
                 assert_eq!(delay, Duration::from_secs(3));

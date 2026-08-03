@@ -311,18 +311,11 @@ impl SdkEventAdapter {
             // Legacy dual-emitted activity; typed variants above drive the TUI.
             #[allow(deprecated)]
             RunEvent::ProviderActivity { .. } => Vec::new(),
-            RunEvent::ProviderStreamReset {
-                reason,
-                retry_after,
-                ..
-            } => {
+            RunEvent::ProviderStreamReset { reason, .. } => {
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset(
-                    ProviderRetryHint {
-                        reason,
-                        retry_after,
-                    },
+                    ProviderRetryHint { reason },
                 ))]
             }
             RunEvent::ProviderContextUpdated { .. } => Vec::new(),

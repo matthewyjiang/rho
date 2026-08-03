@@ -33,6 +33,45 @@ pub enum ProviderStreamResetReason {
     InvalidResponse,
     /// The provider request failed with a retryable error.
     RetryableFailure(crate::ProviderErrorKind),
+    /// Retryable provider failure that includes a provider-supplied wait hint.
+    ///
+    /// Appended after existing variants so 1.0 discriminants stay stable under
+    /// a minor release. Prefer [`Self::retryable_failure`] when constructing.
+    RetryableFailureWithRetryAfter {
+        kind: crate::ProviderErrorKind,
+        retry_after: Duration,
+    },
+}
+
+impl ProviderStreamResetReason {
+    /// Builds a retryable-failure reason, attaching a wait when the provider supplied one.
+    pub fn retryable_failure(
+        kind: crate::ProviderErrorKind,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        match retry_after.filter(|delay| !delay.is_zero()) {
+            Some(retry_after) => Self::RetryableFailureWithRetryAfter { kind, retry_after },
+            None => Self::RetryableFailure(kind),
+        }
+    }
+
+    /// Provider error kind when this reset was caused by a retryable failure.
+    pub fn provider_error_kind(self) -> Option<crate::ProviderErrorKind> {
+        match self {
+            Self::InvalidResponse => None,
+            Self::RetryableFailure(kind) | Self::RetryableFailureWithRetryAfter { kind, .. } => {
+                Some(kind)
+            }
+        }
+    }
+
+    /// Provider-supplied wait before the next attempt may succeed.
+    pub fn retry_after(self) -> Option<Duration> {
+        match self {
+            Self::RetryableFailureWithRetryAfter { retry_after, .. } => Some(retry_after),
+            Self::InvalidResponse | Self::RetryableFailure(_) => None,
+        }
+    }
 }
 
 /// Reason a successful run stopped producing model turns.
@@ -272,8 +311,6 @@ pub enum RunEvent {
     ProviderStreamReset {
         reason: ProviderStreamResetReason,
         detail: String,
-        /// Provider-supplied wait hint (`Retry-After`) when available.
-        retry_after: Option<Duration>,
     },
     /// Host input requested by a correlated tool call.
     ToolHostInputRequested {

@@ -74,7 +74,6 @@ fn provider_stream_reset_preserves_completed_model_performance() {
 
     app.record_agent_event(ViewModelEvent::ProviderStreamReset(ProviderRetryHint {
         reason: ProviderStreamResetReason::InvalidResponse,
-        retry_after: None,
     }));
 
     let summary = app.usage.model_performance.summary(&profile);
@@ -111,16 +110,20 @@ fn provider_retry_status_includes_rate_limit_reset_hint() {
 
     assert_eq!(
         ProviderRetryHint {
-            reason: ProviderStreamResetReason::RetryableFailure(ProviderErrorKind::RateLimit),
-            retry_after: Some(Duration::from_secs(12)),
+            reason: ProviderStreamResetReason::retryable_failure(
+                ProviderErrorKind::RateLimit,
+                Some(Duration::from_secs(12)),
+            ),
         }
         .status_label(),
         "rate limited · retry in 12s"
     );
     assert_eq!(
         ProviderRetryHint {
-            reason: ProviderStreamResetReason::RetryableFailure(ProviderErrorKind::RateLimit),
-            retry_after: None,
+            reason: ProviderStreamResetReason::retryable_failure(
+                ProviderErrorKind::RateLimit,
+                None
+            ),
         }
         .status_label(),
         "rate limited · retrying"
@@ -128,7 +131,6 @@ fn provider_retry_status_includes_rate_limit_reset_hint() {
     assert_eq!(
         ProviderRetryHint {
             reason: ProviderStreamResetReason::InvalidResponse,
-            retry_after: None,
         }
         .status_label(),
         "retrying provider response"

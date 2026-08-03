@@ -24,7 +24,6 @@ fn provider_stream_reset_clears_attempt_owned_tool_previews() {
     app.handle_agent_event(
         ViewModelEvent::ProviderStreamReset(crate::tui::activity::ProviderRetryHint {
             reason: rho_sdk::ProviderStreamResetReason::InvalidResponse,
-            retry_after: None,
         }),
         &mut terminal,
     )
