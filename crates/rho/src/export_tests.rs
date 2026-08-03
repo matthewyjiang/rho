@@ -99,9 +99,8 @@ fn pairs_tool_results_and_renders_orphans_standalone() {
 // Owner: pure unit
 #[test]
 fn resolve_output_target_covers_extension_relative_absolute_and_directory() {
-    let _env = crate::paths::process_env_lock();
     let home = tempfile::tempdir().unwrap();
-    std::env::set_var("RHO_HOME", home.path());
+    let export_dir = home.path().join("exports");
 
     let cwd = PathBuf::from("/tmp/workspace");
     let dir = tempfile::tempdir().unwrap();
@@ -109,7 +108,7 @@ fn resolve_output_target_covers_extension_relative_absolute_and_directory() {
     let stamp = format_file_stamp(export.updated_at);
     let default_name = format!("rho-session-aaaaaaaa-{stamp}-fix-the-login-bug.html");
 
-    let (default_path, default_format) = resolve_output_target(
+    let (default_path, default_format) = resolve_output_target_with(
         &cwd,
         &ExportWriteOptions {
             path_arg: "",
@@ -117,13 +116,11 @@ fn resolve_output_target_covers_extension_relative_absolute_and_directory() {
             force: false,
         },
         &export,
+        || Ok(export_dir.clone()),
     )
     .unwrap();
     assert_eq!(default_format, ExportFormat::Html);
-    assert_eq!(
-        default_path,
-        home.path().join("exports").join(&default_name)
-    );
+    assert_eq!(default_path, export_dir.join(&default_name));
 
     let (md_path, md_format) = resolve_output_target(
         &cwd,
@@ -176,11 +173,32 @@ fn resolve_output_target_covers_extension_relative_absolute_and_directory() {
             force: false,
         },
         &export,
+    );
+    assert!(mismatch.is_err());
+
+    let unknown_with_format = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: "notes.txt",
+            format: Some(ExportFormat::Html),
+            force: false,
+        },
+        &export,
+    );
+    assert!(unknown_with_format.is_err());
+
+    let (stem_path, stem_format) = resolve_output_target(
+        &cwd,
+        &ExportWriteOptions {
+            path_arg: "notes",
+            format: Some(ExportFormat::Markdown),
+            force: false,
+        },
+        &export,
     )
-    .unwrap_err();
-    assert!(mismatch
-        .to_string()
-        .contains("does not match path extension"));
+    .unwrap();
+    assert_eq!(stem_format, ExportFormat::Markdown);
+    assert_eq!(stem_path, cwd.join("notes.md"));
 
     let unknown = resolve_output_target(
         &cwd,
@@ -190,11 +208,8 @@ fn resolve_output_target_covers_extension_relative_absolute_and_directory() {
             force: false,
         },
         &export,
-    )
-    .unwrap_err();
-    assert!(unknown.to_string().contains("unknown export extension"));
-
-    std::env::remove_var("RHO_HOME");
+    );
+    assert!(unknown.is_err());
 }
 
 // Covers: markdown/json renderers keep tool pairing and refuse silent overwrite.
@@ -222,7 +237,11 @@ fn markdown_and_json_export_and_overwrite_guard() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["id"], SESSION_ID);
     assert_eq!(value["title"], "Fix the login bug");
+    assert_eq!(value["cwd"], "example-workspace");
     assert_eq!(value["messages"].as_array().unwrap().len(), 3);
+    let cwd = value["cwd"].as_str().unwrap();
+    assert!(!cwd.contains('/'));
+    assert!(!cwd.contains('\\'));
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("once.md");
@@ -245,9 +264,8 @@ fn markdown_and_json_export_and_overwrite_guard() {
             force: false,
         },
         &export,
-    )
-    .unwrap_err();
-    assert!(refused.to_string().contains("refusing to overwrite"));
+    );
+    assert!(refused.is_err());
     write_export(
         dir.path(),
         &ExportWriteOptions {

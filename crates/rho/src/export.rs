@@ -97,24 +97,32 @@ pub(crate) fn write_export(
     export: &SessionExport,
 ) -> anyhow::Result<PathBuf> {
     let (path, format) = resolve_output_target(cwd, options, export)?;
-    if path.exists() && !options.force {
-        anyhow::bail!(
-            "refusing to overwrite {}; pass --force to replace it",
-            path.display()
-        );
-    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let rendered = render_export(export, format)?;
     let mut open_options = fs::OpenOptions::new();
-    open_options.create(true).write(true).truncate(true);
+    open_options.write(true);
+    if options.force {
+        open_options.create(true).truncate(true);
+    } else {
+        open_options.create_new(true);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         open_options.mode(0o600);
     }
-    let mut file = open_options.open(&path)?;
+    let mut file = match open_options.open(&path) {
+        Ok(file) => file,
+        Err(error) if !options.force && error.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::bail!(
+                "refusing to overwrite {}; pass --force to replace it",
+                path.display()
+            );
+        }
+        Err(error) => return Err(error.into()),
+    };
     set_private_file_permissions(&file)?;
     file.write_all(rendered.as_bytes())?;
     Ok(path)
@@ -156,6 +164,15 @@ pub(crate) fn resolve_output_target(
     options: &ExportWriteOptions<'_>,
     export: &SessionExport,
 ) -> anyhow::Result<(PathBuf, ExportFormat)> {
+    resolve_output_target_with(cwd, options, export, default_export_dir)
+}
+
+fn resolve_output_target_with(
+    cwd: &Path,
+    options: &ExportWriteOptions<'_>,
+    export: &SessionExport,
+    default_export_dir: impl FnOnce() -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<(PathBuf, ExportFormat)> {
     let path_arg = options.path_arg.trim();
     let default_format = options.format.unwrap_or(ExportFormat::Html);
     let default_name = default_file_name(export, default_format);
@@ -178,30 +195,37 @@ pub(crate) fn resolve_output_target(
         ));
     }
 
-    let extension_format = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .and_then(ExportFormat::from_extension);
+    let path_extension = path_extension_str(&path);
+    let extension_format = path_extension.and_then(ExportFormat::from_extension);
 
     let format = match (options.format, extension_format) {
         (Some(explicit), Some(from_ext)) if explicit != from_ext => {
             anyhow::bail!(
                 "export format {:?} does not match path extension '.{}'; use .{} or omit --format",
                 explicit,
-                path.extension()
-                    .and_then(|extension| extension.to_str())
-                    .unwrap_or(""),
+                path_extension.unwrap_or(""),
                 explicit.extension()
             );
         }
-        (Some(explicit), _) => explicit,
+        (Some(explicit), None) if path_extension.is_some() => {
+            anyhow::bail!(
+                "export format {:?} does not match path extension '.{}'; use .{} or omit --format",
+                explicit,
+                path_extension.unwrap_or(""),
+                explicit.extension()
+            );
+        }
+        (Some(explicit), None) => {
+            // No extension with an explicit format: append the format extension.
+            let path = path.with_extension(explicit.extension());
+            return Ok((path, explicit));
+        }
+        (Some(explicit), Some(_)) => explicit,
         (None, Some(from_ext)) => from_ext,
-        (None, None) if path.extension().is_some() => {
+        (None, None) if path_extension.is_some() => {
             anyhow::bail!(
                 "unknown export extension '.{}'; use .html, .md, or .json",
-                path.extension()
-                    .and_then(|extension| extension.to_str())
-                    .unwrap_or("")
+                path_extension.unwrap_or("")
             );
         }
         (None, None) => {
@@ -212,6 +236,10 @@ pub(crate) fn resolve_output_target(
     };
 
     Ok((path, format))
+}
+
+fn path_extension_str(path: &Path) -> Option<&str> {
+    path.extension().and_then(|extension| extension.to_str())
 }
 
 fn default_export_dir() -> anyhow::Result<PathBuf> {
@@ -621,7 +649,7 @@ fn local_datetime(unix_secs: u64) -> Option<chrono::DateTime<chrono::Local>> {
     Some(chrono::DateTime::from_timestamp(timestamp, 0)?.with_timezone(&chrono::Local))
 }
 
-pub(super) fn now_unix_secs() -> u64 {
+pub(crate) fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())

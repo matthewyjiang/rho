@@ -68,10 +68,15 @@ pub(super) fn render_markdown(export: &SessionExport) -> String {
 }
 
 pub(super) fn render_json(export: &SessionExport) -> anyhow::Result<String> {
+    // Match markdown/HTML: share the workspace directory name, not the full path.
+    let cwd = export.cwd.file_name().map_or_else(
+        || crate::paths::display(&export.cwd),
+        |name| name.to_string_lossy().into_owned(),
+    );
     let document = JsonTranscript {
         id: &export.id,
         title: export.title.as_deref(),
-        cwd: crate::paths::display(&export.cwd),
+        cwd,
         created_at: export.created_at,
         updated_at: export.updated_at,
         exported_at: super::now_unix_secs(),

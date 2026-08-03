@@ -3,7 +3,6 @@
 use std::{
     io::{self, IsTerminal, Write},
     path::Path,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::Serialize;
@@ -128,7 +127,7 @@ fn print_session_list(
         return Ok(());
     }
 
-    let now = now_unix_secs();
+    let now = export::now_unix_secs();
     let id_width = sessions
         .iter()
         .map(|session| short_id(&session.id).len())
@@ -328,13 +327,6 @@ fn format_updated_ago(updated_at: u64, now: u64) -> String {
     }
     let days = hours / 24;
     format!("{days}d ago")
-}
-
-fn now_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

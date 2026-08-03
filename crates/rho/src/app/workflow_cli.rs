@@ -15,14 +15,14 @@ use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
         derive_workflow_outcome, CollectedSources, Diagnostic, InputName, PlanInventoryItem,
-        PlanningLimits, PlanningMeasurements, RunInventoryItem, SourceManifest, StarlarkPlanner,
-        StoredPlan, StoredRun, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore,
-        WorkflowValue,
+        PlanningLimits, PlanningMeasurements, RunInventoryItem, RunLifecycle, SourceManifest,
+        StarlarkPlanner, StoredPlan, StoredRun, WorkflowError, WorkflowResult, WorkflowService,
+        WorkflowStore, WorkflowValue,
     },
 };
 
 #[cfg(test)]
-use crate::workflow::{PlanConsent, RunLifecycle};
+use crate::workflow::PlanConsent;
 
 use super::{
     automation, automation_protocol::TerminalReason, bootstrap::host_capabilities, cli_config,
@@ -89,7 +89,10 @@ pub(super) async fn run(command: &WorkflowCommand, cli: &Cli) -> anyhow::Result<
             runs,
             limit,
             json,
-        } => run_list(*plans, *runs, *limit, *json),
+        } => run_list(
+            /* plans_only */ *plans, /* runs_only */ *runs, /* limit */ *limit,
+            /* json */ *json,
+        ),
         WorkflowCommand::Validate { file, input } => run_validate(file, input, cli).await,
         WorkflowCommand::Plan {
             file,
@@ -168,7 +171,7 @@ fn run_list(
                 println!(
                     "  {}  {:<12}  {}/{}  {}",
                     short_uuid(&run.run_id.to_string()),
-                    format!("{:?}", run.lifecycle).to_ascii_lowercase(),
+                    lifecycle_public_value(run.lifecycle),
                     run.done_steps,
                     run.total_steps,
                     run.name
@@ -237,11 +240,22 @@ impl From<&RunInventoryItem> for RunListItem {
         Self {
             id: run.run_id.to_string(),
             name: run.name.clone(),
-            lifecycle: format!("{:?}", run.lifecycle).to_ascii_lowercase(),
+            lifecycle: lifecycle_public_value(run.lifecycle).to_string(),
             done_steps: run.done_steps,
             total_steps: run.total_steps,
             created_at_unix_nanos: run.created_at_unix_nanos,
         }
+    }
+}
+
+/// Wire/public lifecycle token shared by text and JSON list output.
+fn lifecycle_public_value(lifecycle: RunLifecycle) -> &'static str {
+    match lifecycle {
+        RunLifecycle::Planned => "planned",
+        RunLifecycle::Running => "running",
+        RunLifecycle::Cancelling => "cancelling",
+        RunLifecycle::Completed => "completed",
+        RunLifecycle::NeedsRecovery => "needs_recovery",
     }
 }
 
