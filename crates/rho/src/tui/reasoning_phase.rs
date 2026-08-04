@@ -43,10 +43,6 @@ impl ReasoningPhase {
     pub(super) fn is_open(&self) -> bool {
         self.open
     }
-
-    pub(super) fn has_started(&self) -> bool {
-        self.started_at.is_some()
-    }
 }
 
 /// Formats the post-reasoning summary line.

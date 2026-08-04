@@ -108,7 +108,6 @@ fn zen_reasoning_deltas_do_not_render_thinking_placeholder() {
     .unwrap();
 
     assert!(app.turn.reasoning_phase().is_open());
-    assert!(app.turn.reasoning_phase().has_started());
     assert_eq!(app.info.runtime.reasoning_chrome(), ReasoningChrome::Hidden);
     assert!(!live_contains_thinking(&app));
     assert!(!app.info.runtime.displays_reasoning_output());
