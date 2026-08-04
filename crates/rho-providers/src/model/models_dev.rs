@@ -269,7 +269,11 @@ async fn fetch_models_dev_api() -> Option<Value> {
 /// Bump when the models.dev parser gains fields that older cache rows omit.
 /// Older or incomplete rows remain available as stale offline fallback, while
 /// explicit fetch paths rehydrate and write them from a catalog snapshot.
-const MODEL_METADATA_CACHE_VERSION: i64 = 6;
+///
+/// v7: Qwen Token Plan switched from Unknown to ExactAdvertised. Rows written
+/// under Unknown stored `reasoning_metadata_complete = true` with no levels, so
+/// fetch short-circuited forever. Bump forces rehydrate from models.dev.
+const MODEL_METADATA_CACHE_VERSION: i64 = 7;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)

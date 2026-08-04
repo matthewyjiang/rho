@@ -162,6 +162,43 @@ fn poolside_version_five_metadata_is_stale_after_reasoning_policy_change() {
     });
 }
 
+// Covers: Unknown-era Token Plan rows must not block ExactAdvertised rehydrate
+// Owner: models.dev cache freshness
+#[test]
+fn qwen_token_plan_unknown_complete_rows_are_stale_after_policy_change() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        // Shape written while catalog_reasoning was Unknown: complete, but no levels.
+        let old_metadata = ModelMetadata {
+            reasoning_capabilities_known: false,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+        write_cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max", &old_metadata);
+        open_models_dev_cache()
+            .unwrap()
+            .execute(
+                "update model_metadata set cache_version = 6
+                 where provider = 'qwen-token-plan' and model = 'qwen3.8-max'",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(
+            current_cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max"),
+            None
+        );
+        assert!(model_metadata_needs_refresh(
+            "qwen-token-plan",
+            "qwen3.8-max"
+        ));
+        assert_eq!(
+            cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max"),
+            Some(old_metadata)
+        );
+    });
+}
+
 #[test]
 fn provider_context_length_overrides_generic_effective_context() {
     let cache_dir = tempfile::tempdir().unwrap();
