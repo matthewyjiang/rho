@@ -1,4 +1,4 @@
-//! Secret API-key and endpoint collection for interactive provider login.
+//! Secret API-key collection for interactive provider login.
 
 use rho_providers::model::catalog::LoginTarget;
 
@@ -7,37 +7,16 @@ use super::{composer_chrome, styled_line, truncate_one_line, LineFill, Theme};
 #[derive(Clone, Debug)]
 pub(super) struct SecretInput {
     pub(super) target: LoginTarget,
-    pub(super) phase: SecretInputPhase,
     pub(super) value: String,
     pub(super) cursor: usize,
-}
-
-#[derive(Clone, Debug)]
-pub(super) enum SecretInputPhase {
-    ApiKey,
-    /// API key already collected; prompt for the OpenAI-compatible base URL.
-    Endpoint {
-        api_key: String,
-    },
 }
 
 impl SecretInput {
     pub(super) fn new(target: LoginTarget) -> Self {
         Self {
             target,
-            phase: SecretInputPhase::ApiKey,
             value: String::new(),
             cursor: 0,
-        }
-    }
-
-    pub(super) fn for_endpoint(target: LoginTarget, api_key: String, initial: String) -> Self {
-        let cursor = initial.chars().count();
-        Self {
-            target,
-            phase: SecretInputPhase::Endpoint { api_key },
-            value: initial,
-            cursor,
         }
     }
 
@@ -90,24 +69,12 @@ pub(super) fn secret_input_lines(
     secret: &SecretInput,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
-    let (prompt, display_value) = match &secret.phase {
-        SecretInputPhase::ApiKey => (
-            format!(
-                "enter {}  {}",
-                secret.target.label,
-                composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
-            ),
-            "•".repeat(secret.value.chars().count()),
-        ),
-        SecretInputPhase::Endpoint { .. } => (
-            format!(
-                "enter {} endpoint  {}",
-                secret.target.provider,
-                composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
-            ),
-            secret.value.clone(),
-        ),
-    };
+    let prompt = format!(
+        "enter {}  {}",
+        secret.target.label,
+        composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+    );
+    let display_value = "•".repeat(secret.value.chars().count());
     vec![
         styled_line(
             truncate_one_line(&prompt, width),

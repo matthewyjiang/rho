@@ -11,7 +11,7 @@ use {
     rho_providers::provider,
 };
 
-pub(super) use super::login_secret_input::{secret_input_lines, SecretInput, SecretInputPhase};
+pub(super) use super::login_secret_input::{secret_input_lines, SecretInput};
 
 #[derive(Debug)]
 pub(super) struct PendingInteractiveLogin {
@@ -345,66 +345,8 @@ impl App {
             self.set_status("login failed");
             return Ok(());
         }
-        if crate::config::ProviderConfigs::stores_endpoint(&target.provider) {
-            let initial = self
-                .info
-                .services
-                .config_repository
-                .load()
-                .ok()
-                .and_then(|config| config.resolved_provider_endpoint(&target.provider))
-                .map(|url| url.to_string())
-                .unwrap_or_default();
-            self.input_ui
-                .set_composer(ComposerMode::SecretInput(SecretInput::for_endpoint(
-                    target, key, initial,
-                )));
-            self.set_status("enter OpenAI-compatible endpoint");
-            return Ok(());
-        }
         self.persist_api_key_and_finish(target, key, terminal, agent)
             .await
-    }
-
-    pub(super) async fn submit_endpoint_login(
-        &mut self,
-        target: LoginTarget,
-        api_key: String,
-        endpoint: String,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let endpoint = endpoint.trim().to_string();
-        if endpoint.is_empty() {
-            self.insert_entry(&Entry::Error("endpoint cannot be empty".into()));
-            self.set_status("login failed");
-            return Ok(());
-        }
-        // Save the key first so a failed key write never mutates the base URL.
-        // An invalid endpoint keeps the new key (same as plain API-key login)
-        // and leaves the previous base URL in place.
-        self.cancel_limits_command().await;
-        if let Err(err) = ProviderAuthentication::save_api_key(
-            self.credential_store.as_ref(),
-            &target.auth,
-            &api_key,
-        ) {
-            self.insert_entry(&Entry::Error(err.to_string()));
-            self.set_status("login failed");
-            return Ok(());
-        }
-        let provider = target.provider.clone();
-        let stored = self
-            .info
-            .services
-            .config_repository
-            .update(|config| config.providers.set_endpoint(&provider, &endpoint));
-        if let Err(error) = stored.and_then(|result| result) {
-            self.insert_entry(&Entry::Error(error.to_string()));
-            self.set_status("login failed");
-            return Ok(());
-        }
-        self.finish_login(target, terminal, agent).await
     }
 
     async fn persist_api_key_and_finish(

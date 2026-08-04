@@ -9,7 +9,7 @@ Rho supports [QwenCloud Token Plan](https://docs.qwencloud.com/token-plan/overvi
 | Provider | `qwen-token-plan` |
 | Auth | `qwen-token-plan-api-key` |
 | Environment override | `QWEN_TOKEN_PLAN_API_KEY` |
-| Default API base | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` |
+| API base | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` |
 | Model source | Token Plan `/models` API |
 
 Create a Token Plan dedicated API key on the [API Keys page](https://home.qwencloud.com/api-keys). Token Plan keys are not interchangeable with Coding Plan or pay-as-you-go keys. Model access depends on your plan, so Rho fetches the model list after login instead of keeping a static list.
@@ -22,20 +22,7 @@ In the TUI, run:
 /login qwen-token-plan
 ```
 
-Rho asks for:
-
-1. Your Token Plan API key
-2. The OpenAI-compatible endpoint you were given
-
-Paste the endpoint exactly as shown in the QwenCloud console or docs. The common international value is:
-
-```text
-https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-```
-
-Keep the `/compatible-mode/v1` path. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
-
-Rho stores the key in the configured credential store and the endpoint under `[providers.qwen-token-plan].base_url` in `config.toml`. It then refreshes the models available to your account. Select one with `/model`, for example:
+Rho asks for your Token Plan API key, stores it in the configured credential store, and refreshes the models available to your account. Select one with `/model`, for example:
 
 ```text
 /model qwen-token-plan/qwen3.7-plus
@@ -47,16 +34,9 @@ Remove the stored key with:
 /logout qwen-token-plan
 ```
 
-Logout does not clear the saved endpoint. Edit or remove `[providers.qwen-token-plan].base_url` in config if you need a different base URL without logging in again.
-
 ## Environment and automation
 
-For CI or development, set `QWEN_TOKEN_PLAN_API_KEY`. It overrides a stored key. Set the endpoint in config:
-
-```toml
-[providers.qwen-token-plan]
-base_url = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-```
+For CI or development, set `QWEN_TOKEN_PLAN_API_KEY`. It overrides a stored key.
 
 ```bash
 export QWEN_TOKEN_PLAN_API_KEY="<api-key>"
