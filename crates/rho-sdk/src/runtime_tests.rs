@@ -24,8 +24,9 @@ use crate::{
         ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
         ToolInvocation, ToolOutput,
     },
-    Error, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, Rho, RunEvent,
-    SelectionMode, SessionOptions, SteeringRetraction, SystemPrompt, UserInput,
+    Error, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, ProviderError,
+    ProviderErrorKind, Retryability, Rho, RunEvent, SelectionMode, SessionOptions,
+    SteeringRetraction, SystemPrompt, UserInput,
 };
 
 fn identity() -> ModelIdentity {
@@ -1080,6 +1081,87 @@ async fn cancellation_before_the_first_provider_turn_still_commits_the_user_mess
         "cancelled run should still commit the user message: {:?}",
         session.history()
     );
+    assert_eq!(session.revision().get(), 1);
+}
+
+// Covers: SSE/provider failure must keep the user turn for resume
+// Owner: sdk orchestration
+#[tokio::test]
+async fn provider_failure_commits_turn_history() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::failed(ProviderError::new(
+                ProviderErrorKind::Unavailable,
+                "sse disconnect",
+                Retryability::Permanent,
+            )),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "continued".into(),
+            )])),
+        ],
+    );
+    let runtime = Rho::builder().provider(provider.clone()).build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    let error = session.complete("do work").await.unwrap_err();
+    assert!(matches!(error, Error::Provider(_)));
+    assert_eq!(error.to_string(), "provider failed: sse disconnect");
+
+    assert_eq!(session.history(), [Message::user_text("do work")]);
+    assert_eq!(session.revision().get(), 1);
+
+    assert_eq!(
+        session.complete("continue").await.unwrap().text(),
+        "continued"
+    );
+    let requests = provider.recorded_requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].messages.last(),
+        Some(&Message::user_text("continue"))
+    );
+    assert!(
+        requests[1]
+            .messages
+            .iter()
+            .any(|message| message == &Message::user_text("do work")),
+        "follow-up request should still see the failed turn: {:?}",
+        requests[1].messages
+    );
+}
+
+// Covers: failed stream with partial deltas must keep aborted assistant output
+// Owner: sdk orchestration
+#[tokio::test]
+async fn provider_stream_failure_keeps_partial_assistant_in_history() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::streaming_failed(
+            vec![ModelEvent::OutputDelta("partial answer".into())],
+            ProviderError::new(
+                ProviderErrorKind::Unavailable,
+                "stream ended",
+                Retryability::Permanent,
+            ),
+        )],
+    );
+    let runtime = Rho::builder().provider(provider).build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    let error = session.complete("write something").await.unwrap_err();
+    assert!(matches!(error, Error::Provider(_)));
+
+    assert!(matches!(
+        session.history().as_slice(),
+        [
+            Message::User(_),
+            Message::AbortedAssistant(aborted),
+        ] if matches!(
+            aborted.content.as_slice(),
+            [ContentBlock::Text(text)] if text == "partial answer"
+        )
+    ));
     assert_eq!(session.revision().get(), 1);
 }
 

@@ -804,6 +804,73 @@ async fn cancellation_during_retry_backoff_stops_the_run() {
     assert_eq!(calls.load(Ordering::Acquire), 1);
 }
 
+// Covers: cancel during backoff after StreamReset must not commit discarded
+// partial stream text or tool-call fragments as AbortedAssistant.
+// Owner: sdk orchestration
+#[tokio::test]
+async fn cancellation_during_retry_backoff_drops_abandoned_partial_stream() {
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("partial-retry", "test", "partial-retry"),
+        [
+            ScriptedTurn::streaming_failed(
+                vec![
+                    ModelEvent::OutputDelta("stale partial".into()),
+                    ModelEvent::ToolCallDelta {
+                        index: 0,
+                        id: Some("call-1".into()),
+                        name: Some("do_work".into()),
+                        arguments: "{\"x\":".into(),
+                    },
+                ],
+                ProviderError::new(
+                    ProviderErrorKind::Unavailable,
+                    "stream dropped",
+                    Retryability::Retryable,
+                ),
+            ),
+            // Must not be reached after cancel during backoff.
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "recovered".into(),
+            )])),
+        ],
+    );
+    let session = Rho::builder()
+        .provider(provider)
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+
+    loop {
+        match next_event(&mut run).await {
+            RunEvent::ProviderStreamReset {
+                reason: crate::ProviderStreamResetReason::RetryableFailure(_),
+                ..
+            } => break,
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    }
+    run.cancel();
+
+    let outcome = tokio::time::timeout(TEST_TIMEOUT, run.outcome())
+        .await
+        .expect("cancelled run timed out");
+    assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
+
+    assert_eq!(session.history(), [Message::user_text("start")]);
+    assert!(
+        session
+            .history()
+            .iter()
+            .all(|message| !matches!(message, Message::AbortedAssistant(_))),
+        "abandoned retry partials must not become AbortedAssistant: {:?}",
+        session.history()
+    );
+}
+
 #[tokio::test]
 async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     let runtime = Rho::builder()
