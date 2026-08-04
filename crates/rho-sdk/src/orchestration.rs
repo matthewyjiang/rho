@@ -545,7 +545,12 @@ async fn request_valid_response(
                 };
                 tokio::select! {
                     () = tokio::time::sleep(delay) => {}
-                    () = control.cancellation.cancelled() => return Err(failure),
+                    () = control.cancellation.cancelled() => {
+                        // ProviderStreamReset already abandoned this attempt.
+                        // Do not commit its discarded partials as AbortedAssistant.
+                        failure.capture = StreamCapture::default();
+                        return Err(failure);
+                    }
                 }
                 continue;
             }
