@@ -27,6 +27,10 @@ impl App {
     }
 
     pub(super) fn end_busy_ui(&mut self) {
+        // Live stream estimates are display-only for the in-flight provider
+        // attempt. Drop them when the turn is no longer busy so statusline cost
+        // returns to the durable ledger (plus claimed subagent totals).
+        self.usage.live_stream.clear();
         self.turn.end_busy();
     }
 

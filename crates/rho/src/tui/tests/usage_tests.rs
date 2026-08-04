@@ -286,3 +286,22 @@ fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
         })
     );
 }
+
+// Covers: ending a busy turn must drop live estimates so statusline cost is ledger + subagents
+// Owner: tui run lifecycle usage accounting
+#[test]
+fn end_busy_ui_clears_live_stream_estimate() {
+    let mut app = test_app();
+    app.record_agent_event(ViewModelEvent::RunStarted);
+    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
+        2_500,
+        Some(10_000),
+    )));
+    app.record_agent_event(ViewModelEvent::LiveOutputText("abcd".into()));
+    assert!(app.usage.live_stream.is_active());
+
+    app.end_busy_ui();
+
+    assert!(!app.usage.live_stream.is_active());
+}
