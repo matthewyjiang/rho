@@ -5,7 +5,11 @@
 //! same tag, and editors reject a tag when the live file no longer matches.
 
 /// Number of uppercase hex digits in a file snapshot tag.
-pub const FILE_HASH_LENGTH: usize = 4;
+///
+/// Full 32-bit width: the tag is the only guard against a model applying line
+/// numbers from a read that a concurrent writer has already invalidated, so the
+/// collision space is worth more than the four characters it costs.
+pub const FILE_HASH_LENGTH: usize = 8;
 
 /// Separator between a path and its snapshot tag inside a section header.
 pub const FILE_HASH_SEP: char = '#';
@@ -13,11 +17,10 @@ pub const FILE_HASH_SEP: char = '#';
 /// Separator between a 1-indexed line number and the line body.
 pub const LINE_BODY_SEP: char = ':';
 
-/// Compute the 4-hex snapshot tag for normalized file text.
+/// Compute the snapshot tag for normalized file text.
 pub fn compute_file_hash(text: &str) -> String {
-    let normalized = normalize_for_hash(text);
-    let digest = fnv1a32(normalized.as_bytes()) & 0xffff;
-    format!("{digest:04X}")
+    let digest = fnv1a32(normalize_for_hash(text).as_bytes());
+    format!("{digest:08X}")
 }
 
 /// Format a section header `[path#TAG]`.
@@ -79,9 +82,9 @@ pub fn format_hashline_view(
     // Drop the trailing newline so truncation and tool output stay tidy, matching
     // ordinary file bodies that the model already expects without a final blank.
     out.pop();
-    if limit.is_some() && end < total {
+    if start > 1 || end < total {
         out.push_str(&format!(
-            "\n\n[{end} of {total} lines shown; re-read with a higher limit or later offset for the rest]"
+            "\n\n[lines {start}-{end} of {total} shown; re-read with a different offset or limit for the rest]"
         ));
     }
     Ok(out)

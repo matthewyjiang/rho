@@ -36,7 +36,7 @@ fn hashline_view_uses_absolute_lines_and_full_file_tag() {
     assert_eq!(
         view,
         format!(
-            "[src/a.rs#{hash}]\n2:two\n3:three\n\n[3 of 4 lines shown; re-read with a higher limit or later offset for the rest]"
+            "[src/a.rs#{hash}]\n2:two\n3:three\n\n[lines 2-3 of 4 shown; re-read with a different offset or limit for the rest]"
         )
     );
 }

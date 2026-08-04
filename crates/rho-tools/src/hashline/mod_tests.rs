@@ -51,7 +51,7 @@ async fn stale_tag_leaves_file_untouched() {
     let error = HashlineEdit
         .call(
             serde_json::json!({
-                "input": "[sample.rs#DEAD]\nPUT 1.=1:\n+nope\n"
+                "input": "[sample.rs#DEADBEEF]\nPUT 1.=1:\n+nope\n"
             }),
             ctx,
             "call_stale".into(),

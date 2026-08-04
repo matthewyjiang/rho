@@ -39,22 +39,63 @@ pub enum Op {
     Delete { start: usize, end: usize },
 }
 
-impl Op {
-    /// Inclusive original line span touched by this op, if any.
-    pub fn span(&self) -> Option<(usize, usize)> {
-        match self {
-            Self::Replace { start, end, .. } | Self::Delete { start, end } => Some((*start, *end)),
-            Self::InsertBefore { line, .. } => Some((*line, *line)),
-            Self::InsertAfter {
-                line: Some(line), ..
-            } => Some((*line, *line)),
-            Self::InsertAfter { line: None, .. } => None,
-        }
-    }
+/// How the parser treats input it cannot understand.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Strictness {
+    /// Any malformed line fails the whole document. Used before writing.
+    Reject,
+    /// Malformed and half-streamed lines are skipped. Used for preview cards.
+    Skip,
 }
 
 /// Parse a complete hashline edit document into file sections.
 pub fn parse_hashline(input: &str) -> Result<Vec<Section>, String> {
+    parse(input, Strictness::Reject)
+}
+
+/// A section as far as it has streamed in, for presentation cards.
+///
+/// Line counts come from the document alone, so they stay available before the
+/// edit runs and never need the target file on disk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposedSection {
+    pub path: String,
+    pub added_lines: u64,
+    pub removed_lines: u64,
+}
+
+/// Best-effort read of a possibly incomplete document, for presentation cards.
+pub fn proposed_sections(input: &str) -> Vec<ProposedSection> {
+    parse(input, Strictness::Skip)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|section| {
+            let mut proposed = ProposedSection {
+                path: section.path,
+                added_lines: 0,
+                removed_lines: 0,
+            };
+            for op in &section.ops {
+                match op {
+                    Op::Replace { start, end, body } => {
+                        proposed.added_lines += body.len() as u64;
+                        proposed.removed_lines += (end - start + 1) as u64;
+                    }
+                    Op::Delete { start, end } => {
+                        proposed.removed_lines += (end - start + 1) as u64;
+                    }
+                    Op::InsertBefore { body, .. } | Op::InsertAfter { body, .. } => {
+                        proposed.added_lines += body.len() as u64;
+                    }
+                }
+            }
+            proposed
+        })
+        .collect()
+}
+
+fn parse(input: &str, strictness: Strictness) -> Result<Vec<Section>, String> {
+    let reject = strictness == Strictness::Reject;
     let mut sections = Vec::new();
     let mut current: Option<SectionBuilder> = None;
     let mut lines = input.lines().peekable();
@@ -64,57 +105,72 @@ pub fn parse_hashline(input: &str) -> Result<Vec<Section>, String> {
         if line.is_empty() {
             continue;
         }
-        if let Some((path, tag)) = parse_header(line)? {
-            if let Some(section) = current.take() {
-                sections.push(section.finish()?);
+        match parse_header(line) {
+            Ok(Some((path, tag))) => {
+                if let Some(section) = current.replace(SectionBuilder {
+                    path,
+                    tag,
+                    ops: Vec::new(),
+                }) {
+                    sections.push(section.finish(strictness)?);
+                }
+                continue;
             }
-            current = Some(SectionBuilder {
-                path,
-                tag,
-                ops: Vec::new(),
-            });
-            continue;
+            Ok(None) => {}
+            Err(error) if reject => return Err(error),
+            Err(_) => continue,
         }
-        let builder = current
-            .as_mut()
-            .ok_or_else(|| format!("hashline op outside a [path#TAG] section: {line}"))?;
+        let Some(builder) = current.as_mut() else {
+            if reject {
+                return Err(format!("hashline op outside a [path#TAG] section: {line}"));
+            }
+            continue;
+        };
 
-        if let Some(op) = parse_cut(line)? {
-            builder.ops.push(op);
-            continue;
+        match parse_cut(line) {
+            Ok(Some(op)) => {
+                builder.ops.push(op);
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) if reject => return Err(error),
+            Err(_) => continue,
         }
-        if let Some((op_head, needs_body)) = parse_put_header(line)? {
-            let body = if needs_body {
-                take_body(&mut lines)?
-            } else {
-                Vec::new()
-            };
-            builder.ops.push(op_head.with_body(body)?);
-            continue;
+        match parse_put_header(line) {
+            Ok(Some((op_head, needs_body))) => {
+                let body = if needs_body {
+                    take_body(&mut lines)
+                } else {
+                    Vec::new()
+                };
+                match op_head.with_body(body) {
+                    Ok(op) => builder.ops.push(op),
+                    Err(error) if reject => return Err(error),
+                    // A trailing `PUT N:` whose body has not streamed in yet.
+                    Err(_) => {}
+                }
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) if reject => return Err(error),
+            Err(_) => continue,
         }
-        return Err(format!(
-            "unrecognized hashline line (expected PUT/CUT or [path#TAG]): {line}"
-        ));
+        if reject {
+            return Err(format!(
+                "unrecognized hashline line (expected PUT/CUT or [path#TAG]): {line}"
+            ));
+        }
     }
 
     if let Some(section) = current.take() {
-        sections.push(section.finish()?);
+        sections.push(section.finish(strictness)?);
     }
-    if sections.is_empty() {
+    if reject && sections.is_empty() {
         return Err(
             "hashline input must contain at least one [path#TAG] section with operations".into(),
         );
     }
     Ok(sections)
-}
-
-/// Best-effort path extraction for presentation cards.
-pub fn section_paths_lenient(input: &str) -> Vec<String> {
-    input
-        .lines()
-        .filter_map(|line| parse_header(line.trim_end()).ok().flatten())
-        .map(|(path, _)| path)
-        .collect()
 }
 
 struct SectionBuilder {
@@ -124,8 +180,8 @@ struct SectionBuilder {
 }
 
 impl SectionBuilder {
-    fn finish(self) -> Result<Section, String> {
-        if self.ops.is_empty() {
+    fn finish(self, strictness: Strictness) -> Result<Section, String> {
+        if self.ops.is_empty() && strictness == Strictness::Reject {
             return Err(format!(
                 "hashline section [{}#{}] has no operations",
                 self.path, self.tag
@@ -265,7 +321,7 @@ fn parse_put_header(line: &str) -> Result<Option<(PutHead, bool)>, String> {
     Ok(Some((PutHead::Replace { start, end }, needs_body)))
 }
 
-fn take_body<'a, I>(lines: &mut std::iter::Peekable<I>) -> Result<Vec<String>, String>
+fn take_body<'a, I>(lines: &mut std::iter::Peekable<I>) -> Vec<String>
 where
     I: Iterator<Item = &'a str>,
 {
@@ -281,7 +337,7 @@ where
         // outer loop; blank lines inside a body must be written as a lone `+`.
         break;
     }
-    Ok(body)
+    body
 }
 
 fn parse_range(raw: &str) -> Result<(usize, usize), String> {

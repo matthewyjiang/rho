@@ -105,9 +105,20 @@ pub(super) async fn read_file_content(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<ReadFileContent, ToolError> {
-    // Range reads are always hashline text views of the on-disk UTF-8 body.
+    let mut file = tokio::fs::File::open(path).await?;
+    let source_len = file.metadata().await?.len();
+
+    // Range reads are always hashline text views of the on-disk UTF-8 body. The
+    // whole body is read because the header tag covers the whole file, so the
+    // document size limit applies here just as it does to a full read.
     if offset.is_some() || limit.is_some() {
-        let text = tokio::fs::read_to_string(path).await?;
+        check_document_size(path, source_len)?;
+        let text = tokio::fs::read_to_string(path).await.map_err(|error| {
+            ToolError::Message(format!(
+                "could not read '{}' as UTF-8 text: {error}",
+                path.display()
+            ))
+        })?;
         let content = crate::hashline::format_hashline_view(display_path, &text, offset, limit)
             .map_err(ToolError::Message)?;
         return Ok(ReadFileContent {
@@ -117,8 +128,6 @@ pub(super) async fn read_file_content(
         });
     }
 
-    let mut file = tokio::fs::File::open(path).await?;
-    let source_len = file.metadata().await?.len();
     let mut header = [0_u8; 12];
     let header_len = file.read(&mut header).await?;
     if let Some(mime_type) = supported_image_mime_type(&header[..header_len]) {
@@ -184,12 +193,7 @@ pub(super) async fn read_file_content(
         };
     }
 
-    if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
-        return Err(ToolError::Message(format!(
-            "document '{}' is {source_len} bytes; the input limit is {MAX_DOCUMENT_INPUT_BYTES} bytes",
-            path.display()
-        )));
-    }
+    check_document_size(path, source_len)?;
     let mut bytes = Vec::with_capacity(source_len as usize);
     bytes.extend_from_slice(&header[..header_len]);
     (&mut file)
@@ -227,6 +231,16 @@ pub(super) async fn read_file_content(
         image: None,
         preview_error: None,
     })
+}
+
+fn check_document_size(path: &Path, source_len: u64) -> Result<(), ToolError> {
+    if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
+        return Err(ToolError::Message(format!(
+            "document '{}' is {source_len} bytes; the input limit is {MAX_DOCUMENT_INPUT_BYTES} bytes",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)> {

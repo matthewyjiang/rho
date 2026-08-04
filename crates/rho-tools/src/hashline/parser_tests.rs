@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn parses_core_ops() {
     let sections = parse_hashline(
-        r#"[src/a.rs#A1B2]
+        r#"[src/a.rs#A1B2C3D4]
 PUT 1.=2:
 +alpha
 +beta
@@ -21,7 +21,7 @@ PUT >$:
     .unwrap();
     assert_eq!(sections.len(), 1);
     assert_eq!(sections[0].path, "src/a.rs");
-    assert_eq!(sections[0].tag, "A1B2");
+    assert_eq!(sections[0].tag, "A1B2C3D4");
     assert_eq!(
         sections[0].ops,
         vec![
@@ -47,9 +47,9 @@ PUT >$:
 // Owner: hashline parser
 #[test]
 fn rejects_unsupported_block_and_register_ops() {
-    let err = parse_hashline("[a.rs#ABCD]\nPUT 1*:\n+x\n").unwrap_err();
+    let err = parse_hashline("[a.rs#ABCDABCD]\nPUT 1*:\n+x\n").unwrap_err();
     assert!(err.contains("block ops"), "{err}");
-    let err = parse_hashline("[a.rs#ABCD]\nCUT 1.=2 @name\n").unwrap_err();
+    let err = parse_hashline("[a.rs#ABCDABCD]\nCUT 1.=2 @name\n").unwrap_err();
     assert!(err.contains("registers"), "{err}");
 }
 
@@ -57,7 +57,7 @@ fn rejects_unsupported_block_and_register_ops() {
 // Owner: hashline parser
 #[test]
 fn accepts_single_line_put_shorthand() {
-    let sections = parse_hashline("[a.rs#ABCD]\nPUT 3:\n+only\n").unwrap();
+    let sections = parse_hashline("[a.rs#ABCDABCD]\nPUT 3:\n+only\n").unwrap();
     assert_eq!(
         sections[0].ops,
         vec![Op::Replace {
@@ -65,5 +65,29 @@ fn accepts_single_line_put_shorthand() {
             end: 3,
             body: vec!["only".into()],
         }]
+    );
+}
+
+// Covers: streaming preview must survive a half-written document and report counts
+// Owner: hashline parser
+#[test]
+fn proposes_sections_from_incomplete_documents() {
+    let proposed = proposed_sections(
+        "[a.rs#ABCDABCD]\nPUT 1.=3:\n+one\n+two\nCUT 8.=9\n[b.rs#ABCDABCD]\nPUT 2:\n+pa",
+    );
+    assert_eq!(
+        proposed,
+        vec![
+            ProposedSection {
+                path: "a.rs".into(),
+                added_lines: 2,
+                removed_lines: 5,
+            },
+            ProposedSection {
+                path: "b.rs".into(),
+                added_lines: 1,
+                removed_lines: 1,
+            },
+        ]
     );
 }

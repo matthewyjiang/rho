@@ -614,10 +614,10 @@ async fn hashline_edit_prepare_reserves_existing_targets() {
     let workspace = workspace(&dir);
     let tool = coding_tool(CodingToolKind::HashlineEdit, CodingToolOptions::default());
     let input = "\
-[a.txt#AAAA]
+[a.txt#AAAAAAAA]
 PUT 1.=1:
 +A
-[b.txt#BBBB]
+[b.txt#BBBBBBBB]
 PUT 1.=1:
 +B
 ";

@@ -3,7 +3,7 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
-use rho_tools::{compact_display_path, hashline::format_hashline_view, truncate};
+use rho_tools::compact_display_path;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -143,8 +143,9 @@ fn applies_configured_tool_output_limit() {
     let output = run(&root, "read-file", &["run", "read the file"], None);
 
     assert_success(&output);
-    let full = format_hashline_view("large.txt", "abcdefgh", None, None).unwrap();
-    assert_eq!(stdout(&output), format!("{}\n", truncate(full, 5)));
+    // The hashline header is emitted before any content line, so a 5-byte budget
+    // cuts inside the header itself.
+    assert_eq!(stdout(&output), "[larg\n[truncated]\n");
     assert!(output.stderr.is_empty());
 }
 
@@ -166,10 +167,14 @@ fn reads_and_writes_paths_outside_the_working_directory() {
     // Tools display paths relative to the canonical workspace root (macOS /var
     // -> /private/var, Windows short paths / \\?\ prefixes), so match that here.
     let workspace_root = root.path().canonicalize().unwrap();
-    let display =
-        compact_display_path(&workspace_root, &relative_input_path.to_string_lossy());
-    let expected = format_hashline_view(&display, "outside content", None, None).unwrap();
-    assert_eq!(stdout(&read_output), format!("{expected}\n"));
+    let display = compact_display_path(&workspace_root, &relative_input_path.to_string_lossy());
+    let read_stdout = stdout(&read_output);
+    let (header, body) = read_stdout.trim_end().split_once('\n').unwrap();
+    assert!(
+        header.starts_with(&format!("[{display}#")) && header.ends_with(']'),
+        "{header}"
+    );
+    assert_eq!(body, "1:outside content");
 
     let output_path = outside.path().join("output.txt");
     let mut write = command(&root, "write-path");

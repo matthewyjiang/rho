@@ -60,3 +60,115 @@ fn rejects_overlapping_replaces() {
     .unwrap_err();
     assert!(err.contains("overlapping"), "{err}");
 }
+
+// Covers: an insert anchored inside a replaced or deleted range must fail closed
+// rather than be silently dropped from the output
+// Owner: hashline apply
+#[test]
+fn rejects_inserts_anchored_inside_a_destructive_range() {
+    let original = "a\nb\nc\nd\ne\n";
+    let tag = compute_file_hash(original);
+    let replace = || Op::Replace {
+        start: 2,
+        end: 4,
+        body: vec!["B".into()],
+    };
+    for (label, extra) in [
+        (
+            "insert after",
+            Op::InsertAfter {
+                line: Some(3),
+                body: vec!["ghost".into()],
+            },
+        ),
+        (
+            "insert before",
+            Op::InsertBefore {
+                line: 3,
+                body: vec!["ghost".into()],
+            },
+        ),
+        (
+            "insert after the anchor line of the range",
+            Op::InsertAfter {
+                line: Some(2),
+                body: vec!["ghost".into()],
+            },
+        ),
+    ] {
+        let err = apply_ops(original, &tag, &[replace(), extra]).unwrap_err();
+        assert!(err.contains("falls inside"), "{label}: {err}");
+    }
+}
+
+// Covers: inserts at the edges of a destructive range stay legal and ordered
+// Owner: hashline apply
+#[test]
+fn keeps_inserts_at_range_edges() {
+    let original = "a\nb\nc\nd\ne\n";
+    let tag = compute_file_hash(original);
+    let outcome = apply_ops(
+        original,
+        &tag,
+        &[
+            Op::InsertBefore {
+                line: 2,
+                body: vec!["head".into()],
+            },
+            Op::Delete { start: 2, end: 4 },
+            Op::InsertAfter {
+                line: Some(5),
+                body: vec!["tail".into()],
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(outcome.text, "a\nhead\ne\ntail\n");
+}
+
+// Covers: multiple inserts on one anchor keep document order
+// Owner: hashline apply
+#[test]
+fn keeps_document_order_for_shared_anchors() {
+    let original = "a\nb\n";
+    let tag = compute_file_hash(original);
+    let outcome = apply_ops(
+        original,
+        &tag,
+        &[
+            Op::InsertAfter {
+                line: Some(1),
+                body: vec!["first".into()],
+            },
+            Op::InsertAfter {
+                line: Some(1),
+                body: vec!["second".into()],
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(outcome.text, "a\nfirst\nsecond\nb\n");
+}
+
+// Covers: an empty file accepts head inserts and end-of-file appends only
+// Owner: hashline apply
+#[test]
+fn appends_into_an_empty_file() {
+    let tag = compute_file_hash("");
+    let outcome = apply_ops(
+        "",
+        &tag,
+        &[
+            Op::InsertBefore {
+                line: 1,
+                body: vec!["first".into()],
+            },
+            Op::InsertAfter {
+                line: None,
+                body: vec!["second".into()],
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(outcome.text, "first\nsecond\n");
+}

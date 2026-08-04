@@ -217,17 +217,34 @@ fn hashline_start_card(
     cwd: &std::path::Path,
     status: ToolStatus,
 ) -> ToolCard {
-    let paths = hashline_paths(arguments, cwd);
-    let primary = paths.first().cloned();
-    let mut card = kind_card(
+    let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
+        return kind_card(
+            status,
+            ToolKind::HashlineEdit,
+            ToolHeader::call("hashline_edit", None),
+        );
+    };
+    // Show added/removed counts before approval, the same as apply_patch. The
+    // document carries them, so no target file has to be read.
+    let files = rho_tools::hashline::proposed_sections(input)
+        .into_iter()
+        .map(|section| DiffCardFile {
+            path: compact_display_path(cwd, &section.path),
+            source_path: None,
+            change: DiffCardChange::Content,
+            stats: Some((section.added_lines, section.removed_lines))
+                .filter(|(added, removed)| *added > 0 || *removed > 0),
+            rows: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    diff_card(
         status,
-        ToolKind::HashlineEdit,
-        ToolHeader::call("hashline_edit", primary),
-    );
-    for path in paths.into_iter().skip(1) {
-        card.push_fact(ToolFact::Text { text: path });
-    }
-    card
+        "hashline_edit",
+        Vec::new(),
+        files,
+        EmptyDiffState::Silent,
+        /*truncated*/ false,
+    )
 }
 
 fn apply_patch_start_card(
@@ -533,10 +550,10 @@ pub(super) fn hashline_paths(arguments: &serde_json::Value, cwd: &std::path::Pat
     arguments
         .get("input")
         .and_then(|value| value.as_str())
-        .map(rho_tools::hashline::section_paths_lenient)
+        .map(rho_tools::hashline::proposed_sections)
         .unwrap_or_default()
         .into_iter()
-        .map(|path| compact_display_path(cwd, &path))
+        .map(|section| compact_display_path(cwd, &section.path))
         .collect()
 }
 
