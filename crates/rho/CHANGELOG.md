@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.29.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.28.1...rho-coding-agent-v1.29.0) (2026-08-04)
+
+
+### Features
+
+* **providers:** add Qwen Token Plan OpenAI-compatible provider ([#738](https://github.com/matthewyjiang/rho/issues/738)) ([6aa6df2](https://github.com/matthewyjiang/rho/commit/6aa6df2e812674b721bedd3b65c7c2cdb359a1e4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.15.2 to 1.16.0
+    * rho-providers bumped from 0.15.5 to 0.16.0
+
 ## [1.28.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.28.0...rho-coding-agent-v1.28.1) (2026-08-04)
 
 

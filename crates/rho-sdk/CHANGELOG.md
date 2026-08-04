@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.15.2...rho-sdk-v1.16.0) (2026-08-04)
+
+
+### Features
+
+* **providers:** add Qwen Token Plan OpenAI-compatible provider ([#738](https://github.com/matthewyjiang/rho/issues/738)) ([6aa6df2](https://github.com/matthewyjiang/rho/commit/6aa6df2e812674b721bedd3b65c7c2cdb359a1e4))
+
 ## [1.15.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.15.1...rho-sdk-v1.15.2) (2026-08-04)
 
 
