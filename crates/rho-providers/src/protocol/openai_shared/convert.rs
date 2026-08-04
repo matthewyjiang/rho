@@ -85,7 +85,10 @@ pub(crate) fn convert_openai_response(
         .next()
         .ok_or_else(|| ModelError::InvalidResponse("missing choices".into()))?
         .message;
-    let text = message.content.filter(|s| !s.is_empty()).unwrap_or_default();
+    let text = message
+        .content
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default();
     let reasoning = message
         .reasoning_content
         .filter(|text| !text.is_empty())

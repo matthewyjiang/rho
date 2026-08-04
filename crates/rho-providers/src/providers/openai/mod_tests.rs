@@ -969,9 +969,8 @@ fn accumulates_streamed_tool_call_deltas() {
 // Owner: openai chat completions streaming
 #[test]
 fn streamed_tool_calls_tolerate_qwen_style_quirks() {
-    let mut chat_stream = ChatStreamAccumulator::new(
-        crate::protocol::openai_chat::ChatToolCallPolicy::Lenient,
-    );
+    let mut chat_stream =
+        ChatStreamAccumulator::new(crate::protocol::openai_chat::ChatToolCallPolicy::Lenient);
     // index 1 first leaves a hole at 0; arguments arrive as a JSON object value.
     chat_stream
         .handle_line(

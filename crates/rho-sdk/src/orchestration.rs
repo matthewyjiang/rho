@@ -202,7 +202,8 @@ async fn execute_turn_loop(
         {
             Ok(()) => {}
             Err(Error::Cancelled) => {
-                return commit_cancelled_history(core, history, &events).await;
+                return commit_terminal_history(core, history, TerminalKind::Cancelled, &events)
+                    .await;
             }
             Err(error) => return Err(error),
         }
