@@ -557,13 +557,15 @@ async fn request_valid_response(
         if invalid_responses >= INVALID_RESPONSE_ATTEMPTS
             || provider_turn_attempts >= PROVIDER_TURN_ATTEMPTS
         {
+            // Invalid attempts are discarded; do not install stream fragments
+            // into session history on the terminal failure path.
             return Err(RequestFailure {
                 error: ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
                     "provider returned an empty assistant response",
                     Retryability::Permanent,
                 ),
-                capture,
+                capture: StreamCapture::default(),
             });
         }
         let detail = format!(

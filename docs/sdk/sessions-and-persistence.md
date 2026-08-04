@@ -14,7 +14,7 @@ A run starts from a cloned history and appends user input to a private candidate
 | --- | --- |
 | Successful final answer | Commit the user message, completed assistant/tool steps, steering, and final assistant atomically under the session lock |
 | Cooperative cancellation completion | Commit recoverable work, including the user message and an `AbortedAssistant` when partial provider output exists, then return `Error::Cancelled` |
-| Cooperative terminal failure | Commit recoverable work the same way as cancellation, including an `AbortedAssistant` when partial provider output exists, emit `Failed { revision, ... }`, and return the typed error. Provider adapters may add a model-visible abort marker when replaying `AbortedAssistant` |
+| Cooperative terminal failure | Commit recoverable work the same way as cancellation, including an `AbortedAssistant` when partial provider output exists, emit `Failed`, and return the typed error. Read `Session::revision` after the run for the post-commit revision. Provider adapters may add a model-visible abort marker when replaying `AbortedAssistant` |
 | Run-handle drop or task abort | No commit, terminal-event, or partial-recovery guarantee |
 | Tool success or tool-reported failure | Append a tool result to candidate history and continue the model loop |
 | Event-consumer interrupt (nonterminal send failed because the consumer was dropped) | Do not commit uncommitted candidate run history |

@@ -323,8 +323,6 @@ pub enum RunEvent {
     Failed {
         message: String,
         retryability: crate::Retryability,
-        /// Revision after the cooperative failure commit of recoverable history.
-        revision: Revision,
     },
     /// Accepted steering crossed into conversation history for the next model step.
     SteeringApplied {

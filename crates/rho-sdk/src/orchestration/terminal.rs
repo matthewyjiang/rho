@@ -6,7 +6,7 @@ use crate::{
     event::RunOutcome,
     model::Message,
     session::{SessionCore, SessionState},
-    Error, Retryability, Revision, RunEvent,
+    Error, Retryability, RunEvent,
 };
 
 use super::stream_capture::StreamCapture;
@@ -24,6 +24,10 @@ pub(super) enum TerminalKind {
 /// present, bump the revision, emit the matching terminal event, and return the
 /// terminal error. Event-consumer interrupts are not routed here and still leave
 /// uncommitted candidate history uninstalled.
+///
+/// `Cancelled` carries the new revision on the event. `Failed` keeps the 1.x
+/// event shape and relies on `Session::revision` after the run ends; adding a
+/// field to `RunEvent::Failed` would be a minor-incompatible public API break.
 pub(super) async fn commit_terminal(
     core: Arc<SessionCore>,
     mut history: Vec<Message>,
@@ -52,7 +56,7 @@ pub(super) async fn commit_terminal_history(
         }
         TerminalKind::Failed(error) => {
             core.set_state(SessionState::Failed);
-            emit_failure(events, &error, revision).await;
+            emit_failure(events, &error).await;
             Err(error)
         }
     }
@@ -62,7 +66,7 @@ pub(super) async fn send_terminal(events: &mpsc::Sender<RunEvent>, event: RunEve
     let _ = events.send(event).await;
 }
 
-async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error, revision: Revision) {
+async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
     let diagnostic = match error {
         Error::Provider(error) => error.diagnostic(),
         _ => None,
@@ -85,7 +89,6 @@ async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error, revision: 
             } else {
                 Retryability::Permanent
             },
-            revision,
         },
     )
     .await;
