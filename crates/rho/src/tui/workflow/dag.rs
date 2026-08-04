@@ -3,13 +3,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::workflow::{NodeId, NodeState, NodeTerminalState};
 
+use super::super::theme::Theme;
 use super::event_adapter::WorkflowNodeSnapshot;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,10 +144,7 @@ fn connector_line(layer: &[usize], nodes: &[WorkflowNodeSnapshot], width: usize)
     };
     let truncated = truncate(&label, width);
     DagLine {
-        spans: vec![Span::styled(
-            truncated,
-            Style::default().fg(Color::DarkGray),
-        )],
+        spans: vec![Span::styled(truncated, Theme::dim())],
         node_index: None,
     }
 }
@@ -217,20 +215,21 @@ pub(super) fn state_glyph(state: &NodeState) -> &'static str {
 }
 
 pub(super) fn state_style(state: &NodeState) -> Style {
-    let color = match state {
-        NodeState::Pending => Color::DarkGray,
-        NodeState::Ready => Color::Gray,
-        NodeState::Running { .. } => Color::Cyan,
+    match state {
+        // Waiting stays muted; ready uses body text so it reads as actionable
+        // without pulling ANSI white/gray (index 7) into chrome.
+        NodeState::Pending => Theme::dim(),
+        NodeState::Ready => Theme::text(),
+        NodeState::Running { .. } => Theme::accent(),
         NodeState::Terminal { outcome } => match outcome {
-            NodeTerminalState::Success => Color::Green,
-            NodeTerminalState::Skipped => Color::Yellow,
+            NodeTerminalState::Success => Theme::success(),
+            NodeTerminalState::Skipped => Theme::warning(),
             NodeTerminalState::Failure
             | NodeTerminalState::Denial
             | NodeTerminalState::Cancellation
-            | NodeTerminalState::Blocked => Color::Red,
+            | NodeTerminalState::Blocked => Theme::error(),
         },
-    };
-    Style::default().fg(color)
+    }
 }
 
 pub(super) fn state_label(state: &NodeState) -> String {

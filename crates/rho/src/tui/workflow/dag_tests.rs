@@ -1,10 +1,12 @@
-use super::{layer_index_of, render_dag, state_label};
+use super::{layer_index_of, render_dag, state_label, state_style};
 use crate::workflow::AttemptNumber;
 use crate::{
     tui::workflow::event_adapter::{ExecutionMetadata, WorkflowNodeSnapshot},
-    workflow::{AgentRuntime, NodeId, NodeState, WorkspaceAccess},
+    workflow::{AgentRuntime, NodeId, NodeState, NodeTerminalState, WorkspaceAccess},
 };
 use pretty_assertions::assert_eq;
+
+use super::super::super::theme::Theme;
 
 fn node(id: &str, name: &str, deps: &[&str], state: NodeState) -> WorkflowNodeSnapshot {
     WorkflowNodeSnapshot {
@@ -67,4 +69,28 @@ fn running_node_label_reports_attempt() {
         "running · try 2"
     );
     assert_eq!(state_label(&NodeState::Pending), "waiting");
+}
+
+// Covers: ready stays visually stronger than pending without ANSI white/gray chrome
+// Owner: workflow run TUI rendering (theme routing)
+#[test]
+fn state_styles_route_through_theme_and_keep_ready_distinct() {
+    assert_eq!(state_style(&NodeState::Pending), Theme::dim());
+    assert_eq!(state_style(&NodeState::Ready), Theme::text());
+    assert_ne!(
+        state_style(&NodeState::Pending),
+        state_style(&NodeState::Ready)
+    );
+    assert_eq!(
+        state_style(&NodeState::Running {
+            attempt: AttemptNumber::new(1).unwrap()
+        }),
+        Theme::accent()
+    );
+    assert_eq!(
+        state_style(&NodeState::Terminal {
+            outcome: NodeTerminalState::Success
+        }),
+        Theme::success()
+    );
 }
