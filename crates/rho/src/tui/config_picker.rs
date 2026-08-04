@@ -181,7 +181,7 @@ pub(super) fn category_picker(
                 ),
                 item(
                     "Zen mode",
-                    "Show only message text. Hides tool cards, reasoning, Thinking..., and activity status. Space toggles.",
+                    "Show only message text. Hides tool cards, reasoning, and the Thinking... placeholder. Keeps the activity rail. Space toggles.",
                     Some(on_off(info.zen_mode)),
                     ZEN_MODE_VALUE,
                 ),

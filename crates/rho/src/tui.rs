@@ -261,7 +261,10 @@ impl RuntimeModelView {
         self.show_reasoning_output && self.shows_work_chrome()
     }
 
-    /// Whether tool cards, reasoning blocks, Thinking..., and the activity rail are visible.
+    /// Whether tool cards, reasoning blocks, and Thinking... are visible in the transcript.
+    ///
+    /// Zen mode suppresses that work chrome while keeping the live activity rail
+    /// and subagent rows so the session still shows progress.
     pub(crate) fn shows_work_chrome(&self) -> bool {
         !self.zen_mode
     }
