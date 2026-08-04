@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
-use rho_sdk::{HostChoice, HostInputRequest, HostQuestion, Retryability, RunEvent, SelectionMode};
+use rho_sdk::{
+    HostChoice, HostInputRequest, HostQuestion, Retryability, Revision, RunEvent, SelectionMode,
+};
 
 use super::{
     active_run_disposition, begin_provider_switch, state_after_event, ActiveRunCommand,
@@ -84,6 +86,7 @@ fn compaction_provider_switch_and_failure_are_explicit_states() {
             &RunEvent::Failed {
                 message: "failed".into(),
                 retryability: Retryability::Permanent,
+                revision: Revision::from_u64(1),
             },
         ),
         InteractiveState::Failed

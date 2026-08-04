@@ -109,6 +109,7 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
         &rho_sdk::RunEvent::Failed {
             message: "provider unavailable".into(),
             retryability: rho_sdk::Retryability::Retryable,
+            revision: rho_sdk::Revision::from_u64(1),
         },
     );
     assert_eq!(events.len(), 2);

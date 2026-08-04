@@ -73,6 +73,16 @@ When cancellation reaches the cooperative cancellation completion path:
 - `Cancelled { revision }` is emitted when delivery succeeds
 - `Run::outcome` returns `Error::Cancelled`
 
+Cooperative terminal failures (for example a permanent provider/SSE error after retries are exhausted) use the same history commit path:
+
+- recoverable candidate history is committed
+- partial provider output may become `AbortedAssistant`
+- the revision increments
+- `Failed { message, retryability, revision }` is emitted when delivery succeeds
+- `Run::outcome` returns the typed error
+
+Event-consumer interrupts still leave uncommitted candidate history uninstalled; see [Persistence and event-consumer failures](#persistence-and-event-consumer-failures).
+
 Cancellation can race with event delivery or other failing work; see [known limitations](#known-limitations). In those cases, `Run::outcome` can still report cancellation or interruption without a cancellation commit or terminal event.
 
 Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. During a tool batch, cancellation preserves already completed result slots and writes a deterministic interrupted result for every unresolved call, including calls cancelled during preparation. Design tools for idempotency and record enough operation identity for reconciliation.

@@ -6,66 +6,63 @@ use crate::{
     event::RunOutcome,
     model::Message,
     session::{SessionCore, SessionState},
-    Error, Retryability, RunEvent,
+    Error, Retryability, Revision, RunEvent,
 };
 
 use super::stream_capture::StreamCapture;
 
-pub(super) async fn commit_cancellation(
+/// Cooperative terminal outcome that commits recoverable candidate history.
+pub(super) enum TerminalKind {
+    Cancelled,
+    Failed(Error),
+}
+
+/// Commit candidate history after a cooperative terminal outcome.
+///
+/// Cancel and failure share one path: keep the in-flight user turn and any
+/// completed steps, retain partial provider output as `AbortedAssistant` when
+/// present, bump the revision, emit the matching terminal event, and return the
+/// terminal error. Event-consumer interrupts are not routed here and still leave
+/// uncommitted candidate history uninstalled.
+pub(super) async fn commit_terminal(
     core: Arc<SessionCore>,
     mut history: Vec<Message>,
     capture: StreamCapture,
+    kind: TerminalKind,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<RunOutcome, Error> {
     if let Some(aborted) = capture.into_aborted_assistant() {
         history.push(Message::AbortedAssistant(Box::new(aborted)));
     }
-    commit_cancelled_history(core, history, events).await
+    commit_terminal_history(core, history, kind, events).await
 }
 
-pub(super) async fn commit_cancelled_history(
+pub(super) async fn commit_terminal_history(
     core: Arc<SessionCore>,
     history: Vec<Message>,
+    kind: TerminalKind,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<RunOutcome, Error> {
     let revision = core.commit(history)?;
-    core.set_state(SessionState::Cancelling);
-    send_terminal(events, RunEvent::Cancelled { revision }).await;
-    Err(Error::Cancelled)
-}
-
-/// Keep in-flight turn progress after a terminal provider/run failure.
-///
-/// Cancellation already commits partial history. Provider failures used to drop
-/// the user turn and any completed steps, so the next run could not resume.
-/// Commit the same progress, keep any streamed partial assistant output, and
-/// append a short failure notice the model can read on the next turn.
-pub(super) async fn commit_failure(
-    core: Arc<SessionCore>,
-    mut history: Vec<Message>,
-    capture: StreamCapture,
-    error: Error,
-    events: &mpsc::Sender<RunEvent>,
-) -> Result<RunOutcome, Error> {
-    if let Some(aborted) = capture.into_aborted_assistant() {
-        history.push(Message::AbortedAssistant(Box::new(aborted)));
+    match kind {
+        TerminalKind::Cancelled => {
+            core.set_state(SessionState::Cancelling);
+            send_terminal(events, RunEvent::Cancelled { revision }).await;
+            Err(Error::Cancelled)
+        }
+        TerminalKind::Failed(error) => {
+            core.set_state(SessionState::Failed);
+            emit_failure(events, &error, revision).await;
+            Err(error)
+        }
     }
-    history.push(failure_context_message(&error));
-    core.commit(history)?;
-    core.set_state(SessionState::Failed);
-    emit_failure(events, &error).await;
-    Err(error)
-}
-
-fn failure_context_message(error: &Error) -> Message {
-    Message::user_text(format!("[{error}]"))
 }
 
 pub(super) async fn send_terminal(events: &mpsc::Sender<RunEvent>, event: RunEvent) {
     let _ = events.send(event).await;
 }
 
-async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
+async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error, revision: Revision) {
     let diagnostic = match error {
         Error::Provider(error) => error.diagnostic(),
         _ => None,
@@ -88,6 +85,7 @@ async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
             } else {
                 Retryability::Permanent
             },
+            revision,
         },
     )
     .await;

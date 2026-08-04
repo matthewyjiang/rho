@@ -561,6 +561,7 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
     let events = adapter.translate(RunEvent::Failed {
         message: "provider unavailable".into(),
         retryability: rho_sdk::Retryability::Retryable,
+        revision: rho_sdk::Revision::from_u64(1),
     });
     assert_eq!(events.len(), 2);
     assert!(matches!(

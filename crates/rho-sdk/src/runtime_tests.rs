@@ -1084,10 +1084,10 @@ async fn cancellation_before_the_first_provider_turn_still_commits_the_user_mess
     assert_eq!(session.revision().get(), 1);
 }
 
-// Covers: SSE/provider failure must keep the user turn and a failure notice
+// Covers: SSE/provider failure must keep the user turn for resume
 // Owner: sdk orchestration
 #[tokio::test]
-async fn provider_failure_commits_turn_history_and_failure_notice() {
+async fn provider_failure_commits_turn_history() {
     let provider = ScriptedProvider::new(
         identity(),
         [
@@ -1108,14 +1108,7 @@ async fn provider_failure_commits_turn_history_and_failure_notice() {
     assert!(matches!(error, Error::Provider(_)));
     assert_eq!(error.to_string(), "provider failed: sse disconnect");
 
-    let history = session.history();
-    assert_eq!(
-        history,
-        [
-            Message::user_text("do work"),
-            Message::user_text("[provider failed: sse disconnect]"),
-        ]
-    );
+    assert_eq!(session.history(), [Message::user_text("do work")]);
     assert_eq!(session.revision().get(), 1);
 
     assert_eq!(
@@ -1134,14 +1127,6 @@ async fn provider_failure_commits_turn_history_and_failure_notice() {
             .iter()
             .any(|message| message == &Message::user_text("do work")),
         "follow-up request should still see the failed turn: {:?}",
-        requests[1].messages
-    );
-    assert!(
-        requests[1]
-            .messages
-            .iter()
-            .any(|message| { message == &Message::user_text("[provider failed: sse disconnect]") }),
-        "follow-up request should include the failure notice: {:?}",
         requests[1].messages
     );
 }
@@ -1172,16 +1157,12 @@ async fn provider_stream_failure_keeps_partial_assistant_in_history() {
         [
             Message::User(_),
             Message::AbortedAssistant(aborted),
-            Message::User(_),
         ] if matches!(
             aborted.content.as_slice(),
             [ContentBlock::Text(text)] if text == "partial answer"
         )
     ));
-    assert_eq!(
-        session.history().last(),
-        Some(&Message::user_text("[provider failed: stream ended]"))
-    );
+    assert_eq!(session.revision().get(), 1);
 }
 
 #[tokio::test]
