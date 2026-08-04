@@ -33,12 +33,14 @@ const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_s
 mod model_call_timer;
 mod run_hooks;
 mod stream_capture;
+mod terminal;
 mod tool_batch;
 mod tool_turn;
 
 use model_call_timer::ModelCallTimer;
 use run_hooks::RunHooks;
 use stream_capture::{capture_provider_event, StreamCapture};
+use terminal::{commit_cancellation, commit_cancelled_history, commit_failure, send_terminal};
 use tool_turn::{execute_staged_tool_turn, StagedToolTurn, ToolTurnStatus};
 
 /// Runs one turn loop and reports its terminal outcome to lifecycle hooks.
@@ -159,9 +161,8 @@ async fn execute_turn_loop(
                 return commit_cancelled_history(core, history, &events).await;
             }
             Err(error) => {
-                core.set_state(SessionState::Failed);
-                emit_failure(&events, &error).await;
-                return Err(error);
+                return commit_failure(core, history, StreamCapture::default(), error, &events)
+                    .await;
             }
         }
         match emit(&events, &cancellation, RunEvent::StepStarted { step }).await {
@@ -195,10 +196,14 @@ async fn execute_turn_loop(
                 return commit_cancellation(core, history, error.capture, &events).await;
             }
             Err(error) => {
-                let sdk_error = Error::from(error.error);
-                core.set_state(SessionState::Failed);
-                emit_failure(&events, &sdk_error).await;
-                return Err(sdk_error);
+                return commit_failure(
+                    core,
+                    history,
+                    error.capture,
+                    Error::from(error.error),
+                    &events,
+                )
+                .await;
             }
         };
         accumulated_usage = accumulated_usage.saturating_add(capture.usage());
@@ -901,29 +906,6 @@ fn drain_cancelled_provider_events(
     }
 }
 
-async fn commit_cancellation(
-    core: Arc<SessionCore>,
-    mut history: Vec<Message>,
-    capture: StreamCapture,
-    events: &mpsc::Sender<RunEvent>,
-) -> Result<RunOutcome, Error> {
-    if let Some(aborted) = capture.into_aborted_assistant() {
-        history.push(Message::AbortedAssistant(Box::new(aborted)));
-    }
-    commit_cancelled_history(core, history, events).await
-}
-
-async fn commit_cancelled_history(
-    core: Arc<SessionCore>,
-    history: Vec<Message>,
-    events: &mpsc::Sender<RunEvent>,
-) -> Result<RunOutcome, Error> {
-    let revision = core.commit(history)?;
-    core.set_state(SessionState::Cancelling);
-    send_terminal(events, RunEvent::Cancelled { revision }).await;
-    Err(Error::Cancelled)
-}
-
 async fn emit(
     events: &mpsc::Sender<RunEvent>,
     cancellation: &CancellationToken,
@@ -936,38 +918,6 @@ async fn emit(
         }),
         () = cancellation.cancelled() => Err(Error::Cancelled),
     }
-}
-
-async fn send_terminal(events: &mpsc::Sender<RunEvent>, event: RunEvent) {
-    let _ = events.send(event).await;
-}
-
-async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
-    let diagnostic = match error {
-        Error::Provider(error) => error.diagnostic(),
-        _ => None,
-    };
-    if let Some(detail) = diagnostic {
-        send_terminal(
-            events,
-            RunEvent::ProviderDiagnostic {
-                detail: crate::ProviderDiagnostic::new(detail),
-            },
-        )
-        .await;
-    }
-    send_terminal(
-        events,
-        RunEvent::Failed {
-            message: error.to_string(),
-            retryability: if error.is_retryable() {
-                Retryability::Retryable
-            } else {
-                Retryability::Permanent
-            },
-        },
-    )
-    .await;
 }
 
 #[cfg(test)]
