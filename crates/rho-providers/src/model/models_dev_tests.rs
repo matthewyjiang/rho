@@ -702,3 +702,60 @@ fn local_reasoning_override_replaces_provider_levels_exactly() {
     );
     assert!(metadata.reasoning_capabilities_known);
 }
+
+// Covers: Token Plan qwen3.8-max must expose only models.dev effort levels
+// Owner: models.dev catalog policy
+#[test]
+fn qwen_token_plan_qwen38_max_uses_exact_advertised_efforts() {
+    let api = json!({
+        "alibaba-token-plan": {
+            "models": {
+                "qwen3.8-max": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        { "type": "toggle" },
+                        {
+                            "type": "effort",
+                            "values": ["low", "medium", "xhigh"]
+                        },
+                        {
+                            "type": "budget_tokens",
+                            "min": 0,
+                            "max": 262144
+                        }
+                    ]
+                },
+                "qwen3.8-max-preview": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {
+                            "type": "effort",
+                            "values": ["low", "medium", "xhigh"]
+                        }
+                    ]
+                }
+            }
+        }
+    });
+
+    let max = upstream_metadata_from_api(&api, "qwen-token-plan", "qwen3.8-max").unwrap();
+    assert_eq!(
+        max.reasoning_capabilities(),
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::Xhigh,
+        ]))
+    );
+
+    let preview =
+        upstream_metadata_from_api(&api, "qwen-token-plan", "qwen3.8-max-preview").unwrap();
+    assert_eq!(
+        preview.reasoning_capabilities(),
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::Xhigh,
+        ]))
+    );
+}

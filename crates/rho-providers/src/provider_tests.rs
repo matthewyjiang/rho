@@ -80,12 +80,17 @@ fn xai_legacy_provider_alias_selects_oauth_mode() {
 // Owner: provider registry
 #[test]
 fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
-    use super::{ProviderId, RuntimeProviderId};
+    use super::{CatalogReasoningPolicy, ProviderId, RuntimeProviderId};
     use crate::model::registry::{provider_runtime, ProviderRuntime, QWEN_TOKEN_PLAN_API_BASE};
 
     let descriptor = super::provider_descriptor_by_id(ProviderId::QwenTokenPlan);
     assert_eq!(descriptor.name, "qwen-token-plan");
     assert_eq!(descriptor.runtime_id, RuntimeProviderId::QwenTokenPlan);
+    assert_eq!(descriptor.metadata_upstream, "alibaba-token-plan");
+    assert_eq!(
+        descriptor.catalog_reasoning,
+        CatalogReasoningPolicy::ExactAdvertised
+    );
     assert!(descriptor.auth_mode("qwen-token-plan-api-key").is_some());
     assert_eq!(
         provider_runtime("qwen-token-plan"),

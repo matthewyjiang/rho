@@ -626,7 +626,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "alibaba-token-plan",
-        catalog_reasoning: CatalogReasoningPolicy::Unknown,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
     ProviderDescriptor {
         id: ProviderId::Xai,
