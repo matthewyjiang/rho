@@ -163,7 +163,11 @@ fn reads_and_writes_paths_outside_the_working_directory() {
         .args(["run", "read the outside file"]);
     let read_output = read.output().unwrap();
     assert_success(&read_output);
-    let display = compact_display_path(root.path(), &relative_input_path.to_string_lossy());
+    // Tools display paths relative to the canonical workspace root (macOS /var
+    // -> /private/var, Windows short paths / \\?\ prefixes), so match that here.
+    let workspace_root = root.path().canonicalize().unwrap();
+    let display =
+        compact_display_path(&workspace_root, &relative_input_path.to_string_lossy());
     let expected = format_hashline_view(&display, "outside content", None, None).unwrap();
     assert_eq!(stdout(&read_output), format!("{expected}\n"));
 
