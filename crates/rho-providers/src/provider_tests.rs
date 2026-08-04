@@ -75,3 +75,23 @@ fn xai_legacy_provider_alias_selects_oauth_mode() {
     assert_eq!(resolved.provider_name(), "xai");
     assert_eq!(resolved.auth_id(), "xai-oauth");
 }
+
+// Covers: qwen-token-plan must resolve as OpenAI-compatible with api-key auth
+// Owner: provider registry
+#[test]
+fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
+    use super::{ProviderId, RuntimeProviderId};
+    use crate::model::registry::{provider_runtime, ProviderRuntime, QWEN_TOKEN_PLAN_API_BASE};
+
+    let descriptor = super::provider_descriptor_by_id(ProviderId::QwenTokenPlan);
+    assert_eq!(descriptor.name, "qwen-token-plan");
+    assert_eq!(descriptor.runtime_id, RuntimeProviderId::QwenTokenPlan);
+    assert!(descriptor.auth_mode("qwen-token-plan-api-key").is_some());
+    assert_eq!(
+        provider_runtime("qwen-token-plan"),
+        Some(ProviderRuntime::OpenAiCompatible {
+            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Standard,
+            default_api_base: QWEN_TOKEN_PLAN_API_BASE,
+        })
+    );
+}

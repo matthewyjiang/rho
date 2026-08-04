@@ -11,66 +11,10 @@ use {
     rho_providers::provider,
 };
 
-#[derive(Clone, Debug)]
-pub(super) struct SecretInput {
-    pub(super) target: LoginTarget,
-    pub(super) value: String,
-    pub(super) cursor: usize,
-}
-
-impl SecretInput {
-    pub(super) fn new(target: LoginTarget) -> Self {
-        Self {
-            target,
-            value: String::new(),
-            cursor: 0,
-        }
-    }
-
-    pub(super) fn char_len(&self) -> usize {
-        self.value.chars().count()
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
-    }
-
-    pub(super) fn insert_char(&mut self, ch: char) {
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
-    }
-
-    pub(super) fn insert_text(&mut self, text: &str) {
-        let sanitized = text.replace('\n', "");
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert_str(byte_index, &sanitized);
-        self.cursor += sanitized.chars().count();
-    }
-
-    pub(super) fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-
-    pub(super) fn delete(&mut self) {
-        if self.cursor >= self.char_len() {
-            return;
-        }
-        let start = self.byte_index(self.cursor);
-        let end = self.byte_index(self.cursor + 1);
-        self.value.replace_range(start..end, "");
-    }
-}
+pub(super) use super::login_secret_input::{
+    parse_login_endpoint, provider_login_collects_endpoint, secret_input_lines, SecretInput,
+    SecretInputPhase,
+};
 
 #[derive(Debug)]
 pub(super) struct PendingInteractiveLogin {
@@ -404,6 +348,75 @@ impl App {
             self.set_status("login failed");
             return Ok(());
         }
+        if provider_login_collects_endpoint(&target.provider) {
+            let initial = self
+                .info
+                .services
+                .config_repository
+                .load()
+                .ok()
+                .and_then(|config| config.resolved_provider_endpoint(&target.provider))
+                .map(|url| url.to_string())
+                .unwrap_or_default();
+            self.input_ui
+                .set_composer(ComposerMode::SecretInput(SecretInput::for_endpoint(
+                    target, key, initial,
+                )));
+            self.set_status("enter OpenAI-compatible endpoint");
+            return Ok(());
+        }
+        self.persist_api_key_and_finish(target, key, terminal, agent)
+            .await
+    }
+
+    pub(super) async fn submit_endpoint_login(
+        &mut self,
+        target: LoginTarget,
+        api_key: String,
+        endpoint: String,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            self.insert_entry(&Entry::Error("endpoint cannot be empty".into()));
+            self.set_status("login failed");
+            return Ok(());
+        }
+        let base_url = match parse_login_endpoint(endpoint) {
+            Ok(url) => url,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(error));
+                self.set_status("login failed");
+                return Ok(());
+            }
+        };
+        if target.provider != "qwen-token-plan" {
+            self.insert_entry(&Entry::Error(format!(
+                "provider '{}' does not store a login endpoint",
+                target.provider
+            )));
+            self.set_status("login failed");
+            return Ok(());
+        }
+        if let Err(error) = self.info.services.config_repository.update(|config| {
+            config.providers.qwen_token_plan.base_url = base_url;
+        }) {
+            self.insert_entry(&Entry::Error(error.to_string()));
+            self.set_status("login failed");
+            return Ok(());
+        }
+        self.persist_api_key_and_finish(target, api_key, terminal, agent)
+            .await
+    }
+
+    async fn persist_api_key_and_finish(
+        &mut self,
+        target: LoginTarget,
+        key: String,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         self.cancel_limits_command().await;
         let saved = ProviderAuthentication::save_api_key(
             self.credential_store.as_ref(),
@@ -882,34 +895,6 @@ impl App {
         }
         true
     }
-}
-
-pub(super) fn secret_input_lines(
-    secret: &SecretInput,
-    width: usize,
-) -> Vec<ratatui::text::Line<'static>> {
-    let masked = "•".repeat(secret.value.chars().count());
-    vec![
-        styled_line(
-            truncate_one_line(
-                &format!(
-                    "enter {}  {}",
-                    secret.target.label,
-                    super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
-                ),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&masked, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
 }
 
 pub(super) fn interactive_pending_lines(

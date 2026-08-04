@@ -6,6 +6,12 @@ use crate::{
 
 pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
 pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
+/// Default OpenAI-compatible Token Plan base (Singapore / international).
+///
+/// Users may be given a region-specific base URL. Interactive login asks for
+/// the endpoint and stores it under `[providers.qwen-token-plan].base_url`.
+pub const QWEN_TOKEN_PLAN_API_BASE: &str =
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthMode {
@@ -71,6 +77,10 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
         RuntimeProviderId::OpenRouter => ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::OpenRouter,
             default_api_base: "https://openrouter.ai/api/v1",
+        },
+        RuntimeProviderId::QwenTokenPlan => ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Standard,
+            default_api_base: QWEN_TOKEN_PLAN_API_BASE,
         },
         RuntimeProviderId::Xai => ProviderRuntime::Xai,
     })

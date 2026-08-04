@@ -68,6 +68,7 @@ mod limits_command;
 mod local_commands;
 mod local_diff;
 mod login;
+mod login_secret_input;
 mod markdown;
 mod markdown_image;
 mod message_history;
