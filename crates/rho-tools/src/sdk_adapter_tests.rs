@@ -199,7 +199,11 @@ async fn allowed_policy_reads_and_reports_metadata() {
         match event {
             RunEvent::ToolFinished { result, .. } => match result {
                 ToolCompletion::Success(output) => {
-                    assert_eq!(output.content(), "hello\n");
+                    let text = "hello\nworld\n";
+                    let expected =
+                        crate::hashline::format_hashline_view("note.txt", text, Some(1), Some(1))
+                            .unwrap();
+                    assert_eq!(output.content(), expected);
                     assert_eq!(
                         output.presentation().operation_kind(),
                         Some(&OperationKind::Read)
@@ -598,6 +602,70 @@ async fn edit_file_prepare_rejects_invalid_args() {
     };
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
     assert!(error.to_string().contains("old_string must not be empty"));
+}
+
+// Covers: hashline_edit prepare must lock every existing section target for read+write
+// Owner: SDK contract
+#[tokio::test]
+async fn hashline_edit_prepare_reserves_existing_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+    let workspace = workspace(&dir);
+    let tool = coding_tool(CodingToolKind::HashlineEdit, CodingToolOptions::default());
+    let input = "\
+[a.txt#AAAA]
+PUT 1.=1:
++A
+[b.txt#BBBB]
+PUT 1.=1:
++B
+";
+
+    let prepared = tool
+        .prepare(
+            invocation(json!({ "input": input })),
+            ToolPreparationContext::new(Some(workspace.clone()), CancellationToken::new()),
+        )
+        .await
+        .unwrap();
+
+    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy().clone()
+    else {
+        panic!("hashline_edit must opt in to resource-aware execution");
+    };
+    for path in [
+        workspace.root().join("a.txt"),
+        workspace.root().join("b.txt"),
+    ] {
+        assert!(
+            accesses.contains(&ToolResourceAccess::exclusive(
+                ToolResource::workspace_path(path.clone())
+            )),
+            "missing exclusive access for {}",
+            path.display()
+        );
+    }
+    assert_eq!(prepared.capabilities().len(), 4);
+}
+
+// Covers: hashline_edit prepare must reject invalid documents before path I/O
+// Owner: SDK contract
+#[tokio::test]
+async fn hashline_edit_prepare_rejects_invalid_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = coding_tool(CodingToolKind::HashlineEdit, CodingToolOptions::default());
+    let error = match tool
+        .prepare(
+            invocation(json!({ "input": "not a hashline document" })),
+            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
+        )
+        .await
+    {
+        Ok(_) => panic!("invalid hashline document must fail prepare"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
 }
 
 // Covers: edit_file success path emits diff metadata and progress

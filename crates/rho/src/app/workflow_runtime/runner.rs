@@ -150,6 +150,7 @@ fn validate_agent_access(
         "apply_patch",
         "bash",
         "edit_file",
+        "hashline_edit",
         "powershell",
         "process",
         "rho",

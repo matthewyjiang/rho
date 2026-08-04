@@ -39,7 +39,7 @@ impl Tool for EditFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "edit_file".into(),
-            description: "Edits an existing UTF-8 text file by string replacement. Matching normalizes CRLF/LF newlines while preserving the file's newline style on write. By default old_string must match exactly once; set replace_all to replace every match. Prefer this for one surgical replace. Use write_file to create or fully rewrite a file, and apply_patch for multi-hunk or multi-file edits.".into(),
+            description: "Edits an existing UTF-8 text file by string replacement. Matching normalizes CRLF/LF newlines while preserving the file's newline style on write. By default old_string must match exactly once; set replace_all to replace every match. Prefer this for one surgical replace when you did not take a hashline read. Prefer hashline_edit for multi-hunk line-anchored edits after read_file. Prefer write_file to create or fully rewrite a file, and apply_patch for Codex-style multi-file patches that add or delete files.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

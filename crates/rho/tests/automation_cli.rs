@@ -3,6 +3,7 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
+use rho_tools::{compact_display_path, hashline::format_hashline_view, truncate};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -84,6 +85,7 @@ provider = "disabled"
         "read_file",
         "write_file",
         "edit_file",
+        "hashline_edit",
         "apply_patch",
         "grep",
         "glob",
@@ -141,7 +143,8 @@ fn applies_configured_tool_output_limit() {
     let output = run(&root, "read-file", &["run", "read the file"], None);
 
     assert_success(&output);
-    assert_eq!(stdout(&output), "abcde\n[truncated]\n");
+    let full = format_hashline_view("large.txt", "abcdefgh", None, None).unwrap();
+    assert_eq!(stdout(&output), format!("{}\n", truncate(full, 5)));
     assert!(output.stderr.is_empty());
 }
 
@@ -156,11 +159,13 @@ fn reads_and_writes_paths_outside_the_working_directory() {
         .join("input.txt");
 
     let mut read = command(&root, "read-path");
-    read.env(PATH_ENV, relative_input_path)
+    read.env(PATH_ENV, &relative_input_path)
         .args(["run", "read the outside file"]);
     let read_output = read.output().unwrap();
     assert_success(&read_output);
-    assert_eq!(stdout(&read_output), "outside content\n");
+    let display = compact_display_path(root.path(), &relative_input_path.to_string_lossy());
+    let expected = format_hashline_view(&display, "outside content", None, None).unwrap();
+    assert_eq!(stdout(&read_output), format!("{expected}\n"));
 
     let output_path = outside.path().join("output.txt");
     let mut write = command(&root, "write-path");

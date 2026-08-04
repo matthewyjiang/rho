@@ -24,7 +24,7 @@ pub use proposed_diff::{
 
 pub struct ApplyPatch;
 
-const TOOL_DESCRIPTION: &str = r#"Use `apply_patch` for multi-hunk or multi-file edits with a Codex-style patch. Prefer `edit_file` for one surgical string replacement in an existing file, and `write_file` to create or fully rewrite a file.
+const TOOL_DESCRIPTION: &str = r#"Use `apply_patch` for Codex-style multi-file patches that add or delete files. Prefer `hashline_edit` for multi-hunk line-anchored edits after a hashline `read_file`. Prefer `edit_file` for one surgical string replacement in an existing file, and `write_file` to create or fully rewrite a file.
 
 Patch language:
 
@@ -57,7 +57,8 @@ Rules:
 - Prefer relative paths
 - Prefer about 3 lines of context around each change
 - Use @@ headers when context alone is not unique
-- Prefer edit_file when changing one string in one existing file"#;
+- Prefer hashline_edit when you already have a [path#TAG] read
+- Prefer edit_file when changing one string without a hashline read"#;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

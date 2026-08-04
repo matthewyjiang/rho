@@ -20,6 +20,7 @@ pub(super) fn sdk_bundle(
         (ToolCapability::ReadFile, CodingToolKind::ReadFile),
         (ToolCapability::WriteFile, CodingToolKind::WriteFile),
         (ToolCapability::EditFile, CodingToolKind::EditFile),
+        (ToolCapability::HashlineEdit, CodingToolKind::HashlineEdit),
         (ToolCapability::ApplyPatch, CodingToolKind::ApplyPatch),
         (ToolCapability::Grep, CodingToolKind::Grep),
         (ToolCapability::Glob, CodingToolKind::Glob),

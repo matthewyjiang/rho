@@ -27,7 +27,7 @@ impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write_file".into(),
-            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer edit_file for one surgical string replacement in an existing file, and apply_patch for multi-hunk or multi-file edits.".into(),
+            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer edit_file for one surgical string replacement, hashline_edit for multi-hunk line-anchored edits after read_file, and apply_patch for Codex-style multi-file patches that add or delete files.".into(),
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         }
     }

@@ -46,6 +46,7 @@ define_tool_capabilities! {
     ApplyPatch => "apply_patch",
     Bash => "bash",
     EditFile => "edit_file",
+    HashlineEdit => "hashline_edit",
     FetchContent => "fetch_content",
     GetSearchContent => "get_search_content",
     Glob => "glob",

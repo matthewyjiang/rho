@@ -155,6 +155,7 @@ pub(super) fn preview_card(
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
+        ToolKind::HashlineEdit => hashline_start_card(arguments, cwd, status),
         ToolKind::ApplyPatch => apply_patch_start_card(
             arguments,
             cwd,
@@ -209,6 +210,24 @@ pub(super) fn preview_card(
             ToolHeader::call("get_search_content", Some(get_search_primary(arguments))),
         ),
     }
+}
+
+fn hashline_start_card(
+    arguments: &serde_json::Value,
+    cwd: &std::path::Path,
+    status: ToolStatus,
+) -> ToolCard {
+    let paths = hashline_paths(arguments, cwd);
+    let primary = paths.first().cloned();
+    let mut card = kind_card(
+        status,
+        ToolKind::HashlineEdit,
+        ToolHeader::call("hashline_edit", primary),
+    );
+    for path in paths.into_iter().skip(1) {
+        card.push_fact(ToolFact::Text { text: path });
+    }
+    card
 }
 
 fn apply_patch_start_card(
@@ -327,9 +346,10 @@ pub(super) fn finished_card(
             }
             card
         }
-        ToolKind::WriteFile | ToolKind::EditFile | ToolKind::ApplyPatch => {
-            file_diff_card(view, content, ok, cwd)
-        }
+        ToolKind::WriteFile
+        | ToolKind::EditFile
+        | ToolKind::HashlineEdit
+        | ToolKind::ApplyPatch => file_diff_card(view, content, ok, cwd),
         ToolKind::Skill => preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status),
         ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
@@ -428,7 +448,10 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
         | ToolKind::Grep
         | ToolKind::Glob
         | ToolKind::ReadFile => ToolFamily::FileCommand,
-        ToolKind::WriteFile | ToolKind::EditFile | ToolKind::ApplyPatch => ToolFamily::FileDiff,
+        ToolKind::WriteFile
+        | ToolKind::EditFile
+        | ToolKind::HashlineEdit
+        | ToolKind::ApplyPatch => ToolFamily::FileDiff,
         ToolKind::Skill => ToolFamily::Skill,
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
@@ -500,6 +523,17 @@ pub(super) fn apply_patch_paths(
         .get("input")
         .and_then(|value| value.as_str())
         .map(rho_tools::apply_patch::patch_paths_lenient)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| compact_display_path(cwd, &path))
+        .collect()
+}
+
+pub(super) fn hashline_paths(arguments: &serde_json::Value, cwd: &std::path::Path) -> Vec<String> {
+    arguments
+        .get("input")
+        .and_then(|value| value.as_str())
+        .map(rho_tools::hashline::section_paths_lenient)
         .unwrap_or_default()
         .into_iter()
         .map(|path| compact_display_path(cwd, &path))

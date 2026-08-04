@@ -3,7 +3,7 @@
 //! The crate has two layers:
 //!
 //! - Application tools ([`tool::Tool`]) implement the user-facing built-ins
-//!   (`bash`, `read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir`)
+//!   (`bash`, `read_file`, `write_file`, `edit_file`, `hashline_edit`, `apply_patch`, `list_dir`)
 //!   with output truncation, diffs, and display formatting.
 //! - Workspace searches implement `grep` and `glob` over the shared
 //!   [`workspace_walk`] walker.
@@ -34,6 +34,7 @@ pub mod edit_file;
 mod glob;
 mod grep;
 mod grep_format;
+pub mod hashline;
 pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;

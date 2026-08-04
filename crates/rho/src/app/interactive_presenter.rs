@@ -41,6 +41,7 @@ enum ToolKind {
     ReadFile,
     WriteFile,
     EditFile,
+    HashlineEdit,
     ApplyPatch,
     Skill,
     WebSearch,
@@ -64,6 +65,7 @@ impl ToolKind {
             "read_file" => Self::ReadFile,
             "write_file" => Self::WriteFile,
             "edit_file" => Self::EditFile,
+            "hashline_edit" => Self::HashlineEdit,
             "apply_patch" => Self::ApplyPatch,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
@@ -100,6 +102,7 @@ impl ToolKind {
             | Self::ReadFile
             | Self::WriteFile
             | Self::EditFile
+            | Self::HashlineEdit
             | Self::ApplyPatch
             | Self::Skill
             | Self::WebSearch

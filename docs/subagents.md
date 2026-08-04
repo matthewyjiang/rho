@@ -127,6 +127,7 @@ agents
 apply_patch
 bash
 edit_file
+hashline_edit
 fetch_content
 get_search_content
 glob

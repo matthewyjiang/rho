@@ -48,6 +48,7 @@ use crate::{
 use super::{
     apply_patch::{apply_hunks, parse_patch, patch_paths_lenient, ApplyPatch, Hunk},
     edit_file::{edit_file_content, EditFile, EditFileArgs},
+    hashline::{apply_hashline_document, parse_hashline, section_paths_lenient, HashlineEdit},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     write_file::{write_file_content, FileMutationOutcome, WriteFile},
@@ -116,6 +117,7 @@ pub enum CodingToolKind {
     ReadFile,
     WriteFile,
     EditFile,
+    HashlineEdit,
     ApplyPatch,
     Grep,
     Glob,
@@ -138,6 +140,10 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
         }),
+        CodingToolKind::HashlineEdit => Arc::new(HashlineEditTool {
+            max_output_bytes: options.max_output_bytes,
+            mutation_observer: options.mutation_observer.clone(),
+        }),
         CodingToolKind::ApplyPatch => Arc::new(ApplyPatchTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
@@ -154,6 +160,7 @@ pub fn coding_tools(options: CodingToolOptions) -> Vec<Arc<dyn Tool>> {
         CodingToolKind::ReadFile,
         CodingToolKind::WriteFile,
         CodingToolKind::EditFile,
+        CodingToolKind::HashlineEdit,
         CodingToolKind::ApplyPatch,
         CodingToolKind::Grep,
         CodingToolKind::Glob,
@@ -177,6 +184,11 @@ struct WriteFileTool {
 }
 
 struct EditFileTool {
+    max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+}
+
+struct HashlineEditTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
@@ -207,6 +219,12 @@ struct WriteArgs {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplyPatchArgs {
+    input: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HashlineEditArgs {
     input: String,
 }
 
@@ -303,9 +321,14 @@ impl Tool for ReadFileTool {
                 move |_context| {
                     Box::pin(async move {
                         workspace.revalidate(&resolved).map_err(map_path_error)?;
-                        let output = read_file_content(resolved.path(), args.offset, args.limit)
-                            .await
-                            .map_err(map_app_error)?;
+                        let output = read_file_content(
+                            resolved.path(),
+                            &compact_display_path(workspace.root(), &args.path),
+                            args.offset,
+                            args.limit,
+                        )
+                        .await
+                        .map_err(map_app_error)?;
                         let display = read_file_display_content(
                             workspace.root(),
                             &args.path,
@@ -443,6 +466,68 @@ impl Tool for EditFileTool {
     }
 }
 
+impl Tool for HashlineEditTool {
+    fn spec(&self) -> rho_sdk::model::ToolSpec {
+        HashlineEdit.spec()
+    }
+
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([CapabilityKind::Write, CapabilityKind::Read])
+    }
+
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        hashline_start_metadata(arguments)
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async move {
+            check_preparation_cancelled(&context)?;
+            let metadata = hashline_start_metadata(invocation.arguments());
+            let args: HashlineEditArgs = parse_args(invocation.into_arguments())?;
+            let sections = parse_hashline(&args.input).map_err(|error| {
+                ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+            })?;
+            let workspace = preparation_workspace(&context)?.clone();
+            let mut path_set = PatchPathSet::default();
+            for section in &sections {
+                path_set.collect(
+                    &workspace,
+                    &section.path,
+                    /*require_existing*/ true,
+                    "hashline_edit",
+                )?;
+            }
+            let PatchPathSet {
+                resolved_by_request,
+                resolved_by_canonical,
+                accesses,
+                capabilities,
+            } = path_set;
+
+            Ok(PreparedToolInvocation::resource_aware(
+                accesses,
+                capabilities,
+                metadata,
+                move |context| {
+                    execute_prepared_hashline(
+                        self.max_output_bytes,
+                        self.mutation_observer.clone(),
+                        workspace,
+                        resolved_by_canonical,
+                        resolved_by_request,
+                        args.input,
+                        context,
+                    )
+                },
+            ))
+        })
+    }
+}
+
 impl Tool for ApplyPatchTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         ApplyPatch.spec()
@@ -477,13 +562,19 @@ impl Tool for ApplyPatchTool {
                     &workspace,
                     hunk.source_path(),
                     /*require_existing*/ !matches!(hunk, Hunk::Add { .. }),
+                    "apply_patch",
                 )?;
                 if let Hunk::Update {
                     move_path: Some(dest),
                     ..
                 } = hunk
                 {
-                    path_set.collect(&workspace, dest.as_str(), /*require_existing*/ false)?;
+                    path_set.collect(
+                        &workspace,
+                        dest.as_str(),
+                        /*require_existing*/ false,
+                        "apply_patch",
+                    )?;
                 }
             }
             let PatchPathSet {
@@ -527,6 +618,7 @@ impl PatchPathSet {
         workspace: &Workspace,
         requested_path: &str,
         require_existing: bool,
+        tool_name: &str,
     ) -> Result<(), ToolError> {
         if self.resolved_by_request.contains_key(requested_path) {
             return Ok(());
@@ -546,14 +638,11 @@ impl PatchPathSet {
             return Ok(());
         }
         self.accesses.extend(write_accesses(&resolved));
-        self.capabilities.push(path_request(
-            &resolved,
-            PathCapability::Write,
-            "apply_patch",
-        ));
+        self.capabilities
+            .push(path_request(&resolved, PathCapability::Write, tool_name));
         if require_existing || resolved.state() == WorkspacePathState::Existing {
             self.capabilities
-                .push(path_request(&resolved, PathCapability::Read, "apply_patch"));
+                .push(path_request(&resolved, PathCapability::Read, tool_name));
         }
         self.resolved_by_canonical
             .insert(resolved.path().to_path_buf(), resolved);
@@ -618,6 +707,64 @@ fn execute_prepared_edit(
                 &args.old_string,
                 &args.new_string,
                 args.replace_all,
+                max_output_bytes,
+            ),
+        )
+        .await?;
+        Ok(single_path_mutation_output(outcome))
+    })
+}
+
+fn execute_prepared_hashline(
+    max_output_bytes: usize,
+    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    workspace: Workspace,
+    resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
+    requested_paths: std::collections::HashMap<String, PathBuf>,
+    input: String,
+    context: AuthorizedToolContext,
+) -> ToolFuture<'static> {
+    Box::pin(async move {
+        let _ = context
+            .progress()
+            .send(
+                ToolProgress::message(format!(
+                    "applying hashline edit ({} path(s))",
+                    requested_paths.len()
+                ))
+                .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+            )
+            .await;
+        let mutation_paths = resolved
+            .values()
+            .map(ResolvedWorkspacePath::path)
+            .collect::<Vec<_>>();
+        for prepared in resolved.values() {
+            workspace.revalidate(prepared).map_err(map_path_error)?;
+        }
+        let outcome = run_observed_mutation(
+            mutation_observer.as_ref(),
+            &mutation_paths,
+            apply_hashline_document(
+                &input,
+                |requested| {
+                    let path = requested_paths.get(requested).ok_or_else(|| {
+                        AppToolError::Message(format!(
+                            "hashline path '{requested}' was not prepared for this invocation"
+                        ))
+                    })?;
+                    let prepared = resolved.get(path).ok_or_else(|| {
+                        AppToolError::Message(format!(
+                            "hashline target '{}' was not prepared for this invocation",
+                            path.display()
+                        ))
+                    })?;
+                    workspace
+                        .revalidate(prepared)
+                        .map_err(|error| AppToolError::Message(error.to_string()))?;
+                    Ok(path.clone())
+                },
+                |path| compact_display_path(workspace.root(), path),
                 max_output_bytes,
             ),
         )
@@ -771,6 +918,16 @@ fn patch_start_metadata(arguments: &Value) -> ToolMetadata {
     let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
     if let Some(input) = arguments.get("input").and_then(Value::as_str) {
         for path in patch_paths_lenient(input) {
+            metadata = metadata.affected_path(path);
+        }
+    }
+    metadata
+}
+
+fn hashline_start_metadata(arguments: &Value) -> ToolMetadata {
+    let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
+    if let Some(input) = arguments.get("input").and_then(Value::as_str) {
+        for path in section_paths_lenient(input) {
             metadata = metadata.affected_path(path);
         }
     }

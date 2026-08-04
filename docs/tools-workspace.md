@@ -11,6 +11,7 @@ list_dir
 read_file
 write_file
 edit_file
+hashline_edit
 apply_patch
 grep
 glob
@@ -68,7 +69,34 @@ Document extraction enforces a 25 MiB source limit and a 200,000-character extra
 }
 ```
 
-Use `edit_file` for a single surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits. Use `write_file` to create or fully rewrite a file.
+Use `edit_file` for a single surgical string replace when you already know the exact text. Use `hashline_edit` when you have a fresh `read_file` hashline view and need one or more line-anchored hunks. Use `apply_patch` for Codex-style multi-file patches that add or delete files. Use `write_file` to create or fully rewrite a file.
+
+## Hashline edits
+
+`read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is a 4-hex snapshot of the full file. `hashline_edit` applies a compact line-anchored document against those original line numbers and rejects a stale `TAG` before writing.
+
+```json
+{
+  "input": "[src/app.py#A1B2]\nPUT 2.=2:\n+print(\"Hello, world!\")\n"
+}
+```
+
+Supported ops:
+
+- `PUT N.=M:` replace inclusive original lines with `+` body rows (`PUT N:` is shorthand for one line)
+- `PUT <N:` / `PUT >N:` / `PUT >$:` insert body rows before line N, after line N, or at end of file
+- `CUT N.=M` delete inclusive original lines
+
+Rules:
+
+- Take `TAG` and line numbers from the latest `read_file` of that path
+- Line numbers name the original snapshot; they do not shift mid-document
+- Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
+- Stale tags, overlapping destructive ranges, and out-of-range lines fail closed
+- Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
+- Create or fully rewrite files with `write_file`
+
+Successful results include a unified diff and the old/new tags.
 
 ## File patches
 
@@ -82,7 +110,7 @@ Rho parses the whole patch, plans every file operation against current contents,
 }
 ```
 
-Use `write_file` when you need to create or fully replace a file with complete contents. Prefer `edit_file` for one surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits.
+Use `write_file` when you need to create or fully replace a file with complete contents. Prefer `edit_file` for one surgical string replace. Prefer `hashline_edit` for multi-hunk edits after a hashline `read_file`. Use `apply_patch` for Codex-style multi-file patches that add or delete files.
 
 ## Managed background processes
 
