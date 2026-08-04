@@ -220,6 +220,9 @@ impl App {
         if let Err(error) = start_result {
             self.end_busy_ui();
             self.turn.stop_loading();
+            // begin_step() already opened the stretch; drop it so idle draws
+            // do not keep a stale Thinking... line after a failed provider start.
+            self.turn.reasoning_phase_mut().reset();
             self.turn.set_current_turn_start(None);
             self.turn.set_activity_phase(ActivityPhase::default());
             self.set_status("ready");
