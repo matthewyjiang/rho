@@ -405,7 +405,7 @@ async fn a_new_run_resets_the_context_usage_baseline() {
         run_id: RunId::new(),
         revision: Default::default(),
     });
-    interactive.observe_event(&RunEvent::StepStarted { step: 1 });
+    interactive.observe_event(&RunEvent::StepStarted { step: 1, estimated_context_tokens: 0 });
     interactive.observe_event(&RunEvent::UsageUpdated {
         usage: ModelUsage {
             input_tokens: Some(300),
@@ -426,7 +426,7 @@ async fn a_new_run_resets_the_context_usage_baseline() {
 // Covers: step-start estimates must surface before provider usage arrives
 // Owner: interactive run controller context accounting
 #[tokio::test]
-async fn context_estimated_notes_estimated_context_before_provider_usage() {
+async fn step_started_notes_estimated_context_before_provider_usage() {
     let mut interactive = pending_compaction_runtime("done").await;
     interactive.context_window = Some(10_000);
 
@@ -434,8 +434,10 @@ async fn context_estimated_notes_estimated_context_before_provider_usage() {
         run_id: RunId::new(),
         revision: Default::default(),
     });
-    interactive.observe_event(&RunEvent::StepStarted { step: 1 });
-    interactive.observe_event(&RunEvent::ContextEstimated { tokens: 2_500 });
+    interactive.observe_event(&RunEvent::StepStarted {
+        step: 1,
+        estimated_context_tokens: 2_500,
+    });
 
     assert_eq!(
         interactive.take_context_usage(),

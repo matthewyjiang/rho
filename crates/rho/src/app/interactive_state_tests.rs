@@ -38,7 +38,7 @@ fn cancellation_wins_over_tool_questionnaire_and_compaction_events() {
         cancelling
     );
     assert_eq!(
-        state_after_event(cancelling, &RunEvent::StepStarted { step: 2 }),
+        state_after_event(cancelling, &RunEvent::StepStarted { step: 2, estimated_context_tokens: 0 }),
         cancelling
     );
     assert_eq!(
@@ -67,7 +67,7 @@ fn compaction_provider_switch_and_failure_are_explicit_states() {
     assert_eq!(
         state_after_event(
             InteractiveState::Run(RunState::Compacting),
-            &RunEvent::StepStarted { step: 2 },
+            &RunEvent::StepStarted { step: 2, estimated_context_tokens: 0 },
         ),
         InteractiveState::Run(RunState::Running(RunPhase::Model))
     );

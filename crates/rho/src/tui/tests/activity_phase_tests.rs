@@ -15,6 +15,7 @@ fn provider_stream_reset_clears_attempt_owned_tool_previews() {
                 rho_tools::tool_card::ToolFamily::Default,
                 rho_tools::tool_card::ToolHeader::call("stale preview", None),
             )),
+            arguments_delta: String::new(),
         },
         &mut terminal,
     )

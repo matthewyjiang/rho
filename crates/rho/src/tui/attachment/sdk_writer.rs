@@ -91,6 +91,7 @@ fn attachment_update(
             index,
             call_id,
             card,
+            ..
         } => {
             let key = adapter.attachment_key_for_preview(index, call_id.as_ref());
             card.map(|card| AttachmentEvent::ToolStarted {
@@ -113,7 +114,7 @@ fn attachment_update(
             })
         }
         ViewModelEvent::RunStarted => None,
-        ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
+        ViewModelEvent::StepStarted { .. } => Some(AttachmentEvent::StepStarted),
         // This acknowledgement reconciles the interactive TUI's pending-input
         // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,
@@ -124,7 +125,7 @@ fn attachment_update(
         ViewModelEvent::ProviderRetry => None,
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
-        ViewModelEvent::ModelCallCompleted { .. } | ViewModelEvent::LiveOutputTokens(_) => None,
+        ViewModelEvent::ModelCallCompleted { .. } => None,
     }
 }
 

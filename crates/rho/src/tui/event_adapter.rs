@@ -19,7 +19,10 @@ pub(super) use super::compaction_display::{CompactionDisplayFacts, CompactionUiO
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
     RunStarted,
-    StepStarted(usize),
+    StepStarted {
+        step: usize,
+        estimated_context_tokens: u64,
+    },
     SteeringApplied(Vec<rho_sdk::SteeringId>),
     ToolStarted {
         call_id: rho_sdk::ToolCallId,
@@ -29,11 +32,6 @@ pub(super) enum ViewModelEvent {
     ProviderRetry,
     OutputDelta(String),
     ReasoningDelta(String),
-    /// Estimated output tokens from streamed text the card path dropped.
-    ///
-    /// Used for tool-call argument fragments that do not produce a card update
-    /// so live cost still advances on quiet hosts.
-    LiveOutputTokens(u64),
     ContextUsage(ContextUsage),
     Usage(ModelUsage),
     ModelCallCompleted {
@@ -51,6 +49,9 @@ pub(super) enum ViewModelEvent {
         /// may omit a card so the batch can attach a late call id without a
         /// forced re-render.
         card: Option<ToolCard>,
+        /// Argument text from this delta; used for live usage estimates even
+        /// when the card path suppresses a re-render.
+        arguments_delta: String,
     },
     /// Final proposal for a tool call, keyed only by call id.
     ///
@@ -76,7 +77,7 @@ impl ViewModelEvent {
                 Some(ActivityPhase::Starting)
             }
             Self::ToolFinished { .. } => None,
-            Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
+            Self::StepStarted { .. } => Some(ActivityPhase::WaitingForProvider),
             Self::ToolStarted { call_id, .. } if call_id == &compaction_call_id() => {
                 Some(ActivityPhase::Compacting)
             }
@@ -206,13 +207,17 @@ impl SdkEventAdapter {
             RunEvent::Started { .. } => {
                 vec![ViewEvent::Update(ViewModelEvent::RunStarted)]
             }
-            RunEvent::StepStarted { step } => {
+            RunEvent::StepStarted {
+                step,
+                estimated_context_tokens,
+            } => {
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
-                vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
+                vec![ViewEvent::Update(ViewModelEvent::StepStarted {
+                    step,
+                    estimated_context_tokens,
+                })]
             }
-            // Context is delivered through InteractiveRuntime::take_context_usage.
-            RunEvent::ContextEstimated { .. } => Vec::new(),
             RunEvent::SteeringApplied { ids } => {
                 vec![ViewEvent::Update(ViewModelEvent::SteeringApplied(ids))]
             }
@@ -228,7 +233,6 @@ impl SdkEventAdapter {
                 name,
                 arguments_delta,
             } => {
-                let live_tokens = rho_sdk::model::context::estimate_text_tokens(&arguments_delta);
                 // StreamCapture re-emits known identity on later deltas, so the
                 // first rendered preview can bind the call-id slot.
                 let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
@@ -242,22 +246,18 @@ impl SdkEventAdapter {
                     .presenter()
                     .preview(index, name, &arguments_delta)
                     .map(|presented| presented.card);
-                // Emit when the card changed, or when a late call id needs to
-                // bind an existing preview slot without forcing a re-render.
-                let mut events = Vec::new();
-                if live_tokens > 0 {
-                    events.push(ViewEvent::Update(ViewModelEvent::LiveOutputTokens(
-                        live_tokens,
-                    )));
-                }
-                if card.is_some() || newly_bound {
-                    events.push(ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                // Emit when the card changed, a late call id needs to bind, or
+                // argument text arrived (live usage still advances without a card).
+                if card.is_none() && !newly_bound && arguments_delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
                         index,
                         call_id,
                         card,
-                    }));
+                        arguments_delta,
+                    })]
                 }
-                events
             }
             RunEvent::ToolProposed { call } => {
                 let Ok(call_id) = rho_sdk::ToolCallId::from_string(call.id.clone()) else {

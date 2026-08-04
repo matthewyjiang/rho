@@ -34,7 +34,7 @@ pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> Fin
 
 fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
     match event {
-        ViewModelEvent::StepStarted(_)
+        ViewModelEvent::StepStarted { .. }
         | ViewModelEvent::ToolCallUpdated { .. }
         | ViewModelEvent::ToolCallProposed { .. }
         | ViewModelEvent::ToolStarted { .. }
@@ -45,7 +45,6 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ProviderRetry
         | ViewModelEvent::OutputDelta(_)
         | ViewModelEvent::ReasoningDelta(_)
-        | ViewModelEvent::LiveOutputTokens(_)
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
         | ViewModelEvent::ModelCallCompleted { .. }
@@ -236,10 +235,18 @@ impl App {
                 self.usage.live_stream.clear();
                 None
             }
-            ViewModelEvent::StepStarted(step) => {
+            ViewModelEvent::StepStarted {
+                step,
+                estimated_context_tokens,
+            } => {
                 self.usage.usage_cost_tracker.step_started();
                 self.usage.run_usage.step_started();
                 self.usage.live_stream.clear();
+                if estimated_context_tokens > 0 {
+                    self.usage
+                        .live_stream
+                        .note_estimated_input(estimated_context_tokens);
+                }
                 self.reset_streams();
                 self.turn.provider_attempt_mut().begin(self.history.len());
                 self.turn
@@ -267,7 +274,11 @@ impl App {
                 index,
                 call_id,
                 card,
+                arguments_delta,
             } => {
+                if !arguments_delta.is_empty() {
+                    self.usage.live_stream.add_output_text(&arguments_delta);
+                }
                 self.turn.tool_call_preview(index, call_id, card);
                 None
             }
@@ -287,17 +298,10 @@ impl App {
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
-            ViewModelEvent::LiveOutputTokens(tokens) => {
-                self.usage.live_stream.add_output_tokens(tokens);
-                None
-            }
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
-                if usage.source == rho_sdk::model::ContextUsageSource::Estimated {
-                    if let Some(tokens) = usage.tokens {
-                        self.usage.live_stream.note_estimated_input(tokens);
-                    }
-                }
+                // Context fill is independent of live cost; estimated input for
+                // live cost is taken from StepStarted so we do not dual-write.
                 self.usage.current_context = Some(usage);
                 None
             }

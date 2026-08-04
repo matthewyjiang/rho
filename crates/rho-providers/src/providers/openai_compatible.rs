@@ -15,7 +15,7 @@ use crate::{
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{
         convert_openai_response, invalid_stream_utf8, to_openai_message_for_target, to_openai_tool,
-        ChatRequest, ChatResponse, ChatStreamAccumulator, ChatStreamOptions,
+        ChatRequest, ChatResponse, ChatStreamAccumulator, ChatStreamOptions, ChatToolCallPolicy,
     },
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -62,6 +62,15 @@ impl OpenAiCompatibleProvider {
         ModelIdentity::new(self.provider, "openai-chat-completions", &self.model)
     }
 
+    fn chat_tool_call_policy(&self) -> ChatToolCallPolicy {
+        // Qwen Token Plan (and similar) omit ids/empty-arg braces; other hosts stay strict.
+        if self.provider == "qwen-token-plan" {
+            ChatToolCallPolicy::Lenient
+        } else {
+            ChatToolCallPolicy::Strict
+        }
+    }
+
     pub(crate) async fn complete_turn(
         &self,
         request: ModelRequest<'_>,
@@ -69,7 +78,14 @@ impl OpenAiCompatibleProvider {
         let body = self.request_body(request, false)?;
         let response = self.send(&body, None).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
-        convert_openai_response(response.json::<ChatResponse>().await?)
+        // Non-stream SDK path has no event channel; reasoning_content is only
+        // published on stream_turn via ProviderContext. Production orchestration
+        // uses the stream path.
+        Ok(convert_openai_response(
+            response.json::<ChatResponse>().await?,
+            self.chat_tool_call_policy(),
+        )?
+        .response)
     }
 
     pub(crate) async fn stream_turn(
@@ -92,7 +108,7 @@ impl OpenAiCompatibleProvider {
         let body = self.request_body(request, true)?;
         let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
-        let mut chat_stream = ChatStreamAccumulator::default();
+        let mut chat_stream = ChatStreamAccumulator::new(self.chat_tool_call_policy());
         let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();

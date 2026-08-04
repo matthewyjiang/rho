@@ -17,17 +17,16 @@ Hosts must match `RunEvent` with a wildcard because it is non-exhaustive. Delta 
 The significant ordering rules are:
 
 1. `Started` is first and includes the starting revision.
-2. Each provider loop emits `StepStarted` before that step's provider activity.
-3. Immediately after `StepStarted`, the runtime emits `ContextEstimated` with a provider-neutral token estimate of the request history and tool schemas. Hosts should treat this as a display estimate and replace it when `UsageUpdated` reports provider input.
-4. Provider deltas, tool-call assembly, usage, activity, and context updates retain source arrival order.
-5. A complete tool call emits `ToolProposed` before execution.
-6. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
-7. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
-8. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, and finish events from different calls may interleave.
-9. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
-10. The runtime holds completed results in model-order slots. Provider history and persisted history do not use finish order.
-11. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
-12. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
+2. Each provider loop emits `StepStarted` before that step's provider activity. `StepStarted` includes `estimated_context_tokens`, a provider-neutral token estimate of the request history and tool schemas. Hosts should treat this as a display estimate and replace it when `UsageUpdated` reports provider input.
+3. Provider deltas, tool-call assembly, usage, activity, and context updates retain source arrival order.
+4. A complete tool call emits `ToolProposed` before execution.
+5. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
+6. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
+7. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, and finish events from different calls may interleave.
+8. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
+9. The runtime holds completed results in model-order slots. Provider history and persisted history do not use finish order.
+10. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
+11. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
 
 A terminal event describes the worker result, but `Run::outcome` remains the authoritative typed result channel. `Completed` contains the same successful outcome. Cancellation returns `Error::Cancelled`. Failure returns the typed `Error`; the event contains sanitized text and retryability for observation.
 

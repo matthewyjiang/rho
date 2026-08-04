@@ -11,7 +11,7 @@ use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
-use super::tool_calls::{finalize_chat_tool_calls, RawChatToolCall};
+use super::tool_calls::{finalize_chat_tool_calls, ChatToolCallPolicy, RawChatToolCall};
 
 /// Provider-context kind for chat-completions `reasoning_content`.
 ///
@@ -20,17 +20,76 @@ use super::tool_calls::{finalize_chat_tool_calls, RawChatToolCall};
 /// Raw reasoning stays opaque provider context (never `reasoning_summary`).
 pub(crate) const OPENAI_CHAT_REASONING_CONTENT_KIND: &str = "openai_chat_reasoning_content";
 
-pub(crate) fn convert_openai_response(response: ChatResponse) -> Result<ModelResponse, ModelError> {
+/// Normalized chat-completions assistant payload after stream or JSON convert.
+#[derive(Debug)]
+pub(crate) struct ChatAssistantFinish {
+    pub(crate) response: ModelResponse,
+    pub(crate) reasoning_content: Option<String>,
+}
+
+/// Builds the shared chat assistant response from accumulated text, reasoning,
+/// and tool calls. Callers emit [`crate::model::ModelEvent::ProviderContext`]
+/// for reasoning separately via [`emit_chat_reasoning_context`].
+pub(crate) fn finalize_chat_assistant(
+    text: String,
+    reasoning: String,
+    tool_calls: Vec<RawChatToolCall>,
+    policy: ChatToolCallPolicy,
+) -> Result<ChatAssistantFinish, ModelError> {
+    let mut blocks = Vec::new();
+    if !text.is_empty() {
+        blocks.push(ContentBlock::Text(text));
+    }
+    blocks.extend(
+        finalize_chat_tool_calls(tool_calls, policy)?
+            .into_iter()
+            .map(ContentBlock::ToolCall),
+    );
+    if blocks.is_empty() {
+        return Err(ModelError::InvalidResponse(
+            "assistant message had no content or tool calls".into(),
+        ));
+    }
+    Ok(ChatAssistantFinish {
+        response: ModelResponse::Assistant(blocks),
+        reasoning_content: (!reasoning.is_empty()).then_some(reasoning),
+    })
+}
+
+/// Publishes retained chat `reasoning_content` as opaque provider context.
+pub(crate) fn emit_chat_reasoning_context(
+    reasoning_content: Option<String>,
+    on_event: &mut (dyn FnMut(crate::model::ModelEvent) -> Result<(), ModelError> + Send),
+) -> Result<(), ModelError> {
+    let Some(reasoning) = reasoning_content.filter(|text| !text.is_empty()) else {
+        return Ok(());
+    };
+    on_event(crate::model::ModelEvent::ProviderContext {
+        kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
+        position: Some(0),
+        data: serde_json::Value::String(reasoning),
+    })
+}
+
+/// Converts a non-stream chat completion using the shared assistant finalizer.
+///
+/// Reasoning is returned on [`ChatAssistantFinish`] so callers can emit
+/// provider context on event-capable paths.
+pub(crate) fn convert_openai_response(
+    response: ChatResponse,
+    policy: ChatToolCallPolicy,
+) -> Result<ChatAssistantFinish, ModelError> {
     let message = response
         .choices
         .into_iter()
         .next()
         .ok_or_else(|| ModelError::InvalidResponse("missing choices".into()))?
         .message;
-    let mut blocks = Vec::new();
-    if let Some(content) = message.content.filter(|s| !s.is_empty()) {
-        blocks.push(ContentBlock::Text(content));
-    }
+    let text = message.content.filter(|s| !s.is_empty()).unwrap_or_default();
+    let reasoning = message
+        .reasoning_content
+        .filter(|text| !text.is_empty())
+        .unwrap_or_default();
     let raw_calls = message
         .tool_calls
         .unwrap_or_default()
@@ -41,18 +100,46 @@ pub(crate) fn convert_openai_response(response: ChatResponse) -> Result<ModelRes
             arguments: call.function.arguments,
         })
         .collect();
-    blocks.extend(
-        finalize_chat_tool_calls(raw_calls)?
-            .into_iter()
-            .map(ContentBlock::ToolCall),
-    );
-    if blocks.is_empty() {
-        Err(ModelError::InvalidResponse(
-            "assistant message had no content or tool calls".into(),
-        ))
-    } else {
-        Ok(ModelResponse::Assistant(blocks))
+    finalize_chat_assistant(text, reasoning, raw_calls, policy)
+}
+
+/// Known chat wire fields extracted from replayable provider context.
+struct ChatReplay {
+    reasoning_content: Option<String>,
+}
+
+fn chat_replay(replay_context: Vec<ProviderContextBlock>) -> Result<ChatReplay, ModelError> {
+    let mut reasoning_content = None;
+    let mut unknown_kinds = Vec::new();
+    for block in replay_context {
+        if block.kind == OPENAI_CHAT_REASONING_CONTENT_KIND {
+            let Some(text) = block
+                .data
+                .as_str()
+                .map(str::to_owned)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            if reasoning_content.is_some() {
+                return Err(ModelError::InvalidResponse(
+                    "openai chat received multiple reasoning_content replay blocks".into(),
+                ));
+            }
+            reasoning_content = Some(text);
+            continue;
+        }
+        if !unknown_kinds.contains(&block.kind) {
+            unknown_kinds.push(block.kind);
+        }
     }
+    if !unknown_kinds.is_empty() {
+        return Err(ModelError::InvalidResponse(format!(
+            "openai chat cannot encode provider context kinds: {}",
+            unknown_kinds.join(", ")
+        )));
+    }
+    Ok(ChatReplay { reasoning_content })
 }
 
 pub(crate) fn codex_reasoning_param(
@@ -258,12 +345,7 @@ fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, 
 }
 
 fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessage, ModelError> {
-    let reasoning_content = prepared.replay_context.into_iter().find_map(|block| {
-        (block.kind == OPENAI_CHAT_REASONING_CONTENT_KIND)
-            .then(|| block.data.as_str().map(str::to_owned))
-            .flatten()
-            .filter(|text| !text.is_empty())
-    });
+    let replay = chat_replay(prepared.replay_context)?;
     let content = assistant_text(&prepared.content);
     let tool_calls = prepared
         .content
@@ -276,7 +358,7 @@ fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessag
     Ok(OpenAiMessage {
         role: "assistant".into(),
         content: (!content.is_empty()).then(|| json!(content)),
-        reasoning_content,
+        reasoning_content: replay.reasoning_content,
         tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
         tool_call_id: None,
     })
@@ -620,6 +702,60 @@ mod handoff_tests {
         let converted = to_openai_message_for_target(message, Some(&target)).unwrap();
         assert!(converted.reasoning_content.is_none());
         assert_eq!(converted.content.unwrap().as_str().unwrap(), "answer");
+    }
+
+    // Covers: unknown chat replay kinds must fail instead of silent drop
+    // Owner: openai chat completions history conversion
+    #[test]
+    fn chat_handoff_rejects_unknown_replay_context_kinds() {
+        let identity = crate::model::ModelIdentity::new(
+            "qwen-token-plan",
+            "openai-chat-completions",
+            "qwen3.8-max",
+        );
+        let message = Message::assistant(crate::model::AssistantMessage {
+            content: vec![ContentBlock::Text("answer".into())],
+            provenance: Some(identity.clone()),
+            reasoning_summary: None,
+            provider_context: vec![crate::model::ProviderContextBlock {
+                identity: identity.clone(),
+                kind: "future_chat_kind".into(),
+                position: Some(0),
+                data: json!({"x": 1}),
+            }],
+        });
+
+        let err = match to_openai_message_for_target(message, Some(&identity)) {
+            Ok(_) => panic!("expected unknown replay kind to fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            err,
+            ModelError::InvalidResponse(message)
+                if message.contains("future_chat_kind")
+        ));
+    }
+
+    // Covers: non-stream completions must capture reasoning_content for replay
+    // Owner: openai chat completions response conversion
+    #[test]
+    fn convert_openai_response_captures_reasoning_content() {
+        let response: ChatResponse = serde_json::from_value(json!({
+            "choices": [{
+                "message": {
+                    "content": "done",
+                    "reasoning_content": "think first"
+                }
+            }]
+        }))
+        .unwrap();
+        let finish = convert_openai_response(response, ChatToolCallPolicy::Strict).unwrap();
+        assert_eq!(finish.reasoning_content.as_deref(), Some("think first"));
+        assert!(matches!(
+            finish.response,
+            ModelResponse::Assistant(blocks)
+                if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "done")
+        ));
     }
 
     #[test]

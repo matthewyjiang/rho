@@ -100,5 +100,8 @@ pub(crate) struct Choice {
 #[derive(Deserialize)]
 pub(crate) struct ChatResponseMessage {
     pub(crate) content: Option<String>,
+    /// Qwen/DeepSeek-style raw thinking on non-stream completions.
+    #[serde(default)]
+    pub(crate) reasoning_content: Option<String>,
     pub(crate) tool_calls: Option<Vec<OpenAiToolCall>>,
 }

@@ -1,9 +1,12 @@
 use crate::{
-    model::{ContentBlock, ModelError, ModelEvent, ModelResponse, ModelUsage},
+    model::{ModelError, ModelEvent, ModelResponse, ModelUsage},
     protocol::cost::parse_usd_micros,
 };
 
-use super::tool_calls::{finalize_chat_tool_calls, RawChatToolCall};
+use super::{
+    convert::{emit_chat_reasoning_context, finalize_chat_assistant, ChatAssistantFinish},
+    tool_calls::{ChatToolCallPolicy, RawChatToolCall},
+};
 
 #[cfg(test)]
 use super::convert::{extract_response_text, ResponsesResponse};
@@ -15,21 +18,37 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 /// Hosts differ in how they send assistant output: text and reasoning arrive
 /// as deltas, tool calls arrive as indexed fragments, and some hosts repeat a
 /// completed message snapshot on the final chunk. Feed every SSE line to
-/// `handle_line`, then call `finish` once to normalize the accumulated state.
+/// `handle_line`, then call `into_finish` once to normalize the accumulated
+/// state without emitting side effects.
 ///
 /// Reasoning deltas are retained and replayed to later turns as
 /// `openai_chat_reasoning_content` provider context (Qwen/DeepSeek-style
 /// `reasoning_content`). History conversion only replays that context to the
 /// exact model that produced it, and hosts that do not know the field ignore
 /// it, so emitting it for every OpenAI-chat-style provider stays safe.
-#[derive(Default)]
 pub(crate) struct ChatStreamAccumulator {
     text: String,
     reasoning: String,
     tool_calls: Vec<RawChatToolCall>,
+    policy: ChatToolCallPolicy,
+}
+
+impl Default for ChatStreamAccumulator {
+    fn default() -> Self {
+        Self::new(ChatToolCallPolicy::Strict)
+    }
 }
 
 impl ChatStreamAccumulator {
+    pub(crate) fn new(policy: ChatToolCallPolicy) -> Self {
+        Self {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: Vec::new(),
+            policy,
+        }
+    }
+
     /// Consumes one SSE line. Returns whether the line counts as stream activity.
     pub(crate) fn handle_line(
         &mut self,
@@ -146,29 +165,19 @@ impl ChatStreamAccumulator {
         Ok(true)
     }
 
-    /// Emits the retained reasoning context, then normalizes the accumulated
-    /// state into the final response.
+    /// Pure finalization: builds response + reasoning without event side effects.
+    pub(crate) fn into_finish(self) -> Result<ChatAssistantFinish, ModelError> {
+        finalize_chat_assistant(self.text, self.reasoning, self.tool_calls, self.policy)
+    }
+
+    /// Finalizes and emits retained reasoning context through `on_event`.
     pub(crate) fn finish(
         self,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
-        if !self.reasoning.is_empty() {
-            on_event(ModelEvent::ProviderContext {
-                kind: super::convert::OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
-                position: Some(0),
-                data: serde_json::Value::String(self.reasoning),
-            })?;
-        }
-        let mut blocks = Vec::new();
-        if !self.text.is_empty() {
-            blocks.push(ContentBlock::Text(self.text));
-        }
-        blocks.extend(
-            finalize_chat_tool_calls(self.tool_calls)?
-                .into_iter()
-                .map(ContentBlock::ToolCall),
-        );
-        Ok(ModelResponse::Assistant(blocks))
+        let finish = self.into_finish()?;
+        emit_chat_reasoning_context(finish.reasoning_content, on_event)?;
+        Ok(finish.response)
     }
 
     /// Fills gaps in the accumulated state from a completed message snapshot.
@@ -178,6 +187,17 @@ impl ChatStreamAccumulator {
                 if !content.is_empty() {
                     self.text.push_str(content);
                 }
+            }
+        }
+        if self.reasoning.is_empty() {
+            if let Some(reasoning) = message
+                .get("reasoning_content")
+                .or_else(|| message.get("reasoning"))
+                .or_else(|| message.get("reasoning_text"))
+                .and_then(|v| v.as_str())
+                .filter(|text| !text.is_empty())
+            {
+                self.reasoning.push_str(reasoning);
             }
         }
         let Some(completed) = message.get("tool_calls").and_then(|v| v.as_array()) else {

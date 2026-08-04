@@ -304,7 +304,7 @@ async fn cancelled_applied_event_keeps_steering_out_of_history() {
     let cancellation = CancellationToken::new();
     let (events, _receiver) = mpsc::channel(1);
     events
-        .send(RunEvent::StepStarted { step: 1 })
+        .send(RunEvent::StepStarted { step: 1, estimated_context_tokens: 0 })
         .await
         .unwrap();
     let mut steering = SteeringQueue::new();
@@ -343,11 +343,10 @@ async fn cancellation_before_the_first_tool_interrupts_every_unresolved_call() {
     ));
     assert!(matches!(
         next_event(&mut run).await,
-        RunEvent::StepStarted { .. }
-    ));
-    assert!(matches!(
-        next_event(&mut run).await,
-        RunEvent::ContextEstimated { tokens } if tokens > 0
+        RunEvent::StepStarted {
+            estimated_context_tokens: tokens,
+            ..
+        } if tokens > 0
     ));
     assert!(matches!(
         next_event(&mut run).await,
@@ -846,11 +845,10 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     ));
     assert!(matches!(
         event_receiver.recv().await,
-        Some(RunEvent::StepStarted { .. })
-    ));
-    assert!(matches!(
-        event_receiver.recv().await,
-        Some(RunEvent::ContextEstimated { tokens }) if tokens > 0
+        Some(RunEvent::StepStarted {
+            estimated_context_tokens: tokens,
+            ..
+        }) if tokens > 0
     ));
     assert!(matches!(
         event_receiver.recv().await,

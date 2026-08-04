@@ -968,7 +968,9 @@ fn accumulates_streamed_tool_call_deltas() {
 // Owner: openai chat completions streaming
 #[test]
 fn streamed_tool_calls_tolerate_qwen_style_quirks() {
-    let mut chat_stream = ChatStreamAccumulator::default();
+    let mut chat_stream = ChatStreamAccumulator::new(
+        crate::protocol::openai_chat::ChatToolCallPolicy::Lenient,
+    );
     // index 1 first leaves a hole at 0; arguments arrive as a JSON object value.
     chat_stream
         .handle_line(
@@ -1006,6 +1008,25 @@ fn streamed_tool_calls_tolerate_qwen_style_quirks() {
         }
         other => panic!("expected tool call, got {other:?}"),
     }
+}
+
+// Covers: default strict policy must not invent ids for sparse empty slots
+// Owner: openai chat completions tool-call normalization
+#[test]
+fn streamed_tool_calls_strict_policy_rejects_sparse_empty_slots() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call-1","type":"function","function":{"name":"bash","arguments":"{}"}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+    let err = chat_stream.finish(&mut |_| Ok(())).unwrap_err();
+    assert!(matches!(
+        err,
+        crate::model::ModelError::InvalidResponse(message)
+            if message == "tool call 0 missing id"
+    ));
 }
 
 // Covers: non-object argument JSON must fail loud, not become invented parameters

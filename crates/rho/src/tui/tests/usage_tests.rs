@@ -17,7 +17,7 @@ fn cumulative_cost_source_follows_live_provider_snapshots() {
     let mut app = test_app();
     app.model_metadata = Some(input_cost_metadata());
     app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 1, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(100),
         ..Default::default()
@@ -27,7 +27,7 @@ fn cumulative_cost_source_follows_live_provider_snapshots() {
         CostSource::Estimated
     );
 
-    app.record_agent_event(ViewModelEvent::StepStarted(2));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 2, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(200),
         cost_usd_micros: Some(80),
@@ -51,7 +51,7 @@ fn provider_retry_preserves_usage_from_failed_attempt() {
     let mut app = test_app();
     app.model_metadata = Some(input_cost_metadata());
     app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 1, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(100),
         ..Default::default()
@@ -81,7 +81,7 @@ fn provider_retry_preserves_usage_from_failed_attempt() {
         CostSource::Estimated
     );
 
-    app.record_agent_event(ViewModelEvent::StepStarted(2));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 2, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(50),
         cost_usd_micros: Some(50),
@@ -98,12 +98,12 @@ fn provider_retry_after_prior_step_does_not_double_count_completed_usage() {
     let mut app = test_app();
     app.model_metadata = Some(input_cost_metadata());
     app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 1, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(100),
         ..Default::default()
     }));
-    app.record_agent_event(ViewModelEvent::StepStarted(2));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 2, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(140),
         ..Default::default()
@@ -133,13 +133,13 @@ fn provider_retry_after_prior_step_does_not_double_count_completed_usage() {
 fn metadata_loaded_after_first_step_recomputes_uncosted_baseline() {
     let mut app = test_app();
     app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 1, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(100),
         ..Default::default()
     }));
     app.model_metadata = Some(input_cost_metadata());
-    app.record_agent_event(ViewModelEvent::StepStarted(2));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 2, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(140),
         ..Default::default()
@@ -175,14 +175,14 @@ fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
     });
 
     app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 1, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(100_000),
         output_tokens: Some(20_000),
         cache_read_tokens: Some(50_000),
         ..ModelUsage::default()
     }));
-    app.record_agent_event(ViewModelEvent::StepStarted(2));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 2, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(200_000),
         output_tokens: Some(60_000),
@@ -213,7 +213,7 @@ fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
     );
 
     app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted { step: 1, estimated_context_tokens: 0 });
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(10_000),
         output_tokens: Some(5_000),
@@ -249,12 +249,20 @@ fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
         ..ModelMetadata::default()
     });
     app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::StepStarted {
+        step: 1,
+        estimated_context_tokens: 1_000,
+    });
     app.record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
         1_000,
         Some(10_000),
     )));
-    app.record_agent_event(ViewModelEvent::LiveOutputTokens(4));
+    app.record_agent_event(ViewModelEvent::ToolCallUpdated {
+        index: 0,
+        call_id: None,
+        card: None,
+        arguments_delta: "a".repeat(16), // 16 chars => 4 tokens
+    });
     assert!(app.usage.live_stream.is_active());
     let display = crate::tui::usage_cost::display_usage_with_live(
         app.usage.cumulative_usage.as_ref(),
