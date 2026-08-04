@@ -12,8 +12,9 @@ use ratatui::{
 
 use super::{
     activity, history_cache::HistoryLineSlice, App, CachedCodeBlock, CodeBlockCopyTarget,
-    ComposerMode, Entry, GoalStatus, HistoryScrollbar, LineFill, SessionHeaderCache, StreamKind,
-    Theme, HISTORY_SCROLLBAR_REVEAL_DURATION, RECOVERED_HISTORY_LINE_LIMIT,
+    ComposerMode, Entry, GoalStatus, HistoryScrollbar, LineFill, ReasoningChrome,
+    SessionHeaderCache, StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
+    RECOVERED_HISTORY_LINE_LIMIT,
 };
 use super::{
     highlight_selection,
@@ -640,7 +641,12 @@ impl App {
                 lines.extend(self.render_stream_preview_lines(preview, width));
             }
         }
-        if self.turn.reasoning_phase().hidden_placeholder() {
+        if self.turn.reasoning_phase().is_open()
+            && matches!(
+                self.info.runtime.reasoning_chrome(),
+                ReasoningChrome::ThinkingPlaceholder
+            )
+        {
             lines.push(Line::raw(""));
             lines.push(pad_display_line(styled_line(
                 "Thinking...".into(),

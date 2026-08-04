@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.15.1...rho-sdk-v1.15.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* **sdk:** commit turn history on provider failure ([#739](https://github.com/matthewyjiang/rho/issues/739)) ([b4158ab](https://github.com/matthewyjiang/rho/commit/b4158ab1a58974dd29e43f6970dbe2fd08f714b5))
+
 ## [1.15.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.15.0...rho-sdk-v1.15.1) (2026-08-03)
 
 

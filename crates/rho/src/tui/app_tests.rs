@@ -19,6 +19,8 @@ mod activity_phase_tests;
 mod input_editing_tests;
 #[path = "tests/questionnaire_interaction_tests.rs"]
 mod questionnaire_interaction_tests;
+#[path = "tests/reasoning_chrome_tests.rs"]
+mod reasoning_chrome_tests;
 #[path = "tests/shell_composer_tests.rs"]
 mod shell_composer_tests;
 #[path = "tests/subagent_notification_tests.rs"]
