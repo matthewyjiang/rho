@@ -78,7 +78,7 @@ impl App {
                 let show_reasoning = self.info.runtime.displays_reasoning_output();
                 self.turn
                     .reasoning_phase_mut()
-                    .on_reasoning_delta(show_reasoning);
+                    .on_reasoning_delta(self.info.runtime.shows_thinking_placeholder());
                 if !show_reasoning {
                     return Ok(true);
                 }
@@ -239,7 +239,7 @@ impl App {
                 self.turn.provider_attempt_mut().begin(self.history.len());
                 self.turn
                     .reasoning_phase_mut()
-                    .begin_step(self.info.runtime.displays_reasoning_output());
+                    .begin_step(self.info.runtime.shows_thinking_placeholder());
                 self.begin_provider_turn_ui();
                 self.turn.clear_tool_calls();
                 self.turn.start_loading_if_needed();
@@ -556,8 +556,8 @@ impl App {
 
         self.discard_live_reasoning_output();
 
-        // Zen mode hides reasoning text and the Thinking... placeholder.
-        if !self.info.runtime.shows_work_chrome() {
+        if !self.info.runtime.shows_thinking_placeholder() {
+            // Zen mode, or reasoning text shown path already handled above.
             self.turn
                 .reasoning_phase_mut()
                 .set_hidden_placeholder(false);

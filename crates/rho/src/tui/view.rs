@@ -640,7 +640,9 @@ impl App {
                 lines.extend(self.render_stream_preview_lines(preview, width));
             }
         }
-        if self.turn.reasoning_phase().hidden_placeholder() {
+        if self.turn.reasoning_phase().hidden_placeholder()
+            && self.info.runtime.shows_thinking_placeholder()
+        {
             lines.push(Line::raw(""));
             lines.push(pad_display_line(styled_line(
                 "Thinking...".into(),

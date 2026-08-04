@@ -261,6 +261,15 @@ impl RuntimeModelView {
         self.show_reasoning_output && self.shows_work_chrome()
     }
 
+    /// Whether the live Thinking... placeholder should appear while reasoning
+    /// text is suppressed.
+    ///
+    /// True only when work chrome is on and reasoning text is off. Zen mode
+    /// suppresses the placeholder; the activity rail still covers progress.
+    pub(crate) fn shows_thinking_placeholder(&self) -> bool {
+        self.shows_work_chrome() && !self.show_reasoning_output
+    }
+
     /// Whether tool cards, reasoning blocks, and Thinking... are visible in the transcript.
     ///
     /// Zen mode suppresses that work chrome while keeping the live activity rail

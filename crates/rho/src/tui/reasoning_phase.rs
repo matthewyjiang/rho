@@ -9,10 +9,12 @@ pub(super) struct ReasoningPhase {
 }
 
 impl ReasoningPhase {
-    pub(super) fn begin_step(&mut self, show_reasoning: bool) {
+    /// Start a step. `show_thinking_placeholder` controls the live Thinking...
+    /// line when reasoning text itself is not rendered.
+    pub(super) fn begin_step(&mut self, show_thinking_placeholder: bool) {
         *self = Self {
             started_at: None,
-            hidden_placeholder: !show_reasoning,
+            hidden_placeholder: show_thinking_placeholder,
         };
     }
 
@@ -20,11 +22,11 @@ impl ReasoningPhase {
         *self = Self::default();
     }
 
-    pub(super) fn on_reasoning_delta(&mut self, show_reasoning: bool) {
+    pub(super) fn on_reasoning_delta(&mut self, show_thinking_placeholder: bool) {
         if self.started_at.is_none() {
             self.started_at = Some(Instant::now());
         }
-        self.hidden_placeholder = !show_reasoning;
+        self.hidden_placeholder = show_thinking_placeholder;
     }
 
     /// Clears the placeholder. Returns elapsed when reasoning deltas were seen.
