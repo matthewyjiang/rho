@@ -9,6 +9,7 @@ use crate::protocol::openai_responses::{
     CodexSseState,
 };
 use crate::reasoning::ReasoningLevel;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 // Covers: Codex must warn only when the server declines a requested priority tier.
@@ -954,14 +955,14 @@ fn accumulates_streamed_tool_call_deltas() {
         .unwrap();
 
     let response = chat_stream.finish(&mut |_| Ok(())).unwrap();
-    let ModelResponse::Assistant(blocks) = response;
-    assert!(matches!(
-        blocks.as_slice(),
-        [ContentBlock::ToolCall(call)]
-            if call.id == "call-1"
-                && call.name == "bash"
-                && call.arguments == json!({"command":"pwd"})
-    ));
+    assert_eq!(
+        response,
+        ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: "call-1".into(),
+            name: "bash".into(),
+            arguments: json!({"command": "pwd"}),
+        })])
+    );
 }
 
 // Covers: sparse tool indexes, duplicate ids, object-form args must still validate
@@ -986,28 +987,21 @@ fn streamed_tool_calls_tolerate_qwen_style_quirks() {
         .unwrap();
 
     let response = chat_stream.finish(&mut |_| Ok(())).unwrap();
-    let ModelResponse::Assistant(blocks) = response;
-    assert_eq!(blocks.len(), 2);
-    match &blocks[0] {
-        ContentBlock::ToolCall(call) => {
-            assert_eq!(call.id, "dup");
-            assert_eq!(call.name, "bash");
-            assert_eq!(call.arguments, json!({"command":"pwd"}));
-            assert!(call.arguments.is_object());
-            assert!(!call.id.is_empty());
-        }
-        other => panic!("expected tool call, got {other:?}"),
-    }
-    match &blocks[1] {
-        ContentBlock::ToolCall(call) => {
-            assert_eq!(call.id, "dup_2");
-            assert_eq!(call.name, "read_file");
-            assert_eq!(call.arguments, json!({"path":"a.rs"}));
-            assert!(call.arguments.is_object());
-            assert!(!call.id.is_empty());
-        }
-        other => panic!("expected tool call, got {other:?}"),
-    }
+    assert_eq!(
+        response,
+        ModelResponse::Assistant(vec![
+            ContentBlock::ToolCall(ToolCall {
+                id: "dup".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "pwd"}),
+            }),
+            ContentBlock::ToolCall(ToolCall {
+                id: "dup_2".into(),
+                name: "read_file".into(),
+                arguments: json!({"path": "a.rs"}),
+            }),
+        ])
+    );
 }
 
 // Covers: default strict policy must not invent ids for sparse empty slots

@@ -34,7 +34,7 @@ pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> Fin
 
 fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
     match event {
-        ViewModelEvent::StepStarted { .. }
+        ViewModelEvent::StepStarted(_)
         | ViewModelEvent::ToolCallUpdated { .. }
         | ViewModelEvent::ToolCallProposed { .. }
         | ViewModelEvent::ToolStarted { .. }
@@ -235,18 +235,10 @@ impl App {
                 self.usage.live_stream.clear();
                 None
             }
-            ViewModelEvent::StepStarted {
-                step,
-                estimated_context_tokens,
-            } => {
+            ViewModelEvent::StepStarted(step) => {
                 self.usage.usage_cost_tracker.step_started();
                 self.usage.run_usage.step_started();
                 self.usage.live_stream.clear();
-                if estimated_context_tokens > 0 {
-                    self.usage
-                        .live_stream
-                        .note_estimated_input(estimated_context_tokens);
-                }
                 self.reset_streams();
                 self.turn.provider_attempt_mut().begin(self.history.len());
                 self.turn
@@ -300,8 +292,11 @@ impl App {
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
-                // Context fill is independent of live cost; estimated input for
-                // live cost is taken from StepStarted so we do not dual-write.
+                if usage.source == rho_sdk::model::ContextUsageSource::Estimated {
+                    if let Some(tokens) = usage.tokens {
+                        self.usage.live_stream.note_estimated_input(tokens);
+                    }
+                }
                 self.usage.current_context = Some(usage);
                 None
             }

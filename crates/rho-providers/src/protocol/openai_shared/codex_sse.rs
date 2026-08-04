@@ -16,6 +16,11 @@ use rho_sdk::model::ToolCall;
 use super::convert::{extract_response_text, ResponsesResponse};
 use super::stream::{extract_usage, line_decode_error, sse_data};
 
+/// Max chars for a single search/url detail string in activity previews.
+const DETAIL_MAX_CHARS: usize = 80;
+/// Max chars per query when rendering multi-query search previews.
+const QUERY_MAX_CHARS: usize = 48;
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct CodexSseResponse {
     pub(crate) response: ModelResponse,
@@ -329,7 +334,7 @@ fn first_nonempty_detail_field(payload: &serde_json::Value, keys: &[&str]) -> Op
             .get(*key)
             .and_then(|value| value.as_str())
             .filter(|value| !value.is_empty())
-            .map(|value| truncate_detail(value, 80))
+            .map(|value| truncate_detail(value, DETAIL_MAX_CHARS))
     })
 }
 
@@ -339,7 +344,7 @@ fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
         .and_then(|query| query.as_str())
         .filter(|query| !query.is_empty())
     {
-        return Some(truncate_detail(query, 80));
+        return Some(truncate_detail(query, DETAIL_MAX_CHARS));
     }
     let queries = payload
         .get("queries")
@@ -354,7 +359,7 @@ fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
     let mut rendered = queries
         .iter()
         .take(3)
-        .map(|query| truncate_detail(query, 48))
+        .map(|query| truncate_detail(query, QUERY_MAX_CHARS))
         .collect::<Vec<_>>();
     if queries.len() > rendered.len() {
         rendered.push(format!("{} more", queries.len() - rendered.len()));
@@ -441,13 +446,23 @@ fn extract_codex_function_call(item: &serde_json::Value) -> Result<Option<ToolCa
             ModelError::InvalidResponse(format!("function_call {name} missing call_id"))
         })?
         .to_string();
-    let arguments_text = item
-        .get("arguments")
-        .and_then(|v| v.as_str())
-        .unwrap_or("{}");
-    let arguments = serde_json::from_str(arguments_text).map_err(|e| {
-        ModelError::InvalidResponse(format!("invalid function_call arguments for {name}: {e}"))
-    })?;
+    let arguments = match item.get("arguments") {
+        None => serde_json::json!({}),
+        Some(serde_json::Value::String(text)) => serde_json::from_str(text).map_err(|e| {
+            ModelError::InvalidResponse(format!("invalid function_call arguments for {name}: {e}"))
+        })?,
+        Some(value @ serde_json::Value::Object(_)) => value.clone(),
+        Some(_) => {
+            return Err(ModelError::InvalidResponse(format!(
+                "tool call arguments for {name} are not a JSON object"
+            )));
+        }
+    };
+    if !arguments.is_object() {
+        return Err(ModelError::InvalidResponse(format!(
+            "tool call arguments for {name} are not a JSON object"
+        )));
+    }
     Ok(Some(ToolCall {
         id,
         name,

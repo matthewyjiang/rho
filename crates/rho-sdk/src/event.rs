@@ -248,10 +248,23 @@ pub enum RunEvent {
     },
     StepStarted {
         step: usize,
-        /// Provider-neutral token estimate of the request history and tool
-        /// schemas for this step. Hosts should treat this as a display estimate
-        /// and replace it when [`RunEvent::UsageUpdated`] reports provider input.
-        estimated_context_tokens: u64,
+    },
+    /// Estimated context tokens for the model request about to start.
+    ///
+    /// Derived from the live run history and tool specs at step start. Hosts
+    /// should treat this as a display estimate and replace it with
+    /// [`RunEvent::UsageUpdated`] when the provider reports input usage.
+    ///
+    /// Kept as its own variant (instead of a field on [`Self::StepStarted`]) so
+    /// 1.x stays minor-compatible. Constructing/matching `StepStarted` must not
+    /// require a new field until the next major.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): fold `estimated_context_tokens` into `StepStarted`
+    /// and delete this variant so step start and context estimate are one event.
+    ContextEstimated {
+        tokens: u64,
     },
     AssistantTextDelta {
         text: String,

@@ -93,7 +93,7 @@ fn step_started_clears_stream_state_without_clearing_model_performance() {
     });
 
     assert!(app
-        .record_agent_event(ViewModelEvent::StepStarted { step: 2, estimated_context_tokens: 0 })
+        .record_agent_event(ViewModelEvent::StepStarted(2))
         .is_none());
 
     assert!(app.streams.assistant_stream.is_empty());

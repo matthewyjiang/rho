@@ -114,7 +114,7 @@ fn attachment_update(
             })
         }
         ViewModelEvent::RunStarted => None,
-        ViewModelEvent::StepStarted { .. } => Some(AttachmentEvent::StepStarted),
+        ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
         // This acknowledgement reconciles the interactive TUI's pending-input
         // controls. Read-only attachments have no corresponding state.
         ViewModelEvent::SteeringApplied(_) => None,

@@ -164,17 +164,24 @@ async fn execute_turn_loop(
                 return Err(error);
             }
         }
-        // Emit context estimate with the step so quiet hosts still show context
-        // fill while thinking and tool-call JSON stream (usage often arrives only
-        // at the end of the OpenAI-compatible stream).
+        match emit(&events, &cancellation, RunEvent::StepStarted { step }).await {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                return commit_cancelled_history(core, history, &events).await;
+            }
+            Err(error) => return Err(error),
+        }
+        // Emit before the provider call so quiet hosts still show context fill
+        // while thinking and tool-call JSON stream (usage often arrives only at
+        // the end of the OpenAI-compatible stream). Kept separate from
+        // StepStarted for 1.x minor compatibility (see ContextEstimated docs).
         let estimated_context_tokens =
             crate::model::context::estimate_context_tokens(&history, &tool_specs);
         match emit(
             &events,
             &cancellation,
-            RunEvent::StepStarted {
-                step,
-                estimated_context_tokens,
+            RunEvent::ContextEstimated {
+                tokens: estimated_context_tokens,
             },
         )
         .await

@@ -19,10 +19,7 @@ pub(super) use super::compaction_display::{CompactionDisplayFacts, CompactionUiO
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
     RunStarted,
-    StepStarted {
-        step: usize,
-        estimated_context_tokens: u64,
-    },
+    StepStarted(usize),
     SteeringApplied(Vec<rho_sdk::SteeringId>),
     ToolStarted {
         call_id: rho_sdk::ToolCallId,
@@ -77,7 +74,7 @@ impl ViewModelEvent {
                 Some(ActivityPhase::Starting)
             }
             Self::ToolFinished { .. } => None,
-            Self::StepStarted { .. } => Some(ActivityPhase::WaitingForProvider),
+            Self::StepStarted(_) => Some(ActivityPhase::WaitingForProvider),
             Self::ToolStarted { call_id, .. } if call_id == &compaction_call_id() => {
                 Some(ActivityPhase::Compacting)
             }
@@ -207,17 +204,14 @@ impl SdkEventAdapter {
             RunEvent::Started { .. } => {
                 vec![ViewEvent::Update(ViewModelEvent::RunStarted)]
             }
-            RunEvent::StepStarted {
-                step,
-                estimated_context_tokens,
-            } => {
+            RunEvent::StepStarted { step } => {
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
-                vec![ViewEvent::Update(ViewModelEvent::StepStarted {
-                    step,
-                    estimated_context_tokens,
-                })]
+                vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
             }
+            // Context fill and live input estimate arrive via
+            // InteractiveRuntime::take_context_usage → ContextUsage.
+            RunEvent::ContextEstimated { .. } => Vec::new(),
             RunEvent::SteeringApplied { ids } => {
                 vec![ViewEvent::Update(ViewModelEvent::SteeringApplied(ids))]
             }
