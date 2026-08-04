@@ -386,6 +386,7 @@ fn request_body(
 ) -> serde_json::Value {
     let provider_name = match dialect {
         OpenAiCompatibleDialect::Standard => "standard",
+        OpenAiCompatibleDialect::QwenTokenPlan => "qwen-token-plan",
         OpenAiCompatibleDialect::Poolside => "poolside",
         OpenAiCompatibleDialect::Moonshot => "moonshot",
         OpenAiCompatibleDialect::OpenRouter => "openrouter",

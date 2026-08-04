@@ -381,3 +381,7 @@ pub(crate) fn extract_sse_text(body: &str) -> Result<String, ModelError> {
 #[cfg(test)]
 #[path = "stream_cost_tests.rs"]
 mod stream_cost_tests;
+
+#[cfg(test)]
+#[path = "stream_chat_tests.rs"]
+mod stream_chat_tests;

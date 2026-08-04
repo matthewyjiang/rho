@@ -45,6 +45,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ProviderRetry
         | ViewModelEvent::OutputDelta(_)
         | ViewModelEvent::ReasoningDelta(_)
+        | ViewModelEvent::LiveOutputText(_)
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
         | ViewModelEvent::ModelCallCompleted { .. }
@@ -261,11 +262,7 @@ impl App {
                 index,
                 call_id,
                 card,
-                arguments_delta,
             } => {
-                if !arguments_delta.is_empty() {
-                    self.usage.live_stream.add_output_text(&arguments_delta);
-                }
                 self.turn.tool_call_preview(index, call_id, card);
                 None
             }
@@ -285,6 +282,10 @@ impl App {
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
+            ViewModelEvent::LiveOutputText(text) => {
+                self.usage.live_stream.add_output_text(&text);
+                None
+            }
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
                 if usage.source == rho_sdk::model::ContextUsageSource::Estimated {

@@ -95,7 +95,7 @@ fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
     assert_eq!(
         provider_runtime("qwen-token-plan"),
         Some(ProviderRuntime::OpenAiCompatible {
-            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::Standard,
+            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::QwenTokenPlan,
             default_api_base: QWEN_TOKEN_PLAN_API_BASE,
         })
     );

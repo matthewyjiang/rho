@@ -152,7 +152,6 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
             index: 0,
             call_id: None,
             card: Some(preview.clone()),
-            arguments_delta: String::new(),
         },
     );
     let second = attachment_update(
@@ -161,7 +160,6 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
             index: 0,
             call_id: Some(call_id.clone()),
             card: Some(with_id.clone()),
-            arguments_delta: String::new(),
         },
     );
     let finished = attachment_update(

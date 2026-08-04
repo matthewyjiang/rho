@@ -254,12 +254,9 @@ fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
         1_000,
         Some(10_000),
     )));
-    app.record_agent_event(ViewModelEvent::ToolCallUpdated {
-        index: 0,
-        call_id: None,
-        card: None,
-        arguments_delta: "a".repeat(16), // 16 chars => 4 tokens
-    });
+    app.record_agent_event(ViewModelEvent::LiveOutputText(
+        "a".repeat(16), // 16 chars => 4 tokens
+    ));
     assert!(app.usage.live_stream.is_active());
     let display = crate::tui::usage_cost::display_usage_with_live(
         app.usage.cumulative_usage.as_ref(),

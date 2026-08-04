@@ -232,14 +232,11 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
         name: None,
         arguments_delta: partial_arguments.into(),
     });
-    // Argument-only deltas still surface for live usage, but without a card yet.
+    // Argument-only deltas meter live usage without forcing a card event.
     assert!(matches!(
         only_event(partial_events),
-        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-            card: None,
-            call_id: None,
-            ..
-        })
+        ViewEvent::Update(ViewModelEvent::LiveOutputText(text))
+            if text == partial_arguments
     ));
     let ViewEvent::Update(ViewModelEvent::ToolCallUpdated { card, .. }) =
         only_event(adapter.translate(RunEvent::ToolCallUpdated {
@@ -376,19 +373,23 @@ fn apply_patch_binds_a_late_call_id_after_a_large_preview_stride() {
         "+line\n".repeat(45_000)
     );
     let arguments = serde_json::to_string(&serde_json::json!({"input": input})).unwrap();
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::ToolCallUpdated {
-            index: 0,
-            id: None,
-            name: Some("apply_patch".into()),
-            arguments_delta: arguments,
-        })),
+    let events = adapter.translate(RunEvent::ToolCallUpdated {
+        index: 0,
+        id: None,
+        name: Some("apply_patch".into()),
+        arguments_delta: arguments,
+    });
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, ViewEvent::Update(ViewModelEvent::LiveOutputText(_)))));
+    assert!(events.iter().any(|event| matches!(
+        event,
         ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
             call_id: None,
             card: Some(_),
             ..
         })
-    ));
+    )));
 
     // Identity-only delta after a coarse stride: bind without re-rendering.
     assert!(matches!(
@@ -451,15 +452,18 @@ fn apply_patch_preview_preserves_delete_and_move_identity() {
     for case in cases {
         let mut adapter = SdkEventAdapter::default();
         let arguments = serde_json::to_string(&serde_json::json!({"input": case.input})).unwrap();
-        let ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-            card: Some(card), ..
-        }) = only_event(adapter.translate(RunEvent::ToolCallUpdated {
+        let events = adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,
             id: None,
             name: Some("apply_patch".into()),
             arguments_delta: arguments,
-        }))
-        else {
+        });
+        let Some(card) = events.into_iter().find_map(|event| match event {
+            ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                card: Some(card), ..
+            }) => Some(card),
+            _ => None,
+        }) else {
             panic!("{}: expected streamed apply_patch card", case.name);
         };
         assert_eq!(card, case.expected, "{}", case.name);

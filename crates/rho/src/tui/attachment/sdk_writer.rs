@@ -91,7 +91,6 @@ fn attachment_update(
             index,
             call_id,
             card,
-            ..
         } => {
             let key = adapter.attachment_key_for_preview(index, call_id.as_ref());
             card.map(|card| AttachmentEvent::ToolStarted {
@@ -123,6 +122,7 @@ fn attachment_update(
             Some(AttachmentEvent::ProviderStreamReset)
         }
         ViewModelEvent::ProviderRetry => None,
+        ViewModelEvent::LiveOutputText(_) => None,
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
         ViewModelEvent::ModelCallCompleted { .. } => None,

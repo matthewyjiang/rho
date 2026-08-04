@@ -55,7 +55,7 @@ Use `/config` and choose **Refresh model lists** to fetch the current models for
 - `qwen3.8-max` and `qwen3.8-max-preview`: `low`, `medium`, and `xhigh` (API default is `xhigh` when the field is omitted)
 - Models that only advertise a thinking toggle may not expose a full effort cycle until models.dev lists exact effort values
 
-When thinking models stream `reasoning_content` alongside tool calls, Rho retains that field as exact-model provider context and replays it on later assistant messages in the same tool loop. Without replay, multi-step tool use can degrade into empty assistant responses after a couple of tool rounds.
+When thinking models stream `reasoning_content` alongside tool calls, Rho retains that field as exact-model provider context and replays it on later assistant messages in the same tool loop. Without replay, multi-step tool use can degrade into empty assistant responses after a couple of tool rounds. Rho orchestration always uses the streaming path for this; non-stream `send_turn` / complete responses cannot carry provider context.
 
 See [Token Plan overview](https://docs.qwencloud.com/token-plan/overview) and the [Token Plan FAQ](https://docs.qwencloud.com/token-plan/faq) for quota, region, and key rules.
 

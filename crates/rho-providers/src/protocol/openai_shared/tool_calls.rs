@@ -139,3 +139,7 @@ fn parse_chat_tool_arguments(
     }
     Ok(value)
 }
+
+#[cfg(test)]
+#[path = "tool_calls_tests.rs"]
+mod tests;

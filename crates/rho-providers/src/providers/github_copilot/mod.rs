@@ -1,6 +1,6 @@
 use crate::protocol::openai_chat::{
-    convert_openai_response, invalid_stream_utf8, to_openai_message_for_target, to_openai_tool,
-    ChatStreamAccumulator, ChatToolCallPolicy,
+    convert_openai_response, invalid_stream_utf8, response_without_stream_context,
+    to_openai_message_for_target, to_openai_tool, ChatStreamAccumulator, ChatToolCallPolicy,
 };
 use futures_util::StreamExt;
 use reqwest::StatusCode;
@@ -177,7 +177,10 @@ impl GitHubCopilotProvider {
         let response = self.send_chat_with_retry(body, auth, None).await?;
         let response = error_for_status(response).await?;
         let response: ChatResponse = response.json().await?;
-        Ok(convert_openai_response(response, ChatToolCallPolicy::Strict)?.response)
+        Ok(response_without_stream_context(convert_openai_response(
+            response,
+            ChatToolCallPolicy::Strict,
+        )?))
     }
 
     /// Streams one turn through a `Send` callback for the public SDK adapter.

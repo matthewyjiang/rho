@@ -76,7 +76,7 @@ pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
             default_api_base: "https://openrouter.ai/api/v1",
         },
         RuntimeProviderId::QwenTokenPlan => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
+            dialect: OpenAiCompatibleDialect::QwenTokenPlan,
             default_api_base: QWEN_TOKEN_PLAN_API_BASE,
         },
         RuntimeProviderId::Xai => ProviderRuntime::Xai,
