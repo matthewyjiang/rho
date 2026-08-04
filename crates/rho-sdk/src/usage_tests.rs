@@ -127,6 +127,17 @@ async fn cancellation_records_queued_usage_before_usage_updated_is_emitted() {
         run.next_event().await,
         Some(RunEvent::Started { .. })
     ));
+    // Capacity is 1. Drain the pre-provider step events so orchestration can
+    // start the provider; otherwise ContextEstimated blocks forever and the
+    // queue-observed handshake never fires.
+    assert!(matches!(
+        run.next_event().await,
+        Some(RunEvent::StepStarted { .. })
+    ));
+    assert!(matches!(
+        run.next_event().await,
+        Some(RunEvent::ContextEstimated { .. })
+    ));
     queued.await.unwrap();
     run.cancel();
 
