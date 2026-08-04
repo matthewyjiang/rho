@@ -9,6 +9,18 @@ use super::markdown::HeadingLevel;
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
+// Light/dark split for palette-derived chrome. Matches the existing block
+// contrast threshold used by block_foreground.
+const LIGHT_BACKGROUND_LUMINANCE: f32 = 0.55;
+// Dim candidate band: stay muted and readable against the terminal background.
+// 0.75 ≈ #c0c0c0 (above this, dark-bg dim collapses into body white).
+const DIM_MAX_LUMINANCE_ON_DARK: f32 = 0.75;
+// 0.12 ≈ #383838 (below this, dark-bg dim vanishes into the background).
+const DIM_MIN_LUMINANCE_ON_DARK: f32 = 0.12;
+// 0.45 rejects mid/light bright-black samples on light backgrounds.
+const DIM_MAX_LUMINANCE_ON_LIGHT: f32 = 0.45;
+// Minimum luminance gap so muted text neither matches the wash nor the body.
+const DIM_CONTRAST_MARGIN: f32 = 0.08;
 
 static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
 
@@ -26,6 +38,25 @@ impl Rgb {
 
     fn color(self) -> Color {
         Color::Rgb(self.red, self.green, self.blue)
+    }
+
+    fn luminance(self) -> f32 {
+        (0.2126 * f32::from(self.red)
+            + 0.7152 * f32::from(self.green)
+            + 0.0722 * f32::from(self.blue))
+            / 255.0
+    }
+
+    /// True when this sample can serve as muted chrome against `background_luminance`.
+    fn is_usable_dim(self, background_luminance: f32) -> bool {
+        let luminance = self.luminance();
+        if is_light_background(background_luminance) {
+            luminance + DIM_CONTRAST_MARGIN < background_luminance
+                && luminance < DIM_MAX_LUMINANCE_ON_LIGHT
+        } else {
+            (DIM_MIN_LUMINANCE_ON_DARK..=DIM_MAX_LUMINANCE_ON_DARK).contains(&luminance)
+                && luminance >= background_luminance + DIM_CONTRAST_MARGIN
+        }
     }
 
     fn blend_toward(self, overlay: Self, alpha: f32) -> Self {
@@ -52,19 +83,18 @@ impl TerminalPalette {
     }
 
     fn dim_foreground(&self) -> Color {
-        if relative_luminance(
-            self.background.red,
-            self.background.green,
-            self.background.blue,
-        ) > 0.55
-        {
+        // Dim chrome comes from ANSI bright black (index 8), never white (index 7).
+        let background_luminance = self.background.luminance();
+        let fallback = if is_light_background(background_luminance) {
             Color::Black
         } else {
-            self.ansi
-                .get(&AnsiColor::Gray)
-                .copied()
-                .map_or(Color::DarkGray, Rgb::color)
-        }
+            Color::DarkGray
+        };
+        self.ansi
+            .get(&AnsiColor::BrightBlack)
+            .copied()
+            .filter(|rgb| rgb.is_usable_dim(background_luminance))
+            .map_or(fallback, Rgb::color)
     }
 }
 
@@ -96,8 +126,34 @@ enum AnsiColor {
     Blue,
     Magenta,
     Cyan,
-    Gray,
+    /// ANSI index 7. Most palettes store white here. Blend target only - never dim chrome.
+    White,
+    /// ANSI index 8 (bright black). Standard muted chrome slot.
+    BrightBlack,
 }
+
+/// Chromatic colors plus white. Required before a queried palette is accepted.
+const REQUIRED_ANSI_COLORS: [AnsiColor; 7] = [
+    AnsiColor::Red,
+    AnsiColor::Green,
+    AnsiColor::Yellow,
+    AnsiColor::Blue,
+    AnsiColor::Magenta,
+    AnsiColor::Cyan,
+    AnsiColor::White,
+];
+
+/// Colors sampled from the terminal: required set plus optional bright black for dim.
+const SAMPLED_ANSI_COLORS: [AnsiColor; 8] = [
+    AnsiColor::Red,
+    AnsiColor::Green,
+    AnsiColor::Yellow,
+    AnsiColor::Blue,
+    AnsiColor::Magenta,
+    AnsiColor::Cyan,
+    AnsiColor::White,
+    AnsiColor::BrightBlack,
+];
 
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 impl AnsiColor {
@@ -109,7 +165,8 @@ impl AnsiColor {
             Self::Blue => 4,
             Self::Magenta => 5,
             Self::Cyan => 6,
-            Self::Gray => 7,
+            Self::White => 7,
+            Self::BrightBlack => 8,
         }
     }
 
@@ -121,7 +178,10 @@ impl AnsiColor {
             Self::Blue => Color::Blue,
             Self::Magenta => Color::Magenta,
             Self::Cyan => Color::Cyan,
-            Self::Gray => Color::Gray,
+            // ratatui has no Color::White. Color::Gray is ANSI SGR 37 (white/grey slot).
+            // Color::DarkGray is bright black. Do not treat Gray as muted chrome.
+            Self::White => Color::Gray,
+            Self::BrightBlack => Color::DarkGray,
         }
     }
 }
@@ -154,7 +214,7 @@ impl Palette {
             skill: AnsiColor::Magenta.color(),
             user_background: blended_or_fallback(
                 terminal,
-                AnsiColor::Gray,
+                AnsiColor::White,
                 USER_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
@@ -162,7 +222,7 @@ impl Palette {
             // tool chrome can diverge later without rewriting call sites.
             neutral_tool_background: blended_or_fallback(
                 terminal,
-                AnsiColor::Gray,
+                AnsiColor::White,
                 NEUTRAL_TOOL_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
@@ -292,7 +352,7 @@ impl Theme {
             HeadingLevel::H3 => AnsiColor::Cyan.color(),
             HeadingLevel::H4 => AnsiColor::Green.color(),
             HeadingLevel::H5 => AnsiColor::Yellow.color(),
-            HeadingLevel::H6 => AnsiColor::Gray.color(),
+            HeadingLevel::H6 => AnsiColor::BrightBlack.color(),
         };
         let style = Style::default()
             .fg(color)
@@ -443,13 +503,13 @@ impl Theme {
 
 fn block_foreground(background: Option<Rgb>) -> Color {
     match background {
-        Some(rgb) if relative_luminance(rgb.red, rgb.green, rgb.blue) > 0.55 => Color::Black,
+        Some(rgb) if is_light_background(rgb.luminance()) => Color::Black,
         Some(_) | None => Color::White,
     }
 }
 
-fn relative_luminance(red: u8, green: u8, blue: u8) -> f32 {
-    (0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)) / 255.0
+fn is_light_background(luminance: f32) -> bool {
+    luminance > LIGHT_BACKGROUND_LUMINANCE
 }
 
 fn blended_or_fallback(
@@ -477,18 +537,9 @@ fn is_native_wezterm() -> bool {
 }
 
 fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
-    const COLORS: [AnsiColor; 7] = [
-        AnsiColor::Red,
-        AnsiColor::Green,
-        AnsiColor::Yellow,
-        AnsiColor::Blue,
-        AnsiColor::Magenta,
-        AnsiColor::Cyan,
-        AnsiColor::Gray,
-    ];
-
+    // White (7) for panel blends; bright black (8) for dim text. Never use 7 as dim.
     output.write_all(b"\x1b]11;?\x1b\\")?;
-    for color in COLORS {
+    for color in SAMPLED_ANSI_COLORS {
         write!(output, "\x1b]4;{};?\x1b\\", color.index())?;
     }
     output.flush()
@@ -687,17 +738,18 @@ fn query_windows_console_palette() -> std::io::Result<Option<TerminalPalette>> {
     )))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn windows_console_palette(color_table: &[u32; 16], attributes: u16) -> TerminalPalette {
     // Win32's table uses attribute-bit order (blue, green, red), not ANSI order.
-    const COLORS: [(AnsiColor, usize); 7] = [
+    const COLORS: [(AnsiColor, usize); 8] = [
         (AnsiColor::Red, 4),
         (AnsiColor::Green, 2),
         (AnsiColor::Yellow, 6),
         (AnsiColor::Blue, 1),
         (AnsiColor::Magenta, 5),
         (AnsiColor::Cyan, 3),
-        (AnsiColor::Gray, 7),
+        (AnsiColor::White, 7),
+        (AnsiColor::BrightBlack, 8),
     ];
     let ansi = COLORS
         .into_iter()
@@ -711,7 +763,7 @@ fn windows_console_palette(color_table: &[u32; 16], attributes: u16) -> Terminal
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn rgb_from_colorref(color: u32) -> Rgb {
     Rgb::new(color as u8, (color >> 8) as u8, (color >> 16) as u8)
 }
@@ -748,7 +800,12 @@ fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
         background: background?,
         ansi,
     })
-    .filter(|palette| palette.ansi.len() >= 7)
+    // Bright black (index 8) is optional and only improves dim text when present.
+    .filter(|palette| {
+        REQUIRED_ANSI_COLORS
+            .into_iter()
+            .all(|color| palette.ansi.contains_key(&color))
+    })
 }
 
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
@@ -805,7 +862,12 @@ fn ansi_color_from_index(index: u8) -> Option<AnsiColor> {
         4 => Some(AnsiColor::Blue),
         5 => Some(AnsiColor::Magenta),
         6 => Some(AnsiColor::Cyan),
-        7 => Some(AnsiColor::Gray),
+        7 => Some(AnsiColor::White),
+        8 => Some(AnsiColor::BrightBlack),
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "theme_tests.rs"]
+mod tests;

@@ -2,7 +2,7 @@
 
 ## Session identity and revisions
 
-Every session has a non-empty `SessionId` and a monotonic `Revision`. A successful history commit, cancellation commit, reset, or compaction increments the revision. A `RunOutcome` reports the committed revision so a host can associate output with the exact session state.
+Every session has a non-empty `SessionId` and a monotonic `Revision`. A successful history commit, cancellation commit, cooperative failure commit, reset, or compaction increments the revision. A `RunOutcome` reports the committed revision so a host can associate output with the exact session state.
 
 One session supports one active mutable operation. `Session` clones share this constraint and state. Use separate sessions for concurrent conversations. Concurrent runs that mutate the same session are intentionally unsupported for 1.0.
 
@@ -14,14 +14,15 @@ A run starts from a cloned history and appends user input to a private candidate
 | --- | --- |
 | Successful final answer | Commit the user message, completed assistant/tool steps, steering, and final assistant atomically under the session lock |
 | Cooperative cancellation completion | Commit recoverable work, including the user message and an `AbortedAssistant` when partial provider output exists, then return `Error::Cancelled` |
+| Cooperative terminal failure | Commit recoverable work the same way as cancellation, including an `AbortedAssistant` when partial provider output exists, emit `Failed`, and return the typed error. Read `Session::revision` after the run for the post-commit revision. Provider adapters may add a model-visible abort marker when replaying `AbortedAssistant` |
 | Run-handle drop or task abort | No commit, terminal-event, or partial-recovery guarantee |
 | Tool success or tool-reported failure | Append a tool result to candidate history and continue the model loop |
-| Fatal provider, policy, event-delivery, or run error | Do not commit uncommitted candidate run history |
+| Event-consumer interrupt (nonterminal send failed because the consumer was dropped) | Do not commit uncommitted candidate run history |
 | Reset | Replace history with the configured custom system prompt, if any, and clear compaction state |
 
-An automatic compaction is its own immediate commit. If a later step fails, that already successful compaction remains committed even though later candidate messages do not. Hosts must not assume every failed run leaves the starting revision unchanged.
+An automatic compaction is its own immediate commit. If a later step fails, that already successful compaction remains committed, and cooperative terminal failure still commits later recoverable candidate progress. Hosts must not assume every failed run leaves the starting revision unchanged.
 
-Raw streamed reasoning is not committed. A provider-produced reasoning summary may be retained. On cancellation, partial text, summary, provider context, partial tool calls, and usage may be retained in `AbortedAssistant`, but its raw `reasoning` field is cleared before snapshot construction and import.
+Raw streamed reasoning is not committed. A provider-produced reasoning summary may be retained. On cooperative cancellation or terminal failure, partial text, summary, provider context, partial tool calls, and usage may be retained in `AbortedAssistant`, but its raw `reasoning` field is cleared before snapshot construction and import.
 
 ## Compaction
 

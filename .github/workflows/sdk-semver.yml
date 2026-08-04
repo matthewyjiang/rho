@@ -51,6 +51,7 @@ jobs:
           echo "The selected revision predates rho-sdk, so it cannot be a semver baseline."
           echo "This exception applies only to the commit that first introduces the crate."
       - name: Check rho-sdk public API
+        id: semver_check
         if: steps.baseline.outputs.available == 'true'
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
@@ -58,3 +59,27 @@ jobs:
           baseline-rev: ${{ steps.baseline.outputs.revision }}
           feature-group: all-features
           release-type: minor
+      # Agents and humans often "fix CI" by reverting the ideal shape. That is a
+      # minor-compatible compromise and must leave greppable NEXT_MAJOR debt.
+      - name: Next-major debt gate on semver failure
+        if: failure() && steps.semver_check.outcome == 'failure'
+        shell: bash
+        run: |
+          {
+            echo '## Semver wall (minor-incompatible public API)'
+            echo
+            echo 'This is not "just revert and push."'
+            echo
+            echo '1. Load skill: `rho-next-major-debt`'
+            echo '2. Either land a minor-safe ideal shape, **or** keep the compromise and add a greppable marker on the public API:'
+            echo
+            echo '   NEXT_MAJOR(rho-sdk): <imperative cleanup / preferred end state>'
+            echo
+            echo '   Prefer rustdoc `# Next major` on the compromised item (see the skill).'
+            echo '3. Fill the PR template **Next-major debt** section (do not delete it if you compromised).'
+            echo '4. If hosts need data that cannot live on the 1.x event/type yet, document the interim read path (for example `Session::revision`) until major.'
+            echo
+            echo 'Inventory: `rg '"'"'NEXT_MAJOR\('"'"' -n`'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '::error title=Next-major debt required::Semver wall hit. Load rho-next-major-debt; keep a NEXT_MAJOR(...) marker if you ship a minor-only compromise.'
+          exit 1

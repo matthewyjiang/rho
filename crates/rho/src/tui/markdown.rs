@@ -29,8 +29,8 @@ mod table_tests;
 
 use super::{
     render::{
-        char_display_width, display_width, wrap_line_at_whitespace_ranges_with_protected_prefix,
-        wrap_line_hard,
+        char_display_width, display_width, slice_spans_by_bytes, soft_wrap_visible_ranges,
+        wrap_line_at_whitespace_ranges_with_protected_prefix, wrap_line_hard,
     },
     theme::Theme,
 };
@@ -952,42 +952,35 @@ fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'s
         .iter()
         .map(|segment| segment.text.as_str())
         .collect::<String>();
-    let chars = segments
+    let spans = segments
         .iter()
-        .flat_map(|segment| segment.text.chars().map(|ch| (ch, segment.style)))
+        .map(|segment| Span::styled(segment.text.clone(), segment.style))
         .collect::<Vec<_>>();
 
-    let mut char_start = 0;
-    wrap_markdown_line_ranges(&text, width)
-        .into_iter()
+    let lines = soft_wrap_visible_ranges(&text, wrap_markdown_line_ranges(&text, width))
         .map(|range| {
-            let char_count = text[range].chars().count();
-            let char_end = char_start + char_count;
-            let line = Line::from(merge_styled_chars(&chars[char_start..char_end]));
-            char_start = char_end;
-            line
-        })
-        .collect()
-}
-
-fn merge_styled_chars(chars: &[(char, Style)]) -> Vec<Span<'static>> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    for (ch, style) in chars {
-        if let Some(last) = spans.last_mut() {
-            if last.style == *style {
-                last.content.to_mut().push(*ch);
-                continue;
+            let chunk = slice_spans_by_bytes(&spans, range.start, range.end);
+            if chunk.is_empty() {
+                // Preserve an empty content row so underline/style state does not
+                // leak from adjacent lines when a wrap yields no visible glyphs.
+                Line::from(Span::styled(
+                    String::new(),
+                    Style::default().remove_modifier(ratatui::style::Modifier::UNDERLINED),
+                ))
+            } else {
+                Line::from(chunk)
             }
-        }
-        spans.push(Span::styled(ch.to_string(), *style));
-    }
-    if spans.is_empty() {
-        spans.push(Span::styled(
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        vec![Line::from(Span::styled(
             String::new(),
             Style::default().remove_modifier(ratatui::style::Modifier::UNDERLINED),
-        ));
+        ))]
+    } else {
+        lines
     }
-    spans
 }
 
 #[cfg(test)]

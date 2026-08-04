@@ -52,7 +52,12 @@ pub struct PartialToolCall {
     pub arguments: String,
 }
 
-/// Partial assistant output retained after explicit cancellation.
+/// Partial assistant output retained after an incomplete model turn.
+///
+/// Used when a run ends cooperatively before the assistant finishes, including
+/// explicit cancellation and terminal provider/run failure with streamed
+/// progress. Provider adapters may append a model-visible abort marker when
+/// replaying this entry on a later turn.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AbortedAssistant {
     pub content: Vec<ContentBlock>,
@@ -211,7 +216,7 @@ pub enum Message {
     Assistant(Vec<ContentBlock>),
     /// Assistant output with model provenance and portable/provider-owned context.
     EnrichedAssistant(Box<AssistantMessage>),
-    /// Partial assistant output retained when the run is explicitly cancelled.
+    /// Partial assistant output retained when a model turn ends incompletely.
     AbortedAssistant(Box<AbortedAssistant>),
     ToolResult(ToolResult),
 }

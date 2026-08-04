@@ -336,7 +336,10 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     assert_eq!(stream_resets, 1);
     assert_eq!(terminal_failures, 1);
     assert_eq!(provider.recorded_requests().len(), 2);
-    assert!(session.history().is_empty());
+    // Cooperative failure keeps the user turn so the next run can continue, but
+    // abandoned invalid stream fragments must not inflate durable history.
+    assert_eq!(session.history(), [Message::user_text("malformed")]);
+    assert_eq!(session.revision().get(), 1);
     assert_eq!(session.state(), SessionState::Failed);
     assert!(!session.is_running());
 }

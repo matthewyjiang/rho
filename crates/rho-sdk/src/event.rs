@@ -337,6 +337,17 @@ pub enum RunEvent {
     Cancelled {
         revision: Revision,
     },
+    /// Terminal run failure.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): add `revision: Revision` to `RunEvent::Failed` so
+    /// cooperative failure commits match `Cancelled { revision }`.
+    ///
+    /// Failure now commits recoverable candidate history and bumps the session
+    /// revision, but this variant keeps the 1.x field set for minor
+    /// compatibility. Until major, hosts that need the post-commit revision
+    /// should read `Session::revision` after the run ends.
     Failed {
         message: String,
         retryability: crate::Retryability,
