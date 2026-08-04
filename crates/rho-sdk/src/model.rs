@@ -287,6 +287,46 @@ pub enum ModelResponse {
     Assistant(Vec<ContentBlock>),
 }
 
+impl ModelResponse {
+    /// Explains why this response violates the tool-call protocol, if it does.
+    ///
+    /// Orchestration rejects responses with an issue and surfaces the returned
+    /// message. The per-call checks mirror [`ToolCall::has_valid_protocol_fields`]
+    /// and the walk adds duplicate-id detection across the whole response.
+    pub(crate) fn protocol_issue(&self) -> Option<String> {
+        let ModelResponse::Assistant(content) = self;
+        if content.is_empty() {
+            return Some("provider returned an empty assistant response".into());
+        }
+        let mut issues = Vec::new();
+        let mut call_ids = std::collections::BTreeSet::new();
+        for (index, block) in content.iter().enumerate() {
+            let ContentBlock::ToolCall(call) = block else {
+                continue;
+            };
+            if call.id.is_empty() {
+                issues.push(format!("tool call {index} has an empty id"));
+            } else if !call_ids.insert(call.id.as_str()) {
+                issues.push(format!("duplicate tool call id '{}'", call.id));
+            }
+            if call.name.is_empty() {
+                issues.push(format!("tool call {index} has an empty name"));
+            }
+            if !call.arguments.is_object() {
+                issues.push(format!("tool call {index} arguments are not a JSON object"));
+            }
+        }
+        if issues.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "provider returned a malformed assistant response: {}",
+                issues.join("; ")
+            ))
+        }
+    }
+}
+
 /// Normalized token, context, and cost accounting for model work.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {

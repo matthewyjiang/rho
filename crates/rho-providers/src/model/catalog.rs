@@ -134,6 +134,11 @@ pub fn login_groups() -> Vec<LoginGroup> {
             &[("API Key", "poolside-api-key")][..],
         ),
         (
+            "qwen-token-plan",
+            "Qwen Token Plan",
+            &[("API Key", "qwen-token-plan-api-key")][..],
+        ),
+        (
             "xai",
             "xAI",
             &[("API Key", "xai-api-key"), ("OAuth", "xai-oauth")][..],

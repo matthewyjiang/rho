@@ -49,3 +49,49 @@ fn config_canonicalizes_legacy_poolside_wire_model_ids() {
     assert_eq!(title.provider, "poolside");
     assert_eq!(title.model, "laguna-m.1");
 }
+
+// Covers: config load must use one validated endpoint write path
+// Owner: provider config
+#[test]
+fn set_endpoint_updates_supported_providers_and_rejects_others() {
+    let mut providers = ProviderConfigs::default();
+
+    providers
+        .set_endpoint("ollama", "http://10.0.0.5:11434/v1")
+        .unwrap();
+    assert_eq!(
+        providers.ollama.base_url.as_str(),
+        "http://10.0.0.5:11434/v1"
+    );
+
+    let unsupported = providers
+        .set_endpoint("openai", "https://api.openai.com/v1")
+        .unwrap_err();
+    assert!(
+        format!("{unsupported:#}").contains("has no configurable base URL"),
+        "{unsupported:#}"
+    );
+
+    let invalid = providers
+        .set_endpoint("ollama", "file:///tmp/ollama")
+        .unwrap_err();
+    assert!(
+        format!("{invalid:#}").contains("providers.ollama.base_url"),
+        "{invalid:#}"
+    );
+}
+
+// Covers: Token Plan uses the built-in default API base with no config override
+// Owner: provider config
+#[test]
+fn qwen_token_plan_resolves_default_endpoint_without_config() {
+    let config = Config::default();
+
+    assert_eq!(
+        config
+            .resolved_provider_endpoint("qwen-token-plan")
+            .unwrap()
+            .as_str(),
+        rho_providers::model::registry::QWEN_TOKEN_PLAN_API_BASE
+    );
+}

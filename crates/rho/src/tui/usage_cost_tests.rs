@@ -110,6 +110,57 @@ fn attempt_aware_run_usage_preserves_failed_attempt_tokens() {
     );
 }
 
+// Covers: quiet hosts must show growing estimated cost until provider usage arrives
+// Owner: tui live stream usage estimate
+#[test]
+fn live_stream_estimate_tracks_output_until_provider_usage() {
+    let mut live = super::LiveStreamUsageEstimate::default();
+    live.note_estimated_input(1_000);
+    live.add_output_text("abcd"); // 1 token at 4 chars/token
+    live.add_output_text("efghijkl"); // 2 tokens
+
+    assert_eq!(
+        live.as_usage(),
+        Some(ModelUsage {
+            input_tokens: Some(1_000),
+            output_tokens: Some(3),
+            ..ModelUsage::default()
+        })
+    );
+
+    let display = super::display_usage_with_live(
+        Some(&ModelUsage {
+            input_tokens: Some(500),
+            output_tokens: Some(20),
+            cost_usd_micros: Some(50),
+            ..ModelUsage::default()
+        }),
+        &live,
+        Some(&priced_metadata()),
+    )
+    .expect("display usage");
+    assert_eq!(display.input_tokens, Some(1_500));
+    assert_eq!(display.output_tokens, Some(23));
+    assert!(display.cost_usd_micros.is_some());
+
+    live.provider_usage_received();
+    assert!(!live.is_active());
+    assert_eq!(live.as_usage(), None);
+}
+
+// Covers: once a provider reports usage, stream deltas must not invent tokens
+// Owner: tui live stream usage estimate
+#[test]
+fn live_stream_estimate_ignores_deltas_after_provider_usage() {
+    let mut live = super::LiveStreamUsageEstimate::default();
+    live.add_output_text("abcd");
+    live.provider_usage_received();
+    live.add_output_text("more output that would otherwise count");
+    live.note_estimated_input(99);
+    assert!(!live.is_active());
+    assert_eq!(live.as_usage(), None);
+}
+
 #[test]
 fn resolves_and_combines_session_costs() {
     let usage = ModelUsage {

@@ -30,9 +30,7 @@ use crate::{
     SelectionMode, Session, SessionId, SessionOptions, SessionState, UserInput,
 };
 
-use super::{
-    apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT, valid_response,
-};
+use super::{apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -346,6 +344,10 @@ async fn cancellation_before_the_first_tool_interrupts_every_unresolved_call() {
     assert!(matches!(
         next_event(&mut run).await,
         RunEvent::StepStarted { .. }
+    ));
+    assert!(matches!(
+        next_event(&mut run).await,
+        RunEvent::ContextEstimated { tokens } if tokens > 0
     ));
     assert!(matches!(
         next_event(&mut run).await,
@@ -723,7 +725,9 @@ fn provider_response_rejects_duplicate_tool_call_ids() {
         ContentBlock::ToolCall(tool_call("duplicate", "second")),
     ]);
 
-    assert!(!valid_response(&response));
+    assert!(response
+        .protocol_issue()
+        .is_some_and(|issue| issue.contains("duplicate tool call id 'duplicate'")));
 }
 
 #[tokio::test(start_paused = true)]
@@ -910,6 +914,10 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     assert!(matches!(
         event_receiver.recv().await,
         Some(RunEvent::StepStarted { .. })
+    ));
+    assert!(matches!(
+        event_receiver.recv().await,
+        Some(RunEvent::ContextEstimated { tokens }) if tokens > 0
     ));
     assert!(matches!(
         event_receiver.recv().await,

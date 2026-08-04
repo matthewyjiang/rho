@@ -36,6 +36,7 @@ The runtime registry includes:
 - `poolside`
 - `openrouter`
 - `kimi-code`
+- `qwen-token-plan`
 
 ## Usage
 

@@ -654,7 +654,7 @@ impl RunReporter {
             }
         }
         match event {
-            RunEvent::StepStarted { step } => {
+            RunEvent::StepStarted { step, .. } => {
                 self.sink.status.state = RunState::Running;
                 self.sink.status.turns = *step as u64;
                 self.sink.publish();

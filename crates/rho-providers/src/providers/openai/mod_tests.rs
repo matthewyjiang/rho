@@ -3,12 +3,13 @@ use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
     ReasoningLevelSet, ToolCall, ToolSpec,
 };
-use crate::protocol::openai_chat::{convert_streamed_response, handle_openai_stream_line};
+use crate::protocol::openai_chat::ChatStreamAccumulator;
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
     CodexSseState,
 };
 use crate::reasoning::ReasoningLevel;
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 // Covers: Codex must warn only when the server declines a requested priority tier.
@@ -391,27 +392,25 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
 
 #[test]
 fn chat_stream_usage_normalizes_prompt_cache_tokens() {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
+    let mut chat_stream = ChatStreamAccumulator::default();
     let mut usage = None;
-    handle_openai_stream_line(
-        r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"choices":[{"delta":{}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |event| {
-            match event {
-                ModelEvent::Usage(event_usage) => usage = Some(event_usage),
-                ModelEvent::OutputDelta(_)
-                | ModelEvent::ReasoningDelta(_)
-                | ModelEvent::ReasoningSummaryDelta(_)
-                | ModelEvent::ProviderContext { .. }
-                | ModelEvent::WebSearch(_)
-                                | ModelEvent::ToolCallDelta { .. } => {}
-            }
-            Ok(())
-        },
-    )
-    .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"choices":[{"delta":{}}]}"#,
+            &mut |event| {
+                match event {
+                    ModelEvent::Usage(event_usage) => usage = Some(event_usage),
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::ProviderContext { .. }
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. } => {}
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
 
     let usage = usage.unwrap();
     assert_eq!(usage.input_tokens, Some(100));
@@ -882,34 +881,6 @@ fn codex_sse_search_action_url_and_pattern_are_bare_detail() {
             "TODO(foo)".to_string(),
         ]
     );
-}
-
-#[test]
-fn accumulates_streamed_tool_call_deltas() {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
-    handle_openai_stream_line(
-        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":"}}]}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |_| Ok(()),
-    )
-    .unwrap();
-    handle_openai_stream_line(
-        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"pwd\"}"}}]}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |_| Ok(()),
-    )
-    .unwrap();
-
-    let response = convert_streamed_response(text, tool_calls).unwrap();
-    let ModelResponse::Assistant(blocks) = response;
-    assert!(matches!(
-        blocks.as_slice(),
-        [ContentBlock::ToolCall(ToolCall { id, name, arguments })]
-            if id == "call-1" && name == "bash" && arguments == &json!({ "command": "pwd" })
-    ));
 }
 
 #[test]

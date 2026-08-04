@@ -37,7 +37,7 @@ impl DialectReasoning {
     ) -> Self {
         let metadata = || crate::model::models_dev::current_model_metadata(provider, model);
         match dialect {
-            OpenAiCompatibleDialect::Standard => {
+            OpenAiCompatibleDialect::Standard | OpenAiCompatibleDialect::QwenTokenPlan => {
                 Self::Standard(EffortProfile::omit_when_unknown(metadata()))
             }
             OpenAiCompatibleDialect::Poolside => Self::Poolside,

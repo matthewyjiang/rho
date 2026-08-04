@@ -102,6 +102,8 @@ pub(super) struct UsageUi {
     pub(in crate::tui) latest_usage: Option<ModelUsage>,
     pub(in crate::tui) model_performance: super::model_performance::ModelPerformanceTracker,
     pub(in crate::tui) current_context: Option<ContextUsage>,
+    /// In-flight stream estimate while the provider has not reported usage yet.
+    pub(in crate::tui) live_stream: super::usage_cost::LiveStreamUsageEstimate,
     // Cumulative cost from completed subagents (bg + fg), claimed once per run via
     // SubagentManager::claim_terminal_costs_usd_micros during panel refresh.
     pub(in crate::tui) subagent_total_cost_usd_micros: u64,

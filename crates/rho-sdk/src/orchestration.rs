@@ -185,6 +185,28 @@ async fn execute_turn_loop(
             }
             Err(error) => return Err(error),
         }
+        // Emit before the provider call so quiet hosts still show context fill
+        // while thinking and tool-call JSON stream (usage often arrives only at
+        // the end of the OpenAI-compatible stream). Kept separate from
+        // StepStarted for 1.x minor compatibility (see ContextEstimated docs).
+        let estimated_context_tokens =
+            crate::model::context::estimate_context_tokens(&history, &tool_specs);
+        match emit(
+            &events,
+            &cancellation,
+            RunEvent::ContextEstimated {
+                tokens: estimated_context_tokens,
+            },
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                return commit_terminal_history(core, history, TerminalKind::Cancelled, &events)
+                    .await;
+            }
+            Err(error) => return Err(error),
+        }
 
         let mut control = RunControl {
             hooks,
@@ -478,7 +500,7 @@ async fn request_valid_response(
             Ok((response, mut capture)) => {
                 next_attempt_index =
                     record_failed_provider_attempts(&scope, next_attempt_index, &mut capture).await;
-                let outcome = if valid_response(&response) {
+                let outcome = if response.protocol_issue().is_none() {
                     crate::ProviderRequestOutcome::Completed
                 } else {
                     crate::ProviderRequestOutcome::InvalidResponse
@@ -555,9 +577,9 @@ async fn request_valid_response(
                 continue;
             }
         };
-        if valid_response(&response) {
+        let Some(issue) = response.protocol_issue() else {
             return Ok((response, capture));
-        }
+        };
         invalid_responses += 1;
         if invalid_responses >= INVALID_RESPONSE_ATTEMPTS
             || provider_turn_attempts >= PROVIDER_TURN_ATTEMPTS
@@ -567,7 +589,7 @@ async fn request_valid_response(
             return Err(RequestFailure {
                 error: ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
-                    "provider returned an empty assistant response",
+                    issue,
                     Retryability::Permanent,
                 ),
                 capture: StreamCapture::default(),
@@ -646,18 +668,6 @@ async fn record_request_usage(
             context, usage, outcome,
         ))
         .await;
-}
-
-fn valid_response(response: &ModelResponse) -> bool {
-    let ModelResponse::Assistant(content) = response;
-    let mut call_ids = std::collections::BTreeSet::new();
-    !content.is_empty()
-        && content.iter().all(|block| match block {
-            ContentBlock::ToolCall(call) => {
-                call.has_valid_protocol_fields() && call_ids.insert(call.id.as_str())
-            }
-            ContentBlock::Text(_) | ContentBlock::Image(_) => true,
-        })
 }
 
 async fn provider_turn(

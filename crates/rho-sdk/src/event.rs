@@ -390,6 +390,26 @@ pub enum RunEvent {
         requested: crate::model::ServiceTier,
         used: String,
     },
+    /// Estimated context tokens for the model request about to start.
+    ///
+    /// Derived from the live run history and tool specs at step start. Hosts
+    /// should treat this as a display estimate and replace it with
+    /// [`RunEvent::UsageUpdated`] when the provider reports input usage.
+    ///
+    /// Kept as its own variant (instead of a field on [`Self::StepStarted`]) so
+    /// 1.x stays minor-compatible. Constructing/matching `StepStarted` must not
+    /// require a new field until the next major.
+    ///
+    /// Appended after existing variants so discriminant values of the 1.x
+    /// surface stay stable under a minor release.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): fold `estimated_context_tokens` into `StepStarted`
+    /// and delete this variant so step start and context estimate are one event.
+    ContextEstimated {
+        tokens: u64,
+    },
 }
 
 #[cfg(test)]

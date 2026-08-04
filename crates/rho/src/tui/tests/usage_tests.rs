@@ -1,5 +1,6 @@
 use super::*;
 use crate::tui::usage_cost::CostSource;
+use rho_sdk::model::ContextUsage;
 
 fn input_cost_metadata() -> ModelMetadata {
     ModelMetadata {
@@ -231,4 +232,76 @@ fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
             ..ModelUsage::default()
         })
     );
+}
+
+// Covers: quiet hosts must advance estimated cost while thinking before usage arrives
+// Owner: tui transcript usage accounting
+#[test]
+fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
+    let mut app = test_app();
+    app.model_metadata = Some(ModelMetadata {
+        cost_default: Some(rho_providers::model::models_dev::ModelCost {
+            input_micros_per_m: Some(1_000_000),
+            output_micros_per_m: Some(2_000_000),
+            cache_read_micros_per_m: None,
+            cache_write_micros_per_m: None,
+        }),
+        ..ModelMetadata::default()
+    });
+    app.record_agent_event(ViewModelEvent::RunStarted);
+    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
+        1_000,
+        Some(10_000),
+    )));
+    app.record_agent_event(ViewModelEvent::LiveOutputText(
+        "a".repeat(16), // 16 chars => 4 tokens
+    ));
+    assert!(app.usage.live_stream.is_active());
+    let display = crate::tui::usage_cost::display_usage_with_live(
+        app.usage.cumulative_usage.as_ref(),
+        &app.usage.live_stream,
+        app.model_metadata.as_ref(),
+    )
+    .expect("live display usage");
+    assert_eq!(display.input_tokens, Some(1_000));
+    assert_eq!(display.output_tokens, Some(4));
+    assert_eq!(display.cost_usd_micros, Some(1_008));
+
+    app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
+        input_tokens: Some(1_000),
+        output_tokens: Some(10),
+        cost_usd_micros: Some(1_020),
+        ..Default::default()
+    }));
+    assert!(!app.usage.live_stream.is_active());
+    assert_eq!(
+        app.usage.cumulative_usage,
+        Some(ModelUsage {
+            input_tokens: Some(1_000),
+            output_tokens: Some(10),
+            total_tokens: Some(1_010),
+            cost_usd_micros: Some(1_020),
+            ..Default::default()
+        })
+    );
+}
+
+// Covers: ending a busy turn must drop live estimates so statusline cost is ledger + subagents
+// Owner: tui run lifecycle usage accounting
+#[test]
+fn end_busy_ui_clears_live_stream_estimate() {
+    let mut app = test_app();
+    app.record_agent_event(ViewModelEvent::RunStarted);
+    app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
+        2_500,
+        Some(10_000),
+    )));
+    app.record_agent_event(ViewModelEvent::LiveOutputText("abcd".into()));
+    assert!(app.usage.live_stream.is_active());
+
+    app.end_busy_ui();
+
+    assert!(!app.usage.live_stream.is_active());
 }

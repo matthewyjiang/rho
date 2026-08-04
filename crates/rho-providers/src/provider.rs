@@ -16,6 +16,7 @@ pub const POOLSIDE_API_KEY_ACCOUNT: &str = "provider:poolside:api-key";
 pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
 pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
+pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-key";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
@@ -31,6 +32,7 @@ pub enum ProviderId {
     Poolside,
     OpenRouter,
     KimiCode,
+    QwenTokenPlan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -46,6 +48,7 @@ pub enum RuntimeProviderId {
     Poolside,
     OpenRouter,
     KimiCode,
+    QwenTokenPlan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -601,6 +604,29 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "moonshotai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
+    },
+    ProviderDescriptor {
+        id: ProviderId::QwenTokenPlan,
+        runtime_id: RuntimeProviderId::QwenTokenPlan,
+        name: "qwen-token-plan",
+        display_name: "Qwen Token Plan",
+        auth_modes: &[
+        AuthMode {
+            id: "qwen-token-plan-api-key",
+            login_label: "Qwen Token Plan API key",
+            auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "QWEN_TOKEN_PLAN_API_KEY",
+            account: QWEN_TOKEN_PLAN_API_KEY_ACCOUNT,
+            entry_label: "Qwen Token Plan API key",
+            missing_message: "missing Qwen Token Plan API key; run /login qwen-token-plan in the TUI or set QWEN_TOKEN_PLAN_API_KEY as a CI/dev override",
+        },
+        }
+        ],
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
+        metadata_upstream: "alibaba-token-plan",
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
     },
     ProviderDescriptor {
         id: ProviderId::Xai,

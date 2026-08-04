@@ -1,4 +1,5 @@
 use rho_providers::model::{ModelMetadata, ModelUsage};
+use rho_sdk::model::context::estimate_text_tokens;
 
 /// Attempt-aware provider usage snapshots for a single run.
 ///
@@ -60,6 +61,84 @@ impl AttemptAwareRunUsage {
         }
         self.current = Some(current_run_usage.clone());
         current_run_usage
+    }
+}
+
+/// Display-only usage for the in-flight provider stream.
+///
+/// Quiet hosts (OpenAI-compatible chat) often withhold usage until the final
+/// chunk. This estimate fills the statusline while thinking and tool JSON
+/// stream, then yields as soon as any provider `Usage` arrives for the attempt.
+/// It must never enter the durable usage ledger.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct LiveStreamUsageEstimate {
+    input_tokens: Option<u64>,
+    output_tokens: u64,
+    provider_usage_seen: bool,
+}
+
+impl LiveStreamUsageEstimate {
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub(super) fn note_estimated_input(&mut self, tokens: u64) {
+        if !self.provider_usage_seen {
+            self.input_tokens = Some(tokens);
+        }
+    }
+
+    pub(super) fn add_output_text(&mut self, text: &str) {
+        self.add_output_tokens(estimate_text_tokens(text));
+    }
+
+    pub(super) fn add_output_tokens(&mut self, tokens: u64) {
+        if self.provider_usage_seen || tokens == 0 {
+            return;
+        }
+        self.output_tokens = self.output_tokens.saturating_add(tokens);
+    }
+
+    pub(super) fn provider_usage_received(&mut self) {
+        self.provider_usage_seen = true;
+        self.input_tokens = None;
+        self.output_tokens = 0;
+    }
+
+    pub(super) fn is_active(&self) -> bool {
+        !self.provider_usage_seen && (self.input_tokens.is_some() || self.output_tokens > 0)
+    }
+
+    pub(super) fn as_usage(&self) -> Option<ModelUsage> {
+        if !self.is_active() {
+            return None;
+        }
+        Some(ModelUsage {
+            input_tokens: self.input_tokens,
+            output_tokens: (self.output_tokens > 0).then_some(self.output_tokens),
+            ..ModelUsage::default()
+        })
+    }
+}
+
+/// Merge durable cumulative usage with an active live stream estimate for display.
+pub(super) fn display_usage_with_live(
+    cumulative: Option<&ModelUsage>,
+    live: &LiveStreamUsageEstimate,
+    metadata: Option<&ModelMetadata>,
+) -> Option<ModelUsage> {
+    let live_usage = live
+        .as_usage()
+        .map(|usage| usage_with_estimated_cost(usage, metadata));
+    match (cumulative.cloned(), live_usage) {
+        (None, None) => None,
+        (Some(cumulative), None) => Some(cumulative),
+        (None, Some(live_usage)) => Some(live_usage),
+        (Some(cumulative), Some(live_usage)) => {
+            let mut combined = Some(cumulative);
+            merge_usage(&mut combined, live_usage);
+            combined
+        }
     }
 }
 

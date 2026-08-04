@@ -423,6 +423,41 @@ async fn a_new_run_resets_the_context_usage_baseline() {
     );
 }
 
+// Covers: step-start estimates must surface before provider usage arrives
+// Owner: interactive run controller context accounting
+#[tokio::test]
+async fn context_estimated_notes_estimated_context_before_provider_usage() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive.context_window = Some(10_000);
+
+    interactive.observe_event(&RunEvent::Started {
+        run_id: RunId::new(),
+        revision: Default::default(),
+    });
+    interactive.observe_event(&RunEvent::StepStarted { step: 1 });
+    interactive.observe_event(&RunEvent::ContextEstimated { tokens: 2_500 });
+
+    assert_eq!(
+        interactive.take_context_usage(),
+        Some(rho_sdk::model::ContextUsage::estimated(2_500, Some(10_000)))
+    );
+
+    interactive.observe_event(&RunEvent::UsageUpdated {
+        usage: ModelUsage {
+            input_tokens: Some(2_400),
+            cache_read_tokens: Some(100),
+            ..ModelUsage::default()
+        },
+    });
+    assert_eq!(
+        interactive.take_context_usage(),
+        Some(rho_sdk::model::ContextUsage::provider_reported(
+            2_500,
+            Some(10_000)
+        ))
+    );
+}
+
 #[tokio::test]
 async fn finished_run_reports_context_from_committed_history() {
     let mut interactive = pending_compaction_runtime("assistant output").await;

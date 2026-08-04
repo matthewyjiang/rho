@@ -122,6 +122,7 @@ fn attachment_update(
             Some(AttachmentEvent::ProviderStreamReset)
         }
         ViewModelEvent::ProviderRetry => None,
+        ViewModelEvent::LiveOutputText(_) => None,
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
         ViewModelEvent::ModelCallCompleted { .. } => None,

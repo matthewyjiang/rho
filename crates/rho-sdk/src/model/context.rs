@@ -76,6 +76,14 @@ fn tool_spec_tokens(spec: &ToolSpec) -> u64 {
     TOOL_SCHEMA_OVERHEAD_TOKENS.saturating_add(json_tokens(spec))
 }
 
+/// Rough token estimate for free text using the shared chars-per-token heuristic.
+///
+/// Used for context sizing and live stream display estimates. Not a billing
+/// tokenizer; replace with provider-reported usage when available.
+pub fn estimate_text_tokens(text: &str) -> u64 {
+    text_tokens(text)
+}
+
 fn text_tokens(text: &str) -> u64 {
     let chars = text.chars().count() as u64;
     chars.div_ceil(CHARS_PER_TOKEN)

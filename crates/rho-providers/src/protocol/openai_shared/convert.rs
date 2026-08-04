@@ -11,37 +11,149 @@ use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
-pub(crate) fn convert_openai_response(response: ChatResponse) -> Result<ModelResponse, ModelError> {
+use super::tool_calls::{finalize_chat_tool_calls, ChatToolCallPolicy, RawChatToolCall};
+
+/// Provider-context kind for chat-completions `reasoning_content`.
+///
+/// Models such as Qwen3.x stream thinking in `delta.reasoning_content` and expect
+/// that field to be replayed on later assistant messages that carried tool calls.
+/// Raw reasoning stays opaque provider context (never `reasoning_summary`).
+pub(crate) const OPENAI_CHAT_REASONING_CONTENT_KIND: &str = "openai_chat_reasoning_content";
+
+/// Normalized chat-completions assistant payload after stream or JSON convert.
+#[derive(Debug)]
+pub(crate) struct ChatAssistantFinish {
+    pub(crate) response: ModelResponse,
+    pub(crate) reasoning_content: Option<String>,
+}
+
+/// Builds the shared chat assistant response from accumulated text, reasoning,
+/// and tool calls. Callers emit [`crate::model::ModelEvent::ProviderContext`]
+/// for reasoning separately via [`emit_chat_reasoning_context`].
+pub(crate) fn finalize_chat_assistant(
+    text: String,
+    reasoning: String,
+    tool_calls: Vec<RawChatToolCall>,
+    policy: ChatToolCallPolicy,
+) -> Result<ChatAssistantFinish, ModelError> {
+    let mut blocks = Vec::new();
+    if !text.is_empty() {
+        blocks.push(ContentBlock::Text(text));
+    }
+    blocks.extend(
+        finalize_chat_tool_calls(tool_calls, policy)?
+            .into_iter()
+            .map(ContentBlock::ToolCall),
+    );
+    if blocks.is_empty() {
+        return Err(ModelError::InvalidResponse(
+            "assistant message had no content or tool calls".into(),
+        ));
+    }
+    Ok(ChatAssistantFinish {
+        response: ModelResponse::Assistant(blocks),
+        reasoning_content: (!reasoning.is_empty()).then_some(reasoning),
+    })
+}
+
+/// Publishes retained chat `reasoning_content` as opaque provider context.
+pub(crate) fn emit_chat_reasoning_context(
+    reasoning_content: Option<String>,
+    on_event: &mut (dyn FnMut(crate::model::ModelEvent) -> Result<(), ModelError> + Send),
+) -> Result<(), ModelError> {
+    let Some(reasoning) = reasoning_content.filter(|text| !text.is_empty()) else {
+        return Ok(());
+    };
+    on_event(crate::model::ModelEvent::ProviderContext {
+        kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
+        position: Some(0),
+        data: serde_json::Value::String(reasoning),
+    })
+}
+
+/// Non-stream completions keep only the portable assistant response.
+///
+/// Chat `reasoning_content` is stream-path provider context
+/// ([`OPENAI_CHAT_REASONING_CONTENT_KIND`]). `send_turn` / `complete_turn` have
+/// no event channel to publish it, and [`ModelResponse`] cannot carry it.
+/// Rho orchestration always uses the stream path for multi-step tool loops.
+pub(crate) fn response_without_stream_context(finish: ChatAssistantFinish) -> ModelResponse {
+    let _ = finish.reasoning_content;
+    finish.response
+}
+
+/// Converts a non-stream chat completion using the shared assistant finalizer.
+///
+/// Reasoning is returned on [`ChatAssistantFinish`] so callers can emit
+/// provider context on event-capable paths.
+pub(crate) fn convert_openai_response(
+    response: ChatResponse,
+    policy: ChatToolCallPolicy,
+) -> Result<ChatAssistantFinish, ModelError> {
     let message = response
         .choices
         .into_iter()
         .next()
         .ok_or_else(|| ModelError::InvalidResponse("missing choices".into()))?
         .message;
-    let mut blocks = Vec::new();
-    if let Some(content) = message.content.filter(|s| !s.is_empty()) {
-        blocks.push(ContentBlock::Text(content));
+    let text = message
+        .content
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default();
+    let reasoning = message
+        .reasoning_content
+        .filter(|text| !text.is_empty())
+        .unwrap_or_default();
+    let raw_calls = message
+        .tool_calls
+        .unwrap_or_default()
+        .into_iter()
+        .map(|call| RawChatToolCall {
+            id: Some(call.id),
+            name: Some(call.function.name),
+            arguments: call.function.arguments,
+        })
+        .collect();
+    finalize_chat_assistant(text, reasoning, raw_calls, policy)
+}
+
+/// Known chat wire fields extracted from replayable provider context.
+struct ChatReplay {
+    reasoning_content: Option<String>,
+}
+
+fn chat_replay(replay_context: Vec<ProviderContextBlock>) -> Result<ChatReplay, ModelError> {
+    let mut reasoning_content = None;
+    let mut unknown_kinds = Vec::new();
+    for block in replay_context {
+        if block.kind == OPENAI_CHAT_REASONING_CONTENT_KIND {
+            let Some(text) = block
+                .data
+                .as_str()
+                .map(str::to_owned)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            if reasoning_content.is_some() {
+                return Err(ModelError::InvalidResponse(
+                    "openai chat received multiple reasoning_content replay blocks".into(),
+                ));
+            }
+            reasoning_content = Some(text);
+            continue;
+        }
+        if !unknown_kinds.contains(&block.kind) {
+            unknown_kinds.push(block.kind);
+        }
     }
-    for call in message.tool_calls.unwrap_or_default() {
-        let arguments = serde_json::from_str(&call.function.arguments).map_err(|e| {
-            ModelError::InvalidResponse(format!(
-                "invalid tool call arguments for {}: {e}",
-                call.function.name
-            ))
-        })?;
-        blocks.push(ContentBlock::ToolCall(ToolCall {
-            id: call.id,
-            name: call.function.name,
-            arguments,
-        }));
+    if !unknown_kinds.is_empty() {
+        return Err(ModelError::InvalidResponse(format!(
+            "openai chat cannot encode provider context kinds: {}",
+            unknown_kinds.join(", ")
+        )));
     }
-    if blocks.is_empty() {
-        Err(ModelError::InvalidResponse(
-            "assistant message had no content or tool calls".into(),
-        ))
-    } else {
-        Ok(ModelResponse::Assistant(blocks))
-    }
+    Ok(ChatReplay { reasoning_content })
 }
 
 pub(crate) fn codex_reasoning_param(
@@ -240,8 +352,17 @@ fn append_codex_assistant(
 }
 
 fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
-    let content = assistant_text(&blocks);
-    let tool_calls = blocks
+    openai_prepared_assistant(PreparedAssistant {
+        content: blocks,
+        replay_context: Vec::new(),
+    })
+}
+
+fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessage, ModelError> {
+    let replay = chat_replay(prepared.replay_context)?;
+    let content = assistant_text(&prepared.content);
+    let tool_calls = prepared
+        .content
         .into_iter()
         .filter_map(|block| match block {
             ContentBlock::ToolCall(call) => Some(tool_call_to_openai(call)),
@@ -251,6 +372,7 @@ fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, 
     Ok(OpenAiMessage {
         role: "assistant".into(),
         content: (!content.is_empty()).then(|| json!(content)),
+        reasoning_content: replay.reasoning_content,
         tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
         tool_call_id: None,
     })
@@ -265,6 +387,7 @@ pub(crate) fn to_openai_message_for_target(
         Message::User(blocks) => Ok(OpenAiMessage {
             role: "user".into(),
             content: Some(chat_content_blocks(&blocks)),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }),
@@ -273,9 +396,10 @@ pub(crate) fn to_openai_message_for_target(
             let fallback_target = message.provenance.clone().unwrap_or_else(|| {
                 crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
             });
-            openai_assistant_message(
-                prepare_assistant(*message, target.unwrap_or(&fallback_target)).content,
-            )
+            openai_prepared_assistant(prepare_assistant(
+                *message,
+                target.unwrap_or(&fallback_target),
+            ))
         }
         Message::AbortedAssistant(message) => {
             let fallback_target = message.provenance.clone().unwrap_or_else(|| {
@@ -290,13 +414,15 @@ pub(crate) fn to_openai_message_for_target(
             enriched
                 .content
                 .push(ContentBlock::Text("[Operation aborted]".into()));
-            openai_assistant_message(
-                prepare_assistant(enriched, target.unwrap_or(&fallback_target)).content,
-            )
+            openai_prepared_assistant(prepare_assistant(
+                enriched,
+                target.unwrap_or(&fallback_target),
+            ))
         }
         Message::ToolResult(result) => Ok(OpenAiMessage {
             role: "tool".into(),
             content: Some(json!(result.content)),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(result.id),
         }),
@@ -307,6 +433,7 @@ fn openai_text_message(role: &str, content: String) -> OpenAiMessage {
     OpenAiMessage {
         role: role.into(),
         content: Some(json!(content)),
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     }
@@ -502,145 +629,5 @@ fn append_response_citations(text: &mut String, citations: Vec<(Option<String>, 
 mod image_tests;
 
 #[cfg(test)]
-mod handoff_tests {
-    use super::*;
-
-    #[test]
-    fn chat_handoff_keeps_foreign_reasoning_summary_as_tagged_text() {
-        let source =
-            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
-        let target =
-            crate::model::ModelIdentity::new("openai", "openai-chat-completions", "gpt-chat-test");
-        let message = Message::assistant(crate::model::AssistantMessage {
-            content: vec![ContentBlock::Text("answer".into())],
-            provenance: Some(source),
-            reasoning_summary: Some("verified it".into()),
-            provider_context: Vec::new(),
-        });
-
-        let converted = to_openai_message_for_target(message, Some(&target)).unwrap();
-        let content = converted.content.unwrap().as_str().unwrap().to_string();
-
-        assert!(content.contains("answer"));
-        assert!(content.contains("<reasoning_summary>"));
-        assert!(content.contains("verified it"));
-    }
-
-    #[test]
-    fn codex_handoff_restores_replay_item_position() {
-        let source =
-            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
-        let message = Message::assistant(crate::model::AssistantMessage {
-            content: vec![
-                ContentBlock::Text("answer".into()),
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call_1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command": "pwd"}),
-                }),
-            ],
-            provenance: Some(source.clone()),
-            reasoning_summary: None,
-            provider_context: vec![crate::model::ProviderContextBlock {
-                identity: source.clone(),
-                kind: "openai_response_output_item".into(),
-                position: Some(0),
-                data: json!({"type": "reasoning", "encrypted_content": "signed"}),
-            }],
-        });
-
-        let input =
-            codex_input_items_for_target(vec![message], &mut Vec::new(), Some(&source)).unwrap();
-
-        assert_eq!(input[0]["type"], "reasoning");
-        assert_eq!(input[1]["role"], "assistant");
-        assert_eq!(input[2]["type"], "function_call");
-    }
-
-    #[test]
-    fn codex_remote_compaction_marker_replays_item_without_portable_text() {
-        let source =
-            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
-        let message = Message::assistant(
-            crate::model::AssistantMessage {
-                content: Vec::new(),
-                provenance: Some(source.clone()),
-                reasoning_summary: None,
-                provider_context: vec![crate::model::ProviderContextBlock {
-                    identity: source.clone(),
-                    kind: "openai_response_output_item".into(),
-                    position: Some(0),
-                    data: json!({"type": "compaction", "encrypted_content": "blob"}),
-                }],
-            }
-            .with_portable_fallback("portable summary"),
-        );
-
-        let exact =
-            codex_input_items_for_target(vec![message.clone()], &mut Vec::new(), Some(&source))
-                .unwrap();
-        let foreign = codex_input_items_for_target(
-            vec![message],
-            &mut Vec::new(),
-            Some(&crate::model::ModelIdentity::new(
-                "anthropic",
-                "anthropic-messages",
-                "claude-test",
-            )),
-        )
-        .unwrap();
-
-        assert_eq!(exact.len(), 1);
-        assert_eq!(exact[0]["type"], "compaction");
-        assert_eq!(exact[0]["encrypted_content"], "blob");
-        assert_eq!(foreign.len(), 1);
-        assert_eq!(foreign[0]["role"], "assistant");
-        assert!(foreign[0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("portable summary"));
-    }
-
-    #[test]
-    fn codex_handoff_replays_only_exact_model_context() {
-        let source =
-            crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
-        let message = Message::assistant(crate::model::AssistantMessage {
-            content: vec![ContentBlock::Text("answer".into())],
-            provenance: Some(source.clone()),
-            reasoning_summary: Some("verified it".into()),
-            provider_context: vec![crate::model::ProviderContextBlock {
-                identity: source.clone(),
-                kind: "openai_response_output_item".into(),
-                position: None,
-                data: json!({"type": "reasoning", "encrypted_content": "signed"}),
-            }],
-        });
-
-        let exact =
-            codex_input_items_for_target(vec![message.clone()], &mut Vec::new(), Some(&source))
-                .unwrap();
-        let foreign = codex_input_items_for_target(
-            vec![message],
-            &mut Vec::new(),
-            Some(&crate::model::ModelIdentity::new(
-                "anthropic",
-                "anthropic-messages",
-                "claude-test",
-            )),
-        )
-        .unwrap();
-
-        assert!(exact
-            .iter()
-            .any(|item| item["encrypted_content"] == "signed"));
-        assert!(!foreign
-            .iter()
-            .any(|item| item["encrypted_content"] == "signed"));
-        assert!(foreign.iter().any(|item| {
-            item.get("content")
-                .and_then(|content| content.as_str())
-                .is_some_and(|content| content.contains("<reasoning_summary>"))
-        }));
-    }
-}
+#[path = "convert_handoff_tests.rs"]
+mod handoff_tests;

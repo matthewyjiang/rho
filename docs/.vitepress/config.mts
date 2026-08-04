@@ -86,6 +86,7 @@ export default defineConfig({
               { text: 'OpenRouter', link: '/providers/openrouter' },
               { text: 'Poolside', link: '/providers/poolside' },
               { text: 'Moonshot and Kimi Code', link: '/providers/moonshot-kimi' },
+              { text: 'Qwen Token Plan', link: '/providers/qwen-token-plan' },
               { text: 'xAI', link: '/providers/xai' }
             ]
           },
