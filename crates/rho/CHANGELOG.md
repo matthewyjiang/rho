@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.28.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.28.0...rho-coding-agent-v1.28.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **tui:** collapse soft-wrap break spaces at emit ([#744](https://github.com/matthewyjiang/rho/issues/744)) ([0490a4d](https://github.com/matthewyjiang/rho/commit/0490a4d5de3d73ce69abaf48391212c12ef9c1f0))
+* **tui:** keep activity rail and hide Thinking... in zen mode ([#742](https://github.com/matthewyjiang/rho/issues/742)) ([d377de7](https://github.com/matthewyjiang/rho/commit/d377de7275bfc5b7abeea5079974a24f0156b019))
+* **tui:** resolve dim chrome from bright black, not white ([#741](https://github.com/matthewyjiang/rho/issues/741)) ([4b41737](https://github.com/matthewyjiang/rho/commit/4b4173784da5d9d9654f2a258661d97ff4524011))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.15.1 to 1.15.2
+    * rho-providers bumped from 0.15.4 to 0.15.5
+
 ## [1.28.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.27.1...rho-coding-agent-v1.28.0) (2026-08-03)
 
 
