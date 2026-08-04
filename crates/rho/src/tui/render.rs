@@ -529,9 +529,9 @@ pub(super) fn input_lines(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let input_lines = editable_input_visual_lines(input, width);
-    // Walk `input` in lockstep with the visual lines. Wrapping never inserts or
-    // drops characters, so one pass replaces a per-frame `Vec<char>` of the whole
-    // composer.
+    // Walk `input` in lockstep with the visual lines. Composer soft wrap preserves
+    // every character (including break spaces), so one pass replaces a per-frame
+    // `Vec<char>` of the whole composer.
     let mut input_chars = input.chars().peekable();
     let mut input_cursor = 0;
     for (line_index, visual_line) in input_lines.into_iter().enumerate() {
@@ -589,7 +589,12 @@ pub(super) fn input_visual_lines(input: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
     for raw_line in input.split('\n') {
-        let wrapped = wrap_line_hard(raw_line, width);
+        // Covering soft-wrap: every source character stays on some visual line so
+        // cursor/highlight walks can lockstep with `input` chars.
+        let wrapped = wrap_line_at_whitespace_ranges(raw_line, width)
+            .into_iter()
+            .map(|range| raw_line[range].to_string())
+            .collect::<Vec<_>>();
         if wrapped.is_empty() {
             lines.push(String::new());
         } else {
@@ -701,13 +706,19 @@ pub(super) fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".repeat(width.max(1)), style))
 }
 
+/// Word-wrap a line for display. Break-boundary whitespace is collapsed so
+/// continuation rows are not indented; pure whitespace lines still wrap.
 pub(super) fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<String> {
-    wrap_line_at_whitespace_ranges(line, width)
-        .into_iter()
+    soft_wrap_visible_ranges(line, wrap_line_at_whitespace_ranges(line, width))
         .map(|range| line[range].to_string())
         .collect()
 }
 
+/// Covering soft-wrap ranges: every source byte belongs to exactly one range.
+///
+/// Display callers that should not indent continuations must run the result
+/// through [`soft_wrap_visible_ranges`]. Composer lockstep uses the covering
+/// ranges directly so break spaces stay addressable.
 pub(super) fn wrap_line_at_whitespace_ranges(
     line: &str,
     width: usize,
@@ -779,6 +790,36 @@ pub(super) fn wrap_line_at_whitespace_ranges_with_protected_prefix(
     }
 
     ranges
+}
+
+/// Collapse break-boundary whitespace from covering soft-wrap ranges for display.
+///
+/// After a range that contained non-whitespace, leading whitespace on the next
+/// range is break padding and is dropped so the continuation is not indented.
+/// Pure whitespace segments keep their spaces so blank padding still wraps.
+pub(super) fn soft_wrap_visible_ranges<'a>(
+    line: &'a str,
+    ranges: impl IntoIterator<Item = std::ops::Range<usize>> + 'a,
+) -> impl Iterator<Item = std::ops::Range<usize>> + 'a {
+    let mut prev_had_non_whitespace = false;
+    ranges.into_iter().filter_map(move |range| {
+        let end = range.end;
+        let mut start = range.start;
+        if prev_had_non_whitespace {
+            while start < end {
+                let ch = line[start..].chars().next().expect("start < end");
+                if !ch.is_whitespace() {
+                    break;
+                }
+                start += ch.len_utf8();
+            }
+            if start >= end {
+                return None;
+            }
+        }
+        prev_had_non_whitespace = line[start..end].chars().any(|ch| !ch.is_whitespace());
+        Some(start..end)
+    })
 }
 
 pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {

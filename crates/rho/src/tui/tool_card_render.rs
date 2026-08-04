@@ -13,7 +13,7 @@ use super::{
     feed_image::reserve_optional_image_rows,
     render::{
         display_width, pad_display_line, padded_content_width, push_wrapped_text,
-        slice_spans_by_bytes, spans_display_width, styled_blank_line,
+        slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width, styled_blank_line,
         wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
     theme::Theme,
@@ -342,28 +342,12 @@ fn push_wrapped_prefixed(
     let mut row_index = 0usize;
     for logical_line in text.lines() {
         let line_start = subslice_start(&text, logical_line);
-        for (wrap_index, range) in wrap_line_at_whitespace_ranges(logical_line, content_width)
-            .into_iter()
-            .enumerate()
-        {
-            let mut start = range.start;
-            let end = range.end;
-            if wrap_index > 0 {
-                // Soft-wrap only: keep hang indent when a break leaves spaces.
-                // Hard newline rows keep their own leading indentation.
-                while start < end {
-                    let ch = logical_line[start..].chars().next().expect("start < end");
-                    if !ch.is_whitespace() {
-                        break;
-                    }
-                    start += ch.len_utf8();
-                }
-                if start >= end {
-                    continue;
-                }
-            }
+        for range in soft_wrap_visible_ranges(
+            logical_line,
+            wrap_line_at_whitespace_ranges(logical_line, content_width),
+        ) {
             let chunk_spans =
-                slice_spans_by_bytes(&wrappable, line_start + start, line_start + end);
+                slice_spans_by_bytes(&wrappable, line_start + range.start, line_start + range.end);
             let mut row = if row_index == 0 {
                 prefix.clone()
             } else {

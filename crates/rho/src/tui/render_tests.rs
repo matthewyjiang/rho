@@ -86,22 +86,31 @@ fn complete_visual_prefix_wraps_at_exact_width() {
     assert_eq!(complete_visual_prefix_byte_index("abcdef", 3), 6);
 }
 
+// Covers: soft wrap must not put the break space at the start of the next line.
+// Owner: pure unit (wrap layout math)
 #[test]
 fn wrapped_text_prefers_whitespace_boundaries() {
-    let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        "hello wide world",
-        10,
-        Style::default(),
-        LineFill::Natural,
-    );
+    let cases = [
+        ("hello wide world", 10, vec!["hello wide", "world"]),
+        // Overflow lands on the break space itself.
+        ("models.dev mapping.", 10, vec!["models.dev", "mapping."]),
+        // Extra spaces after a width-split must not indent the continuation.
+        ("hello  world", 6, vec!["hello ", "world"]),
+    ];
 
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(
-        rendered,
-        vec!["hello wide".to_string(), " world".to_string()]
-    );
+    for (text, width, expected) in cases {
+        let mut lines = Vec::new();
+        push_wrapped_text(&mut lines, text, width, Style::default(), LineFill::Natural);
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        assert_eq!(
+            rendered,
+            expected
+                .iter()
+                .map(|part| (*part).to_string())
+                .collect::<Vec<_>>(),
+            "text {text:?} width {width}"
+        );
+    }
 }
 
 #[test]
@@ -179,6 +188,9 @@ fn complete_visual_prefix_and_rendering_agree_on_whitespace_boundary() {
     assert_eq!(line_text(&lines[0]), "hello   ");
 }
 
+// Covers: a trailing wrap-boundary space is drained for streaming but not shown
+// as its own indented continuation line.
+// Owner: pure unit (wrap layout math)
 #[test]
 fn complete_visual_prefix_and_rendering_agree_on_exact_width_trailing_space() {
     let text = "abc ";
@@ -189,7 +201,7 @@ fn complete_visual_prefix_and_rendering_agree_on_exact_width_trailing_space() {
     assert_eq!(&text[..split], "abc");
     assert_eq!(
         lines.iter().map(line_text).collect::<Vec<_>>(),
-        vec!["abc".to_string(), " ".to_string()]
+        vec!["abc".to_string()]
     );
 }
 
@@ -263,6 +275,12 @@ fn visual_cursor_index_maps_row_and_column_to_char_index() {
         ("界a界b", 3, 1, 2, 3),
         // Two hard newlines put row 2 past both of them.
         ("a\nb\ncd", 80, 2, 1, 5),
+        // Word wrap: break after the space, second row starts at "world".
+        ("hello world", 8, 1, 0, 6),
+        ("hello world", 8, 1, 2, 8),
+        // Exact-width first word: preserve mode keeps the break space on row 1.
+        ("hello world", 5, 1, 0, 5),
+        ("hello world", 5, 1, 1, 6),
     ];
 
     for (input, width, row, column, expected) in cases {
@@ -270,9 +288,49 @@ fn visual_cursor_index_maps_row_and_column_to_char_index() {
         assert_eq!(
             input_cursor_index_on_visual_line(input, &lines, row, column),
             expected,
-            "input {input:?} width {width} row {row} column {column}"
+            "input {input:?} width {width} row {row} column {column} lines {lines:?}"
         );
     }
+}
+
+// Covers: composer soft-wraps on word boundaries instead of mid-word hard cuts.
+// Owner: pure unit (composer layout math)
+#[test]
+fn composer_input_word_wraps_at_whitespace() {
+    assert_eq!(
+        input_visual_lines("hello wide world", 10),
+        vec!["hello wide".to_string(), " world".to_string()]
+    );
+    // Long tokens still hard-wrap when no break fits.
+    assert_eq!(
+        input_visual_lines("abcdefghijk", 5),
+        vec!["abcde".to_string(), "fghij".to_string(), "k".to_string()]
+    );
+    // Hard newlines still split first; soft wrap applies per logical line.
+    assert_eq!(
+        input_visual_lines("hello world\nnext line here", 10),
+        vec![
+            "hello ".to_string(),
+            "world".to_string(),
+            "next line ".to_string(),
+            "here".to_string(),
+        ]
+    );
+}
+
+// Covers: highlight lockstep stays aligned across preserved soft-wrap spaces.
+// Owner: pure unit (composer layout math)
+#[test]
+fn composer_input_lines_highlight_survives_word_wrap() {
+    let lines = input_lines("hello world", 8, Some(6..11));
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+    assert_eq!(rendered, vec!["hello ".to_string(), "world".to_string()]);
+    assert_eq!(lines[1].spans.len(), 1);
+    assert_eq!(lines[1].spans[0].content.as_ref(), "world");
+    assert!(lines[1].spans[0]
+        .style
+        .add_modifier
+        .contains(ratatui::style::Modifier::REVERSED));
 }
 
 // Covers: a picker must list more entries on a tall terminal instead of staying

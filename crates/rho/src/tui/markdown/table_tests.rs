@@ -31,7 +31,7 @@ fn wraps_table_cells_to_fit_available_width() {
             "│ rho     │ lightw │",
             "│         │ eight  │",
             "│         │ coding │",
-            "│         │  agent │",
+            "│         │ agent  │",
             "└─────────┴────────┘",
         ]
     );
