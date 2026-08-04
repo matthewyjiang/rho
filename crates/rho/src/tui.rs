@@ -246,6 +246,20 @@ pub struct RuntimeModelView {
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
 }
 
+/// How reasoning appears in the transcript for the current display settings.
+///
+/// Zen and `show_reasoning_output` collapse into one exclusive policy so call
+/// sites never invert complementary booleans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReasoningChrome {
+    /// Stream and store reasoning text in the transcript.
+    FullText,
+    /// Suppress reasoning text; show live `Thinking...` while the stretch is open.
+    ThinkingPlaceholder,
+    /// Suppress reasoning text and `Thinking...` (zen mode).
+    Hidden,
+}
+
 impl RuntimeModelView {
     fn model_call_profile(&self) -> rho_sdk::ModelCallProfile {
         rho_sdk::ModelCallProfile {
@@ -256,24 +270,27 @@ impl RuntimeModelView {
         }
     }
 
+    /// Exclusive reasoning display policy for the current session settings.
+    pub(crate) fn reasoning_chrome(&self) -> ReasoningChrome {
+        if self.zen_mode {
+            ReasoningChrome::Hidden
+        } else if self.show_reasoning_output {
+            ReasoningChrome::FullText
+        } else {
+            ReasoningChrome::ThinkingPlaceholder
+        }
+    }
+
     /// Whether the TUI should render reasoning text for this session.
     pub(crate) fn displays_reasoning_output(&self) -> bool {
-        self.show_reasoning_output && self.shows_work_chrome()
+        matches!(self.reasoning_chrome(), ReasoningChrome::FullText)
     }
 
-    /// Whether the live Thinking... placeholder should appear while reasoning
-    /// text is suppressed.
-    ///
-    /// True only when work chrome is on and reasoning text is off. Zen mode
-    /// suppresses the placeholder; the activity rail still covers progress.
-    pub(crate) fn shows_thinking_placeholder(&self) -> bool {
-        self.shows_work_chrome() && !self.show_reasoning_output
-    }
-
-    /// Whether tool cards, reasoning blocks, and Thinking... are visible in the transcript.
+    /// Whether tool cards and reasoning blocks are visible in the transcript.
     ///
     /// Zen mode suppresses that work chrome while keeping the live activity rail
-    /// and subagent rows so the session still shows progress.
+    /// and subagent rows so the session still shows progress. Reasoning text vs
+    /// `Thinking...` vs neither is [`Self::reasoning_chrome`].
     pub(crate) fn shows_work_chrome(&self) -> bool {
         !self.zen_mode
     }

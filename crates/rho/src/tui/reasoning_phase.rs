@@ -1,20 +1,23 @@
 use super::goal::{format_elapsed_with, ElapsedPrecision};
 use std::time::{Duration, Instant};
 
-/// Tracks one reasoning stretch: timer + live Thinking... placeholder.
+/// Tracks one reasoning stretch: open window + timer for Thought for … summaries.
+///
+/// Display policy (full text vs Thinking... vs hidden) lives on
+/// [`super::ReasoningChrome`], not here.
 #[derive(Clone, Debug, Default)]
 pub(super) struct ReasoningPhase {
+    /// True between [`Self::begin_step`] and [`Self::finalize`] / [`Self::reset`].
+    open: bool,
     started_at: Option<Instant>,
-    hidden_placeholder: bool,
 }
 
 impl ReasoningPhase {
-    /// Start a step. `show_thinking_placeholder` controls the live Thinking...
-    /// line when reasoning text itself is not rendered.
-    pub(super) fn begin_step(&mut self, show_thinking_placeholder: bool) {
+    /// Open a new reasoning stretch for the current provider step.
+    pub(super) fn begin_step(&mut self) {
         *self = Self {
+            open: true,
             started_at: None,
-            hidden_placeholder: show_thinking_placeholder,
         };
     }
 
@@ -22,27 +25,23 @@ impl ReasoningPhase {
         *self = Self::default();
     }
 
-    pub(super) fn on_reasoning_delta(&mut self, show_thinking_placeholder: bool) {
+    pub(super) fn on_reasoning_delta(&mut self) {
         if self.started_at.is_none() {
             self.started_at = Some(Instant::now());
         }
-        self.hidden_placeholder = show_thinking_placeholder;
     }
 
-    /// Clears the placeholder. Returns elapsed when reasoning deltas were seen.
+    /// Closes the stretch. Returns elapsed when reasoning deltas were seen.
     pub(super) fn finalize(&mut self) -> Option<Duration> {
-        self.hidden_placeholder = false;
+        self.open = false;
         self.started_at
             .take()
             .map(|started_at| started_at.elapsed())
     }
 
-    pub(super) fn hidden_placeholder(&self) -> bool {
-        self.hidden_placeholder
-    }
-
-    pub(super) fn set_hidden_placeholder(&mut self, active: bool) {
-        self.hidden_placeholder = active;
+    /// Whether the current step's reasoning stretch is still open.
+    pub(super) fn is_open(&self) -> bool {
+        self.open
     }
 
     pub(super) fn has_started(&self) -> bool {

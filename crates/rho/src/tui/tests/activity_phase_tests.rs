@@ -51,35 +51,3 @@ fn zen_mode_keeps_activity_status_while_turn_is_busy() {
         })
     );
 }
-
-// Covers: zen must not arm Thinking... on step start or reasoning deltas.
-// Owner: pure reasoning-placeholder policy.
-#[test]
-fn zen_mode_does_not_show_thinking_placeholder_during_reasoning() {
-    let mut app = test_app();
-    app.info.runtime.zen_mode = true;
-    app.info.runtime.show_reasoning_output = true;
-
-    assert!(!app.info.runtime.shows_thinking_placeholder());
-    assert!(!app.info.runtime.displays_reasoning_output());
-
-    app.turn
-        .reasoning_phase_mut()
-        .begin_step(app.info.runtime.shows_thinking_placeholder());
-    assert!(!app.turn.reasoning_phase().hidden_placeholder());
-
-    app.turn
-        .reasoning_phase_mut()
-        .on_reasoning_delta(app.info.runtime.shows_thinking_placeholder());
-    assert!(app.turn.reasoning_phase().has_started());
-    assert!(!app.turn.reasoning_phase().hidden_placeholder());
-
-    // Non-zen with reasoning text off still wants Thinking...
-    app.info.runtime.zen_mode = false;
-    app.info.runtime.show_reasoning_output = false;
-    assert!(app.info.runtime.shows_thinking_placeholder());
-    app.turn
-        .reasoning_phase_mut()
-        .begin_step(app.info.runtime.shows_thinking_placeholder());
-    assert!(app.turn.reasoning_phase().hidden_placeholder());
-}

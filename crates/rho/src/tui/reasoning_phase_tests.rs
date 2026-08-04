@@ -4,27 +4,30 @@ use std::time::Duration;
 #[test]
 fn finalize_returns_elapsed_only_after_reasoning_deltas() {
     let mut phase = ReasoningPhase::default();
-    phase.begin_step(/*show_thinking_placeholder*/ true);
-    assert!(phase.hidden_placeholder());
+    phase.begin_step();
+    assert!(phase.is_open());
+    assert!(!phase.has_started());
     assert!(phase.finalize().is_none());
-    assert!(!phase.hidden_placeholder());
+    assert!(!phase.is_open());
 
-    phase.begin_step(/*show_thinking_placeholder*/ true);
-    phase.on_reasoning_delta(/*show_thinking_placeholder*/ true);
-    assert!(phase.hidden_placeholder());
+    phase.begin_step();
+    phase.on_reasoning_delta();
+    assert!(phase.is_open());
     assert!(phase.has_started());
     let elapsed = phase.finalize().expect("timed stretch");
     assert!(elapsed >= Duration::ZERO);
-    assert!(!phase.hidden_placeholder());
+    assert!(!phase.is_open());
     assert!(!phase.has_started());
 }
 
 #[test]
-fn begin_step_can_suppress_thinking_placeholder() {
+fn reset_closes_open_stretch_without_elapsed() {
     let mut phase = ReasoningPhase::default();
-    phase.begin_step(/*show_thinking_placeholder*/ false);
-    assert!(!phase.hidden_placeholder());
-    phase.on_reasoning_delta(/*show_thinking_placeholder*/ false);
+    phase.begin_step();
+    phase.on_reasoning_delta();
+    assert!(phase.is_open());
     assert!(phase.has_started());
-    assert!(!phase.hidden_placeholder());
+    phase.reset();
+    assert!(!phase.is_open());
+    assert!(!phase.has_started());
 }

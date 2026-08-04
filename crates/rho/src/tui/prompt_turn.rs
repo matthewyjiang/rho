@@ -195,9 +195,7 @@ impl App {
         let model_input = failed_turn.model_input()?;
         self.turn.set_current_turn_start(Some(self.history.len()));
         self.reset_streams();
-        self.turn
-            .reasoning_phase_mut()
-            .begin_step(self.info.runtime.shows_thinking_placeholder());
+        self.turn.reasoning_phase_mut().begin_step();
         self.set_status("running");
         self.begin_provider_turn_ui();
         self.turn.set_activity_phase(ActivityPhase::Starting);

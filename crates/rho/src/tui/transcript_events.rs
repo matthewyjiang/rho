@@ -75,11 +75,8 @@ impl App {
                 Ok(switched || drained)
             }
             ViewModelEvent::ReasoningDelta(text) => {
-                let show_reasoning = self.info.runtime.displays_reasoning_output();
-                self.turn
-                    .reasoning_phase_mut()
-                    .on_reasoning_delta(self.info.runtime.shows_thinking_placeholder());
-                if !show_reasoning {
+                self.turn.reasoning_phase_mut().on_reasoning_delta();
+                if !self.info.runtime.displays_reasoning_output() {
                     return Ok(true);
                 }
                 let switched = self.switch_stream_kind(StreamKind::Reasoning);
@@ -237,9 +234,7 @@ impl App {
                 self.usage.run_usage.step_started();
                 self.reset_streams();
                 self.turn.provider_attempt_mut().begin(self.history.len());
-                self.turn
-                    .reasoning_phase_mut()
-                    .begin_step(self.info.runtime.shows_thinking_placeholder());
+                self.turn.reasoning_phase_mut().begin_step();
                 self.begin_provider_turn_ui();
                 self.turn.clear_tool_calls();
                 self.turn.start_loading_if_needed();
@@ -546,38 +541,15 @@ impl App {
     }
 
     /// Apply the live transcript chrome settings to in-flight turn UI.
+    ///
+    /// `Thinking...` visibility is decided at render from
+    /// [`crate::tui::ReasoningChrome`] + whether the reasoning stretch is open.
+    /// This only drops an in-flight reasoning text preview when policy no longer
+    /// wants full text.
     pub(super) fn apply_reasoning_output_visibility(&mut self) {
-        if self.info.runtime.displays_reasoning_output() {
-            self.turn
-                .reasoning_phase_mut()
-                .set_hidden_placeholder(false);
-            return;
+        if !self.info.runtime.displays_reasoning_output() {
+            self.discard_live_reasoning_output();
         }
-
-        self.discard_live_reasoning_output();
-
-        if !self.info.runtime.shows_thinking_placeholder() {
-            // Zen mode, or reasoning text shown path already handled above.
-            self.turn
-                .reasoning_phase_mut()
-                .set_hidden_placeholder(false);
-            return;
-        }
-
-        // Keep the Thinking... placeholder while this step is still waiting for
-        // or streaming reasoning. Later phases (response, tools) stay clear.
-        let hide_placeholder = self.is_ui_busy()
-            && (self.turn.reasoning_phase().has_started()
-                || matches!(
-                    self.turn.activity_phase(),
-                    ActivityPhase::Starting
-                        | ActivityPhase::WaitingForProvider
-                        | ActivityPhase::Thinking
-                        | ActivityPhase::RetryingProvider
-                ));
-        self.turn
-            .reasoning_phase_mut()
-            .set_hidden_placeholder(hide_placeholder);
     }
 
     pub(super) fn discard_live_reasoning_output(&mut self) {
