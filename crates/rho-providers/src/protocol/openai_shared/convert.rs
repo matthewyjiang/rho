@@ -11,6 +11,15 @@ use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
+use super::tool_calls::{finalize_chat_tool_calls, RawChatToolCall};
+
+/// Provider-context kind for chat-completions `reasoning_content`.
+///
+/// Models such as Qwen3.x stream thinking in `delta.reasoning_content` and expect
+/// that field to be replayed on later assistant messages that carried tool calls.
+/// Raw reasoning stays opaque provider context (never `reasoning_summary`).
+pub(crate) const OPENAI_CHAT_REASONING_CONTENT_KIND: &str = "openai_chat_reasoning_content";
+
 pub(crate) fn convert_openai_response(response: ChatResponse) -> Result<ModelResponse, ModelError> {
     let message = response
         .choices
@@ -22,19 +31,21 @@ pub(crate) fn convert_openai_response(response: ChatResponse) -> Result<ModelRes
     if let Some(content) = message.content.filter(|s| !s.is_empty()) {
         blocks.push(ContentBlock::Text(content));
     }
-    for call in message.tool_calls.unwrap_or_default() {
-        let arguments = serde_json::from_str(&call.function.arguments).map_err(|e| {
-            ModelError::InvalidResponse(format!(
-                "invalid tool call arguments for {}: {e}",
-                call.function.name
-            ))
-        })?;
-        blocks.push(ContentBlock::ToolCall(ToolCall {
-            id: call.id,
-            name: call.function.name,
-            arguments,
-        }));
-    }
+    let raw_calls = message
+        .tool_calls
+        .unwrap_or_default()
+        .into_iter()
+        .map(|call| RawChatToolCall {
+            id: Some(call.id),
+            name: Some(call.function.name),
+            arguments: call.function.arguments,
+        })
+        .collect();
+    blocks.extend(
+        finalize_chat_tool_calls(raw_calls)?
+            .into_iter()
+            .map(ContentBlock::ToolCall),
+    );
     if blocks.is_empty() {
         Err(ModelError::InvalidResponse(
             "assistant message had no content or tool calls".into(),
@@ -240,8 +251,22 @@ fn append_codex_assistant(
 }
 
 fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
-    let content = assistant_text(&blocks);
-    let tool_calls = blocks
+    openai_prepared_assistant(PreparedAssistant {
+        content: blocks,
+        replay_context: Vec::new(),
+    })
+}
+
+fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessage, ModelError> {
+    let reasoning_content = prepared.replay_context.into_iter().find_map(|block| {
+        (block.kind == OPENAI_CHAT_REASONING_CONTENT_KIND)
+            .then(|| block.data.as_str().map(str::to_owned))
+            .flatten()
+            .filter(|text| !text.is_empty())
+    });
+    let content = assistant_text(&prepared.content);
+    let tool_calls = prepared
+        .content
         .into_iter()
         .filter_map(|block| match block {
             ContentBlock::ToolCall(call) => Some(tool_call_to_openai(call)),
@@ -251,6 +276,7 @@ fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, 
     Ok(OpenAiMessage {
         role: "assistant".into(),
         content: (!content.is_empty()).then(|| json!(content)),
+        reasoning_content,
         tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
         tool_call_id: None,
     })
@@ -265,6 +291,7 @@ pub(crate) fn to_openai_message_for_target(
         Message::User(blocks) => Ok(OpenAiMessage {
             role: "user".into(),
             content: Some(chat_content_blocks(&blocks)),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }),
@@ -273,9 +300,10 @@ pub(crate) fn to_openai_message_for_target(
             let fallback_target = message.provenance.clone().unwrap_or_else(|| {
                 crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
             });
-            openai_assistant_message(
-                prepare_assistant(*message, target.unwrap_or(&fallback_target)).content,
-            )
+            openai_prepared_assistant(prepare_assistant(
+                *message,
+                target.unwrap_or(&fallback_target),
+            ))
         }
         Message::AbortedAssistant(message) => {
             let fallback_target = message.provenance.clone().unwrap_or_else(|| {
@@ -290,13 +318,15 @@ pub(crate) fn to_openai_message_for_target(
             enriched
                 .content
                 .push(ContentBlock::Text("[Operation aborted]".into()));
-            openai_assistant_message(
-                prepare_assistant(enriched, target.unwrap_or(&fallback_target)).content,
-            )
+            openai_prepared_assistant(prepare_assistant(
+                enriched,
+                target.unwrap_or(&fallback_target),
+            ))
         }
         Message::ToolResult(result) => Ok(OpenAiMessage {
             role: "tool".into(),
             content: Some(json!(result.content)),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(result.id),
         }),
@@ -307,6 +337,7 @@ fn openai_text_message(role: &str, content: String) -> OpenAiMessage {
     OpenAiMessage {
         role: role.into(),
         content: Some(json!(content)),
+        reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
     }
@@ -524,6 +555,71 @@ mod handoff_tests {
         assert!(content.contains("answer"));
         assert!(content.contains("<reasoning_summary>"));
         assert!(content.contains("verified it"));
+    }
+
+    // Covers: Qwen-style reasoning_content must replay on same-model tool loops
+    // Owner: openai chat completions history conversion
+    #[test]
+    fn chat_handoff_replays_reasoning_content_for_exact_model() {
+        let identity = crate::model::ModelIdentity::new(
+            "qwen-token-plan",
+            "openai-chat-completions",
+            "qwen3.8-max",
+        );
+        let message = Message::assistant(crate::model::AssistantMessage {
+            content: vec![ContentBlock::ToolCall(ToolCall {
+                id: "call_1".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "pwd"}),
+            })],
+            provenance: Some(identity.clone()),
+            reasoning_summary: None,
+            provider_context: vec![crate::model::ProviderContextBlock {
+                identity: identity.clone(),
+                kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
+                position: Some(0),
+                data: json!("need to inspect the workspace first"),
+            }],
+        });
+
+        let converted = to_openai_message_for_target(message, Some(&identity)).unwrap();
+        assert_eq!(
+            converted.reasoning_content.as_deref(),
+            Some("need to inspect the workspace first")
+        );
+        assert!(converted.content.is_none());
+        let tool_calls = converted.tool_calls.expect("tool calls");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "call_1");
+        assert_eq!(tool_calls[0].function.name, "bash");
+    }
+
+    // Covers: foreign targets must not receive raw reasoning_content
+    // Owner: openai chat completions history conversion
+    #[test]
+    fn chat_handoff_omits_reasoning_content_for_foreign_model() {
+        let source = crate::model::ModelIdentity::new(
+            "qwen-token-plan",
+            "openai-chat-completions",
+            "qwen3.8-max",
+        );
+        let target =
+            crate::model::ModelIdentity::new("openrouter", "openai-chat-completions", "other");
+        let message = Message::assistant(crate::model::AssistantMessage {
+            content: vec![ContentBlock::Text("answer".into())],
+            provenance: Some(source.clone()),
+            reasoning_summary: None,
+            provider_context: vec![crate::model::ProviderContextBlock {
+                identity: source,
+                kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
+                position: Some(0),
+                data: json!("private thoughts"),
+            }],
+        });
+
+        let converted = to_openai_message_for_target(message, Some(&target)).unwrap();
+        assert!(converted.reasoning_content.is_none());
+        assert_eq!(converted.content.unwrap().as_str().unwrap(), "answer");
     }
 
     #[test]

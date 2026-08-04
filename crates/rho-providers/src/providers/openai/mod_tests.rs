@@ -3,7 +3,7 @@ use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
     ReasoningLevelSet, ToolCall, ToolSpec,
 };
-use crate::protocol::openai_chat::{convert_streamed_response, handle_openai_stream_line};
+use crate::protocol::openai_chat::ChatStreamAccumulator;
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
     CodexSseState,
@@ -391,27 +391,25 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
 
 #[test]
 fn chat_stream_usage_normalizes_prompt_cache_tokens() {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
+    let mut chat_stream = ChatStreamAccumulator::default();
     let mut usage = None;
-    handle_openai_stream_line(
-        r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"choices":[{"delta":{}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |event| {
-            match event {
-                ModelEvent::Usage(event_usage) => usage = Some(event_usage),
-                ModelEvent::OutputDelta(_)
-                | ModelEvent::ReasoningDelta(_)
-                | ModelEvent::ReasoningSummaryDelta(_)
-                | ModelEvent::ProviderContext { .. }
-                | ModelEvent::WebSearch(_)
-                                | ModelEvent::ToolCallDelta { .. } => {}
-            }
-            Ok(())
-        },
-    )
-    .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"choices":[{"delta":{}}]}"#,
+            &mut |event| {
+                match event {
+                    ModelEvent::Usage(event_usage) => usage = Some(event_usage),
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::ProviderContext { .. }
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. } => {}
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
 
     let usage = usage.unwrap();
     assert_eq!(usage.input_tokens, Some(100));
@@ -885,30 +883,179 @@ fn codex_sse_search_action_url_and_pattern_are_bare_detail() {
 }
 
 #[test]
-fn accumulates_streamed_tool_call_deltas() {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
-    handle_openai_stream_line(
-        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":"}}]}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |_| Ok(()),
-    )
-    .unwrap();
-    handle_openai_stream_line(
-        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"pwd\"}"}}]}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |_| Ok(()),
-    )
-    .unwrap();
+// Covers: reasoning_content deltas must accumulate and emit provider context
+// Owner: openai chat completions streaming
+fn chat_stream_emits_reasoning_content_provider_context() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    let mut events = Vec::new();
+    let mut on_event = |event: ModelEvent| {
+        events.push(event);
+        Ok(())
+    };
 
-    let response = convert_streamed_response(text, tool_calls).unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"reasoning_content":"plan "}}]}"#,
+            &mut on_event,
+        )
+        .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"reasoning_content":"next"}}]}"#,
+            &mut on_event,
+        )
+        .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"pwd\"}"}}]}}]}"#,
+            &mut on_event,
+        )
+        .unwrap();
+
+    let response = chat_stream.finish(&mut on_event).unwrap();
+
+    assert!(matches!(
+        response,
+        ModelResponse::Assistant(blocks)
+            if matches!(
+                blocks.as_slice(),
+                [ContentBlock::ToolCall(call)] if call.id == "call-1" && call.name == "bash"
+            )
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ModelEvent::ReasoningDelta(text) if text == "plan "
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ModelEvent::ProviderContext {
+            kind,
+            position: Some(0),
+            data,
+        } if kind == "openai_chat_reasoning_content"
+            && data.as_str() == Some("plan next")
+    )));
+}
+
+#[test]
+fn accumulates_streamed_tool_call_deltas() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"bash","arguments":"{\"command\":"}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"pwd\"}"}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+
+    let response = chat_stream.finish(&mut |_| Ok(())).unwrap();
     let ModelResponse::Assistant(blocks) = response;
     assert!(matches!(
         blocks.as_slice(),
-        [ContentBlock::ToolCall(ToolCall { id, name, arguments })]
-            if id == "call-1" && name == "bash" && arguments == &json!({ "command": "pwd" })
+        [ContentBlock::ToolCall(call)]
+            if call.id == "call-1"
+                && call.name == "bash"
+                && call.arguments == json!({"command":"pwd"})
+    ));
+}
+
+// Covers: sparse tool indexes, duplicate ids, object-form args must still validate
+// Owner: openai chat completions streaming
+#[test]
+fn streamed_tool_calls_tolerate_qwen_style_quirks() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    // index 1 first leaves a hole at 0; arguments arrive as a JSON object value.
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"dup","type":"function","function":{"name":"bash","arguments":{"command":"pwd"}}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":2,"id":"dup","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.rs\"}"}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+
+    let response = chat_stream.finish(&mut |_| Ok(())).unwrap();
+    let ModelResponse::Assistant(blocks) = response;
+    assert_eq!(blocks.len(), 2);
+    match &blocks[0] {
+        ContentBlock::ToolCall(call) => {
+            assert_eq!(call.id, "dup");
+            assert_eq!(call.name, "bash");
+            assert_eq!(call.arguments, json!({"command":"pwd"}));
+            assert!(call.arguments.is_object());
+            assert!(!call.id.is_empty());
+        }
+        other => panic!("expected tool call, got {other:?}"),
+    }
+    match &blocks[1] {
+        ContentBlock::ToolCall(call) => {
+            assert_eq!(call.id, "dup_2");
+            assert_eq!(call.name, "read_file");
+            assert_eq!(call.arguments, json!({"path":"a.rs"}));
+            assert!(call.arguments.is_object());
+            assert!(!call.id.is_empty());
+        }
+        other => panic!("expected tool call, got {other:?}"),
+    }
+}
+
+// Covers: non-object argument JSON must fail loud, not become invented parameters
+// Owner: openai chat completions tool-call normalization
+#[test]
+fn chat_tool_calls_reject_non_object_arguments() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"bash","arguments":"42"}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+
+    let err = chat_stream.finish(&mut |_| Ok(())).unwrap_err();
+    assert!(matches!(
+        err,
+        crate::model::ModelError::InvalidResponse(message)
+            if message == "tool call arguments for bash are not a JSON object"
+    ));
+}
+
+// Covers: final message snapshot can complete tool calls missing from deltas
+// Owner: openai chat completions streaming
+#[test]
+fn final_message_snapshot_fills_incomplete_streamed_tool_calls() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-9","function":{"name":"bash"}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls","message":{"role":"assistant","content":"","tool_calls":[{"id":"call-9","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap();
+
+    let response = chat_stream.finish(&mut |_| Ok(())).unwrap();
+    let ModelResponse::Assistant(blocks) = response;
+    assert!(matches!(
+        blocks.as_slice(),
+        [ContentBlock::ToolCall(call)]
+            if call.id == "call-9"
+                && call.name == "bash"
+                && call.arguments == json!({"command":"ls"})
+                && call.arguments.is_object()
+                && !call.id.is_empty()
     ));
 }
 

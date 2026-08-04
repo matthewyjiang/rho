@@ -39,6 +39,13 @@ impl Default for ProviderConfigs {
 }
 
 impl ProviderConfigs {
+    /// Whether this provider stores a configurable base URL.
+    ///
+    /// Keep in sync with `endpoint` and `set_endpoint` below.
+    pub(crate) fn stores_endpoint(provider: &str) -> bool {
+        matches!(provider, "ollama" | "qwen-token-plan")
+    }
+
     fn endpoint(&self, provider: &str) -> Option<&Url> {
         match provider {
             "ollama" => Some(&self.ollama.base_url),
@@ -47,18 +54,29 @@ impl ProviderConfigs {
         }
     }
 
+    /// Validates and stores a provider base URL. This is the one write path
+    /// shared by config loading and interactive login.
+    pub(crate) fn set_endpoint(&mut self, provider: &str, base_url: &str) -> anyhow::Result<()> {
+        let field = format!("providers.{provider}.base_url");
+        let parsed = parse_provider_base_url(&field, base_url)?;
+        let slot = match provider {
+            "ollama" => &mut self.ollama.base_url,
+            "qwen-token-plan" => &mut self.qwen_token_plan.base_url,
+            _ => anyhow::bail!("provider '{provider}' has no configurable base URL"),
+        };
+        *slot = parsed;
+        Ok(())
+    }
+
     pub(super) fn apply(&mut self, partial: PartialProviderConfigs) -> anyhow::Result<()> {
-        if let Some(ollama) = partial.ollama {
-            if let Some(base_url) = ollama.base_url {
-                self.ollama.base_url =
-                    parse_provider_base_url("providers.ollama.base_url", &base_url)?;
-            }
+        if let Some(base_url) = partial.ollama.and_then(|ollama| ollama.base_url) {
+            self.set_endpoint("ollama", &base_url)?;
         }
-        if let Some(qwen_token_plan) = partial.qwen_token_plan {
-            if let Some(base_url) = qwen_token_plan.base_url {
-                self.qwen_token_plan.base_url =
-                    parse_provider_base_url("providers.qwen-token-plan.base_url", &base_url)?;
-            }
+        if let Some(base_url) = partial
+            .qwen_token_plan
+            .and_then(|qwen_token_plan| qwen_token_plan.base_url)
+        {
+            self.set_endpoint("qwen-token-plan", &base_url)?;
         }
         Ok(())
     }

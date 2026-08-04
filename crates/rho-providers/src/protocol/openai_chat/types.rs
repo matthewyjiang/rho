@@ -49,6 +49,9 @@ pub(crate) struct OpenAiMessage {
     pub(crate) role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) content: Option<serde_json::Value>,
+    /// Qwen/DeepSeek-style raw thinking retained for multi-turn tool loops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]

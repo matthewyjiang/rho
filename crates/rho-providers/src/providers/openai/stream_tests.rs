@@ -185,20 +185,17 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
 
 #[test]
 fn rejects_out_of_range_tool_call_index() {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
-    let err = crate::protocol::openai_chat::handle_openai_stream_line(
-        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":4000000000}]}}]}"#,
-        &mut text,
-        &mut tool_calls,
-        &mut |_| Ok(()),
-    )
-    .unwrap_err();
+    let mut chat_stream = crate::protocol::openai_chat::ChatStreamAccumulator::default();
+    let err = chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":4000000000}]}}]}"#,
+            &mut |_| Ok(()),
+        )
+        .unwrap_err();
 
     assert!(matches!(
         err,
         crate::model::ModelError::InvalidResponse(message)
             if message == "stream block index 4000000000 out of range"
     ));
-    assert!(tool_calls.is_empty());
 }

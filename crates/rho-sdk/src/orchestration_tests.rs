@@ -30,9 +30,7 @@ use crate::{
     SelectionMode, Session, SessionId, SessionOptions, SessionState, UserInput,
 };
 
-use super::{
-    apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT, valid_response,
-};
+use super::{apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -723,7 +721,9 @@ fn provider_response_rejects_duplicate_tool_call_ids() {
         ContentBlock::ToolCall(tool_call("duplicate", "second")),
     ]);
 
-    assert!(!valid_response(&response));
+    assert!(response
+        .protocol_issue()
+        .is_some_and(|issue| issue.contains("duplicate tool call id 'duplicate'")));
 }
 
 #[tokio::test(start_paused = true)]

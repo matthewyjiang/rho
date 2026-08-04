@@ -123,21 +123,3 @@ pub(super) fn secret_input_lines(
         ),
     ]
 }
-
-pub(super) fn provider_login_collects_endpoint(provider: &str) -> bool {
-    matches!(provider, "qwen-token-plan")
-}
-
-pub(super) fn parse_login_endpoint(endpoint: &str) -> Result<url::Url, String> {
-    let parsed = url::Url::parse(endpoint).map_err(|error| format!("invalid endpoint: {error}"))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err("endpoint must use http or https".into());
-    }
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("endpoint must not contain credentials".into());
-    }
-    if parsed.query().is_some() || parsed.fragment().is_some() {
-        return Err("endpoint must not contain a query or fragment".into());
-    }
-    Ok(parsed)
-}

@@ -111,3 +111,48 @@ fn qwen_token_plan_base_url_rejects_invalid_or_unsupported_urls() {
         );
     }
 }
+
+// Covers: login and config load must share one validated endpoint write path
+// Owner: provider config
+#[test]
+fn set_endpoint_updates_supported_providers_and_rejects_others() {
+    let mut providers = ProviderConfigs::default();
+
+    providers
+        .set_endpoint(
+            "qwen-token-plan",
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        )
+        .unwrap();
+    assert_eq!(
+        providers.qwen_token_plan.base_url.as_str(),
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    );
+
+    providers
+        .set_endpoint("ollama", "http://10.0.0.5:11434/v1")
+        .unwrap();
+    assert_eq!(
+        providers.ollama.base_url.as_str(),
+        "http://10.0.0.5:11434/v1"
+    );
+
+    assert!(ProviderConfigs::stores_endpoint("qwen-token-plan"));
+    assert!(!ProviderConfigs::stores_endpoint("openai"));
+
+    let unsupported = providers
+        .set_endpoint("openai", "https://api.openai.com/v1")
+        .unwrap_err();
+    assert!(
+        format!("{unsupported:#}").contains("has no configurable base URL"),
+        "{unsupported:#}"
+    );
+
+    let invalid = providers
+        .set_endpoint("qwen-token-plan", "file:///tmp/qwen")
+        .unwrap_err();
+    assert!(
+        format!("{invalid:#}").contains("providers.qwen-token-plan.base_url"),
+        "{invalid:#}"
+    );
+}

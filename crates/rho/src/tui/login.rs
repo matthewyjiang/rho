@@ -11,10 +11,7 @@ use {
     rho_providers::provider,
 };
 
-pub(super) use super::login_secret_input::{
-    parse_login_endpoint, provider_login_collects_endpoint, secret_input_lines, SecretInput,
-    SecretInputPhase,
-};
+pub(super) use super::login_secret_input::{secret_input_lines, SecretInput, SecretInputPhase};
 
 #[derive(Debug)]
 pub(super) struct PendingInteractiveLogin {
@@ -348,7 +345,7 @@ impl App {
             self.set_status("login failed");
             return Ok(());
         }
-        if provider_login_collects_endpoint(&target.provider) {
+        if crate::config::ProviderConfigs::stores_endpoint(&target.provider) {
             let initial = self
                 .info
                 .services
@@ -377,37 +374,37 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let endpoint = endpoint.trim();
+        let endpoint = endpoint.trim().to_string();
         if endpoint.is_empty() {
             self.insert_entry(&Entry::Error("endpoint cannot be empty".into()));
             self.set_status("login failed");
             return Ok(());
         }
-        let base_url = match parse_login_endpoint(endpoint) {
-            Ok(url) => url,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(error));
-                self.set_status("login failed");
-                return Ok(());
-            }
-        };
-        if target.provider != "qwen-token-plan" {
-            self.insert_entry(&Entry::Error(format!(
-                "provider '{}' does not store a login endpoint",
-                target.provider
-            )));
+        // Save the key first so a failed key write never mutates the base URL.
+        // An invalid endpoint keeps the new key (same as plain API-key login)
+        // and leaves the previous base URL in place.
+        self.cancel_limits_command().await;
+        if let Err(err) = ProviderAuthentication::save_api_key(
+            self.credential_store.as_ref(),
+            &target.auth,
+            &api_key,
+        ) {
+            self.insert_entry(&Entry::Error(err.to_string()));
             self.set_status("login failed");
             return Ok(());
         }
-        if let Err(error) = self.info.services.config_repository.update(|config| {
-            config.providers.qwen_token_plan.base_url = base_url;
-        }) {
+        let provider = target.provider.clone();
+        let stored = self
+            .info
+            .services
+            .config_repository
+            .update(|config| config.providers.set_endpoint(&provider, &endpoint));
+        if let Err(error) = stored.and_then(|result| result) {
             self.insert_entry(&Entry::Error(error.to_string()));
             self.set_status("login failed");
             return Ok(());
         }
-        self.persist_api_key_and_finish(target, api_key, terminal, agent)
-            .await
+        self.finish_login(target, terminal, agent).await
     }
 
     async fn persist_api_key_and_finish(

@@ -1,6 +1,6 @@
 use crate::protocol::openai_chat::{
-    convert_openai_response, convert_streamed_response, handle_openai_stream_line,
-    invalid_stream_utf8, to_openai_message_for_target, to_openai_tool,
+    convert_openai_response, invalid_stream_utf8, to_openai_message_for_target, to_openai_tool,
+    ChatStreamAccumulator,
 };
 use futures_util::StreamExt;
 use reqwest::StatusCode;
@@ -210,8 +210,7 @@ impl GitHubCopilotProvider {
             .await?;
         let response = error_for_status(response).await?;
 
-        let mut text = String::new();
-        let mut tool_calls = Vec::new();
+        let mut chat_stream = ChatStreamAccumulator::default();
         let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
@@ -221,16 +220,16 @@ impl GitHubCopilotProvider {
             };
             decoder.push(&chunk?);
             while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
-                if handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)? {
+                if chat_stream.handle_line(line, on_event)? {
                     idle_deadline.record_activity();
                 }
             }
         }
         if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
-            handle_openai_stream_line(line, &mut text, &mut tool_calls, on_event)?;
+            chat_stream.handle_line(line, on_event)?;
         }
 
-        convert_streamed_response(text, tool_calls)
+        chat_stream.finish(on_event)
     }
 }
 

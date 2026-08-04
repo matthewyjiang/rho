@@ -419,7 +419,7 @@ async fn request_valid_response(
             Ok((response, mut capture)) => {
                 next_attempt_index =
                     record_failed_provider_attempts(&scope, next_attempt_index, &mut capture).await;
-                let outcome = if valid_response(&response) {
+                let outcome = if response.protocol_issue().is_none() {
                     crate::ProviderRequestOutcome::Completed
                 } else {
                     crate::ProviderRequestOutcome::InvalidResponse
@@ -491,9 +491,9 @@ async fn request_valid_response(
                 continue;
             }
         };
-        if valid_response(&response) {
+        let Some(issue) = response.protocol_issue() else {
             return Ok((response, capture));
-        }
+        };
         invalid_responses += 1;
         if invalid_responses >= INVALID_RESPONSE_ATTEMPTS
             || provider_turn_attempts >= PROVIDER_TURN_ATTEMPTS
@@ -501,7 +501,7 @@ async fn request_valid_response(
             return Err(RequestFailure {
                 error: ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
-                    "provider returned an empty assistant response",
+                    issue,
                     Retryability::Permanent,
                 ),
                 capture,
@@ -580,18 +580,6 @@ async fn record_request_usage(
             context, usage, outcome,
         ))
         .await;
-}
-
-fn valid_response(response: &ModelResponse) -> bool {
-    let ModelResponse::Assistant(content) = response;
-    let mut call_ids = std::collections::BTreeSet::new();
-    !content.is_empty()
-        && content.iter().all(|block| match block {
-            ContentBlock::ToolCall(call) => {
-                call.has_valid_protocol_fields() && call_ids.insert(call.id.as_str())
-            }
-            ContentBlock::Text(_) | ContentBlock::Image(_) => true,
-        })
 }
 
 async fn provider_turn(

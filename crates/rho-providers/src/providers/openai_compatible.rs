@@ -14,9 +14,8 @@ use crate::{
     auth::ollama_device::OllamaDeviceKey,
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{
-        convert_openai_response, convert_streamed_response, handle_openai_stream_line,
-        invalid_stream_utf8, to_openai_message_for_target, to_openai_tool, ChatRequest,
-        ChatResponse, ChatStreamOptions,
+        convert_openai_response, invalid_stream_utf8, to_openai_message_for_target, to_openai_tool,
+        ChatRequest, ChatResponse, ChatStreamAccumulator, ChatStreamOptions,
     },
     provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
 };
@@ -93,8 +92,7 @@ impl OpenAiCompatibleProvider {
         let body = self.request_body(request, true)?;
         let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
-        let mut text = String::new();
-        let mut tool_calls = Vec::new();
+        let mut chat_stream = ChatStreamAccumulator::default();
         let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
@@ -114,24 +112,19 @@ impl OpenAiCompatibleProvider {
                 };
                 decoder.push(&chunk?);
                 while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
-                    if handle_openai_stream_line(
-                        line,
-                        &mut text,
-                        &mut tool_calls,
-                        &mut handle_event,
-                    )? {
+                    if chat_stream.handle_line(line, &mut handle_event)? {
                         idle_deadline.record_activity();
                     }
                 }
             }
             if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
-                handle_openai_stream_line(line, &mut text, &mut tool_calls, &mut handle_event)?;
+                chat_stream.handle_line(line, &mut handle_event)?;
             }
         }
         if let Some(usage) = buffered_usage {
             on_event(ModelEvent::Usage(usage))?;
         }
-        convert_streamed_response(text, tool_calls)
+        chat_stream.finish(on_event)
     }
 
     fn request_body(
