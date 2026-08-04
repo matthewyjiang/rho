@@ -201,6 +201,9 @@ impl InteractiveRunController {
             RunEvent::StepStarted { .. } => {
                 self.step_input_token_baseline = self.cumulative_input_tokens;
             }
+            RunEvent::ContextEstimated { tokens } => {
+                self.note_context_usage(ContextUsage::estimated(*tokens, context_window));
+            }
             RunEvent::UsageUpdated { usage } => {
                 if let Some(cumulative_tokens) = usage.total_input_tokens() {
                     self.cumulative_input_tokens = cumulative_tokens;

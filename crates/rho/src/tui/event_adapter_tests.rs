@@ -21,12 +21,25 @@ use crate::{
 };
 
 fn only_event(events: Vec<ViewEvent>) -> ViewEvent {
+    let events = without_live_output_events(events);
     assert_eq!(
         events.len(),
         1,
         "expected exactly one view event: {events:?}"
     );
     events.into_iter().next().expect("one event")
+}
+
+fn without_live_output_events(events: Vec<ViewEvent>) -> Vec<ViewEvent> {
+    events
+        .into_iter()
+        .filter(|event| {
+            !matches!(
+                event,
+                ViewEvent::Update(ViewModelEvent::LiveOutputTokens(_))
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -226,14 +239,15 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
         r#"{"input":"*** Begin Patch\n"#,
         r#"*** Update File: src/lib.rs\n@@\n-old\n+new\n"#,
     );
-    assert!(adapter
-        .translate(RunEvent::ToolCallUpdated {
+    assert!(
+        without_live_output_events(adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,
             id: None,
             name: None,
             arguments_delta: partial_arguments.into(),
-        })
-        .is_empty());
+        }))
+        .is_empty()
+    );
     let ViewEvent::Update(ViewModelEvent::ToolCallUpdated { card, .. }) =
         only_event(adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,

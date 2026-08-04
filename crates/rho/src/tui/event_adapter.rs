@@ -29,6 +29,11 @@ pub(super) enum ViewModelEvent {
     ProviderRetry,
     OutputDelta(String),
     ReasoningDelta(String),
+    /// Estimated output tokens from streamed text the card path dropped.
+    ///
+    /// Used for tool-call argument fragments that do not produce a card update
+    /// so live cost still advances on quiet hosts.
+    LiveOutputTokens(u64),
     ContextUsage(ContextUsage),
     Usage(ModelUsage),
     ModelCallCompleted {
@@ -206,6 +211,8 @@ impl SdkEventAdapter {
                 self.bound_stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
             }
+            // Context is delivered through InteractiveRuntime::take_context_usage.
+            RunEvent::ContextEstimated { .. } => Vec::new(),
             RunEvent::SteeringApplied { ids } => {
                 vec![ViewEvent::Update(ViewModelEvent::SteeringApplied(ids))]
             }
@@ -221,6 +228,7 @@ impl SdkEventAdapter {
                 name,
                 arguments_delta,
             } => {
+                let live_tokens = rho_sdk::model::context::estimate_text_tokens(&arguments_delta);
                 // StreamCapture re-emits known identity on later deltas, so the
                 // first rendered preview can bind the call-id slot.
                 let call_id = id.and_then(|id| rho_sdk::ToolCallId::from_string(id).ok());
@@ -236,15 +244,20 @@ impl SdkEventAdapter {
                     .map(|presented| presented.card);
                 // Emit when the card changed, or when a late call id needs to
                 // bind an existing preview slot without forcing a re-render.
-                if card.is_none() && !newly_bound {
-                    Vec::new()
-                } else {
-                    vec![ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+                let mut events = Vec::new();
+                if live_tokens > 0 {
+                    events.push(ViewEvent::Update(ViewModelEvent::LiveOutputTokens(
+                        live_tokens,
+                    )));
+                }
+                if card.is_some() || newly_bound {
+                    events.push(ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
                         index,
                         call_id,
                         card,
-                    })]
+                    }));
                 }
+                events
             }
             RunEvent::ToolProposed { call } => {
                 let Ok(call_id) = rho_sdk::ToolCallId::from_string(call.id.clone()) else {

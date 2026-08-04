@@ -92,10 +92,18 @@ impl App {
                 &self.info.runtime.provider,
                 &self.info.runtime.auth,
             ),
-            cost_source: self.usage.usage_cost_tracker.cumulative_source(),
+            cost_source: if self.usage.live_stream.is_active() {
+                CostSource::Estimated
+            } else {
+                self.usage.usage_cost_tracker.cumulative_source()
+            },
             cwd: self.info.runtime.cwd.clone(),
             branch: git_branch(&self.info.runtime.cwd),
-            usage: self.usage.cumulative_usage.clone(),
+            usage: super::usage_cost::display_usage_with_live(
+                self.usage.cumulative_usage.as_ref(),
+                &self.usage.live_stream,
+                self.model_metadata.as_ref(),
+            ),
             latest_usage: self.usage.latest_usage.clone(),
             model_performance: self
                 .usage

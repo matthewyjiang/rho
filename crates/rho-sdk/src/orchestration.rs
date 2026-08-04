@@ -171,6 +171,26 @@ async fn execute_turn_loop(
             }
             Err(error) => return Err(error),
         }
+        // Emit before the provider call so quiet hosts still show context fill
+        // while thinking and tool-call JSON stream (usage often arrives only at
+        // the end of the OpenAI-compatible stream).
+        let estimated_context_tokens =
+            crate::model::context::estimate_context_tokens(&history, &tool_specs);
+        match emit(
+            &events,
+            &cancellation,
+            RunEvent::ContextEstimated {
+                tokens: estimated_context_tokens,
+            },
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(Error::Cancelled) => {
+                return commit_cancelled_history(core, history, &events).await;
+            }
+            Err(error) => return Err(error),
+        }
 
         let mut control = RunControl {
             hooks,

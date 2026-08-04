@@ -45,6 +45,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ProviderRetry
         | ViewModelEvent::OutputDelta(_)
         | ViewModelEvent::ReasoningDelta(_)
+        | ViewModelEvent::LiveOutputTokens(_)
         | ViewModelEvent::ContextUsage(_)
         | ViewModelEvent::Usage(_)
         | ViewModelEvent::ModelCallCompleted { .. }
@@ -70,11 +71,13 @@ impl App {
         }
         match event {
             ViewModelEvent::OutputDelta(text) => {
+                self.usage.live_stream.add_output_text(&text);
                 let switched = self.switch_stream_kind(StreamKind::Assistant);
                 let drained = self.receive_stream_delta(terminal, StreamKind::Assistant, &text)?;
                 Ok(switched || drained)
             }
             ViewModelEvent::ReasoningDelta(text) => {
+                self.usage.live_stream.add_output_text(&text);
                 let show_reasoning = self.info.runtime.displays_reasoning_output();
                 self.turn
                     .reasoning_phase_mut()
@@ -230,11 +233,13 @@ impl App {
                 self.usage.usage_cost_tracker.run_started();
                 self.usage.usage_before_current_run = self.usage.cumulative_usage.clone();
                 self.usage.run_usage.clear();
+                self.usage.live_stream.clear();
                 None
             }
             ViewModelEvent::StepStarted(step) => {
                 self.usage.usage_cost_tracker.step_started();
                 self.usage.run_usage.step_started();
+                self.usage.live_stream.clear();
                 self.reset_streams();
                 self.turn.provider_attempt_mut().begin(self.history.len());
                 self.turn
@@ -273,15 +278,26 @@ impl App {
             ViewModelEvent::ProviderStreamReset(retry) => {
                 self.reset_provider_attempt_stream(retry);
                 self.reset_attempt_accounting();
+                self.usage.live_stream.clear();
                 None
             }
             ViewModelEvent::ProviderRetry => {
                 self.reset_attempt_accounting();
+                self.usage.live_stream.clear();
                 None
             }
             ViewModelEvent::OutputDelta(_) | ViewModelEvent::ReasoningDelta(_) => None,
+            ViewModelEvent::LiveOutputTokens(tokens) => {
+                self.usage.live_stream.add_output_tokens(tokens);
+                None
+            }
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
+                if usage.source == rho_sdk::model::ContextUsageSource::Estimated {
+                    if let Some(tokens) = usage.tokens {
+                        self.usage.live_stream.note_estimated_input(tokens);
+                    }
+                }
                 self.usage.current_context = Some(usage);
                 None
             }
@@ -290,6 +306,7 @@ impl App {
                 None
             }
             ViewModelEvent::Usage(usage) => {
+                self.usage.live_stream.provider_usage_received();
                 let current_cost_source = self.usage.usage_cost_tracker.record_usage(&usage);
                 let model_metadata = self.model_metadata.as_ref();
                 let mut current_run_usage =

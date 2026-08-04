@@ -249,6 +249,14 @@ pub enum RunEvent {
     StepStarted {
         step: usize,
     },
+    /// Estimated context tokens for the model request about to start.
+    ///
+    /// Derived from the live run history and tool specs at step start. Hosts
+    /// should treat this as a display estimate and replace it with
+    /// [`RunEvent::UsageUpdated`] when the provider reports input usage.
+    ContextEstimated {
+        tokens: u64,
+    },
     AssistantTextDelta {
         text: String,
     },

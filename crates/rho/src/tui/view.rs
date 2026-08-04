@@ -839,8 +839,13 @@ impl App {
         self.statusline
             .update_signed_in(self.setup_state().signed_in);
         self.statusline.update_model(&self.info.runtime);
-        self.statusline.update_usage(
+        let display_usage = super::usage_cost::display_usage_with_live(
             self.usage.cumulative_usage.as_ref(),
+            &self.usage.live_stream,
+            self.model_metadata.as_ref(),
+        );
+        self.statusline.update_usage(
+            display_usage.as_ref(),
             self.usage.current_context.as_ref(),
             self.usage.subagent_total_cost_usd_micros,
         );
