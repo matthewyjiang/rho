@@ -280,9 +280,9 @@ impl App {
     }
 
     pub(super) fn activity_status(&self) -> Option<ActivityStatus> {
-        if !self.info.runtime.shows_work_chrome() {
-            return None;
-        }
+        // Keep the activity rail in zen mode. Zen only strips transcript chrome
+        // (tools, reasoning, Thinking...); live status still belongs on screen so
+        // subagent rows are not an orphaned full-width strip.
         let phase = match self.input_ui.composer() {
             ComposerMode::Approval(_) => ActivityPhase::WaitingForApproval,
             ComposerMode::Questionnaire(_) => ActivityPhase::WaitingForInput,

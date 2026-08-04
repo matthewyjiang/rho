@@ -222,7 +222,7 @@ Rho reads each model's available effort values from cached [models.dev](https://
 
 `show_reasoning_output` controls whether streamed reasoning text is displayed and stored in the TUI transcript. When reasoning text is hidden, the TUI shows `Thinking...` in its place until the reasoning phase finishes, then replaces it with a `Thought for …` summary. When reasoning text is shown, the same summary is appended after the reasoning block. Durations use a compact progressive format such as `3.2s`, `2m 5s`, or `1h 2m`. It defaults to `true`. Changing it from `/config` applies immediately: later reasoning deltas in the current turn follow the new setting, and an in-flight live reasoning preview is cleared when hiding.
 
-`zen_mode` hides tool cards, reasoning blocks, the `Thinking...` placeholder, and the activity status rail so the transcript shows only message text. It defaults to `false`. Changing it from `/config` applies immediately to the current transcript and live turn UI. Tools and reasoning still run; only their display is suppressed.
+`zen_mode` hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows only message text. The live activity rail and subagent rows stay visible so you can still see progress. It defaults to `false`. Changing it from `/config` applies immediately to the current transcript and live turn UI. Tools and reasoning still run; only their transcript display is suppressed.
 
 ## Update checks
 
