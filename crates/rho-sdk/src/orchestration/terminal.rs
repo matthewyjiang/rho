@@ -26,8 +26,9 @@ pub(super) enum TerminalKind {
 /// uncommitted candidate history uninstalled.
 ///
 /// `Cancelled` carries the new revision on the event. `Failed` keeps the 1.x
-/// event shape and relies on `Session::revision` after the run ends; adding a
-/// field to `RunEvent::Failed` would be a minor-incompatible public API break.
+/// event shape and relies on `Session::revision` after the run ends.
+/// NEXT_MAJOR(rho-sdk): add `revision: Revision` to `RunEvent::Failed` so
+/// cooperative failure commits match `Cancelled { revision }`.
 pub(super) async fn commit_terminal(
     core: Arc<SessionCore>,
     mut history: Vec<Message>,

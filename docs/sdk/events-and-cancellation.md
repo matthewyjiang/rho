@@ -79,7 +79,7 @@ Cooperative terminal failures (for example a permanent provider/SSE error after 
 - partial provider output may become `AbortedAssistant`
 - the revision increments
 - `Failed { message, retryability }` is emitted when delivery succeeds
-- hosts that need the post-commit revision should read `Session::revision` after the run ends (`Failed` keeps the 1.x event shape; a revision field there would be a breaking public API change)
+- hosts that need the post-commit revision should read `Session::revision` after the run ends. `NEXT_MAJOR(rho-sdk): add revision to RunEvent::Failed so cooperative failure commits match Cancelled { revision }`
 - `Run::outcome` returns the typed error
 
 Event-consumer interrupts still leave uncommitted candidate history uninstalled; see [Persistence and event-consumer failures](#persistence-and-event-consumer-failures).
