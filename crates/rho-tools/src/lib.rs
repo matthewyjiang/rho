@@ -56,9 +56,4 @@ pub use workspace_mutation::{UntrackedWorkspaceEffect, WorkspaceMutationObserver
 
 /// Default per-tool output budget, in bytes, when the host does not configure
 /// one explicitly.
-///
-/// Sized as a generous tripwire, not a tight working set. 12_000 clipped a
-/// shipped built-in skill (`rho-agent-creator`, ~12.2 KiB) and several common
-/// third-party skills (largest measured locally ~33 KiB). 64_000 covers those
-/// with headroom while still cutting multi-megabyte command dumps.
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64_000;
