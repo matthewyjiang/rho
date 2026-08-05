@@ -40,3 +40,92 @@ fn hashline_view_uses_absolute_lines_and_full_file_tag() {
         )
     );
 }
+
+// Covers: post-edit previews must expose the new tag and renumbered focus lines
+// Owner: hashline format
+#[test]
+fn post_edit_preview_uses_new_tag_and_post_edit_line_numbers() {
+    let new = "one\nTWO\nthree\nfour\nfive\n";
+    let preview = format_post_edit_preview("sample.txt", new, &[2]);
+    let new_tag = compute_file_hash(new);
+    assert!(
+        preview.starts_with(&format!("[sample.txt#{new_tag}]\n")),
+        "{preview}"
+    );
+    assert!(preview.contains("2:TWO"), "{preview}");
+    assert!(!preview.contains("2:two"), "{preview}");
+}
+
+// Covers: pure deletes still produce a usable numbered anchor near the gap
+// Owner: hashline format
+#[test]
+fn post_edit_preview_keeps_context_around_deletes() {
+    let new = "a\nd\n";
+    let preview = format_post_edit_preview("x.txt", new, &[1, 2]);
+    let new_tag = compute_file_hash(new);
+    assert!(
+        preview.starts_with(&format!("[x.txt#{new_tag}]\n")),
+        "{preview}"
+    );
+    assert!(preview.contains("1:a"), "{preview}");
+    assert!(preview.contains("2:d"), "{preview}");
+}
+
+// Covers: multi-hunk previews must not starve later focus regions under the body cap
+// Owner: hashline format
+#[test]
+fn post_edit_preview_spreads_budget_across_hunks() {
+    let mut lines = Vec::new();
+    for i in 1..=80 {
+        lines.push(format!("line-{i}"));
+    }
+    let new = format!("{}\n", lines.join("\n"));
+    // Two distant focus points; with a tiny budget both hunks must appear.
+    let preview = format_post_edit_preview("big.txt", &new, &[2, 70]);
+    assert!(preview.contains("2:line-2"), "{preview}");
+    assert!(preview.contains("70:line-70"), "{preview}");
+}
+
+// Covers: provider TUI fixture hardcodes this tag for "original line\n"
+// Owner: hashline format
+#[test]
+fn fixture_edit_original_tag_matches_compute_file_hash() {
+    assert_eq!(compute_file_hash("original line\n"), "04EE8022");
+}
+
+// Covers: chain snapshots stay bounded and keep head+tail for large files
+// Owner: hashline format
+#[test]
+fn chain_snapshot_uses_head_tail_window_without_focus() {
+    let mut lines = Vec::new();
+    for i in 1..=80 {
+        lines.push(format!("line-{i}"));
+    }
+    let text = format!("{}\n", lines.join("\n"));
+    let snapshot = format_chain_snapshot("big.txt", &text, &[]);
+    let tag = compute_file_hash(&text);
+    assert!(
+        snapshot.starts_with(&format!("[big.txt#{tag}]\n")),
+        "{snapshot}"
+    );
+    assert!(snapshot.contains("1:line-1"), "{snapshot}");
+    assert!(snapshot.contains("80:line-80"), "{snapshot}");
+    assert!(snapshot.contains("…\n"), "{snapshot}");
+    assert!(snapshot.contains("showing"), "{snapshot}");
+    assert!(!snapshot.contains("40:line-40"), "{snapshot}");
+}
+
+// Covers: recovery focus keeps anchors without dumping the whole file
+// Owner: hashline format
+#[test]
+fn chain_snapshot_focuses_around_anchors() {
+    let mut lines = Vec::new();
+    for i in 1..=80 {
+        lines.push(format!("line-{i}"));
+    }
+    let text = format!("{}\n", lines.join("\n"));
+    let snapshot = format_chain_snapshot("big.txt", &text, &[50]);
+    assert!(snapshot.contains("50:line-50"), "{snapshot}");
+    assert!(!snapshot.contains("1:line-1"), "{snapshot}");
+    assert!(!snapshot.contains("80:line-80"), "{snapshot}");
+}

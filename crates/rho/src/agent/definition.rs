@@ -26,6 +26,9 @@ macro_rules! define_tool_capabilities {
             pub fn parse(name: String) -> Self {
                 match name.as_str() {
                     $($name => Self::$variant,)+
+                    // NEXT_MAJOR(rho): drop edit_file and apply_patch aliases once
+                    // agent frontmatter has migrated to the canonical "edit" name.
+                    "edit_file" | "apply_patch" => Self::Edit,
                     _ => Self::Extension(name),
                 }
             }
@@ -43,10 +46,8 @@ macro_rules! define_tool_capabilities {
 define_tool_capabilities! {
     Agent => "agent",
     Agents => "agents",
-    ApplyPatch => "apply_patch",
     Bash => "bash",
-    EditFile => "edit_file",
-    HashlineEdit => "hashline_edit",
+    Edit => "edit",
     FetchContent => "fetch_content",
     GetSearchContent => "get_search_content",
     Glob => "glob",

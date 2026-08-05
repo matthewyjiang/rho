@@ -108,7 +108,7 @@ async fn extracts_supported_binary_documents_for_whole_file_reads() {
     assert_eq!(result.content, "Tool document");
 }
 
-// Covers: plain UTF-8 source reads must expose a hashline snapshot for hashline_edit
+// Covers: plain UTF-8 source reads must expose a hashline snapshot for edit
 // Owner: read_file tool
 #[tokio::test]
 async fn plain_text_reads_return_hashline_view_with_full_file_tag() {

@@ -10,9 +10,7 @@ Rho currently ships these compiled-in workspace tools on all platforms:
 list_dir
 read_file
 write_file
-edit_file
-hashline_edit
-apply_patch
+edit
 grep
 glob
 ```
@@ -59,21 +57,7 @@ Document extraction enforces a 25 MiB source limit and a 200,000-character extra
 
 ## File edits
 
-`edit_file` performs one string replacement in an existing UTF-8 file. Pass `path`, `old_string`, and `new_string`. Matching normalizes CRLF and LF line endings rather than requiring byte-exact newline matches, and the replacement is rewritten to preserve the file's existing newline style. By default `old_string` must match exactly once; set `replace_all` to replace every match. The tool opens the target under an exclusive lock for plan and write so concurrent modifications cannot be overwritten after validation. It fails closed when the match count is wrong, the file is missing, or the lock/write cannot complete. Successful results include a unified diff.
-
-```json
-{
-  "path": "src/app.py",
-  "old_string": "print(\"Hi\")",
-  "new_string": "print(\"Hello, world!\")"
-}
-```
-
-Use `edit_file` for a single surgical string replace when you already know the exact text. Use `hashline_edit` when you have a fresh `read_file` hashline view and need one or more line-anchored hunks. Use `apply_patch` for Codex-style multi-file patches that add or delete files. Use `write_file` to create or fully rewrite a file.
-
-## Hashline edits
-
-`read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is an 8-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `hashline_edit` applies a compact line-anchored document against those original line numbers and rejects a stale `TAG` before writing.
+`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is an 8-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `edit` rejects a stale `TAG` before writing.
 
 ```json
 {
@@ -89,20 +73,27 @@ Supported ops:
 
 Rules:
 
-- Take `TAG` and line numbers from the latest `read_file` of that path
+- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` recovery snapshot
+- Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
 - Line numbers name the original snapshot; they do not shift mid-document
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
-- Stale tags, overlapping destructive ranges, and out-of-range lines fail closed
+- `PUT` always needs at least one `+` body row; use `CUT` to delete
+- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed
+- Failed `edit` calls return a bounded live hashline snapshot in the error - copy that header and lines to retry. Re-read only for lines outside the snapshot
 - An insert whose anchor falls inside a range that another op replaces or deletes is rejected, because that position no longer exists after the edit
 - Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
-- Create or fully rewrite files with `write_file`
+- Create or fully rewrite files with `write_file`. Do not use `edit` to create paths
 
-Successful results include a unified diff and the old/new tags.
+Successful `edit` results return a post-edit `[path#NEW]` numbered preview around the change for chaining. Successful `write_file` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
+
+Streaming and approval cards project the edit document alone (PUT bodies and CUT/replace line numbers). Removed rows show original line numbers without prior file text, so cards never need the target on disk while arguments stream in.
+
+Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write_file` to create or fully rewrite a file.
 
 ### One read format for every caller
 
 `read_file` returns the hashline view for every UTF-8 text file, whether or not
-the caller can use `hashline_edit`. This is deliberate. Two read formats would
+the caller can use `edit`. This is deliberate. Two read formats would
 make the output depend on the agent's tool set, so the same file would read
 differently to a subagent, a workflow step, and the automation CLI, and any
 prompt or parser downstream would have to handle both. One format costs a small
@@ -111,19 +102,6 @@ Question 4 of the [hashline edit eval](dev/hashline-edit-eval.md) measures that
 cost; if it does not pay for itself, drop the view rather than make it
 conditional.
 
-## File patches
-
-`apply_patch` edits existing files and can also add or delete files with a Codex-style patch document. Pass the full patch text in `input`, including the `*** Begin Patch` and `*** End Patch` markers. Operations use `*** Add File:`, `*** Delete File:`, and `*** Update File:` headers. Update hunks use `@@` context markers and lines prefixed with ` ` (context), `-` (remove), or `+` (add). An update may include `*** Move to:` to rename a file while patching it.
-
-Rho parses the whole patch, plans every file operation against current contents, rejects overlapping path claims, re-reads those files immediately before writing, and fails closed if any changed mid-flight. A planning or revalidation failure leaves all targeted files unchanged. If a later write fails after earlier writes succeeded, Rho rolls back the applied ops. Successful results include a unified diff of the committed changes.
-
-```json
-{
-  "input": "*** Begin Patch\n*** Add File: hello.txt\n+Hello world\n*** Update File: src/app.py\n@@ def greet():\n-print(\"Hi\")\n+print(\"Hello, world!\")\n*** Delete File: obsolete.txt\n*** End Patch\n"
-}
-```
-
-Use `write_file` when you need to create or fully replace a file with complete contents. Prefer `edit_file` for one surgical string replace. Prefer `hashline_edit` for multi-hunk edits after a hashline `read_file`. Use `apply_patch` for Codex-style multi-file patches that add or delete files.
 
 ## Managed background processes
 

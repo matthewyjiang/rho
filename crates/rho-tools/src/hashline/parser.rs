@@ -13,7 +13,7 @@ use super::format::{FILE_HASH_LENGTH, FILE_HASH_SEP};
 
 /// One file section in a hashline edit document.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Section {
+pub(crate) struct Section {
     pub path: String,
     pub tag: String,
     pub ops: Vec<Op>,
@@ -21,7 +21,7 @@ pub struct Section {
 
 /// A single edit against original line numbers in one section.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Op {
+pub(crate) enum Op {
     /// Replace inclusive `[start, end]` with `body` lines.
     Replace {
         start: usize,
@@ -49,49 +49,13 @@ enum Strictness {
 }
 
 /// Parse a complete hashline edit document into file sections.
-pub fn parse_hashline(input: &str) -> Result<Vec<Section>, String> {
+pub(crate) fn parse_hashline(input: &str) -> Result<Vec<Section>, String> {
     parse(input, Strictness::Reject)
 }
 
-/// A section as far as it has streamed in, for presentation cards.
-///
-/// Line counts come from the document alone, so they stay available before the
-/// edit runs and never need the target file on disk.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProposedSection {
-    pub path: String,
-    pub added_lines: u64,
-    pub removed_lines: u64,
-}
-
-/// Best-effort read of a possibly incomplete document, for presentation cards.
-pub fn proposed_sections(input: &str) -> Vec<ProposedSection> {
-    parse(input, Strictness::Skip)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|section| {
-            let mut proposed = ProposedSection {
-                path: section.path,
-                added_lines: 0,
-                removed_lines: 0,
-            };
-            for op in &section.ops {
-                match op {
-                    Op::Replace { start, end, body } => {
-                        proposed.added_lines += body.len() as u64;
-                        proposed.removed_lines += (end - start + 1) as u64;
-                    }
-                    Op::Delete { start, end } => {
-                        proposed.removed_lines += (end - start + 1) as u64;
-                    }
-                    Op::InsertBefore { body, .. } | Op::InsertAfter { body, .. } => {
-                        proposed.added_lines += body.len() as u64;
-                    }
-                }
-            }
-            proposed
-        })
-        .collect()
+/// Best-effort parse of a possibly incomplete document for presentation cards.
+pub(super) fn parse_lenient(input: &str) -> Vec<Section> {
+    parse(input, Strictness::Skip).unwrap_or_default()
 }
 
 fn parse(input: &str, strictness: Strictness) -> Result<Vec<Section>, String> {
@@ -137,16 +101,12 @@ fn parse(input: &str, strictness: Strictness) -> Result<Vec<Section>, String> {
             Err(_) => continue,
         }
         match parse_put_header(line) {
-            Ok(Some((op_head, needs_body))) => {
-                let body = if needs_body {
-                    take_body(&mut lines)
-                } else {
-                    Vec::new()
-                };
+            Ok(Some(op_head)) => {
+                let body = take_body(&mut lines);
                 match op_head.with_body(body) {
                     Ok(op) => builder.ops.push(op),
                     Err(error) if reject => return Err(error),
-                    // A trailing `PUT N:` whose body has not streamed in yet.
+                    // A trailing `PUT …:` whose body has not streamed in yet.
                     Err(_) => {}
                 }
                 continue;
@@ -204,7 +164,14 @@ enum PutHead {
 impl PutHead {
     fn with_body(self, body: Vec<String>) -> Result<Op, String> {
         match self {
-            Self::Replace { start, end } => Ok(Op::Replace { start, end, body }),
+            Self::Replace { start, end } => {
+                if body.is_empty() {
+                    return Err(format!(
+                        "PUT {start}.={end}: requires at least one + body row (use CUT to delete)"
+                    ));
+                }
+                Ok(Op::Replace { start, end, body })
+            }
             Self::InsertBefore { line } => {
                 if body.is_empty() {
                     return Err(format!(
@@ -272,7 +239,7 @@ fn parse_cut(line: &str) -> Result<Option<Op>, String> {
     Ok(Some(Op::Delete { start, end }))
 }
 
-fn parse_put_header(line: &str) -> Result<Option<(PutHead, bool)>, String> {
+fn parse_put_header(line: &str) -> Result<Option<PutHead>, String> {
     let trimmed = line.trim();
     let Some(rest) = trimmed.strip_prefix("PUT") else {
         return Ok(None);
@@ -290,35 +257,31 @@ fn parse_put_header(line: &str) -> Result<Option<(PutHead, bool)>, String> {
         return Err("PUT registers (@name) are not supported yet".into());
     }
 
-    let (locator, needs_body) = if let Some(locator) = rest.strip_suffix(':') {
-        (locator.trim(), true)
-    } else {
+    let Some(locator) = rest.strip_suffix(':') else {
         // Bodyless PUT is paste-from-register in full hashline; reject clearly.
         return Err(format!(
             "PUT must end with ':' and take + body rows (got: {trimmed})"
         ));
     };
+    let locator = locator.trim();
     if locator.is_empty() {
         return Err(format!("PUT locator is empty: {trimmed}"));
     }
 
     if let Some(target) = locator.strip_prefix('<') {
         let line = parse_line_number(target.trim(), "PUT <N")?;
-        return Ok(Some((PutHead::InsertBefore { line }, needs_body)));
+        return Ok(Some(PutHead::InsertBefore { line }));
     }
     if let Some(target) = locator.strip_prefix('>') {
         let target = target.trim();
         if target == "$" {
-            return Ok(Some((PutHead::InsertAfter { line: None }, needs_body)));
+            return Ok(Some(PutHead::InsertAfter { line: None }));
         }
         let line = parse_line_number(target, "PUT >N")?;
-        return Ok(Some((
-            PutHead::InsertAfter { line: Some(line) },
-            needs_body,
-        )));
+        return Ok(Some(PutHead::InsertAfter { line: Some(line) }));
     }
     let (start, end) = parse_range(locator)?;
-    Ok(Some((PutHead::Replace { start, end }, needs_body)))
+    Ok(Some(PutHead::Replace { start, end }))
 }
 
 fn take_body<'a, I>(lines: &mut std::iter::Peekable<I>) -> Vec<String>

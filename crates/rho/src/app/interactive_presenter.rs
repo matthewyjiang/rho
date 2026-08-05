@@ -40,9 +40,7 @@ enum ToolKind {
     Glob,
     ReadFile,
     WriteFile,
-    EditFile,
-    HashlineEdit,
-    ApplyPatch,
+    Edit,
     Skill,
     WebSearch,
     FetchContent,
@@ -64,9 +62,7 @@ impl ToolKind {
             "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
             "write_file" => Self::WriteFile,
-            "edit_file" => Self::EditFile,
-            "hashline_edit" => Self::HashlineEdit,
-            "apply_patch" => Self::ApplyPatch,
+            "edit" => Self::Edit,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
             "fetch_content" => Self::FetchContent,
@@ -85,10 +81,10 @@ impl ToolKind {
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
-        if matches!(self, Self::ApplyPatch) && arguments_len >= APPLY_PATCH_STREAM_PREVIEW_LIMIT {
+        if matches!(self, Self::Edit) && arguments_len >= EDIT_STREAM_PREVIEW_LIMIT {
             // Grow with buffer size so total parse work stays linear for long
             // streams instead of rescanning on a fixed byte interval.
-            return arguments_len.max(APPLY_PATCH_STREAM_PREVIEW_STRIDE);
+            return arguments_len.max(EDIT_STREAM_PREVIEW_STRIDE);
         }
         match self {
             Self::Agent
@@ -101,9 +97,7 @@ impl ToolKind {
             | Self::Glob
             | Self::ReadFile
             | Self::WriteFile
-            | Self::EditFile
-            | Self::HashlineEdit
-            | Self::ApplyPatch
+            | Self::Edit
             | Self::Skill
             | Self::WebSearch
             | Self::FetchContent
@@ -130,14 +124,14 @@ const PREVIEW_FULL_PARSE_LIMIT: usize = 4096;
 /// Argument bytes accumulated between parses past [`PREVIEW_FULL_PARSE_LIMIT`].
 const PREVIEW_LARGE_PARSE_STRIDE: usize = 4096;
 
-/// Apply_patch argument size above which streaming previews use a coarse stride.
+/// Edit argument size above which streaming previews use a coarse stride.
 ///
-/// The final proposal still parses the complete patch once.
-const APPLY_PATCH_STREAM_PREVIEW_LIMIT: usize = 256 * 1024;
+/// The final proposal still parses the complete document once.
+const EDIT_STREAM_PREVIEW_LIMIT: usize = 256 * 1024;
 
-/// Minimum bytes between apply_patch preview rebuilds past
-/// [`APPLY_PATCH_STREAM_PREVIEW_LIMIT`]. Actual intervals grow with buffer size.
-const APPLY_PATCH_STREAM_PREVIEW_STRIDE: usize = 64 * 1024;
+/// Minimum bytes between edit preview rebuilds past
+/// [`EDIT_STREAM_PREVIEW_LIMIT`]. Actual intervals grow with buffer size.
+const EDIT_STREAM_PREVIEW_STRIDE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Default)]
 struct StreamedPreview {

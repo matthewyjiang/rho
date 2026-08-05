@@ -68,26 +68,22 @@ fn accepts_single_line_put_shorthand() {
     );
 }
 
-// Covers: streaming preview must survive a half-written document and report counts
+// Covers: empty PUT body is not a second delete opcode; use CUT
 // Owner: hashline parser
 #[test]
-fn proposes_sections_from_incomplete_documents() {
-    let proposed = proposed_sections(
+fn rejects_empty_put_body() {
+    let err = parse_hashline("[a.rs#ABCDABCD]\nPUT 1.=2:\n").unwrap_err();
+    assert!(err.contains("use CUT to delete"), "{err}");
+}
+
+// Covers: streaming preview must survive a half-written document
+// Owner: hashline parser
+#[test]
+fn parses_incomplete_documents_leniently() {
+    let sections = parse_lenient(
         "[a.rs#ABCDABCD]\nPUT 1.=3:\n+one\n+two\nCUT 8.=9\n[b.rs#ABCDABCD]\nPUT 2:\n+pa",
     );
-    assert_eq!(
-        proposed,
-        vec![
-            ProposedSection {
-                path: "a.rs".into(),
-                added_lines: 2,
-                removed_lines: 5,
-            },
-            ProposedSection {
-                path: "b.rs".into(),
-                added_lines: 1,
-                removed_lines: 1,
-            },
-        ]
-    );
+    assert_eq!(sections.len(), 2);
+    assert_eq!(sections[0].ops.len(), 2);
+    assert_eq!(sections[1].ops.len(), 1);
 }

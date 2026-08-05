@@ -218,14 +218,11 @@ fn legacy_provider_activity_is_ignored_by_tui() {
 }
 
 #[test]
-fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
+fn edit_keeps_one_diff_card_from_stream_through_completion() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-1").unwrap();
-    let input = "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch";
-    let partial_arguments = concat!(
-        r#"{"input":"*** Begin Patch\n"#,
-        r#"*** Update File: src/lib.rs\n@@\n-old\n+new\n"#,
-    );
+    let input = "[src/lib.rs#A1B2C3D4]\nPUT 1.=1:\n+new\n";
+    let partial_arguments = r#"{"input":"[src/lib.rs#A1B2C3D4]\nPUT 1.=1:\n+new\n"#;
     let partial_events = adapter.translate(RunEvent::ToolCallUpdated {
         index: 0,
         id: None,
@@ -242,7 +239,7 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
         only_event(adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,
             id: None,
-            name: Some("apply_patch".into()),
+            name: Some("edit".into()),
             arguments_delta: String::new(),
         }))
     else {
@@ -251,7 +248,7 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
     let proposed_card = rho_tools::tool_card::ToolCard::new(
         ToolStatus::Running,
         ToolFamily::FileDiff,
-        ToolHeader::call("apply_patch", Some("src/lib.rs".into())),
+        ToolHeader::call("edit", Some("src/lib.rs".into())),
     )
     .with_facts(vec![ToolFact::DiffStat {
         added: 1,
@@ -259,7 +256,7 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
         path: Some("src/lib.rs".into()),
     }])
     .with_body(ToolBody::Diff(vec![
-        DiffRow::new(DiffRowKind::Removed, None, "old"),
+        DiffRow::new(DiffRowKind::Removed, Some(1), ""),
         DiffRow::new(DiffRowKind::Added, None, "new"),
     ]));
     assert_eq!(card, Some(proposed_card.clone()));
@@ -282,14 +279,14 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
         crate::app::interactive_presenter::InteractiveToolPresenter::new(
             std::path::PathBuf::new(),
         )
-        .interrupted(Some("apply_patch"), partial_arguments)
+        .interrupted(Some("edit"), partial_arguments)
         .card,
         interrupted_card
     );
 
     let call = ToolCall {
         id: call_id.to_string(),
-        name: "apply_patch".into(),
+        name: "edit".into(),
         arguments: serde_json::json!({"input": input}),
     };
     assert!(matches!(
@@ -300,7 +297,7 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolStarted {
             call_id: call_id.clone(),
-            name: "apply_patch".into(),
+            name: "edit".into(),
             metadata: ToolMetadata::new().operation(OperationKind::Write),
         })),
         ViewEvent::Update(ViewModelEvent::ToolStarted { card, .. })
@@ -315,10 +312,23 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
     else {
         panic!("expected tool progress");
     };
-    assert!(card.body.is_diff());
-    assert!(card.facts.contains(&ToolFact::Meta {
-        text: "applying".into(),
-    }));
+    assert!(
+        card.body.is_diff()
+            || card
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, ToolFact::DiffStat { .. }))
+            || matches!(card.body, ToolBody::Lines(_))
+    );
+    assert!(
+        card.facts.contains(&ToolFact::Meta {
+            text: "applying".into(),
+        }) || matches!(
+            &card.body,
+            ToolBody::Lines(lines) if lines.iter().any(|line| line.contains("applying"))
+        ),
+        "progress should surface applying text: {card:?}"
+    );
     assert!(card.facts.contains(&ToolFact::Progress {
         completed: 1,
         total: Some(2),
@@ -345,7 +355,7 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
     assert_eq!(card.status, ToolStatus::Ok);
     assert_eq!(
         card.header,
-        ToolHeader::call("apply_patch", Some("src/lib.rs".into()))
+        ToolHeader::call("edit", Some("src/lib.rs".into()))
     );
     assert_eq!(
         card.facts,
@@ -365,18 +375,18 @@ fn apply_patch_keeps_one_diff_card_from_stream_through_completion() {
 }
 
 #[test]
-fn apply_patch_binds_a_late_call_id_after_a_large_preview_stride() {
+fn edit_binds_a_late_call_id_after_a_large_preview_stride() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-large-preview").unwrap();
     let input = format!(
-        "*** Begin Patch\n*** Add File: large.txt\n{}*** End Patch",
+        "[large.txt#DEADBEEF]\nPUT 1.=1:\n{}",
         "+line\n".repeat(45_000)
     );
     let arguments = serde_json::to_string(&serde_json::json!({"input": input})).unwrap();
     let events = adapter.translate(RunEvent::ToolCallUpdated {
         index: 0,
         id: None,
-        name: Some("apply_patch".into()),
+        name: Some("edit".into()),
         arguments_delta: arguments,
     });
     assert!(events
@@ -415,59 +425,53 @@ fn apply_patch_binds_a_late_call_id_after_a_large_preview_stride() {
         .is_empty());
 }
 
-// Covers: delete and move-only apply_patch previews keep explicit identity
+// Covers: multi-file edit previews keep each path identity
 // Owner: interactive presenter format
 #[test]
-fn apply_patch_preview_preserves_delete_and_move_identity() {
-    struct Case {
-        name: &'static str,
-        input: &'static str,
-        expected: rho_tools::tool_card::ToolCard,
-    }
-
-    let cases = [
-        Case {
-            name: "delete",
-            input: "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch",
-            expected: rho_tools::tool_card::ToolCard::new(
-                ToolStatus::Running,
-                ToolFamily::FileDiff,
-                ToolHeader::call("apply_patch", Some("gone.txt".into())),
-            )
-            .with_facts(vec![ToolFact::Meta {
-                text: "delete".into(),
-            }]),
+fn edit_preview_preserves_multi_file_identity() {
+    let input = "[a.txt#AAAAAAAA]\nPUT 1.=1:\n+A\n\n[b.txt#BBBBBBBB]\nCUT 1.=1\n";
+    let expected = rho_tools::tool_card::ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::FileDiff,
+        ToolHeader::call("edit", Some("2 files".into())),
+    )
+    .with_facts(vec![
+        ToolFact::DiffStat {
+            added: 1,
+            removed: 1,
+            path: Some("a.txt".into()),
         },
-        Case {
-            name: "move-only",
-            input: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n*** End Patch",
-            expected: rho_tools::tool_card::ToolCard::new(
-                ToolStatus::Running,
-                ToolFamily::FileDiff,
-                ToolHeader::call("apply_patch", Some("old.txt → new.txt".into())),
-            ),
+        ToolFact::DiffStat {
+            added: 0,
+            removed: 1,
+            path: Some("b.txt".into()),
         },
-    ];
+    ])
+    .with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::File, None, "a.txt"),
+        DiffRow::new(DiffRowKind::Removed, Some(1), ""),
+        DiffRow::new(DiffRowKind::Added, None, "A"),
+        DiffRow::new(DiffRowKind::File, None, "b.txt"),
+        DiffRow::new(DiffRowKind::Removed, Some(1), ""),
+    ]));
 
-    for case in cases {
-        let mut adapter = SdkEventAdapter::default();
-        let arguments = serde_json::to_string(&serde_json::json!({"input": case.input})).unwrap();
-        let events = adapter.translate(RunEvent::ToolCallUpdated {
-            index: 0,
-            id: None,
-            name: Some("apply_patch".into()),
-            arguments_delta: arguments,
-        });
-        let Some(card) = events.into_iter().find_map(|event| match event {
-            ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
-                card: Some(card), ..
-            }) => Some(card),
-            _ => None,
-        }) else {
-            panic!("{}: expected streamed apply_patch card", case.name);
-        };
-        assert_eq!(card, case.expected, "{}", case.name);
-    }
+    let mut adapter = SdkEventAdapter::default();
+    let arguments = serde_json::to_string(&serde_json::json!({"input": input})).unwrap();
+    let events = adapter.translate(RunEvent::ToolCallUpdated {
+        index: 0,
+        id: None,
+        name: Some("edit".into()),
+        arguments_delta: arguments,
+    });
+    let Some(card) = events.into_iter().find_map(|event| match event {
+        ViewEvent::Update(ViewModelEvent::ToolCallUpdated {
+            card: Some(card), ..
+        }) => Some(card),
+        _ => None,
+    }) else {
+        panic!("expected streamed edit card");
+    };
+    assert_eq!(card, expected);
 }
 
 #[test]

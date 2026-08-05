@@ -1,22 +1,22 @@
 use super::*;
 
-// Covers: large apply_patch preview checkpoints grow with buffer size
+// Covers: large edit preview checkpoints grow with buffer size
 // Owner: interactive presenter
 #[test]
-fn apply_patch_preview_stride_grows_with_input_size() {
-    let limit = APPLY_PATCH_STREAM_PREVIEW_LIMIT;
-    let min_stride = APPLY_PATCH_STREAM_PREVIEW_STRIDE;
+fn edit_preview_stride_grows_with_input_size() {
+    let limit = EDIT_STREAM_PREVIEW_LIMIT;
+    let min_stride = EDIT_STREAM_PREVIEW_STRIDE;
 
     assert_eq!(
-        ToolKind::ApplyPatch.preview_parse_stride(limit),
+        ToolKind::Edit.preview_parse_stride(limit),
         limit.max(min_stride)
     );
     assert_eq!(
-        ToolKind::ApplyPatch.preview_parse_stride(limit * 2),
+        ToolKind::Edit.preview_parse_stride(limit * 2),
         (limit * 2).max(min_stride)
     );
     assert_eq!(
-        ToolKind::ApplyPatch.preview_parse_stride(limit * 3),
+        ToolKind::Edit.preview_parse_stride(limit * 3),
         (limit * 3).max(min_stride)
     );
 
@@ -24,7 +24,7 @@ fn apply_patch_preview_stride_grows_with_input_size() {
     let mut size = limit;
     let mut previous_stride = 0usize;
     for _ in 0..4 {
-        let stride = ToolKind::ApplyPatch.preview_parse_stride(size);
+        let stride = ToolKind::Edit.preview_parse_stride(size);
         assert!(stride >= min_stride);
         assert!(stride >= previous_stride);
         previous_stride = stride;
@@ -32,21 +32,21 @@ fn apply_patch_preview_stride_grows_with_input_size() {
     }
 }
 
-// Covers: below the apply_patch limit, cadence matches the generic policy
+// Covers: below the edit limit, cadence matches the generic policy
 // Owner: interactive presenter
 #[test]
-fn apply_patch_preview_uses_generic_cadence_below_stream_limit() {
-    assert_eq!(ToolKind::ApplyPatch.preview_parse_stride(0), 0);
+fn edit_preview_uses_generic_cadence_below_stream_limit() {
+    assert_eq!(ToolKind::Edit.preview_parse_stride(0), 0);
     assert_eq!(
-        ToolKind::ApplyPatch.preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT - 1),
+        ToolKind::Edit.preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT - 1),
         0
     );
     assert_eq!(
-        ToolKind::ApplyPatch.preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT),
+        ToolKind::Edit.preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT),
         PREVIEW_LARGE_PARSE_STRIDE
     );
     assert_eq!(
-        ToolKind::ApplyPatch.preview_parse_stride(APPLY_PATCH_STREAM_PREVIEW_LIMIT - 1),
+        ToolKind::Edit.preview_parse_stride(EDIT_STREAM_PREVIEW_LIMIT - 1),
         PREVIEW_LARGE_PARSE_STRIDE
     );
 }

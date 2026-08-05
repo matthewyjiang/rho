@@ -7,35 +7,35 @@ use crate::{
 
 use super::{DEFAULT_SIZE, STARTUP, STREAM};
 
-pub(super) const APPLY_PATCH_DIFF_SCENARIO: Scenario = Scenario::new(
-    "apply_patch_diff",
-    "Keep one diff card through apply_patch completion and interruption",
+pub(super) const EDIT_DIFF_SCENARIO: Scenario = Scenario::new(
+    "edit_diff",
+    "Keep one diff card through edit completion and interruption",
     DEFAULT_SIZE,
-    APPLY_PATCH_DIFF_STEPS,
+    EDIT_DIFF_STEPS,
     false,
 );
 
-const APPLY_PATCH_DIFF_STEPS: &[Step] = &[
+const EDIT_DIFF_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::SubmitText("fixture apply patch"),
+    Step::SubmitText("fixture edit"),
     Step::WaitText {
-        text: "+ streamed patch line",
+        text: "edit(",
         timeout: STREAM,
     },
-    Step::Custom(assert_patch_is_still_streaming),
+    Step::Custom(assert_edit_is_still_streaming),
     Step::WaitText {
-        text: "patch lifecycle complete with one result",
+        text: "edit lifecycle complete with one result",
         timeout: STREAM,
     },
-    Step::AssertText("+ streamed patch line"),
-    Step::Custom(assert_one_apply_patch_card),
-    Step::SubmitText("fixture cancel apply patch"),
+    Step::AssertText("+streamed edit line"),
+    Step::Custom(assert_one_edit_card),
+    Step::SubmitText("fixture cancel edit"),
     Step::WaitText {
-        text: "+ cancelled patch line",
+        text: "edit(",
         timeout: STREAM,
     },
     Step::Key(crate::keys::Key::Esc),
@@ -43,8 +43,7 @@ const APPLY_PATCH_DIFF_STEPS: &[Step] = &[
         text: "model interrupted",
         timeout: STREAM,
     },
-    Step::AssertText("+ cancelled patch line"),
-    Step::Custom(assert_two_apply_patch_cards),
+    Step::Custom(assert_two_edit_cards),
     Step::SubmitText("fixture questionnaire"),
     Step::WaitText {
         text: "Choose one color",
@@ -67,22 +66,22 @@ const APPLY_PATCH_DIFF_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-fn assert_patch_is_still_streaming(harness: &mut PtyHarness) -> Result<()> {
+fn assert_edit_is_still_streaming(harness: &mut PtyHarness) -> Result<()> {
     if harness
         .screen()
-        .contains_text("patch lifecycle complete with one result")
+        .contains_text("edit lifecycle complete with one result")
     {
-        anyhow::bail!("apply_patch finished before the streamed diff assertion");
+        anyhow::bail!("edit finished before the streamed diff assertion");
     }
     Ok(())
 }
 
-fn assert_one_apply_patch_card(harness: &mut PtyHarness) -> Result<()> {
-    assert_apply_patch_card_count(harness, 1)
+fn assert_one_edit_card(harness: &mut PtyHarness) -> Result<()> {
+    assert_edit_card_count(harness, 1)
 }
 
-fn assert_two_apply_patch_cards(harness: &mut PtyHarness) -> Result<()> {
-    assert_apply_patch_card_count(harness, 2)
+fn assert_two_edit_cards(harness: &mut PtyHarness) -> Result<()> {
+    assert_edit_card_count(harness, 2)
 }
 
 fn assert_one_questionnaire_card(harness: &mut PtyHarness) -> Result<()> {
@@ -97,10 +96,10 @@ fn assert_one_questionnaire_card(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
-fn assert_apply_patch_card_count(harness: &mut PtyHarness, expected: usize) -> Result<()> {
-    let count = harness.screen().contents().matches("apply_patch(").count();
+fn assert_edit_card_count(harness: &mut PtyHarness, expected: usize) -> Result<()> {
+    let count = harness.screen().contents().matches("edit(").count();
     if count != expected {
-        anyhow::bail!("expected {expected} apply_patch cards, found {count}");
+        anyhow::bail!("expected {expected} edit cards, found {count}");
     }
     Ok(())
 }

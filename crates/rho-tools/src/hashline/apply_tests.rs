@@ -29,6 +29,7 @@ fn applies_mixed_ops_on_original_line_numbers() {
     assert_eq!(outcome.text, "one\nTWO\nthree\n3.5\n");
     assert_eq!(outcome.old_tag, tag);
     assert_eq!(outcome.new_tag, compute_file_hash(&outcome.text));
+    assert_eq!(outcome.focus_lines, vec![2, 4]);
 }
 
 // Covers: stale tags must fail closed before mutating content
@@ -124,6 +125,7 @@ fn keeps_inserts_at_range_edges() {
     )
     .unwrap();
     assert_eq!(outcome.text, "a\nhead\ne\ntail\n");
+    assert_eq!(outcome.focus_lines, vec![2, 3, 4]);
 }
 
 // Covers: multiple inserts on one anchor keep document order
@@ -148,6 +150,7 @@ fn keeps_document_order_for_shared_anchors() {
     )
     .unwrap();
     assert_eq!(outcome.text, "a\nfirst\nsecond\nb\n");
+    assert_eq!(outcome.focus_lines, vec![2, 3]);
 }
 
 // Covers: an empty file accepts head inserts and end-of-file appends only
@@ -171,4 +174,5 @@ fn appends_into_an_empty_file() {
     )
     .unwrap();
     assert_eq!(outcome.text, "first\nsecond\n");
+    assert_eq!(outcome.focus_lines, vec![1, 2]);
 }

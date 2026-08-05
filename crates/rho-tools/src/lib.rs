@@ -3,7 +3,7 @@
 //! The crate has two layers:
 //!
 //! - Application tools ([`tool::Tool`]) implement the user-facing built-ins
-//!   (`bash`, `read_file`, `write_file`, `edit_file`, `hashline_edit`, `apply_patch`, `list_dir`)
+//!   (`bash`, `read_file`, `write_file`, `edit` (hashline), `list_dir`)
 //!   with output truncation, diffs, and display formatting.
 //! - Workspace searches implement `grep` and `glob` over the shared
 //!   [`workspace_walk`] walker.
@@ -26,11 +26,9 @@ pub mod tool_card;
 pub mod workspace_mutation;
 pub mod workspace_walk;
 
-pub mod apply_patch;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod bash;
 pub mod diff;
-pub mod edit_file;
 mod glob;
 mod grep;
 mod grep_format;

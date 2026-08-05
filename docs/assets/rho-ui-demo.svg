@@ -45,7 +45,7 @@
     <text x="42" y="247" class="mono body">pub async fn request_id(mut request: Request, next: Next) -&gt; Response {</text>
 
     <rect x="32" y="288" width="1136" height="84" fill="#2a2f25"/>
-    <text x="42" y="319" class="mono bright">edit_file crates/api/src/middleware/request_id.rs</text>
+    <text x="42" y="319" class="mono bright">edit crates/api/src/middleware/request_id.rs</text>
     <text x="42" y="340" class="mono green">+ span.record("request_id", request_id.as_str());</text>
 
     <rect x="32" y="381" width="1136" height="84" fill="#2a2f25"/>

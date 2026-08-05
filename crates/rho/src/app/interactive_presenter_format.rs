@@ -64,16 +64,9 @@ pub(super) fn streaming_preview_card(
         ToolKind::Agent => agent_format::agent_streaming_preview_card(
             arguments.unwrap_or(&serde_json::Value::Object(Default::default())),
         ),
-        ToolKind::ApplyPatch => arguments.map_or_else(
+        ToolKind::Edit => arguments.map_or_else(
             || kind_card(ToolStatus::Running, kind, ToolHeader::call(name, None)),
-            |arguments| {
-                apply_patch_start_card(
-                    arguments,
-                    cwd,
-                    ToolStatus::Running,
-                    rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
-                )
-            },
+            |arguments| edit_start_card(arguments, cwd, ToolStatus::Running),
         ),
         _ => preview_card(kind, name, arguments, cwd, ToolStatus::Running),
     }
@@ -147,21 +140,7 @@ pub(super) fn preview_card(
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::EditFile => kind_card(
-            status,
-            kind,
-            ToolHeader::call(
-                "edit_file",
-                Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
-            ),
-        ),
-        ToolKind::HashlineEdit => hashline_start_card(arguments, cwd, status),
-        ToolKind::ApplyPatch => apply_patch_start_card(
-            arguments,
-            cwd,
-            status,
-            rho_tools::apply_patch::ProposedDiffTrailingLine::Include,
-        ),
+        ToolKind::Edit => edit_start_card(arguments, cwd, status),
         ToolKind::Skill => kind_card(
             status,
             kind,
@@ -212,21 +191,20 @@ pub(super) fn preview_card(
     }
 }
 
-fn hashline_start_card(
+fn edit_start_card(
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
     status: ToolStatus,
 ) -> ToolCard {
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
-        return kind_card(
-            status,
-            ToolKind::HashlineEdit,
-            ToolHeader::call("hashline_edit", None),
-        );
+        return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
     };
-    // Show added/removed counts before approval, the same as apply_patch. The
-    // document carries them, so no target file has to be read.
-    let files = rho_tools::hashline::proposed_sections(input)
+    // Project the document alone so streaming and approval cards never need the
+    // target file. Added rows come from PUT bodies; removed rows carry original
+    // line numbers from CUT/replace ranges.
+    let proposed = rho_tools::hashline::proposed_edit(input);
+    let files = proposed
+        .files
         .into_iter()
         .map(|section| DiffCardFile {
             path: compact_display_path(cwd, &section.path),
@@ -234,66 +212,12 @@ fn hashline_start_card(
             change: DiffCardChange::Content,
             stats: Some((section.added_lines, section.removed_lines))
                 .filter(|(added, removed)| *added > 0 || *removed > 0),
-            rows: Vec::new(),
+            rows: section.rows,
         })
         .collect::<Vec<_>>();
     diff_card(
         status,
-        "hashline_edit",
-        Vec::new(),
-        files,
-        EmptyDiffState::Silent,
-        /*truncated*/ false,
-    )
-}
-
-fn apply_patch_start_card(
-    arguments: &serde_json::Value,
-    cwd: &std::path::Path,
-    status: ToolStatus,
-    trailing_line: rho_tools::apply_patch::ProposedDiffTrailingLine,
-) -> ToolCard {
-    let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
-        return kind_card(
-            status,
-            ToolKind::ApplyPatch,
-            ToolHeader::call("apply_patch", None),
-        );
-    };
-    let proposed = rho_tools::apply_patch::proposed_diff_lenient(input, trailing_line);
-    let files = proposed
-        .files
-        .into_iter()
-        .map(|file| {
-            use rho_tools::apply_patch::ProposedDiffOperation;
-            let change = match file.operation {
-                ProposedDiffOperation::Delete => DiffCardChange::Delete,
-                ProposedDiffOperation::Add | ProposedDiffOperation::Update => {
-                    DiffCardChange::Content
-                }
-            };
-            let path = compact_display_path(cwd, &file.display_path);
-            let source_path = match (&file.source_path, &file.destination_path) {
-                (Some(source), Some(destination)) if source != destination => {
-                    Some(compact_display_path(cwd, source))
-                }
-                _ => None,
-            };
-            DiffCardFile {
-                path,
-                source_path,
-                change,
-                stats: file
-                    .added_lines
-                    .zip(file.removed_lines)
-                    .filter(|(added, removed)| *added > 0 || *removed > 0),
-                rows: file.rows,
-            }
-        })
-        .collect::<Vec<_>>();
-    diff_card(
-        status,
-        "apply_patch",
+        "edit",
         Vec::new(),
         files,
         EmptyDiffState::Silent,
@@ -363,10 +287,7 @@ pub(super) fn finished_card(
             }
             card
         }
-        ToolKind::WriteFile
-        | ToolKind::EditFile
-        | ToolKind::HashlineEdit
-        | ToolKind::ApplyPatch => file_diff_card(view, content, ok, cwd),
+        ToolKind::WriteFile | ToolKind::Edit => file_diff_card(view, content, ok, cwd),
         ToolKind::Skill => preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status),
         ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
@@ -434,12 +355,7 @@ pub(super) fn interrupted_card(
     match view.kind {
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
-        ToolKind::ApplyPatch => apply_patch_start_card(
-            &view.arguments,
-            cwd,
-            ToolStatus::Interrupted,
-            rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
-        ),
+        ToolKind::Edit => edit_start_card(&view.arguments, cwd, ToolStatus::Interrupted),
         _ => {
             let mut card = preview_card(
                 view.kind,
@@ -465,10 +381,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
         | ToolKind::Grep
         | ToolKind::Glob
         | ToolKind::ReadFile => ToolFamily::FileCommand,
-        ToolKind::WriteFile
-        | ToolKind::EditFile
-        | ToolKind::HashlineEdit
-        | ToolKind::ApplyPatch => ToolFamily::FileDiff,
+        ToolKind::WriteFile | ToolKind::Edit => ToolFamily::FileDiff,
         ToolKind::Skill => ToolFamily::Skill,
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
@@ -532,21 +445,7 @@ pub(super) fn read_path(arguments: &serde_json::Value, cwd: &std::path::Path) ->
     format!("{path}:{start}-{end}")
 }
 
-pub(super) fn apply_patch_paths(
-    arguments: &serde_json::Value,
-    cwd: &std::path::Path,
-) -> Vec<String> {
-    arguments
-        .get("input")
-        .and_then(|value| value.as_str())
-        .map(rho_tools::apply_patch::patch_paths_lenient)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|path| compact_display_path(cwd, &path))
-        .collect()
-}
-
-pub(super) fn hashline_paths(arguments: &serde_json::Value, cwd: &std::path::Path) -> Vec<String> {
+pub(super) fn edit_paths(arguments: &serde_json::Value, cwd: &std::path::Path) -> Vec<String> {
     arguments
         .get("input")
         .and_then(|value| value.as_str())

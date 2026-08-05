@@ -1,12 +1,13 @@
-//! Hashline edit tool: line-anchored multi-hunk edits with snapshot tags.
+//! Line-anchored multi-hunk edit tool (`edit`) with snapshot tags.
 //!
-//! `read_file` returns `[path#TAG]` plus `N:line` rows. `hashline_edit` applies
-//! a compact PUT/CUT document against those original line numbers and rejects
-//! stale tags before writing.
+//! `read_file` returns `[path#TAG]` plus `N:line` rows. `edit` applies a compact
+//! PUT/CUT document against those original line numbers and rejects stale tags
+//! before writing.
 
 mod apply;
 mod format;
 mod parser;
+mod proposed;
 
 use std::{
     collections::BTreeMap,
@@ -20,15 +21,21 @@ use serde_json::json;
 
 use crate::{diff::unified_diff, tool::*, write_file::FileMutationOutcome};
 
-pub use apply::{apply_ops, ApplyOutcome};
-pub use format::{
-    compute_file_hash, format_hashline_view, format_header, format_numbered_line, FILE_HASH_LENGTH,
+use apply::{apply_ops, ApplyOutcome};
+use format::format_post_edit_preview;
+use parser::{Op, Section};
+
+#[cfg(test)]
+pub(crate) use format::compute_file_hash;
+pub(crate) use format::{format_chain_snapshot, format_hashline_view};
+pub(crate) use parser::parse_hashline;
+pub use proposed::{
+    proposed_edit, proposed_sections, ProposedEdit, ProposedEditFile, ProposedSection,
 };
-pub use parser::{parse_hashline, proposed_sections, Op, ProposedSection, Section};
 
-pub struct HashlineEdit;
+pub(crate) struct Edit;
 
-const TOOL_DESCRIPTION: &str = r#"Use `hashline_edit` for multi-hunk edits to existing UTF-8 files with line anchors from `read_file`. Prefer this when you already read the file and have a `[path#TAG]` header. Prefer `edit_file` for one exact string replace when you did not take a hashline read. Prefer `write_file` to create or fully rewrite a file. Prefer `apply_patch` for Codex-style multi-file patches that add or delete files.
+const TOOL_DESCRIPTION: &str = r#"Use `edit` for multi-hunk edits to existing UTF-8 files when you already have a fresh `[path#TAG]` from `read_file`, a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` recovery snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file.
 
 Document shape:
 
@@ -45,16 +52,19 @@ PUT >$:
 CUT N.=M
 
 Rules:
-- TAG is the 8-hex snapshot from the latest `read_file` header and is required
-- Line numbers name ORIGINAL lines from that read; they do not shift mid-document
+- Copy the exact `[path#TAG]` header and `N:line` numbers from the latest snapshot for that path
+- Put every hunk for one file in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch - wait for the result before editing that path again. Different paths may edit in parallel
+- Line numbers name ORIGINAL lines from that snapshot; they do not shift mid-document
 - Body rows under PUT headers that end with `:` must start with `+` (use `+` alone for a blank line)
 - Ranges are inclusive (`PUT 3.=5:` touches original lines 3 through 5)
 - Single-line replace may use `PUT N:` as shorthand for `PUT N.=N:`
-- Stale TAG or out-of-range lines fail closed with no write
+- PUT always needs at least one + body row; use CUT to delete
+- Stale TAG, out-of-range, overlap, and mid-edit file changes fail closed with no write and include a bounded live snapshot - copy that header/lines to retry (re-read only for lines outside the snapshot)
 - An insert anchored inside a range another op replaces or deletes is rejected; anchor it outside
 - TAG ignores trailing whitespace, so whitespace-only changes keep a read valid
+- Successful results return a post-edit `[path#NEW_TAG]` numbered preview around the change
 - Block ops (`N*`), registers (`@name`), REM, and MV are not supported yet
-- Create files with `write_file`; do not use hashline_edit to create paths"#;
+- Create files with `write_file`; do not use `edit` to create paths"#;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,17 +73,17 @@ struct Args {
 }
 
 #[async_trait::async_trait]
-impl Tool for HashlineEdit {
+impl Tool for Edit {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "hashline_edit".into(),
+            name: "edit".into(),
             description: TOOL_DESCRIPTION.into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "input": {
                         "type": "string",
-                        "description": "Hashline document with one or more [path#TAG] sections and PUT/CUT ops."
+                        "description": "Hashline document with one or more [path#TAG] sections and PUT/CUT ops. Copy each [path#TAG] from read_file, write_file, a prior edit preview, or a failed edit recovery snapshot; never invent tags. One section per path; multi-hunk OK. Do not stack two edit calls on the same path in one batch."
                     }
                 },
                 "required": ["input"],
@@ -145,7 +155,7 @@ struct PlannedFile {
     display_path: String,
     original: String,
     outcome: ApplyOutcome,
-    op_count: usize,
+    anchor_lines: Vec<usize>,
 }
 
 /// A file already rewritten in this call, kept so a later failure can undo it.
@@ -168,19 +178,20 @@ fn apply_sections_locked(
         let original = std::fs::read_to_string(&prepared.path).map_err(|error| {
             ToolError::Message(format!("could not read {display_path}: {error}"))
         })?;
+        let anchors = op_anchor_lines(&prepared.section.ops);
         let outcome = apply_ops(&original, &prepared.section.tag, &prepared.section.ops)
-            .map_err(|error| ToolError::Message(format!("{display_path}: {error}")))?;
+            .map_err(|error| recovery_error(display_path, &original, &anchors, error))?;
         planned.push(PlannedFile {
             path: prepared.path.clone(),
             display_path: display_path.clone(),
             original,
             outcome,
-            op_count: prepared.section.ops.len(),
+            anchor_lines: anchors,
         });
     }
 
     let mut applied: Vec<AppliedFile<'_>> = Vec::new();
-    let mut summaries = Vec::new();
+    let mut previews = Vec::new();
     let mut diffs = Vec::new();
     for file in &planned {
         if let Err(error) = commit_planned_file(file) {
@@ -197,9 +208,12 @@ fn apply_sections_locked(
             display_path: &file.display_path,
             original: &file.original,
         });
-        summaries.push(format!(
-            "edited {} (tag {} -> {}); {} op(s)",
-            file.display_path, file.outcome.old_tag, file.outcome.new_tag, file.op_count
+        // Model-facing chain contract: post-edit hashline preview only.
+        // Unified diff stays on metadata for UI cards.
+        previews.push(format_post_edit_preview(
+            &file.display_path,
+            &file.outcome.text,
+            &file.outcome.focus_lines,
         ));
         diffs.push(unified_diff(
             &file.original,
@@ -210,16 +224,13 @@ fn apply_sections_locked(
     }
 
     let diff = diffs.join("\n");
-    let content = truncate(
-        format!("{}\n\n{diff}", summaries.join("\n")),
-        max_output_bytes,
-    );
+    let content = truncate(previews.join("\n\n"), max_output_bytes);
     Ok(FileMutationOutcome {
         content,
-        display_path: planned
-            .first()
+        display_paths: planned
+            .iter()
             .map(|file| file.display_path.clone())
-            .unwrap_or_default(),
+            .collect(),
         diff,
     })
 }
@@ -232,11 +243,51 @@ fn commit_planned_file(file: &PlannedFile) -> Result<(), ToolError> {
         .read_to_string(&mut live)
         .map_err(|error| ToolError::Message(format!("could not read {display_path}: {error}")))?;
     if live != file.original {
-        return Err(ToolError::Message(format!(
-            "{display_path} changed during hashline_edit; re-read and retry"
-        )));
+        return Err(recovery_error(
+            display_path,
+            &live,
+            &file.anchor_lines,
+            "changed during edit",
+        ));
     }
     rewrite_locked_file(&mut handle, display_path, &file.outcome.text)
+}
+
+fn recovery_error(
+    display_path: &str,
+    live_text: &str,
+    focus_lines: &[usize],
+    message: impl std::fmt::Display,
+) -> ToolError {
+    let snapshot = format_chain_snapshot(display_path, live_text, focus_lines);
+    ToolError::Message(format!(
+        "{display_path}: {message}\n\nLive snapshot - copy the header and line numbers below to retry:\n{snapshot}"
+    ))
+}
+
+/// Original-line anchors from ops, used to focus recovery snapshots.
+fn op_anchor_lines(ops: &[Op]) -> Vec<usize> {
+    let mut lines = Vec::new();
+    for op in ops {
+        match op {
+            Op::Replace { start, end, .. } | Op::Delete { start, end } => {
+                // Keep span endpoints only so large CUT/PUT ranges do not
+                // explode the recovery focus set.
+                lines.push(*start);
+                if *end != *start {
+                    lines.push(*end);
+                }
+            }
+            Op::InsertBefore { line, .. } => lines.push(*line),
+            Op::InsertAfter {
+                line: Some(line), ..
+            } => lines.push(*line),
+            Op::InsertAfter { line: None, .. } => {}
+        }
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    lines
 }
 
 fn rollback_applied(applied: &[AppliedFile<'_>]) -> Result<(), ToolError> {

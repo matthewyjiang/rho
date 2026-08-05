@@ -8,10 +8,13 @@ use rho_sdk::{
 
 use super::{completed_tool_call, fixture_sleep, tool_result};
 
-pub(super) const PROMPT: &str = "fixture apply patch";
-pub(super) const CANCEL_PROMPT: &str = "fixture cancel apply patch";
-const CALL_ID: &str = "tui-fixture-apply-patch";
-const CANCEL_CALL_ID: &str = "tui-fixture-cancel-apply-patch";
+pub(super) const PROMPT: &str = "fixture edit";
+pub(super) const CANCEL_PROMPT: &str = "fixture cancel edit";
+const CALL_ID: &str = "tui-fixture-edit";
+const CANCEL_CALL_ID: &str = "tui-fixture-cancel-edit";
+const ORIGINAL: &str = "original line\n";
+// FNV-1a tag for ORIGINAL via rho_tools::hashline::compute_file_hash.
+const ORIGINAL_TAG: &str = "04EE8022";
 
 pub(super) fn is_pending(request: &ModelRequest<'_>) -> bool {
     tool_result(request, CALL_ID).is_none()
@@ -21,12 +24,12 @@ pub(super) async fn stream(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
-    stream_patch(
+    stream_edit(
         request,
         events,
         CALL_ID,
-        ".rho-tui-fixture-patch.txt",
-        "streamed patch line",
+        ".rho-tui-fixture-edit.txt",
+        "streamed edit line",
         Duration::from_millis(750),
         /*complete_after_sleep*/ true,
     )
@@ -37,36 +40,39 @@ pub(super) async fn stream_until_cancelled(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
-    stream_patch(
+    stream_edit(
         request,
         events,
         CANCEL_CALL_ID,
-        ".rho-tui-fixture-cancelled-patch.txt",
-        "cancelled patch line",
+        ".rho-tui-fixture-cancelled-edit.txt",
+        "cancelled edit line",
         Duration::from_secs(30),
         /*complete_after_sleep*/ false,
     )
     .await
 }
 
-async fn stream_patch(
+async fn stream_edit(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
     call_id: &str,
     file_name: &str,
-    patch_line: &str,
+    edit_line: &str,
     sleep: Duration,
     complete_after_sleep: bool,
 ) -> Result<ModelResponse, ProviderError> {
-    let input = format!("*** Begin Patch\n*** Add File: {file_name}\n+{patch_line}\n*** End Patch");
+    // Seed the target so the real edit tool can apply against a known tag.
+    if let Ok(cwd) = std::env::current_dir() {
+        let _ = std::fs::write(cwd.join(file_name), ORIGINAL);
+    }
+    let input = format!("[{file_name}#{ORIGINAL_TAG}]\nPUT 1.=1:\n+{edit_line}\n");
+    let open = format!("{{\"input\":\"[{file_name}#{ORIGINAL_TAG}]\\nPUT 1.=1:\\n+{edit_line}\\n");
     events
         .send(ModelEvent::ToolCallDelta {
             index: 0,
             id: None,
-            name: Some("apply_patch".into()),
-            arguments: format!(
-                "{{\"input\":\"*** Begin Patch\\n*** Add File: {file_name}\\n+{patch_line}\\n"
-            ),
+            name: Some("edit".into()),
+            arguments: open,
         })
         .await?;
     events
@@ -84,17 +90,17 @@ async fn stream_patch(
                 index: 0,
                 id: None,
                 name: None,
-                arguments: r#"*** End Patch"}"#.into(),
+                arguments: r#""}"#.into(),
             })
             .await?;
     }
-    completed_tool_call(call_id, "apply_patch", serde_json::json!({"input": input}))
+    completed_tool_call(call_id, "edit", serde_json::json!({"input": input}))
 }
 
 pub(super) fn completion_text(request: &ModelRequest<'_>) -> Option<String> {
     let result = tool_result(request, CALL_ID)?;
     Some(format!(
-        "patch lifecycle complete with one result: {}",
+        "edit lifecycle complete with one result: {}",
         result.content.lines().next().unwrap_or_default()
     ))
 }

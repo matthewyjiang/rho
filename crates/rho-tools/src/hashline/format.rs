@@ -9,35 +9,62 @@
 /// Full 32-bit width: the tag is the only guard against a model applying line
 /// numbers from a read that a concurrent writer has already invalidated, so the
 /// collision space is worth more than the four characters it costs.
-pub const FILE_HASH_LENGTH: usize = 8;
+pub(crate) const FILE_HASH_LENGTH: usize = 8;
 
 /// Separator between a path and its snapshot tag inside a section header.
-pub const FILE_HASH_SEP: char = '#';
+pub(crate) const FILE_HASH_SEP: char = '#';
 
 /// Separator between a 1-indexed line number and the line body.
-pub const LINE_BODY_SEP: char = ':';
+pub(crate) const LINE_BODY_SEP: char = ':';
 
 /// Compute the snapshot tag for normalized file text.
-pub fn compute_file_hash(text: &str) -> String {
+pub(crate) fn compute_file_hash(text: &str) -> String {
     let digest = fnv1a32(normalize_for_hash(text).as_bytes());
     format!("{digest:08X}")
 }
 
 /// Format a section header `[path#TAG]`.
-pub fn format_header(path: &str, file_hash: &str) -> String {
+pub(crate) fn format_header(path: &str, file_hash: &str) -> String {
     format!("[{path}{FILE_HASH_SEP}{file_hash}]")
 }
 
 /// Format one numbered content line as `N:text` (no trailing newline).
-pub fn format_numbered_line(line_number: usize, line: &str) -> String {
+pub(crate) fn format_numbered_line(line_number: usize, line: &str) -> String {
     format!("{line_number}{LINE_BODY_SEP}{line}")
 }
+
+/// Context lines kept on each side of a post-edit focus line.
+///
+/// Three lines is enough to re-anchor a follow-up PUT/CUT without dumping the
+/// whole file; measured against typical single-hunk agent edits.
+const POST_EDIT_CONTEXT_LINES: usize = 3;
+
+/// Soft cap on numbered body rows in a post-edit chain preview.
+///
+/// Sized so multi-hunk previews stay scannable while still leaving room for a
+/// few context lines around each focus region.
+const POST_EDIT_MAX_BODY_LINES: usize = 40;
+
+/// Soft cap on numbered body rows in write/recovery chain snapshots.
+///
+/// Recovery and write_file must return a usable `[path#TAG]` without dumping
+/// whole files into the model context. Full bodies stay on `read_file`.
+const CHAIN_SNAPSHOT_MAX_BODY_LINES: usize = 40;
+
+/// Context lines around op anchors in a recovery snapshot.
+const CHAIN_SNAPSHOT_CONTEXT_LINES: usize = 2;
+
+/// Head lines kept when a chain snapshot has no focus anchors.
+const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
+
+/// Tail lines kept after the head so EOF anchors stay chainable on large files.
+const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
 
 /// Render a hashline view of `text` for `display_path`.
 ///
 /// `offset`/`limit` select a 1-indexed inclusive window of lines. The header
 /// always carries the full-file tag so later edits can validate the snapshot.
-pub fn format_hashline_view(
+pub(crate) fn format_hashline_view(
     display_path: &str,
     text: &str,
     offset: Option<usize>,
@@ -90,12 +117,217 @@ pub fn format_hashline_view(
     Ok(out)
 }
 
+/// Render a chainable post-edit hashline preview for `new_text`.
+///
+/// The header carries the post-edit tag. Body rows use **post-edit** line
+/// numbers around `focus_lines` (from apply) so a follow-up `edit` can copy them
+/// without a full re-read. Large unchanged spans collapse to `…`.
+pub(crate) fn format_post_edit_preview(
+    display_path: &str,
+    new_text: &str,
+    focus_lines: &[usize],
+) -> String {
+    let new_tag = compute_file_hash(new_text);
+    let header = format_header(display_path, &new_tag);
+    let new_lines = split_content_lines(new_text);
+    if new_lines.is_empty() {
+        return header;
+    }
+
+    let mut focus = focus_lines.to_vec();
+    focus.retain(|line| *line >= 1 && *line <= new_lines.len());
+    focus.sort_unstable();
+    focus.dedup();
+    if focus.is_empty() {
+        focus.push(1);
+    }
+
+    let selected = expand_focus_lines(&focus, new_lines.len(), POST_EDIT_CONTEXT_LINES);
+    let selected = cap_selected_by_hunk(&selected, POST_EDIT_MAX_BODY_LINES);
+    if selected.is_empty() {
+        return header;
+    }
+
+    let mut out = header;
+    out.push('\n');
+    let mut previous = 0usize;
+    let total = new_lines.len();
+    let first = selected[0];
+    let last = *selected.last().expect("non-empty selection");
+    for &line_number in &selected {
+        if previous != 0 && line_number > previous + 1 {
+            out.push_str("…\n");
+        }
+        out.push_str(&format_numbered_line(
+            line_number,
+            new_lines[line_number - 1],
+        ));
+        out.push('\n');
+        previous = line_number;
+    }
+    out.pop();
+    if first > 1 || last < total {
+        out.push_str(&format!(
+            "\n\n[post-edit lines {first}-{last} of {total} shown around changes; re-read for other lines]"
+        ));
+    }
+    out
+}
+
+/// Bounded hashline snapshot for chaining after `write_file` or a failed `edit`.
+///
+/// Always includes the full-file TAG. Body rows are capped so recovery does not
+/// bloat context: focus anchors (when provided) expand locally; otherwise a
+/// short head+tail window is used.
+pub(crate) fn format_chain_snapshot(
+    display_path: &str,
+    text: &str,
+    focus_lines: &[usize],
+) -> String {
+    let tag = compute_file_hash(text);
+    let header = format_header(display_path, &tag);
+    let lines = split_content_lines(text);
+    if lines.is_empty() {
+        return header;
+    }
+
+    let total = lines.len();
+    let selected = if focus_lines.is_empty() {
+        head_tail_lines(total, CHAIN_SNAPSHOT_HEAD_LINES, CHAIN_SNAPSHOT_TAIL_LINES)
+    } else {
+        let mut focus = focus_lines.to_vec();
+        focus.retain(|line| *line >= 1 && *line <= total);
+        focus.sort_unstable();
+        focus.dedup();
+        if focus.is_empty() {
+            head_tail_lines(total, CHAIN_SNAPSHOT_HEAD_LINES, CHAIN_SNAPSHOT_TAIL_LINES)
+        } else {
+            let expanded = expand_focus_lines(&focus, total, CHAIN_SNAPSHOT_CONTEXT_LINES);
+            cap_selected_by_hunk(&expanded, CHAIN_SNAPSHOT_MAX_BODY_LINES)
+        }
+    };
+    if selected.is_empty() {
+        return header;
+    }
+
+    let mut out = header;
+    out.push('\n');
+    let mut previous = 0usize;
+    let first = selected[0];
+    let last = *selected.last().expect("non-empty selection");
+    for &line_number in &selected {
+        if previous != 0 && line_number > previous + 1 {
+            out.push_str("…\n");
+        }
+        out.push_str(&format_numbered_line(line_number, lines[line_number - 1]));
+        out.push('\n');
+        previous = line_number;
+    }
+    out.pop();
+    let showed_all = selected.len() == total && first == 1 && last == total;
+    if !showed_all {
+        out.push_str(&format!(
+            "\n\n[showing {} of {total} lines; re-read with offset/limit for other lines]",
+            selected.len()
+        ));
+    }
+    out
+}
+
+fn head_tail_lines(total: usize, head: usize, tail: usize) -> Vec<usize> {
+    if total == 0 {
+        return Vec::new();
+    }
+    if total <= head + tail {
+        return (1..=total).collect();
+    }
+    let mut selected = Vec::with_capacity(head + tail);
+    selected.extend(1..=head.min(total));
+    let tail_start = total.saturating_sub(tail) + 1;
+    if tail_start > head {
+        selected.extend(tail_start..=total);
+    }
+    selected
+}
+
+fn expand_focus_lines(focus: &[usize], total_lines: usize, context: usize) -> Vec<usize> {
+    if total_lines == 0 {
+        return Vec::new();
+    }
+    let mut selected = Vec::new();
+    for &line in focus {
+        let start = line.saturating_sub(context).max(1);
+        let end = (line + context).min(total_lines);
+        for candidate in start..=end {
+            selected.push(candidate);
+        }
+    }
+    selected.sort_unstable();
+    selected.dedup();
+    selected
+}
+
+/// Keep at most `max_lines` rows, spreading the budget across contiguous hunks
+/// so a late edit is not starved by an early one.
+fn cap_selected_by_hunk(selected: &[usize], max_lines: usize) -> Vec<usize> {
+    if selected.len() <= max_lines {
+        return selected.to_vec();
+    }
+    let hunks = split_hunks(selected);
+    if hunks.is_empty() {
+        return Vec::new();
+    }
+
+    // Give each hunk a floor share, then walk hunks in order filling remaining
+    // budget so small early hunks do not eat the whole preview.
+    let per_hunk = (max_lines / hunks.len()).max(1);
+    let mut remaining = max_lines;
+    let mut out = Vec::with_capacity(max_lines.min(selected.len()));
+    for (index, hunk) in hunks.iter().enumerate() {
+        if remaining == 0 {
+            break;
+        }
+        let later = hunks.len() - index - 1;
+        let reserved_for_later = later; // at least one line per remaining hunk when possible
+        let allow = if later == 0 {
+            remaining
+        } else {
+            remaining
+                .saturating_sub(reserved_for_later)
+                .min(per_hunk.max(remaining / (later + 1)))
+                .max(1)
+                .min(remaining)
+        };
+        let take = allow.min(hunk.len());
+        out.extend(hunk.iter().copied().take(take));
+        remaining -= take;
+    }
+    out
+}
+
+fn split_hunks(selected: &[usize]) -> Vec<Vec<usize>> {
+    let mut hunks = Vec::new();
+    let mut current = Vec::new();
+    let mut previous = 0usize;
+    for &line in selected {
+        if !current.is_empty() && line > previous + 1 {
+            hunks.push(std::mem::take(&mut current));
+        }
+        current.push(line);
+        previous = line;
+    }
+    if !current.is_empty() {
+        hunks.push(current);
+    }
+    hunks
+}
+
 /// Split file text into addressable content lines.
 ///
 /// A trailing newline does not create an extra blank line. An empty file has
 /// zero lines. A file whose sole content is a blank line (single `\n`) has one
 /// empty line.
-pub fn split_content_lines(text: &str) -> Vec<&str> {
+pub(crate) fn split_content_lines(text: &str) -> Vec<&str> {
     if text.is_empty() {
         return Vec::new();
     }
@@ -112,7 +344,7 @@ pub fn split_content_lines(text: &str) -> Vec<&str> {
 }
 
 /// Detect the dominant end-of-line sequence in `text`.
-pub fn detect_eol(text: &str) -> &'static str {
+pub(crate) fn detect_eol(text: &str) -> &'static str {
     let crlf = text.matches("\r\n").count();
     let lf = text.bytes().filter(|byte| *byte == b'\n').count() - crlf;
     let cr = text
@@ -131,13 +363,13 @@ pub fn detect_eol(text: &str) -> &'static str {
 }
 
 /// True when `text` ends with a newline sequence.
-pub fn has_trailing_newline(text: &str) -> bool {
+pub(crate) fn has_trailing_newline(text: &str) -> bool {
     text.ends_with('\n') || text.ends_with('\r')
 }
 
 /// Strip trailing spaces/tabs/CR from each line before hashing so display trim
 /// and CRLF endings do not invalidate a tag.
-pub fn normalize_for_hash(text: &str) -> String {
+pub(crate) fn normalize_for_hash(text: &str) -> String {
     if text.is_empty() {
         return String::new();
     }

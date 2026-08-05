@@ -147,10 +147,8 @@ fn validate_agent_access(
     const MUTATING: &[&str] = &[
         "agent",
         "agents",
-        "apply_patch",
         "bash",
-        "edit_file",
-        "hashline_edit",
+        "edit",
         "powershell",
         "process",
         "rho",

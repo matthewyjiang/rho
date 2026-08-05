@@ -26,7 +26,7 @@ impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files return a hashline view: a [path#TAG] header plus N:line rows for use with hashline_edit. offset and limit select line ranges for UTF-8 text files only.".into(),
+            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files always return a hashline view: a [path#TAG] header plus N:line rows. TAG fingerprints the full file snapshot (trailing whitespace ignored) so line-anchored edit can validate anchors. offset and limit select line ranges for UTF-8 text files only.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -201,7 +201,7 @@ pub(super) async fn read_file_content(
         .read_to_end(&mut bytes)
         .await?;
     // Plain UTF-8 sources use the on-disk bytes for hashline tags so
-    // hashline_edit can validate against the same snapshot. Rich documents keep
+    // edit can validate against the same snapshot. Rich documents keep
     // the extractor path and are not hashline-editable.
     if !is_rich_document_path(path, &bytes) {
         let text = String::from_utf8(bytes).map_err(|error| {

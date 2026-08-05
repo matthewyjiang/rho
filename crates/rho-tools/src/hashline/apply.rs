@@ -9,10 +9,14 @@ use super::{
 
 /// Result of applying ops to one file body.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ApplyOutcome {
+pub(crate) struct ApplyOutcome {
     pub text: String,
     pub old_tag: String,
     pub new_tag: String,
+    /// 1-indexed post-edit lines touched by the ops (inserts, replacements, and
+    /// neighbors of pure deletes). Preview rendering uses this set instead of
+    /// recomputing a content diff.
+    pub focus_lines: Vec<usize>,
 }
 
 /// Apply `ops` to `original` after verifying `expected_tag`.
@@ -21,11 +25,15 @@ pub struct ApplyOutcome {
 /// is planned against the line it anchors to, so destructive spans that overlap
 /// each other, or that swallow another op's anchor, fail closed instead of
 /// silently dropping work.
-pub fn apply_ops(original: &str, expected_tag: &str, ops: &[Op]) -> Result<ApplyOutcome, String> {
+pub(crate) fn apply_ops(
+    original: &str,
+    expected_tag: &str,
+    ops: &[Op],
+) -> Result<ApplyOutcome, String> {
     let old_tag = compute_file_hash(original);
     if !old_tag.eq_ignore_ascii_case(expected_tag) {
         return Err(format!(
-            "hashline tag mismatch: expected {expected_tag}, live file is {old_tag}. Re-read the file and retry with the new tag and line numbers."
+            "hashline tag mismatch: expected {expected_tag}, live file is {old_tag}. Re-read the path or copy the latest edit preview header."
         ));
     }
     if ops.is_empty() {
@@ -34,12 +42,14 @@ pub fn apply_ops(original: &str, expected_tag: &str, ops: &[Op]) -> Result<Apply
 
     let lines = split_content_lines(original);
     let plan = Plan::build(ops, lines.len())?;
-    let text = finalize_text(&plan.emit(&lines), original);
+    let emitted = plan.emit(&lines);
+    let text = finalize_text(&emitted.lines, original);
     let new_tag = compute_file_hash(&text);
     Ok(ApplyOutcome {
         text,
         old_tag,
         new_tag,
+        focus_lines: emitted.focus_lines,
     })
 }
 
@@ -63,6 +73,11 @@ struct LineSlot {
 struct Plan {
     slots: BTreeMap<usize, LineSlot>,
     eof: Vec<String>,
+}
+
+struct EmitResult {
+    lines: Vec<String>,
+    focus_lines: Vec<usize>,
 }
 
 impl Plan {
@@ -190,9 +205,11 @@ impl Plan {
         Ok(())
     }
 
-    /// Walk the original lines once, splicing in each anchor's edits.
-    fn emit(&self, lines: &[&str]) -> Vec<String> {
+    /// Walk the original lines once, splicing in each anchor's edits and
+    /// recording post-edit focus lines for the chain preview.
+    fn emit(&self, lines: &[&str]) -> EmitResult {
         let mut out = Vec::with_capacity(lines.len() + self.eof.len());
+        let mut focus = Vec::new();
         let mut index = 1;
         while index <= lines.len() {
             let Some(slot) = self.slots.get(&index) else {
@@ -200,10 +217,23 @@ impl Plan {
                 index += 1;
                 continue;
             };
-            out.extend(slot.before.iter().cloned());
+
+            push_body(&mut out, &mut focus, &slot.before);
+
             match &slot.span {
+                Some(span) if span.body.is_empty() => {
+                    // Pure delete: keep neighbors so the gap stays editable.
+                    if !out.is_empty() {
+                        focus.push(out.len());
+                    }
+                    let next_neighbor = out.len() + slot.after.len() + 1;
+                    index = span.end + 1;
+                    if index <= lines.len() {
+                        focus.push(next_neighbor);
+                    }
+                }
                 Some(span) => {
-                    out.extend(span.body.iter().cloned());
+                    push_body(&mut out, &mut focus, &span.body);
                     index = span.end + 1;
                 }
                 None => {
@@ -211,10 +241,31 @@ impl Plan {
                     index += 1;
                 }
             }
-            out.extend(slot.after.iter().cloned());
+
+            push_body(&mut out, &mut focus, &slot.after);
         }
-        out.extend(self.eof.iter().cloned());
-        out
+
+        push_body(&mut out, &mut focus, &self.eof);
+
+        // Drop focus markers past EOF (trailing delete with no next neighbor).
+        focus.retain(|line| *line >= 1 && *line <= out.len());
+        focus.sort_unstable();
+        focus.dedup();
+        if focus.is_empty() && !out.is_empty() {
+            focus.push(1);
+        }
+
+        EmitResult {
+            lines: out,
+            focus_lines: focus,
+        }
+    }
+}
+
+fn push_body(out: &mut Vec<String>, focus: &mut Vec<usize>, body: &[String]) {
+    for line in body {
+        out.push(line.clone());
+        focus.push(out.len());
     }
 }
 
