@@ -35,7 +35,8 @@ pub(crate) use load::ConfigWarning;
 
 pub(crate) use provider_config::ProviderConfigs;
 
-pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
+/// Keep in lockstep with [`rho_tools::DEFAULT_MAX_OUTPUT_BYTES`].
+pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
 
 /// Persisted application configuration owned by `rho-coding-agent`.
 ///

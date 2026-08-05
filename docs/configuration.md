@@ -21,7 +21,7 @@ zen_mode = false
 max_tool_output_lines = 10
 
 [output]
-max_output_bytes = 12000
+max_output_bytes = 64000
 
 [compaction]
 auto_compact = false
@@ -230,7 +230,7 @@ Rho reads each model's available effort values from cached [models.dev](https://
 
 ## Tool output limit
 
-`max_output_bytes` controls how much output Rho keeps from [tool](/tools-workspace) calls such as command output and file reads.
+`max_output_bytes` controls how much output Rho keeps from [tool](/tools-workspace) calls such as command output, file reads, and loaded skills. It defaults to `64000`.
 
 `max_tool_output_lines` controls how many lines of a tool result are shown inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line when config is loaded.
 
