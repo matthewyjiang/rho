@@ -67,15 +67,9 @@ const PLANNER_TOKEN_BYTES: usize = 32;
 const PLANNER_REQUEST_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) const PLANNER_RESPONSE_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 const PLANNER_STDERR_BYTES: usize = 64 * 1024;
-// Address-space cap: RLIMIT_AS on unix except macOS (Darwin has no
-// address-space rlimit), or a Windows Job Object memory limit.
-//
-// Receipt: limit_receipt.json planner_process.address_space_bytes. Startup
-// alone maps ~1.1 GiB of virtual address space on current Linux glibc builds,
-// so the old 1 GiB cap killed the worker with SIGSEGV during Starlark planning
-// before it could report a budget error. Keep generous headroom above measured
-// peak; remeasure with scripts/measure_workflow_limits.py after allocator or
-// dependency changes that grow VmPeak.
+// Coarse OS address-space ceiling (RLIMIT_AS except macOS; Windows job
+// ProcessMemoryLimit). Product memory policy is the planning budgets in the
+// receipt, not this backstop. Receipt: planner_process.address_space_bytes.
 #[cfg(any(all(unix, not(target_os = "macos")), windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const WORKFLOW_WIRE_VERSION: u32 = 1;

@@ -680,11 +680,16 @@ separate minimum margin recorded in the receipt.
 On Linux, the address-space value is the highest `/proc/<pid>/status` `VmSize`
 seen after the supervised child starts the planner worker executable. This omits
 the short period before the child applies its limit. The checked debug build
-used 1,071,063,040 bytes of its 1,073,741,824-byte limit. The verifier requires
-at least 2,097,152 free bytes. This margin is small because
-the debug allocator reserves virtual address space near the enforced limit;
-resident memory is much lower. If the worker needs more than the checked
-amount, the check reports its measured value and the hard limit.
+used 1,170,087,936 bytes under a 4,294,967,296-byte (4 GiB) OS ceiling. That
+ceiling is a coarse process backstop (`RLIMIT_AS` on Linux; the same accepted
+value is a Job Object process-memory commit limit on Windows), not a tight
+product tripwire. Product memory policy lives in the receipt-backed planning
+budgets. Virtual size is much larger than resident memory because allocators
+reserve address space without committing it. The verifier rejects measurements
+above twice the checked baseline (the live regression gate) and still requires
+the separate minimum free margin recorded in the receipt under the ceiling. If
+the worker needs more than the checked amount, the check reports its measured
+value and the hard limit.
 
 The `environment_expansion_bytes` zero baseline in the receipt is a schema
 sentinel, not a corpus measurement. Workflow schema v1 forbids
