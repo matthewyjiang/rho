@@ -245,7 +245,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
     else {
         panic!("expected streamed tool call");
     };
-    let proposed_card = rho_tools::tool_card::ToolCard::new(
+    let stream_card = rho_tools::tool_card::ToolCard::new(
         ToolStatus::Running,
         ToolFamily::FileDiff,
         ToolHeader::call("edit", Some("src/lib.rs".into())),
@@ -259,7 +259,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
         DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
         DiffRow::new(DiffRowKind::Added, None, "new"),
     ]));
-    assert_eq!(card, Some(proposed_card.clone()));
+    assert_eq!(card, Some(stream_card.clone()));
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,
@@ -273,7 +273,30 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
             ..
         }) if bound_id == call_id
     ));
-    let mut interrupted_card = proposed_card.clone();
+    // Planned path (propose/start/interrupt): missing live files stamp
+    // document-only notices. Stream previews intentionally stay quieter.
+    let notice = "document preview only - not verified against live file";
+    let planned_card = rho_tools::tool_card::ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::FileDiff,
+        ToolHeader::call("edit", Some("src/lib.rs".into())),
+    )
+    .with_facts(vec![
+        ToolFact::DiffStat {
+            added: 1,
+            removed: 1,
+            path: Some("src/lib.rs".into()),
+        },
+        ToolFact::Meta {
+            text: notice.into(),
+        },
+    ])
+    .with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::Meta, None, notice),
+        DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
+        DiffRow::new(DiffRowKind::Added, None, "new"),
+    ]));
+    let mut interrupted_card = planned_card.clone();
     interrupted_card.status = ToolStatus::Interrupted;
     assert_eq!(
         crate::app::interactive_presenter::InteractiveToolPresenter::new(
@@ -292,7 +315,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolProposed { call })),
         ViewEvent::Update(ViewModelEvent::ToolCallProposed { card, .. })
-            if card == proposed_card
+            if card == planned_card
     ));
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolStarted {
@@ -301,7 +324,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
             metadata: ToolMetadata::new().operation(OperationKind::Write),
         })),
         ViewEvent::Update(ViewModelEvent::ToolStarted { card, .. })
-            if card == proposed_card
+            if card == planned_card
     ));
     let progress = ToolProgress::message("applying").units(1, 2);
     let ViewEvent::Update(ViewModelEvent::ToolUpdated { card, .. }) =
@@ -438,8 +461,11 @@ fn edit_preview_preserves_multi_file_identity() {
             removed: 1,
             path: Some("a.txt".into()),
         },
-        ToolFact::Meta {
-            text: "delete b.txt".into(),
+        // Pure CUT is in-file content change, not path deletion.
+        ToolFact::DiffStat {
+            added: 0,
+            removed: 1,
+            path: Some("b.txt".into()),
         },
     ])
     .with_body(ToolBody::Diff(vec![
