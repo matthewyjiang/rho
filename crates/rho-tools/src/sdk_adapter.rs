@@ -47,7 +47,10 @@ use crate::{
 
 use super::{
     file_mutation::FileMutationOutcome,
-    hashline::{apply_prepared_sections, parse_hashline, proposed_sections, Edit, PreparedSection},
+    hashline::{
+        apply_prepared_sections, claim_unique_path, parse_hashline, proposed_sections, Edit,
+        PreparedSection,
+    },
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     write_file::{write_file_content, WriteFile},
@@ -422,6 +425,7 @@ impl Tool for EditTool {
                 resolved,
                 accesses,
                 capabilities,
+                claimed_as: _,
             } = targets;
 
             Ok(PreparedToolInvocation::resource_aware(
@@ -446,13 +450,13 @@ impl Tool for EditTool {
 /// Existing edit targets collected during prepare. Edit never creates paths, so
 /// this set has no missing-write / rename seam.
 ///
-/// Prepare rejects duplicate canonical paths as `InvalidArguments` so
-/// authorization never starts for a malformed multi-claim document. Write-time
-/// uniqueness is still enforced in [`apply_prepared_sections`] for every
-/// execute path (including the App harness that skips prepare).
+/// Duplicate paths use [`claim_unique_path`] (same predicate as execute) and map
+/// to `InvalidArguments` so authorization never starts for a multi-claim doc.
 #[derive(Default)]
 struct EditTargetSet {
     resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
+    /// Document claim string per canonical path - shared uniqueness owner.
+    claimed_as: std::collections::BTreeMap<PathBuf, String>,
     accesses: Vec<ToolResourceAccess>,
     capabilities: Vec<CapabilityRequest>,
 }
@@ -467,12 +471,8 @@ impl EditTargetSet {
             .resolve_for_read(requested_path)
             .map_err(map_path_error)?;
         let canonical = resolved.path().to_path_buf();
-        if self.resolved.contains_key(&canonical) {
-            return Err(ToolError::new(
-                ToolErrorKind::InvalidArguments,
-                format!("hashline document claims path '{requested_path}' more than once"),
-            ));
-        }
+        claim_unique_path(&mut self.claimed_as, canonical.clone(), requested_path)
+            .map_err(|message| ToolError::new(ToolErrorKind::InvalidArguments, message))?;
         self.accesses
             .push(ToolResourceAccess::exclusive(ToolResource::workspace_path(
                 resolved.path(),

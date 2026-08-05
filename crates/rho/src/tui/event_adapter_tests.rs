@@ -275,7 +275,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
     ));
     // Planned path (propose/start/interrupt): missing live files stamp
     // document-only notices. Stream previews intentionally stay quieter.
-    let notice = "document preview only - not verified against live file";
+    let notice = rho_tools::hashline::EDIT_DOCUMENT_ONLY_NOTICE;
     let planned_card = rho_tools::tool_card::ToolCard::new(
         ToolStatus::Running,
         ToolFamily::FileDiff,

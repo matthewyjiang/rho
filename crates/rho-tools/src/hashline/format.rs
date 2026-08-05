@@ -36,6 +36,24 @@ pub(crate) fn format_numbered_line(line_number: usize, line: &str) -> String {
     format!("{line_number}{LINE_BODY_SEP}{line}")
 }
 
+/// Wire locator for a PUT replace/single-line range (no trailing colon).
+pub(super) fn format_put_locator(start: usize, end: usize) -> String {
+    if start == end {
+        format!("PUT {start}")
+    } else {
+        format!("PUT {start}.={end}")
+    }
+}
+
+/// Wire locator for a CUT range (no trailing colon).
+pub(super) fn format_cut_locator(start: usize, end: usize) -> String {
+    if start == end {
+        format!("CUT {start}")
+    } else {
+        format!("CUT {start}.={end}")
+    }
+}
+
 /// Context lines kept on each side of a post-edit focus line.
 const POST_EDIT_CONTEXT_LINES: usize = 3;
 

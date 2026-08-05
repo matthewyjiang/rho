@@ -41,7 +41,8 @@ PUT >6:
         ]
     );
     assert!(!preview.truncated);
-    assert!(preview.document_only);
+    assert_eq!(preview.kind, EditPreviewKind::Document);
+    assert!(!preview.warns_unverified());
 }
 
 // Covers: incomplete streamed documents still yield path counts and partial rows
@@ -101,7 +102,8 @@ fn plans_live_content_diff_with_removals() {
     });
     assert_eq!(planned.files.len(), 1);
     let file = &planned.files[0];
-    assert!(!planned.document_only);
+    assert_eq!(planned.kind, EditPreviewKind::Planned { unverified: false });
+    assert!(!planned.warns_unverified());
     assert_eq!(file.change, DiffCardChange::Content);
     assert!(
         file.rows
@@ -135,11 +137,11 @@ fn plans_live_content_diff_with_removals() {
 #[test]
 fn planned_edit_falls_back_without_live_file() {
     let planned = planned_edit("[missing.txt#AAAA]\nPUT 1.=1:\n+x\n", |_| None);
-    assert!(planned.document_only);
+    assert!(planned.warns_unverified());
+    assert_eq!(planned.kind, EditPreviewKind::Planned { unverified: true });
     assert!(planned.files.iter().all(|file| {
         file.rows.first().is_some_and(|row| {
-            row.kind == DiffRowKind::Meta
-                && row.text == "document preview only - not verified against live file"
+            row.kind == DiffRowKind::Meta && row.text == EDIT_DOCUMENT_ONLY_NOTICE
         })
     }));
     assert!(planned

@@ -198,12 +198,7 @@ fn edit_document_card(
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
         return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
     };
-    edit_card_from_preview(
-        rho_tools::hashline::proposed_edit(input),
-        cwd,
-        status,
-        /*surface_unverified*/ false,
-    )
+    edit_card_from_preview(rho_tools::hashline::proposed_edit(input), cwd, status)
 }
 
 /// Approval / start / interrupted cards: dry-run against live files when
@@ -220,16 +215,15 @@ fn edit_planned_card(
     let planned = rho_tools::hashline::planned_edit(input, |path| {
         std::fs::read_to_string(resolve_path(&cwd_buf, path)).ok()
     });
-    let unverified = planned.document_only;
-    edit_card_from_preview(planned, cwd, status, unverified)
+    edit_card_from_preview(planned, cwd, status)
 }
 
 fn edit_card_from_preview(
     preview: rho_tools::hashline::EditPreview,
     cwd: &std::path::Path,
     status: ToolStatus,
-    surface_unverified: bool,
 ) -> ToolCard {
+    let warn_unverified = preview.warns_unverified();
     let files = preview
         .files
         .into_iter()
@@ -249,10 +243,9 @@ fn edit_card_from_preview(
         EmptyDiffState::Silent,
         preview.truncated,
     );
-    if surface_unverified {
-        // Approval/start fell back to document projection for at least one path.
+    if warn_unverified {
         card.push_fact(ToolFact::Meta {
-            text: "document preview only - not verified against live file".into(),
+            text: rho_tools::hashline::EDIT_DOCUMENT_ONLY_NOTICE.into(),
         });
     }
     card

@@ -1,15 +1,17 @@
 //! Document and planned projections of a hashline edit for presentation cards.
 //!
-//! Streaming cards use [`proposed_edit`]: rows come from the edit document alone
-//! so mid-stream previews never need the target file on disk.
+//! Streaming cards use [`proposed_edit`] ([`EditPreviewKind::Document`]): rows
+//! come from the edit document alone so mid-stream previews never need disk and
+//! never warn.
 //!
-//! Approval / start cards use [`planned_edit`]: when a reader can supply live
-//! file text, ops are applied in memory and rows become a real content diff
-//! (removals included). Paths that cannot be planned fall back to the document
-//! projection for that section only.
+//! Approval / start cards use [`planned_edit`] ([`EditPreviewKind::Planned`]):
+//! when a reader can supply live file text, ops are applied in memory and rows
+//! become a real content diff (removals included). Paths that cannot be planned
+//! fall back to document rows and set `unverified` so hosts can warn once.
 
 use super::{
     apply::apply_ops,
+    format::{format_cut_locator, format_put_locator},
     parser::{parse_hashline, parse_lenient, Op, Section},
 };
 use crate::{
@@ -22,8 +24,31 @@ const MAX_PROPOSED_DIFF_ROWS: usize = 1_000;
 /// Maximum file sections retained for a proposed card.
 const MAX_PROPOSED_DIFF_FILES: usize = 100;
 
-/// Notice prepended when a section could not bind to live file text.
-const DOCUMENT_ONLY_NOTICE: &str = "document preview only - not verified against live file";
+/// Notice when a planned card could not bind a section to live file text.
+///
+/// Hosts should use this constant for card-level facts so copy stays one place.
+pub const EDIT_DOCUMENT_ONLY_NOTICE: &str =
+    "document preview only - not verified against live file";
+
+/// How an [`EditPreview`] was produced and whether hosts should warn.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum EditPreviewKind {
+    /// Document projection only (streaming). Quiet: never warn.
+    #[default]
+    Document,
+    /// Dry-run against live files when possible.
+    Planned {
+        /// True when at least one path fell back to document rows.
+        unverified: bool,
+    },
+}
+
+impl EditPreviewKind {
+    /// Whether hosts should surface an unverified/document-only warning.
+    pub fn warns_unverified(&self) -> bool {
+        matches!(self, Self::Planned { unverified: true })
+    }
+}
 
 /// Best-effort edit preview ready for FileDiff cards.
 ///
@@ -34,15 +59,20 @@ pub struct EditPreview {
     pub files: Vec<DiffCardFile>,
     /// True when file sections or body rows were dropped to stay in budget.
     pub truncated: bool,
-    /// True when at least one section used document-only rows because a live
-    /// plan was unavailable (missing file, stale tag, apply error, or stream).
-    pub document_only: bool,
+    /// Projection mode. Stream uses [`EditPreviewKind::Document`]; approval
+    /// uses [`EditPreviewKind::Planned`].
+    pub kind: EditPreviewKind,
 }
 
 impl EditPreview {
     /// Paths in document order (cheap helper for headers and path lists).
     pub fn paths(&self) -> impl Iterator<Item = &str> {
         self.files.iter().map(|file| file.path.as_str())
+    }
+
+    /// Whether hosts should surface the unverified notice on the card.
+    pub fn warns_unverified(&self) -> bool {
+        self.kind.warns_unverified()
     }
 }
 
@@ -56,10 +86,10 @@ pub struct ProposedSection {
 
 /// Project a possibly incomplete document into display-ready file cards.
 ///
-/// Document-only: never reads disk. Use for streaming argument previews.
+/// Document-only: never reads disk, never warns. Use for streaming previews.
 pub fn proposed_edit(input: &str) -> EditPreview {
     let mut preview = EditPreview {
-        document_only: true,
+        kind: EditPreviewKind::Document,
         ..EditPreview::default()
     };
     let mut retained_body_rows = 0usize;
@@ -88,24 +118,28 @@ pub fn proposed_edit(input: &str) -> EditPreview {
 ///
 /// `read_path` receives each section path as written in the document and should
 /// return UTF-8 file contents when the path is readable in the caller's
-/// workspace. Sections that cannot be planned fall back to
-/// [`proposed_edit`]-style document rows and set [`EditPreview::document_only`].
+/// workspace. Sections that cannot be planned fall back to document rows with a
+/// per-file notice and set [`EditPreviewKind::Planned::unverified`].
 pub fn planned_edit(input: &str, mut read_path: impl FnMut(&str) -> Option<String>) -> EditPreview {
     let sections = match parse_hashline(input) {
         Ok(sections) => sections,
-        // Incomplete / malformed documents stay on the streaming projection.
+        // Incomplete / malformed documents stay on the document projection, but
+        // approval still warns because nothing was verified against disk.
         Err(_) => {
             let mut preview = proposed_edit(input);
-            // Approval path: mark document fallback so the card can warn.
-            stamp_document_only_notices(&mut preview);
+            mark_planned_unverified(&mut preview);
             return preview;
         }
     };
 
-    let mut preview = EditPreview::default();
+    let mut preview = EditPreview {
+        kind: EditPreviewKind::Planned { unverified: false },
+        ..EditPreview::default()
+    };
     let mut retained_body_rows = 0usize;
     let mut body_overflow = false;
     let mut files_truncated = false;
+    let mut unverified = false;
 
     for section in sections {
         if preview.files.len() >= MAX_PROPOSED_DIFF_FILES {
@@ -123,7 +157,7 @@ pub fn planned_edit(input: &str, mut read_path: impl FnMut(&str) -> Option<Strin
                     &mut body_overflow,
                 ),
                 Err(_) => {
-                    preview.document_only = true;
+                    unverified = true;
                     project_section_document(
                         Section {
                             path,
@@ -137,7 +171,7 @@ pub fn planned_edit(input: &str, mut read_path: impl FnMut(&str) -> Option<Strin
                 }
             },
             None => {
-                preview.document_only = true;
+                unverified = true;
                 project_section_document(
                     Section {
                         path,
@@ -154,6 +188,7 @@ pub fn planned_edit(input: &str, mut read_path: impl FnMut(&str) -> Option<Strin
     }
 
     preview.truncated = body_overflow || files_truncated;
+    preview.kind = EditPreviewKind::Planned { unverified };
     preview
 }
 
@@ -208,7 +243,7 @@ fn project_section_document(
     if include_notice {
         push_row(
             &mut rows,
-            DiffRow::new(DiffRowKind::Meta, None, DOCUMENT_ONLY_NOTICE),
+            DiffRow::new(DiffRowKind::Meta, None, EDIT_DOCUMENT_ONLY_NOTICE),
             retained_body_rows,
             body_overflow,
         );
@@ -297,7 +332,7 @@ fn project_op_document(
             *added_lines += body.len() as u64;
             push_summary_and_body(
                 rows,
-                format_put_range(*start, *end),
+                format_put_locator(*start, *end),
                 body,
                 retained_body_rows,
                 body_overflow,
@@ -307,7 +342,7 @@ fn project_op_document(
             *removed_lines += (*end - *start + 1) as u64;
             push_row(
                 rows,
-                DiffRow::new(DiffRowKind::Meta, None, format_cut_range(*start, *end)),
+                DiffRow::new(DiffRowKind::Meta, None, format_cut_locator(*start, *end)),
                 retained_body_rows,
                 body_overflow,
             );
@@ -356,22 +391,6 @@ fn push_summary_and_body(
     }
 }
 
-fn format_put_range(start: usize, end: usize) -> String {
-    if start == end {
-        format!("PUT {start}")
-    } else {
-        format!("PUT {start}.={end}")
-    }
-}
-
-fn format_cut_range(start: usize, end: usize) -> String {
-    if start == end {
-        format!("CUT {start}")
-    } else {
-        format!("CUT {start}.={end}")
-    }
-}
-
 fn push_row(
     rows: &mut Vec<DiffRow>,
     row: DiffRow,
@@ -386,17 +405,16 @@ fn push_row(
     *retained_body_rows += 1;
 }
 
-fn stamp_document_only_notices(preview: &mut EditPreview) {
-    preview.document_only = true;
+fn mark_planned_unverified(preview: &mut EditPreview) {
+    preview.kind = EditPreviewKind::Planned { unverified: true };
     for file in &mut preview.files {
-        let already = file
-            .rows
-            .first()
-            .is_some_and(|row| row.kind == DiffRowKind::Meta && row.text == DOCUMENT_ONLY_NOTICE);
+        let already = file.rows.first().is_some_and(|row| {
+            row.kind == DiffRowKind::Meta && row.text == EDIT_DOCUMENT_ONLY_NOTICE
+        });
         if !already {
             file.rows.insert(
                 0,
-                DiffRow::new(DiffRowKind::Meta, None, DOCUMENT_ONLY_NOTICE),
+                DiffRow::new(DiffRowKind::Meta, None, EDIT_DOCUMENT_ONLY_NOTICE),
             );
         }
     }
