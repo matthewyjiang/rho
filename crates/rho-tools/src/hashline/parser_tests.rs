@@ -68,6 +68,26 @@ fn accepts_single_line_put_shorthand() {
     );
 }
 
+// Covers: PUT N.: / N.= must fail with an explicit truncated-range diagnostic
+// (not a generic "not a positive integer" that hides the stray dot)
+// Owner: hashline parser
+#[test]
+fn rejects_truncated_range_locators_with_clear_errors() {
+    let err = parse_hashline("[a.rs#ABCD]\nPUT 3.:\n+only\n").unwrap_err();
+    assert!(err.contains("truncated"), "{err}");
+    assert!(err.contains("\"3.\""), "{err}");
+    assert!(err.contains("PUT 3:"), "{err}");
+    assert!(!err.contains("positive integer"), "{err}");
+
+    let err = parse_hashline("[a.rs#ABCD]\nPUT 3.=:\n+only\n").unwrap_err();
+    assert!(err.contains("incomplete"), "{err}");
+    assert!(err.contains("\"3.=\""), "{err}");
+
+    let err = parse_hashline("[a.rs#ABCD]\nCUT 3.\n").unwrap_err();
+    assert!(err.contains("truncated"), "{err}");
+    assert!(err.contains("\"3.\""), "{err}");
+}
+
 // Covers: empty PUT body is not a second delete opcode; use CUT
 // Owner: hashline parser
 #[test]

@@ -305,6 +305,9 @@ where
 
 fn parse_range(raw: &str) -> Result<(usize, usize), String> {
     let raw = raw.trim();
+    if let Some(message) = truncated_range_error(raw) {
+        return Err(message);
+    }
     // Canonical `N.=M`, plus lenient `N-M` / `N..M` the model sometimes emits.
     let endpoints = raw
         .split_once(".=")
@@ -330,6 +333,38 @@ fn parse_range(raw: &str) -> Result<(usize, usize), String> {
     Ok((line, line))
 }
 
+/// Detect botched range spellings that fall out of learning `N.=M`.
+///
+/// Models often emit `PUT N.:` (locator `N.`) or `PUT N.=:` (locator `N.=`).
+/// Those must not be accepted as aliases and must not degrade into a generic
+/// "not a positive integer" message that hides the stray punctuation.
+fn truncated_range_error(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    // `3.=` — range operator present, end missing.
+    if raw.ends_with(".=") {
+        return Some(format!(
+            "hashline range {raw:?} is incomplete; use N.=M (example: \"3.=5\") or a single line N (example: \"3\")"
+        ));
+    }
+    // `.=5` — start missing.
+    if raw.starts_with(".=") {
+        return Some(format!(
+            "hashline range {raw:?} is incomplete; use N.=M (example: \"3.=5\")"
+        ));
+    }
+    // `3.` — almost always a truncated `3.=M` / mistaken `3.:` single-line form.
+    // Do not treat `3..5` here; that still has a second `.` and is handled above.
+    if raw.ends_with('.') && !raw.contains("..") {
+        return Some(format!(
+            "hashline range {raw:?} looks like a truncated N.=M; for one line use N (example: PUT 3:) not N. (invalid: PUT 3.:); for a range use N.=M (example: PUT 3.=5:)"
+        ));
+    }
+    None
+}
+
 /// Strip a leading ASCII keyword case-insensitively when it is a whole token.
 fn strip_ascii_keyword<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
     let bytes = line.as_bytes();
@@ -353,11 +388,12 @@ fn parse_line_number(raw: &str, label: &str) -> Result<usize, String> {
     if raw.is_empty() {
         return Err(format!("{label} is empty"));
     }
+    // Quote the token so trailing dots/spaces stay visible in tool output.
     let value: usize = raw
         .parse()
-        .map_err(|_| format!("{label} must be a positive integer, got: {raw}"))?;
+        .map_err(|_| format!("{label} must be a positive integer, got {raw:?}"))?;
     if value == 0 {
-        return Err(format!("{label} must be >= 1, got: 0"));
+        return Err(format!("{label} must be >= 1, got {raw:?}"));
     }
     Ok(value)
 }

@@ -9,7 +9,7 @@ use std::{path::Path, time::Duration};
 
 use serde_json::Value;
 
-use crate::{hashline::SnapshotStore, tool::ToolError, workspace_walk::WalkStop};
+use crate::{tool::ToolError, workspace_walk::WalkStop};
 
 /// Default number of results returned by one search call.
 pub(crate) const DEFAULT_MAX_RESULTS: usize = 200;
@@ -121,6 +121,5 @@ pub(crate) trait WorkspaceSearch: Send + Sync + 'static {
         display_root: &str,
         request: &Self::Request,
         cancelled: &dyn Fn() -> bool,
-        snapshots: Option<&SnapshotStore>,
     ) -> Result<String, ToolError>;
 }

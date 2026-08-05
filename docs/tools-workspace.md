@@ -61,25 +61,29 @@ Document extraction enforces a 25 MiB source limit and a 200,000-character extra
 
 ```json
 {
-  "input": "[src/app.py#A1B2]\nPUT 2.=2:\n+print(\"Hello, world!\")\n"
+  "input": "[src/app.py#A1B2]\nPUT 2:\n+print(\"Hello, world!\")\n"
 }
 ```
 
 Supported ops:
 
-- `PUT N.=M:` replace inclusive original lines with `+` body rows (`PUT N:` is shorthand for one line)
+- `PUT N:` replace one original line (digits then colon — never `PUT N.:`)
+- `PUT N.=M:` replace inclusive original lines `N` through `M` with `+` body rows
 - `PUT <N:` / `PUT >N:` / `PUT >$:` insert body rows before line N, after line N, or at end of file
-- `CUT N.=M` delete inclusive original lines
+- `CUT N.=M` or `CUT N` delete inclusive original lines (no colon on CUT)
+
+Locators must match those forms exactly. A trailing dot (`PUT 12.:`, `PUT 12.=:`) is invalid and is rejected with an explicit error — it is not a single-line shorthand.
 
 Rules:
 
-- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` recovery snapshot
+- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot
 - Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
 - Line numbers name the original snapshot; they do not shift mid-document
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
 - `PUT` always needs at least one `+` body row; use `CUT` to delete
-- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed. When the session still holds the tagged snapshot, `edit` may remap anchors onto the live file; otherwise the error includes a bounded live snapshot
-- Failed `edit` calls return a bounded live hashline snapshot in the error - copy that header and lines to retry. Re-read only for lines outside the snapshot
+- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed with no write. The error includes a bounded live snapshot - copy that header and lines to retry
+- Re-read only for lines outside the live snapshot or post-edit preview
+- After a large or structural edit, re-read before further ops on anchors outside the returned preview
 - An insert whose anchor falls inside a range that another op replaces or deletes is rejected, because that position no longer exists after the edit
 - Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
 - Create or fully rewrite files with `write_file`. Do not use `edit` to create paths
@@ -113,7 +117,7 @@ Managed processes use standard output and error pipes, with standard input close
 
 ## File writes and diffs
 
-File write results include a unified diff so the model and transcript can inspect what changed. In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
+Successful `write_file` and `edit` results return model-facing hashline snapshots for chaining. Unified diffs are tool metadata for UI cards (not repeated in model content). In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
 
 ## Security and workspace boundaries
 

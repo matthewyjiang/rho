@@ -5,6 +5,9 @@ tool loop. `edit_file` and `apply_patch` were removed from the product; `edit`
 is the only multi-hunk workspace edit tool. Prefer `write_file` to create or
 fully rewrite files.
 
+Dogfood notes from implementing this tool under its own loop:
+[hashline-edit-dogfood-report.md](hashline-edit-dogfood-report.md).
+
 ## Questions this eval answers
 
 1. Does hashline `edit` beat free-form rewrite on multi-hunk single-file work?

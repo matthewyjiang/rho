@@ -115,7 +115,7 @@ fn chain_snapshot_uses_head_tail_window_without_focus() {
     assert!(!snapshot.contains("40:line-40"), "{snapshot}");
 }
 
-// Covers: recovery focus keeps anchors without dumping the whole file
+// Covers: failure focus keeps anchors without dumping the whole file
 // Owner: hashline format
 #[test]
 fn chain_snapshot_focuses_around_anchors() {

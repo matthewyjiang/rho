@@ -31,7 +31,7 @@ const EDIT_DIFF_STEPS: &[Step] = &[
         text: "edit lifecycle complete with one result",
         timeout: STREAM,
     },
-    Step::AssertText("+streamed edit line"),
+    Step::AssertText("streamed edit line"),
     Step::Custom(assert_one_edit_card),
     Step::SubmitText("fixture cancel edit"),
     Step::WaitText {

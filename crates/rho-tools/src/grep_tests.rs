@@ -14,7 +14,7 @@ fn call_grep(dir: &TempDir, args: serde_json::Value) -> Result<String, ToolError
     let request = GrepRequest::from_arguments(args)?;
     let root = resolve_path(dir.path(), &request.path);
     let display = compact_display_path(dir.path(), &request.path);
-    grep_workspace(&root, &display, &request, &|| false, None)
+    grep_workspace(&root, &display, &request, &|| false)
 }
 
 fn write(dir: &TempDir, relative: &str, content: &str) {
@@ -175,7 +175,7 @@ fn cancellation_stops_the_walk_and_is_reported() {
     let dir = TempDir::new().unwrap();
     write(&dir, "a.txt", "needle\n");
     let request = GrepRequest::from_arguments(json!({"pattern": "needle"})).unwrap();
-    let out = grep_workspace(dir.path(), ".", &request, &|| true, None).unwrap();
+    let out = grep_workspace(dir.path(), ".", &request, &|| true).unwrap();
     assert_eq!(out, "no matches for 'needle' under . (cancelled)");
 }
 
@@ -193,4 +193,24 @@ fn content_mode_mints_file_tags() {
         "{content}"
     );
     assert!(content.contains("2:find me"), "{content}");
+}
+
+// Covers: content-mode bodies must keep source indentation for edit chaining
+// Owner: pure unit (grep hashline)
+#[test]
+fn preserves_indentation_for_edit_chaining() {
+    let dir = TempDir::new().unwrap();
+    let body = "fn main() {\n    println!(\"hi\");\n}\n";
+    write(&dir, "main.rs", body);
+    let tag = compute_file_hash(body);
+    let content = call_grep(&dir, json!({"pattern": "println"})).unwrap();
+    assert!(content.contains(&format!("[main.rs#{tag}]")), "{content}");
+    assert!(
+        content.contains("2:    println!(\"hi\");"),
+        "indentation stripped: {content}"
+    );
+    assert!(
+        !content.contains("2:println!(\"hi\");"),
+        "normalized body must not appear: {content}"
+    );
 }

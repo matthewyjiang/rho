@@ -7,9 +7,8 @@
 /// Number of uppercase hex digits in a file snapshot tag.
 ///
 /// Four hex digits (low 16 bits of FNV-1a) match the oh-my-pi wire format and
-/// keep headers cheap. Session SnapshotStore + remap recovery absorb the
-/// shorter collision space; the tag remains a freshness lock, not a sole
-/// identity key (store dedups on full text).
+/// keep headers cheap. The tag is a freshness lock: after the live file drifts,
+/// `edit` fails closed and returns a new live snapshot to copy.
 pub(crate) const FILE_HASH_LENGTH: usize = 4;
 
 /// Separator between a path and its snapshot tag inside a section header.
@@ -46,13 +45,13 @@ const POST_EDIT_CONTEXT_LINES: usize = 3;
 /// few context lines around each focus region.
 const POST_EDIT_MAX_BODY_LINES: usize = 40;
 
-/// Soft cap on numbered body rows in write/recovery chain snapshots.
+/// Soft cap on numbered body rows in write/failure chain snapshots.
 ///
-/// Recovery and write_file must return a usable `[path#TAG]` without dumping
+/// write_file and failed edit must return a usable `[path#TAG]` without dumping
 /// whole files into the model context. Full bodies stay on `read_file`.
 const CHAIN_SNAPSHOT_MAX_BODY_LINES: usize = 40;
 
-/// Context lines around op anchors in a recovery snapshot.
+/// Context lines around op anchors in a failure snapshot.
 const CHAIN_SNAPSHOT_CONTEXT_LINES: usize = 2;
 
 /// Head lines kept when a chain snapshot has no focus anchors.
@@ -60,6 +59,53 @@ const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
 
 /// Tail lines kept after the head so EOF anchors stay chainable on large files.
 const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
+
+/// How to pick body rows for a chainable numbered snapshot.
+enum LineSelection<'a> {
+    Focus {
+        lines: &'a [usize],
+        context: usize,
+        max_body: usize,
+    },
+    HeadTail {
+        head: usize,
+        tail: usize,
+    },
+}
+
+/// Footer wording for a numbered snapshot.
+enum SnapshotFooter {
+    ReadWindow {
+        start: usize,
+        end: usize,
+        total: usize,
+    },
+    PostEdit {
+        first: usize,
+        last: usize,
+        total: usize,
+    },
+    ChainPartial {
+        shown: usize,
+        total: usize,
+    },
+}
+
+impl SnapshotFooter {
+    fn render(&self) -> String {
+        match self {
+            Self::ReadWindow { start, end, total } => format!(
+                "[lines {start}-{end} of {total} shown; re-read with a different offset or limit for the rest]"
+            ),
+            Self::PostEdit { first, last, total } => format!(
+                "[post-edit lines {first}-{last} of {total} shown around changes; re-read for other lines]"
+            ),
+            Self::ChainPartial { shown, total } => {
+                format!("[showing {shown} of {total} lines; re-read with offset/limit for other lines]")
+            }
+        }
+    }
+}
 
 /// Render a hashline view of `text` for `display_path`.
 ///
@@ -81,14 +127,15 @@ pub(crate) fn format_hashline_view(
     let lines = split_content_lines(text);
     let total = lines.len();
     let start = offset.unwrap_or(1);
+    let hash = compute_file_hash(text);
+    let header = format_header(display_path, &hash);
     if total == 0 {
         if start > 1 {
             return Err(format!(
                 "offset {start} is past the end of the file (0 line(s))"
             ));
         }
-        let hash = compute_file_hash(text);
-        return Ok(format_header(display_path, &hash));
+        return Ok(header);
     }
     if start > total {
         return Err(format!(
@@ -100,22 +147,13 @@ pub(crate) fn format_hashline_view(
         Some(limit) => start.saturating_add(limit).saturating_sub(1).min(total),
         None => total,
     };
-    let hash = compute_file_hash(text);
-    let mut out = format_header(display_path, &hash);
-    out.push('\n');
-    for line_number in start..=end {
-        out.push_str(&format_numbered_line(line_number, lines[line_number - 1]));
-        out.push('\n');
-    }
-    // Drop the trailing newline so truncation and tool output stay tidy, matching
-    // ordinary file bodies that the model already expects without a final blank.
-    out.pop();
-    if start > 1 || end < total {
-        out.push_str(&format!(
-            "\n\n[lines {start}-{end} of {total} shown; re-read with a different offset or limit for the rest]"
-        ));
-    }
-    Ok(out)
+    let selected: Vec<usize> = (start..=end).collect();
+    let footer = if start > 1 || end < total {
+        Some(SnapshotFooter::ReadWindow { start, end, total })
+    } else {
+        None
+    };
+    Ok(emit_numbered_body(&header, &lines, &selected, footer))
 }
 
 /// Render a chainable post-edit hashline preview for `new_text`.
@@ -128,62 +166,48 @@ pub(crate) fn format_post_edit_preview(
     new_text: &str,
     focus_lines: &[usize],
 ) -> String {
-    let new_tag = compute_file_hash(new_text);
-    let header = format_header(display_path, &new_tag);
-    let new_lines = split_content_lines(new_text);
-    if new_lines.is_empty() {
-        return header;
-    }
-
-    let mut focus = focus_lines.to_vec();
-    focus.retain(|line| *line >= 1 && *line <= new_lines.len());
-    focus.sort_unstable();
-    focus.dedup();
-    if focus.is_empty() {
-        focus.push(1);
-    }
-
-    let selected = expand_focus_lines(&focus, new_lines.len(), POST_EDIT_CONTEXT_LINES);
-    let selected = cap_selected_by_hunk(&selected, POST_EDIT_MAX_BODY_LINES);
-    if selected.is_empty() {
-        return header;
-    }
-
-    let mut out = header;
-    out.push('\n');
-    let mut previous = 0usize;
-    let total = new_lines.len();
-    let first = selected[0];
-    let last = *selected.last().expect("non-empty selection");
-    for &line_number in &selected {
-        if previous != 0 && line_number > previous + 1 {
-            out.push_str("…\n");
-        }
-        out.push_str(&format_numbered_line(
-            line_number,
-            new_lines[line_number - 1],
-        ));
-        out.push('\n');
-        previous = line_number;
-    }
-    out.pop();
-    if first > 1 || last < total {
-        out.push_str(&format!(
-            "\n\n[post-edit lines {first}-{last} of {total} shown around changes; re-read for other lines]"
-        ));
-    }
-    out
+    format_numbered(
+        display_path,
+        new_text,
+        LineSelection::Focus {
+            lines: focus_lines,
+            context: POST_EDIT_CONTEXT_LINES,
+            max_body: POST_EDIT_MAX_BODY_LINES,
+        },
+        /*post_edit*/ true,
+    )
 }
 
 /// Bounded hashline snapshot for chaining after `write_file` or a failed `edit`.
 ///
-/// Always includes the full-file TAG. Body rows are capped so recovery does not
+/// Always includes the full-file TAG. Body rows are capped so failures do not
 /// bloat context: focus anchors (when provided) expand locally; otherwise a
 /// short head+tail window is used.
 pub(crate) fn format_chain_snapshot(
     display_path: &str,
     text: &str,
     focus_lines: &[usize],
+) -> String {
+    let selection = if focus_lines.is_empty() {
+        LineSelection::HeadTail {
+            head: CHAIN_SNAPSHOT_HEAD_LINES,
+            tail: CHAIN_SNAPSHOT_TAIL_LINES,
+        }
+    } else {
+        LineSelection::Focus {
+            lines: focus_lines,
+            context: CHAIN_SNAPSHOT_CONTEXT_LINES,
+            max_body: CHAIN_SNAPSHOT_MAX_BODY_LINES,
+        }
+    };
+    format_numbered(display_path, text, selection, /*post_edit*/ false)
+}
+
+fn format_numbered(
+    display_path: &str,
+    text: &str,
+    selection: LineSelection<'_>,
+    post_edit: bool,
 ) -> String {
     let tag = compute_file_hash(text);
     let header = format_header(display_path, &tag);
@@ -193,30 +217,70 @@ pub(crate) fn format_chain_snapshot(
     }
 
     let total = lines.len();
-    let selected = if focus_lines.is_empty() {
-        head_tail_lines(total, CHAIN_SNAPSHOT_HEAD_LINES, CHAIN_SNAPSHOT_TAIL_LINES)
-    } else {
-        let mut focus = focus_lines.to_vec();
-        focus.retain(|line| *line >= 1 && *line <= total);
-        focus.sort_unstable();
-        focus.dedup();
-        if focus.is_empty() {
-            head_tail_lines(total, CHAIN_SNAPSHOT_HEAD_LINES, CHAIN_SNAPSHOT_TAIL_LINES)
-        } else {
-            let expanded = expand_focus_lines(&focus, total, CHAIN_SNAPSHOT_CONTEXT_LINES);
-            cap_selected_by_hunk(&expanded, CHAIN_SNAPSHOT_MAX_BODY_LINES)
+    let selected = match selection {
+        LineSelection::Focus {
+            lines: focus,
+            context,
+            max_body,
+        } => {
+            let mut focus = focus.to_vec();
+            focus.retain(|line| *line >= 1 && *line <= total);
+            focus.sort_unstable();
+            focus.dedup();
+            if focus.is_empty() {
+                if post_edit {
+                    focus.push(1);
+                    let expanded = expand_focus_lines(&focus, total, context);
+                    cap_selected_by_hunk(&expanded, max_body)
+                } else {
+                    head_tail_lines(total, CHAIN_SNAPSHOT_HEAD_LINES, CHAIN_SNAPSHOT_TAIL_LINES)
+                }
+            } else {
+                let expanded = expand_focus_lines(&focus, total, context);
+                cap_selected_by_hunk(&expanded, max_body)
+            }
         }
+        LineSelection::HeadTail { head, tail } => head_tail_lines(total, head, tail),
     };
     if selected.is_empty() {
         return header;
     }
 
-    let mut out = header;
-    out.push('\n');
-    let mut previous = 0usize;
     let first = selected[0];
     let last = *selected.last().expect("non-empty selection");
-    for &line_number in &selected {
+    let footer = if post_edit {
+        if first > 1 || last < total {
+            Some(SnapshotFooter::PostEdit { first, last, total })
+        } else {
+            None
+        }
+    } else {
+        let showed_all = selected.len() == total && first == 1 && last == total;
+        if showed_all {
+            None
+        } else {
+            Some(SnapshotFooter::ChainPartial {
+                shown: selected.len(),
+                total,
+            })
+        }
+    };
+    emit_numbered_body(&header, &lines, &selected, footer)
+}
+
+fn emit_numbered_body(
+    header: &str,
+    lines: &[&str],
+    selected: &[usize],
+    footer: Option<SnapshotFooter>,
+) -> String {
+    if selected.is_empty() {
+        return header.to_string();
+    }
+    let mut out = header.to_string();
+    out.push('\n');
+    let mut previous = 0usize;
+    for &line_number in selected {
         if previous != 0 && line_number > previous + 1 {
             out.push_str("…\n");
         }
@@ -225,12 +289,9 @@ pub(crate) fn format_chain_snapshot(
         previous = line_number;
     }
     out.pop();
-    let showed_all = selected.len() == total && first == 1 && last == total;
-    if !showed_all {
-        out.push_str(&format!(
-            "\n\n[showing {} of {total} lines; re-read with offset/limit for other lines]",
-            selected.len()
-        ));
+    if let Some(footer) = footer {
+        out.push_str("\n\n");
+        out.push_str(&footer.render());
     }
     out
 }

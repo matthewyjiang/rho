@@ -1,24 +1,20 @@
 //! Line-anchored multi-hunk edit tool (`edit`) with snapshot tags.
 //!
 //! `read_file` / `grep` / `write_file` mint `[path#TAG]` snapshots. `edit`
-//! applies a compact PUT/CUT document against those original line numbers,
-//! rejects stale tags (or remaps them via the session snapshot store), and
-//! refuses anchors the model never saw under a tagged read.
+//! applies a compact PUT/CUT document against those original line numbers and
+//! rejects stale tags. Failures leave the file untouched and return a bounded
+//! live snapshot to copy.
 
 mod apply;
 mod format;
 mod parser;
 mod proposed;
-mod recovery;
-mod store;
 
 use std::{
     collections::BTreeMap,
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::atomic::Ordering,
-    sync::Arc,
 };
 
 use serde::Deserialize;
@@ -27,32 +23,28 @@ use serde_json::json;
 use crate::{diff::unified_diff, tool::*, write_file::FileMutationOutcome};
 
 use apply::{apply_ops, ApplyOutcome};
-use format::format_post_edit_preview;
 use parser::{Op, Section};
-use recovery::{collect_anchor_lines, try_recover, RECOVERY_REMAP_NOTICE};
-pub use store::{HashlineMetrics, HashlineMetricsSnapshot, Snapshot, SnapshotStore};
 
-pub(crate) use format::{compute_file_hash, format_chain_snapshot, format_hashline_view};
-
-/// Line count helper for store recording outside the hashline module.
-pub(crate) fn split_content_lines_for_store(text: &str) -> usize {
-    format::split_content_lines(text).len()
-}
+pub(crate) use format::{format_chain_snapshot, format_hashline_view, format_post_edit_preview};
 pub(crate) use parser::parse_hashline;
 pub use proposed::{
     proposed_edit, proposed_sections, ProposedEdit, ProposedEditFile, ProposedSection,
 };
 
+pub(crate) use format::compute_file_hash;
+
 pub(crate) struct Edit;
 
-const TOOL_DESCRIPTION: &str = r#"Use `edit` for multi-hunk edits to existing UTF-8 files when you already have a fresh `[path#TAG]` from `read_file`, `grep` (content mode), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` recovery snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file.
+const TOOL_DESCRIPTION: &str = r#"Use `edit` for multi-hunk edits to existing UTF-8 files when you already have a fresh `[path#TAG]` from `read_file`, `grep` (content mode), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file.
 
 Document shape:
 
 [path#TAG]
+PUT N:
++single-line replacement
 PUT N.=M:
-+new line
-+another line
++range replacement line 1
++range replacement line 2
 PUT >N:
 +inserted after N
 PUT <N:
@@ -61,19 +53,23 @@ PUT >$:
 +appended at end
 CUT N.=M
 
+Locators — copy these forms exactly:
+- One line: `PUT 12:` (digits, then colon). Never `PUT 12.:` or `PUT 12.=:` — a trailing dot is invalid
+- Range: `PUT 12.=15:` (N, period, equals, M, colon). Inclusive. Also accepts `12-15` / `12..15`
+- Insert: `PUT <12:` / `PUT >12:` / `PUT >$:`
+- Delete: `CUT 12.=15` or `CUT 12` (no colon on CUT)
+
 Rules:
 - Copy the exact `[path#TAG]` header and `N:line` numbers from the latest snapshot for that path
 - Put every hunk for one file in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch - wait for the result before editing that path again. Different paths may edit in parallel
 - Line numbers name ORIGINAL lines from that snapshot; they do not shift mid-document
 - Body rows under PUT headers that end with `:` must start with `+` (use `+` alone for a blank line)
-- Ranges are inclusive (`PUT 3.=5:` touches original lines 3 through 5). `N-M` and `N..M` are also accepted
-- Single-line replace may use `PUT N:` as shorthand for `PUT N.=N:`
 - PUT always needs at least one + body row; use CUT to delete
-- Stale TAG, out-of-range, overlap, and mid-edit file changes fail closed with no write and include a bounded live snapshot - copy that header/lines to retry (re-read only for lines outside the snapshot). When a session snapshot still matches the tag, `edit` may remap anchors onto the live file automatically
-- Only edit lines you have seen under that TAG (from read/grep/write/edit output). Unseen anchors are rejected with a short reveal
+- Stale TAG, out-of-range, overlap, and mid-edit file changes fail closed with no write and include a bounded live snapshot - copy that header/lines to retry (re-read only for lines outside the snapshot)
 - An insert anchored inside a range another op replaces or deletes is rejected; anchor it outside
 - TAG ignores trailing whitespace, so whitespace-only changes keep a read valid
 - Successful results return a post-edit `[path#NEW_TAG]` numbered preview around the change
+- After a large or structural edit, re-read before further ops on anchors outside that preview
 - Block ops (`N*`), registers (`@name`), REM, and MV are not supported yet
 - Create files with `write_file`; do not use `edit` to create paths"#;
 
@@ -94,7 +90,7 @@ impl Tool for Edit {
                 "properties": {
                     "input": {
                         "type": "string",
-                        "description": "Hashline document with one or more [path#TAG] sections and PUT/CUT ops. Copy each [path#TAG] from read_file, grep, write_file, a prior edit preview, or a failed edit recovery snapshot; never invent tags. One section per path; multi-hunk OK. Do not stack two edit calls on the same path in one batch."
+                        "description": "Hashline document with one or more [path#TAG] sections and PUT/CUT ops. Copy each [path#TAG] from read_file, grep, write_file, a prior edit preview, or a failed edit live snapshot; never invent tags. One section per path; multi-hunk OK. Do not stack two edit calls on the same path in one batch."
                     }
                 },
                 "required": ["input"],
@@ -119,7 +115,7 @@ impl Tool for Edit {
                 section,
             })
             .collect();
-        let outcome = apply_prepared_sections(sections, ctx.max_output_bytes, None).await?;
+        let outcome = apply_prepared_sections(sections, ctx.max_output_bytes).await?;
         Ok(ToolResult {
             id,
             ok: true,
@@ -144,7 +140,6 @@ pub(crate) struct PreparedSection {
 pub(crate) async fn apply_prepared_sections(
     sections: Vec<PreparedSection>,
     max_output_bytes: usize,
-    store: Option<Arc<SnapshotStore>>,
 ) -> Result<FileMutationOutcome, ToolError> {
     let mut seen = BTreeMap::<&Path, &str>::new();
     for prepared in &sections {
@@ -156,7 +151,7 @@ pub(crate) async fn apply_prepared_sections(
         }
     }
 
-    tokio::task::spawn_blocking(move || apply_sections_locked(sections, max_output_bytes, store))
+    tokio::task::spawn_blocking(move || apply_sections_locked(sections, max_output_bytes))
         .await
         .map_err(|error| ToolError::Message(format!("hashline edit task failed: {error}")))?
 }
@@ -168,7 +163,6 @@ struct PlannedFile {
     original: String,
     outcome: ApplyOutcome,
     anchor_lines: Vec<usize>,
-    recovered: bool,
 }
 
 /// A file already rewritten in this call, kept so a later failure can undo it.
@@ -181,7 +175,6 @@ struct AppliedFile<'a> {
 fn apply_sections_locked(
     sections: Vec<PreparedSection>,
     max_output_bytes: usize,
-    store: Option<Arc<SnapshotStore>>,
 ) -> Result<FileMutationOutcome, ToolError> {
     // Plan every file first so a later section failure cannot leave earlier
     // writes applied. Each commit re-checks its file under lock, so no separate
@@ -192,22 +185,19 @@ fn apply_sections_locked(
         let original = std::fs::read_to_string(&prepared.path).map_err(|error| {
             ToolError::Message(format!("could not read {display_path}: {error}"))
         })?;
-        let focus_anchors = focus_anchor_lines(&prepared.section.ops);
-        let (outcome, recovered) =
-            plan_one_file(prepared, &original, &focus_anchors, store.as_deref())?;
+        let anchor_lines = collect_focus_anchors(&prepared.section.ops);
+        let outcome = apply_ops(&original, &prepared.section.tag, &prepared.section.ops)
+            .map_err(|error| recovery_error(display_path, &original, &anchor_lines, error))?;
         planned.push(PlannedFile {
             path: prepared.path.clone(),
             display_path: display_path.clone(),
             original,
             outcome,
-            anchor_lines: focus_anchors,
-            recovered,
+            anchor_lines,
         });
     }
 
     let mut applied: Vec<AppliedFile<'_>> = Vec::new();
-    let mut previews = Vec::new();
-    let mut diffs = Vec::new();
     for file in &planned {
         if let Err(error) = commit_planned_file(file) {
             let mut message = error.to_string();
@@ -223,20 +213,16 @@ fn apply_sections_locked(
             display_path: &file.display_path,
             original: &file.original,
         });
-        if let Some(store) = store.as_ref() {
-            let line_count = format::split_content_lines(&file.outcome.text).len();
-            let seen = (1..=line_count).collect::<Vec<_>>();
-            store.record(&file.path, file.outcome.text.clone(), Some(seen));
-        }
-        let mut preview = format_post_edit_preview(
+    }
+
+    let mut previews = Vec::new();
+    let mut diffs = Vec::new();
+    for file in &planned {
+        previews.push(format_post_edit_preview(
             &file.display_path,
             &file.outcome.text,
             &file.outcome.focus_lines,
-        );
-        if file.recovered {
-            preview = format!("{RECOVERY_REMAP_NOTICE}\n\n{preview}");
-        }
-        previews.push(preview);
+        ));
         diffs.push(unified_diff(
             &file.original,
             &file.outcome.text,
@@ -255,99 +241,6 @@ fn apply_sections_locked(
             .collect(),
         diff,
     })
-}
-
-fn plan_one_file(
-    prepared: &PreparedSection,
-    original: &str,
-    focus_anchors: &[usize],
-    store: Option<&SnapshotStore>,
-) -> Result<(ApplyOutcome, bool), ToolError> {
-    let display_path = &prepared.display_path;
-    match apply_ops(original, &prepared.section.tag, &prepared.section.ops) {
-        Ok(outcome) => {
-            if let Some(store) = store {
-                reject_unseen_anchors(store, &prepared.path, original, &prepared.section.ops)?;
-            }
-            Ok((outcome, false))
-        }
-        Err(error) if error.contains("tag mismatch") => {
-            if let Some(store) = store {
-                store.metrics().tag_mismatch.fetch_add(1, Ordering::Relaxed);
-                if let Some(snapshot) = store.by_hash(&prepared.path, &prepared.section.tag) {
-                    if let Some(outcome) =
-                        try_recover(&snapshot.text, original, &prepared.section.ops)
-                    {
-                        store.metrics().recovery_ok.fetch_add(1, Ordering::Relaxed);
-                        return Ok((outcome, true));
-                    }
-                    store
-                        .metrics()
-                        .recovery_fail
-                        .fetch_add(1, Ordering::Relaxed);
-                } else {
-                    store
-                        .metrics()
-                        .recovery_fail
-                        .fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            Err(recovery_error(display_path, original, focus_anchors, error))
-        }
-        Err(error) => Err(recovery_error(display_path, original, focus_anchors, error)),
-    }
-}
-
-/// Cap on unseen anchor lines revealed inline in the rejection.
-const UNSEEN_REVEAL_CAP: usize = 12;
-
-fn reject_unseen_anchors(
-    store: &SnapshotStore,
-    path: &Path,
-    original: &str,
-    ops: &[Op],
-) -> Result<(), ToolError> {
-    let Some(snapshot) = store.by_content(path, original) else {
-        return Ok(());
-    };
-    let Some(seen) = snapshot.seen_lines.as_ref() else {
-        return Ok(());
-    };
-    let anchors = collect_anchor_lines(ops);
-    let unseen: Vec<usize> = anchors
-        .into_iter()
-        .filter(|line| !seen.contains(line))
-        .collect();
-    if unseen.is_empty() {
-        return Ok(());
-    }
-    store
-        .metrics()
-        .unseen_reject
-        .fetch_add(1, Ordering::Relaxed);
-    let lines = format::split_content_lines(original);
-    let mut reveal = String::new();
-    let show = unseen.len().min(UNSEEN_REVEAL_CAP);
-    for &line in &unseen[..show] {
-        let body = lines.get(line - 1).copied().unwrap_or("");
-        reveal.push_str(&format!("\n{line}:{body}"));
-    }
-    let more = if unseen.len() > show {
-        format!("\n… and {} more unseen anchors", unseen.len() - show)
-    } else {
-        String::new()
-    };
-    // Merge revealed lines so a retry after this error can proceed.
-    store.record_seen_lines(path, &snapshot.hash, unseen.iter().copied().take(show));
-    Err(ToolError::Message(format!(
-        "{}: edit anchors lines the model has not seen under this TAG: {}.\nRe-read those lines or retry using the reveal below (now marked seen):{reveal}{more}",
-        path.display(),
-        unseen
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    )))
 }
 
 fn commit_planned_file(file: &PlannedFile) -> Result<(), ToolError> {
@@ -374,34 +267,10 @@ fn recovery_error(
     focus_lines: &[usize],
     message: impl std::fmt::Display,
 ) -> ToolError {
-    let snapshot = format::format_chain_snapshot(display_path, live_text, focus_lines);
+    let snapshot = format_chain_snapshot(display_path, live_text, focus_lines);
     ToolError::Message(format!(
         "{display_path}: {message}\n\nLive snapshot - copy the header and line numbers below to retry:\n{snapshot}"
     ))
-}
-
-/// Span endpoints / insert anchors for focused recovery snapshots (not every
-/// line inside a large range).
-fn focus_anchor_lines(ops: &[Op]) -> Vec<usize> {
-    let mut lines = Vec::new();
-    for op in ops {
-        match op {
-            Op::Replace { start, end, .. } | Op::Delete { start, end } => {
-                lines.push(*start);
-                if *end != *start {
-                    lines.push(*end);
-                }
-            }
-            Op::InsertBefore { line, .. } => lines.push(*line),
-            Op::InsertAfter {
-                line: Some(line), ..
-            } => lines.push(*line),
-            Op::InsertAfter { line: None, .. } => {}
-        }
-    }
-    lines.sort_unstable();
-    lines.dedup();
-    lines
 }
 
 fn rollback_applied(applied: &[AppliedFile<'_>]) -> Result<(), ToolError> {
@@ -446,6 +315,29 @@ fn rewrite_locked_file(
     file.flush()
         .map_err(|error| ToolError::Message(format!("could not write {display_path}: {error}")))?;
     Ok(())
+}
+
+/// Span endpoints and insert anchors for focused live snapshots on failure.
+fn collect_focus_anchors(ops: &[Op]) -> Vec<usize> {
+    let mut lines = Vec::new();
+    for op in ops {
+        match op {
+            Op::Replace { start, end, .. } | Op::Delete { start, end } => {
+                lines.push(*start);
+                if *end != *start {
+                    lines.push(*end);
+                }
+            }
+            Op::InsertBefore { line, .. }
+            | Op::InsertAfter {
+                line: Some(line), ..
+            } => lines.push(*line),
+            Op::InsertAfter { line: None, .. } => {}
+        }
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    lines
 }
 
 #[cfg(test)]

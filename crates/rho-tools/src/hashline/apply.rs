@@ -1,6 +1,7 @@
 //! Pure apply of parsed hashline ops onto a text body.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use super::{
     format::{compute_file_hash, detect_eol, has_trailing_newline, split_content_lines},
@@ -19,6 +20,33 @@ pub(crate) struct ApplyOutcome {
     pub focus_lines: Vec<usize>,
 }
 
+/// Typed apply failure. Callers match variants instead of English substrings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ApplyError {
+    TagMismatch { expected: String, live: String },
+    EmptyOps,
+    Message(String),
+}
+
+impl ApplyError {
+    fn message(message: impl Into<String>) -> Self {
+        Self::Message(message.into())
+    }
+}
+
+impl fmt::Display for ApplyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TagMismatch { expected, live } => write!(
+                f,
+                "hashline tag mismatch: expected {expected}, live file is {live}. Re-read the path or copy the latest edit preview header."
+            ),
+            Self::EmptyOps => write!(f, "hashline section has no operations"),
+            Self::Message(message) => write!(f, "{message}"),
+        }
+    }
+}
+
 /// Apply `ops` to `original` after verifying `expected_tag`.
 ///
 /// All ops address **original** line numbers from the tagged snapshot. Every op
@@ -29,15 +57,16 @@ pub(crate) fn apply_ops(
     original: &str,
     expected_tag: &str,
     ops: &[Op],
-) -> Result<ApplyOutcome, String> {
+) -> Result<ApplyOutcome, ApplyError> {
     let old_tag = compute_file_hash(original);
     if !old_tag.eq_ignore_ascii_case(expected_tag) {
-        return Err(format!(
-            "hashline tag mismatch: expected {expected_tag}, live file is {old_tag}. Re-read the path or copy the latest edit preview header."
-        ));
+        return Err(ApplyError::TagMismatch {
+            expected: expected_tag.to_string(),
+            live: old_tag,
+        });
     }
     if ops.is_empty() {
-        return Err("hashline section has no operations".into());
+        return Err(ApplyError::EmptyOps);
     }
 
     let lines = split_content_lines(original);
@@ -83,7 +112,7 @@ struct EmitResult {
 impl Plan {
     /// Bucket every op onto its anchor line, rejecting out-of-range anchors and
     /// destructive spans that collide with another op.
-    fn build(ops: &[Op], line_count: usize) -> Result<Self, String> {
+    fn build(ops: &[Op], line_count: usize) -> Result<Self, ApplyError> {
         let mut plan = Self {
             slots: BTreeMap::new(),
             eof: Vec::new(),
@@ -101,7 +130,9 @@ impl Plan {
                     // and end-of-file appends are the same position.
                     if line_count == 0 {
                         if *line != 1 {
-                            return Err("insert before in an empty file must use PUT <1:".into());
+                            return Err(ApplyError::message(
+                                "insert before in an empty file must use PUT <1:",
+                            ));
                         }
                         plan.eof.extend(body.iter().cloned());
                         continue;
@@ -114,10 +145,9 @@ impl Plan {
                     body,
                 } => {
                     if line_count == 0 {
-                        return Err(
-                            "insert after a line requires a non-empty file; use PUT <1: or PUT >$:"
-                                .into(),
-                        );
+                        return Err(ApplyError::message(
+                            "insert after a line requires a non-empty file; use PUT <1: or PUT >$:",
+                        ));
                     }
                     Self::check_in_range(*line, line_count, "insert after")?;
                     plan.slot(*line).after.extend(body.iter().cloned());
@@ -140,21 +170,23 @@ impl Plan {
         body: Vec<String>,
         kind: &'static str,
         line_count: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), ApplyError> {
         if line_count == 0 {
-            return Err("cannot replace or delete lines in an empty file".into());
+            return Err(ApplyError::message(
+                "cannot replace or delete lines in an empty file",
+            ));
         }
         if start > line_count || end > line_count {
-            return Err(format!(
+            return Err(ApplyError::message(format!(
                 "line range {start}.={end} is outside the file ({line_count} line(s))"
-            ));
+            )));
         }
         let slot = self.slots.entry(start).or_default();
         if let Some(existing) = &slot.span {
-            return Err(format!(
+            return Err(ApplyError::message(format!(
                 "overlapping hashline ops: {} {start}.={} and {kind} {start}.={end}",
                 existing.kind, existing.end
-            ));
+            )));
         }
         slot.span = Some(SpanEdit { end, body, kind });
         Ok(())
@@ -163,12 +195,12 @@ impl Plan {
     /// Reject destructive spans that overlap each other or swallow another op's
     /// anchor. Without this, an insert inside a replaced range would be planned
     /// but never emitted.
-    fn validate_spans(&self) -> Result<(), String> {
+    fn validate_spans(&self) -> Result<(), ApplyError> {
         let mut active: Option<(usize, &SpanEdit)> = None;
         for (line, slot) in &self.slots {
             if let Some((start, span)) = active {
                 if *line <= span.end {
-                    return Err(match &slot.span {
+                    return Err(ApplyError::message(match &slot.span {
                         Some(other) => format!(
                             "overlapping hashline ops: {} {start}.={} and {} {line}.={}",
                             span.kind, span.end, other.kind, other.end
@@ -177,7 +209,7 @@ impl Plan {
                             "hashline op anchored at line {line} falls inside {} {start}.={}; anchor it outside the range",
                             span.kind, span.end
                         ),
-                    });
+                    }));
                 }
                 active = None;
             }
@@ -185,10 +217,10 @@ impl Plan {
                 // `after` rows on the first line of a multi-line span would land
                 // in the middle of the range the span removes.
                 if span.end > *line && !slot.after.is_empty() {
-                    return Err(format!(
+                    return Err(ApplyError::message(format!(
                         "insert after line {line} falls inside {} {line}.={}; anchor it outside the range",
                         span.kind, span.end
-                    ));
+                    )));
                 }
                 active = Some((*line, span));
             }
@@ -196,11 +228,11 @@ impl Plan {
         Ok(())
     }
 
-    fn check_in_range(line: usize, line_count: usize, label: &str) -> Result<(), String> {
+    fn check_in_range(line: usize, line_count: usize, label: &str) -> Result<(), ApplyError> {
         if line > line_count {
-            return Err(format!(
+            return Err(ApplyError::message(format!(
                 "{label} line {line} is outside the file ({line_count} line(s))"
-            ));
+            )));
         }
         Ok(())
     }

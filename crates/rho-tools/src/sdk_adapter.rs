@@ -46,10 +46,7 @@ use crate::{
 };
 
 use super::{
-    hashline::{
-        apply_prepared_sections, parse_hashline, proposed_sections, Edit, PreparedSection,
-        SnapshotStore,
-    },
+    hashline::{apply_prepared_sections, parse_hashline, proposed_sections, Edit, PreparedSection},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     write_file::{write_file_content, FileMutationOutcome, WriteFile},
@@ -60,7 +57,6 @@ use super::{
 pub struct CodingToolOptions {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    snapshot_store: Option<Arc<SnapshotStore>>,
 }
 
 impl Default for CodingToolOptions {
@@ -68,8 +64,6 @@ impl Default for CodingToolOptions {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             mutation_observer: None,
-            // One store shared across every tool cloned from these options.
-            snapshot_store: Some(SnapshotStore::shared()),
         }
     }
 }
@@ -89,12 +83,6 @@ impl CodingToolOptions {
         observer: Arc<dyn crate::WorkspaceMutationObserver>,
     ) -> Self {
         self.mutation_observer = Some(observer);
-        self
-    }
-
-    /// Override the session snapshot store (tests) or clear it with `None`.
-    pub fn snapshot_store(mut self, store: Option<Arc<SnapshotStore>>) -> Self {
-        self.snapshot_store = store;
         self
     }
 
@@ -139,23 +127,17 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
         }),
         CodingToolKind::ReadFile => Arc::new(ReadFileTool {
             max_output_bytes: options.max_output_bytes,
-            snapshot_store: options.snapshot_store.clone(),
         }),
         CodingToolKind::WriteFile => Arc::new(WriteFileTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
-            snapshot_store: options.snapshot_store.clone(),
         }),
         CodingToolKind::Edit => Arc::new(EditTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
-            snapshot_store: options.snapshot_store.clone(),
         }),
-        CodingToolKind::Grep => Arc::new(GrepTool::new(
-            options.max_output_bytes,
-            options.snapshot_store.clone(),
-        )),
-        CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes, None)),
+        CodingToolKind::Grep => Arc::new(GrepTool::new(options.max_output_bytes)),
+        CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes)),
     }
 }
 
@@ -180,19 +162,16 @@ struct ListDirTool {
 
 struct ReadFileTool {
     max_output_bytes: usize,
-    snapshot_store: Option<Arc<SnapshotStore>>,
 }
 
 struct WriteFileTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    snapshot_store: Option<Arc<SnapshotStore>>,
 }
 
 struct EditTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    snapshot_store: Option<Arc<SnapshotStore>>,
 }
 
 #[derive(Deserialize)]
@@ -310,7 +289,6 @@ impl Tool for ReadFileTool {
                 [path_request(&resolved, PathCapability::Read, "read_file")],
                 metadata,
                 move |_context| {
-                    let store = self.snapshot_store.clone();
                     Box::pin(async move {
                         workspace.revalidate(&resolved).map_err(map_path_error)?;
                         let display_path = compact_display_path(workspace.root(), &args.path);
@@ -322,11 +300,6 @@ impl Tool for ReadFileTool {
                         )
                         .await
                         .map_err(map_app_error)?;
-                        if let (Some(store), Some((text, seen))) =
-                            (store.as_ref(), output.snapshot.as_ref())
-                        {
-                            store.record(resolved.path(), text.clone(), Some(seen.iter().copied()));
-                        }
                         let display = read_file_display_content(
                             workspace.root(),
                             &args.path,
@@ -342,10 +315,8 @@ impl Tool for ReadFileTool {
                         if let Some(error) = output.preview_error {
                             metadata = metadata.presentation_notice(error);
                         }
-                        Ok(
-                            ToolOutput::text(truncate(output.content, self.max_output_bytes))
-                                .metadata(metadata),
-                        )
+                        let content = truncate(output.content, self.max_output_bytes);
+                        Ok(ToolOutput::text(content).metadata(metadata))
                     })
                 },
             ))
@@ -398,7 +369,6 @@ impl Tool for WriteFileTool {
                     execute_prepared_write(
                         self.max_output_bytes,
                         self.mutation_observer.clone(),
-                        self.snapshot_store.clone(),
                         workspace,
                         resolved,
                         args,
@@ -462,7 +432,6 @@ impl Tool for EditTool {
                     execute_prepared_edit(
                         self.max_output_bytes,
                         self.mutation_observer.clone(),
-                        self.snapshot_store.clone(),
                         workspace,
                         resolved,
                         prepared,
@@ -515,7 +484,6 @@ impl EditTargetSet {
 fn execute_prepared_write(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    snapshot_store: Option<Arc<SnapshotStore>>,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
     args: WriteArgs,
@@ -538,13 +506,6 @@ fn execute_prepared_write(
             write_file_content(resolved.path(), &display, &args.content, max_output_bytes),
         )
         .await?;
-        if let Some(store) = snapshot_store.as_ref() {
-            let n = crate::hashline::split_content_lines_for_store(&args.content);
-            let seen = (1..=n).collect::<Vec<_>>();
-            // Chain snapshots only show a window; still mark all lines seen because
-            // the model authored the full body.
-            store.record(resolved.path(), args.content.clone(), Some(seen));
-        }
         Ok(mutation_output(outcome))
     })
 }
@@ -552,7 +513,6 @@ fn execute_prepared_write(
 fn execute_prepared_edit(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    snapshot_store: Option<Arc<SnapshotStore>>,
     workspace: Workspace,
     resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
     sections: Vec<PreparedSection>,
@@ -576,7 +536,7 @@ fn execute_prepared_edit(
         let outcome = run_observed_mutation(
             mutation_observer.as_ref(),
             &mutation_paths,
-            apply_prepared_sections(sections, max_output_bytes, snapshot_store),
+            apply_prepared_sections(sections, max_output_bytes),
         )
         .await?;
         Ok(mutation_output(outcome))

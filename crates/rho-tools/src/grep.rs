@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 
 use crate::{
     grep_format::format_results,
-    hashline::SnapshotStore,
     path_glob::PathGlob,
     search::{
         clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
@@ -183,9 +182,8 @@ impl WorkspaceSearch for GrepSearch {
         display_root: &str,
         request: &GrepRequest,
         cancelled: &dyn Fn() -> bool,
-        snapshots: Option<&SnapshotStore>,
     ) -> Result<String, ToolError> {
-        grep_workspace(root, display_root, request, cancelled, snapshots)
+        grep_workspace(root, display_root, request, cancelled)
     }
 }
 
@@ -223,7 +221,6 @@ pub(crate) fn grep_workspace(
     display_root: &str,
     request: &GrepRequest,
     cancelled: &dyn Fn() -> bool,
-    snapshots: Option<&SnapshotStore>,
 ) -> Result<String, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
@@ -245,7 +242,7 @@ pub(crate) fn grep_workspace(
                 return ControlFlow::Continue(());
             }
         }
-        let Some(mut hit) = scan_file(request, file, retained_per_file, snapshots) else {
+        let Some(mut hit) = scan_file(request, file, retained_per_file) else {
             return ControlFlow::Continue(());
         };
 
@@ -287,12 +284,7 @@ pub(crate) fn grep_workspace(
 ///
 /// Returns `None` for unreadable, oversized, binary, or non-matching files, so
 /// every output mode shares one read and one pass over the lines.
-fn scan_file(
-    request: &GrepRequest,
-    file: WalkedFile,
-    retain: usize,
-    snapshots: Option<&SnapshotStore>,
-) -> Option<FileHit> {
+fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<FileHit> {
     let text = read_searchable_text(&file.absolute)?;
     let stop_early = request.output_mode.stops_at_first_match();
     let mut hit = FileHit {
@@ -308,7 +300,10 @@ fn scan_file(
         }
         hit.total = hit.total.saturating_add(1);
         if hit.lines.len() < retain {
-            hit.lines.push((index + 1, normalize_match_text(line)));
+            // Preserve raw source (CR already stripped) so grep→edit chains keep
+            // indentation. Only length-truncate; never trim/collapse whitespace.
+            hit.lines
+                .push((index + 1, truncate_chars(line, MAX_LINE_CHARS)));
         }
         if stop_early {
             break;
@@ -318,12 +313,7 @@ fn scan_file(
         return None;
     }
     if request.output_mode == GrepOutputMode::Content {
-        let tag = crate::hashline::compute_file_hash(&text);
-        if let Some(store) = snapshots {
-            let seen = hit.lines.iter().map(|(n, _)| *n);
-            store.record(&file.absolute, text, Some(seen));
-        }
-        hit.file_tag = Some(tag);
+        hit.file_tag = Some(crate::hashline::compute_file_hash(&text));
     }
     Some(hit)
 }
@@ -339,24 +329,6 @@ fn read_searchable_text(path: &Path) -> Option<String> {
         return None;
     }
     String::from_utf8(bytes).ok()
-}
-
-fn normalize_match_text(line: &str) -> String {
-    let trimmed = line.trim();
-    let mut out = String::with_capacity(trimmed.len());
-    let mut previous_space = false;
-    for ch in trimmed.chars() {
-        if ch == ' ' || ch == '\t' {
-            if !previous_space {
-                out.push(' ');
-                previous_space = true;
-            }
-        } else {
-            previous_space = false;
-            out.push(ch);
-        }
-    }
-    truncate_chars(&out, MAX_LINE_CHARS)
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {

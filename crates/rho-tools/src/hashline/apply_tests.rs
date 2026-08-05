@@ -37,7 +37,17 @@ fn applies_mixed_ops_on_original_line_numbers() {
 #[test]
 fn rejects_stale_tag() {
     let err = apply_ops("hello\n", "DEAD", &[Op::Delete { start: 1, end: 1 }]).unwrap_err();
-    assert!(err.contains("tag mismatch"), "{err}");
+    assert!(
+        matches!(
+            err,
+            ApplyError::TagMismatch {
+                expected: _,
+                live: _
+            }
+        ),
+        "{err}"
+    );
+    assert!(err.to_string().contains("tag mismatch"), "{err}");
 }
 
 // Covers: overlapping destructive ranges must fail closed
@@ -59,7 +69,7 @@ fn rejects_overlapping_replaces() {
         ],
     )
     .unwrap_err();
-    assert!(err.contains("overlapping"), "{err}");
+    assert!(err.to_string().contains("overlapping"), "{err}");
 }
 
 // Covers: an insert anchored inside a replaced or deleted range must fail closed
@@ -98,7 +108,7 @@ fn rejects_inserts_anchored_inside_a_destructive_range() {
         ),
     ] {
         let err = apply_ops(original, &tag, &[replace(), extra]).unwrap_err();
-        assert!(err.contains("falls inside"), "{label}: {err}");
+        assert!(err.to_string().contains("falls inside"), "{label}: {err}");
     }
 }
 

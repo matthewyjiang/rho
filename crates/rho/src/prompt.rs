@@ -58,6 +58,13 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. C
 "#,
         );
     }
+    if tools.iter().any(|tool| tool.name == "edit") {
+        text.push_str(
+            r#"
+When using `edit`, prefer it over shell or Python rewrites for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms from the tool description. After a large or structural edit, re-read before further ops on anchors outside the returned preview.
+"#,
+        );
+    }
     if tools.iter().any(|tool| tool.name == "agent") {
         text.push_str(
             r#"

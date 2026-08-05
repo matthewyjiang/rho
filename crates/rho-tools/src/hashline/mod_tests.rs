@@ -102,7 +102,7 @@ async fn chains_second_edit_from_post_edit_preview_without_reread() {
     );
 }
 
-// Covers: stale tags must leave the file unchanged
+// Covers: stale tags must leave the file unchanged and return a live snapshot
 // Owner: edit tool
 #[tokio::test]
 async fn stale_tag_leaves_file_untouched() {
@@ -164,60 +164,66 @@ async fn edits_multiple_files_in_one_document() {
     assert_eq!(std::fs::read_to_string(b_path).unwrap(), "TWO\n");
 }
 
-// Covers: session store must remap anchors after external drift and still apply
-// Owner: edit tool + snapshot store
+// Covers: multi-file commit failure must rollback earlier writes
+// Owner: edit tool atomicity
 #[tokio::test]
-async fn recovers_stale_tag_via_session_store() {
+async fn multi_file_rollback_restores_earlier_writes() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("sample.txt");
-    let previous = "alpha\ntarget\ngamma\n";
-    let live = "intro\nalpha\ntarget\ngamma\n";
-    std::fs::write(&path, live).unwrap();
-    let store = SnapshotStore::shared();
-    let old_tag = store.record(&path, previous, Some([1usize, 2, 3]));
-    let input = format!("[sample.txt#{old_tag}]\nPUT 2.=2:\n+TARGET\n");
-    let sections = vec![PreparedSection {
-        path: path.clone(),
-        display_path: "sample.txt".into(),
-        section: parse_hashline(&input).unwrap().remove(0),
-    }];
-    let outcome = match apply_prepared_sections(sections, 12_000, Some(store.clone())).await {
-        Ok(outcome) => outcome,
-        Err(error) => panic!("expected recovery apply to succeed: {error}"),
-    };
-    assert!(
-        outcome.content.contains("recovered stale tag"),
-        "{}",
-        outcome.content
-    );
-    assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
-        "intro\nalpha\nTARGET\ngamma\n"
-    );
-    assert_eq!(store.metrics().snapshot().recovery_ok, 1);
-}
+    let a_path = dir.path().join("a.txt");
+    let b_path = dir.path().join("b.txt");
+    let a = "alpha\n";
+    let b = "beta\n";
+    std::fs::write(&a_path, a).unwrap();
+    std::fs::write(&b_path, b).unwrap();
 
-// Covers: partial-read provenance must block edits of unseen anchors
-// Owner: edit tool + seen lines
-#[tokio::test]
-async fn rejects_unseen_anchors_from_partial_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("sample.txt");
-    let original = "one\ntwo\nthree\n";
-    std::fs::write(&path, original).unwrap();
-    let store = SnapshotStore::shared();
-    let tag = store.record(&path, original, Some([1usize])); // only line 1 seen
-    let input = format!("[sample.txt#{tag}]\nPUT 2.=2:\n+TWO\n");
-    let sections = vec![PreparedSection {
-        path: path.clone(),
-        display_path: "sample.txt".into(),
-        section: parse_hashline(&input).unwrap().remove(0),
-    }];
-    let err = match apply_prepared_sections(sections, 12_000, Some(store.clone())).await {
-        Ok(_) => panic!("expected unseen-anchor rejection"),
+    // Plan can read b; commit cannot open it for rewrite.
+    let mut perms = std::fs::metadata(&b_path).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&b_path, perms).unwrap();
+
+    let input = format!(
+        "[a.txt#{}]\nPUT 1.=1:\n+ALPHA\n\n[b.txt#{}]\nPUT 1.=1:\n+BETA\n",
+        compute_file_hash(a),
+        compute_file_hash(b)
+    );
+    let mut parsed = parse_hashline(&input).unwrap();
+    let sections = vec![
+        PreparedSection {
+            path: a_path.clone(),
+            display_path: "a.txt".into(),
+            section: parsed.remove(0),
+        },
+        PreparedSection {
+            path: b_path.clone(),
+            display_path: "b.txt".into(),
+            section: parsed.remove(0),
+        },
+    ];
+    let err = match apply_prepared_sections(sections, 12_000).await {
+        Ok(_) => panic!("expected multi-file commit failure"),
         Err(error) => error,
     };
-    assert!(err.to_string().contains("not seen"), "{err}");
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
-    assert_eq!(store.metrics().snapshot().unseen_reject, 1);
+    assert!(
+        err.to_string().contains("rolled back") || err.to_string().contains("could not open"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read_to_string(&a_path).unwrap(), a);
+
+    // Cleanup readonly so tempdir can delete on Windows/unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&b_path).unwrap().permissions();
+        perms.set_mode(0o644);
+        std::fs::set_permissions(&b_path, perms).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        let mut perms = std::fs::metadata(&b_path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        {
+            perms.set_readonly(false);
+        }
+        std::fs::set_permissions(&b_path, perms).unwrap();
+    }
 }
