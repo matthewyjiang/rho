@@ -61,7 +61,7 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. C
     if tools.iter().any(|tool| tool.name == "edit") {
         text.push_str(
             r#"
-Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms exactly from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines — re-read before further ops on that path. Prefer `write_file` only to create or fully rewrite a file.
+Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms exactly from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines — re-read before further ops on that path. Prefer `write` only to create or fully rewrite a file.
 "#,
         );
     }

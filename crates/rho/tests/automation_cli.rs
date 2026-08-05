@@ -83,7 +83,7 @@ provider = "disabled"
     for expected in [
         "list_dir",
         "read_file",
-        "write_file",
+        "write",
         "edit",
         "grep",
         "glob",

@@ -1,6 +1,6 @@
 //! Line-anchored multi-hunk edit tool (`edit`) with snapshot tags.
 //!
-//! `read_file` / `write_file` mint `[path#TAG]` snapshots. `grep` content mode
+//! `read_file` / `write` mint `[path#TAG]` snapshots. `grep` content mode
 //! mints headers + line numbers for anchors (match text is preview only). `edit`
 //! applies a compact PUT/CUT document against those original line numbers and
 //! rejects stale tags. Failures leave the file untouched and return a bounded
@@ -44,7 +44,7 @@ pub(crate) struct Edit;
 /// prompt / docs so this schema string does not drift as a third essay.
 const TOOL_DESCRIPTION: &str = r#"Multi-hunk line-anchored edits to existing UTF-8 files.
 
-Requires a fresh `[path#TAG]` from `read_file`, `grep` (content mode TAG + line numbers only), `write_file` snapshot, a prior non-structural `edit` preview, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file.
+Requires a fresh `[path#TAG]` from `read_file`, `grep` (content mode TAG + line numbers only), `write` snapshot, a prior non-structural `edit` preview, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write` to create or fully rewrite a file.
 
 Document:
 [path#TAG]

@@ -1,4 +1,4 @@
-//! Shared result shape for workspace file mutations (`write_file`, `edit`).
+//! Shared result shape for workspace file mutations (`write`, `edit`).
 
 /// Model-facing content plus UI metadata for a completed file mutation.
 #[derive(Debug)]

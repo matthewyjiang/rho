@@ -122,7 +122,7 @@ Do not expect silent acceptance.
   delete the wrong span** when anchors are slightly wrong or the agent
   mis-counts through a focused preview.
 - Recovery from a mangled mid-function state is harder than a stale-tag error:
-  the file compiles into a red blob and the agent reaches for `write_file` or
+  the file compiles into a red blob and the agent reaches for `write` or
   shell.
 - The session then generalized: "edit is unreliable for refactors" → Python.
 
@@ -190,7 +190,7 @@ docs) were applied with `python3 - <<'PY' ... Path.write_text ...`.
 2. In agent prompt: **do not use shell/Python to rewrite files that `edit` can
    express**, and treat edit failures as retry-with-diagnostics, not
    format-switch.
-3. Track a metric: `edit` failures followed by `bash`/`write_file` on the same
+3. Track a metric: `edit` failures followed by `bash`/`write` on the same
    path within one turn window (dogfood dashboards / eval).
 
 ---
@@ -216,12 +216,12 @@ Already documented ("re-read for other lines"). Dogfood gap: agents still try.
 ## What worked
 
 - Multi-hunk `PUT` with correct `N.=M:` / `N:` syntax and a fresh tag applied
-  cleanly for large intentional rewrites (`apply.rs`, full-file `write_file` for
+  cleanly for large intentional rewrites (`apply.rs`, full-file `write` for
   `mod.rs`).
 - Fail-closed stale tags and live snapshot on error are the right recovery UX
   when the agent uses them.
 - Module split under 1k lines made targeted reads feasible.
-- `write_file` for full-file rewrites is the correct escape when the agent is
+- `write` for full-file rewrites is the correct escape when the agent is
   replacing most of a file — better than a 400-line PUT when the old text is
   irrelevant.
 
@@ -238,11 +238,11 @@ Already documented ("re-read for other lines"). Dogfood gap: agents still try.
 
 ## Appendix — session timeline (abbreviated)
 
-1. `write_file` `apply.rs` / `apply_tests.rs` (full rewrite) — OK  
+1. `write` `apply.rs` / `apply_tests.rs` (full rewrite) — OK  
 2. Large `edit` PUT on `format.rs` introducing unified renderer + accidental `SnapshotFooter` — OK apply  
 3. `edit` CUT to remove `SnapshotFooter` — **file mangled**  
 4. Repair via `edit` PUT restoring `format_hashline_view` header — OK  
-5. `write_file` full `mod.rs` — OK  
+5. `write` full `mod.rs` — OK  
 6. Several single-line `edit` attempts with `PUT N.:` — **hard fail, misread error**  
 7. Agent switched to `python3` path rewrites for recovery call sites, tests, docs  
 8. User asked why Python; this report filed  

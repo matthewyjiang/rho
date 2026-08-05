@@ -242,7 +242,7 @@ async fn fixture_stream(
                 .send(ModelEvent::ToolCallDelta {
                     index: 0,
                     id: Some(TOOL_CALL_ID.into()),
-                    name: Some("write_file".into()),
+                    name: Some("write".into()),
                     arguments: "{\"path\":\".rho-tui-fixture-output.txt\",".into(),
                 })
                 .await?;
@@ -255,7 +255,7 @@ async fn fixture_stream(
                     arguments: "\"content\":\"deterministic tool output\\n\"}".into(),
                 })
                 .await?;
-            completed_tool_call(TOOL_CALL_ID, "write_file", arguments)
+            completed_tool_call(TOOL_CALL_ID, "write", arguments)
         }
         edit::PROMPT if edit::is_pending(&request) => edit::stream(&request, &events).await,
         edit::CANCEL_PROMPT => edit::stream_until_cancelled(&request, &events).await,

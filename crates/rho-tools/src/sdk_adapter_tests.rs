@@ -108,7 +108,7 @@ async fn preparation_reserves_missing_write_membership_and_rejects_parent_traver
     .await
     .unwrap();
     let ToolExecutionPolicy::ResourceAware { accesses } = policy else {
-        panic!("write_file must opt in to resource-aware execution");
+        panic!("write must opt in to resource-aware execution");
     };
     assert!(accesses.contains(&ToolResourceAccess::exclusive(
         ToolResource::workspace_path(workspace.root().join("out.txt"))
@@ -236,7 +236,7 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
                     ToolCall {
                         id: "call-1".into(),
-                        name: "write_file".into(),
+                        name: "write".into(),
                         arguments: json!({"path": "nested/out.txt", "content": "created"}),
                     },
                 )])),
@@ -308,7 +308,7 @@ async fn write_only_policy_cannot_diff_existing_file_contents() {
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
                     ToolCall {
                         id: "call-1".into(),
-                        name: "write_file".into(),
+                        name: "write".into(),
                         arguments: json!({"path": "secret.txt", "content": "new secret"}),
                     },
                 )])),
@@ -389,7 +389,7 @@ async fn hostile_paths_are_rejected_before_file_io() {
     symlink(outside.path(), root.path().join("escape")).unwrap();
     let tool = coding_tools(CodingToolOptions::default())
         .into_iter()
-        .find(|tool| tool.spec().name == "write_file")
+        .find(|tool| tool.spec().name == "write")
         .unwrap();
 
     for path in [

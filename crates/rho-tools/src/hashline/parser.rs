@@ -7,7 +7,7 @@
 //! - `CUT N.=M` delete inclusive original lines
 //!
 //! Intentionally omitted in this first cut: block ops (`N*`), registers,
-//! `REM`, and `MV`. Use `write_file` to create or fully rewrite files.
+//! `REM`, and `MV`. Use `write` to create or fully rewrite files.
 
 use super::format::{FILE_HASH_LENGTH, FILE_HASH_SEP};
 

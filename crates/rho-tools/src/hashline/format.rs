@@ -146,7 +146,7 @@ pub(crate) fn format_post_edit_preview(
     emit_numbered_body(&header, &lines, &selected, footer.as_deref())
 }
 
-/// Bounded hashline snapshot for chaining after `write_file` or a failed `edit`.
+/// Bounded hashline snapshot for chaining after `write` or a failed `edit`.
 ///
 /// Always includes the full-file TAG. Body rows are capped: focus anchors expand
 /// locally; otherwise a short head+tail window is used.

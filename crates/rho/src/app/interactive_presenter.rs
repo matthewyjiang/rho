@@ -61,7 +61,7 @@ impl ToolKind {
             "grep" => Self::Grep,
             "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
-            "write_file" => Self::WriteFile,
+            "write" | "write_file" => Self::WriteFile,
             "edit" => Self::Edit,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
@@ -117,7 +117,7 @@ impl ToolKind {
 /// Argument-buffer size above which live previews stop parsing every delta.
 ///
 /// Ordinary tool calls stay far below this and re-render delta for delta. A
-/// long `write_file` body would otherwise re-parse the whole buffer thousands
+/// long `write` body would otherwise re-parse the whole buffer thousands
 /// of times, so oversized buffers switch to [`PREVIEW_LARGE_PARSE_STRIDE`].
 const PREVIEW_FULL_PARSE_LIMIT: usize = 4096;
 

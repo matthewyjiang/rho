@@ -9,7 +9,7 @@ Rho currently ships these compiled-in workspace tools on all platforms:
 ```text
 list_dir
 read_file
-write_file
+write
 edit
 grep
 glob
@@ -76,7 +76,7 @@ Locators must match those forms exactly. A trailing dot (`PUT 12.:`, `PUT 12.=:`
 
 Rules:
 
-- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot. Grep match previews are not PUT bodies.
+- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write` chain snapshot, or a failed `edit` live snapshot. Grep match previews are not PUT bodies.
 - Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
 - Line numbers name the original snapshot; they do not shift mid-document
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
@@ -86,13 +86,13 @@ Rules:
 - After a large or structural edit, re-read before further ops on anchors outside the returned preview
 - An insert whose anchor falls inside a range that another op replaces or deletes is rejected, because that position no longer exists after the edit
 - Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
-- Create or fully rewrite files with `write_file`. Do not use `edit` to create paths
+- Create or fully rewrite files with `write`. Do not use `edit` to create paths
 
-Successful `edit` results return a one-line ops summary (for example `PUT 2.=5: (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. **Structural** edits (a single replace/delete span of 40+ original lines) return the new TAG and ops summary **without** numbered body lines so the next op must re-read. Successful `write_file` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
+Successful `edit` results return a one-line ops summary (for example `PUT 2.=5: (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. **Structural** edits (a single replace/delete span of 40+ original lines) return the new TAG and ops summary **without** numbered body lines so the next op must re-read. Successful `write` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
 
 Streaming cards project the edit document alone (op summaries + PUT bodies). Approval and start cards dry-run against live files when readable so removals appear as real `-` rows; missing or stale targets fall back to the document projection.
 
-Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write_file` to create or fully rewrite a file. Do not use shell or Python to rewrite UTF-8 sources that `edit` can express.
+Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write` to create or fully rewrite a file. Do not use shell or Python to rewrite UTF-8 sources that `edit` can express.
 
 ### One read format for every caller
 
@@ -117,7 +117,7 @@ Managed processes use standard output and error pipes, with standard input close
 
 ## File writes and diffs
 
-Successful `write_file` and `edit` results return model-facing hashline snapshots for chaining. Unified diffs are tool metadata for UI cards (not repeated in model content). In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
+Successful `write` and `edit` results return model-facing hashline snapshots for chaining. Unified diffs are tool metadata for UI cards (not repeated in model content). In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
 
 ## Security and workspace boundaries
 

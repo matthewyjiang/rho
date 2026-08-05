@@ -352,10 +352,9 @@ impl Tool for WriteFileTool {
             let resolved = workspace
                 .resolve_for_write(&args.path)
                 .map_err(map_path_error)?;
-            let mut capabilities =
-                vec![path_request(&resolved, PathCapability::Write, "write_file")];
+            let mut capabilities = vec![path_request(&resolved, PathCapability::Write, "write")];
             if resolved.state() == WorkspacePathState::Existing {
-                capabilities.push(path_request(&resolved, PathCapability::Read, "write_file"));
+                capabilities.push(path_request(&resolved, PathCapability::Read, "write"));
             }
             let accesses = write_accesses(&resolved);
             let metadata = path_start_metadata(

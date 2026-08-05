@@ -139,7 +139,7 @@ rho
 shell
 skill
 web_search
-write_file
+write
 ```
 
 Notes:

@@ -135,7 +135,7 @@ pub(super) fn preview_card(
             status,
             kind,
             ToolHeader::call(
-                "write_file",
+                "write",
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),

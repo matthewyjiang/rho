@@ -26,9 +26,10 @@ macro_rules! define_tool_capabilities {
             pub fn parse(name: String) -> Self {
                 match name.as_str() {
                     $($name => Self::$variant,)+
-                    // NEXT_MAJOR(rho): drop edit_file and apply_patch aliases once
-                    // agent frontmatter has migrated to the canonical "edit" name.
+                    // NEXT_MAJOR(rho): drop edit_file, apply_patch, and write_file
+                    // aliases once agent frontmatter has migrated to canonical names.
                     "edit_file" | "apply_patch" => Self::Edit,
+                    "write_file" => Self::WriteFile,
                     _ => Self::Extension(name),
                 }
             }
@@ -62,7 +63,7 @@ define_tool_capabilities! {
     Skill => "skill",
     WebSearch => "web_search",
     Workflow => "workflow",
-    WriteFile => "write_file",
+    WriteFile => "write",
 }
 
 impl fmt::Display for ToolCapability {

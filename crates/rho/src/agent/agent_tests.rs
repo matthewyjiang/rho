@@ -23,16 +23,34 @@ fn semantic_fingerprint_ignores_formatting_and_source() {
     let a = parse_definition(
         Path::new("a.md"),
         "worker",
-        "---\ndescription: work\ntools: [read_file, write_file]\n---\nship it\n",
+        "---\ndescription: work\ntools: [read_file, write]\n---\nship it\n",
     )
     .unwrap();
     let b = parse_definition(
         Path::new("elsewhere.md"),
         "worker",
-        "---\nid: worker\ndescription: work\ntools:\n  - write_file\n  - read_file\n---\n\nship it\n",
+        "---\nid: worker\ndescription: work\ntools:\n  - write\n  - read_file\n---\n\nship it\n",
     )
     .unwrap();
     assert_eq!(a.fingerprint(), b.fingerprint());
+}
+
+#[test]
+fn write_file_capability_alias_matches_write() {
+    let canonical = parse_definition(
+        Path::new("a.md"),
+        "worker",
+        "---\ndescription: work\ntools: [write]\n---\n",
+    )
+    .unwrap();
+    let legacy_name = parse_definition(
+        Path::new("b.md"),
+        "worker",
+        "---\ndescription: work\ntools: [write_file]\n---\n",
+    )
+    .unwrap();
+    assert_eq!(canonical.fingerprint(), legacy_name.fingerprint());
+    assert_eq!(ToolCapability::parse("write_file".into()).as_str(), "write");
 }
 
 #[test]
@@ -113,7 +131,7 @@ fn real_definition_change_still_rejects_resume() {
     let changed = parse_definition(
         Path::new("worker.md"),
         "worker",
-        "---\ndescription: work\ntools: [read_file, write_file]\n---\nship it\n",
+        "---\ndescription: work\ntools: [read_file, write]\n---\nship it\n",
     )
     .unwrap();
     let stored_v2 = original.fingerprint().to_string();

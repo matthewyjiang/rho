@@ -70,7 +70,7 @@ Scenarios use `RHO_TUI_TEST_MODE=matrix` automatically. Exact prompts:
 | Prompt | Deterministic behavior |
 | --- | --- |
 | `fixture stream` | Streams reasoning and assistant chunks |
-| `fixture tool` | Writes `.rho-tui-fixture-output.txt` via `write_file` |
+| `fixture tool` | Writes `.rho-tui-fixture-output.txt` via `write` |
 | `fixture questionnaire` | Red/blue questionnaire |
 | `fixture progress tool` | Progress updates then fixed result |
 | `fixture delay` | Partial output, long wait for cancellation |

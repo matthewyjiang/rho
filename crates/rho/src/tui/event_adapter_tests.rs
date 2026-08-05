@@ -501,7 +501,7 @@ fn write_file_does_not_label_a_mixed_omitted_diff_as_no_changes() {
     let call_id = ToolCallId::from_string("call-omitted-diff").unwrap();
     let _ = only_event(adapter.translate(RunEvent::ToolStarted {
         call_id: call_id.clone(),
-        name: "write_file".into(),
+        name: "write".into(),
         metadata: ToolMetadata::new().operation(OperationKind::Write),
     }));
     let output = ToolOutput::text("updated").metadata(
@@ -522,7 +522,7 @@ fn write_file_does_not_label_a_mixed_omitted_diff_as_no_changes() {
 
     assert_eq!(
         card.header,
-        ToolHeader::call("write_file", Some("large.txt".into()))
+        ToolHeader::call("write", Some("large.txt".into()))
     );
     assert_eq!(
         card.facts,

@@ -20,7 +20,7 @@ struct Args {
 impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "write_file".into(),
+            name: "write".into(),
             description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer `edit` for multi-hunk line-anchored edits when you already have a fresh `[path#TAG]`. Successful writes return a bounded hashline chain snapshot (`[path#TAG]` plus numbered lines) so a follow-up `edit` can start without an extra `read_file`. Re-read only for lines outside that snapshot. Unified diff is tool metadata for UI cards.".into(),
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         }
@@ -111,7 +111,7 @@ mod tests {
     }
 
     // Covers: write creates nested paths and returns a chainable hashline snapshot
-    // Owner: write_file
+    // Owner: write
     #[tokio::test]
     async fn writes_file_and_creates_parent_dirs() {
         let (root, ctx) = test_context();
@@ -146,7 +146,7 @@ mod tests {
     }
 
     // Covers: unreadable existing files still rewrite and keep the special diff notice
-    // Owner: write_file
+    // Owner: write
     #[tokio::test]
     async fn overwrites_unreadable_file_without_diff() {
         let (root, ctx) = test_context();
@@ -172,7 +172,7 @@ mod tests {
     }
 
     // Covers: large writes return a bounded head/tail snapshot, not the whole file
-    // Owner: write_file
+    // Owner: write
     #[tokio::test]
     async fn large_write_returns_bounded_chain_snapshot() {
         let (_root, ctx) = test_context();

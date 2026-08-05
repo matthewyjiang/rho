@@ -3,7 +3,7 @@
 //! The crate has two layers:
 //!
 //! - Application tools ([`tool::Tool`]) implement the user-facing built-ins
-//!   (`bash`, `read_file`, `write_file`, `edit` (hashline), `list_dir`)
+//!   (`bash`, `read_file`, `write`, `edit` (hashline), `list_dir`)
 //!   with output truncation, diffs, and display formatting.
 //! - Workspace searches implement `grep` and `glob` over the shared
 //!   [`workspace_walk`] walker.

@@ -63,7 +63,7 @@ Emit `runtime: rho` only when making the Rho choice explicit; omit it to keep th
 
 Then ask whether the agent should receive all tools (Rho only) or a focused allowlist. Tool names depend on runtime and never mix:
 
-- `runtime: rho`: multi-select from `agent`, `agents`, `bash`, `edit`, `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `web_search`, `write_file`. `tools: all` is allowed. Prefer a focused list when the role is narrow.
+- `runtime: rho`: multi-select from `agent`, `agents`, `bash`, `edit`, `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `web_search`, `write`. `tools: all` is allowed. Prefer a focused list when the role is narrow.
 - `runtime: claude-cli`: collect Claude Code tool names such as `Read`, `Edit`, `Glob`, `Grep`, and patterns like `Bash(git *)`. Specifier interiors may contain nested parentheses and quotes, but not commas (Claude's list grammar cannot round-trip commas). Do not use Rho capability names. Omitting `tools` means no Claude tools. `tools: all` is not valid.
 
 For Claude-cli starters, offer concrete presets when the user is unsure:
@@ -158,7 +158,7 @@ You are a planning specialist running under Claude Code for a Rho parent.
 
 ## 7. Write safely and verify
 
-Before writing, inspect the destination. If `<id>.md` already exists, read it and ask for explicit overwrite confirmation. Never overwrite based only on the earlier draft confirmation. Create the destination directory if needed using the available platform shell, then use `write_file` for the definition.
+Before writing, inspect the destination. If `<id>.md` already exists, read it and ask for explicit overwrite confirmation. Never overwrite based only on the earlier draft confirmation. Create the destination directory if needed using the available platform shell, then use `write` for the definition.
 
 After writing:
 

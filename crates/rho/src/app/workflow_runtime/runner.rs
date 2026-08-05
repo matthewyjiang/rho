@@ -154,7 +154,7 @@ fn validate_agent_access(
         "rho",
         "shell",
         "workflow",
-        "write_file",
+        "write",
     ];
     if let Some(capability) = agent
         .capabilities

@@ -36,7 +36,7 @@ env = ["MY_HOOK_TOKEN"]
 [[hook]]
 id = "fmt-rust"
 on = "after_tool_use"
-tools = ["edit", "write_file"]
+tools = ["edit", "write"]
 command = [".rho/hooks/fmt-rust"]
 timeout = "5s"
 ```
@@ -106,7 +106,7 @@ contract and do not change with which tools a given run enables:
 
 `agent`, `agents`, `bash`, `edit`, `fetch_content`,
 `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`, `process`,
-`questionnaire`, `read_file`, `rho`, `skill`, `web_search`, `write_file`.
+`questionnaire`, `read_file`, `rho`, `skill`, `web_search`, `write`.
 
 ## The event a hook receives
 
