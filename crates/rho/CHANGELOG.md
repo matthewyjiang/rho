@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.29.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.29.0...rho-coding-agent-v1.29.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **providers:** keep anthropic tool schemas typed after composition strip ([#753](https://github.com/matthewyjiang/rho/issues/753)) ([207e74c](https://github.com/matthewyjiang/rho/commit/207e74cc577d4c7c905f9bcf6b6b49e7153c9db5))
+* **workflow:** raise planner RLIMIT_AS above startup VmPeak ([#749](https://github.com/matthewyjiang/rho/issues/749)) ([def515e](https://github.com/matthewyjiang/rho/commit/def515e0eea9abfaf92ee0e440b43040be5bb972))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.16.0 to 0.16.1
+
 ## [1.29.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.28.1...rho-coding-agent-v1.29.0) (2026-08-04)
 
 

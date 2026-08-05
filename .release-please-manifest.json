@@ -1,6 +1,6 @@
 {
-  "crates/rho": "1.29.0",
+  "crates/rho": "1.29.1",
   "crates/rho-sdk": "1.16.0",
-  "crates/rho-providers": "0.16.0",
+  "crates/rho-providers": "0.16.1",
   "crates/rho-tools": "0.12.3"
 }
