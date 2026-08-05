@@ -156,14 +156,12 @@ async fn multi_file_rollback_restores_earlier_writes() {
     let (a_path, a_tag) = write_sample(&dir, "a.txt", a);
     let (b_path, b_tag) = write_sample(&dir, "b.txt", b);
 
-    // Hold an exclusive lock on b so commit cannot lock it. Plan still reads b
-    // successfully; failure is isolated to the commit path (privilege-independent).
-    let hold = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&b_path)
-        .unwrap();
-    hold.lock().unwrap();
+    // Make b unwritable so plan can still read it while commit cannot open it
+    // for rewrite. Exclusive locks are mandatory on Windows and would also
+    // block the plan-phase read, so they cannot isolate a commit-path failure.
+    let mut b_perms = std::fs::metadata(&b_path).unwrap().permissions();
+    b_perms.set_readonly(true);
+    std::fs::set_permissions(&b_path, b_perms).unwrap();
 
     let sections = vec![
         prepared(&dir, "a.txt", &a_tag, "PUT 1.=1:\n+ALPHA\n"),
@@ -173,10 +171,15 @@ async fn multi_file_rollback_restores_earlier_writes() {
         Ok(_) => panic!("expected multi-file commit failure"),
         Err(error) => error,
     };
-    drop(hold);
+
+    // Clear readonly so TempDir cleanup succeeds on Windows.
+    let mut b_perms = std::fs::metadata(&b_path).unwrap().permissions();
+    b_perms.set_readonly(false);
+    std::fs::set_permissions(&b_path, b_perms).unwrap();
+
     assert!(
-        err.to_string().contains("rolled back") || err.to_string().contains("could not lock"),
-        "{err}"
+        err.to_string().contains("rolled back"),
+        "expected earlier writes rolled back after b commit failure: {err}"
     );
     assert_eq!(std::fs::read_to_string(&a_path).unwrap(), a);
 }
