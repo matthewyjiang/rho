@@ -86,6 +86,7 @@ impl WorkspaceSearch for GlobSearch {
         display_root: &str,
         request: &GlobRequest,
         cancelled: &dyn Fn() -> bool,
+        _snapshots: Option<&crate::hashline::SnapshotStore>,
     ) -> Result<String, ToolError> {
         glob_workspace(root, display_root, request, cancelled)
     }

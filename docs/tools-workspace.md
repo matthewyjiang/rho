@@ -21,7 +21,7 @@ glob
 - Defaults: both honor `.gitignore`, skip hidden files, and never follow symlinks. Pass `include_hidden` when you need dotfiles.
 - Order: results come back in walk order, sorted by name within each directory, so repeat runs agree and a capped result is the first N paths shown rather than an arbitrary sample.
 - Caps: results are bounded (default 200). `grep` also caps matches per file and trims long lines. Every capped, timed-out, or cancelled search says so in its summary, including when it found nothing.
-- Output: `grep` groups matches by file. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
+- Output: `grep` groups matches by file. Content mode prefixes each file with a chainable `[path#TAG]` header and `N:text` rows. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
 - Permissions: both request read access only, so they work in every permission mode, including `plan`.
 
 It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, web access tools with zero-config invocation, and one native shell tool for the current platform:
@@ -57,11 +57,11 @@ Document extraction enforces a 25 MiB source limit and a 200,000-character extra
 
 ## File edits
 
-`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is an 8-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `edit` rejects a stale `TAG` before writing.
+`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is a 4-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `edit` rejects a stale `TAG` before writing.
 
 ```json
 {
-  "input": "[src/app.py#A1B2C3D4]\nPUT 2.=2:\n+print(\"Hello, world!\")\n"
+  "input": "[src/app.py#A1B2]\nPUT 2.=2:\n+print(\"Hello, world!\")\n"
 }
 ```
 
@@ -73,12 +73,12 @@ Supported ops:
 
 Rules:
 
-- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` recovery snapshot
+- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` recovery snapshot
 - Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
 - Line numbers name the original snapshot; they do not shift mid-document
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
 - `PUT` always needs at least one `+` body row; use `CUT` to delete
-- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed
+- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed. When the session still holds the tagged snapshot, `edit` may remap anchors onto the live file; otherwise the error includes a bounded live snapshot
 - Failed `edit` calls return a bounded live hashline snapshot in the error - copy that header and lines to retry. Re-read only for lines outside the snapshot
 - An insert whose anchor falls inside a range that another op replaces or deletes is rejected, because that position no longer exists after the edit
 - Block ops (`N*`), registers, `REM`, and `MV` are not supported yet

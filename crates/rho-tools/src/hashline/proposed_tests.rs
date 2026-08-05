@@ -9,7 +9,7 @@ use crate::tool_card::DiffRowKind;
 #[test]
 fn projects_mixed_ops_into_diff_rows() {
     let proposed = proposed_edit(
-        r#"[src/a.rs#A1B2C3D4]
+        r#"[src/a.rs#A1B2]
 PUT 2.=3:
 +TWO
 +THREE
@@ -41,13 +41,10 @@ PUT >6:
 // Owner: hashline proposed
 #[test]
 fn projects_incomplete_documents() {
-    let proposed = proposed_edit(
-        "[a.rs#ABCDABCD]\nPUT 1.=3:\n+one\n+two\nCUT 8.=9\n[b.rs#ABCDABCD]\nPUT 2:\n+pa",
-    );
+    let proposed =
+        proposed_edit("[a.rs#ABCD]\nPUT 1.=3:\n+one\n+two\nCUT 8.=9\n[b.rs#ABCD]\nPUT 2:\n+pa");
     assert_eq!(
-        proposed_sections(
-            "[a.rs#ABCDABCD]\nPUT 1.=3:\n+one\n+two\nCUT 8.=9\n[b.rs#ABCDABCD]\nPUT 2:\n+pa"
-        ),
+        proposed_sections("[a.rs#ABCD]\nPUT 1.=3:\n+one\n+two\nCUT 8.=9\n[b.rs#ABCD]\nPUT 2:\n+pa"),
         vec![
             ProposedSection {
                 path: "a.rs".into(),

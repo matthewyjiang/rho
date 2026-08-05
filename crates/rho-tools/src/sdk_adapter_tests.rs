@@ -439,10 +439,10 @@ async fn edit_prepare_reserves_existing_targets() {
     let workspace = workspace(&dir);
     let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
     let input = "\
-[a.txt#AAAAAAAA]
+[a.txt#AAAA]
 PUT 1.=1:
 +A
-[b.txt#BBBBBBBB]
+[b.txt#BBBB]
 PUT 1.=1:
 +B
 ";
@@ -501,10 +501,10 @@ async fn edit_prepare_rejects_duplicate_paths() {
     std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
     let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
     let input = "\
-[a.txt#AAAAAAAA]
+[a.txt#AAAA]
 PUT 1.=1:
 +A
-[a.txt#BBBBBBBB]
+[a.txt#BBBB]
 PUT 1.=1:
 +B
 ";

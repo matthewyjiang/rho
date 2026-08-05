@@ -90,7 +90,7 @@ fn post_edit_preview_spreads_budget_across_hunks() {
 // Owner: hashline format
 #[test]
 fn fixture_edit_original_tag_matches_compute_file_hash() {
-    assert_eq!(compute_file_hash("original line\n"), "04EE8022");
+    assert_eq!(compute_file_hash("original line\n"), "8022");
 }
 
 // Covers: chain snapshots stay bounded and keep head+tail for large files

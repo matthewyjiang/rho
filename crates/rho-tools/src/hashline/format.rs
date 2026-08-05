@@ -6,10 +6,11 @@
 
 /// Number of uppercase hex digits in a file snapshot tag.
 ///
-/// Full 32-bit width: the tag is the only guard against a model applying line
-/// numbers from a read that a concurrent writer has already invalidated, so the
-/// collision space is worth more than the four characters it costs.
-pub(crate) const FILE_HASH_LENGTH: usize = 8;
+/// Four hex digits (low 16 bits of FNV-1a) match the oh-my-pi wire format and
+/// keep headers cheap. Session SnapshotStore + remap recovery absorb the
+/// shorter collision space; the tag remains a freshness lock, not a sole
+/// identity key (store dedups on full text).
+pub(crate) const FILE_HASH_LENGTH: usize = 4;
 
 /// Separator between a path and its snapshot tag inside a section header.
 pub(crate) const FILE_HASH_SEP: char = '#';
@@ -19,8 +20,8 @@ pub(crate) const LINE_BODY_SEP: char = ':';
 
 /// Compute the snapshot tag for normalized file text.
 pub(crate) fn compute_file_hash(text: &str) -> String {
-    let digest = fnv1a32(normalize_for_hash(text).as_bytes());
-    format!("{digest:08X}")
+    let digest = fnv1a32(normalize_for_hash(text).as_bytes()) & 0xFFFF;
+    format!("{digest:04X}")
 }
 
 /// Format a section header `[path#TAG]`.

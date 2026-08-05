@@ -20,9 +20,12 @@ use rho_sdk::{
     CapabilityKind,
 };
 
+use std::sync::Arc;
+
 use crate::{
     glob::GlobSearch,
     grep::GrepSearch,
+    hashline::SnapshotStore,
     sdk_support::{
         check_preparation_cancelled, map_app_error, map_path_error, path_request,
         preparation_workspace, PathCapability,
@@ -38,13 +41,15 @@ pub(crate) type GlobTool = SearchTool<GlobSearch>;
 
 pub(crate) struct SearchTool<S> {
     max_output_bytes: usize,
+    snapshot_store: Option<Arc<SnapshotStore>>,
     search: PhantomData<fn() -> S>,
 }
 
 impl<S: WorkspaceSearch> SearchTool<S> {
-    pub(crate) fn new(max_output_bytes: usize) -> Self {
+    pub(crate) fn new(max_output_bytes: usize, snapshot_store: Option<Arc<SnapshotStore>>) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
+            snapshot_store,
             search: PhantomData,
         }
     }
@@ -93,6 +98,7 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                 resolved.path(),
             ))];
             let max_output_bytes = self.max_output_bytes;
+            let snapshot_store = self.snapshot_store.clone();
             Ok(PreparedToolInvocation::resource_aware(
                 accesses,
                 [capability],
@@ -106,7 +112,13 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                         let content = tokio::task::spawn_blocking({
                             let display = display.clone();
                             move || {
-                                S::run(&root, &display, &request, &|| cancellation.is_cancelled())
+                                S::run(
+                                    &root,
+                                    &display,
+                                    &request,
+                                    &|| cancellation.is_cancelled(),
+                                    snapshot_store.as_deref(),
+                                )
                             }
                         })
                         .await

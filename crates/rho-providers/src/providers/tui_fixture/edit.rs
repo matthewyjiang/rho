@@ -14,7 +14,7 @@ const CALL_ID: &str = "tui-fixture-edit";
 const CANCEL_CALL_ID: &str = "tui-fixture-cancel-edit";
 const ORIGINAL: &str = "original line\n";
 // FNV-1a tag for ORIGINAL via rho_tools::hashline::compute_file_hash.
-const ORIGINAL_TAG: &str = "04EE8022";
+const ORIGINAL_TAG: &str = "8022";
 
 pub(super) fn is_pending(request: &ModelRequest<'_>) -> bool {
     tool_result(request, CALL_ID).is_none()

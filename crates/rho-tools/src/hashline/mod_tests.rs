@@ -114,7 +114,7 @@ async fn stale_tag_leaves_file_untouched() {
     let error = Edit
         .call(
             serde_json::json!({
-                "input": "[sample.rs#DEADBEEF]\nPUT 1.=1:\n+nope\n"
+                "input": "[sample.rs#DEAD]\nPUT 1.=1:\n+nope\n"
             }),
             ctx,
             "call_stale".into(),
@@ -162,4 +162,62 @@ async fn edits_multiple_files_in_one_document() {
 
     assert_eq!(std::fs::read_to_string(a_path).unwrap(), "ONE\n");
     assert_eq!(std::fs::read_to_string(b_path).unwrap(), "TWO\n");
+}
+
+// Covers: session store must remap anchors after external drift and still apply
+// Owner: edit tool + snapshot store
+#[tokio::test]
+async fn recovers_stale_tag_via_session_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sample.txt");
+    let previous = "alpha\ntarget\ngamma\n";
+    let live = "intro\nalpha\ntarget\ngamma\n";
+    std::fs::write(&path, live).unwrap();
+    let store = SnapshotStore::shared();
+    let old_tag = store.record(&path, previous, Some([1usize, 2, 3]));
+    let input = format!("[sample.txt#{old_tag}]\nPUT 2.=2:\n+TARGET\n");
+    let sections = vec![PreparedSection {
+        path: path.clone(),
+        display_path: "sample.txt".into(),
+        section: parse_hashline(&input).unwrap().remove(0),
+    }];
+    let outcome = match apply_prepared_sections(sections, 12_000, Some(store.clone())).await {
+        Ok(outcome) => outcome,
+        Err(error) => panic!("expected recovery apply to succeed: {error}"),
+    };
+    assert!(
+        outcome.content.contains("recovered stale tag"),
+        "{}",
+        outcome.content
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "intro\nalpha\nTARGET\ngamma\n"
+    );
+    assert_eq!(store.metrics().snapshot().recovery_ok, 1);
+}
+
+// Covers: partial-read provenance must block edits of unseen anchors
+// Owner: edit tool + seen lines
+#[tokio::test]
+async fn rejects_unseen_anchors_from_partial_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sample.txt");
+    let original = "one\ntwo\nthree\n";
+    std::fs::write(&path, original).unwrap();
+    let store = SnapshotStore::shared();
+    let tag = store.record(&path, original, Some([1usize])); // only line 1 seen
+    let input = format!("[sample.txt#{tag}]\nPUT 2.=2:\n+TWO\n");
+    let sections = vec![PreparedSection {
+        path: path.clone(),
+        display_path: "sample.txt".into(),
+        section: parse_hashline(&input).unwrap().remove(0),
+    }];
+    let err = match apply_prepared_sections(sections, 12_000, Some(store.clone())).await {
+        Ok(_) => panic!("expected unseen-anchor rejection"),
+        Err(error) => error,
+    };
+    assert!(err.to_string().contains("not seen"), "{err}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    assert_eq!(store.metrics().snapshot().unseen_reject, 1);
 }

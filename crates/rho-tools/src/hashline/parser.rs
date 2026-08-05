@@ -220,7 +220,7 @@ fn parse_header(line: &str) -> Result<Option<(String, String)>, String> {
 
 fn parse_cut(line: &str) -> Result<Option<Op>, String> {
     let trimmed = line.trim();
-    let Some(rest) = trimmed.strip_prefix("CUT") else {
+    let Some(rest) = strip_ascii_keyword(trimmed, "CUT") else {
         return Ok(None);
     };
     let rest = rest.trim();
@@ -241,7 +241,7 @@ fn parse_cut(line: &str) -> Result<Option<Op>, String> {
 
 fn parse_put_header(line: &str) -> Result<Option<PutHead>, String> {
     let trimmed = line.trim();
-    let Some(rest) = trimmed.strip_prefix("PUT") else {
+    let Some(rest) = strip_ascii_keyword(trimmed, "PUT") else {
         return Ok(None);
     };
     let rest = rest.trim();
@@ -305,7 +305,19 @@ where
 
 fn parse_range(raw: &str) -> Result<(usize, usize), String> {
     let raw = raw.trim();
-    if let Some((start, end)) = raw.split_once(".=") {
+    // Canonical `N.=M`, plus lenient `N-M` / `N..M` the model sometimes emits.
+    let endpoints = raw
+        .split_once(".=")
+        .or_else(|| raw.split_once(".."))
+        .or_else(|| {
+            // Single hyphen range: avoid treating negative numbers (unsupported).
+            let idx = raw.find('-')?;
+            if idx == 0 {
+                return None;
+            }
+            Some((&raw[..idx], &raw[idx + 1..]))
+        });
+    if let Some((start, end)) = endpoints {
         let start = parse_line_number(start.trim(), "range start")?;
         let end = parse_line_number(end.trim(), "range end")?;
         if end < start {
@@ -316,6 +328,24 @@ fn parse_range(raw: &str) -> Result<(usize, usize), String> {
     // Allow bare `N` as `N.=N` for single-line convenience.
     let line = parse_line_number(raw, "line")?;
     Ok((line, line))
+}
+
+/// Strip a leading ASCII keyword case-insensitively when it is a whole token.
+fn strip_ascii_keyword<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
+    let bytes = line.as_bytes();
+    let key = keyword.as_bytes();
+    if bytes.len() < key.len() {
+        return None;
+    }
+    if !bytes[..key.len()].eq_ignore_ascii_case(key) {
+        return None;
+    }
+    let rest = &line[key.len()..];
+    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+        Some(rest)
+    } else {
+        None
+    }
 }
 
 fn parse_line_number(raw: &str, label: &str) -> Result<usize, String> {

@@ -97,6 +97,9 @@ pub(super) struct ReadFileContent {
     pub(super) content: String,
     pub(super) image: Option<ImageAsset>,
     pub(super) preview_error: Option<String>,
+    /// Full file text plus 1-indexed lines shown in the hashline view, when the
+    /// body was read as UTF-8 source (for session snapshot recording).
+    pub(super) snapshot: Option<(String, Vec<usize>)>,
 }
 
 pub(super) async fn read_file_content(
@@ -121,10 +124,12 @@ pub(super) async fn read_file_content(
         })?;
         let content = crate::hashline::format_hashline_view(display_path, &text, offset, limit)
             .map_err(ToolError::Message)?;
+        let seen = seen_lines_for_view(&text, offset, limit);
         return Ok(ReadFileContent {
             content,
             image: None,
             preview_error: None,
+            snapshot: Some((text, seen)),
         });
     }
 
@@ -139,6 +144,7 @@ pub(super) async fn read_file_content(
                 preview_error: Some(format!(
                     "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
                 )),
+                snapshot: None,
             });
         }
 
@@ -155,6 +161,7 @@ pub(super) async fn read_file_content(
                 preview_error: Some(format!(
                     "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
                 )),
+                snapshot: None,
             });
         }
         let content = format!("{mime_type} image ({} bytes)", bytes.len());
@@ -167,28 +174,33 @@ pub(super) async fn read_file_content(
                     bytes: thumbnail,
                 }),
                 preview_error: None,
+                snapshot: None,
             }),
             Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
                 Ok(text) => {
                     let content =
                         crate::hashline::format_hashline_view(&display_path, &text, None, None)
                             .map_err(ToolError::Message)?;
+                    let seen = seen_lines_for_view(&text, None, None);
                     Ok(ReadFileContent {
                         content,
                         image: None,
                         preview_error: None,
+                        snapshot: Some((text, seen)),
                     })
                 }
                 Err(_) => Ok(ReadFileContent {
                     content,
                     image: None,
                     preview_error: Some(format!("image preview unavailable: {error}")),
+                    snapshot: None,
                 }),
             },
             Err(error) => Ok(ReadFileContent {
                 content,
                 image: None,
                 preview_error: Some(format!("image preview task failed: {error}")),
+                snapshot: None,
             }),
         };
     }
@@ -212,10 +224,12 @@ pub(super) async fn read_file_content(
         })?;
         let content = crate::hashline::format_hashline_view(display_path, &text, None, None)
             .map_err(ToolError::Message)?;
+        let seen = seen_lines_for_view(&text, None, None);
         return Ok(ReadFileContent {
             content,
             image: None,
             preview_error: None,
+            snapshot: Some((text, seen)),
         });
     }
 
@@ -230,7 +244,24 @@ pub(super) async fn read_file_content(
         content: render_extracted_document(&document),
         image: None,
         preview_error: None,
+        snapshot: None,
     })
+}
+
+fn seen_lines_for_view(text: &str, offset: Option<usize>, limit: Option<usize>) -> Vec<usize> {
+    let total = crate::hashline::split_content_lines_for_store(text);
+    if total == 0 {
+        return Vec::new();
+    }
+    let start = offset.unwrap_or(1).max(1);
+    let end = match limit {
+        Some(limit) => start.saturating_add(limit).saturating_sub(1).min(total),
+        None => total,
+    };
+    if start > total {
+        return Vec::new();
+    }
+    (start..=end).collect()
 }
 
 fn check_document_size(path: &Path, source_len: u64) -> Result<(), ToolError> {

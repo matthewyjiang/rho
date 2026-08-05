@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use crate::{
     grep_format::format_results,
+    hashline::SnapshotStore,
     path_glob::PathGlob,
     search::{
         clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
@@ -147,7 +148,7 @@ impl WorkspaceSearch for GrepSearch {
     fn spec() -> ToolSpec {
         ToolSpec {
             name: Self::NAME.into(),
-            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers.".into(),
+            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode prefixes each file with a chainable [path#TAG] header and N:text rows so edit can validate anchors without a separate read_file.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -182,14 +183,17 @@ impl WorkspaceSearch for GrepSearch {
         display_root: &str,
         request: &GrepRequest,
         cancelled: &dyn Fn() -> bool,
+        snapshots: Option<&SnapshotStore>,
     ) -> Result<String, ToolError> {
-        grep_workspace(root, display_root, request, cancelled)
+        grep_workspace(root, display_root, request, cancelled, snapshots)
     }
 }
 
 /// One file that matched, in the shape every output mode renders from.
 pub(crate) struct FileHit {
     pub(crate) relative: String,
+    /// Full-file snapshot tag when content mode computed one for chaining.
+    pub(crate) file_tag: Option<String>,
     /// Matching lines in the file, including any not retained below.
     pub(crate) total: usize,
     /// Retained match lines as `(line number, display text)`. Empty unless the
@@ -219,6 +223,7 @@ pub(crate) fn grep_workspace(
     display_root: &str,
     request: &GrepRequest,
     cancelled: &dyn Fn() -> bool,
+    snapshots: Option<&SnapshotStore>,
 ) -> Result<String, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
@@ -240,7 +245,7 @@ pub(crate) fn grep_workspace(
                 return ControlFlow::Continue(());
             }
         }
-        let Some(mut hit) = scan_file(request, file, retained_per_file) else {
+        let Some(mut hit) = scan_file(request, file, retained_per_file, snapshots) else {
             return ControlFlow::Continue(());
         };
 
@@ -282,11 +287,17 @@ pub(crate) fn grep_workspace(
 ///
 /// Returns `None` for unreadable, oversized, binary, or non-matching files, so
 /// every output mode shares one read and one pass over the lines.
-fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<FileHit> {
+fn scan_file(
+    request: &GrepRequest,
+    file: WalkedFile,
+    retain: usize,
+    snapshots: Option<&SnapshotStore>,
+) -> Option<FileHit> {
     let text = read_searchable_text(&file.absolute)?;
     let stop_early = request.output_mode.stops_at_first_match();
     let mut hit = FileHit {
         relative: file.relative,
+        file_tag: None,
         total: 0,
         lines: Vec::new(),
     };
@@ -303,7 +314,18 @@ fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<F
             break;
         }
     }
-    (hit.total > 0).then_some(hit)
+    if hit.total == 0 {
+        return None;
+    }
+    if request.output_mode == GrepOutputMode::Content {
+        let tag = crate::hashline::compute_file_hash(&text);
+        if let Some(store) = snapshots {
+            let seen = hit.lines.iter().map(|(n, _)| *n);
+            store.record(&file.absolute, text, Some(seen));
+        }
+        hit.file_tag = Some(tag);
+    }
+    Some(hit)
 }
 
 fn read_searchable_text(path: &Path) -> Option<String> {

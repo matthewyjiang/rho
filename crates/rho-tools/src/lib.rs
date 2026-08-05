@@ -46,6 +46,7 @@ pub mod sdk_support;
 pub mod write_file;
 
 pub use cancellation::RunCancellation;
+pub use hashline::{HashlineMetrics, HashlineMetricsSnapshot, SnapshotStore};
 pub use image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 pub use process_env::apply_process_environment;
 pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};

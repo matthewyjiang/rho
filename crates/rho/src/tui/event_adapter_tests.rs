@@ -221,8 +221,8 @@ fn legacy_provider_activity_is_ignored_by_tui() {
 fn edit_keeps_one_diff_card_from_stream_through_completion() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-1").unwrap();
-    let input = "[src/lib.rs#A1B2C3D4]\nPUT 1.=1:\n+new\n";
-    let partial_arguments = r#"{"input":"[src/lib.rs#A1B2C3D4]\nPUT 1.=1:\n+new\n"#;
+    let input = "[src/lib.rs#A1B2]\nPUT 1.=1:\n+new\n";
+    let partial_arguments = r#"{"input":"[src/lib.rs#A1B2]\nPUT 1.=1:\n+new\n"#;
     let partial_events = adapter.translate(RunEvent::ToolCallUpdated {
         index: 0,
         id: None,
@@ -378,10 +378,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
 fn edit_binds_a_late_call_id_after_a_large_preview_stride() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-large-preview").unwrap();
-    let input = format!(
-        "[large.txt#DEADBEEF]\nPUT 1.=1:\n{}",
-        "+line\n".repeat(45_000)
-    );
+    let input = format!("[large.txt#DEAD]\nPUT 1.=1:\n{}", "+line\n".repeat(45_000));
     let arguments = serde_json::to_string(&serde_json::json!({"input": input})).unwrap();
     let events = adapter.translate(RunEvent::ToolCallUpdated {
         index: 0,
@@ -429,7 +426,7 @@ fn edit_binds_a_late_call_id_after_a_large_preview_stride() {
 // Owner: interactive presenter format
 #[test]
 fn edit_preview_preserves_multi_file_identity() {
-    let input = "[a.txt#AAAAAAAA]\nPUT 1.=1:\n+A\n\n[b.txt#BBBBBBBB]\nCUT 1.=1\n";
+    let input = "[a.txt#AAAA]\nPUT 1.=1:\n+A\n\n[b.txt#BBBB]\nCUT 1.=1\n";
     let expected = rho_tools::tool_card::ToolCard::new(
         ToolStatus::Running,
         ToolFamily::FileDiff,
