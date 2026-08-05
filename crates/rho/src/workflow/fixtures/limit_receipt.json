@@ -127,9 +127,9 @@
       "accepted": 65536
     },
     "address_space_bytes": {
-      "measured": 1071063040,
-      "margin": 2678784,
-      "accepted": 1073741824
+      "measured": 1170087936,
+      "margin": 3124879360,
+      "accepted": 4294967296
     }
   }
 }
