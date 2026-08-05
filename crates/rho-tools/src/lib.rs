@@ -56,4 +56,4 @@ pub use workspace_mutation::{UntrackedWorkspaceEffect, WorkspaceMutationObserver
 
 /// Default per-tool output budget, in bytes, when the host does not configure
 /// one explicitly.
-pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 12_000;
+pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 64_000;
