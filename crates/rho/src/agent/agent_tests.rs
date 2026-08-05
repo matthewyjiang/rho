@@ -71,15 +71,15 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "explorer",
-            "ef6f425945a8cee8742e53e8abb5c8f4cf8da391e48a2a44982c740bb735c249",
+            "0a4e36bcf27330c4c313575049f6bfb1d165585e33bc3b4e75cfeace58d5aefe",
         ),
         (
             "reviewer",
-            "d1d123fac162706d7a40921acbef3af30d6737932afc6fbec4f39ec3e16c76ea",
+            "b6dbdf4028def08031a039f757116526e833c45b3c73318246b519d50246c469",
         ),
         (
             "worker",
-            "6a1f787c17442841a11703c25cb1ef48501be615656a22aba42237c8ccece071",
+            "c63162700fa6689be64fc6e35e37260da177cc4e1fce6bcca592fcbe362ab5be",
         ),
     ];
     for (id, expected_legacy) in expected {

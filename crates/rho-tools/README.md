@@ -7,6 +7,8 @@ agent and adapters for registering them with `rho-sdk`. The crate is imported as
 The built-in tools cover `read_file`, `write_file`, `edit` (hashline),
 `list_dir`, `grep`, and `glob`, with shared diff generation and output limiting.
 `read_file` returns UTF-8 sources as hashline views for `edit`.
+`grep` content mode also mints chainable `[path#TAG]` headers on matching files
+so edits can anchor from search hits without a separate read.
 Successful `edit` results include a post-edit `[path#TAG]` numbered preview so a
 follow-up edit can chain without an immediate re-read.
 `coding_tools` constructs their SDK adapters, while `shell_tool` constructs the

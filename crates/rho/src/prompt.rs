@@ -51,6 +51,13 @@ When structure is the point - architecture, control flow, state machines, reques
 Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram. Keep diagrams small with short labels. Skip diagrams for routine edits, simple answers, linear checklists, or anything that mostly restates bullets. The interactive transcript also renders CommonMark.
 "#,
     );
+    if tools.iter().any(|tool| tool.name == "grep") {
+        text.push_str(
+            r#"
+Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Content mode returns chainable `[path#TAG]` headers and match lines, so you can often `edit` from the search hit without a separate `read_file`. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
+"#,
+        );
+    }
     if tools.iter().any(|tool| tool.name == "agent") {
         text.push_str(
             r#"
@@ -60,6 +67,7 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 "#,
         );
     }
+
     let mut sources = vec![PromptSource {
         kind: PromptSourceKind::Base,
         path: None,
@@ -316,6 +324,24 @@ mod tests {
         assert!(prompt.contains("Web access is available through tool schemas"));
         assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
         assert!(!prompt.contains("BRAVE_SEARCH_API_KEY"));
+    }
+
+    #[test]
+    fn includes_grep_preference_only_when_grep_tool_is_available() {
+        let project = TempDir::new().unwrap();
+        let grep_tool = ToolSpec {
+            name: "grep".into(),
+            description: "search".into(),
+            input_schema: serde_json::json!({}),
+        };
+
+        let enabled = system_prompt_with_home(&[grep_tool], project.path(), None).text;
+        let disabled = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(enabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
+        assert!(enabled.contains("chainable `[path#TAG]`"));
+        assert!(enabled.contains("without a separate `read_file`"));
+        assert!(!disabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
     }
 
     #[test]
