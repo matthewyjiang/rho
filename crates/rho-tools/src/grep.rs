@@ -147,7 +147,7 @@ impl WorkspaceSearch for GrepSearch {
     fn spec() -> ToolSpec {
         ToolSpec {
             name: Self::NAME.into(),
-            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode prefixes each file with a chainable [path#TAG] header and N:text rows so edit can validate anchors without a separate read_file.".into(),
+            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode prefixes each file with a chainable [path#TAG] header (via hashline) and match previews as `N | text` so edit can take TAG and line numbers. Match text is search preview only and may be truncated - do not copy preview bodies into PUT rows; use read_file when you need exact line text.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -190,12 +190,12 @@ impl WorkspaceSearch for GrepSearch {
 /// One file that matched, in the shape every output mode renders from.
 pub(crate) struct FileHit {
     pub(crate) relative: String,
-    /// Full-file snapshot tag when content mode computed one for chaining.
+    /// Full-file snapshot tag when content mode computed one for edit anchors.
     pub(crate) file_tag: Option<String>,
     /// Matching lines in the file, including any not retained below.
     pub(crate) total: usize,
     /// Retained match lines as `(line number, display text)`. Empty unless the
-    /// output mode renders line text.
+    /// output mode renders line text. Preview only - not hashline body text.
     pub(crate) lines: Vec<(usize, String)>,
 }
 
@@ -293,15 +293,15 @@ fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<F
         total: 0,
         lines: Vec::new(),
     };
-    for (index, line) in text.lines().enumerate() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
+    // Use hashline line splitting so match line numbers agree with edit anchors.
+    let lines = crate::hashline::split_content_lines(&text);
+    for (index, line) in lines.iter().enumerate() {
         if !request.regex.is_match(line) {
             continue;
         }
         hit.total = hit.total.saturating_add(1);
         if hit.lines.len() < retain {
-            // Preserve raw source (CR already stripped) so grep→edit chains keep
-            // indentation. Only length-truncate; never trim/collapse whitespace.
+            // Search preview only - may truncate. Not hashline `N:text` body text.
             hit.lines
                 .push((index + 1, truncate_chars(line, MAX_LINE_CHARS)));
         }

@@ -41,7 +41,7 @@ fn max_per_file_suppresses_extra_hits() {
         format!(
             "\
 [hits.rs#{tag}]
-1:hit
+1 | hit
 ... +2 more in this file
 
 1 matches shown (3 total) in 1 files (1 files truncated by max_per_file; raise max_per_file or narrow the pattern)"
@@ -81,7 +81,7 @@ fn max_results_caps_content_output() {
         format!(
             "\
 [a.txt#{tag}]
-1:match one
+1 | match one
 
 1 matches in 1 files (result limit reached; narrow the pattern, path, or glob)"
         )
@@ -101,8 +101,8 @@ fn max_results_splits_a_file_and_reports_the_remainder() {
         format!(
             "\
 [a.txt#{tag}]
-1:hit
-2:hit
+1 | hit
+2 | hit
 ... +1 more in this file
 
 2 matches shown (3 total) in 1 files (result limit reached; narrow the pattern, path, or glob)"
@@ -160,10 +160,10 @@ fn truncates_long_match_lines_at_char_boundary() {
     let content = call_grep(&dir, json!({"pattern": "a"})).unwrap();
     let line = content
         .lines()
-        .find(|line| line.contains(':') && !line.starts_with('['))
+        .find(|line| line.contains(" | ") && !line.starts_with('['))
         .unwrap();
-    // Hashline body: `1:<text>…`
-    let text = line.split_once(':').unwrap().1;
+    // Preview body: `1 | <text>…` - not hashline `N:text`
+    let text = line.split_once(" | ").unwrap().1;
     assert!(text.ends_with('…'), "{line}");
     assert_eq!(text.chars().count(), 201, "{text}");
 }
@@ -179,10 +179,10 @@ fn cancellation_stops_the_walk_and_is_reported() {
     assert_eq!(out, "no matches for 'needle' under . (cancelled)");
 }
 
-// Covers: content mode must mint full-file tags for edit chaining
+// Covers: content mode must mint full-file tags and line numbers for edit anchors
 // Owner: pure unit (grep hashline)
 #[test]
-fn content_mode_mints_file_tags() {
+fn content_mode_mints_file_tags_and_preview_lines() {
     let dir = TempDir::new().unwrap();
     let body = "alpha\nfind me\nbeta\n";
     write(&dir, "src/lib.rs", body);
@@ -192,13 +192,18 @@ fn content_mode_mints_file_tags() {
         content.contains(&format!("[src/lib.rs#{tag}]")),
         "{content}"
     );
-    assert!(content.contains("2:find me"), "{content}");
+    // Anchor + preview shape, not hashline body `N:text`
+    assert!(content.contains("2 | find me"), "{content}");
+    assert!(
+        !content.contains("2:find me"),
+        "must not emit hashline body rows: {content}"
+    );
 }
 
-// Covers: content-mode bodies must keep source indentation for edit chaining
-// Owner: pure unit (grep hashline)
+// Covers: content-mode previews keep source indentation for readability
+// Owner: pure unit (grep display)
 #[test]
-fn preserves_indentation_for_edit_chaining() {
+fn preserves_indentation_in_match_preview() {
     let dir = TempDir::new().unwrap();
     let body = "fn main() {\n    println!(\"hi\");\n}\n";
     write(&dir, "main.rs", body);
@@ -206,11 +211,11 @@ fn preserves_indentation_for_edit_chaining() {
     let content = call_grep(&dir, json!({"pattern": "println"})).unwrap();
     assert!(content.contains(&format!("[main.rs#{tag}]")), "{content}");
     assert!(
-        content.contains("2:    println!(\"hi\");"),
+        content.contains("2 |     println!(\"hi\");"),
         "indentation stripped: {content}"
     );
     assert!(
-        !content.contains("2:println!(\"hi\");"),
-        "normalized body must not appear: {content}"
+        !content.contains("2:    println!(\"hi\");"),
+        "must not emit hashline body rows: {content}"
     );
 }

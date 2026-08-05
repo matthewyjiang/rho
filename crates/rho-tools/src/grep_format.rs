@@ -42,13 +42,19 @@ fn content_body(hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
         if let Some(tag) = &hit.file_tag {
-            let _ = writeln!(body, "[{}#{tag}]", hit.relative);
+            // Sole hashline wire emitter owns header shape.
+            let _ = writeln!(
+                body,
+                "{}",
+                crate::hashline::format_header(&hit.relative, tag)
+            );
         } else {
             let _ = writeln!(body, "{}", hit.relative);
         }
         for (line_no, text) in &hit.lines {
-            // Hashline-shaped `N:text` so models can copy anchors into edit.
-            let _ = writeln!(body, "{line_no}:{text}");
+            // Preview shape uses `N | text`, not hashline `N:text`, so truncated
+            // match bodies are not copy-pasteable into edit PUT rows.
+            let _ = writeln!(body, "{line_no} | {text}");
         }
         if hit.suppressed() > 0 {
             let _ = writeln!(body, "... +{} more in this file", hit.suppressed());

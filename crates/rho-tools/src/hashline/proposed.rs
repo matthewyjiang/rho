@@ -1,11 +1,9 @@
 //! Document-only projection of a hashline edit for presentation cards.
 //!
 //! Rows come from the edit document alone so streaming and approval cards never
-//! need the target file on disk. Added lines use PUT bodies; removed lines use
-//! original line numbers from CUT/replace ranges (body text is not in the
-//! document, so remove rows carry line numbers only).
-
-use crate::tool_card::{DiffRow, DiffRowKind};
+//! need the target file on disk. This is **not** a unified diff: PUT bodies are
+//! shown as added lines, and CUT/replace ranges appear as op summaries (line
+//! numbers only). Prior file text is never invented.
 
 use super::parser::{parse_lenient, Op, Section};
 
@@ -28,7 +26,16 @@ pub struct ProposedEditFile {
     pub path: String,
     pub added_lines: u64,
     pub removed_lines: u64,
-    pub rows: Vec<DiffRow>,
+    pub rows: Vec<ProposedRow>,
+}
+
+/// One display row projected from the document (not from on-disk file text).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProposedRow {
+    /// Op locator / range summary (`PUT 2.=3`, `CUT 5`).
+    Summary(String),
+    /// One PUT body line.
+    Added(String),
 }
 
 /// Path and line counts only, for metadata and path lists.
@@ -69,7 +76,7 @@ pub fn proposed_edit(input: &str) -> ProposedEdit {
 
 /// Path and count summary of a possibly incomplete document.
 ///
-/// Cheap projection: does not allocate diff rows. Use [`proposed_edit`] when
+/// Cheap projection: does not allocate display rows. Use [`proposed_edit`] when
 /// the caller needs card body content.
 pub fn proposed_sections(input: &str) -> Vec<ProposedSection> {
     parse_lenient(input)
@@ -115,13 +122,16 @@ fn project_op(
         Op::Replace { start, end, body } => {
             file.removed_lines += (*end - *start + 1) as u64;
             file.added_lines += body.len() as u64;
-            push_removed_range(file, *start, *end, retained_body_rows, body_overflow);
+            push_row(
+                file,
+                ProposedRow::Summary(format_put_range(*start, *end)),
+                retained_body_rows,
+                body_overflow,
+            );
             for line in body {
                 push_row(
                     file,
-                    DiffRowKind::Added,
-                    None,
-                    line,
+                    ProposedRow::Added(line.clone()),
                     retained_body_rows,
                     body_overflow,
                 );
@@ -129,16 +139,46 @@ fn project_op(
         }
         Op::Delete { start, end } => {
             file.removed_lines += (*end - *start + 1) as u64;
-            push_removed_range(file, *start, *end, retained_body_rows, body_overflow);
+            push_row(
+                file,
+                ProposedRow::Summary(format_cut_range(*start, *end)),
+                retained_body_rows,
+                body_overflow,
+            );
         }
-        Op::InsertBefore { body, .. } | Op::InsertAfter { body, .. } => {
+        Op::InsertBefore { line, body } => {
             file.added_lines += body.len() as u64;
+            push_row(
+                file,
+                ProposedRow::Summary(format!("PUT <{line}")),
+                retained_body_rows,
+                body_overflow,
+            );
             for text in body {
                 push_row(
                     file,
-                    DiffRowKind::Added,
-                    None,
-                    text,
+                    ProposedRow::Added(text.clone()),
+                    retained_body_rows,
+                    body_overflow,
+                );
+            }
+        }
+        Op::InsertAfter { line, body } => {
+            file.added_lines += body.len() as u64;
+            let summary = match line {
+                Some(line) => format!("PUT >{line}"),
+                None => "PUT >$".into(),
+            };
+            push_row(
+                file,
+                ProposedRow::Summary(summary),
+                retained_body_rows,
+                body_overflow,
+            );
+            for text in body {
+                push_row(
+                    file,
+                    ProposedRow::Added(text.clone()),
                     retained_body_rows,
                     body_overflow,
                 );
@@ -147,30 +187,25 @@ fn project_op(
     }
 }
 
-fn push_removed_range(
-    file: &mut ProposedEditFile,
-    start: usize,
-    end: usize,
-    retained_body_rows: &mut usize,
-    body_overflow: &mut bool,
-) {
-    for line in start..=end {
-        push_row(
-            file,
-            DiffRowKind::Removed,
-            u32::try_from(line).ok(),
-            "",
-            retained_body_rows,
-            body_overflow,
-        );
+fn format_put_range(start: usize, end: usize) -> String {
+    if start == end {
+        format!("PUT {start}")
+    } else {
+        format!("PUT {start}.={end}")
+    }
+}
+
+fn format_cut_range(start: usize, end: usize) -> String {
+    if start == end {
+        format!("CUT {start}")
+    } else {
+        format!("CUT {start}.={end}")
     }
 }
 
 fn push_row(
     file: &mut ProposedEditFile,
-    kind: DiffRowKind,
-    line: Option<u32>,
-    text: &str,
+    row: ProposedRow,
     retained_body_rows: &mut usize,
     body_overflow: &mut bool,
 ) {
@@ -178,7 +213,7 @@ fn push_row(
         *body_overflow = true;
         return;
     }
-    file.rows.push(DiffRow::new(kind, line, text));
+    file.rows.push(row);
     *retained_body_rows += 1;
 }
 

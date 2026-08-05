@@ -4,8 +4,8 @@ use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::{
     tool::compact_display_path,
     tool_card::{
-        DiffCardChange, DiffCardFile, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
-        ToolStatus,
+        DiffCardChange, DiffCardFile, DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact,
+        ToolFamily, ToolHeader, ToolStatus,
     },
 };
 
@@ -200,8 +200,8 @@ fn edit_start_card(
         return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
     };
     // Project the document alone so streaming and approval cards never need the
-    // target file. Added rows come from PUT bodies; removed rows carry original
-    // line numbers from CUT/replace ranges.
+    // target file. Op summaries carry CUT/replace ranges; PUT bodies are added
+    // rows. This is not a content diff - empty remove text is never invented.
     let proposed = rho_tools::hashline::proposed_edit(input);
     let files = proposed
         .files
@@ -212,7 +212,18 @@ fn edit_start_card(
             change: DiffCardChange::Content,
             stats: Some((section.added_lines, section.removed_lines))
                 .filter(|(added, removed)| *added > 0 || *removed > 0),
-            rows: section.rows,
+            rows: section
+                .rows
+                .into_iter()
+                .map(|row| match row {
+                    rho_tools::hashline::ProposedRow::Summary(text) => {
+                        DiffRow::new(DiffRowKind::Skip, None, text)
+                    }
+                    rho_tools::hashline::ProposedRow::Added(text) => {
+                        DiffRow::new(DiffRowKind::Added, None, text)
+                    }
+                })
+                .collect(),
         })
         .collect::<Vec<_>>();
     diff_card(

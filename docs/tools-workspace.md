@@ -15,13 +15,13 @@ grep
 glob
 ```
 
-`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or `rtk`. Prefer these tools over shell search for workspace inspection: `grep` content mode mints chainable `[path#TAG]` snapshots that `edit` can consume directly, which shell `rg` cannot.
+`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or `rtk`. Prefer these tools over shell search for workspace inspection: `grep` content mode mints chainable `[path#TAG]` snapshots (via the hashline header format) and match line numbers so `edit` can target anchors. Match text is search preview only.
 
 - Patterns: `grep` takes a Rust/`regex` pattern. `glob` takes a path glob; a pattern with no `/` (for example `*.rs`) matches nested paths as `**/*.rs`.
 - Defaults: both honor `.gitignore`, skip hidden files, and never follow symlinks. Pass `include_hidden` when you need dotfiles.
 - Order: results come back in walk order, sorted by name within each directory, so repeat runs agree and a capped result is the first N paths shown rather than an arbitrary sample.
 - Caps: results are bounded (default 200). `grep` also caps matches per file and trims long lines. Every capped, timed-out, or cancelled search says so in its summary, including when it found nothing.
-- Output: `grep` groups matches by file. Content mode prefixes each file with a chainable `[path#TAG]` header and `N:text` rows so matched lines can feed `edit` without a separate `read_file`. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
+- Output: `grep` groups matches by file. Content mode prefixes each file with a chainable `[path#TAG]` header and `N | text` match previews. Copy TAG and line numbers into `edit`; do not copy preview bodies into PUT rows (previews may be truncated). Use `read_file` when you need exact line text. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
 - Permissions: both request read access only, so they work in every permission mode, including `plan`.
 
 It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, web access tools with zero-config invocation, and one native shell tool for the current platform:
@@ -76,7 +76,7 @@ Locators must match those forms exactly. A trailing dot (`PUT 12.:`, `PUT 12.=:`
 
 Rules:
 
-- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot
+- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot. Grep match previews are not PUT bodies.
 - Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
 - Line numbers name the original snapshot; they do not shift mid-document
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)

@@ -174,7 +174,7 @@ pub(crate) fn format_post_edit_preview(
             context: POST_EDIT_CONTEXT_LINES,
             max_body: POST_EDIT_MAX_BODY_LINES,
         },
-        /*post_edit*/ true,
+        SnapshotKind::PostEdit,
     )
 }
 
@@ -200,14 +200,21 @@ pub(crate) fn format_chain_snapshot(
             max_body: CHAIN_SNAPSHOT_MAX_BODY_LINES,
         }
     };
-    format_numbered(display_path, text, selection, /*post_edit*/ false)
+    format_numbered(display_path, text, selection, SnapshotKind::Chain)
+}
+
+/// Which product a numbered snapshot is for (footer and empty-focus policy).
+#[derive(Clone, Copy)]
+enum SnapshotKind {
+    PostEdit,
+    Chain,
 }
 
 fn format_numbered(
     display_path: &str,
     text: &str,
     selection: LineSelection<'_>,
-    post_edit: bool,
+    kind: SnapshotKind,
 ) -> String {
     let tag = compute_file_hash(text);
     let header = format_header(display_path, &tag);
@@ -228,12 +235,15 @@ fn format_numbered(
             focus.sort_unstable();
             focus.dedup();
             if focus.is_empty() {
-                if post_edit {
-                    focus.push(1);
-                    let expanded = expand_focus_lines(&focus, total, context);
-                    cap_selected_by_hunk(&expanded, max_body)
-                } else {
-                    head_tail_lines(total, CHAIN_SNAPSHOT_HEAD_LINES, CHAIN_SNAPSHOT_TAIL_LINES)
+                match kind {
+                    SnapshotKind::PostEdit => {
+                        focus.push(1);
+                        let expanded = expand_focus_lines(&focus, total, context);
+                        cap_selected_by_hunk(&expanded, max_body)
+                    }
+                    SnapshotKind::Chain => {
+                        head_tail_lines(total, CHAIN_SNAPSHOT_HEAD_LINES, CHAIN_SNAPSHOT_TAIL_LINES)
+                    }
                 }
             } else {
                 let expanded = expand_focus_lines(&focus, total, context);
@@ -248,21 +258,24 @@ fn format_numbered(
 
     let first = selected[0];
     let last = *selected.last().expect("non-empty selection");
-    let footer = if post_edit {
-        if first > 1 || last < total {
-            Some(SnapshotFooter::PostEdit { first, last, total })
-        } else {
-            None
+    let footer = match kind {
+        SnapshotKind::PostEdit => {
+            if first > 1 || last < total {
+                Some(SnapshotFooter::PostEdit { first, last, total })
+            } else {
+                None
+            }
         }
-    } else {
-        let showed_all = selected.len() == total && first == 1 && last == total;
-        if showed_all {
-            None
-        } else {
-            Some(SnapshotFooter::ChainPartial {
-                shown: selected.len(),
-                total,
-            })
+        SnapshotKind::Chain => {
+            let showed_all = selected.len() == total && first == 1 && last == total;
+            if showed_all {
+                None
+            } else {
+                Some(SnapshotFooter::ChainPartial {
+                    shown: selected.len(),
+                    total,
+                })
+            }
         }
     };
     emit_numbered_body(&header, &lines, &selected, footer)

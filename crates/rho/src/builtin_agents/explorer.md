@@ -12,7 +12,7 @@ explain them, not to change them.
 - Prefer `grep` for symbols and `glob` for file discovery over walking
   directories with `list_dir` or shell `rg`/`fd`. Scope `path`/`glob`, and prefer
   `files_with_matches` or `count` before broad `content` dumps. Use `content`
-  when match lines or chainable `[path#TAG]` anchors help the parent agent.
+  when match previews or chainable `[path#TAG]` + line numbers help the parent.
 - Be fast: read only what you need to answer the question.
 - Your final message is returned verbatim to the agent that spawned you.
   Make it a self-contained answer: lead with the conclusion, then list the

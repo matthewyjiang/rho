@@ -2,20 +2,13 @@ use std::path::Path;
 
 use crate::{
     diff::{unified_diff, UNREADABLE_FILE_DIFF_MESSAGE},
+    file_mutation::FileMutationOutcome,
     tool::*,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 pub struct WriteFile;
-
-/// Shared result for file mutations that return a unified diff.
-pub(crate) struct FileMutationOutcome {
-    pub content: String,
-    /// Display paths touched by the mutation, in document order.
-    pub display_paths: Vec<String>,
-    pub diff: String,
-}
 
 #[derive(Deserialize)]
 struct Args {

@@ -256,7 +256,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
         path: Some("src/lib.rs".into()),
     }])
     .with_body(ToolBody::Diff(vec![
-        DiffRow::new(DiffRowKind::Removed, Some(1), ""),
+        DiffRow::new(DiffRowKind::Skip, None, "PUT 1"),
         DiffRow::new(DiffRowKind::Added, None, "new"),
     ]));
     assert_eq!(card, Some(proposed_card.clone()));
@@ -446,10 +446,10 @@ fn edit_preview_preserves_multi_file_identity() {
     ])
     .with_body(ToolBody::Diff(vec![
         DiffRow::new(DiffRowKind::File, None, "a.txt"),
-        DiffRow::new(DiffRowKind::Removed, Some(1), ""),
+        DiffRow::new(DiffRowKind::Skip, None, "PUT 1"),
         DiffRow::new(DiffRowKind::Added, None, "A"),
         DiffRow::new(DiffRowKind::File, None, "b.txt"),
-        DiffRow::new(DiffRowKind::Removed, Some(1), ""),
+        DiffRow::new(DiffRowKind::Skip, None, "CUT 1"),
     ]));
 
     let mut adapter = SdkEventAdapter::default();

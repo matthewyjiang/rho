@@ -46,10 +46,11 @@ use crate::{
 };
 
 use super::{
+    file_mutation::FileMutationOutcome,
     hashline::{apply_prepared_sections, parse_hashline, proposed_sections, Edit, PreparedSection},
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
-    write_file::{write_file_content, FileMutationOutcome, WriteFile},
+    write_file::{write_file_content, WriteFile},
 };
 
 /// Options for coding tools registered on an SDK runtime.

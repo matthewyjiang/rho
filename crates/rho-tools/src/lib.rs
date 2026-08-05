@@ -21,6 +21,7 @@ mod process_stream;
 mod search;
 mod shell_process;
 pub use shell_process::{parse_shell_content, ShellContent};
+mod file_mutation;
 pub mod tool;
 pub mod tool_card;
 pub mod workspace_mutation;

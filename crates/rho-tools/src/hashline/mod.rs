@@ -1,6 +1,7 @@
 //! Line-anchored multi-hunk edit tool (`edit`) with snapshot tags.
 //!
-//! `read_file` / `grep` / `write_file` mint `[path#TAG]` snapshots. `edit`
+//! `read_file` / `write_file` mint `[path#TAG]` snapshots. `grep` content mode
+//! mints headers + line numbers for anchors (match text is preview only). `edit`
 //! applies a compact PUT/CUT document against those original line numbers and
 //! rejects stale tags. Failures leave the file untouched and return a bounded
 //! live snapshot to copy.
@@ -20,22 +21,25 @@ use std::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{diff::unified_diff, tool::*, write_file::FileMutationOutcome};
+use crate::{diff::unified_diff, file_mutation::FileMutationOutcome, tool::*};
 
 use apply::{apply_ops, ApplyOutcome};
 use parser::{Op, Section};
 
-pub(crate) use format::{format_chain_snapshot, format_hashline_view, format_post_edit_preview};
+pub(crate) use format::{
+    format_chain_snapshot, format_hashline_view, format_header, format_post_edit_preview,
+    split_content_lines,
+};
 pub(crate) use parser::parse_hashline;
 pub use proposed::{
-    proposed_edit, proposed_sections, ProposedEdit, ProposedEditFile, ProposedSection,
+    proposed_edit, proposed_sections, ProposedEdit, ProposedEditFile, ProposedRow, ProposedSection,
 };
 
 pub(crate) use format::compute_file_hash;
 
 pub(crate) struct Edit;
 
-const TOOL_DESCRIPTION: &str = r#"Use `edit` for multi-hunk edits to existing UTF-8 files when you already have a fresh `[path#TAG]` from `read_file`, `grep` (content mode), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file.
+const TOOL_DESCRIPTION: &str = r#"Use `edit` for multi-hunk edits to existing UTF-8 files when you already have a fresh `[path#TAG]` from `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file. Grep match previews (`N | text`) are not PUT bodies - copy TAG and line numbers only; `read_file` when you need exact line text.
 
 Document shape:
 
@@ -60,7 +64,7 @@ Locators — copy these forms exactly:
 - Delete: `CUT 12.=15` or `CUT 12` (no colon on CUT)
 
 Rules:
-- Copy the exact `[path#TAG]` header and `N:line` numbers from the latest snapshot for that path
+- Copy the exact `[path#TAG]` header and `N:line` numbers from the latest hashline snapshot for that path (`read_file`, edit preview, write_file snapshot, or failed-edit live snapshot). Grep gives TAG + line numbers only - not `N:line` body text
 - Put every hunk for one file in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch - wait for the result before editing that path again. Different paths may edit in parallel
 - Line numbers name ORIGINAL lines from that snapshot; they do not shift mid-document
 - Body rows under PUT headers that end with `:` must start with `+` (use `+` alone for a blank line)

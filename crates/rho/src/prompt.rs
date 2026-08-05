@@ -54,7 +54,7 @@ Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram. K
     if tools.iter().any(|tool| tool.name == "grep") {
         text.push_str(
             r#"
-Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Content mode returns chainable `[path#TAG]` headers and match lines, so you can often `edit` from the search hit without a separate `read_file`. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
+Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Content mode returns chainable `[path#TAG]` headers and match line numbers (`N | preview`) so you can target `edit` anchors. Match text is search preview only and may be truncated - copy TAG and line numbers, not preview bodies, into PUT rows; use `read_file` when you need exact line text. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
 "#,
         );
     }
@@ -347,7 +347,8 @@ mod tests {
 
         assert!(enabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
         assert!(enabled.contains("chainable `[path#TAG]`"));
-        assert!(enabled.contains("without a separate `read_file`"));
+        assert!(enabled.contains("not preview bodies"));
+        assert!(enabled.contains("`N | preview`"));
         assert!(!disabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
     }
 

@@ -1,13 +1,12 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tool_card::DiffRowKind;
 
-// Covers: proposal cards must show added bodies and removed line anchors from the
-// document alone so approval does not need the target file
+// Covers: proposal cards must show op summaries and PUT bodies from the document
+// alone so approval does not need the target file
 // Owner: hashline proposed
 #[test]
-fn projects_mixed_ops_into_diff_rows() {
+fn projects_mixed_ops_into_document_rows() {
     let proposed = proposed_edit(
         r#"[src/a.rs#A1B2]
 PUT 2.=3:
@@ -26,12 +25,12 @@ PUT >6:
     assert_eq!(
         file.rows,
         vec![
-            DiffRow::new(DiffRowKind::Removed, Some(2), ""),
-            DiffRow::new(DiffRowKind::Removed, Some(3), ""),
-            DiffRow::new(DiffRowKind::Added, None, "TWO"),
-            DiffRow::new(DiffRowKind::Added, None, "THREE"),
-            DiffRow::new(DiffRowKind::Removed, Some(5), ""),
-            DiffRow::new(DiffRowKind::Added, None, "tail"),
+            ProposedRow::Summary("PUT 2.=3".into()),
+            ProposedRow::Added("TWO".into()),
+            ProposedRow::Added("THREE".into()),
+            ProposedRow::Summary("CUT 5".into()),
+            ProposedRow::Summary("PUT >6".into()),
+            ProposedRow::Added("tail".into()),
         ]
     );
     assert!(!proposed.truncated);
@@ -58,6 +57,15 @@ fn projects_incomplete_documents() {
             },
         ]
     );
-    assert_eq!(proposed.files[0].rows.len(), 7);
+    // PUT summary + 2 bodies + CUT summary; PUT summary + body (partial stream)
+    assert_eq!(proposed.files[0].rows.len(), 4);
     assert_eq!(proposed.files[1].rows.len(), 2);
+    assert_eq!(
+        proposed.files[0].rows[0],
+        ProposedRow::Summary("PUT 1.=3".into())
+    );
+    assert_eq!(
+        proposed.files[0].rows[3],
+        ProposedRow::Summary("CUT 8.=9".into())
+    );
 }
