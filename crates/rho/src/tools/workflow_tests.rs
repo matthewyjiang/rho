@@ -66,6 +66,22 @@ async fn dispatches_a_typed_operation() {
     );
 }
 
+// Covers: workflow tool advertises a portable flat multi-action object schema.
+// Owner: model-facing workflow tool adapter.
+#[test]
+fn workflow_tool_schema_is_a_root_object() {
+    let schema = WorkflowTool::new(Arc::new(RecordingService::default()), 4096)
+        .spec()
+        .input_schema;
+    assert_eq!(schema["type"], "object");
+    assert!(schema.get("oneOf").is_none());
+    assert_eq!(schema["required"], serde_json::json!(["action"]));
+    assert_eq!(
+        schema["properties"]["action"]["enum"],
+        serde_json::json!(["validate", "plan", "run", "status", "cancel", "resume"])
+    );
+}
+
 // Covers: large workflow state must not bypass the configured tool output bound.
 // Owner: model-facing workflow tool adapter.
 #[test]

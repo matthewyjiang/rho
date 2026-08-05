@@ -281,53 +281,42 @@ fn bounded_result(
 }
 
 fn workflow_schema() -> serde_json::Value {
-    let source_operation = |action: &str| {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {"const": action},
-                "file": {"type": "string", "minLength": 1},
-                "inputs": {
-                    "type": "object",
-                    "description": "Explicit input values. Inputs are persisted and are not a secret store."
-                }
-            },
-            "required": ["action", "file"],
-            "additionalProperties": false
-        })
-    };
-    let id_operation = |action: &str, field: &str| {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "action": {"const": action},
-                (field): {"type": "string", "minLength": 1}
-            },
-            "required": ["action", field],
-            "additionalProperties": false
-        })
-    };
+    // Flat multi-action object: action enum + optional fields.
+    // Per-action required fields are enforced by WorkflowToolRequest.
     serde_json::json!({
-        "oneOf": [
-            source_operation("validate"),
-            source_operation("plan"),
-            id_operation("run", "plan_id"),
-            id_operation("status", "run_id"),
-            id_operation("cancel", "run_id"),
-            serde_json::json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["validate", "plan", "run", "status", "cancel", "resume"],
+                "description": "validate/plan need file; run needs plan_id; status/cancel/resume need run_id."
+            },
+            "file": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Workflow source path for validate and plan."
+            },
+            "inputs": {
                 "type": "object",
-                "properties": {
-                    "action": {"const": "resume"},
-                    "run_id": {"type": "string", "minLength": 1},
-                    "recover_uncertain": {
-                        "type": "boolean",
-                        "description": "Confirm no prior process remains before relaunching uncertain attempts."
-                    }
-                },
-                "required": ["action", "run_id"],
-                "additionalProperties": false
-            })
-        ]
+                "description": "Explicit input values. Inputs are persisted and are not a secret store."
+            },
+            "plan_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Frozen plan id for run."
+            },
+            "run_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Run id for status, cancel, and resume."
+            },
+            "recover_uncertain": {
+                "type": "boolean",
+                "description": "Confirm no prior process remains before relaunching uncertain attempts."
+            }
+        },
+        "required": ["action"],
+        "additionalProperties": false
     })
 }
 
