@@ -127,9 +127,7 @@ pub(super) async fn run_supervised_planner(
         let diagnostics = String::from_utf8_lossy(&diagnostics);
         let diagnostics = diagnostics.trim();
         if diagnostics.is_empty() {
-            anyhow::bail!(
-                "workflow planner worker failed with {status} and no stderr (often a signal kill such as SIGSEGV under RLIMIT_AS)"
-            );
+            anyhow::bail!("workflow planner worker failed with {status} and no stderr");
         }
         anyhow::bail!("workflow planner worker failed: {diagnostics}");
     }
