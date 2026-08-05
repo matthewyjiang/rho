@@ -218,8 +218,61 @@ fn request_body_removes_top_level_schema_composition_from_tools() {
     assert!(schema.get("anyOf").is_none());
     assert!(schema.get("oneOf").is_none());
     assert!(schema.get("allOf").is_none());
+    assert_eq!(schema["type"], "object");
     assert!(schema["properties"]["value"].get("anyOf").is_some());
     assert_eq!(schema["properties"]["path"]["type"], "string");
+}
+
+#[test]
+fn request_body_folds_pure_composition_tool_schemas_for_anthropic() {
+    let provider = test_provider("claude-sonnet-5");
+    let body = provider
+        .request_body(
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &[ToolSpec {
+                    name: "workflow".into(),
+                    description: "run workflows".into(),
+                    input_schema: json!({
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "action": {"const": "validate"},
+                                    "file": {"type": "string"}
+                                },
+                                "required": ["action", "file"]
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "action": {"const": "run"},
+                                    "plan_id": {"type": "string"}
+                                },
+                                "required": ["action", "plan_id"]
+                            }
+                        ]
+                    }),
+                }],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            false,
+        )
+        .unwrap();
+
+    let value = serde_json::to_value(body).unwrap();
+    let schema = &value["tools"][0]["input_schema"];
+    assert!(schema.get("oneOf").is_none());
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["properties"]["file"]["type"], "string");
+    assert_eq!(schema["properties"]["plan_id"]["type"], "string");
+    assert_eq!(schema["properties"]["action"]["type"], "string");
+    assert_eq!(
+        schema["properties"]["action"]["enum"],
+        json!(["run", "validate"])
+    );
 }
 
 #[test]

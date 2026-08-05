@@ -197,17 +197,121 @@ fn render_tool_call(call: &ToolCall) -> String {
 }
 
 pub(crate) fn to_anthropic_tool(tool: ToolSpec) -> AnthropicTool {
-    let mut input_schema = tool.input_schema;
-    if let Some(schema) = input_schema.as_object_mut() {
-        schema.remove("oneOf");
-        schema.remove("allOf");
-        schema.remove("anyOf");
-    }
     AnthropicTool {
         name: tool.name,
         description: tool.description,
-        input_schema,
+        input_schema: sanitize_anthropic_input_schema(tool.input_schema),
         cache_control: None,
+    }
+}
+
+/// Anthropic custom tools require `input_schema.type` and reject top-level
+/// `oneOf` / `anyOf` / `allOf`. Fold object-branch properties into the root
+/// before dropping those keywords so pure-composition schemas (for example
+/// workflow) still advertise parameters and never become `{}`.
+fn sanitize_anthropic_input_schema(mut input_schema: serde_json::Value) -> serde_json::Value {
+    let Some(schema) = input_schema.as_object_mut() else {
+        return serde_json::json!({
+            "type": "object",
+            "properties": {},
+        });
+    };
+
+    for key in ["oneOf", "anyOf", "allOf"] {
+        if let Some(branches) = schema.remove(key) {
+            fold_composition_branches(schema, &branches);
+        }
+    }
+
+    schema
+        .entry("type")
+        .or_insert_with(|| serde_json::json!("object"));
+    input_schema
+}
+
+fn fold_composition_branches(
+    schema: &mut serde_json::Map<String, serde_json::Value>,
+    branches: &serde_json::Value,
+) {
+    let Some(branches) = branches.as_array() else {
+        return;
+    };
+    for branch in branches {
+        let Some(branch) = branch.as_object() else {
+            continue;
+        };
+        let Some(properties) = branch
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
+        let root_properties = schema
+            .entry("properties")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .expect("properties entry is an object");
+        for (name, property) in properties {
+            merge_schema_property(root_properties, name, property);
+        }
+    }
+}
+
+fn merge_schema_property(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    incoming: &serde_json::Value,
+) {
+    match properties.get_mut(name) {
+        None => {
+            properties.insert(name.to_string(), incoming.clone());
+        }
+        Some(existing) if existing == incoming => {}
+        Some(existing) => {
+            *existing = widen_schema_property(existing, incoming);
+        }
+    }
+}
+
+fn widen_schema_property(left: &serde_json::Value, right: &serde_json::Value) -> serde_json::Value {
+    let mut literals = Vec::new();
+    collect_literal_values(left, &mut literals);
+    collect_literal_values(right, &mut literals);
+    if literals.is_empty() {
+        return if left.get("type").is_some() {
+            left.clone()
+        } else {
+            right.clone()
+        };
+    }
+
+    literals.sort_by_key(ToString::to_string);
+    literals.dedup();
+
+    let mut merged = serde_json::Map::new();
+    let schema_type = left
+        .get("type")
+        .or_else(|| right.get("type"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!("string"));
+    merged.insert("type".into(), schema_type);
+    if literals.len() == 1 {
+        merged.insert("const".into(), literals.pop().expect("one literal"));
+    } else {
+        merged.insert("enum".into(), serde_json::Value::Array(literals));
+    }
+    if let Some(description) = left.get("description").or_else(|| right.get("description")) {
+        merged.insert("description".into(), description.clone());
+    }
+    serde_json::Value::Object(merged)
+}
+
+fn collect_literal_values(schema: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+    if let Some(value) = schema.get("const") {
+        out.push(value.clone());
+    }
+    if let Some(values) = schema.get("enum").and_then(serde_json::Value::as_array) {
+        out.extend(values.iter().cloned());
     }
 }
 
