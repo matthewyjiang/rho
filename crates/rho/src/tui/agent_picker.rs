@@ -21,7 +21,7 @@ pub(super) enum InternalAgentModelPickerOrigin {
     AdvisorCommand,
     /// Opened from the config picker's advisor row; a selection also turns
     /// advisor mode on and returns to the config picker.
-    ConfigPicker,
+    AdvisorConfigRow,
 }
 
 /// The internal agent an open model picker configures.
@@ -276,15 +276,11 @@ impl super::App {
         }
     }
 
-    pub(super) fn open_internal_agent_model_picker(&mut self, id: &str) {
-        let picker =
-            self.internal_agent_model_picker(id, InternalAgentModelPickerOrigin::AgentsPicker);
-        self.open_child_picker(picker);
-    }
-
-    /// Opens the internal-agent model picker without a parent picker, for
-    /// commands that start from the composer.
-    pub(super) fn open_standalone_internal_agent_model_picker(
+    /// Opens the model picker for an internal agent, placed by origin: as a
+    /// child when a parent picker waits underneath, alone in the composer for
+    /// `/advisor on`. Reports whether it opened; with no cached models it
+    /// names the fix instead of showing an empty list.
+    pub(super) fn open_internal_agent_model_picker(
         &mut self,
         id: &str,
         origin: InternalAgentModelPickerOrigin,
@@ -295,7 +291,13 @@ impl super::App {
             self.set_status("no cached provider models. use Config > Refresh model lists.");
             return false;
         }
-        self.input_ui.set_composer(ComposerMode::Picker(picker));
+        match origin {
+            InternalAgentModelPickerOrigin::AgentsPicker
+            | InternalAgentModelPickerOrigin::AdvisorConfigRow => self.open_child_picker(picker),
+            InternalAgentModelPickerOrigin::AdvisorCommand => {
+                self.input_ui.set_composer(ComposerMode::Picker(picker));
+            }
+        }
         true
     }
 
@@ -304,7 +306,7 @@ impl super::App {
             .iter()
             .any(|definition| definition.id.as_str() == id);
         if internal {
-            self.open_internal_agent_model_picker(id);
+            self.open_internal_agent_model_picker(id, InternalAgentModelPickerOrigin::AgentsPicker);
         }
         internal
     }

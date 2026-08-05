@@ -38,21 +38,26 @@ impl InteractiveRuntime {
         &mut self,
         model: Option<InternalAgentModelConfig>,
     ) -> anyhow::Result<()> {
-        let Some(store) = self.tools.advisor() else {
+        let Some(store) = self.tools.advisor().cloned() else {
             return Ok(());
         };
         let registered = model.is_some();
-        store.set_model(model);
         if registered == self.tools.advisor_registered() {
+            store.set_model(model);
             return Ok(());
         }
         if self.runs.is_active() {
             anyhow::bail!("advisor mode cannot change while a run is active");
         }
 
+        // The model lands only after the rebuild succeeds, so a failed
+        // transition leaves both the tool list and the store untouched.
         self.tools.set_advisor_registered(registered);
         match self.rebind_current_session().await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                store.set_model(model);
+                Ok(())
+            }
             Err(error) => {
                 self.tools.set_advisor_registered(!registered);
                 Err(error)

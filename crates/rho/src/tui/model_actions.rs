@@ -292,7 +292,7 @@ impl App {
                         self.internal_agent_model_target = None;
                         self.finish_advisor_model_selection(selected, agent).await?;
                     }
-                    InternalAgentModelPickerOrigin::ConfigPicker => {
+                    InternalAgentModelPickerOrigin::AdvisorConfigRow => {
                         self.internal_agent_model_target = None;
                         self.finish_advisor_model_selection(selected, agent).await?;
                         let status = self.status().to_string();

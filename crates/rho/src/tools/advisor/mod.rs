@@ -184,6 +184,12 @@ impl SdkTool for AdvisorTool {
         ToolSecurity::built_in([])
     }
 
+    // The advisor reviews the turn it was called from, which only the
+    // published in-flight history contains.
+    fn reads_live_history(&self) -> bool {
+        true
+    }
+
     fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let workspace_path = context

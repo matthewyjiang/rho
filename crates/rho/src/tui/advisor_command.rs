@@ -60,7 +60,7 @@ impl App {
         // Advisor mode on with no model does nothing, so `/advisor on` asks for
         // one instead of reporting a mode that cannot run.
         if requested && !self.advisor_model_configured() {
-            self.open_advisor_model_prompt();
+            self.open_advisor_model_prompt(InternalAgentModelPickerOrigin::AdvisorCommand);
             return Ok(());
         }
         self.set_advisor_mode(requested, agent).await
@@ -73,31 +73,13 @@ impl App {
             .contains_key(ADVISOR_AGENT_ID)
     }
 
-    /// Opens the advisor model picker on its own, for `/advisor on` without a
-    /// configured advisor model.
-    fn open_advisor_model_prompt(&mut self) {
-        if self.open_standalone_internal_agent_model_picker(
-            ADVISOR_AGENT_ID,
-            InternalAgentModelPickerOrigin::AdvisorCommand,
-        ) {
+    /// Opens the advisor model picker. The origin places it: alone in the
+    /// composer for `/advisor on`, under the config picker for its row, so
+    /// escaping returns where the user came from.
+    pub(super) fn open_advisor_model_prompt(&mut self, origin: InternalAgentModelPickerOrigin) {
+        if self.open_internal_agent_model_picker(ADVISOR_AGENT_ID, origin) {
             self.set_status(SELECT_ADVISOR_MODEL_STATUS);
         }
-    }
-
-    /// Opens the advisor model picker under the config picker, so escaping
-    /// returns to the row the user came from.
-    pub(super) fn open_advisor_model_picker_from_config(&mut self) {
-        let picker = self.internal_agent_model_picker(
-            ADVISOR_AGENT_ID,
-            InternalAgentModelPickerOrigin::ConfigPicker,
-        );
-        if picker.items.is_empty() {
-            self.internal_agent_model_target = None;
-            self.set_status("no cached provider models. use Config > Refresh model lists.");
-            return;
-        }
-        self.open_child_picker(picker);
-        self.set_status(SELECT_ADVISOR_MODEL_STATUS);
     }
 
     /// Turns advisor mode on once the advisor model picker has stored a model.

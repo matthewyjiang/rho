@@ -214,7 +214,18 @@ impl SessionCore {
     }
 
     /// Publishes the run's working history for the duration of a tool batch.
+    ///
+    /// Publication copies the whole conversation, so it happens only when a
+    /// registered tool declared [`crate::tool::Tool::reads_live_history`].
     pub(crate) fn publish_in_flight_history(&self, history: &[Message]) {
+        if !self
+            .runtime
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .publish_live_history
+        {
+            return;
+        }
         *self
             .in_flight
             .write()
@@ -432,6 +443,11 @@ impl Session {
     ///
     /// The published view lasts until the run ends. Between runs, and before
     /// the first tool batch of a run, this equals [`Self::history`].
+    ///
+    /// Publication costs a history copy per tool batch, so the run publishes
+    /// only when a registered tool declares
+    /// [`crate::tool::Tool::reads_live_history`]. Without such a tool this
+    /// always equals [`Self::history`].
     pub fn live_history(&self) -> Vec<Message> {
         self.core.live_history()
     }

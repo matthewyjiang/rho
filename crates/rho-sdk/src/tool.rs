@@ -553,6 +553,17 @@ pub trait Tool: Send + Sync {
         ToolSecurity::host_provided()
     }
 
+    /// Declares that this tool reads [`crate::Session::live_history`] while it
+    /// runs.
+    ///
+    /// Publishing the turn in flight copies the working history once per tool
+    /// batch, so the runtime publishes it only when a registered tool declares
+    /// the need. Without this declaration, `live_history` returns committed
+    /// history only.
+    fn reads_live_history(&self) -> bool {
+        false
+    }
+
     /// Returns presentation metadata available before this tool starts.
     ///
     /// Implementors may derive metadata from validated or unvalidated arguments,

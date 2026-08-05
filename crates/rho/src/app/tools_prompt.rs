@@ -8,7 +8,7 @@ use {
     crate::diagnostics::RuntimeDiagnostics,
     crate::prompt,
     crate::tools::{
-        advisor::{advisor_model, AdvisorSessionStore},
+        advisor::AdvisorSessionStore,
         agent::BackgroundSubagents,
         sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
     },
@@ -92,9 +92,7 @@ pub(crate) fn assemble_tools_and_prompt(
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
         tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if advisor_capable {
-            let store = AdvisorSessionStore::new();
-            store.set_model(advisor_model(options.config).cloned());
-            tool_options = tool_options.advisor(store);
+            tool_options = tool_options.advisor(AdvisorSessionStore::new());
         }
         if delegation_enabled {
             tool_options = tool_options.delegation(DelegationConfig::new(
@@ -154,7 +152,7 @@ pub(crate) fn assemble_tools_and_prompt(
         store.bind_system_prompt(match system_prompt.for_advisor_mode(true) {
             SystemPrompt::Custom(text) => Some(text),
             // `SystemPrompt` is non-exhaustive; only custom text is reviewable.
-            SystemPrompt::None | _ => None,
+            _ => None,
         });
     }
     options.diagnostics.update_tools(&specs);
