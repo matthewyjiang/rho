@@ -271,6 +271,37 @@ fn request_body_types_pure_composition_tool_schemas_for_anthropic() {
 }
 
 #[test]
+fn request_body_forces_non_object_root_schema_type_to_object() {
+    let provider = test_provider("claude-sonnet-5");
+    let body = provider
+        .request_body(
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &[ToolSpec {
+                    name: "odd".into(),
+                    description: "odd root type".into(),
+                    input_schema: json!({
+                        "type": "string",
+                        "properties": {
+                            "path": {"type": "string"}
+                        }
+                    }),
+                }],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            false,
+        )
+        .unwrap();
+
+    let value = serde_json::to_value(body).unwrap();
+    let schema = &value["tools"][0]["input_schema"];
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["properties"]["path"]["type"], "string");
+}
+
+#[test]
 fn model_capability_predicates_match_the_known_table() {
     let cases = [
         ("claude-opus-4-6", true, false, false, false),

@@ -206,7 +206,7 @@ pub(crate) fn to_anthropic_tool(tool: ToolSpec) -> AnthropicTool {
 }
 
 /// Anthropic custom tools require `input_schema.type` and reject top-level
-/// `oneOf` / `anyOf` / `allOf`. Strip those keywords and ensure a root object
+/// `oneOf` / `anyOf` / `allOf`. Strip those keywords and force a root object
 /// type; tool specs own portable parameter advertising (no composition fold).
 fn sanitize_anthropic_input_schema(mut input_schema: serde_json::Value) -> serde_json::Value {
     let Some(schema) = input_schema.as_object_mut() else {
@@ -219,9 +219,7 @@ fn sanitize_anthropic_input_schema(mut input_schema: serde_json::Value) -> serde
     schema.remove("oneOf");
     schema.remove("anyOf");
     schema.remove("allOf");
-    schema
-        .entry("type")
-        .or_insert_with(|| serde_json::json!("object"));
+    schema.insert("type".into(), serde_json::json!("object"));
     input_schema
 }
 
