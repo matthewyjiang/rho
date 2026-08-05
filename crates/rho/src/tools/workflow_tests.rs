@@ -66,7 +66,7 @@ async fn dispatches_a_typed_operation() {
     );
 }
 
-// Covers: Anthropic requires input_schema.type; pure oneOf would be stripped empty.
+// Covers: workflow tool advertises a portable flat multi-action object schema.
 // Owner: model-facing workflow tool adapter.
 #[test]
 fn workflow_tool_schema_is_a_root_object() {

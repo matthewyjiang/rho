@@ -281,9 +281,8 @@ fn bounded_result(
 }
 
 fn workflow_schema() -> serde_json::Value {
-    // Flat object schema on purpose: Anthropic rejects top-level oneOf/anyOf/allOf
-    // and our provider sanitizer strips them. Per-action required fields are still
-    // enforced by `WorkflowToolRequest` deserialization.
+    // Flat multi-action object: action enum + optional fields.
+    // Per-action required fields are enforced by WorkflowToolRequest.
     serde_json::json!({
         "type": "object",
         "properties": {
