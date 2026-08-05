@@ -67,10 +67,21 @@ const CHAIN_SNAPSHOT_MAX_BODY_LINES: usize = 40;
 const CHAIN_SNAPSHOT_CONTEXT_LINES: usize = 2;
 
 /// Head lines kept when a chain snapshot has no focus anchors.
-const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
+pub(crate) const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
 
 /// Tail lines kept after the head so EOF anchors stay chainable on large files.
-const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
+pub(crate) const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
+
+/// Marker text embedded in structural post-edit footers (tests assert against this).
+pub(crate) const STRUCTURAL_EDIT_FOOTER_MARKER: &str = "structural edit";
+
+/// Marker that structural previews omit numbered chainable body lines.
+pub(crate) const STRUCTURAL_NO_CHAIN_MARKER: &str = "no chainable body lines";
+
+/// Build the chain truncation footer for a selected/total line count pair.
+pub(crate) fn chain_truncation_footer(selected: usize, total: usize) -> String {
+    format!("[showing {selected} of {total} lines; re-read with offset/limit for other lines]")
+}
 
 /// Render a hashline view of `text` for `display_path`.
 ///
@@ -146,7 +157,7 @@ pub(crate) fn format_post_edit_preview(
     if structural {
         let total = split_content_lines(new_text).len();
         return format!(
-            "{header}\n\n[structural edit; {total} line(s) after apply; re-read this path before further edit ops — no chainable body lines]"
+            "{header}\n\n[{STRUCTURAL_EDIT_FOOTER_MARKER}; {total} line(s) after apply; re-read this path before further edit ops — {STRUCTURAL_NO_CHAIN_MARKER}]"
         );
     }
     let lines = split_content_lines(new_text);
@@ -213,10 +224,7 @@ fn chain_footer(selected: &[usize], total: usize) -> Option<String> {
     if selected.len() == total && first == 1 && last == total {
         return None;
     }
-    Some(format!(
-        "[showing {} of {total} lines; re-read with offset/limit for other lines]",
-        selected.len()
-    ))
+    Some(chain_truncation_footer(selected.len(), total))
 }
 
 fn emit_numbered_body(

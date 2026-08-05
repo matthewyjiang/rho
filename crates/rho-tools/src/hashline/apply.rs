@@ -173,6 +173,11 @@ impl Plan {
                 "cannot replace or delete lines in an empty file",
             ));
         }
+        if start == 0 || end < start {
+            return Err(ApplyError::message(format!(
+                "invalid line range {start}.={end}"
+            )));
+        }
         if start > line_count || end > line_count {
             return Err(ApplyError::message(format!(
                 "line range {start}.={end} is outside the file ({line_count} line(s))"

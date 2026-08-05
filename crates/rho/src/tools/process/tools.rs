@@ -68,7 +68,6 @@ impl ProcessArgs {
     }
 }
 
-#[async_trait::async_trait]
 impl Tool for Process {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -89,24 +88,26 @@ impl Tool for Process {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         context: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        self.call_with_updates(args, context, id, &mut |_| {}).await
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move { self.call_with_updates(args, context, id, &mut |_| {}).await })
     }
 
-    async fn call_with_updates(
-        &self,
+    fn call_with_updates<'a>(
+        &'a self,
         args: serde_json::Value,
         context: ToolContext,
         id: String,
-        on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
-        self.execute(ProcessArgs::parse(args)?, context, id, on_update)
-            .await
+        on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            self.execute(ProcessArgs::parse(args)?, context, id, on_update)
+                .await
+        })
     }
 }
 

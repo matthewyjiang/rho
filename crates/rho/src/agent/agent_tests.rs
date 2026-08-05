@@ -54,6 +54,34 @@ fn write_file_capability_alias_matches_write() {
 }
 
 #[test]
+fn edit_capability_aliases_match_edit() {
+    let canonical = parse_definition(
+        Path::new("a.md"),
+        "worker",
+        "---\ndescription: work\ntools: [edit]\n---\n",
+    )
+    .unwrap();
+    for alias in ["edit_file", "apply_patch"] {
+        let legacy = parse_definition(
+            Path::new("b.md"),
+            "worker",
+            &format!("---\ndescription: work\ntools: [{alias}]\n---\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            canonical.fingerprint(),
+            legacy.fingerprint(),
+            "alias {alias}"
+        );
+        assert_eq!(
+            ToolCapability::parse(alias.into()).as_str(),
+            "edit",
+            "alias {alias}"
+        );
+    }
+}
+
+#[test]
 fn current_fingerprint_uses_v2_marker_and_differs_from_legacy_v1() {
     let definition = parse_definition(
         Path::new("default.md"),

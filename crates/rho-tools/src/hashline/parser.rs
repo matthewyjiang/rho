@@ -290,8 +290,10 @@ where
 {
     let mut body = Vec::new();
     while let Some(candidate) = lines.peek().copied() {
-        let trimmed_end = candidate.trim_end();
-        if let Some(body_line) = trimmed_end.strip_prefix('+') {
+        // Drop only a terminal wire CR so CRLF split rows still match; preserve
+        // trailing spaces/tabs in body content (do not trim_end).
+        let candidate = candidate.strip_suffix('\r').unwrap_or(candidate);
+        if let Some(body_line) = candidate.strip_prefix('+') {
             lines.next();
             body.push(body_line.to_string());
             continue;

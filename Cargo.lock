@@ -4054,7 +4054,6 @@ dependencies = [
 name = "rho-agent-tools"
 version = "0.12.3"
 dependencies = [
- "async-trait",
  "calamine",
  "flate2",
  "globset",

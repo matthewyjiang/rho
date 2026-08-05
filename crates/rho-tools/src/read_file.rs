@@ -21,7 +21,6 @@ struct Args {
     limit: Option<usize>,
 }
 
-#[async_trait::async_trait]
 impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -39,20 +38,22 @@ impl Tool for ReadFile {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
-        let path = resolve_path(&ctx.cwd, &args.path);
-        let display_path = compact_display_path(&ctx.cwd, &args.path);
-        let output = read_file_content(&path, &display_path, args.offset, args.limit).await?;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: truncate(output.content, ctx.max_output_bytes),
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            let args: Args = serde_json::from_value(args)?;
+            let path = resolve_path(&ctx.cwd, &args.path);
+            let display_path = compact_display_path(&ctx.cwd, &args.path);
+            let output = read_file_content(&path, &display_path, args.offset, args.limit).await?;
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content: truncate(output.content, ctx.max_output_bytes),
+            })
         })
     }
 }
@@ -113,7 +114,19 @@ pub(super) async fn read_file_content(
     // document size limit applies here just as it does to a full read.
     if offset.is_some() || limit.is_some() {
         check_document_size(path, source_len)?;
-        let text = tokio::fs::read_to_string(path).await.map_err(|error| {
+        let mut bytes =
+            Vec::with_capacity(source_len.min(MAX_DOCUMENT_INPUT_BYTES as u64 + 1) as usize);
+        (&mut file)
+            .take(MAX_DOCUMENT_INPUT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .await?;
+        if bytes.len() > MAX_DOCUMENT_INPUT_BYTES {
+            return Err(ToolError::Message(format!(
+                "document '{}' is larger than the {MAX_DOCUMENT_INPUT_BYTES} byte input limit",
+                path.display()
+            )));
+        }
+        let text = String::from_utf8(bytes).map_err(|error| {
             ToolError::Message(format!(
                 "could not read '{}' as UTF-8 text: {error}",
                 path.display()
@@ -131,66 +144,15 @@ pub(super) async fn read_file_content(
     let mut header = [0_u8; 12];
     let header_len = file.read(&mut header).await?;
     if let Some(mime_type) = supported_image_mime_type(&header[..header_len]) {
-        let content = format!("{mime_type} image ({source_len} bytes)");
-        if source_len > MAX_IMAGE_FILE_BYTES {
-            return Ok(ReadFileContent {
-                content,
-                image: None,
-                preview_error: Some(format!(
-                    "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
-                )),
-            });
-        }
-
-        let mut bytes = Vec::with_capacity(source_len as usize);
-        bytes.extend_from_slice(&header[..header_len]);
-        (&mut file)
-            .take(MAX_IMAGE_FILE_BYTES + 1 - header_len as u64)
-            .read_to_end(&mut bytes)
-            .await?;
-        if bytes.len() as u64 > MAX_IMAGE_FILE_BYTES {
-            return Ok(ReadFileContent {
-                content,
-                image: None,
-                preview_error: Some(format!(
-                    "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
-                )),
-            });
-        }
-        let content = format!("{mime_type} image ({} bytes)", bytes.len());
-        let display_path = display_path.to_string();
-        return match tokio::task::spawn_blocking(move || thumbnail_png(bytes)).await {
-            Ok(Ok(thumbnail)) => Ok(ReadFileContent {
-                content,
-                image: Some(ImageAsset {
-                    media_type: "image/png",
-                    bytes: thumbnail,
-                }),
-                preview_error: None,
-            }),
-            Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
-                Ok(text) => {
-                    let content =
-                        crate::hashline::format_hashline_view(&display_path, &text, None, None)
-                            .map_err(ToolError::Message)?;
-                    Ok(ReadFileContent {
-                        content,
-                        image: None,
-                        preview_error: None,
-                    })
-                }
-                Err(_) => Ok(ReadFileContent {
-                    content,
-                    image: None,
-                    preview_error: Some(format!("image preview unavailable: {error}")),
-                }),
-            },
-            Err(error) => Ok(ReadFileContent {
-                content,
-                image: None,
-                preview_error: Some(format!("image preview task failed: {error}")),
-            }),
-        };
+        return read_image_content(
+            file,
+            display_path,
+            source_len,
+            mime_type,
+            header,
+            header_len,
+        )
+        .await;
     }
 
     check_document_size(path, source_len)?;
@@ -241,6 +203,76 @@ fn check_document_size(path: &Path, source_len: u64) -> Result<(), ToolError> {
         )));
     }
     Ok(())
+}
+
+async fn read_image_content(
+    mut file: tokio::fs::File,
+    display_path: &str,
+    source_len: u64,
+    mime_type: &'static str,
+    header: [u8; 12],
+    header_len: usize,
+) -> Result<ReadFileContent, ToolError> {
+    let content = format!("{mime_type} image ({source_len} bytes)");
+    if source_len > MAX_IMAGE_FILE_BYTES {
+        return Ok(ReadFileContent {
+            content,
+            image: None,
+            preview_error: Some(format!(
+                "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
+            )),
+        });
+    }
+
+    let mut bytes = Vec::with_capacity(source_len as usize);
+    bytes.extend_from_slice(&header[..header_len]);
+    (&mut file)
+        .take(MAX_IMAGE_FILE_BYTES + 1 - header_len as u64)
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > MAX_IMAGE_FILE_BYTES {
+        return Ok(ReadFileContent {
+            content,
+            image: None,
+            preview_error: Some(format!(
+                "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
+            )),
+        });
+    }
+    let content = format!("{mime_type} image ({} bytes)", bytes.len());
+    let display_path = display_path.to_string();
+    match tokio::task::spawn_blocking(move || thumbnail_png(bytes)).await {
+        Ok(Ok(thumbnail)) => Ok(ReadFileContent {
+            content,
+            image: Some(ImageAsset {
+                media_type: "image/png",
+                bytes: thumbnail,
+            }),
+            preview_error: None,
+        }),
+        Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
+            Ok(text) => {
+                let content =
+                    crate::hashline::format_hashline_view(&display_path, &text, None, None)
+                        .map_err(ToolError::Message)?;
+                Ok(ReadFileContent {
+                    content,
+                    image: None,
+                    preview_error: None,
+                })
+            }
+            Err(_) => Ok(ReadFileContent {
+                content,
+                image: None,
+                preview_error: Some(format!("image preview unavailable: {error}")),
+            }),
+        },
+        Err(error) => Ok(ReadFileContent {
+            content,
+            image: None,
+            preview_error: Some(format!("image preview task failed: {error}")),
+        }),
+    }
 }
 
 fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)> {

@@ -467,8 +467,10 @@ impl EditTargetSet {
         workspace: &Workspace,
         requested_path: &str,
     ) -> Result<PathBuf, ToolError> {
+        // Existing edit targets are rewritten in place; resolve for write so path
+        // policy matches mutation rather than a read-only open.
         let resolved = workspace
-            .resolve_for_read(requested_path)
+            .resolve_for_write(requested_path)
             .map_err(map_path_error)?;
         let canonical = resolved.path().to_path_buf();
         claim_unique_path(&mut self.claimed_as, canonical.clone(), requested_path)

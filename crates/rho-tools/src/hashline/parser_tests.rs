@@ -88,6 +88,22 @@ fn rejects_truncated_range_locators_with_clear_errors() {
     assert!(err.contains("\"3.\""), "{err}");
 }
 
+// Covers: body rows keep trailing spaces/tabs; only a wire CR is stripped
+// Owner: hashline parser
+#[test]
+fn preserves_trailing_spaces_and_tabs_in_body_rows() {
+    let sections =
+        parse_hashline("[a.rs#ABCD]\nPUT 1:\n+keep trailing  \n+\tkeep tab\t\n").unwrap();
+    assert_eq!(
+        sections[0].ops,
+        vec![Op::Replace {
+            start: 1,
+            end: 1,
+            body: vec!["keep trailing  ".into(), "\tkeep tab\t".into()],
+        }]
+    );
+}
+
 // Covers: empty PUT body is not a second delete opcode; use CUT
 // Owner: hashline parser
 #[test]

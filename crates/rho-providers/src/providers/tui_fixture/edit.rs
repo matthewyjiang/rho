@@ -62,9 +62,24 @@ async fn stream_edit(
     complete_after_sleep: bool,
 ) -> Result<ModelResponse, ProviderError> {
     // Seed the target so the real edit tool can apply against a known tag.
-    if let Ok(cwd) = std::env::current_dir() {
-        let _ = std::fs::write(cwd.join(file_name), ORIGINAL);
-    }
+    let cwd = std::env::current_dir().map_err(|error| {
+        ProviderError::new(
+            rho_sdk::ProviderErrorKind::Other,
+            format!("fixture setup: current_dir failed: {error}"),
+            rho_sdk::Retryability::Permanent,
+        )
+    })?;
+    let target = cwd.join(file_name);
+    std::fs::write(&target, ORIGINAL).map_err(|error| {
+        ProviderError::new(
+            rho_sdk::ProviderErrorKind::Other,
+            format!(
+                "fixture setup: could not write '{}': {error}",
+                target.display()
+            ),
+            rho_sdk::Retryability::Permanent,
+        )
+    })?;
     let input = format!("[{file_name}#{ORIGINAL_TAG}]\nPUT 1.=1:\n+{edit_line}\n");
     let open = format!("{{\"input\":\"[{file_name}#{ORIGINAL_TAG}]\\nPUT 1.=1:\\n+{edit_line}\\n");
     events

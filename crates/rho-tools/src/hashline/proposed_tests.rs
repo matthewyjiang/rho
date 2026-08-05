@@ -105,30 +105,19 @@ fn plans_live_content_diff_with_removals() {
     assert_eq!(planned.kind, EditPreviewKind::Planned { unverified: false });
     assert!(!planned.warns_unverified());
     assert_eq!(file.change, DiffCardChange::Content);
-    assert!(
+    assert_eq!(
         file.rows
             .iter()
-            .any(|row| row.kind == DiffRowKind::Removed && row.text == "beta"),
-        "expected removed beta: {:?}",
-        file.rows
+            .map(|row| (row.kind, row.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (DiffRowKind::Context, "alpha"),
+            (DiffRowKind::Removed, "beta"),
+            (DiffRowKind::Removed, "gamma"),
+            (DiffRowKind::Added, "BETA"),
+        ]
     );
-    assert!(
-        file.rows
-            .iter()
-            .any(|row| row.kind == DiffRowKind::Removed && row.text == "gamma"),
-        "expected removed gamma: {:?}",
-        file.rows
-    );
-    assert!(
-        file.rows
-            .iter()
-            .any(|row| row.kind == DiffRowKind::Added && row.text == "BETA"),
-        "expected added BETA: {:?}",
-        file.rows
-    );
-    let (added, removed) = file.stats.expect("stats");
-    assert!(removed >= 2);
-    assert!(added >= 1);
+    assert_eq!(file.stats, Some((1, 2)));
 }
 
 // Covers: planned_edit falls back to document rows with an explicit notice when

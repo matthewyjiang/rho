@@ -16,7 +16,6 @@ struct Args {
     content: String,
 }
 
-#[async_trait::async_trait]
 impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -26,25 +25,27 @@ impl Tool for WriteFile {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
-        let path = resolve_path(&ctx.cwd, &args.path);
-        let outcome = write_file_content(
-            &path,
-            &compact_display_path(&ctx.cwd, &args.path),
-            &args.content,
-            ctx.max_output_bytes,
-        )
-        .await?;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: outcome.content,
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            let args: Args = serde_json::from_value(args)?;
+            let path = resolve_path(&ctx.cwd, &args.path);
+            let outcome = write_file_content(
+                &path,
+                &compact_display_path(&ctx.cwd, &args.path),
+                &args.content,
+                ctx.max_output_bytes,
+            )
+            .await?;
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content: outcome.content,
+            })
         })
     }
 }
@@ -191,11 +192,6 @@ mod tests {
 
         assert!(result.content.contains("1:line-1"), "{}", result.content);
         assert!(result.content.contains("80:line-80"), "{}", result.content);
-        assert!(
-            result.content.contains("showing"),
-            "expected truncation notice: {}",
-            result.content
-        );
         // Middle of a large file should not all be dumped into model content.
         assert!(
             !result.content.contains("40:line-40"),

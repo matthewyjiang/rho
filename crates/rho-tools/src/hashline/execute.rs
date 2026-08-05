@@ -96,6 +96,9 @@ struct AppliedFile<'a> {
     path: &'a Path,
     display_path: &'a str,
     original: &'a str,
+    /// Committed text; rollback refuses to restore if the live file no longer
+    /// matches this (another writer raced after our commit).
+    applied_text: &'a str,
 }
 
 fn apply_sections_locked(
@@ -142,6 +145,7 @@ fn apply_sections_locked(
             path: &file.path,
             display_path: &file.display_path,
             original: &file.original,
+            applied_text: &file.outcome.text,
         });
     }
 
@@ -206,11 +210,35 @@ fn recovery_error(
 }
 
 fn rollback_applied(applied: &[AppliedFile<'_>]) -> Result<(), ToolError> {
+    let mut failures = Vec::new();
     for file in applied.iter().rev() {
-        let mut handle = lock_for_rewrite(file.path, file.display_path, " for rollback")?;
-        rewrite_locked_file(&mut handle, file.display_path, file.original)?;
+        if let Err(error) = rollback_one(file) {
+            failures.push(error.to_string());
+        }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(ToolError::Message(failures.join("; ")))
+    }
+}
+
+fn rollback_one(file: &AppliedFile<'_>) -> Result<(), ToolError> {
+    let mut handle = lock_for_rewrite(file.path, file.display_path, " for rollback")?;
+    let mut live = String::new();
+    handle.read_to_string(&mut live).map_err(|error| {
+        ToolError::Message(format!(
+            "could not read {} for rollback: {error}",
+            file.display_path
+        ))
+    })?;
+    if live != file.applied_text {
+        return Err(ToolError::Message(format!(
+            "{}: changed after apply; refusing rollback to avoid clobbering concurrent writers",
+            file.display_path
+        )));
+    }
+    rewrite_locked_file(&mut handle, file.display_path, file.original)
 }
 
 fn lock_for_rewrite(
@@ -218,6 +246,12 @@ fn lock_for_rewrite(
     display_path: &str,
     context: &str,
 ) -> Result<std::fs::File, ToolError> {
+    use std::time::{Duration, Instant};
+
+    const LOCK_TIMEOUT: Duration = Duration::from_secs(1);
+    const INITIAL_BACKOFF: Duration = Duration::from_millis(2);
+    const MAX_BACKOFF: Duration = Duration::from_millis(50);
+
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -225,10 +259,29 @@ fn lock_for_rewrite(
         .map_err(|error| {
             ToolError::Message(format!("could not open {display_path}{context}: {error}"))
         })?;
-    file.lock().map_err(|error| {
-        ToolError::Message(format!("could not lock {display_path}{context}: {error}"))
-    })?;
-    Ok(file)
+
+    let deadline = Instant::now() + LOCK_TIMEOUT;
+    let mut backoff = INITIAL_BACKOFF;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return Err(ToolError::Message(format!(
+                        "could not lock {display_path}{context}: timed out after {}ms",
+                        LOCK_TIMEOUT.as_millis()
+                    )));
+                }
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(ToolError::Message(format!(
+                    "could not lock {display_path}{context}: {error}"
+                )));
+            }
+        }
+    }
 }
 
 fn rewrite_locked_file(

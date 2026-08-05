@@ -70,7 +70,7 @@ fn edit_planned_card_surfaces_unverified_document_fallback() {
         card.facts.iter().any(|fact| matches!(
             fact,
             rho_tools::tool_card::ToolFact::Meta { text }
-                if text.contains("document preview only")
+                if text.as_str() == rho_tools::hashline::EDIT_DOCUMENT_ONLY_NOTICE
         )),
         "expected unverified notice in facts: {:?}",
         card.facts

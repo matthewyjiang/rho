@@ -145,10 +145,11 @@ async fn ranged_plain_text_reads_use_hashline_window() {
         .await
         .unwrap();
 
-    assert_eq!(
-        result.content,
-        format_hashline_view("sample.txt", text, Some(2), Some(2)).unwrap()
+    let tag = compute_file_hash(text);
+    let expected = format!(
+        "[sample.txt#{tag}]\n2:two\n3:three\n\n[lines 2-3 of 4 shown; re-read with a different offset or limit for the rest]"
     );
+    assert_eq!(result.content, expected);
 }
 
 #[cfg(feature = "document-docx")]

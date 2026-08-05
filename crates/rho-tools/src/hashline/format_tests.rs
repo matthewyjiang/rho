@@ -95,10 +95,10 @@ fn post_edit_preview_marks_structural_edits() {
     let tag = compute_file_hash(new);
     assert!(preview.starts_with(&format!("[x.txt#{tag}]")), "{preview}");
     assert!(
-        preview.contains("structural edit"),
+        preview.contains(STRUCTURAL_EDIT_FOOTER_MARKER),
         "expected structural footer: {preview}"
     );
-    assert!(preview.contains("no chainable body lines"), "{preview}");
+    assert!(preview.contains(STRUCTURAL_NO_CHAIN_MARKER), "{preview}");
     assert!(
         !preview.contains("1:only"),
         "structural preview must not expose numbered body lines: {preview}"
@@ -130,7 +130,10 @@ fn chain_snapshot_uses_head_tail_window_without_focus() {
     assert!(snapshot.contains("1:line-1"), "{snapshot}");
     assert!(snapshot.contains("80:line-80"), "{snapshot}");
     assert!(snapshot.contains("…\n"), "{snapshot}");
-    assert!(snapshot.contains("showing"), "{snapshot}");
+    assert!(
+        snapshot.contains(&chain_truncation_footer(36, 80)),
+        "{snapshot}"
+    );
     assert!(!snapshot.contains("40:line-40"), "{snapshot}");
 }
 

@@ -212,10 +212,35 @@ fn edit_planned_card(
         return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
     };
     let cwd_buf = cwd.to_path_buf();
+    let mut referenced = 0usize;
     let planned = rho_tools::hashline::planned_edit(input, |path| {
-        std::fs::read_to_string(resolve_path(&cwd_buf, path)).ok()
+        if referenced >= MAX_EDIT_PLAN_FILES {
+            return None;
+        }
+        referenced += 1;
+        read_planned_edit_file(&cwd_buf, path)
     });
     edit_card_from_preview(planned, cwd, status)
+}
+
+/// Max files the interactive edit card will load for a live dry-run.
+const MAX_EDIT_PLAN_FILES: usize = 32;
+/// Max bytes per file for interactive edit planning (sync path).
+const MAX_EDIT_PLAN_FILE_BYTES: u64 = 1_048_576;
+
+/// Resolve `path` inside `cwd`, reject escapes, and read only small enough files.
+fn read_planned_edit_file(cwd: &std::path::Path, path: &str) -> Option<String> {
+    let candidate = resolve_path(cwd, path);
+    let cwd_canon = std::fs::canonicalize(cwd).ok()?;
+    let path_canon = std::fs::canonicalize(&candidate).ok()?;
+    if !path_canon.starts_with(&cwd_canon) {
+        return None;
+    }
+    let meta = std::fs::metadata(&path_canon).ok()?;
+    if !meta.is_file() || meta.len() > MAX_EDIT_PLAN_FILE_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(path_canon).ok()
 }
 
 fn edit_card_from_preview(

@@ -11,8 +11,8 @@ use rho_sdk::{
         OperationKind, ToolErrorKind, ToolExecutionPolicy, ToolInvocation, ToolPreparationContext,
         ToolResource, ToolResourceAccess,
     },
-    CancellationToken, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCallId,
-    ToolCompletion, UserInput, Workspace,
+    CancellationToken, CapabilityOperation, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions,
+    ToolCallId, ToolCompletion, UserInput, Workspace,
 };
 
 use super::*;
@@ -470,8 +470,18 @@ PUT 1.=1:
             "missing exclusive access for {}",
             path.display()
         );
+        let mut ops = prepared
+            .capabilities()
+            .iter()
+            .filter_map(|cap| match cap.operation() {
+                CapabilityOperation::ReadPath { path: p, .. } if p == &path => Some("read"),
+                CapabilityOperation::WritePath { path: p, .. } if p == &path => Some("write"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        ops.sort_unstable();
+        assert_eq!(ops, ["read", "write"], "path {}", path.display());
     }
-    assert_eq!(prepared.capabilities().len(), 4);
 }
 
 // Covers: edit prepare must reject invalid documents before path I/O

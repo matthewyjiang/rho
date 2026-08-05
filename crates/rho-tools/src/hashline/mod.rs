@@ -54,7 +54,6 @@ struct Args {
     input: String,
 }
 
-#[async_trait::async_trait]
 impl Tool for Edit {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -74,29 +73,31 @@ impl Tool for Edit {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        // App-tool harness for unit tests only. Production runs go through the
-        // SDK EditTool (workspace resolve, capabilities, resources, revalidate).
-        let args: Args = serde_json::from_value(args)?;
-        let sections = parse_hashline(&args.input)
-            .map_err(|error| ToolError::Message(error.to_string()))?
-            .into_iter()
-            .map(|section| PreparedSection {
-                path: resolve_path(&ctx.cwd, &section.path),
-                display_path: compact_display_path(&ctx.cwd, &section.path),
-                section,
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            // App-tool harness for unit tests only. Production runs go through the
+            // SDK EditTool (workspace resolve, capabilities, resources, revalidate).
+            let args: Args = serde_json::from_value(args)?;
+            let sections = parse_hashline(&args.input)
+                .map_err(|error| ToolError::Message(error.to_string()))?
+                .into_iter()
+                .map(|section| PreparedSection {
+                    path: resolve_path(&ctx.cwd, &section.path),
+                    display_path: compact_display_path(&ctx.cwd, &section.path),
+                    section,
+                })
+                .collect();
+            let outcome = apply_prepared_sections(sections, ctx.max_output_bytes).await?;
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content: outcome.content,
             })
-            .collect();
-        let outcome = apply_prepared_sections(sections, ctx.max_output_bytes).await?;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: outcome.content,
         })
     }
 }
