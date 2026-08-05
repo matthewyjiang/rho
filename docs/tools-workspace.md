@@ -102,9 +102,6 @@ make the output depend on the agent's tool set, so the same file would read
 differently to a subagent, a workflow step, and the automation CLI, and any
 prompt or parser downstream would have to handle both. One format costs a small
 number of input tokens per line and keeps every reader on the same contract.
-Question 4 of the [hashline edit eval](dev/hashline-edit-eval.md) measures that
-cost; if it does not pay for itself, drop the view rather than make it
-conditional.
 
 
 ## Managed background processes
