@@ -468,7 +468,9 @@ impl Theme {
         match kind {
             DiffRowKind::Added => Style::default().fg(palette.success),
             DiffRowKind::Removed => Style::default().fg(palette.error),
-            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip => Self::text(),
+            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
+                Self::text()
+            }
         }
     }
 

@@ -37,6 +37,9 @@ pub use proposed::{
 
 pub(crate) use format::compute_file_hash;
 
+/// Replace/delete span size that marks a structural edit in the post-edit footer.
+const STRUCTURAL_EDIT_SPAN_LINES: usize = 40;
+
 pub(crate) struct Edit;
 
 const TOOL_DESCRIPTION: &str = r#"Use `edit` for multi-hunk edits to existing UTF-8 files when you already have a fresh `[path#TAG]` from `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file. Grep match previews (`N | text`) are not PUT bodies - copy TAG and line numbers only; `read_file` when you need exact line text.
@@ -72,8 +75,8 @@ Rules:
 - Stale TAG, out-of-range, overlap, and mid-edit file changes fail closed with no write and include a bounded live snapshot - copy that header/lines to retry (re-read only for lines outside the snapshot)
 - An insert anchored inside a range another op replaces or deletes is rejected; anchor it outside
 - TAG ignores trailing whitespace, so whitespace-only changes keep a read valid
-- Successful results return a post-edit `[path#NEW_TAG]` numbered preview around the change
-- After a large or structural edit, re-read before further ops on anchors outside that preview
+- Successful results return a one-line ops summary plus a post-edit `[path#NEW_TAG]` numbered preview around the change
+- Structural edits (large replace/delete spans) strengthen the preview footer: re-read before further ops on anchors outside that preview
 - Block ops (`N*`), registers (`@name`), REM, and MV are not supported yet
 - Create files with `write_file`; do not use `edit` to create paths"#;
 
@@ -141,6 +144,9 @@ pub(crate) struct PreparedSection {
 }
 
 /// Apply already-resolved hashline sections to the workspace.
+///
+/// Path uniqueness is enforced here (single owner) for every caller — App tool
+/// and SDK adapter both funnel through this entry point.
 pub(crate) async fn apply_prepared_sections(
     sections: Vec<PreparedSection>,
     max_output_bytes: usize,
@@ -167,6 +173,8 @@ struct PlannedFile {
     original: String,
     outcome: ApplyOutcome,
     anchor_lines: Vec<usize>,
+    ops_summary: String,
+    structural: bool,
 }
 
 /// A file already rewritten in this call, kept so a later failure can undo it.
@@ -190,6 +198,8 @@ fn apply_sections_locked(
             ToolError::Message(format!("could not read {display_path}: {error}"))
         })?;
         let anchor_lines = collect_focus_anchors(&prepared.section.ops);
+        let structural = ops_are_structural(&prepared.section.ops);
+        let ops_summary = format_ops_summary(&prepared.section.ops);
         let outcome = apply_ops(&original, &prepared.section.tag, &prepared.section.ops)
             .map_err(|error| recovery_error(display_path, &original, &anchor_lines, error))?;
         planned.push(PlannedFile {
@@ -198,6 +208,8 @@ fn apply_sections_locked(
             original,
             outcome,
             anchor_lines,
+            ops_summary,
+            structural,
         });
     }
 
@@ -222,11 +234,13 @@ fn apply_sections_locked(
     let mut previews = Vec::new();
     let mut diffs = Vec::new();
     for file in &planned {
-        previews.push(format_post_edit_preview(
+        let preview = format_post_edit_preview(
             &file.display_path,
             &file.outcome.text,
             &file.outcome.focus_lines,
-        ));
+            file.structural,
+        );
+        previews.push(format!("{}\n{preview}", file.ops_summary));
         diffs.push(unified_diff(
             &file.original,
             &file.outcome.text,
@@ -342,6 +356,58 @@ fn collect_focus_anchors(ops: &[Op]) -> Vec<usize> {
     lines.sort_unstable();
     lines.dedup();
     lines
+}
+
+/// True when any single destructive span covers enough original lines that a
+/// follow-up edit should re-read rather than trust a focused preview alone.
+fn ops_are_structural(ops: &[Op]) -> bool {
+    ops.iter().any(|op| match op {
+        Op::Replace { start, end, .. } | Op::Delete { start, end } => {
+            end.saturating_sub(*start).saturating_add(1) >= STRUCTURAL_EDIT_SPAN_LINES
+        }
+        Op::InsertBefore { .. } | Op::InsertAfter { .. } => false,
+    })
+}
+
+/// One-line summary of applied ops for model-facing success content.
+fn format_ops_summary(ops: &[Op]) -> String {
+    let mut parts = Vec::with_capacity(ops.len());
+    for op in ops {
+        match op {
+            Op::Replace { start, end, body } => {
+                let removed = end.saturating_sub(*start).saturating_add(1);
+                if start == end {
+                    parts.push(format!("PUT {start} → {} line(s)", body.len()));
+                } else {
+                    parts.push(format!(
+                        "PUT {start}.={end} ({removed} → {} line(s))",
+                        body.len()
+                    ));
+                }
+            }
+            Op::Delete { start, end } => {
+                let removed = end.saturating_sub(*start).saturating_add(1);
+                if start == end {
+                    parts.push(format!("CUT {start} ({removed} line)"));
+                } else {
+                    parts.push(format!("CUT {start}.={end} ({removed} lines)"));
+                }
+            }
+            Op::InsertBefore { line, body } => {
+                parts.push(format!("PUT <{line} (+{} line(s))", body.len()));
+            }
+            Op::InsertAfter {
+                line: Some(line),
+                body,
+            } => {
+                parts.push(format!("PUT >{line} (+{} line(s))", body.len()));
+            }
+            Op::InsertAfter { line: None, body } => {
+                parts.push(format!("PUT >$ (+{} line(s))", body.len()));
+            }
+        }
+    }
+    parts.join("; ")
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ fn hashline_view_uses_absolute_lines_and_full_file_tag() {
 #[test]
 fn post_edit_preview_uses_new_tag_and_post_edit_line_numbers() {
     let new = "one\nTWO\nthree\nfour\nfive\n";
-    let preview = format_post_edit_preview("sample.txt", new, &[2]);
+    let preview = format_post_edit_preview("sample.txt", new, &[2], /*structural*/ false);
     let new_tag = compute_file_hash(new);
     assert!(
         preview.starts_with(&format!("[sample.txt#{new_tag}]\n")),
@@ -61,7 +61,7 @@ fn post_edit_preview_uses_new_tag_and_post_edit_line_numbers() {
 #[test]
 fn post_edit_preview_keeps_context_around_deletes() {
     let new = "a\nd\n";
-    let preview = format_post_edit_preview("x.txt", new, &[1, 2]);
+    let preview = format_post_edit_preview("x.txt", new, &[1, 2], /*structural*/ false);
     let new_tag = compute_file_hash(new);
     assert!(
         preview.starts_with(&format!("[x.txt#{new_tag}]\n")),
@@ -81,9 +81,25 @@ fn post_edit_preview_spreads_budget_across_hunks() {
     }
     let new = format!("{}\n", lines.join("\n"));
     // Two distant focus points; with a tiny budget both hunks must appear.
-    let preview = format_post_edit_preview("big.txt", &new, &[2, 70]);
+    let preview = format_post_edit_preview("big.txt", &new, &[2, 70], /*structural*/ false);
     assert!(preview.contains("2:line-2"), "{preview}");
     assert!(preview.contains("70:line-70"), "{preview}");
+}
+
+// Covers: structural edits strengthen the re-read notice
+// Owner: hashline format
+#[test]
+fn post_edit_preview_marks_structural_edits() {
+    let new = "only\n";
+    let preview = format_post_edit_preview("x.txt", new, &[1], /*structural*/ true);
+    assert!(
+        preview.contains("structural edit"),
+        "expected structural footer: {preview}"
+    );
+    assert!(
+        preview.contains("re-read before further ops"),
+        "{preview}"
+    );
 }
 
 // Covers: provider TUI fixture hardcodes this tag for "original line\n"

@@ -88,9 +88,9 @@ Rules:
 - Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
 - Create or fully rewrite files with `write_file`. Do not use `edit` to create paths
 
-Successful `edit` results return a post-edit `[path#NEW]` numbered preview around the change for chaining. Successful `write_file` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
+Successful `edit` results return a one-line ops summary (for example `PUT 2.=5 (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. Large structural spans add a stronger re-read notice on the preview footer. Successful `write_file` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
 
-Streaming and approval cards project the edit document alone (PUT bodies and CUT/replace line numbers). Removed rows show original line numbers without prior file text, so cards never need the target on disk while arguments stream in.
+Streaming and approval cards project the edit document alone: op locator summaries (`PUT 2.=3`, `CUT 5`) plus PUT body lines as additions. Prior file text is never invented, so cards never need the target on disk while arguments stream in.
 
 Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write_file` to create or fully rewrite a file.
 

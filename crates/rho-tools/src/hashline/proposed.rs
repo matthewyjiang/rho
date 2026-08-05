@@ -122,20 +122,13 @@ fn project_op(
         Op::Replace { start, end, body } => {
             file.removed_lines += (*end - *start + 1) as u64;
             file.added_lines += body.len() as u64;
-            push_row(
+            push_summary_and_body(
                 file,
-                ProposedRow::Summary(format_put_range(*start, *end)),
+                format_put_range(*start, *end),
+                body,
                 retained_body_rows,
                 body_overflow,
             );
-            for line in body {
-                push_row(
-                    file,
-                    ProposedRow::Added(line.clone()),
-                    retained_body_rows,
-                    body_overflow,
-                );
-            }
         }
         Op::Delete { start, end } => {
             file.removed_lines += (*end - *start + 1) as u64;
@@ -148,20 +141,13 @@ fn project_op(
         }
         Op::InsertBefore { line, body } => {
             file.added_lines += body.len() as u64;
-            push_row(
+            push_summary_and_body(
                 file,
-                ProposedRow::Summary(format!("PUT <{line}")),
+                format!("PUT <{line}"),
+                body,
                 retained_body_rows,
                 body_overflow,
             );
-            for text in body {
-                push_row(
-                    file,
-                    ProposedRow::Added(text.clone()),
-                    retained_body_rows,
-                    body_overflow,
-                );
-            }
         }
         Op::InsertAfter { line, body } => {
             file.added_lines += body.len() as u64;
@@ -169,21 +155,31 @@ fn project_op(
                 Some(line) => format!("PUT >{line}"),
                 None => "PUT >$".into(),
             };
-            push_row(
-                file,
-                ProposedRow::Summary(summary),
-                retained_body_rows,
-                body_overflow,
-            );
-            for text in body {
-                push_row(
-                    file,
-                    ProposedRow::Added(text.clone()),
-                    retained_body_rows,
-                    body_overflow,
-                );
-            }
+            push_summary_and_body(file, summary, body, retained_body_rows, body_overflow);
         }
+    }
+}
+
+fn push_summary_and_body(
+    file: &mut ProposedEditFile,
+    summary: String,
+    body: &[String],
+    retained_body_rows: &mut usize,
+    body_overflow: &mut bool,
+) {
+    push_row(
+        file,
+        ProposedRow::Summary(summary),
+        retained_body_rows,
+        body_overflow,
+    );
+    for text in body {
+        push_row(
+            file,
+            ProposedRow::Added(text.clone()),
+            retained_body_rows,
+            body_overflow,
+        );
     }
 }
 

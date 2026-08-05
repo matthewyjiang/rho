@@ -217,7 +217,7 @@ fn edit_start_card(
                 .into_iter()
                 .map(|row| match row {
                     rho_tools::hashline::ProposedRow::Summary(text) => {
-                        DiffRow::new(DiffRowKind::Skip, None, text)
+                        DiffRow::new(DiffRowKind::Meta, None, text)
                     }
                     rho_tools::hashline::ProposedRow::Added(text) => {
                         DiffRow::new(DiffRowKind::Added, None, text)

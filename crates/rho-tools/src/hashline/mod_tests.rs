@@ -46,6 +46,11 @@ async fn edits_file_from_read_tag() {
         "{}",
         result.content
     );
+    assert!(
+        result.content.contains("PUT 2.=2") || result.content.contains("PUT 2 →"),
+        "expected ops summary: {}",
+        result.content
+    );
     // Chain contract: preview only - no unified diff in model content.
     assert!(
         !result.content.contains("@@"),

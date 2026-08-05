@@ -446,6 +446,11 @@ impl Tool for EditTool {
 
 /// Existing edit targets collected during prepare. Edit never creates paths, so
 /// this set has no missing-write / rename seam.
+///
+/// Path uniqueness for the mutation itself is owned by
+/// [`apply_prepared_sections`]. Prepare fails fast with `InvalidArguments` when
+/// the same canonical path appears twice so authorization never starts for a
+/// malformed multi-claim document.
 #[derive(Default)]
 struct EditTargetSet {
     resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
