@@ -57,7 +57,7 @@ Document extraction enforces a 25 MiB source limit and a 200,000-character extra
 
 ## File edits
 
-`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is a 4-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `edit` rejects a stale `TAG` before writing.
+`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is a 4-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `offset`/`limit` select which rows are shown; the file is still read fully to mint `TAG`. `edit` rejects a stale `TAG` before writing.
 
 ```json
 {
@@ -88,11 +88,11 @@ Rules:
 - Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
 - Create or fully rewrite files with `write_file`. Do not use `edit` to create paths
 
-Successful `edit` results return a one-line ops summary (for example `PUT 2.=5 (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. Large structural spans add a stronger re-read notice on the preview footer. Successful `write_file` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
+Successful `edit` results return a one-line ops summary (for example `PUT 2.=5: (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. **Structural** edits (a single replace/delete span of 40+ original lines) return the new TAG and ops summary **without** numbered body lines so the next op must re-read. Successful `write_file` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
 
-Streaming and approval cards project the edit document alone: op locator summaries (`PUT 2.=3`, `CUT 5`) plus PUT body lines as additions. Prior file text is never invented, so cards never need the target on disk while arguments stream in.
+Streaming cards project the edit document alone (op summaries + PUT bodies). Approval and start cards dry-run against live files when readable so removals appear as real `-` rows; missing or stale targets fall back to the document projection.
 
-Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write_file` to create or fully rewrite a file.
+Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write_file` to create or fully rewrite a file. Do not use shell or Python to rewrite UTF-8 sources that `edit` can express.
 
 ### One read format for every caller
 

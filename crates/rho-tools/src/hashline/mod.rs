@@ -23,7 +23,7 @@ use serde_json::json;
 
 use crate::{diff::unified_diff, file_mutation::FileMutationOutcome, tool::*};
 
-use apply::{apply_ops, ApplyOutcome};
+use apply::apply_ops;
 use parser::{Op, Section};
 
 pub(crate) use format::{
@@ -32,7 +32,8 @@ pub(crate) use format::{
 };
 pub(crate) use parser::parse_hashline;
 pub use proposed::{
-    proposed_edit, proposed_sections, ProposedEdit, ProposedEditFile, ProposedRow, ProposedSection,
+    planned_edit, proposed_edit, proposed_sections, ProposedEdit, ProposedEditFile, ProposedRow,
+    ProposedSection,
 };
 
 pub(crate) use format::compute_file_hash;
@@ -42,43 +43,23 @@ const STRUCTURAL_EDIT_SPAN_LINES: usize = 40;
 
 pub(crate) struct Edit;
 
-const TOOL_DESCRIPTION: &str = r#"Use `edit` for multi-hunk edits to existing UTF-8 files when you already have a fresh `[path#TAG]` from `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write_file` chain snapshot, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file. Grep match previews (`N | text`) are not PUT bodies - copy TAG and line numbers only; `read_file` when you need exact line text.
+/// Operational contract only. Chaining policy and dialect tips live in the system
+/// prompt / docs so this schema string does not drift as a third essay.
+const TOOL_DESCRIPTION: &str = r#"Multi-hunk line-anchored edits to existing UTF-8 files.
 
-Document shape:
+Requires a fresh `[path#TAG]` from `read_file`, `grep` (content mode TAG + line numbers only), `write_file` snapshot, a prior non-structural `edit` preview, or a failed `edit` live snapshot. Never invent a TAG. Prefer `write_file` to create or fully rewrite a file.
 
+Document:
 [path#TAG]
 PUT N:
-+single-line replacement
++replacement
 PUT N.=M:
-+range replacement line 1
-+range replacement line 2
-PUT >N:
-+inserted after N
-PUT <N:
-+inserted before N
-PUT >$:
-+appended at end
++range body
+PUT <N: / PUT >N: / PUT >$:
++insert
 CUT N.=M
 
-Locators — copy these forms exactly:
-- One line: `PUT 12:` (digits, then colon). Never `PUT 12.:` or `PUT 12.=:` — a trailing dot is invalid
-- Range: `PUT 12.=15:` (N, period, equals, M, colon). Inclusive. Also accepts `12-15` / `12..15`
-- Insert: `PUT <12:` / `PUT >12:` / `PUT >$:`
-- Delete: `CUT 12.=15` or `CUT 12` (no colon on CUT)
-
-Rules:
-- Copy the exact `[path#TAG]` header and `N:line` numbers from the latest hashline snapshot for that path (`read_file`, edit preview, write_file snapshot, or failed-edit live snapshot). Grep gives TAG + line numbers only - not `N:line` body text
-- Put every hunk for one file in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch - wait for the result before editing that path again. Different paths may edit in parallel
-- Line numbers name ORIGINAL lines from that snapshot; they do not shift mid-document
-- Body rows under PUT headers that end with `:` must start with `+` (use `+` alone for a blank line)
-- PUT always needs at least one + body row; use CUT to delete
-- Stale TAG, out-of-range, overlap, and mid-edit file changes fail closed with no write and include a bounded live snapshot - copy that header/lines to retry (re-read only for lines outside the snapshot)
-- An insert anchored inside a range another op replaces or deletes is rejected; anchor it outside
-- TAG ignores trailing whitespace, so whitespace-only changes keep a read valid
-- Successful results return a one-line ops summary plus a post-edit `[path#NEW_TAG]` numbered preview around the change
-- Structural edits (large replace/delete spans) strengthen the preview footer: re-read before further ops on anchors outside that preview
-- Block ops (`N*`), registers (`@name`), REM, and MV are not supported yet
-- Create files with `write_file`; do not use `edit` to create paths"#;
+Locators: `PUT 12:` (single line; never `PUT 12.:`), `PUT 12.=15:` (inclusive range; also `12-15` / `12..15`), inserts as above, `CUT` without a colon. Body rows under `:` headers must start with `+`. PUT needs ≥1 body row; use CUT to delete. Line numbers are original snapshot lines and do not shift mid-document. One section per path; do not stack two `edit` calls on the same path in one batch. Stale TAG, overlap, out-of-range, and mid-edit changes fail closed with a live snapshot to copy."#;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,7 +78,7 @@ impl Tool for Edit {
                 "properties": {
                     "input": {
                         "type": "string",
-                        "description": "Hashline document with one or more [path#TAG] sections and PUT/CUT ops. Copy each [path#TAG] from read_file, grep, write_file, a prior edit preview, or a failed edit live snapshot; never invent tags. One section per path; multi-hunk OK. Do not stack two edit calls on the same path in one batch."
+                        "description": "Hashline document: one or more [path#TAG] sections with PUT/CUT ops. Copy each TAG from a fresh snapshot; never invent tags."
                     }
                 },
                 "required": ["input"],
@@ -112,6 +93,8 @@ impl Tool for Edit {
         ctx: ToolContext,
         id: String,
     ) -> Result<ToolResult, ToolError> {
+        // App-tool harness for unit tests only. Production runs go through the
+        // SDK EditTool (workspace resolve, capabilities, resources, revalidate).
         let args: Args = serde_json::from_value(args)?;
         let sections = parse_hashline(&args.input)
             .map_err(|error| ToolError::Message(error.to_string()))?
@@ -145,8 +128,11 @@ pub(crate) struct PreparedSection {
 
 /// Apply already-resolved hashline sections to the workspace.
 ///
-/// Path uniqueness is enforced here (single owner) for every caller — App tool
-/// and SDK adapter both funnel through this entry point.
+/// Path uniqueness for the mutation is enforced here for every caller (App
+/// harness and SDK execute). The SDK prepare path may also reject duplicates
+/// earlier as `InvalidArguments` so authorization never starts for a malformed
+/// multi-claim document — that is a fail-fast gate, not a second owner of the
+/// write-time invariant.
 pub(crate) async fn apply_prepared_sections(
     sections: Vec<PreparedSection>,
     max_output_bytes: usize,
@@ -171,7 +157,7 @@ struct PlannedFile {
     path: PathBuf,
     display_path: String,
     original: String,
-    outcome: ApplyOutcome,
+    outcome: apply::ApplyOutcome,
     anchor_lines: Vec<usize>,
     ops_summary: String,
     structural: bool,
@@ -192,19 +178,19 @@ fn apply_sections_locked(
     // writes applied. Each commit re-checks its file under lock, so no separate
     // revalidation pass is needed here.
     let mut planned = Vec::with_capacity(sections.len());
-    for prepared in &sections {
-        let display_path = &prepared.display_path;
+    for prepared in sections {
+        let display_path = prepared.display_path.clone();
         let original = std::fs::read_to_string(&prepared.path).map_err(|error| {
             ToolError::Message(format!("could not read {display_path}: {error}"))
         })?;
         let anchor_lines = collect_focus_anchors(&prepared.section.ops);
         let structural = ops_are_structural(&prepared.section.ops);
         let ops_summary = format_ops_summary(&prepared.section.ops);
-        let outcome = apply_ops(&original, &prepared.section.tag, &prepared.section.ops)
-            .map_err(|error| recovery_error(display_path, &original, &anchor_lines, error))?;
+        let outcome = apply_ops(&original, &prepared.section.tag, prepared.section.ops)
+            .map_err(|error| recovery_error(&display_path, &original, &anchor_lines, error))?;
         planned.push(PlannedFile {
-            path: prepared.path.clone(),
-            display_path: display_path.clone(),
+            path: prepared.path,
+            display_path,
             original,
             outcome,
             anchor_lines,
@@ -369,7 +355,7 @@ fn ops_are_structural(ops: &[Op]) -> bool {
     })
 }
 
-/// One-line summary of applied ops for model-facing success content.
+/// One-line summary of applied ops using wire locator forms.
 fn format_ops_summary(ops: &[Op]) -> String {
     let mut parts = Vec::with_capacity(ops.len());
     for op in ops {
@@ -377,10 +363,10 @@ fn format_ops_summary(ops: &[Op]) -> String {
             Op::Replace { start, end, body } => {
                 let removed = end.saturating_sub(*start).saturating_add(1);
                 if start == end {
-                    parts.push(format!("PUT {start} → {} line(s)", body.len()));
+                    parts.push(format!("PUT {start}: (1 → {} line(s))", body.len()));
                 } else {
                     parts.push(format!(
-                        "PUT {start}.={end} ({removed} → {} line(s))",
+                        "PUT {start}.={end}: ({removed} → {} line(s))",
                         body.len()
                     ));
                 }
@@ -394,16 +380,16 @@ fn format_ops_summary(ops: &[Op]) -> String {
                 }
             }
             Op::InsertBefore { line, body } => {
-                parts.push(format!("PUT <{line} (+{} line(s))", body.len()));
+                parts.push(format!("PUT <{line}: (+{} line(s))", body.len()));
             }
             Op::InsertAfter {
                 line: Some(line),
                 body,
             } => {
-                parts.push(format!("PUT >{line} (+{} line(s))", body.len()));
+                parts.push(format!("PUT >{line}: (+{} line(s))", body.len()));
             }
             Op::InsertAfter { line: None, body } => {
-                parts.push(format!("PUT >$ (+{} line(s))", body.len()));
+                parts.push(format!("PUT >$: (+{} line(s))", body.len()));
             }
         }
     }

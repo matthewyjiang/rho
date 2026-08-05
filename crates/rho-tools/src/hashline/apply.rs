@@ -12,8 +12,6 @@ use super::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ApplyOutcome {
     pub text: String,
-    pub old_tag: String,
-    pub new_tag: String,
     /// 1-indexed post-edit lines touched by the ops (inserts, replacements, and
     /// neighbors of pure deletes). Preview rendering uses this set instead of
     /// recomputing a content diff.
@@ -53,16 +51,18 @@ impl fmt::Display for ApplyError {
 /// is planned against the line it anchors to, so destructive spans that overlap
 /// each other, or that swallow another op's anchor, fail closed instead of
 /// silently dropping work.
+///
+/// Takes ownership of `ops` so body lines move into the plan instead of cloning.
 pub(crate) fn apply_ops(
     original: &str,
     expected_tag: &str,
-    ops: &[Op],
+    ops: Vec<Op>,
 ) -> Result<ApplyOutcome, ApplyError> {
-    let old_tag = compute_file_hash(original);
-    if !old_tag.eq_ignore_ascii_case(expected_tag) {
+    let live_tag = compute_file_hash(original);
+    if !live_tag.eq_ignore_ascii_case(expected_tag) {
         return Err(ApplyError::TagMismatch {
             expected: expected_tag.to_string(),
-            live: old_tag,
+            live: live_tag,
         });
     }
     if ops.is_empty() {
@@ -73,11 +73,8 @@ pub(crate) fn apply_ops(
     let plan = Plan::build(ops, lines.len())?;
     let emitted = plan.emit(&lines);
     let text = finalize_text(&emitted.lines, original);
-    let new_tag = compute_file_hash(&text);
     Ok(ApplyOutcome {
         text,
-        old_tag,
-        new_tag,
         focus_lines: emitted.focus_lines,
     })
 }
@@ -112,7 +109,7 @@ struct EmitResult {
 impl Plan {
     /// Bucket every op onto its anchor line, rejecting out-of-range anchors and
     /// destructive spans that collide with another op.
-    fn build(ops: &[Op], line_count: usize) -> Result<Self, ApplyError> {
+    fn build(ops: Vec<Op>, line_count: usize) -> Result<Self, ApplyError> {
         let mut plan = Self {
             slots: BTreeMap::new(),
             eof: Vec::new(),
@@ -120,25 +117,25 @@ impl Plan {
         for op in ops {
             match op {
                 Op::Replace { start, end, body } => {
-                    plan.add_span(*start, *end, body.clone(), "replace", line_count)?;
+                    plan.add_span(start, end, body, "replace", line_count)?;
                 }
                 Op::Delete { start, end } => {
-                    plan.add_span(*start, *end, Vec::new(), "delete", line_count)?;
+                    plan.add_span(start, end, Vec::new(), "delete", line_count)?;
                 }
                 Op::InsertBefore { line, body } => {
                     // An empty file has no line 1 to sit before, so head inserts
                     // and end-of-file appends are the same position.
                     if line_count == 0 {
-                        if *line != 1 {
+                        if line != 1 {
                             return Err(ApplyError::message(
                                 "insert before in an empty file must use PUT <1:",
                             ));
                         }
-                        plan.eof.extend(body.iter().cloned());
+                        plan.eof.extend(body);
                         continue;
                     }
-                    Self::check_in_range(*line, line_count, "insert before")?;
-                    plan.slot(*line).before.extend(body.iter().cloned());
+                    Self::check_in_range(line, line_count, "insert before")?;
+                    plan.slot(line).before.extend(body);
                 }
                 Op::InsertAfter {
                     line: Some(line),
@@ -149,10 +146,10 @@ impl Plan {
                             "insert after a line requires a non-empty file; use PUT <1: or PUT >$:",
                         ));
                     }
-                    Self::check_in_range(*line, line_count, "insert after")?;
-                    plan.slot(*line).after.extend(body.iter().cloned());
+                    Self::check_in_range(line, line_count, "insert after")?;
+                    plan.slot(line).after.extend(body);
                 }
-                Op::InsertAfter { line: None, body } => plan.eof.extend(body.iter().cloned()),
+                Op::InsertAfter { line: None, body } => plan.eof.extend(body),
             }
         }
         plan.validate_spans()?;

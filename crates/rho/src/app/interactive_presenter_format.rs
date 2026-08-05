@@ -66,7 +66,8 @@ pub(super) fn streaming_preview_card(
         ),
         ToolKind::Edit => arguments.map_or_else(
             || kind_card(ToolStatus::Running, kind, ToolHeader::call(name, None)),
-            |arguments| edit_start_card(arguments, cwd, ToolStatus::Running),
+            // Streaming: document-only projection — never touch disk mid-JSON.
+            |arguments| edit_document_card(arguments, cwd, ToolStatus::Running),
         ),
         _ => preview_card(kind, name, arguments, cwd, ToolStatus::Running),
     }
@@ -140,7 +141,7 @@ pub(super) fn preview_card(
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::Edit => edit_start_card(arguments, cwd, status),
+        ToolKind::Edit => edit_planned_card(arguments, cwd, status),
         ToolKind::Skill => kind_card(
             status,
             kind,
@@ -191,7 +192,7 @@ pub(super) fn preview_card(
     }
 }
 
-fn edit_start_card(
+fn edit_document_card(
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
     status: ToolStatus,
@@ -199,17 +200,47 @@ fn edit_start_card(
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
         return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
     };
-    // Project the document alone so streaming and approval cards never need the
-    // target file. Op summaries carry CUT/replace ranges; PUT bodies are added
-    // rows. This is not a content diff - empty remove text is never invented.
-    let proposed = rho_tools::hashline::proposed_edit(input);
+    edit_card_from_proposed(rho_tools::hashline::proposed_edit(input), cwd, status)
+}
+
+/// Approval / start / interrupted cards: dry-run against live files when
+/// readable so removals are visible. Falls back to document projection per path.
+fn edit_planned_card(
+    arguments: &serde_json::Value,
+    cwd: &std::path::Path,
+    status: ToolStatus,
+) -> ToolCard {
+    let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
+        return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
+    };
+    let cwd = cwd.to_path_buf();
+    let planned = rho_tools::hashline::planned_edit(input, |path| {
+        let candidate = if std::path::Path::new(path).is_absolute() {
+            std::path::PathBuf::from(path)
+        } else {
+            cwd.join(path)
+        };
+        std::fs::read_to_string(candidate).ok()
+    });
+    edit_card_from_proposed(planned, &cwd, status)
+}
+
+fn edit_card_from_proposed(
+    proposed: rho_tools::hashline::ProposedEdit,
+    cwd: &std::path::Path,
+    status: ToolStatus,
+) -> ToolCard {
     let files = proposed
         .files
         .into_iter()
         .map(|section| DiffCardFile {
             path: compact_display_path(cwd, &section.path),
             source_path: None,
-            change: DiffCardChange::Content,
+            change: if section.pure_delete {
+                DiffCardChange::Delete
+            } else {
+                DiffCardChange::Content
+            },
             stats: Some((section.added_lines, section.removed_lines))
                 .filter(|(added, removed)| *added > 0 || *removed > 0),
             rows: section
@@ -221,6 +252,12 @@ fn edit_start_card(
                     }
                     rho_tools::hashline::ProposedRow::Added(text) => {
                         DiffRow::new(DiffRowKind::Added, None, text)
+                    }
+                    rho_tools::hashline::ProposedRow::Removed(text) => {
+                        DiffRow::new(DiffRowKind::Removed, None, text)
+                    }
+                    rho_tools::hashline::ProposedRow::Context(text) => {
+                        DiffRow::new(DiffRowKind::Context, None, text)
                     }
                 })
                 .collect(),
@@ -366,7 +403,7 @@ pub(super) fn interrupted_card(
     match view.kind {
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
-        ToolKind::Edit => edit_start_card(&view.arguments, cwd, ToolStatus::Interrupted),
+        ToolKind::Edit => edit_planned_card(&view.arguments, cwd, ToolStatus::Interrupted),
         _ => {
             let mut card = preview_card(
                 view.kind,

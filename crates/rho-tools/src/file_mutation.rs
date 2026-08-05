@@ -1,6 +1,7 @@
 //! Shared result shape for workspace file mutations (`write_file`, `edit`).
 
 /// Model-facing content plus UI metadata for a completed file mutation.
+#[derive(Debug)]
 pub(crate) struct FileMutationOutcome {
     pub content: String,
     /// Display paths touched by the mutation, in document order.

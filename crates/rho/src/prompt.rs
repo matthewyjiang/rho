@@ -61,7 +61,7 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. C
     if tools.iter().any(|tool| tool.name == "edit") {
         text.push_str(
             r#"
-When using `edit`, prefer it over shell or Python rewrites for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms from the tool description. After a large or structural edit, re-read before further ops on anchors outside the returned preview.
+Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms exactly from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines — re-read before further ops on that path. Prefer `write_file` only to create or fully rewrite a file.
 "#,
         );
     }
@@ -350,6 +350,24 @@ mod tests {
         assert!(enabled.contains("not preview bodies"));
         assert!(enabled.contains("`N | preview`"));
         assert!(!disabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
+    }
+
+    #[test]
+    fn includes_edit_policy_only_when_edit_tool_is_available() {
+        let project = TempDir::new().unwrap();
+        let edit_tool = ToolSpec {
+            name: "edit".into(),
+            description: "edit".into(),
+            input_schema: serde_json::json!({}),
+        };
+
+        let enabled = system_prompt_with_home(&[edit_tool], project.path(), None).text;
+        let disabled = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(enabled.contains("Use `edit` (not shell or Python rewrites)"));
+        assert!(enabled.contains("never `PUT 12.:`"));
+        assert!(enabled.contains("without chainable body lines"));
+        assert!(!disabled.contains("Use `edit` (not shell or Python rewrites)"));
     }
 
     #[test]

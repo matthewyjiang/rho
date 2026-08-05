@@ -86,19 +86,22 @@ fn post_edit_preview_spreads_budget_across_hunks() {
     assert!(preview.contains("70:line-70"), "{preview}");
 }
 
-// Covers: structural edits strengthen the re-read notice
+// Covers: structural edits omit chainable body lines and force re-read
 // Owner: hashline format
 #[test]
 fn post_edit_preview_marks_structural_edits() {
     let new = "only\n";
     let preview = format_post_edit_preview("x.txt", new, &[1], /*structural*/ true);
+    let tag = compute_file_hash(new);
+    assert!(preview.starts_with(&format!("[x.txt#{tag}]")), "{preview}");
     assert!(
         preview.contains("structural edit"),
         "expected structural footer: {preview}"
     );
+    assert!(preview.contains("no chainable body lines"), "{preview}");
     assert!(
-        preview.contains("re-read before further ops"),
-        "{preview}"
+        !preview.contains("1:only"),
+        "structural preview must not expose numbered body lines: {preview}"
     );
 }
 

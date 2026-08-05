@@ -101,25 +101,37 @@ pub(crate) fn format_hashline_view(
     } else {
         None
     };
-    Ok(emit_numbered_body(&header, &lines, &selected, footer.as_deref()))
+    Ok(emit_numbered_body(
+        &header,
+        &lines,
+        &selected,
+        footer.as_deref(),
+    ))
 }
 
 /// Render a chainable post-edit hashline preview for `new_text`.
 ///
-/// The header carries the post-edit tag. Body rows use **post-edit** line
-/// numbers around `focus_lines` so a follow-up `edit` can copy them without a
-/// full re-read. Large unchanged spans collapse to `…`.
+/// The header carries the post-edit tag. For ordinary edits, body rows use
+/// **post-edit** line numbers around `focus_lines` so a follow-up `edit` can
+/// copy them without a full re-read. Large unchanged spans collapse to `…`.
 ///
-/// `structural` strengthens the footer when a large span was rewritten so the
-/// model re-reads before further ops outside the preview.
+/// `structural` omits numbered body lines entirely and requires a re-read
+/// before further ops on this path — a focused window is not a safe anchor map
+/// after a large rewrite.
 pub(crate) fn format_post_edit_preview(
     display_path: &str,
     new_text: &str,
     focus_lines: &[usize],
     structural: bool,
 ) -> String {
-    let lines = split_content_lines(new_text);
     let header = format_header(display_path, &compute_file_hash(new_text));
+    if structural {
+        let total = split_content_lines(new_text).len();
+        return format!(
+            "{header}\n\n[structural edit; {total} line(s) after apply; re-read this path before further edit ops — no chainable body lines]"
+        );
+    }
+    let lines = split_content_lines(new_text);
     if lines.is_empty() {
         return header;
     }
@@ -130,7 +142,7 @@ pub(crate) fn format_post_edit_preview(
     }
     let expanded = expand_focus_lines(&focus, total, POST_EDIT_CONTEXT_LINES);
     let selected = cap_selected_by_hunk(&expanded, POST_EDIT_MAX_BODY_LINES);
-    let footer = post_edit_footer(&selected, total, structural);
+    let footer = post_edit_footer(&selected, total);
     emit_numbered_body(&header, &lines, &selected, footer.as_deref())
 }
 
@@ -160,24 +172,18 @@ pub(crate) fn format_chain_snapshot(
     emit_numbered_body(&header, &lines, &selected, footer.as_deref())
 }
 
-fn post_edit_footer(selected: &[usize], total: usize, structural: bool) -> Option<String> {
+fn post_edit_footer(selected: &[usize], total: usize) -> Option<String> {
     if selected.is_empty() {
         return None;
     }
     let first = selected[0];
     let last = *selected.last().expect("non-empty");
-    if first == 1 && last == total && selected.len() == total && !structural {
+    if first == 1 && last == total && selected.len() == total {
         return None;
     }
-    if structural {
-        Some(format!(
-            "[structural edit; post-edit lines {first}-{last} of {total} shown around changes; re-read before further ops on anchors outside this preview]"
-        ))
-    } else {
-        Some(format!(
-            "[post-edit lines {first}-{last} of {total} shown around changes; re-read for other lines]"
-        ))
-    }
+    Some(format!(
+        "[post-edit lines {first}-{last} of {total} shown around changes; re-read for other lines]"
+    ))
 }
 
 fn chain_footer(selected: &[usize], total: usize) -> Option<String> {

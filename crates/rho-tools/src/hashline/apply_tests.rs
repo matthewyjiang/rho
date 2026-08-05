@@ -12,7 +12,7 @@ fn applies_mixed_ops_on_original_line_numbers() {
     let outcome = apply_ops(
         original,
         &tag,
-        &[
+        vec![
             Op::Replace {
                 start: 2,
                 end: 2,
@@ -27,16 +27,18 @@ fn applies_mixed_ops_on_original_line_numbers() {
     )
     .unwrap();
     assert_eq!(outcome.text, "one\nTWO\nthree\n3.5\n");
-    assert_eq!(outcome.old_tag, tag);
-    assert_eq!(outcome.new_tag, compute_file_hash(&outcome.text));
     assert_eq!(outcome.focus_lines, vec![2, 4]);
+    assert_eq!(
+        compute_file_hash(&outcome.text),
+        compute_file_hash("one\nTWO\nthree\n3.5\n")
+    );
 }
 
 // Covers: stale tags must fail closed before mutating content
 // Owner: hashline apply
 #[test]
 fn rejects_stale_tag() {
-    let err = apply_ops("hello\n", "DEAD", &[Op::Delete { start: 1, end: 1 }]).unwrap_err();
+    let err = apply_ops("hello\n", "DEAD", vec![Op::Delete { start: 1, end: 1 }]).unwrap_err();
     assert!(
         matches!(
             err,
@@ -59,7 +61,7 @@ fn rejects_overlapping_replaces() {
     let err = apply_ops(
         original,
         &tag,
-        &[
+        vec![
             Op::Replace {
                 start: 1,
                 end: 2,
@@ -107,7 +109,7 @@ fn rejects_inserts_anchored_inside_a_destructive_range() {
             },
         ),
     ] {
-        let err = apply_ops(original, &tag, &[replace(), extra]).unwrap_err();
+        let err = apply_ops(original, &tag, vec![replace(), extra]).unwrap_err();
         assert!(err.to_string().contains("falls inside"), "{label}: {err}");
     }
 }
@@ -121,7 +123,7 @@ fn keeps_inserts_at_range_edges() {
     let outcome = apply_ops(
         original,
         &tag,
-        &[
+        vec![
             Op::InsertBefore {
                 line: 2,
                 body: vec!["head".into()],
@@ -147,7 +149,7 @@ fn keeps_document_order_for_shared_anchors() {
     let outcome = apply_ops(
         original,
         &tag,
-        &[
+        vec![
             Op::InsertAfter {
                 line: Some(1),
                 body: vec!["first".into()],
@@ -171,7 +173,7 @@ fn appends_into_an_empty_file() {
     let outcome = apply_ops(
         "",
         &tag,
-        &[
+        vec![
             Op::InsertBefore {
                 line: 1,
                 body: vec!["first".into()],

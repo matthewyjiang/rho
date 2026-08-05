@@ -438,10 +438,8 @@ fn edit_preview_preserves_multi_file_identity() {
             removed: 1,
             path: Some("a.txt".into()),
         },
-        ToolFact::DiffStat {
-            added: 0,
-            removed: 1,
-            path: Some("b.txt".into()),
+        ToolFact::Meta {
+            text: "delete b.txt".into(),
         },
     ])
     .with_body(ToolBody::Diff(vec![

@@ -26,7 +26,7 @@ impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files always return a hashline view: a [path#TAG] header plus N:line rows. TAG fingerprints the full file snapshot (trailing whitespace ignored) so line-anchored edit can validate anchors. offset and limit select line ranges for UTF-8 text files only.".into(),
+            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files always return a hashline view: a [path#TAG] header plus N:line rows. TAG fingerprints the full file (trailing whitespace ignored); offset/limit select which rows are shown, but the file is still read fully to mint TAG. offset and limit apply to UTF-8 text files only.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
