@@ -200,11 +200,12 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
             session,
             None,
             crate::tools::web::WebAccessStore::new(),
+            tools.advisor().cloned(),
         ),
         provider: ProviderController::new(shared_provider, rho_sdk::ReasoningLevel::Off),
         tools,
         workspace,
-        system_prompt: SystemPrompt::None,
+        system_prompt: super::SystemPromptVariants::uniform(SystemPrompt::None),
         compaction: CompactionConfig::default(),
         context_window: None,
         usage_recording: Default::default(),
@@ -609,4 +610,60 @@ async fn failed_resume_preserves_the_current_runtime() {
         .start(UserInput::text("continue"), None)
         .await
         .unwrap();
+}
+
+async fn advisor_test_runtime() -> InteractiveRuntime {
+    let mut interactive = test_runtime(Vec::new()).await;
+    let config = Config::default();
+    interactive.tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(AgentCapabilities::new(
+            [ToolCapability::Advisor].into_iter().collect(),
+        ))
+        .advisor(crate::tools::advisor::AdvisorSessionStore::new()),
+    );
+    interactive
+}
+
+fn advisor_model() -> crate::config::InternalAgentModelConfig {
+    crate::config::InternalAgentModelConfig::new(
+        "anthropic".into(),
+        "claude-fable-5".into(),
+        "api-key".into(),
+    )
+}
+
+// Covers: toggling advisor mode mid-session must add and remove the advisor tool
+// for the next turn while the session ID and history survive the rebuild.
+// Owner: interactive runtime advisor state transition.
+#[tokio::test]
+async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
+    let mut interactive = advisor_test_runtime().await;
+    let session_id = interactive.sessions.session().id().clone();
+    let advertised = |interactive: &InteractiveRuntime| {
+        interactive
+            .runtime
+            .diagnostics()
+            .tools()
+            .iter()
+            .any(|tool| tool.name() == "advisor")
+    };
+
+    assert!(!interactive.tools.advisor_registered());
+
+    interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .unwrap();
+
+    assert!(interactive.tools.advisor_registered());
+    assert!(advertised(&interactive));
+    assert_eq!(interactive.sessions.session().id(), &session_id);
+
+    interactive.set_advisor(None).await.unwrap();
+
+    assert!(!interactive.tools.advisor_registered());
+    assert!(!advertised(&interactive));
+    assert_eq!(interactive.sessions.session().id(), &session_id);
 }

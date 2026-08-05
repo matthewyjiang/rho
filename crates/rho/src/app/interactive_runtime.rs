@@ -4,7 +4,7 @@ use rho_sdk::{
     model::{Message, ToolCall},
     provider::ModelProvider,
     ApprovalHandler, ApprovalRequestReceiver, Error, HostInputId, HostInputResponse, Rho, RunEvent,
-    RunOutcome, SessionId, SessionOptions, SystemPrompt, UserInput, Workspace,
+    RunOutcome, SessionId, SessionOptions, UserInput, Workspace,
 };
 
 use {
@@ -16,6 +16,8 @@ use {
     crate::tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
 };
 
+#[path = "interactive_runtime_advisor.rs"]
+mod advisor;
 #[path = "interactive_runtime_hooks.rs"]
 mod session_hooks;
 #[path = "interactive_runtime_startup.rs"]
@@ -32,7 +34,7 @@ use super::{
     runtime_builder::{
         build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
     },
-    tools_prompt::{assemble_tools_and_prompt, ToolsAndPromptOptions},
+    tools_prompt::{assemble_tools_and_prompt, SystemPromptVariants, ToolsAndPromptOptions},
 };
 
 pub(crate) use super::interactive_run_controller::{
@@ -72,7 +74,7 @@ pub(crate) struct InteractiveRuntime {
     provider: ProviderController,
     tools: AppToolSet,
     workspace: Workspace,
-    system_prompt: SystemPrompt,
+    system_prompt: SystemPromptVariants,
     compaction: CompactionConfig,
     context_window: Option<u64>,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
@@ -170,7 +172,7 @@ impl InteractiveRuntime {
             approval_session: approval_handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: system_prompt.clone(),
+            system_prompt: system_prompt.for_advisor_mode(tools.advisor_registered()),
             reasoning: sdk_options.runtime.reasoning,
             service_tier: sdk_options.runtime.service_tier,
             compaction: compaction.clone(),
@@ -193,6 +195,7 @@ impl InteractiveRuntime {
                 session,
                 storage,
                 tools.web_access().clone(),
+                tools.advisor().cloned(),
             ),
             provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
             tools,
@@ -262,7 +265,7 @@ impl InteractiveRuntime {
             approval_session: approval_handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: self.system_prompt.clone(),
+            system_prompt: self.active_system_prompt(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
             compaction: self.compaction.clone(),
@@ -700,7 +703,7 @@ impl InteractiveRuntime {
                 .approval_handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: self.system_prompt.clone(),
+            system_prompt: self.active_system_prompt(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
             compaction: self.compaction.clone(),
@@ -942,7 +945,7 @@ impl InteractiveRuntime {
                 .approval_handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: self.system_prompt.clone(),
+            system_prompt: self.active_system_prompt(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
             compaction: self.compaction.clone(),

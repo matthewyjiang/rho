@@ -127,6 +127,7 @@ struct WebSearchConfig<'a> {
 struct BehaviorConfig<'a> {
     check_for_updates: bool,
     enable_subagents: bool,
+    advisor_mode: bool,
     experimental_workspace_rewind: bool,
     permission_mode: PermissionMode,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -187,6 +188,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             behavior: BehaviorConfig {
                 check_for_updates: config.check_for_updates,
                 enable_subagents: config.enable_subagents,
+                advisor_mode: config.advisor_mode,
                 experimental_workspace_rewind: config.experimental_workspace_rewind,
                 permission_mode: config.permission_mode,
                 credential_store: config.credential_store.map(CredentialStoreBackend::as_str),

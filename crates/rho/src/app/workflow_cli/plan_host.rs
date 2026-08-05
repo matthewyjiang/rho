@@ -308,7 +308,8 @@ fn frozen_capabilities(capabilities: &crate::agent::AgentCapabilities) -> BTreeS
         .filter(|capability| {
             !matches!(
                 capability,
-                ToolCapability::Agent
+                ToolCapability::Advisor
+                    | ToolCapability::Agent
                     | ToolCapability::Agents
                     | ToolCapability::Questionnaire
                     | ToolCapability::Rho

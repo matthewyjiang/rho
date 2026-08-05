@@ -38,6 +38,11 @@ compact_target_percent = 50
 # model = "gpt-5.6-sol"
 # auth = "api-key"
 
+[internal_agents.advisor]
+# provider = "anthropic"
+# model = "claude-fable-5"
+# auth = "anthropic-api-key"
+
 [web_search]
 hosted = true # provider-hosted search when the chat path supports it
 provider = "auto" # backup only: auto, openai, exa, brave, or disabled
@@ -46,6 +51,7 @@ provider = "auto" # backup only: auto, openai, exa, brave, or disabled
 base_url = "http://127.0.0.1:11434/v1"
 
 [behavior]
+advisor_mode = false
 check_for_updates = true
 enable_subagents = true
 experimental_workspace_rewind = false
@@ -156,7 +162,9 @@ Rho resolves aliases to concrete ids before any model-specific behavior, holds n
 
 ## Internal agent models
 
-Rho uses reserved internal agents to generate session titles and evaluate `/goal` completion. Each role follows the active conversation provider, model, and auth by default. Run `/agents`, select `session-title` or `goal-judge`, and press Enter to choose a separate model. The picker includes **Use conversation model**, which removes that role's override. Changes apply to the next invocation and save at once.
+Rho uses reserved internal agents to generate session titles, evaluate `/goal` completion, and answer the [`advisor`](#advisor-mode) tool. Most roles follow the active conversation provider, model, and auth by default. Run `/agents`, select the role, and press Enter to choose a separate model. The picker includes **Use conversation model**, which removes that role's override. Changes apply to the next invocation and save at once.
+
+The `advisor` role is the exception: it has no default and no conversation-model fallback, because an advisor that mirrors the executor adds nothing. Its picker omits the **Use conversation model** row, and advisor mode stays inactive until a model is chosen.
 
 Overrides are stored by stable internal agent ID:
 
@@ -186,6 +194,8 @@ To disable search entirely, set both `hosted = false` and `provider = "disabled"
 
 Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the configured credential store when loaded. Empty strings are ignored.
 
+`advisor_mode` controls whether the [`advisor`](#advisor-mode) tool is available. It defaults to `false`.
+
 `enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
 
 `inline_shell` selects the shell used for `!` and `!!` commands in the [interactive TUI](/interactive-tui). It defaults to `bash` on macOS and Linux and `powershell` on Windows. Change it from **Tools** > **Inline shell** in `/config`, or set a detected shell name or custom executable path in config. Rho keeps a configured custom path in the picker even when it is not on `PATH`. See [inline shell](/inline-shell).
@@ -206,11 +216,27 @@ Non-interactive `rho run` sessions cannot display approval prompts. Supervised o
 
 Permission modes are application policy checks, not an operating-system sandbox. Rho and its tools still run with the current user's permissions, and tools must correctly declare and authorize their capabilities for the policy to cover them. In restricted modes, capability classes that this Rho version does not recognize fail closed: Plan denies them and Supervised requires approval.
 
+## Advisor mode
+
+Advisor mode gives the agent an `advisor` tool backed by a second model. When the agent calls it, Rho sends the session transcript to that model and returns its guidance as the tool result. The idea is to let a stronger reviewer check the plan before the agent commits to it, when it is stuck, and before it declares the work done.
+
+- Rho runs the advisor itself. There is no server-side advisor and no provider beta flag, so any model in Rho's [catalog](/authentication-and-models#selecting-models) can be the advisor, on any provider.
+- The tool takes no parameters. Rho serializes the transcript, so nothing the agent writes reaches the advisor unedited. The transcript covers the system prompt, your requests, every tool call, every result, and the turn in flight.
+- The advisor runs bare: one request, no tools, guidance text only. It cannot read files, run commands, or edit anything.
+- Advisor mode needs an advisor model. Set `[internal_agents.advisor]` or choose one from `/advisor`, `/agents`, or **Agent behavior** > **Advisor mode** in `/config`. With `advisor_mode = true` and no model, Rho shows `advisor: no model` in the status line and offers no tool.
+- The advisor must resolve to the `rho` runtime. A `claude-cli` advisor is rejected with a clear error.
+- Changes apply before the next turn. The session ID and history are kept.
+- Advice appears in the transcript as an ordinary tool card, collapsed past the [output limit](#tool-output-limit) and expandable with `ctrl+o`.
+- Advisor calls are billed to the advisor model's provider and recorded in the [usage ledger](/usage-ledger) under the `advisor` purpose.
+- [Automation runs](/automation-cli) honor `advisor_mode` too, so `rho run` gets the same tool. Subagents and workflow runs do not: the advisor reviews the root session, and a child run has its own.
+
+See [`/advisor`](/interactive-tui#commands) for the interactive command.
+
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, and zen mode. **Agent behavior** contains permission mode and delegation. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell and Web search settings. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, and zen mode. **Agent behavior** contains permission mode, delegation, and advisor mode. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell and Web search settings. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
 
-Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output` and `zen_mode` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
+Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output` and `zen_mode` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
 
 [`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows. Use `/agents` to inspect reserved internal agents and configure their optional model overrides. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 

@@ -1,6 +1,7 @@
 //! Built-in Rho TUI PTY scenarios.
 
 mod activity_anchor;
+mod advisor;
 mod apply_patch_diff;
 mod background_agents;
 mod changelog;
@@ -26,6 +27,10 @@ mod workflow;
 mod workspace_rewind;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
+use advisor::{
+    setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
+    ADVISOR_MISSING_MODEL_STEPS, ADVISOR_REVIEW_STEPS, XAI_KEY_ENV,
+};
 use apply_patch_diff::APPLY_PATCH_DIFF_SCENARIO;
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
@@ -824,6 +829,32 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SCREEN_TEXT_SELECTION_STEPS,
         false,
     ),
+    Scenario::new(
+        "advisor_command",
+        "Choose an advisor model, turn the mode off from config, and turn it on again",
+        DEFAULT_SIZE,
+        ADVISOR_COMMAND_STEPS,
+        /*smoke*/ false,
+    )
+    .with_env(XAI_KEY_ENV),
+    Scenario {
+        id: "advisor_missing_model",
+        description: "Warn about advisor mode saved without a model and route to a model picker",
+        size: DEFAULT_SIZE,
+        setup: Some(setup_advisor_without_model),
+        env: XAI_KEY_ENV,
+        steps: ADVISOR_MISSING_MODEL_STEPS,
+        smoke: false,
+    },
+    Scenario {
+        id: "advisor_review",
+        description: "Consult the advisor during a turn, then survive an advisor failure",
+        size: DEFAULT_SIZE,
+        setup: Some(setup_advisor_ready),
+        env: XAI_KEY_ENV,
+        steps: ADVISOR_REVIEW_STEPS,
+        smoke: false,
+    },
     Scenario::new(
         "background_agent_questionnaire",
         "Answer a questionnaire raised by a background agent and deliver its completion",

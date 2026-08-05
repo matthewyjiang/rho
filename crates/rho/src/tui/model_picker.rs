@@ -47,11 +47,20 @@ pub(super) fn model_picker_during_run(
 
 pub(super) const USE_CONVERSATION_MODEL: &str = "Use conversation model";
 
+/// Whether an internal-agent model picker offers the conversation-model row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ConversationModelRow {
+    /// The agent follows the conversation model when it has no own model.
+    Offered { selected: bool },
+    /// The agent has no conversation-model fallback, so the row would lie.
+    Omitted,
+}
+
 pub(super) fn internal_agent_model_picker(
     agent_id: &str,
     current_provider: &str,
     current_model: &str,
-    uses_conversation_model: bool,
+    conversation_model: ConversationModelRow,
     favorite_models: &[String],
     available_auths: &[String],
 ) -> UiPicker {
@@ -66,6 +75,12 @@ pub(super) fn internal_agent_model_picker(
         available_auths,
         PickerAction::SelectInternalAgentModel,
     );
+    let ConversationModelRow::Offered {
+        selected: uses_conversation_model,
+    } = conversation_model
+    else {
+        return picker;
+    };
     let selected_model = picker.items.iter().position(|item| {
         item.value == rho_providers::provider::model_reference(current_provider, current_model)
     });

@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+mod advisor;
 mod apply_patch;
 
 use rho_sdk::{
@@ -446,6 +447,9 @@ async fn fixture_stream(
                 }),
             )
         }
+        advisor::PROMPT | advisor::FAILURE_PROMPT if advisor::is_pending(&request) => {
+            advisor::call()
+        }
         "fixture agents list" if tool_result(&request, AGENTS_LIST_CALL_ID).is_none() => {
             completed_tool_call(
                 AGENTS_LIST_CALL_ID,
@@ -546,6 +550,9 @@ fn is_goal_delegation_retry_continuation(prompt: &str) -> bool {
 }
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
+    if let Some(review) = advisor::review(request) {
+        return review;
+    }
     if is_compaction_request(request) {
         return completed("deterministic compacted conversation summary");
     }
@@ -678,6 +685,9 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
     }
     if tool_result(request, AGENTS_LIST_CALL_ID).is_some() {
         return completed("agents list complete");
+    }
+    if let Some(completion) = advisor::completion(request) {
+        return completion;
     }
     let prompt = last_user_text(request).unwrap_or_default();
     if prompt.starts_with("[agent notification]") {

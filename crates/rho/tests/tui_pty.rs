@@ -480,6 +480,17 @@ fn fragile_surface_scenarios_pass() {
     }
 }
 
+// Covers: advisor mode must ask for a model before it claims to be on, keep the
+// chosen model across off and on, warn when a saved mode has no model, and bring
+// the advisor's answer back to the executor without ending the turn on failure.
+// Owner: interactive TUI
+#[test]
+fn advisor_mode_scenarios_pass() {
+    for id in ["advisor_command", "advisor_missing_model", "advisor_review"] {
+        assert_pass(id);
+    }
+}
+
 #[test]
 fn mermaid_flowchart_survives_narrow_and_restored_panes() {
     assert_pass("mermaid_flowchart_resize");

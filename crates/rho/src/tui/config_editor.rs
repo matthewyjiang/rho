@@ -37,6 +37,7 @@ pub(super) enum ConfigTextKey {
 pub(super) enum ConfigToggle {
     CheckForUpdates,
     EnableSubagents,
+    AdvisorMode,
     AutoCompact,
     ShowReasoningOutput,
     ZenMode,
@@ -47,6 +48,7 @@ pub(super) enum ConfigToggle {
 pub(super) enum ConfigMutation {
     CheckForUpdates(bool),
     EnableSubagents(bool),
+    AdvisorMode(bool),
     AutoCompact(bool),
     ShowReasoningOutput(bool),
     ZenMode(bool),
@@ -77,6 +79,10 @@ pub(super) fn toggle(
         ConfigToggle::EnableSubagents => {
             config.enable_subagents = !config.enable_subagents;
             ConfigMutation::EnableSubagents(config.enable_subagents)
+        }
+        ConfigToggle::AdvisorMode => {
+            config.advisor_mode = !config.advisor_mode;
+            ConfigMutation::AdvisorMode(config.advisor_mode)
         }
         ConfigToggle::AutoCompact => {
             config.auto_compact = !config.auto_compact;

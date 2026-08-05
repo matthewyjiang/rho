@@ -72,13 +72,16 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
     let root = tempfile::tempdir().unwrap();
     let config = Config::default();
     let options = ToolSetOptions::default()
+        .advisor(AdvisorSessionStore::new())
         .delegation(DelegationConfig::new(
             root.path().to_owned(),
             root.path().join("config.toml"),
             BackgroundSubagents::Enabled,
         ))
         .workflow(Arc::new(RegistryWorkflowService));
-    let tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
+    let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
+    // Advisor mode is off by default; the registry still owns the name.
+    tools.set_advisor_registered(true);
 
     let model_names = tools.unfiltered_names().collect::<Vec<_>>();
     assert!(!model_names.iter().any(|name| name == "workflow_command"));
@@ -531,4 +534,49 @@ fn security_declarations_distinguish_network_builtins_from_host_tools() {
     let rho = security("rho");
     assert_eq!(rho.origin(), ToolOrigin::BuiltIn);
     assert!(rho.capabilities().is_empty());
+}
+
+// Covers: /advisor must add and remove the advisor tool mid-session without
+// disturbing the rest of the tool set or dropping the configured model.
+// Owner: application tool registry.
+#[test]
+fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
+    let config = Config::default();
+    let store = AdvisorSessionStore::new();
+    let mut tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(capabilities(&["advisor", "read_file"])).advisor(store),
+    );
+    let without_advisor = tools.unfiltered_names().collect::<Vec<_>>();
+
+    assert!(!tools.advisor_registered());
+    assert!(!without_advisor.iter().any(|name| name == "advisor"));
+
+    for (requested, changed, expected) in [
+        (true, true, true),
+        (true, false, true),
+        (false, true, false),
+        (false, false, false),
+    ] {
+        assert_eq!(
+            tools.set_advisor_registered(requested),
+            changed,
+            "requested={requested}"
+        );
+        assert_eq!(
+            tools.advisor_registered(),
+            expected,
+            "requested={requested}"
+        );
+        assert_eq!(tools.contains("advisor"), expected, "requested={requested}");
+    }
+
+    assert_eq!(
+        tools.unfiltered_names().collect::<Vec<_>>(),
+        without_advisor
+    );
+    // The store outlives the registration, so turning the mode back on keeps
+    // the model the user already chose.
+    assert!(tools.advisor().is_some());
 }

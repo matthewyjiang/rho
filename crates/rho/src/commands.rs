@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
+    Advisor,
     New,
     Login,
     Logout,
@@ -71,6 +72,19 @@ const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
+const ADVISOR_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
+    CommandArgumentChoice {
+        completion: "/advisor on",
+        usage: "/advisor on",
+        description: "let the agent ask an advisor model for guidance",
+    },
+    CommandArgumentChoice {
+        completion: "/advisor off",
+        usage: "/advisor off",
+        description: "work without advisor guidance",
+    },
+];
+
 const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
         completion: "/fast on",
@@ -92,6 +106,13 @@ const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentCh
 
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        id: CommandId::Advisor,
+        name: "advisor",
+        usage: "/advisor [on|off]",
+        description: "toggle advisor mode, which reviews the session with a second model",
+        argument_choices: ADVISOR_ARGUMENT_CHOICES,
+    },
     CommandSpec {
         id: CommandId::Agents,
         name: "agents",
@@ -462,6 +483,18 @@ mod tests {
         assert_eq!(invocation.name, "title");
         assert_eq!(invocation.raw_args, " My Session");
         assert_eq!(invocation.args, "My Session");
+    }
+
+    // Covers: the palette lists commands in name order, which decides what the
+    // unfiltered short list shows first.
+    // Owner: command table
+    #[test]
+    fn command_palette_stays_alphabetical() {
+        let names = COMMANDS.iter().map(|spec| spec.name).collect::<Vec<_>>();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+
+        assert_eq!(names, sorted);
     }
 
     #[test]

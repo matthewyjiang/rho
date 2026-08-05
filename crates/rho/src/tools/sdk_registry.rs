@@ -10,8 +10,11 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
 };
 
-use super::agent::{
-    BackgroundSubagents, DelegationBundleOptions, DelegationToolSelection, SubagentManager,
+use super::{
+    advisor::AdvisorSessionStore,
+    agent::{
+        BackgroundSubagents, DelegationBundleOptions, DelegationToolSelection, SubagentManager,
+    },
 };
 
 /// A feature-owned group of tools and any resources they need.
@@ -63,6 +66,7 @@ impl DelegationConfig {
 #[derive(Clone)]
 pub struct ToolSetOptions {
     capabilities: AgentCapabilities,
+    advisor: Option<AdvisorSessionStore>,
     delegation: Option<DelegationConfig>,
     workflow: Option<Arc<dyn super::workflow::WorkflowToolService>>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
@@ -78,10 +82,22 @@ impl ToolSetOptions {
     pub fn new(capabilities: AgentCapabilities) -> Self {
         Self {
             capabilities,
+            advisor: None,
             delegation: None,
             workflow: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
         }
+    }
+
+    /// Supplies the session store the `advisor` tool reads. Without it the
+    /// capability alone registers no tool, so runs with no live session to
+    /// review cannot offer the advisor.
+    ///
+    /// The store is kept whether or not advisor mode is on, so a later
+    /// `/advisor on` registers the tool without rebuilding the tool set.
+    pub fn advisor(mut self, store: AdvisorSessionStore) -> Self {
+        self.advisor = Some(store);
+        self
     }
 
     pub fn delegation(mut self, config: DelegationConfig) -> Self {
@@ -106,9 +122,22 @@ impl ToolSetOptions {
     }
 }
 
+/// The `advisor` tool and the store it reads, held whether or not the tool is
+/// currently advertised.
+///
+/// Advisor mode toggles mid-session, and the executor must never see a tool the
+/// run does not have, so registration is a state transition on the built tool
+/// set rather than a reason to rebuild it.
+struct AdvisorTools {
+    store: AdvisorSessionStore,
+    tool: Arc<dyn Tool>,
+    registered: bool,
+}
+
 pub struct AppToolSet {
     tools: Vec<Arc<dyn Tool>>,
     bundles: Vec<Box<dyn ToolBundle>>,
+    advisor: Option<AdvisorTools>,
     subagents: Option<SubagentManager>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
@@ -120,6 +149,7 @@ impl AppToolSet {
         Self {
             tools: Vec::new(),
             bundles: Vec::new(),
+            advisor: None,
             subagents: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             checkpoint_tracker: Arc::new(
@@ -132,6 +162,7 @@ impl AppToolSet {
     pub fn new(config: &Config, diagnostics: RuntimeDiagnostics, options: ToolSetOptions) -> Self {
         let ToolSetOptions {
             capabilities,
+            advisor,
             delegation,
             workflow,
             workflow_tracker,
@@ -171,6 +202,14 @@ impl AppToolSet {
         }
         if capabilities.contains(&ToolCapability::Questionnaire) {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
+        }
+        if let (true, Some(store)) = (capabilities.contains(&ToolCapability::Advisor), advisor) {
+            tool_set.advisor = Some(AdvisorTools {
+                tool: super::advisor::advisor_tool(store.clone()),
+                store,
+                registered: false,
+            });
+            tool_set.set_advisor_registered(super::advisor::advisor_available(config));
         }
         if let (true, Some(service)) = (capabilities.contains(&ToolCapability::Workflow), workflow)
         {
@@ -232,6 +271,41 @@ impl AppToolSet {
 
     pub fn contains(&self, name: &str) -> bool {
         self.unfiltered_names().any(|registered| registered == name)
+    }
+
+    /// The advisor's session store, present whenever the run may offer the
+    /// advisor, even while advisor mode is off.
+    pub fn advisor(&self) -> Option<&AdvisorSessionStore> {
+        self.advisor.as_ref().map(|advisor| &advisor.store)
+    }
+
+    /// Whether the `advisor` tool is currently advertised to the model.
+    pub fn advisor_registered(&self) -> bool {
+        self.advisor
+            .as_ref()
+            .is_some_and(|advisor| advisor.registered)
+    }
+
+    /// Adds or removes the `advisor` tool, so `/advisor` reaches the next
+    /// runtime build without disturbing tools that hold live state.
+    ///
+    /// Returns whether the advertised tool list changed; callers rebuild the
+    /// runtime only then.
+    pub fn set_advisor_registered(&mut self, registered: bool) -> bool {
+        let Some(advisor) = self.advisor.as_mut() else {
+            return false;
+        };
+        if advisor.registered == registered {
+            return false;
+        }
+        advisor.registered = registered;
+        let tool = Arc::clone(&advisor.tool);
+        if registered {
+            self.tools.push(tool);
+        } else {
+            self.tools.retain(|existing| !Arc::ptr_eq(existing, &tool));
+        }
+        true
     }
 
     pub fn subagents(&self) -> Option<&SubagentManager> {

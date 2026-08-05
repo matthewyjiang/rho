@@ -102,6 +102,9 @@ pub(in crate::orchestration) async fn execute(
         max_parallel_tools = limit.get()
     );
     batch_span.in_scope(|| tracing::trace!("batch coordinator started"));
+    // Tools that reason about the conversation read this instead of committed
+    // history, which does not include the turn they were called from.
+    core.publish_in_flight_history(history);
     let batch_cancellation = control.cancellation.clone();
     if let Err(error) = propose_calls(control, &calls).await {
         batch_cancellation.cancel();

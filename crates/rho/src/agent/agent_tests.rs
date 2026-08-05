@@ -157,19 +157,51 @@ fn internal_agents_are_visible_but_not_selectable() {
     let root = tempfile::tempdir().unwrap();
     let catalog = AgentCatalog::discover_with_home(root.path(), None).unwrap();
 
-    assert!(catalog.find(SESSION_TITLE_AGENT_ID).is_err());
-    assert!(catalog.find(GOAL_JUDGE_AGENT_ID).is_err());
+    for id in [
+        SESSION_TITLE_AGENT_ID,
+        GOAL_JUDGE_AGENT_ID,
+        ADVISOR_AGENT_ID,
+    ] {
+        assert!(catalog.find(id).is_err());
+    }
     assert!(catalog
         .iter()
         .all(|entry| entry.metadata.origin != AgentOrigin::Internal));
+    let internal_count = internal_definitions().len();
     let origins = catalog
         .iter_with_internal()
         .map(|entry| entry.metadata.origin)
         .collect::<Vec<_>>();
-    assert_eq!(origins[..2], [AgentOrigin::Internal, AgentOrigin::Internal]);
-    assert!(origins[2..]
+    assert!(origins[..internal_count]
+        .iter()
+        .all(|origin| *origin == AgentOrigin::Internal));
+    assert!(origins[internal_count..]
         .iter()
         .all(|origin| *origin != AgentOrigin::Internal));
+}
+
+// Covers: the advisor agent stays unconfigured until a model is chosen
+// Owner: internal agent definitions
+#[test]
+fn only_the_advisor_internal_agent_requires_its_own_model() {
+    let requires = internal_definitions()
+        .iter()
+        .map(|definition| {
+            (
+                definition.id.as_str(),
+                internal_agent_requires_model(definition.id.as_str()),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        requires,
+        vec![
+            (SESSION_TITLE_AGENT_ID, false),
+            (GOAL_JUDGE_AGENT_ID, false),
+            (ADVISOR_AGENT_ID, true),
+        ]
+    );
 }
 
 #[test]

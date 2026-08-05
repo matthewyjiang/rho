@@ -95,6 +95,8 @@ pub(super) fn preview_card(
         return kind_card(status, kind, header);
     };
     match kind {
+        // The advisor takes no arguments, so the row is the verb alone.
+        ToolKind::Advisor => kind_card(status, kind, ToolHeader::call("advisor", None)),
         ToolKind::Agent => agent_format::agent_start_card(arguments),
         ToolKind::Agents => agent_format::agents_start_card(arguments),
         ToolKind::Bash => shell_card("$", arguments, status),
@@ -273,6 +275,7 @@ pub(super) fn finished_card(
 ) -> ToolCard {
     let status = ToolStatus::from_finished(ok);
     match view.kind {
+        ToolKind::Advisor => generic_card(view, content, status),
         ToolKind::Agent => agent_format::agent_finished_card(view, content, ok),
         ToolKind::Agents => agent_format::agents_finished_card(view, content, ok),
         ToolKind::Bash => shell_result_card("$", &view.arguments, content, status),
@@ -395,6 +398,14 @@ pub(super) fn interrupted_card(
     cwd: &std::path::Path,
 ) -> ToolCard {
     match view.kind {
+        // A partial argument buffer for a no-argument tool is only `{}` noise.
+        ToolKind::Advisor => preview_card(
+            view.kind,
+            &view.name,
+            Some(&view.arguments),
+            cwd,
+            ToolStatus::Interrupted,
+        ),
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
         ToolKind::ApplyPatch => apply_patch_start_card(
@@ -421,7 +432,8 @@ pub(super) fn interrupted_card(
 
 pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -> ToolFamily {
     match kind {
-        ToolKind::Agent | ToolKind::Agents => ToolFamily::Agent,
+        // The advisor is another model reviewing the run, like a subagent.
+        ToolKind::Advisor | ToolKind::Agent | ToolKind::Agents => ToolFamily::Agent,
         ToolKind::Bash
         | ToolKind::PowerShell
         | ToolKind::ListDir

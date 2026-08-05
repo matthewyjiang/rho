@@ -27,6 +27,7 @@ pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const ZEN_MODE_VALUE: &str = "zen_mode";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
+pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
@@ -67,6 +68,15 @@ fn item(
 
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
+}
+
+/// Advisor badge: the mode, plus the advisor model once one is selected.
+fn advisor_mode_badge(config: &Config, info: &super::RuntimeModelView) -> String {
+    super::advisor_status::AdvisorStatus::new(
+        config.advisor_mode,
+        info.internal_agents.get(crate::agent::ADVISOR_AGENT_ID),
+    )
+    .badge()
 }
 
 /// Badge for the conversation model, shown as `alias → provider/model` when
@@ -206,6 +216,12 @@ pub(super) fn category_picker(
                     Some(on_off(config.enable_subagents)),
                     ENABLE_SUBAGENTS_VALUE,
                 ),
+                item(
+                    "Advisor mode",
+                    "Let the agent ask an advisor model to review the session. Needs an advisor model; turning it on picks one. Space toggles.",
+                    Some(advisor_mode_badge(config, info)),
+                    ADVISOR_MODE_VALUE,
+                ),
             ],
         ),
         CONTEXT_CATEGORY_VALUE => (
@@ -326,7 +342,9 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | REASONING_VALUE
         | SHOW_REASONING_OUTPUT_VALUE
         | ZEN_MODE_VALUE => Some(MODELS_CATEGORY_VALUE),
-        PERMISSION_MODE_VALUE | ENABLE_SUBAGENTS_VALUE => Some(AGENT_CATEGORY_VALUE),
+        PERMISSION_MODE_VALUE | ENABLE_SUBAGENTS_VALUE | ADVISOR_MODE_VALUE => {
+            Some(AGENT_CATEGORY_VALUE)
+        }
         AUTO_COMPACT_VALUE
         | COMPACT_THRESHOLD_PERCENT_VALUE
         | COMPACT_TARGET_PERCENT_VALUE

@@ -485,7 +485,7 @@ async fn run_session_with_output(
             workspace,
             workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
             approval_session: startup.approval_session.clone(),
-            system_prompt,
+            system_prompt: system_prompt.for_advisor_mode(tool_set.advisor_registered()),
             reasoning: sdk_options.runtime.reasoning,
             service_tier: sdk_options.runtime.service_tier,
             compaction,
@@ -499,6 +499,9 @@ async fn run_session_with_output(
         startup.max_steps,
     )?;
     let session = runtime.session(SessionOptions::default()).await?;
+    if let Some(advisor) = tool_set.advisor() {
+        advisor.bind_session(session.clone());
+    }
     if let Some(adapter) = jsonl.as_deref_mut() {
         adapter.set_run_context(session.id(), &workspace_root);
     }

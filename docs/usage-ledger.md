@@ -23,7 +23,7 @@ Each row represents one actual provider request. `event_id` is the primary key, 
 | `step_index`, `attempt_index` | Optional one-based orchestration step and provider-attempt indexes. |
 | `workspace_path` | Optional workspace identity as recorded by the caller. |
 | `provider`, `model` | Exact provider and model identities used for the request, without pricing aliases. |
-| `purpose` | Open string describing why the model was called. Documented values are `agent`, `subagent`, `compaction`, `title`, and `goal`. |
+| `purpose` | Open string describing why the model was called. Documented values are `agent`, `subagent`, `compaction`, `title`, `goal`, and `advisor`. |
 | `request_outcome` | `completed`, `failed`, or `cancelled`. Usage observed before failure or cancellation is still recorded. |
 | `input_tokens` | Uncached input tokens. |
 | `output_tokens` | Output tokens. |

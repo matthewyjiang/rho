@@ -52,9 +52,9 @@ const SLASH_COMMAND_PALETTE_STEPS: &[Step] = &[
     },
     Step::Phase("open_palette"),
     Step::TypeText("/"),
-    // The palette shows a short top slice in name order; /agents is first.
+    // The palette shows a short top slice in name order; /advisor is first.
     Step::WaitText {
-        text: "/agents",
+        text: "/advisor",
         timeout: SETTLE,
     },
     Step::Phase("filter"),
@@ -106,9 +106,9 @@ fn assert_slash_palette_filtered_to_model(harness: &mut PtyHarness) -> Result<()
     if !screen.contains("/model") {
         anyhow::bail!("filtered slash palette missing /model:\n{screen}");
     }
-    // /agents is first in the unfiltered short list; it must leave after /mod.
-    if screen.contains("/agents") {
-        anyhow::bail!("slash palette still listed /agents after /mod filter:\n{screen}");
+    // /advisor is first in the unfiltered short list; it must leave after /mod.
+    if screen.contains("/advisor") {
+        anyhow::bail!("slash palette still listed /advisor after /mod filter:\n{screen}");
     }
     Ok(())
 }

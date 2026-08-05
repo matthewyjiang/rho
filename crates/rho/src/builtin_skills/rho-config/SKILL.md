@@ -63,4 +63,4 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 
 ## Applying a change
 
-State which mechanism you recommend and, when relevant, when it takes effect. Settings that apply to the current session or the next turn need no restart; `enable_subagents`, web search hosted state, templates, and keybindings apply on the next session or at startup. When the user edits config directly, tell them a restart may be required and offer to check whether the setting is restart-only.
+State which mechanism you recommend and, when relevant, when it takes effect. Settings that apply to the current session or the next turn need no restart, including `advisor_mode`; `enable_subagents`, web search hosted state, templates, and keybindings apply on the next session or at startup. When the user edits config directly, tell them a restart may be required and offer to check whether the setting is restart-only.

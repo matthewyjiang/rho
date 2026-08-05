@@ -41,6 +41,7 @@ macro_rules! define_tool_capabilities {
 }
 
 define_tool_capabilities! {
+    Advisor => "advisor",
     Agent => "agent",
     Agents => "agents",
     ApplyPatch => "apply_patch",

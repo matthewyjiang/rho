@@ -125,6 +125,16 @@ pub fn append_subagents_disabled_instruction(text: &mut String) {
     text.push_str("\n\nAgent delegation is disabled. Do not attempt to delegate work.\n");
 }
 
+/// Tells the executor when to consult the `advisor` tool.
+///
+/// Appended only while advisor mode is active and an advisor model is set, so
+/// the prompt never describes a tool the run does not have.
+pub fn append_advisor_instruction(text: &mut String) {
+    text.push_str(ADVISOR_INSTRUCTION);
+}
+
+const ADVISOR_INSTRUCTION: &str = "\n\n# Advisor\n\nYou have access to an `advisor` tool backed by a stronger reviewer model. It takes NO parameters. When you call advisor, your entire conversation history is forwarded automatically. The advisor sees the task, every tool call you have made, and every result you have seen.\n\nCall advisor BEFORE substantive work: before writing, before committing to an interpretation, before building on an assumption. If the task needs orientation first (finding files, fetching a source, seeing what is there), do that, then call advisor. Orientation is not substantive work. Writing, editing, and declaring an answer are.\n\nAlso call advisor:\n- When you believe the task is complete. BEFORE this call, make your deliverable durable: write the file, save the result, commit the change.\n- When stuck: errors recurring, approach not converging, results that do not fit.\n- When considering a change of approach.\n\nOn tasks longer than a few steps, call advisor at least once before committing to an approach and once before declaring done. On short reactive tasks where the next action follows from tool output you just read, you do not need to keep calling. The advisor adds most of its value on the first call, before the approach hardens.\n\nGive the advice serious weight. If you follow a step and it fails in practice, or you have primary-source evidence that contradicts a specific claim, adapt. If you have already retrieved data pointing one way and the advisor points another, do not switch silently: surface the conflict in one more advisor call.\n";
+
 fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
     out.push('\n');
     out.push('<');

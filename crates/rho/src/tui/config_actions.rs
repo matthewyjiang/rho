@@ -44,6 +44,7 @@ impl App {
             config_picker::ZEN_MODE_VALUE => self.toggle_zen_mode(),
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
             config_picker::ENABLE_SUBAGENTS_VALUE => self.toggle_enable_subagents(),
+            config_picker::ADVISOR_MODE_VALUE => self.toggle_advisor_mode(agent).await,
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
@@ -275,6 +276,7 @@ impl App {
             }
             Ok(
                 ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AdvisorMode(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)
@@ -307,6 +309,48 @@ impl App {
             }
             Ok(
                 ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::AdvisorMode(_)
+                | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::ZenMode(_)
+                | ConfigMutation::WebSearchHosted(_)
+                | ConfigMutation::WebSearchProvider(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
+        }
+        Ok(())
+    }
+
+    /// Advisor mode needs an advisor model, so turning it on from the config
+    /// picker opens the model picker first and completes on selection.
+    pub(super) async fn toggle_advisor_mode(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if !self.info.runtime.advisor_mode && !self.advisor_model_configured() {
+            self.open_advisor_model_picker_from_config();
+            return Ok(());
+        }
+        match config_editor::toggle(
+            &self.info.services.config_repository,
+            ConfigToggle::AdvisorMode,
+        ) {
+            Ok(ConfigMutation::AdvisorMode(advisor_mode)) => {
+                self.info.runtime.advisor_mode = advisor_mode;
+                self.sync_advisor_runtime(agent).await;
+                self.refresh_main_config_picker_if_open(config_picker::ADVISOR_MODE_VALUE)?;
+                let status = self.advisor_mode_status();
+                self.set_status(status);
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save advisor mode setting: {err}"
+                )));
+                self.refresh_main_config_picker_if_open(config_picker::ADVISOR_MODE_VALUE)?;
+                self.set_status("config save failed");
+            }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::EnableSubagents(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)
@@ -340,6 +384,7 @@ impl App {
             Ok(
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AdvisorMode(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
@@ -378,6 +423,7 @@ impl App {
             Ok(
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AdvisorMode(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
@@ -411,6 +457,7 @@ impl App {
             Ok(
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AdvisorMode(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::WebSearchHosted(_)
@@ -441,6 +488,7 @@ impl App {
             Ok(
                 ConfigMutation::CheckForUpdates(_)
                 | ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AdvisorMode(_)
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)

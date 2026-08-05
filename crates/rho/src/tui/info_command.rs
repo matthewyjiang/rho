@@ -44,6 +44,7 @@ pub(super) struct RuntimeInfo {
     model: String,
     reasoning: String,
     permission_mode: String,
+    advisor: String,
     billing: BillingInfo,
     cost_source: CostSource,
     cwd: PathBuf,
@@ -88,6 +89,8 @@ impl App {
             model: identity.model.to_string(),
             reasoning: identity.reasoning.to_string(),
             permission_mode: self.info.runtime.permission_mode.as_str().into(),
+            advisor: super::advisor_status::AdvisorStatus::from_runtime(&self.info.runtime)
+                .detail(),
             billing: BillingInfo::from_provider_auth(
                 &self.info.runtime.provider,
                 &self.info.runtime.auth,
@@ -136,6 +139,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     block.push_field("Model", &info.model);
     block.push_field("Reasoning", &info.reasoning);
     block.push_field("Permissions", &info.permission_mode);
+    block.push_field("Advisor", &info.advisor);
     block.push_field("Billing", info.billing.description());
 
     block.push_section("External runtimes");

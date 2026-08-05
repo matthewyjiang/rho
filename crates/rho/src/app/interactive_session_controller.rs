@@ -3,7 +3,10 @@ use rho_sdk::{
     RunOutcome, Session, SessionId,
 };
 
-use crate::{session::Session as StoredSession, tools::web::WebAccessStore};
+use crate::{
+    session::Session as StoredSession,
+    tools::{advisor::AdvisorSessionStore, web::WebAccessStore},
+};
 
 use super::interactive_run_controller::PendingTurn;
 
@@ -28,6 +31,7 @@ pub(crate) struct InteractiveSessionController {
     pending_omission: Option<HandoffReport>,
     persisted_pending_user: bool,
     web_access: WebAccessStore,
+    advisor: Option<AdvisorSessionStore>,
 }
 
 impl InteractiveSessionController {
@@ -35,6 +39,7 @@ impl InteractiveSessionController {
         session: Session,
         storage: Option<StoredSession>,
         web_access: WebAccessStore,
+        advisor: Option<AdvisorSessionStore>,
     ) -> Self {
         let controller = Self {
             session,
@@ -43,14 +48,24 @@ impl InteractiveSessionController {
             pending_omission: None,
             persisted_pending_user: false,
             web_access,
+            advisor,
         };
         controller.sync_web_access();
+        controller.sync_advisor_session();
         controller
     }
 
     fn sync_web_access(&self) {
         let root = self.storage.as_ref().and_then(StoredSession::web_dir);
         self.web_access.bind_session(root);
+    }
+
+    /// Points the advisor at the session now in use. Every session replacement
+    /// runs through here, so the advisor never reads a retired session.
+    fn sync_advisor_session(&self) {
+        if let Some(advisor) = &self.advisor {
+            advisor.bind_session(self.session.clone());
+        }
     }
 
     pub(crate) fn session(&self) -> &Session {
@@ -66,6 +81,7 @@ impl InteractiveSessionController {
         self.pending_session_id = None;
         self.persisted_pending_user = false;
         self.pending_omission = omission.filter(HandoffReport::has_omissions);
+        self.sync_advisor_session();
     }
 
     /// Replaces only the SDK session used by the current runtime policy.
@@ -74,6 +90,7 @@ impl InteractiveSessionController {
     /// rebuilds until the next turn realizes the replacement.
     pub(crate) fn replace_runtime_session(&mut self, session: Session) {
         self.session = session;
+        self.sync_advisor_session();
     }
 
     pub(crate) fn history(&self) -> Vec<Message> {
