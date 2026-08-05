@@ -31,10 +31,7 @@ pub(crate) use format::{
     split_content_lines,
 };
 pub(crate) use parser::parse_hashline;
-pub use proposed::{
-    planned_edit, proposed_edit, proposed_sections, ProposedEdit, ProposedEditFile, ProposedRow,
-    ProposedSection,
-};
+pub use proposed::{planned_edit, proposed_edit, proposed_sections, EditPreview, ProposedSection};
 
 pub(crate) use format::compute_file_hash;
 

@@ -2,11 +2,9 @@
 
 use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::{
+    resolve_path,
     tool::compact_display_path,
-    tool_card::{
-        DiffCardChange, DiffCardFile, DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact,
-        ToolFamily, ToolHeader, ToolStatus,
-    },
+    tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
 };
 
 #[path = "interactive_presenter_results.rs"]
@@ -200,7 +198,12 @@ fn edit_document_card(
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
         return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
     };
-    edit_card_from_proposed(rho_tools::hashline::proposed_edit(input), cwd, status)
+    edit_card_from_preview(
+        rho_tools::hashline::proposed_edit(input),
+        cwd,
+        status,
+        /*surface_unverified*/ false,
+    )
 }
 
 /// Approval / start / interrupted cards: dry-run against live files when
@@ -213,64 +216,46 @@ fn edit_planned_card(
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
         return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
     };
-    let cwd = cwd.to_path_buf();
+    let cwd_buf = cwd.to_path_buf();
     let planned = rho_tools::hashline::planned_edit(input, |path| {
-        let candidate = if std::path::Path::new(path).is_absolute() {
-            std::path::PathBuf::from(path)
-        } else {
-            cwd.join(path)
-        };
-        std::fs::read_to_string(candidate).ok()
+        std::fs::read_to_string(resolve_path(&cwd_buf, path)).ok()
     });
-    edit_card_from_proposed(planned, &cwd, status)
+    let unverified = planned.document_only;
+    edit_card_from_preview(planned, cwd, status, unverified)
 }
 
-fn edit_card_from_proposed(
-    proposed: rho_tools::hashline::ProposedEdit,
+fn edit_card_from_preview(
+    preview: rho_tools::hashline::EditPreview,
     cwd: &std::path::Path,
     status: ToolStatus,
+    surface_unverified: bool,
 ) -> ToolCard {
-    let files = proposed
+    let files = preview
         .files
         .into_iter()
-        .map(|section| DiffCardFile {
-            path: compact_display_path(cwd, &section.path),
-            source_path: None,
-            change: if section.pure_delete {
-                DiffCardChange::Delete
-            } else {
-                DiffCardChange::Content
-            },
-            stats: Some((section.added_lines, section.removed_lines))
-                .filter(|(added, removed)| *added > 0 || *removed > 0),
-            rows: section
-                .rows
-                .into_iter()
-                .map(|row| match row {
-                    rho_tools::hashline::ProposedRow::Summary(text) => {
-                        DiffRow::new(DiffRowKind::Meta, None, text)
-                    }
-                    rho_tools::hashline::ProposedRow::Added(text) => {
-                        DiffRow::new(DiffRowKind::Added, None, text)
-                    }
-                    rho_tools::hashline::ProposedRow::Removed(text) => {
-                        DiffRow::new(DiffRowKind::Removed, None, text)
-                    }
-                    rho_tools::hashline::ProposedRow::Context(text) => {
-                        DiffRow::new(DiffRowKind::Context, None, text)
-                    }
-                })
-                .collect(),
+        .map(|mut file| {
+            file.path = compact_display_path(cwd, &file.path);
+            if let Some(source) = file.source_path.take() {
+                file.source_path = Some(compact_display_path(cwd, &source));
+            }
+            file
         })
         .collect::<Vec<_>>();
-    diff_card(
+    let mut card = diff_card(
         status,
         "edit",
         Vec::new(),
         files,
         EmptyDiffState::Silent,
-        proposed.truncated,
-    )
+        preview.truncated,
+    );
+    if surface_unverified {
+        // Approval/start fell back to document projection for at least one path.
+        card.push_fact(ToolFact::Meta {
+            text: "document preview only - not verified against live file".into(),
+        });
+    }
+    card
 }
 
 pub(super) fn finished_card(

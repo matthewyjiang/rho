@@ -12,17 +12,26 @@ use super::{
     apply::apply_ops,
     parser::{parse_hashline, parse_lenient, Op, Section},
 };
-use crate::diff::unified_diff;
+use crate::{
+    diff::unified_diff,
+    tool_card::{parse_unified_diff, DiffCardChange, DiffCardFile, DiffRow, DiffRowKind},
+};
 
 /// Maximum rendered body rows for a proposed card, including multi-file spend.
 const MAX_PROPOSED_DIFF_ROWS: usize = 1_000;
 /// Maximum file sections retained for a proposed card.
 const MAX_PROPOSED_DIFF_FILES: usize = 100;
 
-/// Best-effort proposed edit grouped by file section.
+/// Notice prepended when a section could not bind to live file text.
+const DOCUMENT_ONLY_NOTICE: &str = "document preview only - not verified against live file";
+
+/// Best-effort edit preview ready for FileDiff cards.
+///
+/// Emits existing [`DiffCardFile`] values directly so presenters do not map a
+/// parallel DTO graph.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ProposedEdit {
-    pub files: Vec<ProposedEditFile>,
+pub struct EditPreview {
+    pub files: Vec<DiffCardFile>,
     /// True when file sections or body rows were dropped to stay in budget.
     pub truncated: bool,
     /// True when at least one section used document-only rows because a live
@@ -30,30 +39,11 @@ pub struct ProposedEdit {
     pub document_only: bool,
 }
 
-/// One file section as far as the document has streamed in / been planned.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProposedEditFile {
-    pub path: String,
-    pub added_lines: u64,
-    pub removed_lines: u64,
-    /// True when this section only deletes lines (no adds).
-    pub pure_delete: bool,
-    /// True when rows are document projection rather than a live content diff.
-    pub document_only: bool,
-    pub rows: Vec<ProposedRow>,
-}
-
-/// One display row for a proposed / planned card.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ProposedRow {
-    /// Op locator / range summary (`PUT 2.=3`, `CUT 5`) — document projection.
-    Summary(String),
-    /// Added line (PUT body or planned +).
-    Added(String),
-    /// Removed line from a live plan (never invented for streaming).
-    Removed(String),
-    /// Unchanged context line from a live plan.
-    Context(String),
+impl EditPreview {
+    /// Paths in document order (cheap helper for headers and path lists).
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.files.iter().map(|file| file.path.as_str())
+    }
 }
 
 /// Path and line counts only, for metadata and path lists.
@@ -67,26 +57,31 @@ pub struct ProposedSection {
 /// Project a possibly incomplete document into display-ready file cards.
 ///
 /// Document-only: never reads disk. Use for streaming argument previews.
-pub fn proposed_edit(input: &str) -> ProposedEdit {
-    let mut proposed = ProposedEdit {
+pub fn proposed_edit(input: &str) -> EditPreview {
+    let mut preview = EditPreview {
         document_only: true,
-        ..ProposedEdit::default()
+        ..EditPreview::default()
     };
     let mut retained_body_rows = 0usize;
     let mut body_overflow = false;
     let mut files_truncated = false;
 
     for section in parse_lenient(input) {
-        if proposed.files.len() >= MAX_PROPOSED_DIFF_FILES {
+        if preview.files.len() >= MAX_PROPOSED_DIFF_FILES {
             files_truncated = true;
             break;
         }
-        let file = project_section_document(section, &mut retained_body_rows, &mut body_overflow);
-        proposed.files.push(file);
+        let file = project_section_document(
+            section,
+            /*include_notice*/ false,
+            &mut retained_body_rows,
+            &mut body_overflow,
+        );
+        preview.files.push(file);
     }
 
-    proposed.truncated = body_overflow || files_truncated;
-    proposed
+    preview.truncated = body_overflow || files_truncated;
+    preview
 }
 
 /// Plan a content diff against live file text when possible.
@@ -94,24 +89,26 @@ pub fn proposed_edit(input: &str) -> ProposedEdit {
 /// `read_path` receives each section path as written in the document and should
 /// return UTF-8 file contents when the path is readable in the caller's
 /// workspace. Sections that cannot be planned fall back to
-/// [`proposed_edit`]-style document rows.
-pub fn planned_edit(
-    input: &str,
-    mut read_path: impl FnMut(&str) -> Option<String>,
-) -> ProposedEdit {
+/// [`proposed_edit`]-style document rows and set [`EditPreview::document_only`].
+pub fn planned_edit(input: &str, mut read_path: impl FnMut(&str) -> Option<String>) -> EditPreview {
     let sections = match parse_hashline(input) {
         Ok(sections) => sections,
         // Incomplete / malformed documents stay on the streaming projection.
-        Err(_) => return proposed_edit(input),
+        Err(_) => {
+            let mut preview = proposed_edit(input);
+            // Approval path: mark document fallback so the card can warn.
+            stamp_document_only_notices(&mut preview);
+            return preview;
+        }
     };
 
-    let mut proposed = ProposedEdit::default();
+    let mut preview = EditPreview::default();
     let mut retained_body_rows = 0usize;
     let mut body_overflow = false;
     let mut files_truncated = false;
 
     for section in sections {
-        if proposed.files.len() >= MAX_PROPOSED_DIFF_FILES {
+        if preview.files.len() >= MAX_PROPOSED_DIFF_FILES {
             files_truncated = true;
             break;
         }
@@ -126,36 +123,38 @@ pub fn planned_edit(
                     &mut body_overflow,
                 ),
                 Err(_) => {
-                    proposed.document_only = true;
+                    preview.document_only = true;
                     project_section_document(
                         Section {
                             path,
                             tag: section.tag,
                             ops: section.ops,
                         },
+                        /*include_notice*/ true,
                         &mut retained_body_rows,
                         &mut body_overflow,
                     )
                 }
             },
             None => {
-                proposed.document_only = true;
+                preview.document_only = true;
                 project_section_document(
                     Section {
                         path,
                         tag: section.tag,
                         ops: section.ops,
                     },
+                    /*include_notice*/ true,
                     &mut retained_body_rows,
                     &mut body_overflow,
                 )
             }
         };
-        proposed.files.push(file);
+        preview.files.push(file);
     }
 
-    proposed.truncated = body_overflow || files_truncated;
-    proposed
+    preview.truncated = body_overflow || files_truncated;
+    preview
 }
 
 /// Path and count summary of a possibly incomplete document.
@@ -198,22 +197,43 @@ fn count_section_lines(section: &Section) -> (u64, u64) {
 
 fn project_section_document(
     section: Section,
+    include_notice: bool,
     retained_body_rows: &mut usize,
     body_overflow: &mut bool,
-) -> ProposedEditFile {
-    let mut file = ProposedEditFile {
-        path: section.path,
-        added_lines: 0,
-        removed_lines: 0,
-        pure_delete: false,
-        document_only: true,
-        rows: Vec::new(),
-    };
-    for op in &section.ops {
-        project_op_document(op, &mut file, retained_body_rows, body_overflow);
+) -> DiffCardFile {
+    let mut added_lines = 0u64;
+    let mut removed_lines = 0u64;
+    let mut rows = Vec::new();
+
+    if include_notice {
+        push_row(
+            &mut rows,
+            DiffRow::new(DiffRowKind::Meta, None, DOCUMENT_ONLY_NOTICE),
+            retained_body_rows,
+            body_overflow,
+        );
     }
-    file.pure_delete = file.added_lines == 0 && file.removed_lines > 0;
-    file
+
+    for op in &section.ops {
+        project_op_document(
+            op,
+            &mut added_lines,
+            &mut removed_lines,
+            &mut rows,
+            retained_body_rows,
+            body_overflow,
+        );
+    }
+
+    DiffCardFile {
+        path: section.path,
+        source_path: None,
+        // Pure CUT is still in-file content change, never path deletion.
+        change: DiffCardChange::Content,
+        stats: Some((added_lines, removed_lines))
+            .filter(|(added, removed)| *added > 0 || *removed > 0),
+        rows,
+    }
 }
 
 fn project_section_planned(
@@ -222,87 +242,61 @@ fn project_section_planned(
     updated: &str,
     retained_body_rows: &mut usize,
     body_overflow: &mut bool,
-) -> ProposedEditFile {
+) -> DiffCardFile {
     let diff = unified_diff(original, updated, &path, /*created*/ false);
-    let mut file = ProposedEditFile {
-        path,
-        added_lines: 0,
-        removed_lines: 0,
-        pure_delete: false,
-        document_only: false,
-        rows: Vec::new(),
-    };
-    push_unified_diff_rows(&diff, &mut file, retained_body_rows, body_overflow);
-    file.pure_delete = file.added_lines == 0 && file.removed_lines > 0;
+    let parsed = parse_unified_diff(&diff);
+    let file = parsed
+        .into_iter()
+        .next()
+        .map(DiffCardFile::from)
+        .unwrap_or_else(|| DiffCardFile {
+            path: path.clone(),
+            source_path: None,
+            change: DiffCardChange::Content,
+            stats: None,
+            rows: Vec::new(),
+        });
+    // Keep the caller's document path for display even if the diff header
+    // normalized differently.
+    let mut file = DiffCardFile { path, ..file };
+    trim_rows_to_budget(&mut file, retained_body_rows, body_overflow);
     file
 }
 
-fn push_unified_diff_rows(
-    diff: &str,
-    file: &mut ProposedEditFile,
+fn trim_rows_to_budget(
+    file: &mut DiffCardFile,
     retained_body_rows: &mut usize,
     body_overflow: &mut bool,
 ) {
-    let mut in_hunk = false;
-    for line in diff.lines() {
-        if line.starts_with("@@") {
-            in_hunk = true;
-            continue;
+    if *retained_body_rows >= MAX_PROPOSED_DIFF_ROWS {
+        if !file.rows.is_empty() {
+            *body_overflow = true;
+            file.rows.clear();
         }
-        if line.starts_with("---") || line.starts_with("+++") {
-            continue;
-        }
-        if !in_hunk {
-            continue;
-        }
-        let Some(marker) = line.as_bytes().first().copied() else {
-            continue;
-        };
-        let content = line.get(1..).unwrap_or_default();
-        match marker {
-            b'+' => {
-                file.added_lines += 1;
-                push_row(
-                    file,
-                    ProposedRow::Added(content.to_string()),
-                    retained_body_rows,
-                    body_overflow,
-                );
-            }
-            b'-' => {
-                file.removed_lines += 1;
-                push_row(
-                    file,
-                    ProposedRow::Removed(content.to_string()),
-                    retained_body_rows,
-                    body_overflow,
-                );
-            }
-            b' ' => {
-                push_row(
-                    file,
-                    ProposedRow::Context(content.to_string()),
-                    retained_body_rows,
-                    body_overflow,
-                );
-            }
-            _ => {}
-        }
+        return;
     }
+    let room = MAX_PROPOSED_DIFF_ROWS - *retained_body_rows;
+    if file.rows.len() > room {
+        file.rows.truncate(room);
+        *body_overflow = true;
+    }
+    *retained_body_rows = retained_body_rows.saturating_add(file.rows.len());
 }
 
 fn project_op_document(
     op: &Op,
-    file: &mut ProposedEditFile,
+    added_lines: &mut u64,
+    removed_lines: &mut u64,
+    rows: &mut Vec<DiffRow>,
     retained_body_rows: &mut usize,
     body_overflow: &mut bool,
 ) {
     match op {
         Op::Replace { start, end, body } => {
-            file.removed_lines += (*end - *start + 1) as u64;
-            file.added_lines += body.len() as u64;
+            *removed_lines += (*end - *start + 1) as u64;
+            *added_lines += body.len() as u64;
             push_summary_and_body(
-                file,
+                rows,
                 format_put_range(*start, *end),
                 body,
                 retained_body_rows,
@@ -310,18 +304,18 @@ fn project_op_document(
             );
         }
         Op::Delete { start, end } => {
-            file.removed_lines += (*end - *start + 1) as u64;
+            *removed_lines += (*end - *start + 1) as u64;
             push_row(
-                file,
-                ProposedRow::Summary(format_cut_range(*start, *end)),
+                rows,
+                DiffRow::new(DiffRowKind::Meta, None, format_cut_range(*start, *end)),
                 retained_body_rows,
                 body_overflow,
             );
         }
         Op::InsertBefore { line, body } => {
-            file.added_lines += body.len() as u64;
+            *added_lines += body.len() as u64;
             push_summary_and_body(
-                file,
+                rows,
                 format!("PUT <{line}"),
                 body,
                 retained_body_rows,
@@ -329,33 +323,33 @@ fn project_op_document(
             );
         }
         Op::InsertAfter { line, body } => {
-            file.added_lines += body.len() as u64;
+            *added_lines += body.len() as u64;
             let summary = match line {
                 Some(line) => format!("PUT >{line}"),
                 None => "PUT >$".into(),
             };
-            push_summary_and_body(file, summary, body, retained_body_rows, body_overflow);
+            push_summary_and_body(rows, summary, body, retained_body_rows, body_overflow);
         }
     }
 }
 
 fn push_summary_and_body(
-    file: &mut ProposedEditFile,
+    rows: &mut Vec<DiffRow>,
     summary: String,
     body: &[String],
     retained_body_rows: &mut usize,
     body_overflow: &mut bool,
 ) {
     push_row(
-        file,
-        ProposedRow::Summary(summary),
+        rows,
+        DiffRow::new(DiffRowKind::Meta, None, summary),
         retained_body_rows,
         body_overflow,
     );
     for text in body {
         push_row(
-            file,
-            ProposedRow::Added(text.clone()),
+            rows,
+            DiffRow::new(DiffRowKind::Added, None, text.clone()),
             retained_body_rows,
             body_overflow,
         );
@@ -379,8 +373,8 @@ fn format_cut_range(start: usize, end: usize) -> String {
 }
 
 fn push_row(
-    file: &mut ProposedEditFile,
-    row: ProposedRow,
+    rows: &mut Vec<DiffRow>,
+    row: DiffRow,
     retained_body_rows: &mut usize,
     body_overflow: &mut bool,
 ) {
@@ -388,8 +382,24 @@ fn push_row(
         *body_overflow = true;
         return;
     }
-    file.rows.push(row);
+    rows.push(row);
     *retained_body_rows += 1;
+}
+
+fn stamp_document_only_notices(preview: &mut EditPreview) {
+    preview.document_only = true;
+    for file in &mut preview.files {
+        let already = file
+            .rows
+            .first()
+            .is_some_and(|row| row.kind == DiffRowKind::Meta && row.text == DOCUMENT_ONLY_NOTICE);
+        if !already {
+            file.rows.insert(
+                0,
+                DiffRow::new(DiffRowKind::Meta, None, DOCUMENT_ONLY_NOTICE),
+            );
+        }
+    }
 }
 
 #[cfg(test)]
