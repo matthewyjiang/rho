@@ -487,9 +487,7 @@ impl App {
             PickerAction::Dismiss | PickerAction::ViewAgent => {
                 self.set_status("running");
             }
-            PickerAction::SelectInternalAgentModel
-            | PickerAction::SelectInternalAgentReasoning
-            | PickerAction::EditAgent => {
+            PickerAction::SelectInternalAgentModel | PickerAction::EditAgent => {
                 self.set_status("agent editing is unavailable while a model turn is running");
             }
             PickerAction::SelectModel => {

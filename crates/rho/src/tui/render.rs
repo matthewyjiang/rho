@@ -206,7 +206,6 @@ fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
         | super::PickerAction::RefreshModelList
         | super::PickerAction::InsertSkillCommand
         | super::PickerAction::ViewAgent
-        | super::PickerAction::SelectInternalAgentReasoning
         | super::PickerAction::EditAgent => 30,
     };
     let reserved_preview_width = width.saturating_sub(18);

@@ -48,13 +48,11 @@ model, because a reviewer that mirrors the executor adds nothing.
 Ways to enable it:
 
 - `/advisor` or `/advisor on` in the [interactive TUI](/interactive-tui#commands).
-  Without a model, the command opens a model picker, then a reasoning picker when
-  the model supports one. The mode turns on after you finish. `esc` leaves the
-  mode off. `/advisor off` turns it off.
+  Without a model, the command opens a model picker first. The mode turns on after you
+  select one. `esc` leaves the mode off. `/advisor off` turns it off.
 - `/config` → **Agent behavior** → **Advisor mode**, **Advisor model**, and
   **Advisor reasoning**
-- `/agents`, then choose the `advisor` internal agent and pick a model (and
-  reasoning when offered)
+- `/agents`, then choose the `advisor` internal agent and pick a model
 - a hand edit of `~/.rho/config.toml`
 
 ```toml

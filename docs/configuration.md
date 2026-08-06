@@ -147,7 +147,7 @@ Rho resolves aliases to concrete ids before any model-specific behavior, holds n
 
 Rho uses reserved internal agents to generate session titles, evaluate `/goal` completion, and answer the [`advisor`](/configuration/advisor-mode) tool. Most roles follow the active conversation provider, model, and auth by default. Run `/agents`, select the role, and press Enter to choose a separate model. The picker includes **Use conversation model**, which removes that role's override. Changes apply to the next invocation and save at once.
 
-The `advisor` role is the exception: it has no default and no conversation-model fallback, because an advisor that mirrors the executor adds nothing. Its picker omits the **Use conversation model** row, and advisor mode stays inactive until a model is chosen. After you pick a model, Rho offers a reasoning level when the model supports one. `/config` under **Agent behavior** exposes **Advisor model** and **Advisor reasoning** next to **Advisor mode**.
+The `advisor` role is the exception: it has no default and no conversation-model fallback, because an advisor that mirrors the executor adds nothing. Its picker omits the **Use conversation model** row, and advisor mode stays inactive until a model is chosen. When the advisor model supports configurable reasoning, Rho carries the previous level (or the advisor default) onto the new model. `/config` under **Agent behavior** exposes **Advisor model** and **Advisor reasoning** next to **Advisor mode**.
 
 Overrides are stored by stable internal agent ID:
 

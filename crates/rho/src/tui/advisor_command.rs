@@ -138,6 +138,40 @@ impl App {
         Ok(())
     }
 
+    /// Persists an advisor reasoning override on the current advisor model.
+    pub(super) fn set_advisor_reasoning(
+        &mut self,
+        reasoning: rho_providers::reasoning::ReasoningLevel,
+    ) -> anyhow::Result<()> {
+        let Some(mut selection) = self
+            .info
+            .runtime
+            .internal_agents
+            .get(ADVISOR_AGENT_ID)
+            .cloned()
+        else {
+            self.set_status("select an advisor model first");
+            return Ok(());
+        };
+        selection.reasoning = Some(reasoning);
+        self.info
+            .runtime
+            .internal_agents
+            .insert(ADVISOR_AGENT_ID.into(), selection.clone());
+        match self.info.services.config_repository.update(|config| {
+            config.set_internal_agent_model_config(ADVISOR_AGENT_ID, selection);
+        }) {
+            Ok(()) => self.set_status(format!("advisor reasoning: {reasoning}")),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "advisor reasoning set to {reasoning} for this session, but saving config failed: {err}"
+                )));
+                self.set_status("config save failed");
+            }
+        }
+        Ok(())
+    }
+
     /// Applies the saved advisor state to the live runtime.
     ///
     /// The advisor model and the mode reach the runtime as one value, because

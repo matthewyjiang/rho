@@ -252,7 +252,7 @@ pub(super) fn category_picker(
                 ),
                 item(
                     "Advisor model",
-                    "Model used by the advisor tool. Enter opens a picker, then a reasoning level when the model supports one.",
+                    "Model used by the advisor tool. Enter opens a picker. Reasoning is set below when the model supports it.",
                     Some(advisor_model_badge(info)),
                     ADVISOR_MODEL_VALUE,
                 ),

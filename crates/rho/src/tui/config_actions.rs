@@ -371,28 +371,13 @@ impl App {
         }
         let current = crate::tools::advisor::advisor_effective_reasoning(&selection);
         let reasoning = capabilities.next_level(current);
-        let mut updated = selection;
-        updated.reasoning = Some(reasoning);
-        self.info
-            .runtime
-            .internal_agents
-            .insert(crate::agent::ADVISOR_AGENT_ID.into(), updated.clone());
-        let save_result = self.info.services.config_repository.update(|config| {
-            config.set_internal_agent_model_config(crate::agent::ADVISOR_AGENT_ID, updated.clone());
-        });
+        self.set_advisor_reasoning(reasoning)?;
         if self.info.runtime.advisor_mode {
             self.sync_advisor_runtime(agent).await;
         }
+        let status = self.status().to_string();
         self.refresh_main_config_picker_if_open(config_picker::ADVISOR_REASONING_VALUE)?;
-        match save_result {
-            Ok(()) => self.set_status(format!("advisor reasoning: {reasoning}")),
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "advisor reasoning set to {reasoning} for this session, but saving config failed: {err}"
-                )));
-                self.set_status("config save failed");
-            }
-        }
+        self.set_status(status);
         Ok(())
     }
 
