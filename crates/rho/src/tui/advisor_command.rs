@@ -8,6 +8,7 @@ use super::{
 };
 
 const SELECT_ADVISOR_MODEL_STATUS: &str = "select an advisor model to turn advisor mode on";
+const SELECT_ADVISOR_MODEL_EDIT_STATUS: &str = "select an advisor model";
 
 /// The runtime side of advisor mode.
 ///
@@ -78,7 +79,15 @@ impl App {
     /// escaping returns where the user came from.
     pub(super) fn open_advisor_model_prompt(&mut self, origin: InternalAgentModelPickerOrigin) {
         if self.open_internal_agent_model_picker(ADVISOR_AGENT_ID, origin) {
-            self.set_status(SELECT_ADVISOR_MODEL_STATUS);
+            let status = match origin {
+                InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+                    SELECT_ADVISOR_MODEL_EDIT_STATUS
+                }
+                InternalAgentModelPickerOrigin::AdvisorCommand
+                | InternalAgentModelPickerOrigin::AdvisorConfigRow
+                | InternalAgentModelPickerOrigin::AgentsPicker => SELECT_ADVISOR_MODEL_STATUS,
+            };
+            self.set_status(status);
         }
     }
 

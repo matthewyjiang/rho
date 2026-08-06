@@ -4,7 +4,8 @@ use futures_util::task::noop_waker_ref;
 use rho_sdk::{CancellationToken, ProviderRequestUsageRecording, SessionId};
 
 use crate::agent::{
-    internal_definition, run_one_shot_agent, OneShotAgentRequest, SESSION_TITLE_AGENT_ID,
+    effective_internal_agent_reasoning, internal_definition, run_one_shot_agent, OneShotAgentRequest,
+    SESSION_TITLE_AGENT_ID,
 };
 
 use super::{App, Entry, InteractiveRuntime, Session, SessionTitleResult};
@@ -65,6 +66,7 @@ pub(super) async fn generate_session_title(
     provider_name: String,
     model: String,
     auth: String,
+    reasoning: rho_providers::reasoning::ReasoningLevel,
     first_user_message: String,
     first_assistant_message: String,
     session_id: SessionId,
@@ -79,7 +81,7 @@ pub(super) async fn generate_session_title(
             provider_name: &provider_name,
             model: &model,
             auth: &auth,
-            reasoning: None,
+            reasoning: Some(reasoning),
             input: format!(
                 "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
             ),
@@ -174,6 +176,8 @@ impl App {
         let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
         let selection = self.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID);
+        let reasoning =
+            effective_internal_agent_reasoning(crate::agent::SESSION_TITLE_AGENT_ID, &selection);
         let cancellation = rho_sdk::CancellationToken::new();
         let task_cancellation = cancellation.clone();
         let task_session_id = session_id.clone();
@@ -184,6 +188,7 @@ impl App {
                 selection.provider,
                 selection.model,
                 selection.auth,
+                reasoning,
                 first_user_message,
                 first_assistant_message,
                 task_session_id.clone(),

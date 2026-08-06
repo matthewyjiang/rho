@@ -23,8 +23,8 @@ use serde_json::json;
 
 use crate::{
     agent::{
-        internal_agent_requires_model, internal_definition, run_one_shot_agent,
-        OneShotAgentRequest, ADVISOR_AGENT_ID,
+        effective_internal_agent_reasoning, internal_agent_requires_model, internal_definition,
+        run_one_shot_agent, OneShotAgentRequest, ADVISOR_AGENT_ID,
     },
     config::{Config, InternalAgentModelConfig},
 };
@@ -58,16 +58,12 @@ pub(crate) fn advisor_model(config: &Config) -> Option<&InternalAgentModelConfig
 
 /// Reasoning level the advisor run will use.
 ///
-/// An explicit config value wins. Otherwise the reserved advisor definition
-/// default applies (medium).
+/// Explicit config wins. Otherwise the reserved advisor definition default
+/// applies (medium), normalized to the selection's model capabilities.
 pub(crate) fn advisor_effective_reasoning(
     model: &InternalAgentModelConfig,
 ) -> rho_providers::reasoning::ReasoningLevel {
-    model.reasoning.unwrap_or_else(|| {
-        internal_definition(ADVISOR_AGENT_ID)
-            .reasoning()
-            .unwrap_or(rho_providers::reasoning::ReasoningLevel::Medium)
-    })
+    effective_internal_agent_reasoning(ADVISOR_AGENT_ID, model)
 }
 
 /// Whether the `advisor` tool can run under this configuration.

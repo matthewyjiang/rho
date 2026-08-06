@@ -1,7 +1,8 @@
 use crate::{
     agent::{
-        internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
-        AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
+        effective_internal_agent_reasoning, internal_agent_requires_model, AgentCatalog,
+        AgentCatalogEntry, AgentOrigin, AgentRuntimeSpec, ModelPolicy, ModelSelection,
+        PromptPolicy, ToolPolicy,
     },
     config::InternalAgentModelConfig,
 };
@@ -156,13 +157,15 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         }
     };
     let reasoning = if entry.metadata.origin == AgentOrigin::Internal {
-        models
-            .internal_agents
-            .get(definition.id.as_str())
-            .and_then(|selection| selection.reasoning)
-            .or_else(|| definition.reasoning())
-            .map(|level| level.to_string())
-            .unwrap_or_else(|| "inherit".to_string())
+        match models.internal_agents.get(definition.id.as_str()) {
+            Some(selection) => {
+                effective_internal_agent_reasoning(definition.id.as_str(), selection).to_string()
+            }
+            None => definition
+                .reasoning()
+                .map(|level| level.to_string())
+                .unwrap_or_else(|| "inherit".to_string()),
+        }
     } else {
         definition
             .reasoning()

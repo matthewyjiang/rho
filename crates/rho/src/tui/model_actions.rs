@@ -1,15 +1,11 @@
 use ratatui::DefaultTerminal;
 
-use rho_providers::{
-    credentials::available_auth_modes,
-    model::{
-        models_dev,
-        provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
-        ReasoningCapabilities, ReasoningRequestSource,
-    },
+use rho_providers::credentials::available_auth_modes;
+use rho_providers::model::provider_models::{
+    refresh_provider_models_with_store, ProviderModelEndpoint,
 };
 
-use crate::agent::ADVISOR_AGENT_ID;
+use crate::agent::{carry_internal_agent_reasoning, ADVISOR_AGENT_ID};
 
 use super::{
     agent_picker::InternalAgentModelPickerOrigin, catalog, config_picker, favorites, model_picker,
@@ -671,10 +667,7 @@ impl App {
                     selection.model,
                     selection.auth,
                 );
-                if id == ADVISOR_AGENT_ID {
-                    config.reasoning =
-                        resolve_advisor_selection_reasoning(&config, previous.as_ref());
-                }
+                config.reasoning = carry_internal_agent_reasoning(&config, previous.as_ref());
                 self.info
                     .runtime
                     .internal_agents
@@ -773,27 +766,6 @@ impl App {
     }
 }
 
-fn resolve_advisor_selection_reasoning(
-    selection: &crate::config::InternalAgentModelConfig,
-    previous: Option<&crate::config::InternalAgentModelConfig>,
-) -> Option<rho_providers::reasoning::ReasoningLevel> {
-    let capabilities =
-        models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
-    if capabilities == ReasoningCapabilities::NotConfigurable {
-        return None;
-    }
-    let requested = previous
-        .and_then(|prev| prev.reasoning)
-        .unwrap_or_else(|| crate::tools::advisor::advisor_effective_reasoning(selection));
-    // Persisted/default carry-forward never rejects; normalize onto the new model.
-    reasoning_metadata::resolve_model_switch_reasoning(
-        &capabilities,
-        requested,
-        ReasoningRequestSource::PersistedOrDefault,
-    )
-    .ok()
-    .map(|resolved| resolved.effective)
-}
 
 #[cfg(test)]
 #[path = "model_actions_tests.rs"]

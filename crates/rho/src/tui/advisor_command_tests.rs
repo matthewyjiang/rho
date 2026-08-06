@@ -300,3 +300,22 @@ async fn unknown_advisor_argument_reports_usage() {
     assert!(!app.info.runtime.advisor_mode);
     assert_eq!(app.status(), "invalid advisor mode");
 }
+
+// Covers: editing the advisor model from /config does not claim it enables mode.
+// Owner: advisor command
+#[test]
+fn advisor_model_config_row_uses_edit_status() {
+    with_cached_openai_models(|| {
+        let mut app = app_with_advisor_model();
+        app.open_main_config_picker_selected(super::super::config_picker::ADVISOR_MODEL_VALUE)
+            .unwrap();
+        app.open_advisor_model_prompt(InternalAgentModelPickerOrigin::AdvisorModelConfigRow);
+        assert_eq!(app.status(), "select an advisor model");
+        assert_eq!(
+            app.internal_agent_model_target
+                .as_ref()
+                .map(|target| target.origin),
+            Some(InternalAgentModelPickerOrigin::AdvisorModelConfigRow)
+        );
+    });
+}
