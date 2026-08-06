@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.17.0...rho-providers-v0.17.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **providers:** source Meta Muse Spark reasoning from models.dev ([#758](https://github.com/matthewyjiang/rho/issues/758)) ([a11eea0](https://github.com/matthewyjiang/rho/commit/a11eea0756cedfd2f1bb879603355c28a9c4a037))
+
 ## [0.17.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.16.1...rho-providers-v0.17.0) (2026-08-06)
 
 

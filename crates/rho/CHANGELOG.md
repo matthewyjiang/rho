@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.30.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.30.0...rho-coding-agent-v1.30.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **providers:** source Meta Muse Spark reasoning from models.dev ([#758](https://github.com/matthewyjiang/rho/issues/758)) ([a11eea0](https://github.com/matthewyjiang/rho/commit/a11eea0756cedfd2f1bb879603355c28a9c4a037))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.17.0 to 0.17.1
+
 ## [1.30.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.29.1...rho-coding-agent-v1.30.0) (2026-08-06)
 
 
