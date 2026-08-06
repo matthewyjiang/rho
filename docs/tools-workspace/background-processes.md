@@ -2,8 +2,128 @@
 
 Parent: [Tools and workspace](/tools-workspace).
 
-The `process` tool has three actions. `start` launches a background shell command and returns its process ID; it accepts an optional timeout. `poll` requires a process ID and returns retained stdout and stderr, optionally continuing from a cursor or waiting briefly for changes. Continue from the returned `next_cursor` to avoid duplicate output. Retention is bounded, so sufficiently old output can be discarded; poll results report when a requested cursor predates the retained range. `stop` requires a process ID and terminates the managed process tree.
+The `process` tool runs a shell command in the background inside the current
+Rho instance. Start it, poll retained output with a cursor, and stop it when
+done. Use this for long-running servers, watchers, and other work that should
+outlive a single foreground `bash` or `powershell` call.
 
-Rho owns these processes only within the running instance. It cleans them up when that instance shuts down, and process records do not persist across restarts. The tool does not support stdin writes, process listing, pseudo-terminals, persistent sessions, or pane and session orchestration. Use a dedicated multiplexer such as tmux or Herdr when you need interactive terminals or persistent, orchestrated sessions.
+Rho owns these processes only while that instance is alive. Shutdown cleans
+them up. Records do not survive a restart.
 
-Managed processes use standard output and error pipes, with standard input closed. Commands that require interactive input or terminal emulation will not behave as they do in a foreground terminal. The tool executes shell commands with the same user permissions as Rho. Rho's [permission modes](/configuration#permission-modes) can deny or request approval before process execution, but they do not add operating-system sandboxing.
+```mermaid
+flowchart TD
+    start["start: command"] --> id[process_id]
+    id --> poll["poll: cursor + optional wait"]
+    poll --> out[Retained stdout and stderr]
+    out --> more{Need more output?}
+    more -->|yes| poll
+    more -->|stop or done| stop["stop: process_id"]
+    stop --> end[Process tree terminated]
+    id --> stop
+```
+
+## Actions
+
+| Action | Required | Optional | Result |
+| --- | --- | --- | --- |
+| `start` | `command` | `timeout_seconds` (≥ 1) | Snapshot with `process_id` and early output |
+| `poll` | `process_id` | `cursor`, `wait_seconds` (0–30) | Snapshot of retained chunks from the cursor |
+| `stop` | `process_id` | | Stop request for that managed process tree |
+
+### `start`
+
+Launches the command through the platform shell with:
+
+- working directory set to the workspace root
+- stdin closed
+- stdout and stderr captured on pipes
+- the same user permissions as Rho
+
+Returns a JSON snapshot that includes `process_id`. Optional `timeout_seconds`
+bounds how long the process may run before Rho marks it timed out and stops the
+tree.
+
+### `poll`
+
+Reads retained stdout and stderr. Pass the previous `next_cursor` as `cursor` so
+you do not re-read the same chunks.
+
+- `wait_seconds` may block briefly (0–30, default 0) for new output.
+- Retention is bounded. If the requested cursor is older than the retained
+  range, the snapshot reports that and advances from what is still held.
+- `output_pending` is true when more retained output exists past the returned
+  window.
+- `truncated` is true when output was dropped under the byte or chunk caps.
+
+### `stop`
+
+Requests termination of the managed process tree (process group on Unix, job
+object on Windows), not only the direct child. Rho waits a short grace period,
+then force-kills if needed.
+
+## Snapshot fields
+
+Typical fields on `start` and `poll` results:
+
+| Field | Meaning |
+| --- | --- |
+| `process_id` | Handle for later `poll` / `stop` |
+| `command` | Started command string |
+| `state` | `starting`, `running`, `exited`, `terminated`, `timed_out`, or `failed_to_start` |
+| `runtime_seconds` | Elapsed wall time |
+| `first_cursor` / `next_cursor` / `available_cursor` | Retained output range and read position |
+| `chunks` | Ordered stdout/stderr pieces with per-chunk cursors |
+| `exit_code` | Set when the process has exited |
+| `terminal_detail` | Extra detail for failed or forced ends |
+| `truncated` / `output_pending` | Retention and pagination flags |
+
+## Limits
+
+Default manager limits (per Rho instance):
+
+| Limit | Default |
+| --- | --- |
+| Live processes | 16 |
+| Retained process records | 64 |
+| Retained output per process | 1 MiB |
+| Retained chunks per process | 8,192 |
+| Completed-record retention | 30 minutes |
+| `poll` wait | 0–30 seconds |
+| `stop` grace | 2 seconds |
+
+Rho prunes completed records past retention and drops the oldest completed
+records when the record cap is hit. Live processes count against `max_live`.
+
+## What this tool is not
+
+The `process` tool does not provide:
+
+- stdin writes after start
+- process listing as its own action
+- a pseudo-terminal or interactive TUI inside the child
+- persistent sessions across Rho restarts
+- pane or session orchestration
+
+Commands that need a real terminal, interactive prompts, or durable attachable
+sessions belong in a multiplexer such as tmux or Herdr, or in a foreground
+`bash` / `powershell` call when the work fits one turn.
+
+## Permissions and safety
+
+`process` requests the Process capability. [Permission modes](/configuration#permission-modes)
+can deny it (`plan`) or ask first (`supervised`). They do not add an
+operating-system sandbox. The child still runs with the current user's rights
+and can affect files inside or outside the workspace the same way a shell in
+that account could.
+
+Foreground `bash` and `powershell` are separate tools for work that should
+finish inside one tool call. Prefer `process` when you need to keep a command
+running across turns and read its output later.
+
+## Related
+
+- [Tools and workspace](/tools-workspace) - workspace root and capability model
+- [Permission modes](/configuration#permission-modes) - plan and supervised
+  process policy
+- [Workflow runtime](/workflows/runtime) - host-only `workflow_command` for
+  frozen workflow steps (not the agent `process` tool)

@@ -2,7 +2,63 @@
 
 Parent: [Tools and workspace](/tools-workspace).
 
-`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is a 4-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `offset`/`limit` select which rows are shown; the file is still read fully to mint `TAG`. `edit` rejects a stale `TAG` before writing.
+`edit` changes existing UTF-8 files with line-anchored hunks. You pass one
+hashline document in `input`. Each section names a path and a snapshot tag from
+a prior read, then lists `PUT` and `CUT` ops against the original line numbers.
+
+Use `edit` for targeted hunks when you already have a fresh `[path#TAG]`. Use
+`write` to create a path or replace a whole file. Do not use shell or Python to
+rewrite UTF-8 sources that `edit` can express.
+
+```mermaid
+flowchart TD
+    src["read_file / grep / write / prior edit"] --> snap["path#TAG snapshot"]
+    snap --> doc[Hashline edit document]
+    doc --> edit[edit tool]
+    edit --> ok{Tag still matches?}
+    ok -->|yes| apply[Apply all hunks]
+    apply --> preview[New TAG plus chain preview]
+    ok -->|no| fail[No write]
+    fail --> live[Live snapshot to copy]
+    live --> doc
+```
+
+## Hashline snapshots
+
+UTF-8 text and source files always read as a hashline view:
+
+```text
+[src/app.py#A1B2]
+1:import sys
+2:print("hi")
+3:
+```
+
+| Piece | Meaning |
+| --- | --- |
+| `path` | Display path for the file |
+| `TAG` | 4 uppercase hex digits. Full-file fingerprint with trailing whitespace ignored so a whitespace-only drift does not bust the tag |
+| `N:line` | 1-indexed original line body |
+
+`read_file` still hashes the whole file when you pass `offset` / `limit`. Those
+args only choose which numbered rows appear. Rich documents and images are not
+hashline-editable; see [documents and images](/tools-workspace/documents-and-images).
+
+### Where tags come from
+
+Copy `TAG` and line numbers from the latest snapshot for that path:
+
+- `read_file` hashline view
+- `grep` content mode (`[path#TAG]` plus match line numbers)
+- a successful non-structural `edit` preview
+- a successful `write` chain snapshot
+- a failed `edit` live snapshot
+
+Never invent a tag. Grep match previews use `N | text` and may truncate. Copy
+TAG and line numbers only; do not paste preview bodies into `PUT` rows. Use
+`read_file` when you need exact line text.
+
+## Document shape
 
 ```json
 {
@@ -10,35 +66,92 @@ Parent: [Tools and workspace](/tools-workspace).
 }
 ```
 
-Supported ops:
+One or more sections, each starting with `[path#TAG]`, then ops:
 
-- `PUT N:` replace one original line (digits then colon — never `PUT N.:`)
-- `PUT N.=M:` replace inclusive original lines `N` through `M` with `+` body rows
-- `PUT <N:` / `PUT >N:` / `PUT >$:` insert body rows before line N, after line N, or at end of file
-- `CUT N.=M` or `CUT N` delete inclusive original lines (no colon on CUT)
+```text
+[path#TAG]
+PUT N:
++replacement
+PUT N.=M:
++range body
+PUT <N:
++insert before N
+PUT >N:
++insert after N
+PUT >$:
++append at EOF
+CUT N.=M
+```
 
-Locators must match those forms exactly. A trailing dot (`PUT 12.:`, `PUT 12.=:`) is invalid and is rejected with an explicit error — it is not a single-line shorthand.
+## Operations
 
-Rules:
+| Op | Form | Effect |
+| --- | --- | --- |
+| Replace one line | `PUT N:` | Replace original line `N` with the `+` body |
+| Replace a range | `PUT N.=M:` | Replace inclusive lines `N`–`M` (also `N-M` / `N..M`) |
+| Insert before | `PUT <N:` | Insert body rows before line `N` |
+| Insert after | `PUT >N:` | Insert body rows after line `N` |
+| Append | `PUT >$:` | Insert body rows at end of file |
+| Delete | `CUT N` or `CUT N.=M` | Delete inclusive original lines (no colon) |
 
-- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write` chain snapshot, or a failed `edit` live snapshot. Grep match previews are not PUT bodies.
-- Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
-- Line numbers name the original snapshot; they do not shift mid-document
+Locator rules:
+
+- Digits then colon for single-line PUT: `PUT 12:` — never `PUT 12.:`
+- A trailing dot such as `PUT 12.=:` is invalid and fails with an explicit error
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
 - `PUT` always needs at least one `+` body row; use `CUT` to delete
-- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed with no write. The error includes a bounded live snapshot - copy that header and lines to retry
-- Re-read only for lines outside the live snapshot or post-edit preview
-- After a large or structural edit, re-read before further ops on anchors outside the returned preview
-- An insert whose anchor falls inside a range that another op replaces or deletes is rejected, because that position no longer exists after the edit
-- Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
-- Create or fully rewrite files with `write`. Do not use `edit` to create paths
+- Line numbers name the **original** snapshot. They do not shift mid-document
+  after earlier ops in the same input
 
-Successful `edit` results return a one-line ops summary (for example `PUT 2.=5: (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. **Structural** edits (a single replace/delete span of 40+ original lines) return the new TAG and ops summary **without** numbered body lines so the next op must re-read. Successful `write` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
+Not supported yet: block ops (`N*`), registers, `REM`, and `MV`.
 
-Streaming cards project the edit document alone (op summaries + PUT bodies). Approval and start cards dry-run against live files when readable so removals appear as real `-` rows; missing or stale targets fall back to the document projection.
+## Rules
 
-Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write` to create or fully rewrite a file. Do not use shell or Python to rewrite UTF-8 sources that `edit` can express.
+1. Put every hunk for one path in a **single** `edit` document. Do not issue two
+   `edit` calls on the same path in one batch; wait for the result first.
+   Different paths may edit in parallel.
+2. One `[path#TAG]` section per path in that document.
+3. Stale tags, overlapping destructive ranges, duplicate paths, out-of-range
+   lines, mid-edit file changes, and inserts whose anchor sits inside another
+   op's replace/delete range all **fail closed with no write**.
+4. Failures return a bounded live snapshot. Copy that header and lines to retry.
+5. Re-read only for lines outside the live snapshot or post-edit preview.
+6. After a large or structural edit, re-read before further ops on anchors
+   outside the returned preview.
+7. Create or fully rewrite files with `write`. Do not use `edit` to create paths.
+
+## Results and chaining
+
+| Outcome | Model-facing content |
+| --- | --- |
+| Successful normal `edit` | One-line ops summary (for example `PUT 2.=5: (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change |
+| Successful structural `edit` | New TAG and ops summary **without** numbered body lines. A structural edit is a single replace/delete span of 40 or more original lines. Re-read before the next op |
+| Successful `write` | Bounded head/tail hashline snapshot with the new TAG (about 28 head + 8 tail lines on large files) |
+| Failed `edit` | Error plus a bounded live snapshot focused on the op anchors |
+
+Unified diffs are tool metadata for UI cards. They are not repeated in
+model-facing content. In the interactive TUI, added lines are green, removed
+lines red, and diff headers use the accent color.
+
+### Cards while the edit runs
+
+- Streaming cards project the edit document alone (op summaries and PUT bodies).
+- Approval and start cards dry-run against live files when readable so removals
+  show as real `-` rows. Missing or stale targets fall back to the document
+  projection.
 
 ## One read format for every caller
 
-`read_file` returns the hashline view for every UTF-8 text file, whether or not the caller can use `edit`. This is deliberate. Two read formats would make the output depend on the agent's tool set, so the same file would read differently to a subagent, a workflow step, and the automation CLI, and any prompt or parser downstream would have to handle both. One format costs a small number of input tokens per line and keeps every reader on the same contract.
+`read_file` returns the hashline view for every UTF-8 text file, whether or not
+the caller can use `edit`. Two read formats would make output depend on the
+agent's tool set, so the same file would read differently to a subagent, a
+workflow step, and the automation CLI. One format costs a small number of input
+tokens per line and keeps every reader on the same contract.
+
+## Related
+
+- [Documents and images](/tools-workspace/documents-and-images) - what
+  `read_file` does for non-text inputs
+- [Search tools](/tools-workspace/search) - `grep` content mode tags and
+  previews
+- [Tools and workspace](/tools-workspace) - when to prefer `edit` vs `write`
