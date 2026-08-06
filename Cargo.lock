@@ -4128,12 +4128,14 @@ dependencies = [
  "katex-rs",
  "keyring",
  "libc",
+ "logos 0.16.1",
  "mermaid-rs-renderer",
  "native-tls",
  "pretty_assertions",
  "pulldown-cmark",
  "rand 0.8.6",
  "ratatui",
+ "ratatui-core",
  "ratatui-image",
  "regex",
  "reqwest",
@@ -4156,7 +4158,6 @@ dependencies = [
  "tokio-tungstenite",
  "toml 0.8.23",
  "tracing",
- "txm",
  "unicode-segmentation",
  "unicode-width 0.2.2",
  "url",
@@ -5556,17 +5557,6 @@ dependencies = [
  "sha1",
  "thiserror 2.0.18",
  "utf-8",
-]
-
-[[package]]
-name = "txm"
-version = "0.1.5"
-source = "git+https://github.com/thatmagicalcat/txm?rev=26e6d3cfef4d5d040711f4c49d9147aabd350d4d#26e6d3cfef4d5d040711f4c49d9147aabd350d4d"
-dependencies = [
- "logos 0.16.1",
- "ratatui-core",
- "thiserror 2.0.18",
- "unicode-width 0.2.2",
 ]
 
 [[package]]

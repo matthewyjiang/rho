@@ -44,7 +44,7 @@ behavior.
 txm
 ===
 
-Terminal LaTeX math layout and the Ratatui math widget use txm
+Terminal LaTeX math layout and the Ratatui math widget are vendored from txm
 (commit 26e6d3cfef4d5d040711f4c49d9147aabd350d4d):
 
   https://github.com/thatmagicalcat/txm
@@ -54,5 +54,8 @@ Licensed under the MIT License or Apache License, Version 2.0
 (https://www.apache.org/licenses/LICENSE-2.0).
 
 Rho paints the txm Ratatui widget into an off-screen buffer, then embeds the
-resulting Unicode art in Markdown history panels. crates.io txm 0.1.5's
-ratatui feature does not build, so Rho pins the upstream git revision above.
+resulting Unicode art in Markdown history panels. The library sources live in
+crates/rho/src/tui/markdown/txm.rs and crates/rho/src/tui/markdown/txm/,
+because crates.io txm 0.1.5's ratatui feature does not build and cargo cannot
+publish a crate with a git dependency. The vendored copy should be replaced by
+the crates.io dependency once a fixed txm release ships.

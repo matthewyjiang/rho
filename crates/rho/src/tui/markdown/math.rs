@@ -2,7 +2,7 @@ use std::panic::AssertUnwindSafe;
 
 use super::super::{render::display_width, theme::Theme};
 use super::panel::ClosedPanel;
-use txm::ratatui::Math;
+use super::txm::ratatui::Math;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,

@@ -38,6 +38,9 @@ toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+# ratatui-core and logos serve the vendored txm module (src/tui/markdown/txm.rs).
+ratatui-core = "0.1"
+logos = "0.16"
 ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm"] }
 image = { version = "0.25.6", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 crossterm = { version = "0.29.0", features = ["event-stream", "osc52"] }
@@ -66,7 +69,6 @@ tracing = "0.1"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 katex-rs = "0.2.4"
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
-txm = { git = "https://github.com/thatmagicalcat/txm", rev = "26e6d3cfef4d5d040711f4c49d9147aabd350d4d", features = ["ratatui"] }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
 [target.'cfg(windows)'.dependencies]
