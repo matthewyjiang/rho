@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.16.0...rho-sdk-v1.17.0) (2026-08-06)
+
+
+### Features
+
+* add advisor mode with a selectable advisor model ([#752](https://github.com/matthewyjiang/rho/issues/752)) ([13c1ebb](https://github.com/matthewyjiang/rho/commit/13c1ebb89edfde2924ee760c7621b099fd510708))
+
 ## [1.16.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.15.2...rho-sdk-v1.16.0) (2026-08-04)
 
 
