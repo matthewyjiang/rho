@@ -34,8 +34,10 @@ const EDIT_DIFF_STEPS: &[Step] = &[
     Step::AssertText("streamed edit line"),
     Step::Custom(assert_one_edit_card),
     Step::SubmitText("fixture cancel edit"),
+    // Do not WaitText("edit(") here: the completed first card still matches and
+    // Esc can race ahead of the second stream. Wait for cancel-fixture content.
     Step::WaitText {
-        text: "edit(",
+        text: "cancelled edit line",
         timeout: STREAM,
     },
     Step::Key(crate::keys::Key::Esc),
@@ -81,7 +83,20 @@ fn assert_one_edit_card(harness: &mut PtyHarness) -> Result<()> {
 }
 
 fn assert_two_edit_cards(harness: &mut PtyHarness) -> Result<()> {
-    assert_edit_card_count(harness, 2)
+    let contents = harness.screen().contents();
+    let count = contents.matches("edit(").count();
+    if count != 2 {
+        anyhow::bail!("expected 2 edit cards, found {count}");
+    }
+    // Unique fixture payloads prove both cards are still on-screen, not just
+    // two header hits from wrap or a single card rendered twice.
+    if !contents.contains("streamed edit line") {
+        anyhow::bail!("missing completed edit card content on screen");
+    }
+    if !contents.contains("cancelled edit line") {
+        anyhow::bail!("missing interrupted edit card content on screen");
+    }
+    Ok(())
 }
 
 fn assert_one_questionnaire_card(harness: &mut PtyHarness) -> Result<()> {
