@@ -6,7 +6,7 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall},
+    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage, ToolCall},
     provider::{ScriptedProvider, ScriptedTurn},
     ProviderRequestUsageEvent, ProviderRequestUsageRecorder, ProviderRequestUsageRecorderFuture,
 };
@@ -113,21 +113,29 @@ fn rejects_definitions_without_reasoning() {
 async fn assembles_messages_extracts_text_and_records_usage_purpose() {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "api", "model"),
-        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
-            ContentBlock::Text("first".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call".into(),
-                name: "ignored".into(),
-                arguments: json!({}),
-            }),
-            ContentBlock::Text("second".into()),
-        ]))],
+        [ScriptedTurn::streaming(
+            vec![rho_sdk::model::ModelEvent::Usage(ModelUsage {
+                input_tokens: Some(11),
+                output_tokens: Some(7),
+                cost_usd_micros: Some(42),
+                ..ModelUsage::default()
+            })],
+            ModelResponse::Assistant(vec![
+                ContentBlock::Text("first".into()),
+                ContentBlock::ToolCall(ToolCall {
+                    id: "call".into(),
+                    name: "ignored".into(),
+                    arguments: json!({}),
+                }),
+                ContentBlock::Text("second".into()),
+            ]),
+        )],
     );
     let recorder = CapturingRecorder::default();
     let definition = definition();
     let session_id = SessionId::new();
 
-    let blocks = run_one_shot_with_provider(
+    let result = run_one_shot_with_provider(
         &provider,
         request(&definition, &session_id, Path::new("/test/workspace")),
         ProviderRequestUsageRecording::new(recorder.clone()),
@@ -135,7 +143,16 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
     .await
     .unwrap();
 
-    assert_eq!(blocks, ["first", "second"]);
+    assert_eq!(result.texts, ["first", "second"]);
+    assert_eq!(
+        result.usage,
+        ModelUsage {
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            cost_usd_micros: Some(42),
+            ..ModelUsage::default()
+        }
+    );
     let requests = provider.recorded_requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(

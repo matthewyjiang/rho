@@ -853,7 +853,7 @@ impl App {
         self.statusline.update_usage(
             display_usage.as_ref(),
             self.usage.current_context.as_ref(),
-            self.usage.subagent_total_cost_usd_micros,
+            self.usage.extra_cost_usd_micros(),
         );
         let performance = self
             .usage

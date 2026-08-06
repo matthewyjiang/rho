@@ -45,7 +45,8 @@ pub(super) struct StatusLineState {
     permission_mode: PermissionMode,
     advisor: AdvisorStatus,
     model_metadata: Option<ModelMetadata>,
-    subagent_total_cost_usd_micros: u64,
+    /// Non-main session cost (subagents + advisor) folded into one total.
+    extra_cost_usd_micros: u64,
     average_output_rate: Option<u64>,
     /// The active provider resolved to usable credentials. When false the row
     /// names the gap instead of a model the session cannot reach.
@@ -89,7 +90,7 @@ impl Default for StatusLineState {
             permission_mode: PermissionMode::default(),
             advisor: AdvisorStatus::Off,
             model_metadata: None,
-            subagent_total_cost_usd_micros: 0,
+            extra_cost_usd_micros: 0,
             average_output_rate: None,
             signed_in: true,
         }
@@ -111,7 +112,7 @@ impl StatusLineState {
             permission_mode: info.permission_mode,
             advisor: AdvisorStatus::from_runtime(info),
             model_metadata: None,
-            subagent_total_cost_usd_micros: 0,
+            extra_cost_usd_micros: 0,
             average_output_rate: None,
             signed_in: true,
         }
@@ -161,15 +162,15 @@ impl StatusLine {
         &mut self,
         usage: Option<&ModelUsage>,
         context_usage: Option<&ContextUsage>,
-        subagent_total_cost_usd_micros: u64,
+        extra_cost_usd_micros: u64,
     ) {
         if self.state.usage.as_ref() != usage
             || self.state.context_usage.as_ref() != context_usage
-            || self.state.subagent_total_cost_usd_micros != subagent_total_cost_usd_micros
+            || self.state.extra_cost_usd_micros != extra_cost_usd_micros
         {
             self.state.usage = usage.cloned();
             self.state.context_usage = context_usage.cloned();
-            self.state.subagent_total_cost_usd_micros = subagent_total_cost_usd_micros;
+            self.state.extra_cost_usd_micros = extra_cost_usd_micros;
             self.invalidate();
         }
     }
@@ -643,8 +644,7 @@ fn status_cost(state: &StatusLineState) -> Option<String> {
         .usage
         .as_ref()
         .and_then(|usage| resolved_usage_cost_usd_micros(usage, state.model_metadata.as_ref()));
-    session_total_cost_usd_micros(main_cost_micros, state.subagent_total_cost_usd_micros)
-        .map(format_usd)
+    session_total_cost_usd_micros(main_cost_micros, state.extra_cost_usd_micros).map(format_usd)
 }
 
 fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {

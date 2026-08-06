@@ -60,6 +60,8 @@ pub(super) struct RuntimeInfo {
     claude_code: String,
     /// Cumulative cost from all completed subagents, including failed/canceled ones.
     subagent_total_cost_usd_micros: u64,
+    /// Cumulative cost from finished advisor calls in this conversation.
+    advisor_total_cost_usd_micros: u64,
 }
 
 impl App {
@@ -118,6 +120,7 @@ impl App {
             tree_error,
             claude_code,
             subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
+            advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
         };
         self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
         self.set_status("runtime info");
@@ -205,7 +208,7 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        if info.subagent_total_cost_usd_micros == 0 {
+        if info.subagent_total_cost_usd_micros == 0 && info.advisor_total_cost_usd_micros == 0 {
             block.push_note("No token usage recorded yet.");
         } else {
             push_cost_fields(block, info, None);
@@ -227,7 +230,9 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
 
 fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micros: Option<u64>) {
     let subagent = info.subagent_total_cost_usd_micros;
-    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, subagent) else {
+    let advisor = info.advisor_total_cost_usd_micros;
+    let extra = subagent.saturating_add(advisor);
+    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, extra) else {
         return;
     };
     let equivalent = cost_equivalent_suffix(info.billing);
@@ -237,32 +242,53 @@ fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micr
         ""
     };
 
-    match (main_cost_micros, subagent) {
-        (Some(main), 0) => {
-            block.push_field(
-                "Cost",
-                &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
-            );
+    for (label, value) in cost_field_rows(
+        main_cost_micros,
+        subagent,
+        advisor,
+        total_micros,
+        main_qualifier,
+        equivalent,
+    ) {
+        block.push_field(label, &value);
+    }
+}
+
+/// Labels for /info cost rows. One component stays a single labeled field;
+/// multiple components break out Main/Subagent/Advisor plus Total.
+fn cost_field_rows(
+    main_cost_micros: Option<u64>,
+    subagent: u64,
+    advisor: u64,
+    total_micros: u64,
+    main_qualifier: &str,
+    equivalent: &str,
+) -> Vec<(&'static str, String)> {
+    let format_amount =
+        |amount: u64, qualifier: &str| format!("{}{qualifier}{equivalent}", format_usd(amount));
+
+    let mut rows = Vec::new();
+    if let Some(main) = main_cost_micros {
+        rows.push(("Main cost", format_amount(main, main_qualifier)));
+    }
+    if subagent > 0 {
+        rows.push(("Subagent cost", format_amount(subagent, "")));
+    }
+    if advisor > 0 {
+        rows.push(("Advisor cost", format_amount(advisor, "")));
+    }
+
+    match rows.len() {
+        0 => rows,
+        1 => {
+            if rows[0].0 == "Main cost" {
+                rows[0].0 = "Cost";
+            }
+            rows
         }
-        (None, subagent) => {
-            block.push_field(
-                "Subagent cost",
-                &format!("{}{equivalent}", format_usd(subagent)),
-            );
-        }
-        (Some(main), subagent) => {
-            block.push_field(
-                "Main cost",
-                &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
-            );
-            block.push_field(
-                "Subagent cost",
-                &format!("{}{equivalent}", format_usd(subagent)),
-            );
-            block.push_field(
-                "Total cost",
-                &format!("{}{equivalent}", format_usd(total_micros)),
-            );
+        _ => {
+            rows.push(("Total cost", format_amount(total_micros, "")));
+            rows
         }
     }
 }
@@ -337,4 +363,54 @@ fn format_number(value: u64) -> String {
         formatted.push(ch);
     }
     formatted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels<'a>(rows: &'a [(&'a str, String)]) -> Vec<&'a str> {
+        rows.iter().map(|(label, _)| *label).collect()
+    }
+
+    #[test]
+    fn cost_rows_cover_single_and_multi_component_layouts() {
+        assert_eq!(
+            labels(&cost_field_rows(Some(1_000), 0, 0, 1_000, "", "")),
+            ["Cost"]
+        );
+        assert_eq!(
+            labels(&cost_field_rows(None, 2_000, 0, 2_000, "", "")),
+            ["Subagent cost"]
+        );
+        assert_eq!(
+            labels(&cost_field_rows(None, 0, 3_000, 3_000, "", "")),
+            ["Advisor cost"]
+        );
+        assert_eq!(
+            labels(&cost_field_rows(Some(1_000), 0, 3_000, 4_000, "", "")),
+            ["Main cost", "Advisor cost", "Total cost"]
+        );
+        assert_eq!(
+            labels(&cost_field_rows(Some(1_000), 2_000, 3_000, 6_000, "", "")),
+            ["Main cost", "Subagent cost", "Advisor cost", "Total cost"]
+        );
+        assert_eq!(
+            labels(&cost_field_rows(None, 2_000, 3_000, 5_000, "", "")),
+            ["Subagent cost", "Advisor cost", "Total cost"]
+        );
+    }
+
+    #[test]
+    fn cost_rows_preserve_main_qualifier_and_amounts() {
+        let rows = cost_field_rows(Some(1_500_000), 500_000, 0, 2_000_000, " estimated", "");
+        assert_eq!(
+            rows,
+            vec![
+                ("Main cost", "$1.500 estimated".into()),
+                ("Subagent cost", "$0.500".into()),
+                ("Total cost", "$2.000".into()),
+            ]
+        );
+    }
 }

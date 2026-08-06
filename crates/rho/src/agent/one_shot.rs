@@ -2,7 +2,7 @@ use std::{future::Future, path::Path};
 
 use anyhow::bail;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelRequest, ModelResponse},
+    model::{ContentBlock, Message, ModelRequest, ModelResponse, ModelUsage},
     provider::ModelProvider,
     CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
 };
@@ -23,11 +23,18 @@ pub(crate) struct OneShotAgentRequest<'a> {
     pub workspace_path: &'a Path,
 }
 
+/// Text blocks and usage from a finished one-shot agent request.
+#[derive(Debug)]
+pub(crate) struct OneShotAgentResult {
+    pub texts: Vec<String>,
+    pub usage: ModelUsage,
+}
+
 /// Builds the provider before returning so callers can time only the model request.
 pub(crate) fn run_one_shot_agent(
     request: OneShotAgentRequest<'_>,
     usage_recording: ProviderRequestUsageRecording,
-) -> anyhow::Result<impl Future<Output = anyhow::Result<Vec<String>>> + '_> {
+) -> anyhow::Result<impl Future<Output = anyhow::Result<OneShotAgentResult>> + '_> {
     let reasoning = validate_definition(request.definition)?;
     let provider = build_provider(
         request.provider_name,
@@ -42,7 +49,7 @@ async fn run_one_shot_with_provider(
     provider: &dyn ModelProvider,
     request: OneShotAgentRequest<'_>,
     usage_recording: ProviderRequestUsageRecording,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<OneShotAgentResult> {
     let reasoning = validate_definition(request.definition)?;
     let PromptPolicy::Replace(prompt) = &request.definition.prompt else {
         unreachable!("definition was validated")
@@ -55,7 +62,7 @@ async fn run_one_shot_with_provider(
         ProviderRequestUsageContext::for_purpose(provider.identity(), request.usage_purpose)
             .with_session_id(request.session_id.clone())
             .with_workspace_path(request.workspace_path);
-    let (response, _) = crate::usage::send_recorded(
+    let (response, usage) = crate::usage::send_recorded(
         provider,
         ModelRequest {
             messages: &messages,
@@ -70,13 +77,18 @@ async fn run_one_shot_with_provider(
     .await
     .map_err(|error| anyhow::anyhow!(error))?;
     let ModelResponse::Assistant(blocks) = response;
-    Ok(blocks
-        .into_iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text),
-            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
-        })
-        .collect())
+    // Successful runs only: failed attempts are written to the durable ledger by
+    // send_recorded, but their usage is not returned here.
+    Ok(OneShotAgentResult {
+        texts: blocks
+            .into_iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text),
+                ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+            })
+            .collect(),
+        usage,
+    })
 }
 
 fn validate_definition(

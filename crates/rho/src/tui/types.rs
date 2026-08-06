@@ -107,6 +107,17 @@ pub(super) struct UsageUi {
     // Cumulative cost from completed subagents (bg + fg), claimed once per run via
     // SubagentManager::claim_terminal_costs_usd_micros during panel refresh.
     pub(in crate::tui) subagent_total_cost_usd_micros: u64,
+    // Cumulative cost from finished advisor calls, claimed via
+    // AdvisorSessionStore::claim_cost_usd_micros during the same poll path.
+    pub(in crate::tui) advisor_total_cost_usd_micros: u64,
+}
+
+impl UsageUi {
+    /// Non-main session cost folded into the statusline total.
+    pub(in crate::tui) fn extra_cost_usd_micros(&self) -> u64 {
+        self.subagent_total_cost_usd_micros
+            .saturating_add(self.advisor_total_cost_usd_micros)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

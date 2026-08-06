@@ -176,8 +176,16 @@ fn resolves_and_combines_session_costs() {
         Some(1_000_000)
     );
     assert_eq!(
+        super::session_total_cost_usd_micros(Some(570_000), 300_000 + 130_000),
+        Some(1_000_000)
+    );
+    assert_eq!(
         super::session_total_cost_usd_micros(None, 250_000),
         Some(250_000)
+    );
+    assert_eq!(
+        super::session_total_cost_usd_micros(None, 180_000),
+        Some(180_000)
     );
     assert_eq!(super::session_total_cost_usd_micros(None, 0), None);
 }
