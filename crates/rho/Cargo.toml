@@ -14,9 +14,6 @@ include = [
     "/CHANGELOG.md",
     "/README.md",
     "/LICENSE",
-    "/LICENSE-APACHE-GROK-BUILD",
-    "/LICENSE-MIT-MERMAID-RS-RENDERER",
-    "/LICENSE-MIT-TXM",
     "/THIRD-PARTY-NOTICES",
 ]
 
