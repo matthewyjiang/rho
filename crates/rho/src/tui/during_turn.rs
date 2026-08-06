@@ -578,9 +578,11 @@ impl App {
             config_picker::ENABLE_SUBAGENTS_VALUE => {
                 self.toggle_enable_subagents()?;
             }
-            config_picker::ADVISOR_MODE_VALUE => {
-                // The advisor changes the tool list, which the running turn owns.
-                self.set_status("advisor mode is unavailable while a model turn is running");
+            config_picker::ADVISOR_MODE_VALUE
+            | config_picker::ADVISOR_MODEL_VALUE
+            | config_picker::ADVISOR_REASONING_VALUE => {
+                // The advisor changes the tool list / live model, which the running turn owns.
+                self.set_status("advisor settings are unavailable while a model turn is running");
             }
             config_picker::AUTO_COMPACT_VALUE => {
                 self.toggle_auto_compact()?;

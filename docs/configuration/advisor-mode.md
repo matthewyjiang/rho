@@ -48,9 +48,10 @@ model, because a reviewer that mirrors the executor adds nothing.
 Ways to enable it:
 
 - `/advisor` or `/advisor on` in the [interactive TUI](/interactive-tui#commands).
-  Without a model, the command opens a picker first. The mode turns on after you
+  Without a model, the command opens a model picker first. The mode turns on after you
   select one. `esc` leaves the mode off. `/advisor off` turns it off.
-- `/config` → **Agent behavior** → **Advisor mode**
+- `/config` → **Agent behavior** → **Advisor mode**, **Advisor model**, and
+  **Advisor reasoning**
 - `/agents`, then choose the `advisor` internal agent and pick a model
 - a hand edit of `~/.rho/config.toml`
 
@@ -62,10 +63,12 @@ advisor_mode = true
 provider = "anthropic"
 model = "claude-fable-5"
 auth = "anthropic-api-key"
+reasoning = "high"
 ```
 
-Model [aliases](/configuration#model-aliases) work in the advisor entry
-(`model = "@deep"`). The advisor must resolve to the `rho` runtime. A
+`reasoning` is optional. When omitted, the advisor uses its built-in default
+(`medium`). Model [aliases](/configuration#model-aliases) work in the advisor
+entry (`model = "@deep"`). The advisor must resolve to the `rho` runtime. A
 `claude-cli` advisor is rejected with a clear error.
 
 Changes save at once and apply before the next turn. The session ID and history
@@ -125,7 +128,7 @@ with `ctrl+o`. `/info` also reports whether advisor mode is on.
 | Setting | Role |
 | --- | --- |
 | `[behavior].advisor_mode` | Offers the `advisor` tool when a model is also set. Default: `false`. |
-| `[internal_agents.advisor]` | Required provider, model, and auth for the reviewer. No conversation-model fallback. |
+| `[internal_agents.advisor]` | Required provider, model, and auth for the reviewer. Optional `reasoning`. No conversation-model fallback. |
 | [`display.max_tool_output_lines`](/configuration#tool-output-limit) | How many lines of advice show inline before the TUI collapses the card. |
 
 See also: [`/advisor`](/interactive-tui#commands),

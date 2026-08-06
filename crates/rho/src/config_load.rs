@@ -165,6 +165,7 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
                     provider,
                     model: group.model.unwrap_or_else(|| cfg.model.clone()),
                     auth,
+                    reasoning: group.reasoning,
                     model_alias: None,
                 },
             )
@@ -181,6 +182,7 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
                 provider,
                 model: group.model.unwrap_or_else(|| cfg.model.clone()),
                 auth,
+                reasoning: None,
                 model_alias: None,
             });
     }
@@ -530,6 +532,7 @@ struct PartialInternalAgentModelConfig {
     provider: Option<String>,
     model: Option<String>,
     auth: Option<String>,
+    reasoning: Option<ReasoningLevel>,
 }
 
 #[derive(Deserialize)]

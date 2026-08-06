@@ -171,6 +171,7 @@ pub(super) struct EvaluationRequest<'a> {
     pub provider_name: &'a str,
     pub model: &'a str,
     pub auth: &'a str,
+    pub reasoning: rho_providers::reasoning::ReasoningLevel,
     pub condition: &'a str,
     pub messages: &'a [Message],
     pub cancellation: CancellationToken,
@@ -186,6 +187,7 @@ pub(super) async fn evaluate(
         provider_name,
         model,
         auth,
+        reasoning,
         condition,
         messages,
         cancellation,
@@ -200,6 +202,7 @@ pub(super) async fn evaluate(
             provider_name,
             model,
             auth,
+            reasoning: Some(reasoning),
             input: format!(
                 "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
             ),

@@ -42,6 +42,7 @@ compact_target_percent = 50
 # provider = "anthropic"
 # model = "claude-fable-5"
 # auth = "anthropic-api-key"
+# reasoning = "high"
 
 [web_search]
 hosted = true # provider-hosted search when the chat path supports it

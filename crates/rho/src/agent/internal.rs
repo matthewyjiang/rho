@@ -1,6 +1,11 @@
 use std::{collections::BTreeSet, sync::LazyLock};
 
-use rho_providers::reasoning::ReasoningLevel;
+use rho_providers::{
+    model::{models_dev, ReasoningCapabilities, ReasoningRequestSource},
+    reasoning::ReasoningLevel,
+};
+
+use crate::config::InternalAgentModelConfig;
 
 use super::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
@@ -103,3 +108,50 @@ pub(crate) fn is_internal_agent_id(id: &AgentId) -> bool {
         .iter()
         .any(|definition| definition.id == *id)
 }
+
+/// Reasoning level an internal-agent one-shot will use for `selection`.
+///
+/// Explicit config wins. Otherwise the reserved definition default applies.
+/// Persisted/default values are normalized onto the selection's model
+/// capabilities so a carried level never rejects at call time.
+pub(crate) fn effective_internal_agent_reasoning(
+    id: &str,
+    selection: &InternalAgentModelConfig,
+) -> ReasoningLevel {
+    let requested = selection.reasoning.unwrap_or_else(|| {
+        internal_definition(id)
+            .reasoning()
+            .expect("internal agent definitions set a reasoning level")
+    });
+    let capabilities =
+        models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
+    match capabilities.resolve(requested, ReasoningRequestSource::PersistedOrDefault) {
+        // One-shot still needs a concrete level; the provider ignores it when
+        // the model has no selectable control.
+        rho_providers::model::ReasoningResolution::NotConfigurable => requested,
+        resolution => resolution.effective().unwrap_or(requested),
+    }
+}
+
+/// Reasoning override to store after selecting a new internal-agent model.
+///
+/// Only an **explicit** previous override is carried, and only when the new
+/// model is reasoning-configurable. `None` keeps the definition default.
+pub(crate) fn carry_internal_agent_reasoning(
+    selection: &InternalAgentModelConfig,
+    previous: Option<&InternalAgentModelConfig>,
+) -> Option<ReasoningLevel> {
+    let capabilities =
+        models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
+    if capabilities == ReasoningCapabilities::NotConfigurable {
+        return None;
+    }
+    let requested = previous.and_then(|prev| prev.reasoning)?;
+    capabilities
+        .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
+        .effective()
+}
+
+#[cfg(test)]
+#[path = "internal_tests.rs"]
+mod tests;

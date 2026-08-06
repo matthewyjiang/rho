@@ -830,7 +830,7 @@ model = "title-model"
     );
 }
 
-// Covers: advisor mode and its internal-agent model survive a save and reload
+// Covers: advisor mode, model, and reasoning survive a save and reload
 // Owner: config persistence
 #[test]
 fn advisor_mode_and_model_round_trip_through_save() {
@@ -841,12 +841,13 @@ fn advisor_mode_and_model_round_trip_through_save() {
         advisor_mode: true,
         ..Default::default()
     };
-    config.set_internal_agent_model(
-        crate::agent::ADVISOR_AGENT_ID,
+    let mut advisor = crate::config::InternalAgentModelConfig::new(
         "anthropic".into(),
         "claude-opus-4-8".into(),
         "anthropic-api-key".into(),
     );
+    advisor.reasoning = Some(rho_providers::reasoning::ReasoningLevel::High);
+    config.set_internal_agent_model_config(crate::agent::ADVISOR_AGENT_ID, advisor.clone());
 
     config.save_with_store(path.clone(), &store).unwrap();
     let reloaded = Config::load_with_store(path, &store).unwrap();
@@ -856,10 +857,6 @@ fn advisor_mode_and_model_round_trip_through_save() {
         reloaded
             .internal_agent_model(crate::agent::ADVISOR_AGENT_ID)
             .cloned(),
-        Some(crate::config::InternalAgentModelConfig::new(
-            "anthropic".into(),
-            "claude-opus-4-8".into(),
-            "anthropic-api-key".into(),
-        ))
+        Some(advisor)
     );
 }

@@ -1,11 +1,11 @@
 use ratatui::DefaultTerminal;
 
-use rho_providers::{
-    credentials::available_auth_modes,
-    model::provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
+use rho_providers::credentials::available_auth_modes;
+use rho_providers::model::provider_models::{
+    refresh_provider_models_with_store, ProviderModelEndpoint,
 };
 
-use crate::agent::ADVISOR_AGENT_ID;
+use crate::agent::{carry_internal_agent_reasoning, ADVISOR_AGENT_ID};
 
 use super::{
     agent_picker::InternalAgentModelPickerOrigin, catalog, config_picker, favorites, model_picker,
@@ -277,30 +277,8 @@ impl App {
                         }
                     }
                 };
-                match target.origin {
-                    InternalAgentModelPickerOrigin::AgentsPicker => {
-                        // The advisor is configurable from /agents too, and its
-                        // live tool must follow the new model.
-                        if id == ADVISOR_AGENT_ID {
-                            self.sync_advisor_runtime(agent).await;
-                        }
-                        let status = self.status().to_string();
-                        self.execute_agents_command()?;
-                        self.set_status(status);
-                    }
-                    InternalAgentModelPickerOrigin::AdvisorCommand => {
-                        self.internal_agent_model_target = None;
-                        self.finish_advisor_model_selection(selected, agent).await?;
-                    }
-                    InternalAgentModelPickerOrigin::AdvisorConfigRow => {
-                        self.internal_agent_model_target = None;
-                        self.finish_advisor_model_selection(selected, agent).await?;
-                        let status = self.status().to_string();
-                        self.open_main_config_picker_selected(config_picker::ADVISOR_MODE_VALUE)?;
-                        self.set_status(status);
-                    }
-                }
-                Ok(())
+                self.finish_internal_agent_model_flow(target, selected, agent)
+                    .await
             }
             PickerAction::LoginGroup => {
                 // A single-method group short-circuits to that method's value,
@@ -681,34 +659,32 @@ impl App {
                 rho_providers::provider::model_reference(&selection.provider, &selection.model)
             })
             .unwrap_or_else(|| "conversation model".into());
-        match &selection {
+        let previous = self.info.runtime.internal_agents.get(id).cloned();
+        let save_result = match selection {
             Some(selection) => {
-                self.info.runtime.internal_agents.insert(
-                    id.to_string(),
-                    crate::config::InternalAgentModelConfig::new(
-                        selection.provider.clone(),
-                        selection.model.clone(),
-                        selection.auth.clone(),
-                    ),
+                let mut config = crate::config::InternalAgentModelConfig::new(
+                    selection.provider,
+                    selection.model,
+                    selection.auth,
                 );
+                config.reasoning = carry_internal_agent_reasoning(&config, previous.as_ref());
+                self.info
+                    .runtime
+                    .internal_agents
+                    .insert(id.to_string(), config.clone());
+                self.info.services.config_repository.update(|saved| {
+                    saved.set_internal_agent_model_config(id, config);
+                })
             }
             None => {
                 self.info.runtime.internal_agents.remove(id);
+                self.info
+                    .services
+                    .config_repository
+                    .update(|config| config.clear_internal_agent_model(id))
             }
-        }
-        match self
-            .info
-            .services
-            .config_repository
-            .update(|config| match &selection {
-                Some(selection) => config.set_internal_agent_model(
-                    id,
-                    selection.provider.clone(),
-                    selection.model.clone(),
-                    selection.auth.clone(),
-                ),
-                None => config.clear_internal_agent_model(id),
-            }) {
+        };
+        match save_result {
             Ok(()) => {
                 self.set_status(format!(
                     "internal agent {id} now uses {label}; saved to config"
@@ -723,6 +699,46 @@ impl App {
         }
         if id == ADVISOR_AGENT_ID {
             self.statusline.update_model(&self.info.runtime);
+        }
+        Ok(())
+    }
+
+    async fn finish_internal_agent_model_flow(
+        &mut self,
+        target: super::agent_picker::InternalAgentModelTarget,
+        selected: bool,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let id = target.id.as_str();
+        match target.origin {
+            InternalAgentModelPickerOrigin::AgentsPicker => {
+                if id == ADVISOR_AGENT_ID {
+                    self.sync_advisor_runtime(agent).await;
+                }
+                let status = self.status().to_string();
+                self.execute_agents_command()?;
+                self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::AdvisorCommand => {
+                self.internal_agent_model_target = None;
+                self.finish_advisor_model_selection(selected, agent).await?;
+            }
+            InternalAgentModelPickerOrigin::AdvisorConfigRow => {
+                self.internal_agent_model_target = None;
+                self.finish_advisor_model_selection(selected, agent).await?;
+                let status = self.status().to_string();
+                self.open_main_config_picker_selected(config_picker::ADVISOR_MODE_VALUE)?;
+                self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+                self.internal_agent_model_target = None;
+                if selected && self.info.runtime.advisor_mode {
+                    self.sync_advisor_runtime(agent).await;
+                }
+                let status = self.status().to_string();
+                self.open_main_config_picker_selected(config_picker::ADVISOR_MODEL_VALUE)?;
+                self.set_status(status);
+            }
         }
         Ok(())
     }
@@ -749,6 +765,7 @@ impl App {
             })
     }
 }
+
 
 #[cfg(test)]
 #[path = "model_actions_tests.rs"]

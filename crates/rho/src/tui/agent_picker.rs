@@ -1,7 +1,8 @@
 use crate::{
     agent::{
-        internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
-        AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
+        effective_internal_agent_reasoning, internal_agent_requires_model, AgentCatalog,
+        AgentCatalogEntry, AgentOrigin, AgentRuntimeSpec, ModelPolicy, ModelSelection,
+        PromptPolicy, ToolPolicy,
     },
     config::InternalAgentModelConfig,
 };
@@ -19,12 +20,15 @@ pub(super) enum InternalAgentModelPickerOrigin {
     AgentsPicker,
     /// Opened by `/advisor on`; a selection also turns advisor mode on.
     AdvisorCommand,
-    /// Opened from the config picker's advisor row; a selection also turns
-    /// advisor mode on and returns to the config picker.
+    /// Opened from the config picker's advisor mode row when enabling without a
+    /// model; a selection also turns advisor mode on and returns to config.
     AdvisorConfigRow,
+    /// Opened from the config picker's advisor model row; returns to config
+    /// without forcing advisor mode on.
+    AdvisorModelConfigRow,
 }
 
-/// The internal agent an open model picker configures.
+/// The internal agent an open model or reasoning picker configures.
 #[derive(Clone, Debug)]
 pub(super) struct InternalAgentModelTarget {
     pub(super) id: String,
@@ -152,10 +156,22 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
             ModelPolicy::Select(selection) => format!("select {}", model_name(selection)),
         }
     };
-    let reasoning = definition
-        .reasoning()
-        .map(|level| level.to_string())
-        .unwrap_or_else(|| "inherit".to_string());
+    let reasoning = if entry.metadata.origin == AgentOrigin::Internal {
+        match models.internal_agents.get(definition.id.as_str()) {
+            Some(selection) => {
+                effective_internal_agent_reasoning(definition.id.as_str(), selection).to_string()
+            }
+            None => definition
+                .reasoning()
+                .map(|level| level.to_string())
+                .unwrap_or_else(|| "inherit".to_string()),
+        }
+    } else {
+        definition
+            .reasoning()
+            .map(|level| level.to_string())
+            .unwrap_or_else(|| "inherit".to_string())
+    };
     let (tools, inherit_claude_config) = match &definition.runtime {
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::All,
@@ -293,7 +309,10 @@ impl super::App {
         }
         match origin {
             InternalAgentModelPickerOrigin::AgentsPicker
-            | InternalAgentModelPickerOrigin::AdvisorConfigRow => self.open_child_picker(picker),
+            | InternalAgentModelPickerOrigin::AdvisorConfigRow
+            | InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+                self.open_child_picker(picker)
+            }
             InternalAgentModelPickerOrigin::AdvisorCommand => {
                 self.input_ui.set_composer(ComposerMode::Picker(picker));
             }

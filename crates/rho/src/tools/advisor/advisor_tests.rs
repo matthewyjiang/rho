@@ -1,12 +1,13 @@
 use pretty_assertions::assert_eq;
+use rho_providers::reasoning::ReasoningLevel;
 use rho_sdk::{tool::Tool as _, tool::ToolErrorKind};
 use serde_json::json;
 
 use crate::config::{Config, InternalAgentModelConfig};
 
 use super::{
-    advisor_model, AdvisorSessionStore, AdvisorTool, DEFAULT_TRANSCRIPT_BUDGET, NO_MODEL_MESSAGE,
-    NO_SESSION_MESSAGE, TOOL_NAME,
+    advisor_effective_reasoning, advisor_model, AdvisorSessionStore, AdvisorTool,
+    DEFAULT_TRANSCRIPT_BUDGET, NO_MODEL_MESSAGE, NO_SESSION_MESSAGE, TOOL_NAME,
 };
 
 fn advisor_selection() -> InternalAgentModelConfig {
@@ -40,6 +41,28 @@ fn the_advisor_model_never_falls_back_to_the_conversation_model() {
     assert_eq!(
         advisor_model(&config_with(true, Some(advisor_selection()))).map(|model| &model.model),
         Some(&"claude-test".to_string())
+    );
+}
+
+// Covers: unset advisor reasoning keeps the reserved definition default.
+// Owner: advisor tool configuration
+#[test]
+fn advisor_reasoning_defaults_to_the_definition_level() {
+    assert_eq!(
+        advisor_effective_reasoning(&advisor_selection()),
+        ReasoningLevel::Medium
+    );
+}
+
+// Covers: an explicit advisor reasoning override wins over the definition default.
+// Owner: advisor tool configuration
+#[test]
+fn advisor_reasoning_override_wins() {
+    let mut selection = advisor_selection();
+    selection.reasoning = Some(ReasoningLevel::High);
+    assert_eq!(
+        advisor_effective_reasoning(&selection),
+        ReasoningLevel::High
     );
 }
 

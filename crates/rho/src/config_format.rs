@@ -20,6 +20,8 @@ pub struct InternalAgentModelConfig {
     pub provider: String,
     pub model: String,
     pub auth: String,
+    /// Per-agent reasoning override. `None` keeps the agent definition default.
+    pub reasoning: Option<ReasoningLevel>,
     pub(super) model_alias: Option<String>,
 }
 
@@ -45,6 +47,7 @@ impl InternalAgentModelConfig {
             provider,
             model,
             auth,
+            reasoning: None,
             model_alias: None,
         }
     }
@@ -109,6 +112,8 @@ struct PersistedInternalAgentModelConfig<'a> {
     provider: &'a str,
     model: Cow<'a, str>,
     auth: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<ReasoningLevel>,
 }
 
 #[derive(Serialize)]
@@ -161,6 +166,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                                 &selection.model,
                             ),
                             auth: &selection.auth,
+                            reasoning: selection.reasoning,
                         },
                     )
                 })

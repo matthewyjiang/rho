@@ -51,6 +51,7 @@ fn request<'a>(
         provider_name: "test-provider",
         model: "test-model",
         auth: "api-key",
+        reasoning: None,
         input: "user input".into(),
         cancellation: CancellationToken::new(),
         session_id,
@@ -103,7 +104,7 @@ fn rejects_definitions_without_reasoning() {
     if let AgentRuntimeSpec::Rho { reasoning, .. } = &mut definition.runtime {
         *reasoning = None;
     }
-    assert!(validate_definition(&definition)
+    assert!(resolve_reasoning(&definition, None)
         .unwrap_err()
         .to_string()
         .contains("set a reasoning level"));

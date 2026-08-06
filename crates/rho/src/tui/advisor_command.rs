@@ -8,6 +8,7 @@ use super::{
 };
 
 const SELECT_ADVISOR_MODEL_STATUS: &str = "select an advisor model to turn advisor mode on";
+const SELECT_ADVISOR_MODEL_EDIT_STATUS: &str = "select an advisor model";
 
 /// The runtime side of advisor mode.
 ///
@@ -78,7 +79,15 @@ impl App {
     /// escaping returns where the user came from.
     pub(super) fn open_advisor_model_prompt(&mut self, origin: InternalAgentModelPickerOrigin) {
         if self.open_internal_agent_model_picker(ADVISOR_AGENT_ID, origin) {
-            self.set_status(SELECT_ADVISOR_MODEL_STATUS);
+            let status = match origin {
+                InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+                    SELECT_ADVISOR_MODEL_EDIT_STATUS
+                }
+                InternalAgentModelPickerOrigin::AdvisorCommand
+                | InternalAgentModelPickerOrigin::AdvisorConfigRow
+                | InternalAgentModelPickerOrigin::AgentsPicker => SELECT_ADVISOR_MODEL_STATUS,
+            };
+            self.set_status(status);
         }
     }
 
@@ -135,6 +144,40 @@ impl App {
         self.statusline.update_model(&self.info.runtime);
         let status = self.advisor_mode_status();
         self.set_status(status);
+        Ok(())
+    }
+
+    /// Persists an advisor reasoning override on the current advisor model.
+    pub(super) fn set_advisor_reasoning(
+        &mut self,
+        reasoning: rho_providers::reasoning::ReasoningLevel,
+    ) -> anyhow::Result<()> {
+        let Some(mut selection) = self
+            .info
+            .runtime
+            .internal_agents
+            .get(ADVISOR_AGENT_ID)
+            .cloned()
+        else {
+            self.set_status("select an advisor model first");
+            return Ok(());
+        };
+        selection.reasoning = Some(reasoning);
+        self.info
+            .runtime
+            .internal_agents
+            .insert(ADVISOR_AGENT_ID.into(), selection.clone());
+        match self.info.services.config_repository.update(|config| {
+            config.set_internal_agent_model_config(ADVISOR_AGENT_ID, selection);
+        }) {
+            Ok(()) => self.set_status(format!("advisor reasoning: {reasoning}")),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "advisor reasoning set to {reasoning} for this session, but saving config failed: {err}"
+                )));
+                self.set_status("config save failed");
+            }
+        }
         Ok(())
     }
 

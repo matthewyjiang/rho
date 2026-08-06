@@ -260,15 +260,20 @@ impl App {
             self.turn.start_loading();
             terminal.draw(|frame| self.draw(frame))?;
 
-            let (condition, provider, model, auth) = {
+            let (condition, provider, model, auth, reasoning) = {
                 let goal = self.goal.as_ref().expect("goal checked above");
                 let selection =
                     self.internal_agent_model_selection(crate::agent::GOAL_JUDGE_AGENT_ID);
+                let reasoning = crate::agent::effective_internal_agent_reasoning(
+                    crate::agent::GOAL_JUDGE_AGENT_ID,
+                    &selection,
+                );
                 (
                     goal.condition.clone(),
                     selection.provider,
                     selection.model,
                     selection.auth,
+                    reasoning,
                 )
             };
             let history = agent.history();
@@ -281,6 +286,7 @@ impl App {
                         provider_name: &provider,
                         model: &model,
                         auth: &auth,
+                        reasoning,
                         condition: &condition,
                         messages: &history,
                         cancellation: cancellation.clone(),
