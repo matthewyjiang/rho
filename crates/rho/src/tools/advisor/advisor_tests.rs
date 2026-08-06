@@ -106,3 +106,46 @@ fn advisor_costs_accumulate_and_claim_once() {
     assert_eq!(store.claim_cost_usd_micros(), 20_000);
     assert_eq!(store.claim_cost_usd_micros(), 0);
 }
+
+// Covers: session rebinds keep or drop unclaimed spend by session id.
+// Owner: advisor cost ledger
+#[tokio::test]
+async fn rebinding_session_scopes_unclaimed_advisor_cost() {
+    use rho_sdk::{
+        model::{ContentBlock, ModelIdentity, ModelResponse, ModelUsage},
+        provider::{ScriptedProvider, ScriptedTurn},
+        Rho, SessionOptions, Workspace,
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("unused".into()),
+        ]))],
+    );
+    let rho = Rho::builder()
+        .provider(provider)
+        .workspace(Workspace::new(root.path()).unwrap())
+        .build()
+        .unwrap();
+    let first = rho.session(SessionOptions::default()).await.unwrap();
+    let second = rho.session(SessionOptions::default()).await.unwrap();
+    assert_ne!(first.id(), second.id());
+
+    let store = AdvisorSessionStore::new();
+    store.bind_session(first.clone());
+    store.note_usage(&ModelUsage {
+        cost_usd_micros: Some(9_000),
+        ..ModelUsage::default()
+    });
+    assert_eq!(store.unclaimed_cost_usd_micros(), 9_000);
+
+    // Same-id rebind (policy rebuild) keeps the accumulator.
+    store.bind_session(first);
+    assert_eq!(store.unclaimed_cost_usd_micros(), 9_000);
+
+    // A new conversation must not inherit the previous total.
+    store.bind_session(second);
+    assert_eq!(store.unclaimed_cost_usd_micros(), 0);
+}

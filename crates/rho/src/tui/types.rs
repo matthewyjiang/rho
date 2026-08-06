@@ -112,6 +112,14 @@ pub(super) struct UsageUi {
     pub(in crate::tui) advisor_total_cost_usd_micros: u64,
 }
 
+impl UsageUi {
+    /// Non-main session cost folded into the statusline total.
+    pub(in crate::tui) fn extra_cost_usd_micros(&self) -> u64 {
+        self.subagent_total_cost_usd_micros
+            .saturating_add(self.advisor_total_cost_usd_micros)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum InputSubmissionMode {
     #[default]

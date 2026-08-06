@@ -279,14 +279,13 @@ pub(super) fn resolved_usage_cost_usd_micros(
         .or_else(|| estimated_cost_usd_micros(usage, metadata))
 }
 
-/// Combine main-session, subagent, and advisor costs into one statusline/info total.
+/// Combine main-session cost with already-aggregated non-main cost (subagents,
+/// advisor, and any future extras folded at the call site).
 pub(super) fn session_total_cost_usd_micros(
     main_cost_micros: Option<u64>,
-    subagent_total_cost_usd_micros: u64,
-    advisor_total_cost_usd_micros: u64,
+    extra_cost_usd_micros: u64,
 ) -> Option<u64> {
-    let extras = subagent_total_cost_usd_micros.saturating_add(advisor_total_cost_usd_micros);
-    match (main_cost_micros, extras) {
+    match (main_cost_micros, extra_cost_usd_micros) {
         (None, 0) => None,
         (main, extra) => Some(main.unwrap_or(0).saturating_add(extra)),
     }

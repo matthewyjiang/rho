@@ -128,7 +128,11 @@ impl AdvisorSessionStore {
     }
 
     /// Fold provider-reported cost from a finished advisor call into the
-    /// unclaimed total. Missing cost stays silent (tokens-only providers).
+    /// unclaimed total.
+    ///
+    /// Only `cost_usd_micros` counts — same contract as subagent terminal
+    /// costs. Tokens-only providers and models without a provider cost stay
+    /// silent; the TUI does not estimate advisor spend from metadata.
     pub fn note_usage(&self, usage: &ModelUsage) {
         let Some(cost) = usage.cost_usd_micros.filter(|cost| *cost > 0) else {
             return;
@@ -146,6 +150,11 @@ impl AdvisorSessionStore {
         let claimed = state.unclaimed_cost_usd_micros;
         state.unclaimed_cost_usd_micros = 0;
         claimed
+    }
+
+    #[cfg(test)]
+    fn unclaimed_cost_usd_micros(&self) -> u64 {
+        self.lock().unclaimed_cost_usd_micros
     }
 
     #[cfg(test)]
@@ -232,30 +241,30 @@ impl SdkTool for AdvisorTool {
                 .map(std::path::Path::to_path_buf)
                 .ok_or_else(|| execution_error(NO_WORKSPACE_MESSAGE))?;
             let request = self.store.request(self.budget)?;
-            let advice = consult_advisor(
-                &self.store,
-                request,
-                workspace_path,
-                context.cancellation().clone(),
-            )
-            .await?;
+            let (advice, usage) =
+                consult_advisor(request, workspace_path, context.cancellation().clone()).await?;
+            // Note before the empty-guidance check: the provider already spent.
+            self.store.note_usage(&usage);
+            if advice.is_empty() {
+                return Err(execution_error(NO_GUIDANCE_MESSAGE));
+            }
             Ok(ToolOutput::text(advice)
                 .metadata(ToolMetadata::new().operation(OperationKind::Read)))
         })
     }
 }
 
-/// Runs the advisor and returns its guidance.
+/// Runs the advisor and returns its guidance plus provider usage.
 ///
 /// Every failure comes back as a tool error, never as a run failure, so a
-/// broken advisor leaves the executor's turn intact. Successful runs only
-/// contribute cost to the parent session total.
+/// broken advisor leaves the executor's turn intact. Successful provider runs
+/// (including empty text) return usage so the caller can fold cost into the
+/// parent session total.
 async fn consult_advisor(
-    store: &AdvisorSessionStore,
     request: AdvisorRequest,
     workspace_path: PathBuf,
     cancellation: CancellationToken,
-) -> Result<String, ToolError> {
+) -> Result<(String, ModelUsage), ToolError> {
     let AdvisorRequest {
         model,
         session_id,
@@ -285,12 +294,8 @@ async fn consult_advisor(
     let result = started
         .await
         .map_err(|error| execution_error(format!("the advisor request failed: {error}")))?;
-    store.note_usage(&result.usage);
     let advice = result.texts.join("\n").trim().to_owned();
-    if advice.is_empty() {
-        return Err(execution_error(NO_GUIDANCE_MESSAGE));
-    }
-    Ok(advice)
+    Ok((advice, result.usage))
 }
 
 fn execution_error(message: impl Into<String>) -> ToolError {

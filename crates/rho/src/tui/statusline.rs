@@ -644,8 +644,7 @@ fn status_cost(state: &StatusLineState) -> Option<String> {
         .usage
         .as_ref()
         .and_then(|usage| resolved_usage_cost_usd_micros(usage, state.model_metadata.as_ref()));
-    // extra_cost already combines subagent + advisor before it reaches the row.
-    session_total_cost_usd_micros(main_cost_micros, state.extra_cost_usd_micros, 0).map(format_usd)
+    session_total_cost_usd_micros(main_cost_micros, state.extra_cost_usd_micros).map(format_usd)
 }
 
 fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
