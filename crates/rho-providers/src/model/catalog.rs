@@ -87,7 +87,12 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 ///
 /// Single-provider groups are derived from [`provider::providers`]; only groupings that
 /// span providers (OpenAI+Codex, Moonshot+Kimi) need an explicit spec.
-const CROSS_PROVIDER_LOGIN_GROUPS: &[(&str, &str, &[(&str, &str)])] = &[
+type CrossProviderLoginGroup = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+);
+const CROSS_PROVIDER_LOGIN_GROUPS: &[CrossProviderLoginGroup] = &[
     (
         "openai",
         "OpenAI",
