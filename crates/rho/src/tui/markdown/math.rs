@@ -15,6 +15,7 @@ const MAX_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_SOURCE_LINES: usize = 256;
 const MAX_RENDERED_LINES: usize = 128;
 const MAX_RENDERED_WIDTH: usize = 240;
+const MAX_INLINE_SOURCE_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MathFallback {
@@ -173,11 +174,33 @@ fn render_inner(source: &str, inner_width: usize) -> MathRender {
         return MathRender::Fallback(MathFallback::TooWide);
     }
 
+    let mut lines = Vec::with_capacity(size.height as usize);
+    for text in visible_rows(&math) {
+        let width = display_width(&text);
+        if width > inner_width {
+            return MathRender::Fallback(MathFallback::TooWide);
+        }
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+
+    if lines.is_empty() {
+        return MathRender::Fallback(MathFallback::EmptyOutput);
+    }
+
+    MathRender::Rendered(lines)
+}
+
+/// Non-blank rendered rows, top to bottom.
+///
+/// TXM often pads with blank rows (outer margins and nested-fraction gaps), so
+/// whitespace-only rows are dropped to keep output tight around real glyphs.
+fn visible_rows(math: &Math) -> Vec<String> {
+    let size = math.size();
     let area = Rect::new(0, 0, size.width, size.height);
     let mut buffer = Buffer::empty(area);
-    Widget::render(&math, area, &mut buffer);
+    Widget::render(math, area, &mut buffer);
 
-    let mut lines = Vec::with_capacity(size.height as usize);
+    let mut rows = Vec::with_capacity(size.height as usize);
     for y in 0..size.height {
         let mut text = String::new();
         let mut x = 0u16;
@@ -189,22 +212,39 @@ fn render_inner(source: &str, inner_width: usize) -> MathRender {
             }
             x = x.saturating_add(1);
         }
-        let width = display_width(&text);
-        if width > inner_width {
-            return MathRender::Fallback(MathFallback::TooWide);
+        if !text.chars().all(char::is_whitespace) {
+            rows.push(text);
         }
-        lines.push(Line::from(Span::styled(text, style)));
+    }
+    rows
+}
+
+/// Single-row rendering of an inline `$...$` formula.
+///
+/// Returns `None` when the formula needs more than one terminal row (fractions,
+/// stacked limits, mixed scripts), fails to parse, or exceeds inline limits; the
+/// caller keeps the literal source text in that case.
+pub(super) fn render_inline_math(source: &str) -> Option<String> {
+    std::panic::catch_unwind(AssertUnwindSafe(|| render_inline_inner(source))).unwrap_or_default()
+}
+
+fn render_inline_inner(source: &str) -> Option<String> {
+    if source.trim().is_empty() || source.len() > MAX_INLINE_SOURCE_BYTES || source.contains('\n') {
+        return None;
     }
 
-    if lines.iter().all(|line| {
-        line.spans
-            .iter()
-            .all(|span| span.content.chars().all(char::is_whitespace))
-    }) {
-        return MathRender::Fallback(MathFallback::EmptyOutput);
+    let math = Math::new(source).ok()?;
+    let size = math.size();
+    if size.width == 0 || size.height == 0 || size.width as usize > MAX_RENDERED_WIDTH {
+        return None;
     }
 
-    MathRender::Rendered(lines)
+    let mut rows = visible_rows(&math);
+    if rows.len() != 1 {
+        return None;
+    }
+    let row = rows.pop().expect("rows has exactly one element");
+    Some(row.trim().to_owned())
 }
 
 pub(super) fn panel_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {

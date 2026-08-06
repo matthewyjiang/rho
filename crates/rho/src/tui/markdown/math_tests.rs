@@ -87,6 +87,64 @@ fn renders_core_latex_without_ansi_or_width_overflow() {
     );
 }
 
+// Covers: TXM blank padding rows must not inflate math panels
+// Owner: pure unit (markdown math blank trim)
+#[test]
+fn drops_whitespace_only_rendered_rows() {
+    let lines = rendered(
+        r"\epsilon = \frac{1}{1 + \frac{1}{1 + \frac{1}{1 + \dots}}}",
+        80,
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| line.chars().any(|ch| !ch.is_whitespace())),
+        "expected no blank rows, got {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains('ε') || line.contains("epsilon")),
+        "{lines:?}"
+    );
+    // Nested continued fraction should stay a compact stack, not a sparse padded block.
+    assert!(
+        lines.len() <= 8,
+        "expected compact nested fraction, got {} rows: {lines:?}",
+        lines.len()
+    );
+}
+
+// Covers: inline math must accept only single-row art and reject taller output
+// Owner: pure unit (markdown inline math render)
+#[test]
+fn inline_math_renders_single_row_only() {
+    assert_eq!(render_inline_math("x^2"), Some("x²".into()));
+    assert_eq!(render_inline_math("a_i"), Some("aᵢ".into()));
+
+    let greek = render_inline_math(r"\alpha + \beta").expect("single-row greek");
+    assert!(greek.contains('α') && greek.contains('β'), "{greek}");
+
+    // Taller-than-one-row constructs keep their literal source.
+    assert_eq!(render_inline_math(r"\frac{1}{2}"), None);
+    assert_eq!(render_inline_math(r"\sum_{i=1}^{n} i"), None);
+    assert_eq!(render_inline_math("x_i^2"), None);
+}
+
+// Covers: invalid or oversized inline sources must fall back without panicking
+// Owner: pure unit (markdown inline math limits)
+#[test]
+fn inline_math_falls_back_for_blank_invalid_and_oversized_input() {
+    assert_eq!(render_inline_math(""), None);
+    assert_eq!(render_inline_math("   "), None);
+    assert_eq!(render_inline_math("{"), None);
+    assert_eq!(render_inline_math("a\nb"), None);
+    assert_eq!(
+        render_inline_math(&"x".repeat(MAX_INLINE_SOURCE_BYTES + 1)),
+        None
+    );
+}
+
 // Covers: bad or oversized math must fall back instead of panicking the TUI
 // Owner: pure unit (markdown math limits)
 #[test]

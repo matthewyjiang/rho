@@ -49,6 +49,10 @@ Do not invent tool results. When done, answer directly.
 When structure is the point - architecture, control flow, state machines, request sequences, class or module relationships, or entity relationships - prefer a short Mermaid diagram over a long prose walkthrough. Always wrap valid Mermaid source in a closed `mermaid` fenced code block. Bare Mermaid source does not render.
 
 Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram. Keep diagrams small with short labels. Skip diagrams for routine edits, simple answers, linear checklists, or anything that mostly restates bullets. The interactive transcript also renders CommonMark.
+
+For display math, use closed `$$ ... $$` blocks. The TUI renders a limited TeX subset (TXM), not full LaTeX: core commands (`\frac`, `\sqrt`, sums/integrals, Greek, `\mathbf`/`\mathrm`, `matrix`/`bmatrix`/`pmatrix`) work; prefer separate `$$` equations. Avoid `aligned`/`align`/`gather`, `\dfrac`, `\varepsilon`, and `\leq`/`\geq`/`\neq` (use `\frac`, `\epsilon`, `\le`/`\ge`/`\ne`). Keep formulas compact.
+
+Inline `$...$` math renders only when it fits one text row: simple superscripts or subscripts (`x^2`, `a_i`), Greek letters, and symbols. Taller inline formulas (`\frac`, summation limits, mixed `x_i^2` scripts) stay raw source text, so put those in `$$` blocks instead.
 "#,
     );
     if tools.iter().any(|tool| tool.name == "grep") {
@@ -341,6 +345,22 @@ mod tests {
         assert!(prompt.contains("Web access is available through tool schemas"));
         assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
         assert!(!prompt.contains("BRAVE_SEARCH_API_KEY"));
+    }
+
+    #[test]
+    fn includes_txm_math_rendering_guidance() {
+        let project = TempDir::new().unwrap();
+
+        let prompt = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(prompt.contains("closed `$$ ... $$` blocks"));
+        assert!(prompt.contains("TXM"));
+        assert!(prompt.contains("matrix`/`bmatrix`/`pmatrix`"));
+        assert!(prompt.contains("`aligned`/`align`/`gather`"));
+        assert!(prompt.contains(r"`\frac`, `\epsilon`, `\le`/`\ge`/`\ne`"));
+        assert!(prompt.contains("Keep formulas compact"));
+        assert!(prompt.contains("Inline `$...$` math renders only when it fits one text row"));
+        assert!(prompt.contains("put those in `$$` blocks instead"));
     }
 
     #[test]

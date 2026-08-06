@@ -268,6 +268,72 @@ fn stable_prefix_stops_at_earliest_open_marker() {
     );
 }
 
+// Covers: open $ math must hold the preview while currency dollars stay plain
+// Owner: pure unit (markdown inline math streaming bounds)
+#[test]
+fn stable_prefix_holds_open_inline_math_but_not_currency() {
+    assert_eq!(
+        inline_markdown_stable_prefix_len("before $x^2"),
+        "before ".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("pay $"),
+        "pay ".len(),
+        "a trailing $ may still open math once more input arrives"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("done $x^2$ tail"),
+        "done $x^2$ tail".len()
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("cost $5 and more"),
+        "cost $5 and more".len(),
+        "a $ before a digit is currency, not math"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("a `$x` b"),
+        "a `$x` b".len(),
+        "$ inside a code span never opens math"
+    );
+    assert_eq!(
+        inline_markdown_stable_prefix_len("closed $a_i$ then *em"),
+        "closed $a_i$ then ".len(),
+        "markers after closed math must still hold"
+    );
+}
+
+// Covers: closed $...$ renders single-row art while currency and tall math stay literal
+// Owner: pure unit (markdown inline math integration)
+#[test]
+fn renders_single_row_inline_math_in_prose() {
+    let mut in_code_block = false;
+    let lines = markdown_lines("energy $E = mc^2$ done", 80, &mut in_code_block);
+    let text = lines.iter().map(line_text).collect::<Vec<_>>();
+    assert_eq!(text, vec!["energy E = mc² done"]);
+
+    let mut in_code_block = false;
+    let currency = markdown_lines("that costs $5 and $10 total", 80, &mut in_code_block);
+    let currency_text = currency.iter().map(line_text).collect::<Vec<_>>();
+    assert_eq!(currency_text, vec!["that costs $5 and $10 total"]);
+
+    let mut in_code_block = false;
+    let tall = markdown_lines(r"half is $\frac{1}{2}$ here", 80, &mut in_code_block);
+    let tall_text = tall.iter().map(line_text).collect::<Vec<_>>();
+    assert_eq!(
+        tall_text,
+        vec![r"half is $\frac{1}{2}$ here"],
+        "multi-row inline math must keep its literal source"
+    );
+
+    let mut in_code_block = false;
+    let code = markdown_lines("run `echo $x^2$` now", 80, &mut in_code_block);
+    let code_text = code.iter().map(line_text).collect::<Vec<_>>();
+    assert!(
+        code_text.iter().any(|line| line.contains("echo $x^2$")),
+        "code spans keep dollars literal: {code_text:?}"
+    );
+}
+
 // Covers: closed $$ blocks must render through the markdown panel path
 // Owner: pure unit (markdown display math integration)
 #[test]
