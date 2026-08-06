@@ -22,7 +22,10 @@ fn selection(
 #[test]
 fn effective_reasoning_defaults_to_the_definition_level() {
     assert_eq!(
-        effective_internal_agent_reasoning(ADVISOR_AGENT_ID, &selection("openai", "gpt-test", None)),
+        effective_internal_agent_reasoning(
+            ADVISOR_AGENT_ID,
+            &selection("openai", "gpt-test", None)
+        ),
         ReasoningLevel::Medium
     );
     assert_eq!(
