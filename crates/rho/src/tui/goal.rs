@@ -193,7 +193,7 @@ pub(super) async fn evaluate(
         workspace_path,
     } = request;
     let transcript = evaluation_transcript(messages);
-    let blocks = run_one_shot_agent(
+    let result = run_one_shot_agent(
         OneShotAgentRequest {
             definition: internal_definition(GOAL_JUDGE_AGENT_ID),
             usage_purpose: "goal",
@@ -210,7 +210,7 @@ pub(super) async fn evaluate(
         usage_recording,
     )?
     .await?;
-    let text = blocks.join("\n");
+    let text = result.texts.join("\n");
     parse_evaluation(&text).context("goal evaluator returned an invalid response")
 }
 

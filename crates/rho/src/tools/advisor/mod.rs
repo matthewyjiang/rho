@@ -12,7 +12,7 @@ use std::{
 };
 
 use rho_sdk::{
-    model::ToolSpec,
+    model::{ModelUsage, ToolSpec},
     tool::{
         OperationKind, Tool as SdkTool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
         ToolInvocation, ToolMetadata, ToolOutput, ToolSecurity,
@@ -89,6 +89,8 @@ struct AdvisorSessionState {
     session: Option<Session>,
     system_prompt: Option<String>,
     model: Option<InternalAgentModelConfig>,
+    /// Provider-reported advisor spend not yet folded into the parent TUI total.
+    unclaimed_cost_usd_micros: u64,
 }
 
 impl AdvisorSessionStore {
@@ -97,8 +99,20 @@ impl AdvisorSessionStore {
     }
 
     /// Points the advisor at the session the executor is running.
+    ///
+    /// Changing the session id drops unclaimed advisor spend so a new
+    /// conversation never inherits cost from the previous one. Same-id rebinds
+    /// (runtime policy rebuilds) keep the accumulator.
     pub fn bind_session(&self, session: Session) {
-        self.lock().session = Some(session);
+        let mut state = self.lock();
+        let same_session = state
+            .session
+            .as_ref()
+            .is_some_and(|current| current.id() == session.id());
+        if !same_session {
+            state.unclaimed_cost_usd_micros = 0;
+        }
+        state.session = Some(session);
     }
 
     /// Records the executor system prompt, which the advisor reviews alongside
@@ -111,6 +125,27 @@ impl AdvisorSessionStore {
     /// next call without rebuilding the tool set.
     pub fn set_model(&self, model: Option<InternalAgentModelConfig>) {
         self.lock().model = model;
+    }
+
+    /// Fold provider-reported cost from a finished advisor call into the
+    /// unclaimed total. Missing cost stays silent (tokens-only providers).
+    pub fn note_usage(&self, usage: &ModelUsage) {
+        let Some(cost) = usage.cost_usd_micros.filter(|cost| *cost > 0) else {
+            return;
+        };
+        let mut state = self.lock();
+        state.unclaimed_cost_usd_micros = state.unclaimed_cost_usd_micros.saturating_add(cost);
+    }
+
+    /// Takes advisor costs that have not yet been added to the parent session
+    /// total. Safe to call from any TUI poll path; returns 0 when nothing is
+    /// new. Costs claimed only through this poll can be lost if the TUI exits
+    /// before the next refresh - same as subagent terminal-cost claims.
+    pub fn claim_cost_usd_micros(&self) -> u64 {
+        let mut state = self.lock();
+        let claimed = state.unclaimed_cost_usd_micros;
+        state.unclaimed_cost_usd_micros = 0;
+        claimed
     }
 
     #[cfg(test)]
@@ -197,8 +232,13 @@ impl SdkTool for AdvisorTool {
                 .map(std::path::Path::to_path_buf)
                 .ok_or_else(|| execution_error(NO_WORKSPACE_MESSAGE))?;
             let request = self.store.request(self.budget)?;
-            let advice =
-                consult_advisor(request, workspace_path, context.cancellation().clone()).await?;
+            let advice = consult_advisor(
+                &self.store,
+                request,
+                workspace_path,
+                context.cancellation().clone(),
+            )
+            .await?;
             Ok(ToolOutput::text(advice)
                 .metadata(ToolMetadata::new().operation(OperationKind::Read)))
         })
@@ -208,8 +248,10 @@ impl SdkTool for AdvisorTool {
 /// Runs the advisor and returns its guidance.
 ///
 /// Every failure comes back as a tool error, never as a run failure, so a
-/// broken advisor leaves the executor's turn intact.
+/// broken advisor leaves the executor's turn intact. Successful runs only
+/// contribute cost to the parent session total.
 async fn consult_advisor(
+    store: &AdvisorSessionStore,
     request: AdvisorRequest,
     workspace_path: PathBuf,
     cancellation: CancellationToken,
@@ -240,10 +282,11 @@ async fn consult_advisor(
             rho_providers::provider::model_reference(&model.provider, &model.model)
         ))
     })?;
-    let blocks = started
+    let result = started
         .await
         .map_err(|error| execution_error(format!("the advisor request failed: {error}")))?;
-    let advice = blocks.join("\n").trim().to_owned();
+    store.note_usage(&result.usage);
+    let advice = result.texts.join("\n").trim().to_owned();
     if advice.is_empty() {
         return Err(execution_error(NO_GUIDANCE_MESSAGE));
     }

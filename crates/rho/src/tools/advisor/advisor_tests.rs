@@ -80,3 +80,29 @@ fn the_tool_takes_no_arguments() {
         json!({ "type": "object", "additionalProperties": false, "properties": {} })
     );
 }
+
+// Covers: finished advisor spend must accumulate and claim once for the parent
+// session total (statusline and /info).
+// Owner: advisor cost ledger
+#[test]
+fn advisor_costs_accumulate_and_claim_once() {
+    use rho_sdk::model::ModelUsage;
+
+    let store = AdvisorSessionStore::new();
+    store.note_usage(&ModelUsage {
+        cost_usd_micros: Some(12_500),
+        ..ModelUsage::default()
+    });
+    store.note_usage(&ModelUsage {
+        cost_usd_micros: Some(7_500),
+        ..ModelUsage::default()
+    });
+    // Tokens without a provider cost stay silent.
+    store.note_usage(&ModelUsage {
+        input_tokens: Some(100),
+        ..ModelUsage::default()
+    });
+
+    assert_eq!(store.claim_cost_usd_micros(), 20_000);
+    assert_eq!(store.claim_cost_usd_micros(), 0);
+}

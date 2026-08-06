@@ -127,7 +127,7 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
     let definition = definition();
     let session_id = SessionId::new();
 
-    let blocks = run_one_shot_with_provider(
+    let result = run_one_shot_with_provider(
         &provider,
         request(&definition, &session_id, Path::new("/test/workspace")),
         ProviderRequestUsageRecording::new(recorder.clone()),
@@ -135,7 +135,7 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
     .await
     .unwrap();
 
-    assert_eq!(blocks, ["first", "second"]);
+    assert_eq!(result.texts, ["first", "second"]);
     let requests = provider.recorded_requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(

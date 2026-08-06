@@ -857,6 +857,11 @@ impl InteractiveRuntime {
         self.tools.subagents()
     }
 
+    /// Advisor session store when this run can offer the advisor tool.
+    pub(crate) fn advisor(&self) -> Option<&crate::tools::advisor::AdvisorSessionStore> {
+        self.tools.advisor()
+    }
+
     pub(crate) fn workflow_tracker(&self) -> &crate::tools::workflow_tracker::WorkflowRunTracker {
         self.tools.workflow_tracker()
     }

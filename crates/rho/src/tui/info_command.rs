@@ -60,6 +60,8 @@ pub(super) struct RuntimeInfo {
     claude_code: String,
     /// Cumulative cost from all completed subagents, including failed/canceled ones.
     subagent_total_cost_usd_micros: u64,
+    /// Cumulative cost from finished advisor calls in this conversation.
+    advisor_total_cost_usd_micros: u64,
 }
 
 impl App {
@@ -118,6 +120,7 @@ impl App {
             tree_error,
             claude_code,
             subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
+            advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
         };
         self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
         self.set_status("runtime info");
@@ -205,7 +208,7 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        if info.subagent_total_cost_usd_micros == 0 {
+        if info.subagent_total_cost_usd_micros == 0 && info.advisor_total_cost_usd_micros == 0 {
             block.push_note("No token usage recorded yet.");
         } else {
             push_cost_fields(block, info, None);
@@ -227,7 +230,9 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
 
 fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micros: Option<u64>) {
     let subagent = info.subagent_total_cost_usd_micros;
-    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, subagent) else {
+    let advisor = info.advisor_total_cost_usd_micros;
+    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, subagent, advisor)
+    else {
         return;
     };
     let equivalent = cost_equivalent_suffix(info.billing);
@@ -237,34 +242,59 @@ fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micr
         ""
     };
 
-    match (main_cost_micros, subagent) {
-        (Some(main), 0) => {
+    let mut parts = 0u8;
+    if main_cost_micros.is_some() {
+        parts += 1;
+    }
+    if subagent > 0 {
+        parts += 1;
+    }
+    if advisor > 0 {
+        parts += 1;
+    }
+
+    if parts <= 1 {
+        if let Some(main) = main_cost_micros {
             block.push_field(
                 "Cost",
                 &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
             );
-        }
-        (None, subagent) => {
+        } else if subagent > 0 {
             block.push_field(
                 "Subagent cost",
                 &format!("{}{equivalent}", format_usd(subagent)),
             );
-        }
-        (Some(main), subagent) => {
+        } else {
             block.push_field(
-                "Main cost",
-                &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
-            );
-            block.push_field(
-                "Subagent cost",
-                &format!("{}{equivalent}", format_usd(subagent)),
-            );
-            block.push_field(
-                "Total cost",
-                &format!("{}{equivalent}", format_usd(total_micros)),
+                "Advisor cost",
+                &format!("{}{equivalent}", format_usd(advisor)),
             );
         }
+        return;
     }
+
+    if let Some(main) = main_cost_micros {
+        block.push_field(
+            "Main cost",
+            &format!("{}{main_qualifier}{equivalent}", format_usd(main)),
+        );
+    }
+    if subagent > 0 {
+        block.push_field(
+            "Subagent cost",
+            &format!("{}{equivalent}", format_usd(subagent)),
+        );
+    }
+    if advisor > 0 {
+        block.push_field(
+            "Advisor cost",
+            &format!("{}{equivalent}", format_usd(advisor)),
+        );
+    }
+    block.push_field(
+        "Total cost",
+        &format!("{}{equivalent}", format_usd(total_micros)),
+    );
 }
 
 fn cost_equivalent_suffix(billing: BillingInfo) -> &'static str {

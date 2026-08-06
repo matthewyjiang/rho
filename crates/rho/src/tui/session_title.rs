@@ -96,11 +96,11 @@ pub(super) async fn generate_session_title(
             (request.await, true)
         }
     };
-    let blocks = match result {
+    let result = match result {
         Err(_) if timed_out => return Err(anyhow::anyhow!("title generation timed out")),
         result => result?,
     };
-    let title = blocks.join(" ");
+    let title = result.texts.join(" ");
     sanitize_session_title(&title)
         .ok_or_else(|| anyhow::anyhow!("title model returned an empty title"))
 }
