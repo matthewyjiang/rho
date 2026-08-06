@@ -159,6 +159,67 @@ fn claude_reasoning_picker_omits_off_and_minimal() {
     assert!(labels.contains(&"high"));
 }
 
+// Covers: catalog-known models only offer advertised reasoning levels
+// Owner: tui agent editor
+#[test]
+fn reasoning_levels_follow_catalog_capabilities() {
+    use rho_providers::model::{ReasoningCapabilities, ReasoningLevelSet};
+    use rho_providers::reasoning::ReasoningLevel;
+
+    let levels = reasoning_levels_for_capabilities(
+        /*is_claude*/ false,
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+            ReasoningLevel::Minimal,
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+            ReasoningLevel::Xhigh,
+        ])),
+        None,
+    );
+    assert_eq!(
+        levels,
+        vec![
+            ReasoningLevel::Minimal,
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+            ReasoningLevel::Xhigh,
+        ]
+    );
+
+    let with_current = reasoning_levels_for_capabilities(
+        /*is_claude*/ false,
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::High,
+        ])),
+        Some(ReasoningLevel::Max),
+    );
+    assert_eq!(
+        with_current,
+        vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::High,
+            ReasoningLevel::Max,
+        ]
+    );
+
+    let not_configurable = reasoning_levels_for_capabilities(
+        /*is_claude*/ false,
+        ReasoningCapabilities::NotConfigurable,
+        None,
+    );
+    assert!(not_configurable.is_empty());
+
+    let unknown_rho = reasoning_levels_for_capabilities(
+        /*is_claude*/ false,
+        ReasoningCapabilities::Unknown,
+        None,
+    );
+    assert_eq!(unknown_rho, ReasoningLevel::ALL.to_vec());
+}
+
 // Covers: shared line editor edits at the character cursor
 // Owner: tui agent editor
 #[test]

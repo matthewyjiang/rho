@@ -22,6 +22,7 @@ use crate::agent::{
     AgentDefinition, AgentOrigin, AgentRuntime, AgentRuntimeSpec, ModelPolicy, PromptPolicy,
     ReasoningLevel,
 };
+use rho_providers::model::{models_dev, ReasoningCapabilities};
 
 /// Stable field-picker values (choice/model phases dispatch by session phase).
 pub(super) const AGENT_FIELD_DESCRIPTION: &str = AgentField::Description.value();
@@ -444,15 +445,7 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
         AgentChoiceField::Reasoning => {
             let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
             let current = draft.reasoning();
-            let levels = if is_claude {
-                ReasoningLevel::ALL
-                    .iter()
-                    .copied()
-                    .filter(|level| !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal))
-                    .collect::<Vec<_>>()
-            } else {
-                ReasoningLevel::ALL.to_vec()
-            };
+            let levels = selectable_agent_reasoning_levels(draft);
             let mut items = vec![PickerItem {
                 section: None,
                 label: "inherit".into(),
@@ -520,6 +513,75 @@ fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> 
             }
         })
         .collect()
+}
+
+/// Reasoning options for the agent editor.
+///
+/// Prefer catalog-advertised levels when the draft pins a provider/model.
+/// Fall back to the full (or Claude-safe) set when catalog data is missing.
+fn selectable_agent_reasoning_levels(draft: &AgentDefinition) -> Vec<ReasoningLevel> {
+    let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
+    let capabilities = draft_reasoning_capabilities(draft);
+    reasoning_levels_for_capabilities(is_claude, capabilities, draft.reasoning())
+}
+
+fn draft_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilities {
+    if draft.runtime.runtime() == AgentRuntime::ClaudeCli {
+        // Claude Code efforts are fixed; Claude model ids are not resolved through
+        // models.dev provider rows in this editor.
+        return ReasoningCapabilities::Unknown;
+    }
+    let model_policy = draft.model_policy();
+    let selection = match model_policy.as_ref() {
+        ModelPolicy::Prefer(selection)
+        | ModelPolicy::Require(selection)
+        | ModelPolicy::Select(selection) => selection,
+        ModelPolicy::Inherit => return ReasoningCapabilities::Unknown,
+    };
+    if selection.model.is_empty() {
+        return ReasoningCapabilities::Unknown;
+    }
+    let Some(provider) = selection.provider.as_deref() else {
+        return ReasoningCapabilities::Unknown;
+    };
+
+    let current = models_dev::current_reasoning_capabilities(provider, &selection.model);
+    if current.is_known() {
+        current
+    } else {
+        // Prefer a stale-but-known cache row over offering every global level.
+        models_dev::cached_reasoning_capabilities(provider, &selection.model)
+    }
+}
+
+fn reasoning_levels_for_capabilities(
+    is_claude: bool,
+    capabilities: ReasoningCapabilities,
+    current: Option<ReasoningLevel>,
+) -> Vec<ReasoningLevel> {
+    let mut levels = match capabilities {
+        ReasoningCapabilities::Levels(levels) => levels.into_levels(),
+        ReasoningCapabilities::NotConfigurable => Vec::new(),
+        ReasoningCapabilities::Unknown if is_claude => ReasoningLevel::ALL
+            .iter()
+            .copied()
+            .filter(|level| !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal))
+            .collect(),
+        ReasoningCapabilities::Unknown => ReasoningLevel::ALL.to_vec(),
+    };
+
+    if is_claude {
+        levels.retain(|level| !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal));
+    }
+
+    // Keep a currently selected level visible so the user can see and change it.
+    if let Some(current) = current {
+        if !levels.contains(&current) {
+            levels.push(current);
+            levels.sort_unstable();
+        }
+    }
+    levels
 }
 
 #[path = "agent_editor_app.rs"]
