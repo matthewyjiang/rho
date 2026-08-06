@@ -1,15 +1,14 @@
 use std::panic::AssertUnwindSafe;
 
+use super::super::{render::display_width, theme::Theme};
+use super::panel::ClosedPanel;
+use txm::ratatui::Math;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     text::{Line, Span},
     widgets::Widget,
 };
-use txm::ratatui::Math;
-
-use super::super::{render::display_width, theme::Theme};
-use super::mermaid;
 
 const MAX_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_SOURCE_LINES: usize = 256;
@@ -48,19 +47,6 @@ impl MathFallback {
 pub(super) enum MathRender {
     Rendered(Vec<Line<'static>>),
     Fallback(MathFallback),
-}
-
-/// Complete closed display-math block ready for the Markdown renderer.
-#[derive(Debug)]
-pub(super) enum ClosedDisplayMath {
-    Art {
-        lines: Vec<Line<'static>>,
-        source: String,
-    },
-    SourceFallback {
-        title: &'static str,
-        source: String,
-    },
 }
 
 /// How far a closed or still-open display-math block extends from `lines[0]`.
@@ -126,10 +112,14 @@ fn display_math_source(lines: &[&str]) -> String {
     lines[1..lines.len() - 1].join("\n")
 }
 
-pub(super) fn render_closed_display_math(source: String, inner_width: usize) -> ClosedDisplayMath {
+pub(super) fn render_closed_display_math(source: String, inner_width: usize) -> ClosedPanel {
     match render_math(&source, inner_width) {
-        MathRender::Rendered(lines) => ClosedDisplayMath::Art { lines, source },
-        MathRender::Fallback(reason) => ClosedDisplayMath::SourceFallback {
+        MathRender::Rendered(lines) => ClosedPanel::Art {
+            title: "MATH",
+            lines,
+            source,
+        },
+        MathRender::Fallback(reason) => ClosedPanel::SourceFallback {
             title: reason.panel_title(),
             source,
         },
@@ -245,10 +235,6 @@ fn render_inline_inner(source: &str) -> Option<String> {
     }
     let row = rows.pop().expect("rows has exactly one element");
     Some(row.trim().to_owned())
-}
-
-pub(super) fn panel_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
-    mermaid::panel_lines(lines, width)
 }
 
 #[cfg(test)]

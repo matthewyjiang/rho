@@ -183,7 +183,12 @@ fn falls_back_for_blank_invalid_and_oversized_input() {
 #[test]
 fn closed_fence_keeps_source_for_art_and_fallback() {
     match render_closed_display_math(r"\frac{a}{b}".into(), 80) {
-        ClosedDisplayMath::Art { lines, source } => {
+        ClosedPanel::Art {
+            title,
+            lines,
+            source,
+        } => {
+            assert_eq!(title, "MATH");
             assert_eq!(source, r"\frac{a}{b}");
             assert!(!lines.is_empty());
         }
@@ -191,7 +196,7 @@ fn closed_fence_keeps_source_for_art_and_fallback() {
     }
 
     match render_closed_display_math(String::new(), 80) {
-        ClosedDisplayMath::SourceFallback { title, source } => {
+        ClosedPanel::SourceFallback { title, source } => {
             assert_eq!(title, "MATH · NOT RENDERED");
             assert!(source.is_empty());
         }
