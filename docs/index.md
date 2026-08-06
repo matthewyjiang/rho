@@ -31,47 +31,49 @@ features:
 
 [![Rho terminal UI showing a code inspection, Rust edit, and focused test run](./assets/rho-ui-demo.svg)](/interactive-tui)
 
-## Concept docs
+## Choose a path
 
-- [Getting started](/getting-started)
-- [Installation](/installation)
-- [Authentication and models](/authentication-and-models)
-  - [OpenAI](/providers/openai)
-  - [OpenAI (Codex OAuth)](/providers/openai-codex)
-  - [Anthropic](/providers/anthropic)
-  - [Google Gemini](/providers/google-gemini)
-  - [GitHub Copilot](/providers/github-copilot)
-  - [Ollama](/providers/ollama)
-  - [Ollama Cloud](/providers/ollama-cloud)
-  - [OpenRouter](/providers/openrouter)
-  - [Poolside](/providers/poolside)
-  - [Moonshot and Kimi Code](/providers/moonshot-kimi)
-  - [Qwen Token Plan](/providers/qwen-token-plan)
-  - [Meta Model API](/providers/meta)
-  - [xAI](/providers/xai)
-- [Interactive TUI](/interactive-tui)
-- [Inline shell](/inline-shell)
-- [Automation and CLI](/automation-cli)
-- [Workflows](/workflows)
-- [Configuration](/configuration)
-- [Tools and workspace](/tools-workspace)
-- [Skills](/skills)
-- [Subagents](/subagents)
-  - [Agent definition schema](/subagents#agent-definition-schema)
-- [Sessions](/sessions)
+| Goal | Start here |
+| --- | --- |
+| Install and complete a first run | [Getting started](/getting-started) → [Installation](/installation) → [Authentication and models](/authentication-and-models) |
+| Work in the terminal UI | [Interactive TUI](/interactive-tui), [inline shell](/inline-shell), [sessions](/sessions) |
+| Script one-shot prompts or CI | [Automation and CLI](/automation-cli), [workflows](/workflows) |
+| Configure or extend behavior | [Configuration](/configuration), [tools and workspace](/tools-workspace), [skills](/skills), [hooks](/hooks), [subagents](/subagents) |
+| Embed Rho in a Rust host | [Rust SDK](/sdk/) |
+| Contribute to Rho | [Development](/development) |
+
+## Providers
+
+Shared auth and model concepts live in [authentication and models](/authentication-and-models). Provider-specific login, environment overrides, and model notes are under [providers](/providers/).
+
+| Provider | Page |
+| --- | --- |
+| OpenAI | [OpenAI](/providers/openai) |
+| OpenAI Codex OAuth | [OpenAI (Codex OAuth)](/providers/openai-codex) |
+| Anthropic | [Anthropic](/providers/anthropic) |
+| Google Gemini | [Google Gemini](/providers/google-gemini) |
+| GitHub Copilot | [GitHub Copilot](/providers/github-copilot) |
+| Ollama | [Ollama](/providers/ollama) |
+| Ollama Cloud | [Ollama Cloud](/providers/ollama-cloud) |
+| OpenRouter | [OpenRouter](/providers/openrouter) |
+| Poolside | [Poolside](/providers/poolside) |
+| Moonshot and Kimi Code | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
+| Qwen Token Plan | [Qwen Token Plan](/providers/qwen-token-plan) |
+| Meta Model API | [Meta Model API](/providers/meta) |
+| xAI | [xAI](/providers/xai) |
+
+## Rust SDK
+
+`rho-sdk` is the embeddable headless runtime. Start with the [SDK overview](/sdk/), then [installation](/sdk/installation) and [concepts](/sdk/concepts).
+
+| Area | Pages |
+| --- | --- |
+| Guide | [Providers](/sdk/providers), [tools](/sdk/tools), [sessions](/sdk/sessions-and-persistence), [events and cancellation](/sdk/events-and-cancellation) |
+| Security | [Security model](/sdk/security), [threat model](/sdk/threat-model), [redaction audit](/sdk/redaction-audit) |
+| Reference | [Compatibility](/sdk/compatibility), [performance](/sdk/performance), [upgrade to 1.0](/sdk/upgrade-to-1.0), [changelog](/sdk/changelog) |
+
+## Reference
+
 - [Usage ledger](/usage-ledger)
-- [Rust SDK](/sdk/)
-  - [Installation and support](/sdk/installation)
-  - [Concepts and ownership](/sdk/concepts)
-  - [Providers](/sdk/providers)
-  - [Tools and capabilities](/sdk/tools)
-  - [Sessions and persistence](/sdk/sessions-and-persistence)
-  - [Events and cancellation](/sdk/events-and-cancellation)
-  - [Compatibility contracts](/sdk/compatibility)
-  - [Security model](/sdk/security)
-  - [Threat model](/sdk/threat-model)
-  - [Redaction audit procedure](/sdk/redaction-audit)
-  - [Upgrade to 1.0](/sdk/upgrade-to-1.0)
-  - [Release candidates](/sdk/release-candidates)
-- [Development](/development)
-- [Changelog](/changelog)
+- [App changelog](/changelog)
+- [SDK changelog](/sdk/changelog)

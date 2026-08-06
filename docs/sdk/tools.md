@@ -128,4 +128,15 @@ Authorization follows this sequence:
 
 `DiagnosticsSnapshot::approval_audit` records bounded, ordered, secret-free decision facts: sequence, capability class, and sanitized result. It intentionally excludes reasons, paths, commands, arguments, environment values, URLs, skill names, and request bodies. Full approval requests remain available only to the approval handler and exact remembered rules remain in session memory.
 
-See [security](/sdk/security) and the [threat model](/sdk/threat-model) before enabling tools.
+## Provider-free tool host
+
+`ToolHost` executes registered tools without a model loop. It shares the SDK authorization path, approval session, progress channels, host-input path, and hook wiring.
+
+- `ToolHost::invoke` runs one call to completion and returns `ToolOutput` or `ToolError`.
+- `ToolHost::start` returns a `ToolHostRun` with events (`ToolHostEvent`), `respond` for questionnaires, cancellation, and a final typed output.
+- Builders accept the same workspace, policy, approval, and hook options as `RhoBuilder` where applicable.
+- Dropping an unfinished `ToolHostRun` cancels its work.
+
+Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks.
+
+See [hooks](/sdk/hooks), [security](/sdk/security), and the [threat model](/sdk/threat-model) before enabling tools.

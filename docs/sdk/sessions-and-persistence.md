@@ -4,7 +4,7 @@
 
 Every session has a non-empty `SessionId` and a monotonic `Revision`. A successful history commit, cancellation commit, cooperative failure commit, reset, or compaction increments the revision. A `RunOutcome` reports the committed revision so a host can associate output with the exact session state.
 
-One session supports one active mutable operation. `Session` clones share this constraint and state. Use separate sessions for concurrent conversations. Concurrent runs that mutate the same session are intentionally unsupported for 1.0.
+One session supports one active mutable operation. `Session` clones share this constraint and state. Use separate sessions for concurrent conversations. Concurrent runs that mutate the same session are intentionally unsupported.
 
 ## History commit contract
 
@@ -42,7 +42,7 @@ A compactor must preserve valid conversation structure and all information the h
 
 ## Snapshot schema
 
-`Session::snapshot` returns `SessionSnapshot`, the stable persistence boundary proposed for 1.0. Schema version 2 contains:
+`Session::snapshot` returns `SessionSnapshot`, the stable persistence boundary. Schema version 2 contains:
 
 - schema version
 - session ID
@@ -93,7 +93,7 @@ The SDK does not currently call a store automatically after each message. The ho
 
 Historical Rho application JSONL session schemas 1 and 2 are migrated by the application adapter to complete SDK snapshots. Current JSONL schema 3 stores a complete snapshot base followed by atomic records containing only newly appended model history and the display-history update. History replacement, such as compaction, writes a new complete base. The versioned SQLite index remains application-owned. Historical JSONL and SQLite fixtures cover every supported application schema.
 
-Compatibility rules are documented in [public contracts](/sdk/compatibility#serialization-contract). The [1.0 upgrade guide](/sdk/upgrade-to-1.0) distinguishes application config, application sessions, and SDK snapshots.
+Compatibility rules are documented in [public contracts](/sdk/compatibility#serialization-contract). The historical [1.0 upgrade guide](/sdk/upgrade-to-1.0) distinguishes application config, application sessions, and SDK snapshots for the original cutover. Current schema rules live on this page and in [compatibility](/sdk/compatibility).
 
 ## Export safety
 

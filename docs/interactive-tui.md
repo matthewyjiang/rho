@@ -8,6 +8,7 @@ rho
 
 The TUI is the main way to use Rho. Ask it to inspect files, explain code, make changes, run commands, or iterate on a task with you. Rho uses the current directory as its [workspace](/tools-workspace). Tool access and command execution follow the workspace and security behavior described in [tools and workspace](/tools-workspace#security-and-workspace-boundaries).
 
+
 ## Start a session
 
 Open a project and run Rho from the repository root:
@@ -17,44 +18,16 @@ cd path/to/project
 rho
 ```
 
-Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. Markdown ATX headings from `#` through `######` render without their syntax markers, using distinct terminal colors and stronger emphasis for the top three levels. Provider streams that deliver no data for two minutes are treated as stale, so Rho can reset or surface an error instead of remaining in the `working` state indefinitely. The interactive UI owns the transcript viewport while it is open, so use the built-in transcript scrolling controls instead of terminal scrollback. When you exit, your previous shell view returns and Rho prints only a short saved-session summary when a session exists.
+Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. For persisted history and resume behavior, see [sessions](/sessions).
 
-For persisted history and resume behavior, see [sessions](/sessions).
+If you need auth or a model first, use `/login` and `/model`, or follow [getting started](/getting-started).
 
-### Mermaid diagrams
 
-Closed fenced code blocks whose first info token is `mermaid` render as terminal-native Unicode diagrams. The match is case-insensitive and extra info tokens are allowed. During streaming, an open fence remains a normal source code block and changes to diagram art only when its closing fence arrives. The diagram is laid out again when the terminal width changes.
+## Everyday controls
 
-Rho uses `mermaid-rs-renderer` 0.3.1 as its Mermaid parser and semantic model. The terminal painter provides quality-first support for core subsets of flowcharts and graphs, state diagrams, sequence diagrams, class diagrams, and entity-relationship diagrams. Other diagram families and constructs the painter cannot represent losslessly remain raw code blocks, as do unsupported syntax and malformed input. This is not full Mermaid.js syntax or visual parity.
-
-Flowcharts and state diagrams keep the direction you asked for. When their normal layout is wider than the pane, Rho wraps node labels more tightly and lays the diagram out again, down to a readable limit. Compaction never shortens or truncates label text.
-
-Diagrams Rho cannot draw stay readable as source, and the panel border says why. A diagram that needs a wider pane reads `MERMAID · PANE TOO NARROW`, so you can widen the pane or the terminal to see the art. Everything else Rho declines to draw, such as unsupported, malformed, unsafe, or oversized input, reads `MERMAID · NOT RENDERED`. Very narrow panels drop the label so the `COPY` action keeps its place. Resizing moves a diagram between art and source in both directions.
-
-Rendering does not execute links or scripts, requires no external executable or network access, and does not trust Mermaid-provided terminal styles. The panel's `COPY` action copies the original Mermaid source rather than the rendered box art, for both diagrams and source fallbacks.
-
-## Watch a subagent
-
-Run `rho attach <id>` to watch a subagent reported by the `agent` tool:
-
-```bash
-rho attach abc123
-```
-
-Attached mode uses a separate read-only TUI. It renders the delegated prompt,
-reasoning, assistant output, tool activity, usage, and final state, but it has no
-message box and cannot submit prompts or change the subagent environment. Use
-Up/Down, Page Up/Page Down, and Home/End to scroll. Press `q`, Escape, or Ctrl-C
-to detach without stopping the run. For Claude-cli runs, attach also surfaces
-`claude_session_id` when present so you can open the full Claude transcript with
-`claude --resume <session-id>`. See [subagents](/subagents#attachment-and-artifacts)
-for lifecycle and Herdr behavior.
-
-## Send prompts
+### Send a prompt
 
 Type a request and press `enter` to send it.
-
-Examples:
 
 ```text
 summarize this repository
@@ -68,19 +41,51 @@ add tests for the config parser
 find where the TUI handles paste events
 ```
 
-Use a multiline prompt when you need to paste or write a longer request.
+Use a multiline prompt when you need to paste or write a longer request. Type `@` to open a workspace file picker, fuzzy-search paths, then press `tab` or `enter` to insert an `@path` reference. The picker follows `.gitignore`, `.ignore`, and global Git ignore rules while still showing hidden workspace files that are not ignored.
 
-Press `ctrl+v` to paste a clipboard image as an attachment when a supported host helper is available (`wl-paste`/`xclip` on Linux, `pngpaste` on macOS, or PowerShell on Windows/WSL). Hosts such as Herdr may paste clipboard content as a single filesystem path. Rho loads PNG, JPEG, GIF, and WebP paths as image attachments. It also extracts text from UTF-8 text and source files, PDFs, DOCX documents, and XLSX, XLS, or ODS spreadsheets and queues the result as a document attachment. An absolute document path is handled before slash-command parsing, so paths beginning with `/` do not become unknown commands. Press backspace in an empty message box to remove the last queued file.
+### Interrupt, steer, reset, or quit
 
-Document extraction is bounded by input and extracted-character limits. PDFs need a text layer because scanned-image OCR is not included. PDF headings, lists, tables, links, and reading order are preserved as structured Markdown. The model receives extracted text with the filename, MIME type, truncation state, and warnings. Session model history stores that bounded text and metadata, not raw PDF or Office bytes. Images continue to use the provider's multimodal image path.
+- Press `esc` to abort the current response without closing Rho. The provider request and active tool receive the same cancellation signal, partial assistant output remains in the session, and queued prompts are restored to the composer instead of running automatically.
+- Press `enter` while Rho is working to steer the run. Rho finishes every tool call from the current assistant turn, adds their results to context, then inserts the steering message before the next model request.
+- Press `ctrl-r` to reset the conversation history. The next message starts a new [session](/sessions).
+- Press `ctrl-c` to clear the current input line.
+- Press `ctrl-c` twice to quit.
+
+### Keyboard shortcuts
+
+Most editing keys work the way they do in a normal terminal input. Run `/help` for a searchable overlay of the same shortcuts.
+
+| Key | Action |
+| --- | --- |
+| `esc` | Abort the current response and restore queued work, or hide the command palette when it is open |
+| `/` at start | Open the command palette |
+| `/help` | Open the keyboard shortcuts overlay |
+| `@` | Open workspace file path autocomplete |
+| `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
+| `tab` | Complete the selected command or file path |
+| `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
+| `alt-up` | Pull the most recent queued prompt back into the composer for editing |
+| `ctrl-r` | Reset conversation history |
+| `pageup` / `pagedown` | Scroll the transcript viewport |
+| `ctrl-g` | Open the current composer text in a non-empty `$VISUAL`, else `$EDITOR` |
+| `ctrl-end` | Jump the transcript viewport back to the bottom |
+| mouse wheel | Scroll the transcript viewport |
+| left-click and drag | Select transcript text and copy it on release |
+| code block `COPY` | Copy the full code block contents |
+| `ctrl-c` | Clear input, then quit if pressed again |
+
+`ctrl-g` opens the current composer text in a non-empty `$VISUAL`, falling back to `$EDITOR` only when `VISUAL` is unset or empty, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `VISUAL` or `EDITOR` to an executable path or a platform-native command line with arguments. Rho does not pick a default editor; if neither variable is set or non-empty, it warns with `EDITOR is not set`.
+
 
 ## Commands
 
 Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Most built-in slash commands run locally. Commands that start agent work say so below.
 
+A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.
+
 | Command | Action |
 | --- | --- |
-| `/advisor [on\|off]` | Toggle or set [advisor mode](/configuration#advisor-mode), which gives the agent an `advisor` tool backed by a second model. `/advisor on` without an advisor model opens a picker first; the mode turns on once a model is selected, and `esc` leaves it off. The choice saves to configuration and applies before the next turn. |
+| `/advisor [on\|off]` | Toggle or set [advisor mode](/configuration/advisor-mode), which gives the agent an `advisor` tool backed by a second model. `/advisor on` without an advisor model opens a picker first; the mode turns on once a model is selected, and `esc` leaves it off. The choice saves to configuration and applies before the next turn. |
 | `/login [provider]` | Log in with a provider or the Claude Code runtime. No args opens a picker (Claude Code is under **Anthropic** as **Claude Code (delegation only)**); direct args target a single [provider](/authentication-and-models#providers) or `/login claude-code`. |
 | `/logout [provider]` | Delete stored provider credentials, or sign out of Claude Code everywhere with `/logout claude-code` (after confirmation). No args opens a picker; direct args target a single [provider](/authentication-and-models#providers). |
 | `/model [provider/model]` | Open a picker for models with available auth, or choose a provider/model and save it to [configuration](/configuration). When switching would drop provider-native context, or when the current model has completed a live turn and older context can be compacted, Rho asks how to continue. Compaction can summarize portable context first; it does not make native blocks sendable to the new model. Press `ctrl-p` in the picker to pin or unpin the highlighted model. |
@@ -108,15 +113,10 @@ Type `/` at the start of the message box to open the command palette. Keep typin
 
 Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/configuration#prompt-templates) also appear in the command palette. Completing one inserts its prompt into the composer so you can add or edit text before sending.
 
-A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette. While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
+### Pickers
 
-Some commands can replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In conversation and internal-agent model pickers, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both picker types. `/config` starts with a short category browser. Its search matches the settings listed inside each category. Press `enter` to open a category and `esc` to return. Press `space` on an on/off setting to toggle it in place. Changes save at once and return to the same category so you can keep adjusting its settings; login workflows close the picker while credentials are entered or authorized.
+Some commands replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In conversation and internal-agent model pickers, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both picker types. `/config` starts with a short category browser. Its search matches the settings listed inside each category. Press `enter` to open a category and `esc` to return. Press `space` on an on/off setting to toggle it in place. Changes save at once and return to the same category so you can keep adjusting its settings; login workflows close the picker while credentials are entered or authorized.
 
-In supervised mode, a tool that wants to write a file or execute a process opens a dedicated approval prompt in the composer. The prompt opens on the start of the request, names the capability class, and focuses **Deny** by default. Use the arrow keys to choose **Allow once**, **Allow for session (exact request)**, or **Deny**, then press Enter. **Allow for session** remembers only that exact structured capability request for the current session. Long operation details grow with the terminal height; use Page Up and Page Down to inspect every detail page without hiding the choices. Choosing **Deny** rejects that operation without ending the session. Press Escape to deny and cancel the current run. The active `plan` or `supervised` mode appears in the status line; the default `auto` mode stays hidden to avoid clutter.
-
-While [advisor mode](/configuration#advisor-mode) is on, the status line names the reviewing model, for example `advisor: anthropic/claude-fable-5`. It reads `advisor: no model` when the mode is on but no advisor model is set, which can happen after a hand edit of config; nothing reviews the session in that state. Advisor mode stays out of the status line while it is off. Advice arrives as a normal `advisor` tool card, collapsed past the tool output limit and expandable with `ctrl+o`.
-
-Type `@` to open a workspace file picker. Keep typing to fuzzy-search paths, use `up` and `down` to select, then press `tab` or `enter` to insert the highlighted path into the message as an `@path` reference. The picker follows `.gitignore`, `.ignore`, and global Git ignore rules while still showing hidden workspace files that are not ignored.
 
 ## Login and logout
 
@@ -128,7 +128,8 @@ Under **Anthropic**, the method picker includes **Claude Code (delegation only)*
 
 Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
 
-## Model picker
+
+## Choose a model
 
 The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. Which models each provider exposes, and whether its list is refreshable, is covered on the [provider pages](/authentication-and-models#providers). Open `/config`, choose **Providers**, then choose **Refresh model lists** to fetch models for one or all refreshable providers when credentials are available. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of conversation and internal-agent model pickers in the order they were pinned.
 
@@ -149,46 +150,45 @@ Rho does not treat a newly resumed session as proof that a provider cache is war
 
 Run `/agents` to inspect reserved internal agents. The detail pane shows the effective provider/model and whether it follows the conversation or uses an override. Press Enter on `session-title`, `goal-judge`, or `advisor` to choose a model. Select **Use conversation model** to remove that role's override. Each role resolves its own setting when invoked, so changing one does not affect the others.
 
-The `advisor` role has no conversation-model fallback, so its picker omits **Use conversation model** and its detail pane reads `not selected` until you choose a model. See [advisor mode](/configuration#advisor-mode).
+The `advisor` role has no conversation-model fallback, so its picker omits **Use conversation model** and its detail pane reads `not selected` until you choose a model. See [advisor mode](/configuration/advisor-mode).
 
 For provider and auth details, see [authentication and models](/authentication-and-models).
 
-## Interrupt, steer, reset, or quit
 
-- Press `esc` to abort the current response without closing Rho. The provider request and active tool receive the same cancellation signal, partial assistant output remains in the session, and queued prompts are restored to the composer instead of running automatically.
-- Press `enter` while Rho is working to steer the run. Rho finishes every tool call from the current assistant turn, adds their results to context, then inserts the steering message before the next model request.
-- Press `ctrl-r` to reset the conversation history. The next message starts a new [session](/sessions).
-- Press `ctrl-c` to clear the current input line.
-- Press `ctrl-c` twice to quit.
+## Approvals and status line
 
-## Useful controls
+In supervised mode, a tool that wants to write a file or execute a process opens a dedicated approval prompt in the composer. The prompt opens on the start of the request, names the capability class, and focuses **Deny** by default. Use the arrow keys to choose **Allow once**, **Allow for session (exact request)**, or **Deny**, then press Enter. **Allow for session** remembers only that exact structured capability request for the current session. Long operation details grow with the terminal height; use Page Up and Page Down to inspect every detail page without hiding the choices. Choosing **Deny** rejects that operation without ending the session. Press Escape to deny and cancel the current run. The active `plan` or `supervised` mode appears in the status line; the default `auto` mode stays hidden to avoid clutter.
 
-Most editing keys work the way they do in a normal terminal input.
+While [advisor mode](/configuration/advisor-mode) is on, the status line names the reviewing model, for example `advisor: anthropic/claude-fable-5`. It reads `advisor: no model` when the mode is on but no advisor model is set, which can happen after a hand edit of config; nothing reviews the session in that state. Advisor mode stays out of the status line while it is off. Advice arrives as a normal `advisor` tool card, collapsed past the tool output limit and expandable with `ctrl+o`.
 
-| Key | Action |
-| --- | --- |
-| `esc` | Abort the current response and restore queued work, or hide the command palette when it is open |
-| `/` at start | Open the command palette |
-| `/help` | Open the keyboard shortcuts overlay |
-| `@` | Open workspace file path autocomplete |
-| `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
-| `tab` | Complete the selected command or file path |
-| `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
-| `alt-up` | Pull the most recent queued prompt back into the composer for editing |
-| `ctrl-r` | Reset conversation history |
-| `pageup` / `pagedown` | Scroll the transcript viewport |
-| `ctrl-g` | Open the current composer text in a non-empty `$VISUAL`, else `$EDITOR` |
-| `ctrl-end` | Jump the transcript viewport back to the bottom |
-| mouse wheel | Scroll the transcript viewport |
-| left-click and drag | Select transcript text and copy it on release |
-| code block `COPY` | Copy the full code block contents |
-| `ctrl-c` | Clear input, then quit if pressed again |
+While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
 
-`ctrl-g` opens the current composer text in a non-empty `$VISUAL`, falling back to `$EDITOR` only when `VISUAL` is unset or empty, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `VISUAL` or `EDITOR` to an executable path or a platform-native command line with arguments. Rho does not pick a default editor; if neither variable is set or non-empty, it warns with `EDITOR is not set`.
 
-Copied text is sent to the terminal clipboard, and Rho briefly shows how many characters were copied. Code block copy buttons are shown in the top-right border and highlight on hover.
+## Watch a subagent
 
-When the transcript is scrolled away from the bottom, Rho overlays a right-aligned `↓ jump to bottom  ctrl+end` button on the last transcript row and obscures only the button's own cells. During generation, the spinner is similarly overlaid on the left. At the live bottom, transcript content stops one row above the spinner; while manually scrolled, the complete last row remains visible wherever neither control is drawn. Press `ctrl-end` or click the button to resume following live output.
+Run `rho attach <id>` to watch a subagent reported by the `agent` tool:
+
+```bash
+rho attach abc123
+```
+
+Attached mode uses a separate read-only TUI. It renders the delegated prompt, reasoning, assistant output, tool activity, usage, and final state, but it has no message box and cannot submit prompts or change the subagent environment. Use Up/Down, Page Up/Page Down, and Home/End to scroll. Press `q`, Escape, or Ctrl-C to detach without stopping the run. For Claude-cli runs, attach also surfaces `claude_session_id` when present so you can open the full Claude transcript with `claude --resume <session-id>`. See [subagents](/subagents/attachment-and-artifacts) for lifecycle and Herdr behavior.
+
+
+## Attachments
+
+Paste images with `ctrl+v` when a host clipboard helper is available, or drop a filesystem path. Rho accepts PNG, JPEG, GIF, and WebP images and extracts text from common document types into a bounded attachment.
+
+Details: [Attachments](/interactive-tui/attachments).
+
+## Transcript display
+
+The TUI owns the transcript viewport (use its scroll controls, not terminal scrollback). Headings, copy actions, jump-to-bottom, and stale-stream handling are documented separately.
+
+- [Transcript display](/interactive-tui/transcript)
+- [Mermaid diagrams](/interactive-tui/mermaid)
+
+## Related
 
 Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.
 Use [workflows](/workflows) when you need a frozen multi-step graph with durable status, cancellation, and resume. In the interactive TUI, run `/workflow` to browse sources, plans, and runs without leaving the session.

@@ -7,7 +7,7 @@ description: Create a new Rho agent through a guided questionnaire. Use when the
 
 Guide the user through creating one valid agent definition. Do not jump directly to a file. Collect decisions step by step with the `questionnaire` tool, draft the definition, confirm it, write it safely, and verify it.
 
-The authoritative field and value contract is the agent definition schema in the Rho docs (`docs/subagents.md`, section "Agent definition schema"). Prefer that schema over inventing fields or values.
+The authoritative field and value contract is the agent definition schema in the Rho docs (`docs/subagents/definition-schema.md`). Prefer that schema over inventing fields or values.
 
 Rho ships no built-in `runtime: claude-cli` agent. If the user wants Claude Code or a Claude subscription-backed specialist under Rho, create a user-defined agent with this skill.
 

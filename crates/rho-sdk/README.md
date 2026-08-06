@@ -1,9 +1,10 @@
 # rho-sdk
 
 `rho-sdk` is the embeddable, headless agent runtime used by the Rho coding agent.
-The crate is under active development toward its first stable release. See the
+The crate is published on crates.io. See the
 [private-API migration guide](MIGRATION.md) when moving existing Rho integrations
-to the SDK.
+from application-private modules to the SDK, and the
+[SDK docs](https://matthewyjiang.github.io/rho/sdk/) for the current contract.
 
 Construction is explicit and side-effect-free by default: no automatic writes to
 `~/.rho`, no implicit environment reads, no credential-store access, and no
@@ -357,9 +358,9 @@ approval flow.
 ## Runtime behavior
 
 A session permits one active run. `Session::complete` and `Session::start` use
-the same provider and tool loop. Streaming runs produce one terminal event and
-expose their final typed outcome without requiring hosts to reconstruct it from
-deltas.
+the same provider and tool loop. Streaming runs expose a final typed outcome through `Run::outcome`. Cooperative
+paths also emit a terminal `RunEvent`; non-cooperative exits may end the stream
+without one, so hosts must not infer success from end-of-stream alone.
 
 The SDK currently requires a Tokio runtime. Provider and tool extension points
 return explicit `Send` futures and may be used as trait objects. `Rho::shutdown`
@@ -367,10 +368,11 @@ is idempotent, cancels all registered runs and compactions, and rejects new
 sessions or runs. Dropping a runtime handle alone does not shut down clones, so
 hosts that need coordinated teardown should call `shutdown`.
 
-Session history is replaced under one lock only after a successful run or
-explicit cancellation, so provider, tool, or persistence failure leaves the prior
-revision intact. The intended 1.0 persistence boundary is the snapshot rather than a
-public transactional store trait.
+Session history commits under one lock for successful runs, cooperative
+cancellation, and cooperative terminal failure (including partial
+`AbortedAssistant` recovery when applicable). Run-handle drop and event-consumer
+interrupts do not promise a commit. The persistence boundary is the versioned
+snapshot rather than a public transactional store trait.
 
 ## Features and compatibility
 
@@ -380,10 +382,10 @@ minimal headless API. Built-in providers, SQLite, keychain access, web access,
 and coding tools remain application-owned adapters. If moved into the SDK, they
 will be named opt-in features and will not be added to `default`.
 
-The SDK MSRV is Rust 1.86. CI tests the crate on Linux, macOS, and Windows
-and separately compiles downstream-only fixture crates. See the
-[SDK compatibility policy][compatibility-policy] for supported platforms,
-SemVer, deprecation, MSRV, feature, and package guarantees.
+MSRV is declared in this crate's `package.rust-version` field. CI tests the
+crate on Linux, macOS, and Windows and separately compiles downstream-only
+fixture crates. See the [SDK compatibility policy][compatibility-policy] for
+supported platforms, SemVer, deprecation, MSRV, feature, and package guarantees.
 
 [compatibility-policy]: https://github.com/matthewyjiang/rho/blob/main/docs/sdk/compatibility.md
 

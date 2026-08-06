@@ -91,6 +91,6 @@ curl -fsSL https://claude.ai/install.sh | bash
 irm https://claude.ai/install.ps1 | iex
 ```
 
-Confirm with `claude --version`. Sign in from Rho with `/login claude-code` (terminal handoff; Claude Code stores the credential). Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in) and [Claude Code as a delegated runtime](/subagents#claude-code-as-a-delegated-runtime).
+Confirm with `claude --version`. Sign in from Rho with `/login claude-code` (terminal handoff; Claude Code stores the credential). Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in) and [Claude Code as a delegated runtime](/subagents/claude-cli).
 
 Next, configure [authentication and models](/authentication-and-models). To embed Rho as a headless Rust library instead of installing the CLI, start with [SDK installation and support](/sdk/installation).

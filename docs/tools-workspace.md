@@ -1,123 +1,39 @@
 # Tools and workspace
 
-Rho uses the current working directory as the workspace and as the base for relative file paths and shell commands. File paths can point outside that directory, either with parent components such as `../` or with absolute paths. Start the [interactive TUI](/interactive-tui) or [automation command](/automation-cli) from the repository or directory you want Rho to use as its main work context.
+Rho uses the current working directory as the workspace and as the base for relative file paths and shell commands. Start the [interactive TUI](/interactive-tui) or [automation command](/automation-cli) from the repository or directory you want Rho to use as its main work context.
+
+File paths can point outside that directory with parent components such as `../` or with absolute paths. Read [Security and workspace boundaries](#security-and-workspace-boundaries) before you rely on permission modes as a sandbox.
 
 ## Built-in tools
 
-Rho currently ships these compiled-in workspace tools on all platforms:
+Core workspace tools on every platform:
 
-```text
-list_dir
-read_file
-write
-edit
-grep
-glob
-```
+| Tool | Role |
+| --- | --- |
+| `list_dir` | List directory entries |
+| `read_file` | Read text, documents, and images |
+| `write` | Create or fully rewrite a file |
+| `edit` | Apply line-anchored hunks to an existing UTF-8 file |
+| `grep` | Search file contents with a regex (in-process) |
+| `glob` | List paths that match a glob (in-process) |
 
-`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or `rtk`. Prefer these tools over shell search for workspace inspection: `grep` content mode mints chainable `[path#TAG]` snapshots (via the hashline header format) and match line numbers so `edit` can target anchors. Match text is search preview only.
+Additional tools:
 
-- Patterns: `grep` takes a Rust/`regex` pattern. `glob` takes a path glob; a pattern with no `/` (for example `*.rs`) matches nested paths as `**/*.rs`.
-- Defaults: both honor `.gitignore`, skip hidden files, and never follow symlinks. Pass `include_hidden` when you need dotfiles.
-- Order: results come back in walk order, sorted by name within each directory, so repeat runs agree and a capped result is the first N paths shown rather than an arbitrary sample.
-- Caps: results are bounded (default 200). `grep` also caps matches per file and trims long lines. Every capped, timed-out, or cancelled search says so in its summary, including when it found nothing.
-- Output: `grep` groups matches by file. Content mode prefixes each file with a chainable `[path#TAG]` header and `N | text` match previews. Copy TAG and line numbers into `edit`; do not copy preview bodies into PUT rows (previews may be truncated). Use `read_file` when you need exact line text. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
-- Permissions: both request read access only, so they work in every permission mode, including `plan`.
+| Tool | Role |
+| --- | --- |
+| `bash` / `powershell` | Native shell for the current platform |
+| `process` | Start, poll, or stop a managed background shell process |
+| `web_search` | Hosted provider search when available, otherwise the configured backup |
+| `fetch_content` | Fetch pages, GitHub URLs, local files, PDFs, and video targets |
+| `get_search_content` | Retrieve stored content from a prior web tool call |
+| `workflow` | Validate, freeze, run, inspect, cancel, or resume a durable workflow |
+| `skill` | Load a skill into the session |
+| `rho` | Read-only harness diagnostics |
+| `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 
-It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, web access tools with zero-config invocation, an optional `advisor` tool, and one native shell tool for the current platform:
+Prefer `grep` and `glob` over shell search for workspace inspection. Both honor `.gitignore`, skip hidden files by default, never follow symlinks, and request read access only, so they work in every permission mode including `plan`.
 
-```text
-rho                 inspect runtime identity, context, prompt sources, tools, or sanitized config
-advisor             ask the configured advisor model to review this session; only when advisor mode is on
-web_search          when hosted = true and the chat path supports it, use provider-hosted search; otherwise use the configured backup backend and store snippets by default
-fetch_content       fetch pages, GitHub URLs, local files, PDFs, and video targets
-get_search_content  retrieve stored content from a prior web_search or fetch_content call
-process             start, poll, or stop a managed background shell process
-workflow            validate, freeze, run, inspect, cancel, or resume a durable workflow; run/resume complete via automatic parent notification
-bash                macOS and Linux
-powershell          Windows
-```
-
-The `advisor` tool appears only while [advisor mode](/configuration#advisor-mode) is on and an advisor model is configured. It takes no parameters: Rho serializes the session transcript, sends it to the advisor model in one request with no tools, and returns the guidance text. Turning the mode on or off adds or removes the tool before the next turn.
-
-When the active model provider is xAI, Rho attaches xAI's hosted `x_search` tool on every model turn as a provider amenity. That tool searches X (x.com) posts, users, and threads server-side. It is separate from `web_search`, which uses hosted provider web search when enabled and supported, otherwise the configured client backup backends. Hosted X Search is not part of the agent tool allowlist: restricted or empty tool sets still receive it while the session uses xAI. Switching an existing session to xAI adds it on the next turn, and switching away removes it. Hosted X Search activity appears in the run stream as typed `HostedToolActivity` events with `name: "x_search"`.
-
-Built-in skills that ship with the binary include `rho-diagnostics` for harness diagnostics, `rho-config` for guiding users through configuring Rho, `rho-agent-creator` for defining new agents, and `rho-workflow-authoring` for writing [workflows](/workflows). The `rho-config` skill guides users through the `/config` browser, model and provider selection, credential storage, and direct config-file edits. The `rho-agent-creator` skill guides you through a step-by-step questionnaire to produce a valid agent Markdown file with YAML frontmatter and a prompt body. Custom user skills can be added under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to prevent the model from loading it while keeping it available through `/skill:<name>`.
-
-The workflow runtime also registers `workflow_command` on its provider-free host tool registry. This internal tool carries one frozen process request through policy, hooks, and approval. It is host-only and never appears in a model tool list.
-
-Web access tools keep normal prompts small when needed, but `fetch_content` returns a single target's readable body inline when it fits the tool output limit. Larger or multi-target results keep a `responseId` for `get_search_content`. Full bodies are stored as sidecar blobs under the active session folder (`.../<session>/web/` for new sessions, or a legacy `*.web/` companion beside flat transcripts), not in the session transcript and not as paths for `read_file`. `get_search_content` selectors must use the exact original query/prompt or URL from the prior tool result; free-text keyword queries are rejected with the available selectors listed. `web_search` stores snippets by default and stores fetched source pages only when `includeContent` succeeds. GitHub repository URLs prefer a local clone so the tool can return real tree/file contents through the web tools; oversized repositories fall back to the GitHub API unless `forceClone` is set. Do not open web-access cache directories with `read_file`. HTTP fetches refuse private, loopback, and link-local destinations by default. Set `RHO_SSRF_ALLOW_RANGES` to a comma-separated list of CIDRs (for example `198.18.0.0/15`) only when a TUN or fake-IP proxy requires it.
-
-`read_file` and `fetch_content` share Rho's bounded document extractor. Along with UTF-8 text and source files, it extracts text-layer PDFs, DOCX documents, and XLSX, XLS, or ODS spreadsheets. `pdf-inspector` preserves PDF headings, lists, tables, links, and reading order as structured Markdown. Spreadsheet output also uses bounded Markdown tables. PDF extraction preflights Flate stream expansion, including object and cross-reference streams, against a 64 MiB budget and rejects chained or unbounded stream filters. Extraction warnings and truncation are included in tool output and metadata. Scanned PDFs without a text layer report a clear warning because OCR, archive recursion, PPTX, and native provider document parts are not included. Remote PDFs use the same pure-Rust extraction path instead of a placeholder.
-
-These tools can read and modify files inside or outside the workspace, run shell commands that start in the working directory, and fetch external or local content when invoked. The `rho` tool is read-only and returns compact live snapshots. Its detailed action reference is embedded in the `rho-diagnostics` skill and loaded only when needed; diagnostics exclude credentials, prompt contents, and conversation history. Restart-only settings report the values used by the running process, not newer values saved for the next session.
-
-## Document extraction and image previews
-
-Document extraction enforces a 25 MiB source limit and a 200,000-character extracted-text limit. Office and PDF parsers run behind the small `rho_tools::document` facade and optional crate features. Rho does not depend on `markitdown-rs` and does not unpack arbitrary archives.
-
-`read_file` accepts PNG, JPEG, GIF, and WebP files in addition to text and supported documents. Image files are decoded under strict byte, dimension, and allocation limits on a blocking worker, then reduced to a bounded PNG thumbnail. The immutable thumbnail is attached to the completed tool result, so later workspace changes cannot alter the preview. In the interactive TUI, the thumbnail renders directly in the feed on Kitty and Ghostty. Under Herdr, Rho probes whether the active client can paint Kitty placements; if host cell metrics are unavailable, it falls back to halfblock previews so reserved feed rows are not left blank. Conservative capability detection avoids probing terminal input and keeps persistent tmux sessions on the text fallback because their terminal-specific environment can describe a stale client. Other terminals keep the normal text tool result without emitting graphics escape sequences. Image previews are presentation-only and are not restored when resuming a saved transcript.
-
-## File edits
-
-`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is a 4-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `offset`/`limit` select which rows are shown; the file is still read fully to mint `TAG`. `edit` rejects a stale `TAG` before writing.
-
-```json
-{
-  "input": "[src/app.py#A1B2]\nPUT 2:\n+print(\"Hello, world!\")\n"
-}
-```
-
-Supported ops:
-
-- `PUT N:` replace one original line (digits then colon — never `PUT N.:`)
-- `PUT N.=M:` replace inclusive original lines `N` through `M` with `+` body rows
-- `PUT <N:` / `PUT >N:` / `PUT >$:` insert body rows before line N, after line N, or at end of file
-- `CUT N.=M` or `CUT N` delete inclusive original lines (no colon on CUT)
-
-Locators must match those forms exactly. A trailing dot (`PUT 12.:`, `PUT 12.=:`) is invalid and is rejected with an explicit error — it is not a single-line shorthand.
-
-Rules:
-
-- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write` chain snapshot, or a failed `edit` live snapshot. Grep match previews are not PUT bodies.
-- Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
-- Line numbers name the original snapshot; they do not shift mid-document
-- Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
-- `PUT` always needs at least one `+` body row; use `CUT` to delete
-- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed with no write. The error includes a bounded live snapshot - copy that header and lines to retry
-- Re-read only for lines outside the live snapshot or post-edit preview
-- After a large or structural edit, re-read before further ops on anchors outside the returned preview
-- An insert whose anchor falls inside a range that another op replaces or deletes is rejected, because that position no longer exists after the edit
-- Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
-- Create or fully rewrite files with `write`. Do not use `edit` to create paths
-
-Successful `edit` results return a one-line ops summary (for example `PUT 2.=5: (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. **Structural** edits (a single replace/delete span of 40+ original lines) return the new TAG and ops summary **without** numbered body lines so the next op must re-read. Successful `write` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
-
-Streaming cards project the edit document alone (op summaries + PUT bodies). Approval and start cards dry-run against live files when readable so removals appear as real `-` rows; missing or stale targets fall back to the document projection.
-
-Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write` to create or fully rewrite a file. Do not use shell or Python to rewrite UTF-8 sources that `edit` can express.
-
-### One read format for every caller
-
-`read_file` returns the hashline view for every UTF-8 text file, whether or not
-the caller can use `edit`. This is deliberate. Two read formats would
-make the output depend on the agent's tool set, so the same file would read
-differently to a subagent, a workflow step, and the automation CLI, and any
-prompt or parser downstream would have to handle both. One format costs a small
-number of input tokens per line and keeps every reader on the same contract.
-
-
-## Managed background processes
-
-The `process` tool has three actions. `start` launches a background shell command and returns its process ID; it accepts an optional timeout. `poll` requires a process ID and returns retained stdout and stderr, optionally continuing from a cursor or waiting briefly for changes. Continue from the returned `next_cursor` to avoid duplicate output. Retention is bounded, so sufficiently old output can be discarded; poll results report when a requested cursor predates the retained range. `stop` requires a process ID and terminates the managed process tree.
-
-Rho owns these processes only within the running instance. It cleans them up when that instance shuts down, and process records do not persist across restarts. The tool does not support stdin writes, process listing, pseudo-terminals, persistent sessions, or pane and session orchestration. Use a dedicated multiplexer such as tmux or Herdr when you need interactive terminals or persistent, orchestrated sessions.
-
-Managed processes use standard output and error pipes, with standard input closed. Commands that require interactive input or terminal emulation will not behave as they do in a foreground terminal. The tool executes shell commands with the same user permissions as Rho. Rho's [permission modes](/configuration#permission-modes) can deny or request approval before process execution, but they do not add operating-system sandboxing.
-
-## File writes and diffs
-
-Successful `write` and `edit` results return model-facing hashline snapshots for chaining. Unified diffs are tool metadata for UI cards (not repeated in model content). In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
+Built-in skills that ship with the binary include `rho-diagnostics`, `rho-config`, `rho-agent-creator`, and `rho-workflow-authoring`. Custom skills live under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to keep it available only through `/skill:<name>`.
 
 ## Security and workspace boundaries
 
@@ -126,3 +42,35 @@ Tools run with the current user's permissions. File tools can read or modify any
 Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. The SDK still scopes file access by default; embedded hosts must opt into broader access when they build a `Workspace`. Run Rho only in workspaces where you are comfortable with the selected mode and these limits.
 
 For session storage separate from the workspace, see [sessions](/sessions). For output-size settings, see [configuration](/configuration#tool-output-limit).
+
+## File edits and writes
+
+File edits use a hashline snapshot plus line-anchored `PUT`/`CUT` ops. Prefer `edit` for targeted changes and `write` for create-or-replace.
+
+Successful `write` and `edit` results return model-facing hashline snapshots for chaining. Unified diffs are tool metadata for UI cards (not repeated in model content). In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
+
+Details: [Edit format](/tools-workspace/edit-format).
+
+## Search tools
+
+`grep` and `glob` run in-process, honor ignore rules, and stay read-only so they work in every permission mode including `plan`.
+
+Details: [Search tools](/tools-workspace/search).
+
+## Documents and images
+
+`read_file` and `fetch_content` extract text-layer PDFs and Office docs under strict size limits, and can show bounded image thumbnails in supporting terminals.
+
+Details: [Documents and images](/tools-workspace/documents-and-images).
+
+## Web access and related tools
+
+Web tools store large bodies by `responseId`, refuse private destinations by default, and add provider amenities such as xAI `x_search` when relevant.
+
+Details: [Web access and related tools](/tools-workspace/web-access).
+
+## Background processes
+
+The `process` tool starts, polls, and stops managed background shell commands owned by the current Rho instance only.
+
+Details: [Background processes](/tools-workspace/background-processes).

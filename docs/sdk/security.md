@@ -2,7 +2,7 @@
 
 ## Default-deny authority
 
-The 1.0 security model is explicit authority with no sensitive capability granted by default. The current builder already defaults to:
+The security model is explicit authority with no sensitive capability granted by default. The current builder already defaults to:
 
 - no filesystem, process, network, web, skill, or coding tools
 - no workspace

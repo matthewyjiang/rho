@@ -1,5 +1,8 @@
 # Coordinated 1.0 release notes
 
+> Historical record of the 1.0.0 publication. Current releases are documented in the [SDK changelog](/sdk/changelog).
+
+
 `rho-sdk 1.0.0` and `rho-coding-agent 1.0.0` were published on 2026-07-15 from [#262](https://github.com/matthewyjiang/rho/issues/262). `rho-coding-agent` was immediately followed by a `1.0.1` patch ([#272](https://github.com/matthewyjiang/rho/issues/272)) that separated the application release process from the SDK's; it carries no SDK or user-facing behavior change.
 
 ::: warning Known gap

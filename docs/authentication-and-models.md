@@ -1,6 +1,6 @@
 # Authentication and models
 
-Rho supports several providers with different auth modes. This page covers the concepts shared across all of them. For provider-specific login, logout, environment overrides, and model selection, see the individual [provider pages](#providers).
+Rho supports several providers with different auth modes. This page covers the concepts shared across all of them. For provider-specific login, logout, environment overrides, and model selection, see the [provider index](/providers/) or the individual [provider pages](#providers).
 
 Provider, model, and auth mode are stored in [configuration](/configuration). Secrets are never stored in config.
 
@@ -28,28 +28,6 @@ Rho's implemented providers are:
 OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, and Meta Model API expose refreshable API model lists. Local Ollama needs no login; the other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
 
 Each provider page documents whether authentication is required, how to select models, and any provider-specific setup.
-
-## Where credentials live
-
-Rho recommends the native OS credential store. When the credential backend is still unset, the first interactive login for a **normal Rho provider** probes available backends and opens a picker before any secret is saved. Bare `/login` opens the provider group picker first; the store chooser appears only after you pick a normal provider (or run `/login <provider>`). CLI `rho login` asks the same store question on a TTY. If the OS probe fails, you can choose local file storage instead.
-
-Local file storage keeps secrets in `~/.rho/credentials/secrets.json` (or under `RHO_HOME`). Rho applies owner-only directory and file permissions on Unix and a protected user-only ACL on Windows. It is not encrypted at rest. Rho never selects it without an explicit login picker answer, CLI command, config value, or environment setting.
-
-Check or change the backend at any time:
-
-```bash
-rho credential-store status
-rho credential-store probe os
-rho credential-store probe file
-rho credential-store set os
-rho credential-store set file
-```
-
-Backends are `os` and `file` only. When no choice has been saved, Rho uses the OS store and does not fall back to a file. `rho credential-store status` prints the saved config policy only: `unset`, `os`, or `file`. `RHO_CREDENTIAL_STORE=os|file` overrides the saved policy for the current process. The policy contains no secrets and is saved in `~/.rho/config.toml` as `behavior.credential_store`.
-
-On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/keychain-access/if-youre-asked-for-access-to-your-keychain-kyca1243/mac) documentation when the OS asks whether to allow a credential-store operation.
-
-For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation. Pass `--save` with `--provider`, `--model`, `--auth`, or `--reasoning` to make those choices the saved default.
 
 ## First run
 
@@ -83,22 +61,6 @@ Outside setup, the session shows whether the active provider resolved to usable 
 - **No usable credentials.** The header hints lead with `/login`, in accent rather than dim. The statusline replaces the provider and model with `not signed in · /login`, so the state stays on screen no matter how far the transcript scrolls.
 - **A prompt sent while signed out** opens the login picker instead of failing a turn. Your text stays in the composer; press enter once a provider is live to send it.
 
-## Seeing these states without deleting your config
-
-`RHO_FIRST_RUN` opens the setup screen, and its value picks the step:
-
-```bash
-RHO_FIRST_RUN=signin rho   # the provider menu
-RHO_FIRST_RUN=model rho    # the model list
-RHO_FIRST_RUN=1 rho        # whichever step a real first launch would open
-```
-
-Name the step you want to see. A configured machine already lists models, so `RHO_FIRST_RUN=1` there behaves as it would for a user who has signed in and goes straight to the model step, leaving the provider menu unreachable.
-
-Forcing it this way opens setup on a machine that already has history and a chosen model, so setup is the only thing the flag changes; it neither clears state nor creates a fresh config.
-
-To see the signed-out session state, run `/logout <provider>` for the active provider. A successful login clears the signed-out header and statusline; setup ends when you choose a model, or when you leave it with Esc.
-
 ## Login and provider switching
 
 `/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
@@ -109,7 +71,7 @@ Successful login normally stores credentials only. It does not switch the active
 
 ### Claude Code runtime sign-in
 
-Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic API-key provider](/providers/anthropic). Anthropic does not allow third-party clients to use Claude.ai subscription credentials on their own API stacks, so Rho cannot put a Pro/Max plan on the normal Anthropic provider path. `runtime: claude-cli` is the indirect workaround: delegate a child to the official `claude` binary, which owns sign-in and plan usage (see [subscription workaround and how to use it](/subagents#claude-code-as-a-delegated-runtime)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
+Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic API-key provider](/providers/anthropic). Anthropic does not allow third-party clients to use Claude.ai subscription credentials on their own API stacks, so Rho cannot put a Pro/Max plan on the normal Anthropic provider path. `runtime: claude-cli` is the indirect workaround: delegate a child to the official `claude` binary, which owns sign-in and plan usage (see [subscription workaround and how to use it](/subagents/claude-cli)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
 
 - `/login claude-code` (or **Anthropic** → **Claude Code (delegation only)** in the picker) hands the terminal to `claude auth login --claudeai`. Rho suspends its TUI for that process and resumes when it exits.
 - Claude Code runs the sign-in UI, stores the subscription credential, and remains the owner of that state. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
@@ -136,6 +98,44 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
 OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, and Meta Model API can refresh their provider model lists through **Refresh model lists** in `/config`. Local Ollama reads its installed models without authentication. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released or newly installed model.
+
+## Where credentials live
+
+Rho recommends the native OS credential store. When the credential backend is still unset, the first interactive login for a **normal Rho provider** probes available backends and opens a picker before any secret is saved. Bare `/login` opens the provider group picker first; the store chooser appears only after you pick a normal provider (or run `/login <provider>`). CLI `rho login` asks the same store question on a TTY. If the OS probe fails, you can choose local file storage instead.
+
+Local file storage keeps secrets in `~/.rho/credentials/secrets.json` (or under `RHO_HOME`). Rho applies owner-only directory and file permissions on Unix and a protected user-only ACL on Windows. It is not encrypted at rest. Rho never selects it without an explicit login picker answer, CLI command, config value, or environment setting.
+
+Check or change the backend at any time:
+
+```bash
+rho credential-store status
+rho credential-store probe os
+rho credential-store probe file
+rho credential-store set os
+rho credential-store set file
+```
+
+Backends are `os` and `file` only. When no choice has been saved, Rho uses the OS store and does not fall back to a file. `rho credential-store status` prints the saved config policy only: `unset`, `os`, or `file`. `RHO_CREDENTIAL_STORE=os|file` overrides the saved policy for the current process. The policy contains no secrets and is saved in `~/.rho/config.toml` as `behavior.credential_store`.
+
+On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/keychain-access/if-youre-asked-for-access-to-your-keychain-kyca1243/mac) documentation when the OS asks whether to allow a credential-store operation.
+
+For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation. Pass `--save` with `--provider`, `--model`, `--auth`, or `--reasoning` to make those choices the saved default.
+
+## Seeing these states without deleting your config
+
+`RHO_FIRST_RUN` opens the setup screen, and its value picks the step:
+
+```bash
+RHO_FIRST_RUN=signin rho   # the provider menu
+RHO_FIRST_RUN=model rho    # the model list
+RHO_FIRST_RUN=1 rho        # whichever step a real first launch would open
+```
+
+Name the step you want to see. A configured machine already lists models, so `RHO_FIRST_RUN=1` there behaves as it would for a user who has signed in and goes straight to the model step, leaving the provider menu unreachable.
+
+Forcing it this way opens setup on a machine that already has history and a chosen model, so setup is the only thing the flag changes; it neither clears state nor creates a fresh config.
+
+To see the signed-out session state, run `/logout <provider>` for the active provider. A successful login clears the signed-out header and statusline; setup ends when you choose a model, or when you leave it with Esc.
 
 ## Model metadata
 

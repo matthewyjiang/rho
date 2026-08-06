@@ -2,14 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitepress'
-import type { Plugin } from 'vite'
+import type { DefaultTheme } from 'vitepress'
+import type { Plugin as VitePlugin } from 'vite'
 
 const configDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(configDir, '../..')
 const installScripts = ['install.sh', 'install.ps1'] as const
 
 /** Serve scripts/install.* at the docs site root (for example /rho/install.sh). */
-function installScriptsPlugin(): Plugin {
+function installScriptsPlugin(): VitePlugin {
   const scriptPath = (name: (typeof installScripts)[number]) =>
     path.join(repoRoot, 'scripts', name)
 
@@ -48,91 +49,225 @@ function installScriptsPlugin(): Plugin {
   }
 }
 
+const providerItems: DefaultTheme.SidebarItem[] = [
+  { text: 'OpenAI', link: '/providers/openai' },
+  { text: 'OpenAI (Codex OAuth)', link: '/providers/openai-codex' },
+  { text: 'Anthropic', link: '/providers/anthropic' },
+  { text: 'Google Gemini', link: '/providers/google-gemini' },
+  { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+  { text: 'Ollama', link: '/providers/ollama' },
+  { text: 'Ollama Cloud', link: '/providers/ollama-cloud' },
+  { text: 'OpenRouter', link: '/providers/openrouter' },
+  { text: 'Poolside', link: '/providers/poolside' },
+  { text: 'Moonshot and Kimi Code', link: '/providers/moonshot-kimi' },
+  { text: 'Qwen Token Plan', link: '/providers/qwen-token-plan' },
+  { text: 'Meta Model API', link: '/providers/meta' },
+  { text: 'xAI', link: '/providers/xai' },
+]
+
+const appSidebar: DefaultTheme.SidebarItem[] = [
+  {
+    text: 'Start',
+    items: [
+      { text: 'Overview', link: '/' },
+      { text: 'Getting started', link: '/getting-started' },
+      { text: 'Installation', link: '/installation' },
+      { text: 'Authentication and models', link: '/authentication-and-models' },
+      {
+        text: 'Providers',
+        collapsed: true,
+        items: [
+          { text: 'Provider index', link: '/providers/' },
+          ...providerItems,
+        ],
+      },
+    ],
+  },
+  {
+    text: 'Use Rho',
+    items: [
+      {
+        text: 'Interactive TUI',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/interactive-tui' },
+          { text: 'Attachments', link: '/interactive-tui/attachments' },
+          { text: 'Transcript display', link: '/interactive-tui/transcript' },
+          { text: 'Mermaid diagrams', link: '/interactive-tui/mermaid' },
+        ],
+      },
+      { text: 'Inline shell', link: '/inline-shell' },
+      { text: 'Automation and CLI', link: '/automation-cli' },
+      {
+        text: 'Workflows',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/workflows' },
+          { text: 'Authoring', link: '/workflows/authoring' },
+          { text: 'Runtime', link: '/workflows/runtime' },
+        ],
+      },
+      { text: 'Sessions', link: '/sessions' },
+    ],
+  },
+  {
+    text: 'Customize',
+    items: [
+      {
+        text: 'Configuration',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/configuration' },
+          { text: 'Advisor mode', link: '/configuration/advisor-mode' },
+          { text: 'Full example', link: '/configuration/full-example' },
+        ],
+      },
+      {
+        text: 'Tools and workspace',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/tools-workspace' },
+          { text: 'Edit format', link: '/tools-workspace/edit-format' },
+          { text: 'Search tools', link: '/tools-workspace/search' },
+          { text: 'Documents and images', link: '/tools-workspace/documents-and-images' },
+          { text: 'Web access', link: '/tools-workspace/web-access' },
+          { text: 'Background processes', link: '/tools-workspace/background-processes' },
+        ],
+      },
+      { text: 'Skills', link: '/skills' },
+      {
+        text: 'Hooks',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/hooks' },
+          { text: 'Protocol', link: '/hooks/protocol' },
+        ],
+      },
+      {
+        text: 'Subagents',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/subagents' },
+          { text: 'Definition schema', link: '/subagents/definition-schema' },
+          { text: 'Binding and security', link: '/subagents/binding-and-security' },
+          { text: 'Claude Code runtime', link: '/subagents/claude-cli' },
+          { text: 'Attachment and artifacts', link: '/subagents/attachment-and-artifacts' },
+        ],
+      },
+      { text: 'Usage ledger', link: '/usage-ledger' },
+    ],
+  },
+  {
+    text: 'Project',
+    items: [
+      { text: 'Development', link: '/development' },
+      { text: 'App changelog', link: '/changelog' },
+      { text: 'Rust SDK', link: '/sdk/' },
+    ],
+  },
+]
+
+const sdkSidebar: DefaultTheme.SidebarItem[] = [
+  {
+    text: 'SDK guide',
+    items: [
+      { text: 'Overview', link: '/sdk/' },
+      { text: 'Installation and support', link: '/sdk/installation' },
+      { text: 'Concepts and ownership', link: '/sdk/concepts' },
+      { text: 'Providers', link: '/sdk/providers' },
+      { text: 'Tools and capabilities', link: '/sdk/tools' },
+      { text: 'Hooks', link: '/sdk/hooks' },
+      { text: 'Sessions and persistence', link: '/sdk/sessions-and-persistence' },
+      { text: 'Events and cancellation', link: '/sdk/events-and-cancellation' },
+    ],
+  },
+  {
+    text: 'Security',
+    items: [
+      { text: 'Security model', link: '/sdk/security' },
+      { text: 'Threat model', link: '/sdk/threat-model' },
+      { text: 'Redaction audit', link: '/sdk/redaction-audit' },
+    ],
+  },
+  {
+    text: 'Reference and history',
+    collapsed: true,
+    items: [
+      { text: 'Compatibility contracts', link: '/sdk/compatibility' },
+      { text: 'Performance acceptance', link: '/sdk/performance' },
+      { text: 'SDK changelog', link: '/sdk/changelog' },
+      { text: 'Upgrade to 1.0 (historical)', link: '/sdk/upgrade-to-1.0' },
+      { text: '1.0 release notes (historical)', link: '/sdk/release-notes-1.0' },
+      { text: 'Release candidates (historical)', link: '/sdk/release-candidates' },
+    ],
+  },
+  {
+    text: 'Rho app docs',
+    items: [
+      { text: 'Getting started', link: '/getting-started' },
+      { text: 'Interactive TUI', link: '/interactive-tui' },
+      { text: 'Automation and CLI', link: '/automation-cli' },
+    ],
+  },
+]
+
 export default defineConfig({
   title: 'Rho',
   description: 'A lightweight agent harness inspired by Pi',
   base: '/rho/',
   cleanUrls: true,
+  lastUpdated: true,
   vite: {
     plugins: [installScriptsPlugin()],
   },
   themeConfig: {
     nav: [
       { text: 'Getting started', link: '/getting-started' },
-      { text: 'Interactive TUI', link: '/interactive-tui' },
-      { text: 'Automation', link: '/automation-cli' },
-      { text: 'Rust SDK', link: '/sdk/' },
-      { text: 'App changelog', link: '/changelog' }
-    ],
-    sidebar: [
       {
-        text: 'Rho',
+        text: 'Guide',
         items: [
-          { text: 'Overview', link: '/' },
-          { text: 'Getting started', link: '/getting-started' },
-          { text: 'Installation', link: '/installation' },
-          { text: 'Authentication and models', link: '/authentication-and-models' },
-          {
-            text: 'Providers',
-            collapsed: false,
-            items: [
-              { text: 'OpenAI', link: '/providers/openai' },
-              { text: 'OpenAI (Codex OAuth)', link: '/providers/openai-codex' },
-              { text: 'Anthropic', link: '/providers/anthropic' },
-              { text: 'Google Gemini', link: '/providers/google-gemini' },
-              { text: 'GitHub Copilot', link: '/providers/github-copilot' },
-              { text: 'Ollama', link: '/providers/ollama' },
-              { text: 'Ollama Cloud', link: '/providers/ollama-cloud' },
-              { text: 'OpenRouter', link: '/providers/openrouter' },
-              { text: 'Poolside', link: '/providers/poolside' },
-              { text: 'Moonshot and Kimi Code', link: '/providers/moonshot-kimi' },
-              { text: 'Qwen Token Plan', link: '/providers/qwen-token-plan' },
-              { text: 'Meta Model API', link: '/providers/meta' },
-              { text: 'xAI', link: '/providers/xai' }
-            ]
-          },
           { text: 'Interactive TUI', link: '/interactive-tui' },
-          { text: 'Inline shell', link: '/inline-shell' },
           { text: 'Automation and CLI', link: '/automation-cli' },
           { text: 'Workflows', link: '/workflows' },
           { text: 'Configuration', link: '/configuration' },
           { text: 'Tools and workspace', link: '/tools-workspace' },
-          { text: 'Skills', link: '/skills' },
-          { text: 'Hooks', link: '/hooks' },
           { text: 'Subagents', link: '/subagents' },
           { text: 'Sessions', link: '/sessions' },
-          { text: 'Usage ledger', link: '/usage-ledger' },
-          { text: 'Development', link: '/development' },
-          { text: 'App changelog', link: '/changelog' }
-        ]
+        ],
       },
       {
-        text: 'Rust SDK',
+        text: 'Providers',
         items: [
-          { text: 'Overview', link: '/sdk/' },
-          { text: 'Installation and support', link: '/sdk/installation' },
-          { text: 'Concepts and ownership', link: '/sdk/concepts' },
-          { text: 'Providers', link: '/sdk/providers' },
-          { text: 'Tools and capabilities', link: '/sdk/tools' },
-          { text: 'Sessions and persistence', link: '/sdk/sessions-and-persistence' },
-          { text: 'Events and cancellation', link: '/sdk/events-and-cancellation' },
-          { text: 'Compatibility contracts', link: '/sdk/compatibility' },
-          { text: 'Security model', link: '/sdk/security' },
-          { text: 'Threat model', link: '/sdk/threat-model' },
-          { text: 'Redaction audit', link: '/sdk/redaction-audit' },
-          { text: 'Performance acceptance', link: '/sdk/performance' },
-          { text: 'Upgrade to planned 1.0', link: '/sdk/upgrade-to-1.0' },
-          { text: 'Draft 1.0 release notes', link: '/sdk/release-notes-1.0' },
-          { text: 'Release candidates', link: '/sdk/release-candidates' },
-          { text: 'SDK changelog', link: '/sdk/changelog' }
-        ]
-      }
+          { text: 'Authentication and models', link: '/authentication-and-models' },
+          { text: 'Provider index', link: '/providers/' },
+          ...providerItems,
+        ],
+      },
+      { text: 'Rust SDK', link: '/sdk/' },
+      {
+        text: 'Changelog',
+        items: [
+          { text: 'App changelog', link: '/changelog' },
+          { text: 'SDK changelog', link: '/sdk/changelog' },
+        ],
+      },
     ],
+    sidebar: {
+      '/sdk/': sdkSidebar,
+      '/': appSidebar,
+    },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/matthewyjiang/rho' }
+      { icon: 'github', link: 'https://github.com/matthewyjiang/rho' },
     ],
     search: {
-      provider: 'local'
-    }
-  }
+      provider: 'local',
+    },
+    editLink: {
+      pattern: 'https://github.com/matthewyjiang/rho/edit/main/docs/:path',
+      text: 'Edit this page on GitHub',
+    },
+    outline: {
+      level: [2, 3],
+    },
+  },
 })

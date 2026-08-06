@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This is a repository-maintained design threat model for the `rho-sdk` 1.0 boundary. It is not an independent audit, penetration test, fuzzing report, or certification. Update it whenever authority, persistence, provider context, tool execution, or host integration changes.
+This is a repository-maintained design threat model for the `rho-sdk` public boundary. It is not an independent audit, penetration test, fuzzing report, or certification. Update it whenever authority, persistence, provider context, tool execution, or host integration changes.
 
 In scope:
 
@@ -89,9 +89,9 @@ Release and adapter tests should include at least:
 
 Documentation does not prove these tests have been run. Release evidence must identify each executed command and result.
 
-## Security invariants for 1.0
+## Security invariants
 
-A 1.0 release candidate must preserve these invariants:
+A release must preserve these invariants:
 
 1. No filesystem, process, or network capability is granted by default.
 2. No environment, credential-store, config, session, terminal, update, or logging side effect occurs during default SDK construction.

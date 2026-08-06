@@ -1,18 +1,19 @@
 # SDK compatibility and public contracts
 
-## Published and intended versions
+## Published crate
 
-`rho-sdk 1.0.0` is published on [crates.io](https://crates.io/crates/rho-sdk). This is the first stable version, and this page documents its actual public contract rather than a forward-looking intent.
+`rho-sdk` is published on [crates.io](https://crates.io/crates/rho-sdk). This page documents the public contract of the published crate. For additive changes between releases, see the [changelog](/sdk/changelog).
 
 ## Stability labels
 
-At 1.0:
+For the published crate:
 
-- the documented public API, snapshot schema rules, event lifecycle, cancellation/drop/shutdown behavior, capability defaults, and other behavior explicitly marked as contract are stable
+- the documented public API, snapshot schema rules, event lifecycle, cancellation/drop/shutdown behavior, capability defaults, and other behavior explicitly marked as contract are stable under Cargo SemVer
 - breaking changes to that contract require a major version bump, not a minor or patch release
-- consumers should pin a `1.x` version range and read the [upgrade guide](/sdk/upgrade-to-1.0) when migrating from a pre-1.0 checkout
+- consumers should depend on a major-compatible Cargo range and read the [changelog](/sdk/changelog) when adopting new minors
+- migrations from pre-stable application-private modules are covered only by the historical [upgrade guide](/sdk/upgrade-to-1.0)
 - provider-private wire formats and upstream service behavior are never stabilized by the core crate
-- some documented behavior did not fully meet the drafted release-candidate gates before publication; see [known limitations](/sdk/events-and-cancellation#known-limitations)
+- terminal-event delivery on non-cooperative exits remains a documented [known limitation](/sdk/events-and-cancellation#known-limitations)
 
 Internal modules, task/channel implementation details, exact allocation, delta chunk boundaries, provider-private payloads, application UI, and undocumented formatting remain implementation details.
 
@@ -23,7 +24,7 @@ A public item being exported does not by itself make every derived representatio
 `rho-sdk` deliberately declares an empty default feature set:
 
 ```toml
-rho-sdk = { version = "1.0", default-features = false }
+rho-sdk = { version = "1", default-features = false }
 ```
 
 The crate currently has no optional Cargo features. Default,
@@ -120,7 +121,7 @@ Public values follow these conventions:
 | IDs and revision | IDs clone and compare by full string; revisions copy and compare numerically | IDs are transparent non-empty strings; revision is a transparent integer | IDs are visible in `Display` and `Debug`; do not put secrets in IDs |
 | Provider-neutral history and usage | Deep clone and structural equality | Serde representation supports snapshots and historical message compatibility | Derived `Debug` can reveal prompts, images, tool arguments/results, summaries, usage, and opaque context |
 | `SessionSnapshot` and `CompactionState` | Deep clone and structural equality | Versioned JSON persistence boundary | Derived `Debug` reveals snapshot content; snapshots are sensitive |
-| Events and outcomes | Owned, cloneable, structural equality where implemented | Not a versioned wire format in 1.0 unless a separate event format is explicitly introduced | Event `Debug` can reveal model and tool content |
+| Events and outcomes | Owned, cloneable, structural equality where implemented | Not a versioned wire format unless a separate event format is explicitly introduced | Event `Debug` can reveal model and tool content |
 | Builders, runtime, sessions, runs, tokens, senders, and trait objects | Operational handles have type-specific clone/ownership behavior and are not value records | Not serializable | Custom `Debug` is diagnostic only and is not a general secret scrubber |
 | Workspace, policy, approvals, host input, tool metadata/output/errors | Structural equality where implemented; policies/handlers are behavior | Not a durable SDK schema | Paths, commands, URLs, diffs, questions, answers, and error text may be sensitive |
 
@@ -175,11 +176,11 @@ The following pages are normative for the stable 1.0 behavioral contract:
 - [tools, workspace paths, process/network limits, and approval behavior](/sdk/tools)
 - [security defaults and host obligations](/sdk/security)
 
-Where code and documentation disagree, treat it as a bug to resolve in the next release, not permission to select the less secure behavior. See [known limitations](/sdk/events-and-cancellation#known-limitations) for gaps that shipped in 1.0.0 despite the drafted release-candidate gates.
+Where code and documentation disagree, treat it as a bug to resolve in the next release, not permission to select the less secure behavior. See [known limitations](/sdk/events-and-cancellation#known-limitations) for remaining gaps.
 
 ## Deprecation policy
 
-After 1.0:
+After the 1.0 cutover:
 
 1. Public API or behavior planned for removal is marked deprecated in Rust and documented in release notes with a replacement and rationale.
 2. Deprecated stable APIs remain available through the rest of the current major release whenever safety and security permit.
@@ -192,24 +193,21 @@ After 1.0:
 
 ## Minimum supported Rust version
 
-The `rho-sdk` minimum supported Rust version (MSRV) is **1.86**. The
-`rho-coding-agent` application MSRV is **1.92** because its terminal,
-credential, and terminal-native Mermaid rendering dependencies require a newer
-compiler. Both values are declared as
-`package.rust-version` in Cargo metadata and tested in CI.
+Embedders must build with a Rust toolchain at least as new as the
+`package.rust-version` declared by the published `rho-sdk` crate on crates.io.
+That field is the source of truth for hosts.
 
-An MSRV increase must not ship as a patch release. It must update Cargo
-metadata, this page, and CI together, and release notes must call it out. After
-1.0, an SDK MSRV increase requires at least a minor version increase. Emergency
-compiler requirements caused by a security or soundness fix may skip normal
-notice, but still require coordinated metadata and CI updates.
+Contributor-facing MSRV values for both `rho-sdk` and `rho-coding-agent`, and the
+rules for raising them, live in [development](/development#rust-toolchain-and-msrv).
+CI keeps those development docs synchronized with Cargo metadata.
+
 
 ## Semantic-version and downstream checks
 
 Public Rust items, documented event ordering and cancellation behavior, feature
 names, and versioned persisted formats are compatibility contracts. CI runs
 `cargo-semver-checks` against the pull-request base when that revision contains
-`rho-sdk`. Post-1.0, breaking changes require a major version bump and must not
+`rho-sdk`. Breaking changes after the first stable major require a major version bump and must not
 ship in a minor or patch release.
 
 The excluded workspace in `fixtures/downstream` has its own committed lockfile

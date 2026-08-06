@@ -82,16 +82,18 @@ def check_metadata() -> None:
     if not application_msrv:
         raise RuntimeError("rho-coding-agent must declare package.rust-version")
 
-    policy = (ROOT / "docs" / "sdk" / "compatibility.md").read_text(encoding="utf-8")
-    policy_markers = {
+    development = (ROOT / "docs" / "development.md").read_text(encoding="utf-8")
+    msrv_markers = {
         "rho-sdk": f"`rho-sdk` minimum supported Rust version (MSRV) is **{sdk_msrv}**",
         "rho-coding-agent": (
             f"`rho-coding-agent` application MSRV is **{application_msrv}**"
         ),
     }
-    for name, marker in policy_markers.items():
-        if marker not in policy:
-            raise RuntimeError(f"compatibility policy must document {name} MSRV")
+    for name, marker in msrv_markers.items():
+        if marker not in development:
+            raise RuntimeError(
+                f"development docs must document {name} MSRV"
+            )
     fixture_workspace = load_toml(DOWNSTREAM_ROOT / "Cargo.toml")
     for member in fixture_workspace["workspace"]["members"]:
         manifest = load_toml(DOWNSTREAM_ROOT / member / "Cargo.toml")
