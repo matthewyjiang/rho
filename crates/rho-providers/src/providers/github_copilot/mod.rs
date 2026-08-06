@@ -90,6 +90,7 @@ impl GitHubCopilotProvider {
             messages,
             tools: has_tools.then_some(tools),
             tool_choice: has_tools.then_some("auto"),
+            parallel_tool_calls: has_tools.then_some(true),
             stream,
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,

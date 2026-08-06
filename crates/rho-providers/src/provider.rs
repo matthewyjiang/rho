@@ -83,6 +83,12 @@ impl ProviderRuntime {
 /// OpenAI API-key and Codex OAuth are two auth modes on the same backend;
 /// all other providers are isolated families. Add new groupings here rather
 /// than hiding them in runtime equality.
+///
+/// Next-major intent: collapse `openai` + `codex` into one provider with two
+/// auth modes (like `openrouter`/`xai` already do) so family grouping becomes
+/// unnecessary; similarly `kimi-code` wants to be an auth mode on `moonshot`
+/// rather than a separate provider with a different API base, which is why
+/// `catalog::CROSS_PROVIDER_LOGIN_GROUPS` exists.
 const AUTH_FAMILY_GROUPS: &[&[ProviderId]] = &[&[ProviderId::OpenAi, ProviderId::OpenAiCodex]];
 
 pub fn same_provider_family(left: ProviderId, right: ProviderId) -> bool {
