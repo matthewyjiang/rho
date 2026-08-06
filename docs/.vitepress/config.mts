@@ -108,6 +108,15 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
         ],
       },
       { text: 'Sessions', link: '/sessions' },
+      {
+        text: 'Integrations',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/integrations' },
+          { text: 'Herdr', link: '/integrations/herdr' },
+          { text: 'RTK', link: '/integrations/rtk' },
+        ],
+      },
     ],
   },
   {
@@ -241,6 +250,7 @@ export default withMermaid({
           { text: 'Tools and workspace', link: '/tools-workspace' },
           { text: 'Subagents', link: '/subagents' },
           { text: 'Sessions', link: '/sessions' },
+          { text: 'Integrations', link: '/integrations' },
         ],
       },
       {

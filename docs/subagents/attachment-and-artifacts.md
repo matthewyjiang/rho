@@ -34,7 +34,7 @@ Each run directory can contain:
 
 Run IDs stay globally unique. `rho attach` first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This lets another process attach from any working directory while keeping unindexed older runs available.
 
-Detaching does not cancel execution. Herdr panes also run `rho attach <id>` and never own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
+Detaching does not cancel execution. [Herdr](/integrations/herdr) panes also run `rho attach <id>` and never own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
 
 A direct automation run can persist the same status contract:
 

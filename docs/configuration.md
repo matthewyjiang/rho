@@ -207,6 +207,6 @@ Model metadata supplies the effective context window when available. Pricing-sen
 
 ## RTK
 
-`rtk` enables built-in RTK command rewriting when the `rtk` binary is available. It defaults to `true`; set `rtk = false` to leave shell commands unchanged.
+`rtk` enables built-in [RTK](/integrations/rtk) command rewriting when the `rtk` binary is available. It defaults to `true`; set `rtk = false` to leave shell commands unchanged.
 
-Rewritten commands run through the RTK binary, so their savings are recorded by `rtk gain`. Rho also writes RTK-compatible command records and output sizes under the Claude projects directory so `rtk discover` can include Rho shell commands. Command output is not copied into these compatibility records. Set `CLAUDE_CONFIG_DIR` to override the default `~/.claude` location used by both Rho and RTK.
+Full behavior, version requirements, analytics paths, and doctor checks are on the [RTK](/integrations/rtk) page.

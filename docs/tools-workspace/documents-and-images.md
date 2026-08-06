@@ -115,8 +115,8 @@ provider multimodal path; see [attachments](/interactive-tui/attachments).
 | Environment | Behavior |
 | --- | --- |
 | Kitty, Ghostty | Graphics protocol preview in the feed |
-| Herdr with paintable Kitty client | Kitty placements through the host |
-| Herdr without host cell metrics | Halfblock preview so reserved rows are not blank |
+| [Herdr](/integrations/herdr) with paintable Kitty client | Kitty placements through the host |
+| [Herdr](/integrations/herdr) without host cell metrics | Halfblock preview so reserved rows are not blank |
 | Persistent tmux | Text fallback (no graphics probe; env can describe a stale client) |
 | Other terminals | Text tool result only; no graphics escape sequences |
 

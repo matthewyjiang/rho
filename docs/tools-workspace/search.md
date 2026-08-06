@@ -2,7 +2,7 @@
 
 Parent: [Tools and workspace](/tools-workspace).
 
-`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or `rtk`. Prefer these tools over shell search for workspace inspection: `grep` content mode mints chainable `[path#TAG]` snapshots (via the hashline header format) and match line numbers so `edit` can target anchors. Match text is search preview only.
+`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or [RTK](/integrations/rtk). Prefer these tools over shell search for workspace inspection: `grep` content mode mints chainable `[path#TAG]` snapshots (via the hashline header format) and match line numbers so `edit` can target anchors. Match text is search preview only.
 
 - Patterns: `grep` takes a Rust/`regex` pattern. `glob` takes a path glob; a pattern with no `/` (for example `*.rs`) matches nested paths as `**/*.rs`.
 - Defaults: both honor `.gitignore`, skip hidden files, and never follow symlinks. Pass `include_hidden` when you need dotfiles.
