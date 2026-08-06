@@ -4,6 +4,18 @@ Parent: [Workflows](/workflows).
 
 Starlark source shape, node types, output schemas, and conditions.
 
+```mermaid
+flowchart TD
+    entry[Entry WORKFLOW] --> build[build inputs]
+    build --> nodes[Node graph]
+    nodes --> agentN[agent]
+    nodes --> cmdN[command]
+    nodes --> shellN[shell]
+    agentN --> deps[needs and when]
+    cmdN --> deps
+    shellN --> deps
+    deps --> plan[Frozen plan]
+```
 
 ## Source format
 
@@ -82,11 +94,21 @@ An entry and every loaded module must:
 Rho loads each module once, sorts the source manifest by label, rejects import
 cycles, and includes every source digest in the plan.
 
-
 ## Node types
 
 Every node has a unique portable name. Names start with `a-z`, contain at most
 63 ASCII bytes, and then use only `a-z`, `0-9`, `_`, or `-`.
+
+```mermaid
+flowchart LR
+    a[inspect agent] --> b[check command]
+    b --> c[fix command]
+    a --> d[summarize agent]
+    c --> d
+```
+
+Edges come from `needs`. Optional `when` conditions can skip or block a node
+without inventing cycles.
 
 All node constructors accept these common fields:
 
@@ -177,7 +199,6 @@ Command standard input is closed. Rho captures bounded stdout and stderr and
 stops the supervised process tree on timeout or cancellation. A command exit
 records an integer code, signal, timeout, cancellation, or abnormal end.
 
-
 ## Output schemas
 
 Rho supports a small first-party schema language. It is not JSON Schema.
@@ -206,7 +227,6 @@ output = schema.stdout_json(schema.record({"passed": schema.bool()}))
 
 Rho parses the complete bounded stdout value after the process exits. Invalid
 JSON or a schema mismatch is a typed node failure.
-
 
 ## Templates and conditions
 

@@ -2,6 +2,16 @@
 
 Rho persists interactive conversation history so you can resume work later.
 
+```mermaid
+flowchart TD
+    first[First user message] --> folder[Session folder under workspace key]
+    folder --> transcript[session.jsonl tree]
+    folder --> web[web sidecar]
+    folder --> kids[subagents artifacts]
+    transcript --> resume[rho --resume /resume]
+    transcript --> tree["/tree branch restore"]
+```
+
 ## Storage location
 
 Sessions persist automatically under:
@@ -36,6 +46,18 @@ For those legacy files, web-access blobs use a sibling companion directory named
 Starting `rho` opens the [interactive TUI](/interactive-tui). Rho creates a new session folder only after you send the first message.
 
 ## Resuming a session
+
+```mermaid
+flowchart TD
+    id[UUID or prefix] --> local[Current workspace match]
+    local -->|miss| global[Search all workspaces]
+    local -->|hit| own[Continue under session workspace]
+    global -->|hit| own
+    global -->|miss| err[Not found]
+    own --> missing{Workspace still exists?}
+    missing -->|yes| tui[Interactive TUI]
+    missing -->|no| report[Report original path]
+```
 
 To resume an existing session for the current workspace, pass its UUID or UUID prefix with `--resume` or `-R`:
 
@@ -94,7 +116,18 @@ After you send at least one message, Rho restores your shell view on exit and pr
 
 ## Conversation trees
 
-Each saved session is an append-only tree of completed conversation states. Use `/tree` to select any valid turn or compaction state in the current session. Press `up` or `down` to move, type to filter, press `enter` to restore, or press `escape` to cancel. Continuing after you restore an earlier state creates a branch without deleting the path you left. `/info` shows the active leaf ID, node count, and branch count.
+Each saved session is an append-only tree of completed conversation states.
+
+```mermaid
+flowchart LR
+    root[Session root] --> a[Turn A]
+    a --> b[Turn B]
+    a --> c[Branch after restore]
+    b --> d[Compaction node]
+    d --> e[Later turns]
+```
+
+Use `/tree` to select any valid turn or compaction state in the current session. Press `up` or `down` to move, type to filter, press `enter` to restore, or press `escape` to cancel. Continuing after you restore an earlier state creates a branch without deleting the path you left. `/info` shows the active leaf ID, node count, and branch count.
 
 Navigation restores conversation and model state only. It does not undo file edits, shell commands, network requests, or any other tool side effects. `/export` renders the active path. The resume picker still shows one row for the whole session, and deleting a session deletes all its branches.
 

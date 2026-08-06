@@ -8,6 +8,16 @@ Observe any delegated run without owning its execution:
 rho attach abc123
 ```
 
+```mermaid
+flowchart TD
+    attach[rho attach id] --> index[Global run index]
+    index --> sessionDir[Session-owned subagents folder]
+    index --> globalDir["~/.rho/subagents id"]
+    sessionDir --> watch[Read-only event stream]
+    globalDir --> watch
+    watch --> detach[Detach leaves run running]
+```
+
 Runs started by a saved interactive session store durable artifacts with that session:
 
 ```text

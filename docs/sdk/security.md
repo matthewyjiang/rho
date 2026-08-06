@@ -4,6 +4,17 @@
 
 The security model is explicit authority with no sensitive capability granted by default. The current builder already defaults to:
 
+```mermaid
+flowchart TD
+    builder[RhoBuilder defaults] --> none[No tools workspace or ambient IO]
+    none --> deny[DenyAllPolicy]
+    none --> noAppr[DenyApprovals]
+    host[Host choices] --> provider[Register provider]
+    host --> tools[Register tools]
+    host --> ws[Attach workspace and policy]
+    host --> appr[Approval handler]
+```
+
 - no filesystem, process, network, web, skill, or coding tools
 - no workspace
 - `DenyAllPolicy` for capability requests
@@ -25,13 +36,38 @@ The default-deny posture above applies to external SDK embedders. The shipped Rh
 
 Sensitive operations are represented as separate `CapabilityKind` values for path reads, path writes, process execution, network access, skill loading, and instruction discovery. A request also records whether it came from host-provided code, a built-in adapter, or prompt construction. A host policy returns allow, deny, or require approval. Defaults deny.
 
+```mermaid
+flowchart LR
+    op[CapabilityOperation] --> policy[Host policy]
+    policy --> allow[Allow]
+    policy --> deny[Deny]
+    policy --> ask[Require approval]
+    ask --> once[AllowOnce]
+    ask --> session[AllowForSession exact rule]
+```
+
 Security decisions are made from `CapabilityOperation`, not model prose, shell display strings, tool names, or presentation metadata. Process requests include cwd, shell versus direct execution, executable lookup, arguments, environment inheritance, timeout, and output bounds. Built-ins declare their origin and capability classes in diagnostics. Host-provided tools remain trusted in-process code.
 
 An approval can be one-shot or remembered for the exact structured request in the current session. Remembered rules never override the current policy and are not persisted. Sanitized approval audit records contain only sequence, capability class, and decision. Reasons and operation details are excluded.
 
 ## Workspace scope
 
-A `Workspace` stores a canonical primary root and optional canonical roots deliberately attached by the host. A host can instead opt into unrestricted file paths. Path scopes control resolution; they do not grant capability authority. Read resolution requires an existing canonical target. Write resolution canonicalizes either the target or its nearest existing parent. Both return a `ResolvedWorkspacePath` with primary-workspace, granted-root, or unrestricted-filesystem scope. Built-ins authorize that object, revalidate it immediately before I/O, and use its canonical path.
+A `Workspace` stores a canonical primary root and optional canonical roots deliberately attached by the host. A host can instead opt into unrestricted file paths. Path scopes control resolution; they do not grant capability authority.
+
+```mermaid
+flowchart TD
+    path[Requested path] --> resolve[resolve_for_read or resolve_for_write]
+    resolve --> scope{Path scope}
+    scope --> primary[Primary workspace]
+    scope --> granted[Granted root]
+    scope --> unrestricted[Unrestricted filesystem]
+    primary --> auth[Capability authorize]
+    granted --> auth
+    unrestricted --> auth
+    auth --> reval[revalidate before I/O]
+```
+
+Read resolution requires an existing canonical target. Write resolution canonicalizes either the target or its nearest existing parent. Both return a `ResolvedWorkspacePath` with primary-workspace, granted-root, or unrestricted-filesystem scope. Built-ins authorize that object, revalidate it immediately before I/O, and use its canonical path.
 
 By default, parent traversal is rejected even when it would normalize back inside, absolute paths must be under the primary or an attached root, and symlinks outside configured roots fail. `Workspace::with_unrestricted_file_access` permits parent traversal and absolute paths, but paths outside the primary workspace retain unrestricted-filesystem scope and still require policy authorization. Missing reads fail; missing writes have an explicit state.
 

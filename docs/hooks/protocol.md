@@ -4,7 +4,6 @@ Parent: [Hooks](/hooks).
 
 This page covers event payloads, decisions, pipeline placement, environment, bounds, and diagnostics.
 
-
 ## The event a hook receives
 
 One bounded JSON document on stdin:
@@ -75,7 +74,6 @@ host, and path with userinfo and query removed, plus a `query_present` flag.
 Paths and shell command text **are** included, because inspecting them is the
 whole point of a deny hook.
 
-
 ## Answering a blocking event
 
 A `before_tool_use` handler must write exactly one JSON decision:
@@ -109,11 +107,25 @@ second budget.
 Observational handlers do not answer. Their stdout is not parsed, their failures
 are recorded and visible, and they never fail a run.
 
-
 ## Where a hook sits in the pipeline
 
-For one tool call, in order: resolve the tool, validate arguments, evaluate
-workspace policy, run trusted deny-only hooks, request user approval, execute.
+For one tool call, the path is fixed. Hooks sit after workspace policy and
+before host approval.
+
+```mermaid
+flowchart TD
+    resolve[Resolve tool] --> validate[Validate arguments]
+    validate --> policy[Evaluate workspace policy]
+    policy -->|Deny| denied[Denied by policy]
+    policy -->|Allow or RequireApproval| hooks[before_tool_use hooks]
+    hooks -->|deny| hookDenied[Denied by hook]
+    hooks -->|continue| approval{Approval required?}
+    approval -->|yes| prompt[Host approval]
+    approval -->|no| exec[Execute]
+    prompt -->|allow| exec
+    prompt -->|deny| userDenied[Denied by user]
+    exec --> after[after_tool_use]
+```
 
 A hook can only keep the current decision or make it stricter:
 
@@ -129,7 +141,6 @@ In supervised mode a hook denial happens before you are prompted. In auto mode
 it becomes an ordinary tool failure the model reads and can respond to. Hooks
 cannot widen workspace policy, sandbox policy, permission mode, or an existing
 denial, and they cannot rewrite tool arguments.
-
 
 ## Trust
 
@@ -156,7 +167,6 @@ once at load, and diagnostics show the resolved path.
 
 A hooks file that fails validation in a trusted workspace disables hooks for
 that session and logs why. It never half-loads.
-
 
 ## What a hook program gets
 
@@ -185,7 +195,6 @@ On timeout or cancellation Rho kills the whole process tree: a process group on
 Unix, a job object on Windows. A background process your hook started does not
 outlive the hook.
 
-
 ## Bounds
 
 - Event payloads are capped at 64 KiB, with individual fields capped at 8 KiB
@@ -206,7 +215,6 @@ bound. The full workflow event uses the same 64 KiB envelope bound. The
 `bounds.fields` list names each shortened identifier or artifact reference. If
 the artifact list must be shortened to fit the envelope, it also names
 `payload.artifact_references`.
-
 
 ## Diagnostics
 
@@ -247,7 +255,6 @@ is atomic: a blocking decision already in flight keeps the hook set it started
 with. A session that started with no hooks, or without a whole class of hooks
 (blocking vs observational), needs a restart to pick new ones up, because
 installing a gate or worker rebuilds the runtime.
-
 
 ## Not in this release
 

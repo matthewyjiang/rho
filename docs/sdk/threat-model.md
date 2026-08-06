@@ -4,6 +4,17 @@
 
 This is a repository-maintained design threat model for the `rho-sdk` public boundary. It is not an independent audit, penetration test, fuzzing report, or certification. Update it whenever authority, persistence, provider context, tool execution, or host integration changes.
 
+```mermaid
+flowchart TD
+    host[Host process] --> sdk[rho-sdk]
+    sdk --> provider[Provider service]
+    sdk --> fs[Filesystem]
+    sdk --> proc[Processes]
+    sdk --> net[Network]
+    model[Model output] --> tools[Tool arguments]
+    tools --> sdk
+```
+
 In scope:
 
 - prompt and instruction sources
@@ -53,6 +64,16 @@ The SDK builder defaults to deny, but the shipped Rho application is an explicit
 7. **Memory to persistence/export:** snapshots cross into storage, backups, telemetry, or recipients.
 8. **Instruction discovery to prompt:** repository files, skills, and fetched content can influence model decisions but cannot grant authority.
 9. **Tool batch scheduler:** model calls share one run coordinator. Prepared capability and resource declarations gate overlap, but they do not synchronize other runs or work that survives an invocation.
+
+```mermaid
+flowchart LR
+    host[Host] --> sdk[SDK]
+    sdk --> provider[Provider]
+    model[Model] --> tools[Tools]
+    tools --> fs[FS / process / network]
+    sdk --> ui[UI and logs]
+    sdk --> snap[Snapshots]
+```
 
 ## Threats, controls, and residual risk
 

@@ -4,6 +4,14 @@ Parent: [Agents and delegation](/subagents).
 
 Rho can hand a delegated agent to the installed `claude` binary instead of running Rho's own loop. The parent stays in Rho. The child uses Claude Code's harness and the user's Claude subscription. Model choice and runtime choice stay separate: picking an Anthropic model on the Rho runtime is not the same as `runtime: claude-cli`.
 
+```mermaid
+flowchart LR
+    parent[Rho parent session] --> agentTool[agent tool]
+    agentTool --> claude[claude binary child]
+    claude --> sub[Claude subscription credential]
+    claude --> attach[rho attach / completion]
+```
+
 ## Subscription workaround
 
 Anthropic does not allow third-party clients to sign in with Claude.ai Free/Pro/Max credentials or to route those plans through their own API stacks. Rho's Anthropic provider path is API-key billing only.
@@ -24,6 +32,15 @@ Skip this feature when you only need "a subagent on Opus" through Rho's normal p
 Claude-cli agents are **delegated only**. The interactive root and `rho run` root cannot bind `runtime: claude-cli`. A Rho parent must launch them through the `agent` tool.
 
 ## How to use it
+
+```mermaid
+flowchart TD
+    install[Install claude binary] --> login["/login claude-code"]
+    login --> def[Write runtime claude-cli agent]
+    def --> doctor["/doctor /agents /info"]
+    doctor --> launch[Parent agent tool launch]
+    launch --> watch[attach cancel resume]
+```
 
 1. **Install the binary** (Rho does not ship it):
 

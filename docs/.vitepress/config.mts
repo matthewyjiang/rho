@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 import type { DefaultTheme } from 'vitepress'
 import type { Plugin as VitePlugin } from 'vite'
 
@@ -211,12 +211,20 @@ const sdkSidebar: DefaultTheme.SidebarItem[] = [
   },
 ]
 
-export default defineConfig({
+export default withMermaid({
   title: 'Rho',
   description: 'A lightweight agent harness inspired by Pi',
   base: '/rho/',
   cleanUrls: true,
   lastUpdated: true,
+  // Render fenced ```mermaid blocks as interactive diagrams.
+  mermaid: {
+    securityLevel: 'strict',
+    theme: 'neutral',
+  },
+  mermaidPlugin: {
+    class: 'rho-mermaid',
+  },
   vite: {
     plugins: [installScriptsPlugin()],
   },

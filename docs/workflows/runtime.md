@@ -4,10 +4,25 @@ Parent: [Workflows](/workflows).
 
 Run state, scheduling, workspace access, digests, permissions, cancellation, artifacts, and limits.
 
-
 ## State and outcome
 
-Node states are:
+Nodes move through a small set of typed states. Terminal outcomes stay distinct
+so conditions and resume logic never treat them as interchangeable.
+
+```mermaid
+stateDiagram
+    [*] --> pending
+    pending --> ready: deps and when ok
+    pending --> skipped: when is false
+    pending --> blocked: required value unavailable
+    ready --> running: scheduler launches
+    running --> success
+    running --> failure
+    running --> denial
+    running --> cancellation
+```
+
+### Node states
 
 - `pending`
 - `ready`
@@ -23,15 +38,26 @@ Node states are:
 run because a required input or dependency result is unavailable. These states
 are not interchangeable.
 
+### Workflow outcomes
+
 Workflow outcomes are `success`, `failure`, `denial`, `cancellation`, or
 `blocked`. `allow_failure = True` affects workflow outcome only. It does not
 turn a failed node into success, and status conditions still see `failure`.
-
 
 ## Deterministic scheduling
 
 The scheduler uses only the frozen graph, durable state, and frozen capacity
 settings. It does not use wall-clock timing to choose a ready node.
+
+```mermaid
+flowchart TD
+    pass[Scheduling pass] --> update[Update deps and conditions in node ID order]
+    update --> ready[Build ready set in node ID order]
+    ready --> pick[Launch first node that fits capacity]
+    pick --> more{Another node fits?}
+    more -->|yes| pick
+    more -->|no| wait[Stop until state changes]
+```
 
 For each scheduling pass, Rho:
 
@@ -43,10 +69,17 @@ For each scheduling pass, Rho:
 Completion order can vary when nodes run in parallel. The next launch decision
 for a given durable state does not.
 
-
 ## Workspace access
 
 Rho uses one canonical checkout. It does not create or merge worktrees.
+
+```mermaid
+flowchart LR
+    readers[Read-only nodes] -->|share| checkout[Canonical checkout]
+    writer[Mutating node] -->|exclusive| checkout
+```
+
+### Access rules
 
 - A Rho agent may use `read_only` only when its frozen capability set excludes
   writes, process execution, nested agents, nested workflows, and other
@@ -60,7 +93,6 @@ An in-process fair lock prevents a stream of readers from starving a writer.
 Separate Rho processes use a shared filesystem lock. Cross-process lock order
 is safe but not fair, so a mutating node can wait behind readers from other Rho
 processes.
-
 
 ## Plans, digests, and exact resume
 
@@ -93,7 +125,6 @@ verified original path because their current process adapter cannot keep the
 same handle-based guarantee. Workflows with only in-process Rho agent nodes
 remain available there.
 
-
 ## Permissions, approval, and trust
 
 Plan confirmation and capability approval are separate.
@@ -111,12 +142,12 @@ Plan confirmation:
 Every command node uses the host-only `workflow_command` tool with the frozen
 process facts. The request follows this order:
 
-```text
-workspace policy
-before_tool_use hook
-host approval when policy requires it
-execution
-after_tool_use hook
+```mermaid
+flowchart TD
+    policy[workspace policy] --> before[before_tool_use hook]
+    before --> approval[host approval when policy requires it]
+    approval --> exec[execution]
+    exec --> after[after_tool_use hook]
 ```
 
 Permission modes map a `workflow_command` process request as follows:
@@ -135,10 +166,23 @@ Project workflow sources and project agent definitions follow project trust
 rules. User hooks remain eligible. Project hooks stay inactive until the
 workspace is trusted. See [Hooks](/hooks).
 
-
 ## Cancellation and process exit
 
-Cancellation is durable intent. The active owner:
+Cancellation is durable intent. The active owner walks a fixed cleanup path
+before it stores terminal state.
+
+```mermaid
+flowchart TD
+    req[Cancel request] --> stopNew[Stop new launches]
+    stopNew --> intent[Record cancellation intent]
+    intent --> stopActive[Cancel active agents and process trees]
+    stopActive --> cleanup[Bounded cleanup]
+    cleanup --> store[Store attempt and node outcomes]
+    store --> unlock[Release checkout and run locks]
+    unlock --> final[Write final durable state]
+```
+
+The active owner:
 
 1. stops new launches
 2. records cancellation intent
@@ -155,7 +199,6 @@ After an unclean exit, an attempt with uncertain process ownership becomes
 `needs_recovery`. The first release does not infer success and does not start an
 automatic retry. Inspect the process and artifacts, then use an explicit
 recovery action.
-
 
 ## Artifacts and storage
 
@@ -185,10 +228,14 @@ Plans and runs remain until you remove the Rho data. The first release has no
 automatic retention policy. Treat source snapshots, inputs, prompts, model
 answers, and command output as sensitive local data.
 
-
 ## Planning limits
 
-Planning checks named measured budgets for:
+Planning checks named measured budgets. A limit error names the budget, accepted
+limit, and requested or measured value. Runtime values do not use hidden
+defaults for timeout or output limits. Rho evaluates untrusted Starlark only in
+its supervised planning worker.
+
+### What planning checks
 
 - total source bytes, module count, and module depth
 - evaluator work, heap, call stack, and wall time
@@ -200,9 +247,7 @@ Planning checks named measured budgets for:
 - rendered templates, expanded prompts and argv, node timeouts, and retained
   command output
 
-A limit error names the budget, accepted limit, and requested or measured
-value. Runtime values do not use hidden defaults for timeout or output limits.
-Rho evaluates untrusted Starlark only in its supervised planning worker.
+### Receipt and corpus
 
 The checked-in receipt records each corpus measurement, its free margin, and
 the accepted value. The planner reads its limits from that receipt. The corpus
@@ -210,6 +255,8 @@ is not one small example. A deterministic generator creates separate stress
 cases for source modules, evaluator work and heap, values, a 750-node and
 7,500-edge graph, schemas and conditions, serialized graph size, runtime output,
 templates, prompts, argv, inputs, and planner process frames.
+
+### Verify the receipt
 
 Build Rho and verify the receipt with:
 
@@ -226,6 +273,8 @@ frame differs, or if wall time or address space loses its stated safety margin.
 Wall time and address space use checked baselines because OS load can change
 them. The verifier allows at most twice the baseline and still requires the
 separate minimum margin recorded in the receipt.
+
+### Address space and environment sentinel
 
 On Linux, the address-space value is the highest `/proc/<pid>/status` `VmSize`
 seen after the supervised child starts the planner worker executable. This omits
@@ -244,6 +293,8 @@ value and the hard limit.
 The `environment_expansion_bytes` zero baseline in the receipt is a schema
 sentinel, not a corpus measurement. Workflow schema v1 forbids
 source-controlled environment entries and keeps a one-byte accepted floor.
+
+### Fixture paths and current stress values
 
 The receipt and corpus map are in
 `crates/rho/src/workflow/fixtures/limit_receipt.json` and
@@ -275,7 +326,6 @@ measured 33 ms for acknowledgement, final command cleanup, and workflow owner
 completion. The accepted limits are 2,000 ms, 2,000 ms, and 2,500 ms. The
 cancellation command checks both the accepted limits and twice the checked
 baseline.
-
 
 ## First-release limits
 

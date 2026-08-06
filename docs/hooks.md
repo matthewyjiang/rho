@@ -8,6 +8,13 @@ use a Rho workflow.
 A hook is an ordinary executable. Rho sends it one JSON event on stdin. For the
 one blocking event, the program answers with a JSON decision on stdout.
 
+```mermaid
+flowchart LR
+    event[Rho event JSON] --> hook[Hook program]
+    hook -->|before_tool_use| decision[continue or deny]
+    hook -->|other events| observe[Observe only]
+```
+
 ## Files
 
 ```text
@@ -22,6 +29,7 @@ trust questions.
 ## A first hook
 
 ```toml
+
 # ~/.rho/hooks.toml
 version = 1
 
@@ -73,7 +81,18 @@ configuration error names the file, the hook ID, and the field.
 
 ## Events
 
-Delivered at schema version 2:
+Delivered at schema version 2. Most events are observational. Only
+`before_tool_use` can stop work.
+
+```mermaid
+flowchart TD
+    session[session_started] --> tools[tool calls during runs]
+    tools --> before[before_tool_use blocking]
+    before --> after[after_tool_use]
+    after --> runEnd[run_completed or run_failed]
+    runEnd --> sessionEnd[session_completed or session_failed]
+    tools --> workflow[workflow_* observational events]
+```
 
 | Event | Kind | Fires |
 | --- | --- | --- |

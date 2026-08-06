@@ -1,9 +1,21 @@
 # SDK concepts and ownership
 
+The SDK splits configuration, conversation state, and one active model loop into
+explicit owners. Hosts build a runtime once, open sessions from it, and drive
+runs through events plus a typed final outcome.
+
+```mermaid
+flowchart TD
+    host[Embedding host] --> rho[Rho runtime]
+    rho --> session[Session]
+    rho --> toolHost[ToolHost]
+    session --> run[Run]
+    run --> events[RunEvent stream]
+    run --> outcome[RunOutcome]
+    toolHost --> toolRun[ToolHostRun]
+```
+
 ## Runtime
-
-`Rho` is a cloneable handle to runtime configuration and shared lifecycle state. Build it explicitly with `Rho::builder()` and at least one `ModelProvider`. A runtime owns the provider, registered tools, prompt policy, event capacity, step limit, optional workspace and policies, optional compactor, optional usage recorder, optional hook wiring, and shutdown state.
-
 Construction is side-effect-free by default:
 
 - `SystemPrompt::None`
@@ -20,8 +32,16 @@ A custom system prompt is inserted as the first history message for a new sessio
 
 A `Session` owns a conversation ID, provider-neutral history, a monotonic revision, compaction continuation state, runtime configuration, and explicit lifecycle state. Clones refer to the same mutable session.
 
-One session permits only one active run or manual compaction. A second attempt returns `Error::SessionBusy`. Different sessions created from the same runtime may run concurrently, subject to the provider and host resources.
+```mermaid
+stateDiagram
+    [*] --> Idle
+    Idle --> Running: start or complete
+    Running --> WaitingForHostInput: tool requests input
+    WaitingForHostInput --> Running: respond
+    Running --> Idle: outcome
+```
 
+One session permits only one active run or manual compaction. A second attempt returns `Error::SessionBusy`. Different sessions created from the same runtime may run concurrently, subject to the provider and host resources.
 Hosts can:
 
 - inspect cloned history and create a snapshot
@@ -43,6 +63,20 @@ History cannot be mutated in place through the public session API. Initial histo
 - steering with additional user input (`Run::steer`)
 - retractable steering (`Run::steer_retractable` / `Run::retract_steering`) before staged input reaches history
 - responding to typed host-input requests
+
+```mermaid
+sequenceDiagram
+    participant Host
+    participant Session
+    participant Run
+    participant Provider
+    Host->>Session: start UserInput
+    Session->>Run: create
+    Run-->>Host: event stream
+    Run->>Provider: model step
+    Provider-->>Run: content or tool calls
+    Run-->>Host: RunOutcome
+```
 
 `Session::complete` is a convenience path over the same run loop. It drains events and returns the final outcome. Because it has no host interaction callback, it cancels and returns `InvalidHostResponse` if a tool requests host input. Use `Session::start` for questionnaires or other interactive host work.
 

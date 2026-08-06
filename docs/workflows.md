@@ -11,18 +11,23 @@ need a graph.
 
 ## Lifecycle
 
+A workflow moves through a fixed path: source to plan, plan to run, then a
+terminal outcome. Cancel and recovery only reopen the same frozen run.
+
 ```mermaid
 stateDiagram
+    [*] --> source
     source --> plan: validate and freeze
     plan --> run: confirm digest
     run --> complete
     run --> cancelled
-    run --> recovery
+    run --> recovery: needs_recovery
     cancelled --> run: resume
     recovery --> run: recover then resume
+    complete --> [*]
 ```
 
-The main steps are:
+### Main steps
 
 1. Write one or more `.star` files under the workspace or project root. When a
    workflow owns helper scripts, local modules, or local agents, put the entry
@@ -35,14 +40,43 @@ The main steps are:
 5. Read status and artifact references by run ID.
 6. Cancel or resume the same frozen run when needed.
 
+```mermaid
+flowchart LR
+    write[Write Starlark] --> validate[validate]
+    validate --> plan[plan]
+    plan --> run[run]
+    run --> status[status]
+    run --> cancel[cancel]
+    cancel --> resume[resume]
+    run --> resume
+```
+
 ## Interactive hub
 
-In the chat TUI, run `/workflow` to open one list:
+In the chat TUI, run `/workflow` to open one list with three sections.
+
+```mermaid
+flowchart TD
+    hub["/workflow hub"] --> startSec[START]
+    hub --> runsSec[RUNS]
+    hub --> plansSec[SAVED PLANS]
+    startSec --> startRun["Start name: background run"]
+    runsSec --> watch["Watch state · id: DAG watch"]
+    plansSec --> runPlan["Run plan · id: background from plan"]
+    startRun --> chat[Back to chat with run id]
+    runPlan --> chat
+    watch --> leave["q leaves watch"]
+    watch --> stop["c requests stop on live run"]
+```
+
+### Sections
 
 1. **START** - `Start <name>` starts a new run in the background, appends the
    run id to chat context, and returns to chat without starting a model turn.
 2. **RUNS** - `Watch <state> · <id>` opens the DAG watch screen (live or finished).
 3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan in the background.
+
+### Watch and cleanup
 
 Keep chatting while a run continues. Reopen `/workflow` and Enter a run to **watch**
 the DAG without taking ownership of the driver. Press `q` to leave watch; `c` requests
@@ -51,6 +85,8 @@ output (agent answers as markdown, command streams as text). Use `PgUp`/`PgDn`,
 `Home`/`End`, mouse wheel, or the scrollbar to scroll long output. Press `d` on a
 **RUNS** or **SAVED PLANS** row to delete it after confirm. Local `.star` source
 files are not deleted from disk.
+
+### Model tool and context
 
 The model `workflow` tool also starts `run` and `resume` in the background and
 returns a run id immediately. Completions are delivered automatically to the
@@ -65,6 +101,9 @@ finishes, Rho kicks a completion message into the parent session the same way.
 The right pane explains the highlighted row. Enter runs that action.
 
 ## CLI reference
+
+Every stage uses a separate command. Prefer `list` and `status` for inspection;
+use `validate` and `plan` before any run.
 
 ```text
 rho workflow list [--plans|--runs] [--limit N] [--json]

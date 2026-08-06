@@ -4,6 +4,18 @@ Parent: [Agents and delegation](/subagents).
 
 This is the parse contract for agent Markdown files. Unknown frontmatter keys fail. Invalid values fail before execution. Field order does not matter; `runtime` is resolved before `tools`.
 
+```mermaid
+flowchart TD
+    file[name.md] --> fm[Frontmatter]
+    file --> body[Markdown body]
+    fm --> runtime{runtime}
+    runtime -->|rho| rhoRules[Rho model and tool rules]
+    runtime -->|claude-cli| claudeRules[Claude model and tool rules]
+    body --> prompt{prompt}
+    prompt -->|extend| base[Base coding prompt plus body]
+    prompt -->|replace| full[Body is full system prompt]
+```
+
 ## File shape
 
 ```text
@@ -38,6 +50,8 @@ Scalars are plain or single/double quoted. Booleans are only `true` / `false`. L
 
 ## Model rules by runtime
 
+Model selection depends on `runtime`. Rho can inherit or pin host models. Claude-cli passes model names through and rejects Rho-only fields.
+
 **`runtime: rho` (default)**
 
 | `model-policy` | `model` | `provider` | Result |
@@ -58,6 +72,8 @@ Scalars are plain or single/double quoted. Booleans are only `true` / `false`. L
 | any | any | set | rejected |
 
 ## Tool vocabulary by runtime
+
+Tool lists are not shared across runtimes. Mixing Rho capability names and Claude tool entries is a parse error.
 
 **`runtime: rho`**
 

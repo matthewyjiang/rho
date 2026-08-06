@@ -4,6 +4,18 @@ Rho uses the current working directory as the workspace and as the base for rela
 
 File paths can point outside that directory with parent components such as `../` or with absolute paths. Read [Security and workspace boundaries](#security-and-workspace-boundaries) before you rely on permission modes as a sandbox.
 
+```mermaid
+flowchart TD
+    cwd[Current working directory] --> ws[Workspace root]
+    ws --> files[File tools]
+    ws --> shell[Shell and process]
+    ws --> web[Web tools]
+    ws --> workflow[workflow tool]
+    files --> policy[Permission mode and capability checks]
+    shell --> policy
+    web --> policy
+```
+
 ## Built-in tools
 
 Core workspace tools on every platform:
@@ -37,7 +49,17 @@ Built-in skills that ship with the binary include `rho-diagnostics`, `rho-config
 
 ## Security and workspace boundaries
 
-Tools run with the current user's permissions. File tools can read or modify any path that the user can access, including paths outside the workspace, and shell commands can do the same. The default `auto` [permission mode](/configuration#permission-modes) allows this behavior. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised non-interactive runs fail closed because no approval UI is available.
+Tools run with the current user's permissions. File tools can read or modify any path that the user can access, including paths outside the workspace, and shell commands can do the same.
+
+```mermaid
+flowchart LR
+    auto[auto: allow] --> cap[Capability request]
+    plan[plan: deny write and process] --> cap
+    supervised[supervised: ask] --> cap
+    cap --> os[OS user permissions still apply]
+```
+
+The default `auto` [permission mode](/configuration#permission-modes) allows this behavior. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised non-interactive runs fail closed because no approval UI is available.
 
 Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. The SDK still scopes file access by default; embedded hosts must opt into broader access when they build a `Workspace`. Run Rho only in workspaces where you are comfortable with the selected mode and these limits.
 

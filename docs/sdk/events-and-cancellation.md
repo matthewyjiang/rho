@@ -14,7 +14,32 @@ Hosts must match `RunEvent` with a wildcard because it is non-exhaustive. Delta 
 
 ## Lifecycle sequence
 
-The significant ordering rules are:
+A cooperative run emits ordered facts, then one terminal event when delivery
+succeeds. Always treat `Run::outcome` as authoritative.
+
+```mermaid
+sequenceDiagram
+    participant Host
+    participant Run
+    participant Provider
+    participant Tool
+    Run-->>Host: Started
+    loop Each model step
+        Run-->>Host: StepStarted
+        Run-->>Host: ContextEstimated
+        Run->>Provider: request
+        Provider-->>Run: deltas
+        Run-->>Host: provider and usage events
+        opt Tool calls
+            Run-->>Host: ToolProposed
+            Run->>Tool: execute
+            Run-->>Host: ToolStarted / ToolUpdated / ToolFinished
+        end
+    end
+    Run-->>Host: Completed or Cancelled or Failed
+```
+
+### Ordering rules
 
 1. `Started` is first and includes the starting revision.
 2. Each provider loop emits `StepStarted` before that step's provider activity.
@@ -28,6 +53,8 @@ The significant ordering rules are:
 10. The runtime holds completed results in model-order slots. Provider history and persisted history do not use finish order.
 11. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
 12. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
+
+### Terminal authority
 
 A terminal event describes the worker result, but `Run::outcome` remains the authoritative typed result channel. `Completed` contains the same successful outcome. Cancellation returns `Error::Cancelled`. Failure returns the typed `Error`; the event contains sanitized text and retryability for observation.
 
