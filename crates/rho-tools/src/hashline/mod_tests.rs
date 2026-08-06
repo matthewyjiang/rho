@@ -159,9 +159,25 @@ async fn multi_file_rollback_restores_earlier_writes() {
     // Make b unwritable so plan can still read it while commit cannot open it
     // for rewrite. Exclusive locks are mandatory on Windows and would also
     // block the plan-phase read, so they cannot isolate a commit-path failure.
-    let mut b_perms = std::fs::metadata(&b_path).unwrap().permissions();
+    // Restore original mode on drop so TempDir cleanup succeeds on Windows and
+    // so we avoid clippy::permissions_set_readonly_false (world-writable on Unix).
+    struct RestorePerms {
+        path: std::path::PathBuf,
+        perms: std::fs::Permissions,
+    }
+    impl Drop for RestorePerms {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.path, self.perms.clone());
+        }
+    }
+    let original_b_perms = std::fs::metadata(&b_path).unwrap().permissions();
+    let mut b_perms = original_b_perms.clone();
     b_perms.set_readonly(true);
     std::fs::set_permissions(&b_path, b_perms).unwrap();
+    let _restore = RestorePerms {
+        path: b_path.clone(),
+        perms: original_b_perms,
+    };
 
     let sections = vec![
         prepared(&dir, "a.txt", &a_tag, "PUT 1.=1:\n+ALPHA\n"),
@@ -171,11 +187,6 @@ async fn multi_file_rollback_restores_earlier_writes() {
         Ok(_) => panic!("expected multi-file commit failure"),
         Err(error) => error,
     };
-
-    // Clear readonly so TempDir cleanup succeeds on Windows.
-    let mut b_perms = std::fs::metadata(&b_path).unwrap().permissions();
-    b_perms.set_readonly(false);
-    std::fs::set_permissions(&b_path, b_perms).unwrap();
 
     assert!(
         err.to_string().contains("rolled back"),
