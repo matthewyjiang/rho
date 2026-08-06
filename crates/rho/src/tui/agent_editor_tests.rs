@@ -159,65 +159,56 @@ fn claude_reasoning_picker_omits_off_and_minimal() {
     assert!(labels.contains(&"high"));
 }
 
-// Covers: catalog-known models only offer advertised reasoning levels
-// Owner: tui agent editor
+// Covers: pinned catalog models only list advertised reasoning levels in the agent picker
+// Owner: pure unit (agent editor reasoning choice assembly)
 #[test]
-fn reasoning_levels_follow_catalog_capabilities() {
-    use rho_providers::model::{ReasoningCapabilities, ReasoningLevelSet};
-    use rho_providers::reasoning::ReasoningLevel;
+fn reasoning_picker_follows_pinned_catalog_capabilities() {
+    use rho_providers::model::models_dev::{
+        with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
+    };
 
-    let levels = reasoning_levels_for_capabilities(
-        /*is_claude*/ false,
-        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-            ReasoningLevel::Minimal,
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-            ReasoningLevel::Xhigh,
-        ])),
-        None,
-    );
-    assert_eq!(
-        levels,
-        vec![
-            ReasoningLevel::Minimal,
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-            ReasoningLevel::Xhigh,
-        ]
-    );
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
+        write_cached_model_metadata_for_tests(
+            "meta",
+            "muse-spark-1.2",
+            &ModelMetadata {
+                supported_reasoning_levels: Some(vec![
+                    ReasoningLevel::Minimal,
+                    ReasoningLevel::Low,
+                    ReasoningLevel::Medium,
+                    ReasoningLevel::High,
+                    ReasoningLevel::Xhigh,
+                ]),
+                reasoning_capabilities_known: true,
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
 
-    let with_current = reasoning_levels_for_capabilities(
-        /*is_claude*/ false,
-        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-            ReasoningLevel::Low,
-            ReasoningLevel::High,
-        ])),
-        Some(ReasoningLevel::Max),
-    );
-    assert_eq!(
-        with_current,
-        vec![
-            ReasoningLevel::Low,
-            ReasoningLevel::High,
-            ReasoningLevel::Max,
-        ]
-    );
+        let mut draft = rho_draft();
+        if let AgentRuntimeSpec::Rho {
+            model, reasoning, ..
+        } = &mut draft.runtime
+        {
+            *model = ModelPolicy::Select(ModelSelection {
+                provider: Some("meta".into()),
+                model: "muse-spark-1.2".into(),
+            });
+            *reasoning = Some(ReasoningLevel::Max);
+        }
 
-    let not_configurable = reasoning_levels_for_capabilities(
-        /*is_claude*/ false,
-        ReasoningCapabilities::NotConfigurable,
-        None,
-    );
-    assert!(not_configurable.is_empty());
-
-    let unknown_rho = reasoning_levels_for_capabilities(
-        /*is_claude*/ false,
-        ReasoningCapabilities::Unknown,
-        None,
-    );
-    assert_eq!(unknown_rho, ReasoningLevel::ALL.to_vec());
+        let picker = agent_choice_picker(AgentChoiceField::Reasoning, &draft);
+        let labels: Vec<&str> = picker
+            .items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            ["inherit", "minimal", "low", "medium", "high", "xhigh", "max"]
+        );
+    });
 }
 
 // Covers: shared line editor edits at the character cursor

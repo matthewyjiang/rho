@@ -97,3 +97,80 @@ fn legacy_unrestricted_capabilities_deserialize_as_unknown() {
         ReasoningCapabilities::Unknown
     );
 }
+
+// Covers: UI selectable levels follow advertised sets and keep unsupported pins visible
+// Owner: pure unit (reasoning capabilities policy)
+#[test]
+fn selectable_levels_follow_advertised_sets_and_keep_current_visible() {
+    let cases = [
+        (
+            "exact advertised",
+            ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+                ReasoningLevel::Minimal,
+                ReasoningLevel::Low,
+                ReasoningLevel::High,
+            ])),
+            ReasoningLevel::ALL.as_slice(),
+            None,
+            vec![
+                ReasoningLevel::Minimal,
+                ReasoningLevel::Low,
+                ReasoningLevel::High,
+            ],
+        ),
+        (
+            "exact keeps unsupported current",
+            ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+                ReasoningLevel::Low,
+                ReasoningLevel::High,
+            ])),
+            ReasoningLevel::ALL.as_slice(),
+            Some(ReasoningLevel::Max),
+            vec![
+                ReasoningLevel::Low,
+                ReasoningLevel::High,
+                ReasoningLevel::Max,
+            ],
+        ),
+        (
+            "not configurable offers nothing",
+            ReasoningCapabilities::NotConfigurable,
+            ReasoningLevel::ALL.as_slice(),
+            None,
+            Vec::new(),
+        ),
+        (
+            "unknown uses fallback",
+            ReasoningCapabilities::Unknown,
+            &[ReasoningLevel::Low, ReasoningLevel::High][..],
+            None,
+            vec![ReasoningLevel::Low, ReasoningLevel::High],
+        ),
+        (
+            "unknown keeps current outside fallback",
+            ReasoningCapabilities::Unknown,
+            &[ReasoningLevel::Low][..],
+            Some(ReasoningLevel::Max),
+            vec![ReasoningLevel::Low, ReasoningLevel::Max],
+        ),
+    ];
+
+    for (name, capabilities, fallback, current, expected) in cases {
+        assert_eq!(
+            capabilities.selectable_levels(fallback, current),
+            expected,
+            "{name}"
+        );
+    }
+
+    assert_eq!(
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![ReasoningLevel::Low]))
+            .advertised_levels(),
+        Some(vec![ReasoningLevel::Low])
+    );
+    assert_eq!(
+        ReasoningCapabilities::NotConfigurable.advertised_levels(),
+        Some(Vec::new())
+    );
+    assert_eq!(ReasoningCapabilities::Unknown.advertised_levels(), None);
+}

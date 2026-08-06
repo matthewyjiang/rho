@@ -521,16 +521,31 @@ fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> 
 /// Fall back to the full (or Claude-safe) set when catalog data is missing.
 fn selectable_agent_reasoning_levels(draft: &AgentDefinition) -> Vec<ReasoningLevel> {
     let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
-    let capabilities = draft_reasoning_capabilities(draft);
-    reasoning_levels_for_capabilities(is_claude, capabilities, draft.reasoning())
+    // Claude Code efforts are fixed; Claude model ids are not resolved through
+    // models.dev provider rows in this editor.
+    let capabilities = if is_claude {
+        ReasoningCapabilities::Unknown
+    } else {
+        draft_model_reasoning_capabilities(draft)
+    };
+    let fallback = if is_claude {
+        CLAUDE_EFFORT_LEVELS
+    } else {
+        ReasoningLevel::ALL.as_slice()
+    };
+    capabilities.selectable_levels(fallback, draft.reasoning())
 }
 
-fn draft_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilities {
-    if draft.runtime.runtime() == AgentRuntime::ClaudeCli {
-        // Claude Code efforts are fixed; Claude model ids are not resolved through
-        // models.dev provider rows in this editor.
-        return ReasoningCapabilities::Unknown;
-    }
+/// Claude `--effort` values exposed in the agent editor (no `off` / `minimal`).
+const CLAUDE_EFFORT_LEVELS: &[ReasoningLevel] = &[
+    ReasoningLevel::Low,
+    ReasoningLevel::Medium,
+    ReasoningLevel::High,
+    ReasoningLevel::Xhigh,
+    ReasoningLevel::Max,
+];
+
+fn draft_model_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilities {
     let model_policy = draft.model_policy();
     let selection = match model_policy.as_ref() {
         ModelPolicy::Prefer(selection)
@@ -544,44 +559,7 @@ fn draft_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilitie
     let Some(provider) = selection.provider.as_deref() else {
         return ReasoningCapabilities::Unknown;
     };
-
-    let current = models_dev::current_reasoning_capabilities(provider, &selection.model);
-    if current.is_known() {
-        current
-    } else {
-        // Prefer a stale-but-known cache row over offering every global level.
-        models_dev::cached_reasoning_capabilities(provider, &selection.model)
-    }
-}
-
-fn reasoning_levels_for_capabilities(
-    is_claude: bool,
-    capabilities: ReasoningCapabilities,
-    current: Option<ReasoningLevel>,
-) -> Vec<ReasoningLevel> {
-    let mut levels = match capabilities {
-        ReasoningCapabilities::Levels(levels) => levels.into_levels(),
-        ReasoningCapabilities::NotConfigurable => Vec::new(),
-        ReasoningCapabilities::Unknown if is_claude => ReasoningLevel::ALL
-            .iter()
-            .copied()
-            .filter(|level| !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal))
-            .collect(),
-        ReasoningCapabilities::Unknown => ReasoningLevel::ALL.to_vec(),
-    };
-
-    if is_claude {
-        levels.retain(|level| !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal));
-    }
-
-    // Keep a currently selected level visible so the user can see and change it.
-    if let Some(current) = current {
-        if !levels.contains(&current) {
-            levels.push(current);
-            levels.sort_unstable();
-        }
-    }
-    levels
+    models_dev::known_reasoning_capabilities(provider, &selection.model)
 }
 
 #[path = "agent_editor_app.rs"]

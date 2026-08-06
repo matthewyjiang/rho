@@ -797,47 +797,48 @@ fn qwen_token_plan_qwen38_max_uses_exact_advertised_efforts() {
     );
 }
 
-// Covers: Meta Muse Spark efforts come from models.dev exact advertised levels
-// Owner: models.dev catalog policy
+// Covers: UI prefers current-known capabilities and only then a stale-known cache row
+// Owner: models.dev capability lookup
 #[test]
-fn meta_muse_spark_uses_exact_advertised_efforts() {
-    let api = json!({
-        "meta": {
-            "models": {
-                "muse-spark-1.1": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["minimal", "low", "medium", "high", "xhigh"]
-                    }]
-                },
-                "muse-spark-1.2": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["minimal", "low", "medium", "high", "xhigh"]
-                    }]
-                }
-            }
-        }
-    });
+fn known_reasoning_capabilities_prefers_current_then_stale_known() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let stale_exact = ModelMetadata {
+            supported_reasoning_levels: Some(vec![ReasoningLevel::Low, ReasoningLevel::High]),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: false,
+            ..ModelMetadata::default()
+        };
+        write_cached_upstream_model_metadata("xai", "stale-exact", &stale_exact);
 
-    let expected = ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-        ReasoningLevel::Minimal,
-        ReasoningLevel::Low,
-        ReasoningLevel::Medium,
-        ReasoningLevel::High,
-        ReasoningLevel::Xhigh,
-    ]));
-
-    for model in ["muse-spark-1.1", "muse-spark-1.2"] {
-        let metadata = upstream_metadata_from_api(&api, "meta", model).unwrap();
         assert_eq!(
-            metadata.reasoning_capabilities(),
-            expected,
-            "{model} should use ExactAdvertised efforts from models.dev"
+            current_reasoning_capabilities("xai", "stale-exact"),
+            ReasoningCapabilities::Unknown
         );
-        assert!(metadata.reasoning_metadata_complete);
-        assert_eq!(metadata.reasoning_off_behavior, ReasoningOffBehavior::Omit);
-    }
+        assert_eq!(
+            known_reasoning_capabilities("xai", "stale-exact"),
+            stale_exact.reasoning_capabilities()
+        );
+
+        let current_exact = ModelMetadata {
+            supported_reasoning_levels: Some(vec![
+                ReasoningLevel::Minimal,
+                ReasoningLevel::Medium,
+                ReasoningLevel::Xhigh,
+            ]),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+        write_cached_upstream_model_metadata("xai", "current-exact", &current_exact);
+        assert_eq!(
+            known_reasoning_capabilities("xai", "current-exact"),
+            current_exact.reasoning_capabilities()
+        );
+
+        assert_eq!(
+            known_reasoning_capabilities("xai", "missing-model"),
+            ReasoningCapabilities::Unknown
+        );
+    });
 }
