@@ -1,4 +1,8 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    future::Future,
+    path::{Component, Path, PathBuf},
+    pin::Pin,
+};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -26,48 +30,49 @@ pub enum ToolError {
     Message(String),
 }
 
+/// Future returned by app-tool trait methods.
+pub type AppToolFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ToolResult, ToolError>> + Send + 'a>>;
+
 /// Extension point for agent tools exposed to model tool calls.
 ///
 /// Implementors should provide a stable JSON schema from `spec` and execute
 /// `call` using only the supplied arguments and context, returning user-visible
-/// output in the `ToolResult`.
-#[async_trait::async_trait]
+/// output in the `ToolResult`. Methods return an explicit `Send` future.
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
 
-    async fn call(
-        &self,
-        args: Value,
-        ctx: ToolContext,
-        id: String,
-    ) -> Result<ToolResult, ToolError>;
+    fn call<'a>(&'a self, args: Value, ctx: ToolContext, id: String) -> AppToolFuture<'a>;
 
     /// Runs the tool, reporting interim progress through `on_update`.
     ///
     /// Each update replaces the previous one and contains only progress
     /// content; the presenter renders the tool name and command header.
-    async fn call_with_updates(
-        &self,
+    fn call_with_updates<'a>(
+        &'a self,
         args: Value,
         ctx: ToolContext,
         id: String,
-        _on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
-        self.call(args, ctx, id).await
+        _on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
+    ) -> AppToolFuture<'a> {
+        self.call(args, ctx, id)
     }
 
-    async fn call_with_updates_and_cancellation(
-        &self,
+    fn call_with_updates_and_cancellation<'a>(
+        &'a self,
         args: Value,
         ctx: ToolContext,
         id: String,
         cancellation: RunCancellation,
-        on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
-        tokio::select! {
-            result = self.call_with_updates(args, ctx, id, on_update) => result,
-            () = cancellation.cancelled() => Err(ToolError::Cancelled),
-        }
+        on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
+    ) -> AppToolFuture<'a> {
+        let call = self.call_with_updates(args, ctx, id, on_update);
+        Box::pin(async move {
+            tokio::select! {
+                result = call => result,
+                () = cancellation.cancelled() => Err(ToolError::Cancelled),
+            }
+        })
     }
 }
 

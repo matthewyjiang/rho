@@ -4,8 +4,14 @@
 agent and adapters for registering them with `rho-sdk`. The crate is imported as
 `rho_agent_tools`.
 
-The built-in tools cover `read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir`,
-`grep`, and `glob`, with shared diff generation and output limiting.
+The built-in tools cover `read_file`, `write`, `edit` (hashline),
+`list_dir`, `grep`, and `glob`, with shared diff generation and output limiting.
+`read_file` returns UTF-8 sources as hashline views for `edit`.
+`grep` content mode also mints chainable `[path#TAG]` headers on matching files
+(via hashline) plus `N | text` match previews. Copy TAG and line numbers into
+`edit`; do not treat preview bodies as hashline line text.
+Successful `edit` results include a post-edit `[path#TAG]` numbered preview so a
+follow-up edit can chain without an immediate re-read.
 `coding_tools` constructs their SDK adapters, while `shell_tool` constructs the
 platform shell adapter (`bash` on Linux and macOS, PowerShell on Windows).
 

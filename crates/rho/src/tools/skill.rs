@@ -1,9 +1,10 @@
-use async_trait::async_trait;
 use serde::Deserialize;
 
 use {
     crate::skills,
-    rho_tools::tool::{truncate, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+    rho_tools::tool::{
+        truncate, AppToolFuture, Tool, ToolContext, ToolError, ToolResult, ToolSpec,
+    },
 };
 
 pub struct Skill;
@@ -13,7 +14,6 @@ struct Args {
     name: String,
 }
 
-#[async_trait]
 impl Tool for Skill {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -33,22 +33,24 @@ impl Tool for Skill {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
-        let skill = skills::discover(&ctx.cwd)
-            .into_iter()
-            .find(|skill| skill.name == args.name)
-            .ok_or_else(|| ToolError::Message(format!("unknown skill: {}", args.name)))?;
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            let args: Args = serde_json::from_value(args)?;
+            let skill = skills::discover(&ctx.cwd)
+                .into_iter()
+                .find(|skill| skill.name == args.name)
+                .ok_or_else(|| ToolError::Message(format!("unknown skill: {}", args.name)))?;
 
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: truncate(skill.contents, ctx.max_output_bytes),
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content: truncate(skill.contents, ctx.max_output_bytes),
+            })
         })
     }
 }

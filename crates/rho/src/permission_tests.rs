@@ -91,7 +91,7 @@ fn workspace_policy_agrees_with_decision_for() {
     let write_request = CapabilityRequest::write_path(
         "/workspace/file",
         PathScope::PrimaryWorkspace,
-        source("write_file"),
+        source("write"),
     );
     let network_request = CapabilityRequest::network(
         NetworkTarget::Url("https://example.com/path".into()),

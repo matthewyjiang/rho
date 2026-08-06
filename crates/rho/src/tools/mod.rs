@@ -22,9 +22,8 @@ pub(crate) const CANONICAL_TOOL_NAMES: &[&str] = &[
     "advisor",
     "agent",
     "agents",
-    "apply_patch",
     "bash",
-    "edit_file",
+    "edit",
     "fetch_content",
     "get_search_content",
     "glob",
@@ -39,14 +38,14 @@ pub(crate) const CANONICAL_TOOL_NAMES: &[&str] = &[
     "web_search",
     "workflow",
     "workflow_command",
-    "write_file",
+    "write",
 ];
 
 /// Returns whether a canonical built-in tool can mutate workspace or run state.
 pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
     match name {
-        "agent" | "agents" | "apply_patch" | "bash" | "edit_file" | "powershell" | "process"
-        | "rho" | "workflow" | "workflow_command" | "write_file" => Some(true),
+        "agent" | "agents" | "bash" | "edit" | "powershell" | "process" | "rho" | "workflow"
+        | "workflow_command" | "write" => Some(true),
         "advisor" | "fetch_content" | "get_search_content" | "glob" | "grep" | "list_dir"
         | "questionnaire" | "read_file" | "skill" | "web_search" => Some(false),
         _ => None,

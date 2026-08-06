@@ -457,6 +457,12 @@ fn push_diff_row(lines: &mut Vec<Line<'static>>, row: &DiffRow, gutter: usize, w
         push_body_line(lines, &row.text, width, Theme::tool_path());
         return;
     }
+    // Op locators and other annotations are not content lines; drop the sign
+    // column so they read as headers rather than gap markers.
+    if row.kind == DiffRowKind::Meta {
+        push_body_line(lines, &row.text, width, Theme::tool_diff_text(row.kind));
+        return;
+    }
 
     // Unnumbered bodies (patch text without hunk headers) drop the gutter and
     // its separator so the sign column sits right under the tree indent.

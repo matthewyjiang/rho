@@ -147,7 +147,7 @@ impl WorkspaceSearch for GrepSearch {
     fn spec() -> ToolSpec {
         ToolSpec {
             name: Self::NAME.into(),
-            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers.".into(),
+            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode prefixes each file with a chainable [path#TAG] header (via hashline) and match previews as `N | text` so edit can take TAG and line numbers. Match text is search preview only and may be truncated - do not copy preview bodies into PUT rows; use read_file when you need exact line text.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -190,10 +190,12 @@ impl WorkspaceSearch for GrepSearch {
 /// One file that matched, in the shape every output mode renders from.
 pub(crate) struct FileHit {
     pub(crate) relative: String,
+    /// Full-file snapshot tag when content mode computed one for edit anchors.
+    pub(crate) file_tag: Option<String>,
     /// Matching lines in the file, including any not retained below.
     pub(crate) total: usize,
     /// Retained match lines as `(line number, display text)`. Empty unless the
-    /// output mode renders line text.
+    /// output mode renders line text. Preview only - not hashline body text.
     pub(crate) lines: Vec<(usize, String)>,
 }
 
@@ -287,23 +289,33 @@ fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<F
     let stop_early = request.output_mode.stops_at_first_match();
     let mut hit = FileHit {
         relative: file.relative,
+        file_tag: None,
         total: 0,
         lines: Vec::new(),
     };
-    for (index, line) in text.lines().enumerate() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
+    // Use hashline line splitting so match line numbers agree with edit anchors.
+    let lines = crate::hashline::split_content_lines(&text);
+    for (index, line) in lines.iter().enumerate() {
         if !request.regex.is_match(line) {
             continue;
         }
         hit.total = hit.total.saturating_add(1);
         if hit.lines.len() < retain {
-            hit.lines.push((index + 1, normalize_match_text(line)));
+            // Search preview only - may truncate. Not hashline `N:text` body text.
+            hit.lines
+                .push((index + 1, truncate_chars(line, MAX_LINE_CHARS)));
         }
         if stop_early {
             break;
         }
     }
-    (hit.total > 0).then_some(hit)
+    if hit.total == 0 {
+        return None;
+    }
+    if request.output_mode == GrepOutputMode::Content {
+        hit.file_tag = Some(crate::hashline::compute_file_hash(&text));
+    }
+    Some(hit)
 }
 
 fn read_searchable_text(path: &Path) -> Option<String> {
@@ -317,24 +329,6 @@ fn read_searchable_text(path: &Path) -> Option<String> {
         return None;
     }
     String::from_utf8(bytes).ok()
-}
-
-fn normalize_match_text(line: &str) -> String {
-    let trimmed = line.trim();
-    let mut out = String::with_capacity(trimmed.len());
-    let mut previous_space = false;
-    for ch in trimmed.chars() {
-        if ch == ' ' || ch == '\t' {
-            if !previous_space {
-                out.push(' ');
-                previous_space = true;
-            }
-        } else {
-            previous_space = false;
-            out.push(ch);
-        }
-    }
-    truncate_chars(&out, MAX_LINE_CHARS)
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {

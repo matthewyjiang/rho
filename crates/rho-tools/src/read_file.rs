@@ -3,7 +3,7 @@ use std::{io::Cursor, path::Path};
 use image::{ImageFormat, ImageReader, Limits};
 use serde::Deserialize;
 use serde_json::json;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 
 use crate::{
     document::{
@@ -21,12 +21,11 @@ struct Args {
     limit: Option<usize>,
 }
 
-#[async_trait::async_trait]
 impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. offset and limit select line ranges for UTF-8 text files only.".into(),
+            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files always return a hashline view: a [path#TAG] header plus N:line rows. TAG fingerprints the full file (trailing whitespace ignored); offset/limit select which rows are shown, but the file is still read fully to mint TAG. offset and limit apply to UTF-8 text files only.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -39,19 +38,22 @@ impl Tool for ReadFile {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
-        let path = resolve_path(&ctx.cwd, &args.path);
-        let output = read_file_content(&path, args.offset, args.limit).await?;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: truncate(output.content, ctx.max_output_bytes),
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            let args: Args = serde_json::from_value(args)?;
+            let path = resolve_path(&ctx.cwd, &args.path);
+            let display_path = compact_display_path(&ctx.cwd, &args.path);
+            let output = read_file_content(&path, &display_path, args.offset, args.limit).await?;
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content: truncate(output.content, ctx.max_output_bytes),
+            })
         })
     }
 }
@@ -100,103 +102,177 @@ pub(super) struct ReadFileContent {
 
 pub(super) async fn read_file_content(
     path: &Path,
+    display_path: &str,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<ReadFileContent, ToolError> {
-    if offset.is_none() && limit.is_none() {
-        let mut file = tokio::fs::File::open(path).await?;
-        let source_len = file.metadata().await?.len();
-        let mut header = [0_u8; 12];
-        let header_len = file.read(&mut header).await?;
-        if let Some(mime_type) = supported_image_mime_type(&header[..header_len]) {
-            let content = format!("{mime_type} image ({source_len} bytes)");
-            if source_len > MAX_IMAGE_FILE_BYTES {
-                return Ok(ReadFileContent {
-                    content,
-                    image: None,
-                    preview_error: Some(format!(
-                        "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
-                    )),
-                });
-            }
+    let mut file = tokio::fs::File::open(path).await?;
+    let source_len = file.metadata().await?.len();
 
-            let mut bytes = Vec::with_capacity(source_len as usize);
-            bytes.extend_from_slice(&header[..header_len]);
-            (&mut file)
-                .take(MAX_IMAGE_FILE_BYTES + 1 - header_len as u64)
-                .read_to_end(&mut bytes)
-                .await?;
-            if bytes.len() as u64 > MAX_IMAGE_FILE_BYTES {
-                return Ok(ReadFileContent {
-                    content,
-                    image: None,
-                    preview_error: Some(format!(
-                        "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
-                    )),
-                });
-            }
-            let content = format!("{mime_type} image ({} bytes)", bytes.len());
-            return match tokio::task::spawn_blocking(move || thumbnail_png(bytes)).await {
-                Ok(Ok(thumbnail)) => Ok(ReadFileContent {
-                    content,
-                    image: Some(ImageAsset {
-                        media_type: "image/png",
-                        bytes: thumbnail,
-                    }),
-                    preview_error: None,
-                }),
-                Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
-                    Ok(content) => Ok(ReadFileContent {
-                        content,
-                        image: None,
-                        preview_error: None,
-                    }),
-                    Err(_) => Ok(ReadFileContent {
-                        content,
-                        image: None,
-                        preview_error: Some(format!("image preview unavailable: {error}")),
-                    }),
-                },
-                Err(error) => Ok(ReadFileContent {
-                    content,
-                    image: None,
-                    preview_error: Some(format!("image preview task failed: {error}")),
-                }),
-            };
-        }
-
-        if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
+    // Range reads are always hashline text views of the on-disk UTF-8 body. The
+    // whole body is read because the header tag covers the whole file, so the
+    // document size limit applies here just as it does to a full read.
+    if offset.is_some() || limit.is_some() {
+        check_document_size(path, source_len)?;
+        let mut bytes =
+            Vec::with_capacity(source_len.min(MAX_DOCUMENT_INPUT_BYTES as u64 + 1) as usize);
+        (&mut file)
+            .take(MAX_DOCUMENT_INPUT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .await?;
+        if bytes.len() > MAX_DOCUMENT_INPUT_BYTES {
             return Err(ToolError::Message(format!(
-                "document '{}' is {source_len} bytes; the input limit is {MAX_DOCUMENT_INPUT_BYTES} bytes",
+                "document '{}' is larger than the {MAX_DOCUMENT_INPUT_BYTES} byte input limit",
                 path.display()
             )));
         }
-        let mut bytes = Vec::with_capacity(source_len as usize);
-        bytes.extend_from_slice(&header[..header_len]);
-        (&mut file)
-            .take(MAX_DOCUMENT_INPUT_BYTES as u64 + 1 - header_len as u64)
-            .read_to_end(&mut bytes)
-            .await?;
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        let document = extract_document_from_bytes_async(name, bytes)
-            .await
-            .map_err(|error| ToolError::Message(error.to_string()))?;
-        let content = render_extracted_document(&document);
+        let text = String::from_utf8(bytes).map_err(|error| {
+            ToolError::Message(format!(
+                "could not read '{}' as UTF-8 text: {error}",
+                path.display()
+            ))
+        })?;
+        let content = crate::hashline::format_hashline_view(display_path, &text, offset, limit)
+            .map_err(ToolError::Message)?;
         return Ok(ReadFileContent {
             content,
             image: None,
             preview_error: None,
         });
     }
-    let file = tokio::fs::File::open(path).await?;
+
+    let mut header = [0_u8; 12];
+    let header_len = file.read(&mut header).await?;
+    if let Some(mime_type) = supported_image_mime_type(&header[..header_len]) {
+        return read_image_content(
+            file,
+            display_path,
+            source_len,
+            mime_type,
+            header,
+            header_len,
+        )
+        .await;
+    }
+
+    check_document_size(path, source_len)?;
+    let mut bytes = Vec::with_capacity(source_len as usize);
+    bytes.extend_from_slice(&header[..header_len]);
+    (&mut file)
+        .take(MAX_DOCUMENT_INPUT_BYTES as u64 + 1 - header_len as u64)
+        .read_to_end(&mut bytes)
+        .await?;
+    // Plain UTF-8 sources use the on-disk bytes for hashline tags so
+    // edit can validate against the same snapshot. Rich documents keep
+    // the extractor path and are not hashline-editable.
+    if !is_rich_document_path(path, &bytes) {
+        let text = String::from_utf8(bytes).map_err(|error| {
+            ToolError::Message(format!(
+                "file '{}' is not valid UTF-8 text: {error}",
+                path.display()
+            ))
+        })?;
+        let content = crate::hashline::format_hashline_view(display_path, &text, None, None)
+            .map_err(ToolError::Message)?;
+        return Ok(ReadFileContent {
+            content,
+            image: None,
+            preview_error: None,
+        });
+    }
+
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let document = extract_document_from_bytes_async(name, bytes)
+        .await
+        .map_err(|error| ToolError::Message(error.to_string()))?;
     Ok(ReadFileContent {
-        content: read_line_range(BufReader::new(file), offset, limit).await?,
+        content: render_extracted_document(&document),
         image: None,
         preview_error: None,
     })
+}
+
+fn check_document_size(path: &Path, source_len: u64) -> Result<(), ToolError> {
+    if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
+        return Err(ToolError::Message(format!(
+            "document '{}' is {source_len} bytes; the input limit is {MAX_DOCUMENT_INPUT_BYTES} bytes",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+async fn read_image_content(
+    mut file: tokio::fs::File,
+    display_path: &str,
+    source_len: u64,
+    mime_type: &'static str,
+    header: [u8; 12],
+    header_len: usize,
+) -> Result<ReadFileContent, ToolError> {
+    let content = format!("{mime_type} image ({source_len} bytes)");
+    if source_len > MAX_IMAGE_FILE_BYTES {
+        return Ok(ReadFileContent {
+            content,
+            image: None,
+            preview_error: Some(format!(
+                "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
+            )),
+        });
+    }
+
+    let mut bytes = Vec::with_capacity(source_len as usize);
+    bytes.extend_from_slice(&header[..header_len]);
+    (&mut file)
+        .take(MAX_IMAGE_FILE_BYTES + 1 - header_len as u64)
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > MAX_IMAGE_FILE_BYTES {
+        return Ok(ReadFileContent {
+            content,
+            image: None,
+            preview_error: Some(format!(
+                "image preview unavailable: file exceeds the {MAX_IMAGE_FILE_BYTES} byte preview limit"
+            )),
+        });
+    }
+    let content = format!("{mime_type} image ({} bytes)", bytes.len());
+    let display_path = display_path.to_string();
+    match tokio::task::spawn_blocking(move || thumbnail_png(bytes)).await {
+        Ok(Ok(thumbnail)) => Ok(ReadFileContent {
+            content,
+            image: Some(ImageAsset {
+                media_type: "image/png",
+                bytes: thumbnail,
+            }),
+            preview_error: None,
+        }),
+        Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
+            Ok(text) => {
+                let content =
+                    crate::hashline::format_hashline_view(&display_path, &text, None, None)
+                        .map_err(ToolError::Message)?;
+                Ok(ReadFileContent {
+                    content,
+                    image: None,
+                    preview_error: None,
+                })
+            }
+            Err(_) => Ok(ReadFileContent {
+                content,
+                image: None,
+                preview_error: Some(format!("image preview unavailable: {error}")),
+            }),
+        },
+        Err(error) => Ok(ReadFileContent {
+            content,
+            image: None,
+            preview_error: Some(format!("image preview task failed: {error}")),
+        }),
+    }
 }
 
 fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)> {
@@ -217,43 +293,18 @@ fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)
     result.map_err(|error| (error, bytes))
 }
 
-async fn read_line_range(
-    mut reader: impl AsyncBufRead + Unpin,
-    offset: Option<usize>,
-    limit: Option<usize>,
-) -> Result<String, ToolError> {
-    if offset == Some(0) {
-        return Err(ToolError::Message("offset must be greater than 0".into()));
+fn is_rich_document_path(path: &Path, bytes: &[u8]) -> bool {
+    if bytes.starts_with(b"%PDF-") {
+        return true;
     }
-    if limit == Some(0) {
-        return Err(ToolError::Message("limit must be greater than 0".into()));
-    }
-
-    let start = offset.unwrap_or(1) - 1;
-    let mut line_number = 0;
-    let mut selected_lines = 0;
-    let mut selected = String::new();
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).await? == 0 {
-            if start > 0 && start >= line_number {
-                return Err(ToolError::Message(format!(
-                    "offset {} is past the end of the file ({line_number} line(s))",
-                    start + 1
-                )));
-            }
-            return Ok(selected);
-        }
-        line_number += 1;
-        if line_number <= start {
-            continue;
-        }
-        selected.push_str(&line);
-        selected_lines += 1;
-        if limit == Some(selected_lines) {
-            return Ok(selected);
-        }
-    }
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    matches!(
+        extension.as_deref(),
+        Some("pdf" | "docx" | "xlsx" | "xls" | "ods")
+    )
 }
 
 #[cfg(test)]

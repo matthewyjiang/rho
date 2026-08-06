@@ -8,7 +8,7 @@ fn write_request() -> CapabilityRequest {
     CapabilityRequest::write_path(
         "/workspace/file",
         PathScope::PrimaryWorkspace,
-        CapabilitySource::built_in_tool("write_file"),
+        CapabilitySource::built_in_tool("write"),
     )
 }
 

@@ -23,16 +23,62 @@ fn semantic_fingerprint_ignores_formatting_and_source() {
     let a = parse_definition(
         Path::new("a.md"),
         "worker",
-        "---\ndescription: work\ntools: [read_file, write_file]\n---\nship it\n",
+        "---\ndescription: work\ntools: [read_file, write]\n---\nship it\n",
     )
     .unwrap();
     let b = parse_definition(
         Path::new("elsewhere.md"),
         "worker",
-        "---\nid: worker\ndescription: work\ntools:\n  - write_file\n  - read_file\n---\n\nship it\n",
+        "---\nid: worker\ndescription: work\ntools:\n  - write\n  - read_file\n---\n\nship it\n",
     )
     .unwrap();
     assert_eq!(a.fingerprint(), b.fingerprint());
+}
+
+#[test]
+fn write_file_capability_alias_matches_write() {
+    let canonical = parse_definition(
+        Path::new("a.md"),
+        "worker",
+        "---\ndescription: work\ntools: [write]\n---\n",
+    )
+    .unwrap();
+    let legacy_name = parse_definition(
+        Path::new("b.md"),
+        "worker",
+        "---\ndescription: work\ntools: [write_file]\n---\n",
+    )
+    .unwrap();
+    assert_eq!(canonical.fingerprint(), legacy_name.fingerprint());
+    assert_eq!(ToolCapability::parse("write_file".into()).as_str(), "write");
+}
+
+#[test]
+fn edit_capability_aliases_match_edit() {
+    let canonical = parse_definition(
+        Path::new("a.md"),
+        "worker",
+        "---\ndescription: work\ntools: [edit]\n---\n",
+    )
+    .unwrap();
+    for alias in ["edit_file", "apply_patch"] {
+        let legacy = parse_definition(
+            Path::new("b.md"),
+            "worker",
+            &format!("---\ndescription: work\ntools: [{alias}]\n---\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            canonical.fingerprint(),
+            legacy.fingerprint(),
+            "alias {alias}"
+        );
+        assert_eq!(
+            ToolCapability::parse(alias.into()).as_str(),
+            "edit",
+            "alias {alias}"
+        );
+    }
 }
 
 #[test]
@@ -71,15 +117,15 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "explorer",
-            "ef6f425945a8cee8742e53e8abb5c8f4cf8da391e48a2a44982c740bb735c249",
+            "52a0868729579676fbcff35089221a5a59d52da787d995a9f3a776b94e041dc0",
         ),
         (
             "reviewer",
-            "d1d123fac162706d7a40921acbef3af30d6737932afc6fbec4f39ec3e16c76ea",
+            "b6dbdf4028def08031a039f757116526e833c45b3c73318246b519d50246c469",
         ),
         (
             "worker",
-            "6a1f787c17442841a11703c25cb1ef48501be615656a22aba42237c8ccece071",
+            "b89c52ef5f589a6472764151b6baf50640d362a2a69d5d01a81ff1cc744fe5f3",
         ),
     ];
     for (id, expected_legacy) in expected {
@@ -113,7 +159,7 @@ fn real_definition_change_still_rejects_resume() {
     let changed = parse_definition(
         Path::new("worker.md"),
         "worker",
-        "---\ndescription: work\ntools: [read_file, write_file]\n---\nship it\n",
+        "---\ndescription: work\ntools: [read_file, write]\n---\nship it\n",
     )
     .unwrap();
     let stored_v2 = original.fingerprint().to_string();

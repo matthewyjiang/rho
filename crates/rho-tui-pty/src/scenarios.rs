@@ -2,13 +2,13 @@
 
 mod activity_anchor;
 mod advisor;
-mod apply_patch_diff;
 mod background_agents;
 mod changelog;
 mod command_palette;
 mod config;
 mod conversation_tree;
 mod document_attachment;
+mod edit_diff;
 mod file_palette;
 mod first_run;
 mod goal;
@@ -31,7 +31,6 @@ use advisor::{
     setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
     ADVISOR_MISSING_MODEL_STEPS, ADVISOR_REVIEW_STEPS, XAI_KEY_ENV,
 };
-use apply_patch_diff::APPLY_PATCH_DIFF_SCENARIO;
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
@@ -40,6 +39,7 @@ use command_palette::{HELP_OVERLAY_SCENARIO, SLASH_COMMAND_PALETTE_SCENARIO};
 use config::OPEN_CONFIG_PICKER_STEPS;
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
+use edit_diff::EDIT_DIFF_SCENARIO;
 use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
 use first_run::{
     setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SIGNIN_ENV,
@@ -639,7 +639,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         PROGRESS_TOOL_STEPS,
         false,
     ),
-    APPLY_PATCH_DIFF_SCENARIO,
+    EDIT_DIFF_SCENARIO,
     Scenario::new(
         "concurrent_progress",
         "Keep concurrent progress visible through out-of-order completion",

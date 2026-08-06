@@ -28,44 +28,82 @@ pub(crate) fn format_results(
     }
 
     let (body, counts) = match request.output_mode {
-        GrepOutputMode::Content => (content_body(hits), content_counts(hits.len(), &stats)),
-        GrepOutputMode::FilesWithMatches => (path_body(hits), format!("{} files", hits.len())),
+        GrepOutputMode::Content => (
+            content_body(display_root, hits),
+            content_counts(hits.len(), &stats),
+        ),
+        GrepOutputMode::FilesWithMatches => (
+            path_body(display_root, hits),
+            format!("{} files", hits.len()),
+        ),
         GrepOutputMode::Count => (
-            count_body(hits),
+            count_body(display_root, hits),
             format!("{} matches in {} files", stats.total_matches, hits.len()),
         ),
     };
     format!("{body}\n{}", with_reasons(counts, &stats.reasons, NARROW))
 }
 
-fn content_body(hits: &[FileHit]) -> String {
+fn content_body(display_root: &str, hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
-        let _ = writeln!(body, "{}", hit.relative);
+        let path = workspace_relative_path(display_root, &hit.relative);
+        if let Some(tag) = &hit.file_tag {
+            // Sole hashline wire emitter owns header shape. Path must be the
+            // workspace-relative form edit resolves, not walk-root-relative.
+            let _ = writeln!(body, "{}", crate::hashline::format_header(&path, tag));
+        } else {
+            let _ = writeln!(body, "{path}");
+        }
         for (line_no, text) in &hit.lines {
-            let _ = writeln!(body, "  {line_no}: {text}");
+            // Preview shape uses `N | text`, not hashline `N:text`, so truncated
+            // match bodies are not copy-pasteable into edit PUT rows.
+            let _ = writeln!(body, "{line_no} | {text}");
         }
         if hit.suppressed() > 0 {
-            let _ = writeln!(body, "  ... +{} more in this file", hit.suppressed());
+            let _ = writeln!(body, "... +{} more in this file", hit.suppressed());
         }
     }
     body
 }
 
-fn path_body(hits: &[FileHit]) -> String {
+fn path_body(display_root: &str, hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
-        let _ = writeln!(body, "{}", hit.relative);
+        let _ = writeln!(
+            body,
+            "{}",
+            workspace_relative_path(display_root, &hit.relative)
+        );
     }
     body
 }
 
-fn count_body(hits: &[FileHit]) -> String {
+fn count_body(display_root: &str, hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
-        let _ = writeln!(body, "{}:{}", hit.relative, hit.total);
+        let _ = writeln!(
+            body,
+            "{}:{}",
+            workspace_relative_path(display_root, &hit.relative),
+            hit.total
+        );
     }
     body
+}
+
+/// Join the search display root with a walk-root-relative hit path so chain
+/// headers and path lists stay workspace-relative for `edit` / `read_file`.
+fn workspace_relative_path(display_root: &str, relative: &str) -> String {
+    let root = display_root.trim();
+    let rel = relative.trim();
+    if root.is_empty() || root == "." {
+        return rel.to_string();
+    }
+    if rel.is_empty() || rel == "." {
+        return root.to_string();
+    }
+    format!("{root}/{rel}")
 }
 
 /// `content` mode is the only mode where the number shown can fall short of

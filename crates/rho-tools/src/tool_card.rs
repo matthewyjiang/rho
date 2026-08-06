@@ -137,8 +137,10 @@ pub enum DiffRowKind {
     Removed,
     /// File path heading in a multi-file diff.
     File,
-    /// Gap between hunks.
+    /// Gap between hunks (`⋯`).
     Skip,
+    /// Non-content annotation (edit op locators, notices). Not a hunk gap.
+    Meta,
 }
 
 impl DiffRowKind {
@@ -147,7 +149,7 @@ impl DiffRowKind {
         match self {
             Self::Added => "+",
             Self::Removed => "-",
-            Self::Context | Self::File | Self::Skip => " ",
+            Self::Context | Self::File | Self::Skip | Self::Meta => " ",
         }
     }
 }
@@ -175,7 +177,7 @@ impl DiffRow {
     /// Gutter number, sign and text as one string, for text-only surfaces.
     pub fn plain_text(&self) -> String {
         match self.kind {
-            DiffRowKind::File | DiffRowKind::Skip => self.text.clone(),
+            DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => self.text.clone(),
             DiffRowKind::Context | DiffRowKind::Added | DiffRowKind::Removed => match self.line {
                 Some(line) => format!("{line} {}{}", self.kind.sign(), self.text),
                 None => format!("{}{}", self.kind.sign(), self.text),

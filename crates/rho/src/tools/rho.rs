@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde::Deserialize;
 
 use {
@@ -10,7 +9,7 @@ use {
         ToolErrorKind, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
         ToolPrepareFuture, ToolSecurity,
     },
-    rho_tools::tool::{Tool, ToolContext, ToolError, ToolResult, ToolSpec},
+    rho_tools::tool::{AppToolFuture, Tool, ToolContext, ToolError, ToolResult, ToolSpec},
 };
 
 pub(super) fn sdk_bundle(
@@ -112,7 +111,6 @@ struct Args {
     action: String,
 }
 
-#[async_trait]
 impl Tool for Rho {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -133,21 +131,23 @@ impl Tool for Rho {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         _ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
-        let content = self
-            .diagnostics
-            .response(&args.action)
-            .map_err(ToolError::Message)?;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content,
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            let args: Args = serde_json::from_value(args)?;
+            let content = self
+                .diagnostics
+                .response(&args.action)
+                .map_err(ToolError::Message)?;
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content,
+            })
         })
     }
 }

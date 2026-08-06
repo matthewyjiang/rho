@@ -92,8 +92,8 @@ fn absolute_document_path_paste_attaches_and_submits_text() {
 }
 
 #[test]
-fn apply_patch_diff_streams_and_survives_cancellation() {
-    assert_pass("apply_patch_diff");
+fn edit_diff_streams_and_survives_cancellation() {
+    assert_pass("edit_diff");
 }
 
 // Covers: enabling fast mode must update the persistent model indicator without a restart.

@@ -1,4 +1,11 @@
 use pretty_assertions::assert_eq;
+use rho_providers::model::{
+    provider_models::{
+        replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
+        ProviderModel,
+    },
+    ReasoningCapabilities,
+};
 
 use super::*;
 use crate::{
@@ -8,6 +15,38 @@ use crate::{
 
 fn invocation(command: &str) -> CommandInvocation {
     parse_command(command).unwrap().unwrap()
+}
+
+/// Runs `f` with a temporary OpenAI model cache so the advisor model picker can open.
+///
+/// OpenAI is cache-backed. Without this, `/advisor on` with no model only
+/// reports "no cached provider models" and never opens a picker. The cache
+/// override is thread-local, so the body stays on one thread.
+fn with_cached_openai_models<T>(f: impl FnOnce() -> T) -> T {
+    let cache = tempfile::tempdir().unwrap();
+    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
+        replace_cached_provider_models_for_tests(
+            "openai",
+            &[ProviderModel {
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+                display_name: "GPT-5.5".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
+        .unwrap();
+        f()
+    })
+}
+
+fn block_on<T>(f: impl std::future::Future<Output = T>) -> T {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(f)
 }
 
 /// Records what the command asked the runtime to apply, so the advisor state
@@ -161,78 +200,90 @@ async fn disabling_advisor_mode_saves_the_setting() {
 
 // Covers: /advisor on without an advisor model asks for one instead of turning the mode on
 // Owner: advisor command
-#[tokio::test]
-async fn enabling_advisor_mode_without_a_model_opens_the_model_picker() {
-    let mut app = test_app();
-    let mut agent = FakeAdvisorRuntime::default();
+#[test]
+fn enabling_advisor_mode_without_a_model_opens_the_model_picker() {
+    with_cached_openai_models(|| {
+        block_on(async {
+            let mut app = test_app();
+            let mut agent = FakeAdvisorRuntime::default();
 
-    app.execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
-        .await
-        .unwrap();
+            app.execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
+                .await
+                .unwrap();
 
-    assert!(!app.info.runtime.advisor_mode);
-    assert!(
-        !app.info
-            .services
-            .config_repository
-            .load()
-            .unwrap()
-            .advisor_mode
-    );
-    let picker = open_picker(&app);
-    assert_eq!(picker.action, PickerAction::SelectInternalAgentModel);
-    assert_eq!(
-        app.internal_agent_model_target
-            .as_ref()
-            .map(|target| (target.id.as_str(), target.origin)),
-        Some((
-            ADVISOR_AGENT_ID,
-            InternalAgentModelPickerOrigin::AdvisorCommand
-        ))
-    );
-    assert_eq!(
-        app.status(),
-        "select an advisor model to turn advisor mode on"
-    );
+            assert!(!app.info.runtime.advisor_mode);
+            assert!(
+                !app.info
+                    .services
+                    .config_repository
+                    .load()
+                    .unwrap()
+                    .advisor_mode
+            );
+            let picker = open_picker(&app);
+            assert_eq!(picker.action, PickerAction::SelectInternalAgentModel);
+            assert_eq!(
+                app.internal_agent_model_target
+                    .as_ref()
+                    .map(|target| (target.id.as_str(), target.origin)),
+                Some((
+                    ADVISOR_AGENT_ID,
+                    InternalAgentModelPickerOrigin::AdvisorCommand
+                ))
+            );
+            assert_eq!(
+                app.status(),
+                "select an advisor model to turn advisor mode on"
+            );
+        });
+    });
 }
 
 // Covers: the advisor picker never offers the conversation model, which the advisor cannot use
 // Owner: advisor model picker
-#[tokio::test]
-async fn advisor_model_picker_omits_the_conversation_model_row() {
-    let mut app = test_app();
-    let mut agent = FakeAdvisorRuntime::default();
+#[test]
+fn advisor_model_picker_omits_the_conversation_model_row() {
+    with_cached_openai_models(|| {
+        block_on(async {
+            let mut app = test_app();
+            let mut agent = FakeAdvisorRuntime::default();
 
-    app.execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
-        .await
-        .unwrap();
+            app.execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
+                .await
+                .unwrap();
 
-    let picker = open_picker(&app);
-    assert!(!picker
-        .items
-        .iter()
-        .any(|item| item.value == super::super::model_picker::USE_CONVERSATION_MODEL));
+            let picker = open_picker(&app);
+            assert!(!picker
+                .items
+                .iter()
+                .any(|item| item.value == super::super::model_picker::USE_CONVERSATION_MODEL));
+        });
+    });
 }
 
 // Covers: dismissing the advisor model prompt leaves the mode off and says why
 // Owner: advisor command
-#[tokio::test]
-async fn dismissing_the_advisor_model_prompt_leaves_the_mode_off() {
-    let mut app = test_app();
-    let mut agent = FakeAdvisorRuntime::default();
-    app.execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
-        .await
-        .unwrap();
+#[test]
+fn dismissing_the_advisor_model_prompt_leaves_the_mode_off() {
+    with_cached_openai_models(|| {
+        block_on(async {
+            let mut app = test_app();
+            let mut agent = FakeAdvisorRuntime::default();
+            app.execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
+                .await
+                .unwrap();
 
-    app.handle_picker_escape(/*running*/ false).unwrap();
+            app.handle_picker_escape(/*running*/ false).unwrap();
 
-    assert!(!app.info.runtime.advisor_mode);
-    assert!(app.internal_agent_model_target.is_none());
-    assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
-    assert_eq!(
-        app.status(),
-        "advisor mode stays off: no advisor model selected"
-    );
+            assert!(!app.info.runtime.advisor_mode);
+            assert!(app.internal_agent_model_target.is_none());
+            assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
+            assert_eq!(
+                app.status(),
+                "advisor mode stays off: no advisor model selected"
+            );
+        });
+    });
 }
 
 // Covers: an unknown argument reports usage without changing the mode

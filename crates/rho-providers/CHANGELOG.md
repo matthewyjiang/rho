@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.16.0...rho-providers-v0.16.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **providers:** keep anthropic tool schemas typed after composition strip ([#753](https://github.com/matthewyjiang/rho/issues/753)) ([207e74c](https://github.com/matthewyjiang/rho/commit/207e74cc577d4c7c905f9bcf6b6b49e7153c9db5))
+
 ## [0.16.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.15.5...rho-providers-v0.16.0) (2026-08-04)
 
 

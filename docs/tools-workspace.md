@@ -9,20 +9,19 @@ Rho currently ships these compiled-in workspace tools on all platforms:
 ```text
 list_dir
 read_file
-write_file
-edit_file
-apply_patch
+write
+edit
 grep
 glob
 ```
 
-`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or `rtk`.
+`grep` searches file contents with a regex. `glob` lists files whose paths match a pattern. Both run in-process and do not need `rg`, `fd`, or `rtk`. Prefer these tools over shell search for workspace inspection: `grep` content mode mints chainable `[path#TAG]` snapshots (via the hashline header format) and match line numbers so `edit` can target anchors. Match text is search preview only.
 
 - Patterns: `grep` takes a Rust/`regex` pattern. `glob` takes a path glob; a pattern with no `/` (for example `*.rs`) matches nested paths as `**/*.rs`.
 - Defaults: both honor `.gitignore`, skip hidden files, and never follow symlinks. Pass `include_hidden` when you need dotfiles.
 - Order: results come back in walk order, sorted by name within each directory, so repeat runs agree and a capped result is the first N paths shown rather than an arbitrary sample.
 - Caps: results are bounded (default 200). `grep` also caps matches per file and trims long lines. Every capped, timed-out, or cancelled search says so in its summary, including when it found nothing.
-- Output: `grep` groups matches by file. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
+- Output: `grep` groups matches by file. Content mode prefixes each file with a chainable `[path#TAG]` header and `N | text` match previews. Copy TAG and line numbers into `edit`; do not copy preview bodies into PUT rows (previews may be truncated). Use `read_file` when you need exact line text. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
 - Permissions: both request read access only, so they work in every permission mode, including `plan`.
 
 It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, web access tools with zero-config invocation, an optional `advisor` tool, and one native shell tool for the current platform:
@@ -61,31 +60,52 @@ Document extraction enforces a 25 MiB source limit and a 200,000-character extra
 
 ## File edits
 
-`edit_file` performs one string replacement in an existing UTF-8 file. Pass `path`, `old_string`, and `new_string`. Matching normalizes CRLF and LF line endings rather than requiring byte-exact newline matches, and the replacement is rewritten to preserve the file's existing newline style. By default `old_string` must match exactly once; set `replace_all` to replace every match. The tool opens the target under an exclusive lock for plan and write so concurrent modifications cannot be overwritten after validation. It fails closed when the match count is wrong, the file is missing, or the lock/write cannot complete. Successful results include a unified diff.
+`edit` applies one or more line-anchored hunks to existing UTF-8 files. Pass a hashline document in `input`. Take path tags and line numbers from a `read_file` result or from a prior successful `edit` response preview. Never invent a tag. `read_file` returns UTF-8 source files as a hashline view: a `[path#TAG]` header plus `N:line` rows. `TAG` is a 4-hex snapshot of the full file, computed with trailing whitespace ignored so a whitespace-only change does not invalidate a read. `offset`/`limit` select which rows are shown; the file is still read fully to mint `TAG`. `edit` rejects a stale `TAG` before writing.
 
 ```json
 {
-  "path": "src/app.py",
-  "old_string": "print(\"Hi\")",
-  "new_string": "print(\"Hello, world!\")"
+  "input": "[src/app.py#A1B2]\nPUT 2:\n+print(\"Hello, world!\")\n"
 }
 ```
 
-Use `edit_file` for a single surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits. Use `write_file` to create or fully rewrite a file.
+Supported ops:
 
-## File patches
+- `PUT N:` replace one original line (digits then colon — never `PUT N.:`)
+- `PUT N.=M:` replace inclusive original lines `N` through `M` with `+` body rows
+- `PUT <N:` / `PUT >N:` / `PUT >$:` insert body rows before line N, after line N, or at end of file
+- `CUT N.=M` or `CUT N` delete inclusive original lines (no colon on CUT)
 
-`apply_patch` edits existing files and can also add or delete files with a Codex-style patch document. Pass the full patch text in `input`, including the `*** Begin Patch` and `*** End Patch` markers. Operations use `*** Add File:`, `*** Delete File:`, and `*** Update File:` headers. Update hunks use `@@` context markers and lines prefixed with ` ` (context), `-` (remove), or `+` (add). An update may include `*** Move to:` to rename a file while patching it.
+Locators must match those forms exactly. A trailing dot (`PUT 12.:`, `PUT 12.=:`) is invalid and is rejected with an explicit error — it is not a single-line shorthand.
 
-Rho parses the whole patch, plans every file operation against current contents, rejects overlapping path claims, re-reads those files immediately before writing, and fails closed if any changed mid-flight. A planning or revalidation failure leaves all targeted files unchanged. If a later write fails after earlier writes succeeded, Rho rolls back the applied ops. Successful results include a unified diff of the committed changes.
+Rules:
 
-```json
-{
-  "input": "*** Begin Patch\n*** Add File: hello.txt\n+Hello world\n*** Update File: src/app.py\n@@ def greet():\n-print(\"Hi\")\n+print(\"Hello, world!\")\n*** Delete File: obsolete.txt\n*** End Patch\n"
-}
-```
+- Take `TAG` and line numbers from the latest snapshot for that path: `read_file`, `grep` (content mode TAG + line numbers), a successful `edit` preview, a `write` chain snapshot, or a failed `edit` live snapshot. Grep match previews are not PUT bodies.
+- Put every hunk for one path in a single `edit` document. Do not issue two `edit` tool calls on the same path in one batch; wait for the result first. Different paths may edit in parallel
+- Line numbers name the original snapshot; they do not shift mid-document
+- Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
+- `PUT` always needs at least one `+` body row; use `CUT` to delete
+- Stale tags, overlapping destructive ranges, duplicate paths, out-of-range lines, and mid-edit file changes fail closed with no write. The error includes a bounded live snapshot - copy that header and lines to retry
+- Re-read only for lines outside the live snapshot or post-edit preview
+- After a large or structural edit, re-read before further ops on anchors outside the returned preview
+- An insert whose anchor falls inside a range that another op replaces or deletes is rejected, because that position no longer exists after the edit
+- Block ops (`N*`), registers, `REM`, and `MV` are not supported yet
+- Create or fully rewrite files with `write`. Do not use `edit` to create paths
 
-Use `write_file` when you need to create or fully replace a file with complete contents. Prefer `edit_file` for one surgical string replace. Use `apply_patch` for multi-hunk or multi-file edits.
+Successful `edit` results return a one-line ops summary (for example `PUT 2.=5: (4 → 2 line(s))`) plus a post-edit `[path#NEW]` numbered preview around the change for chaining. **Structural** edits (a single replace/delete span of 40+ original lines) return the new TAG and ops summary **without** numbered body lines so the next op must re-read. Successful `write` results return a bounded head/tail hashline snapshot with the new TAG. Unified diffs are tool metadata for UI cards, not repeated in model-facing content.
+
+Streaming cards project the edit document alone (op summaries + PUT bodies). Approval and start cards dry-run against live files when readable so removals appear as real `-` rows; missing or stale targets fall back to the document projection.
+
+Use `edit` when you have a fresh hashline snapshot and need one or more line-anchored hunks. Use `write` to create or fully rewrite a file. Do not use shell or Python to rewrite UTF-8 sources that `edit` can express.
+
+### One read format for every caller
+
+`read_file` returns the hashline view for every UTF-8 text file, whether or not
+the caller can use `edit`. This is deliberate. Two read formats would
+make the output depend on the agent's tool set, so the same file would read
+differently to a subagent, a workflow step, and the automation CLI, and any
+prompt or parser downstream would have to handle both. One format costs a small
+number of input tokens per line and keeps every reader on the same contract.
+
 
 ## Managed background processes
 
@@ -97,7 +117,7 @@ Managed processes use standard output and error pipes, with standard input close
 
 ## File writes and diffs
 
-File write results include a unified diff so the model and transcript can inspect what changed. In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
+Successful `write` and `edit` results return model-facing hashline snapshots for chaining. Unified diffs are tool metadata for UI cards (not repeated in model content). In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers in the accent color. This is useful in both the [interactive TUI](/interactive-tui) and [automation mode](/automation-cli).
 
 ## Security and workspace boundaries
 
