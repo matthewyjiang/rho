@@ -4,7 +4,7 @@ use crate::{
     reasoning::ReasoningLevel,
 };
 
-use super::dialect::OpenAiCompatibleDialect;
+use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
 #[derive(Default)]
 pub(super) struct ReasoningFields {

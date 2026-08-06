@@ -87,6 +87,7 @@ export default defineConfig({
               { text: 'Poolside', link: '/providers/poolside' },
               { text: 'Moonshot and Kimi Code', link: '/providers/moonshot-kimi' },
               { text: 'Qwen Token Plan', link: '/providers/qwen-token-plan' },
+              { text: 'Meta Model API', link: '/providers/meta' },
               { text: 'xAI', link: '/providers/xai' }
             ]
           },

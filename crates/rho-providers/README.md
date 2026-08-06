@@ -7,7 +7,7 @@ applications built on `rho-sdk`. It includes:
   `build_automation_provider` construction helpers
 - typed `ProviderBuildOptions`, `ModelError`, and the `CredentialStore` and
   `OsCredentialStore` credential APIs
-- the model catalog and `provider_runtime` registry
+- the model catalog and provider descriptor table (`provider_runtime` projects each row's runtime)
 - provider wire protocols and OAuth login flows
 - `set_rho_version`, which lets an embedder identify its application version in
   provider request headers
@@ -37,6 +37,7 @@ The runtime registry includes:
 - `openrouter`
 - `kimi-code`
 - `qwen-token-plan`
+- `meta`
 
 ## Usage
 

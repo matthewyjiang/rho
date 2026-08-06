@@ -96,5 +96,5 @@ fn normalize_moonshot_schema(schema: &mut Value) {
 }
 
 #[cfg(test)]
-#[path = "dialect_tests.rs"]
+#[path = "openai_compatible_dialect_tests.rs"]
 mod tests;

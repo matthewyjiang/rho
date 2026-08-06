@@ -47,6 +47,7 @@ features:
   - [Poolside](/providers/poolside)
   - [Moonshot and Kimi Code](/providers/moonshot-kimi)
   - [Qwen Token Plan](/providers/qwen-token-plan)
+  - [Meta Model API](/providers/meta)
   - [xAI](/providers/xai)
 - [Interactive TUI](/interactive-tui)
 - [Inline shell](/inline-shell)

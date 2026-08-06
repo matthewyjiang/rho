@@ -1,13 +1,10 @@
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 
-#[path = "openai_compatible/dialect.rs"]
-mod dialect;
-
 #[path = "openai_compatible/reasoning.rs"]
 mod reasoning;
 
-pub(crate) use dialect::OpenAiCompatibleDialect;
+pub(crate) use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
 use crate::{
     auth::kimi_token::KimiAuthManager,

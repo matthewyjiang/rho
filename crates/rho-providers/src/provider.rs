@@ -1,7 +1,8 @@
-//! Stable provider identity and metadata shared across credential, catalog, and runtime layers.
+//! Stable provider identity, descriptor table, and runtime construction metadata.
 //!
-//! This module intentionally contains no credential-store or model-runtime behavior. Provider
-//! adapters and `ModelError` mappings belong in the model runtime.
+//! Credential-store access and HTTP adapters live elsewhere. Each
+//! [`ProviderDescriptor`] owns its runtime shape and optional default model so
+//! new providers are table rows rather than parallel match arms.
 
 pub const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
 pub const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
@@ -17,6 +18,58 @@ pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
 pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-key";
+pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
+
+pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
+pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
+pub const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
+pub const POOLSIDE_API_BASE: &str = "https://inference.poolside.ai/v1";
+pub const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
+pub const KIMI_CODE_API_BASE: &str = "https://api.kimi.com/coding/v1";
+/// Default OpenAI-compatible Token Plan base (Singapore / international).
+pub const QWEN_TOKEN_PLAN_API_BASE: &str =
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
+/// Meta Model API OpenAI-compatible base (Chat Completions and `/models`).
+pub const META_API_BASE: &str = "https://api.meta.ai/v1";
+
+/// OpenAI API-key vs Codex OAuth runtime auth selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenAiRuntimeAuth {
+    ApiKey,
+    Codex,
+}
+
+/// How a registered provider is constructed at runtime.
+///
+/// Owned on [`ProviderDescriptor`] so adding a provider is a single table row
+/// rather than a parallel match arm in the registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderRuntime {
+    OpenAi {
+        auth_mode: OpenAiRuntimeAuth,
+    },
+    OpenAiCompatible {
+        dialect: crate::openai_compatible_dialect::OpenAiCompatibleDialect,
+        default_api_base: &'static str,
+    },
+    Anthropic,
+    Google,
+    GithubCopilot,
+    Xai,
+}
+
+impl ProviderRuntime {
+    /// Whether two descriptors share a runtime family for auth-profile resolution.
+    ///
+    /// OpenAI API-key and Codex OAuth are different auth modes on the same backend
+    /// family; other runtimes compare by full value (including dialect and base URL).
+    pub fn same_family(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::OpenAi { .. }, Self::OpenAi { .. }) => true,
+            (left, right) => left == right,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
@@ -33,22 +86,7 @@ pub enum ProviderId {
     OpenRouter,
     KimiCode,
     QwenTokenPlan,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum RuntimeProviderId {
-    Ollama,
-    OllamaCloud,
-    OpenAi,
-    Anthropic,
-    Google,
-    GithubCopilot,
-    Xai,
-    Moonshot,
-    Poolside,
-    OpenRouter,
-    KimiCode,
-    QwenTokenPlan,
+    Meta,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,9 +231,9 @@ impl ProviderDescriptor {
     /// Provider model discovery remains authoritative. This only bridges model
     /// names when the provider API and metadata catalog use different IDs.
     pub fn metadata_model<'a>(&self, model: &'a str) -> &'a str {
-        match (self.runtime_id, model) {
-            (RuntimeProviderId::KimiCode, "k3") => "kimi-k3",
-            (RuntimeProviderId::OpenRouter, model) => model
+        match (self.id, model) {
+            (ProviderId::KimiCode, "k3") => "kimi-k3",
+            (ProviderId::OpenRouter, model) => model
                 .split_once('/')
                 .map(|(_, upstream_model)| upstream_model)
                 .unwrap_or(model),
@@ -205,8 +243,8 @@ impl ProviderDescriptor {
 
     /// Resolves an aggregator model ID to its models.dev provider.
     pub fn metadata_upstream_for_model<'a>(&self, model: &'a str) -> &'a str {
-        match self.runtime_id {
-            RuntimeProviderId::OpenRouter => model
+        match self.id {
+            ProviderId::OpenRouter => model
                 .split_once('/')
                 .map(|(upstream, _)| upstream)
                 .unwrap_or(self.metadata_upstream),
@@ -216,8 +254,8 @@ impl ProviderDescriptor {
 
     /// Returns a safe effective context when account-scoped model metadata is unavailable.
     pub fn effective_context_fallback(&self, model: &str) -> Option<u64> {
-        match (self.runtime_id, model) {
-            (RuntimeProviderId::KimiCode, "k3") => Some(262_144),
+        match (self.id, model) {
+            (ProviderId::KimiCode, "k3") => Some(262_144),
             _ => None,
         }
     }
@@ -287,7 +325,8 @@ pub struct AuthMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProviderDescriptor {
     pub id: ProviderId,
-    pub runtime_id: RuntimeProviderId,
+    /// Runtime construction shape (dialect, default API base, backend kind).
+    pub runtime: ProviderRuntime,
     pub name: &'static str,
     pub display_name: &'static str,
     /// Non-empty. First entry is the default auth mode.
@@ -297,6 +336,8 @@ pub struct ProviderDescriptor {
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
+    /// Preferred model when the cache is empty or contains this id.
+    pub default_model: Option<&'static str>,
 }
 
 /// Provider identity plus the selected auth mode after profile resolution.
@@ -340,327 +381,10 @@ impl ProviderDescriptor {
     }
 }
 
-pub const PROVIDERS: &[ProviderDescriptor] = &[
-    ProviderDescriptor {
-        id: ProviderId::Ollama,
-        runtime_id: RuntimeProviderId::Ollama,
-        name: "ollama",
-        display_name: "Ollama",
-        auth_modes: &[
-        AuthMode {
-            id: "none",
-            login_label: "No authentication required",
-            auth_kind: ProviderAuthKind::None,
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "ollama",
-        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
-    },
-    ProviderDescriptor {
-        id: ProviderId::OllamaCloud,
-        runtime_id: RuntimeProviderId::OllamaCloud,
-        name: "ollama-cloud",
-        display_name: "Ollama Cloud",
-        auth_modes: &[
-        AuthMode {
-            id: "ollama-cloud-api-key",
-            login_label: "Ollama Cloud API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "OLLAMA_API_KEY",
-            account: OLLAMA_CLOUD_API_KEY_ACCOUNT,
-            entry_label: "Ollama Cloud API key",
-            missing_message: "missing Ollama Cloud API key; run /login ollama-cloud in the TUI or set OLLAMA_API_KEY as a CI/dev override",
-        },
-        },
-        AuthMode {
-            id: "ollama-cloud-device",
-            login_label: "Ollama Cloud device key",
-            auth_kind: ProviderAuthKind::OllamaDeviceKey {
-                missing_message: "missing Ollama Cloud device key; run /login ollama-cloud in the TUI and choose Device Key, or sign in with `ollama signin` so ~/.ollama/id_ed25519 is registered",
-            },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::Plain,
-        // models.dev catalogs cloud models under `ollama-cloud`, not `ollama`.
-        metadata_upstream: "ollama-cloud",
-        // Ollama's OpenAI-compatible API accepts reasoning_effort including "none".
-        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
-    },
-    ProviderDescriptor {
-        id: ProviderId::OpenAi,
-        runtime_id: RuntimeProviderId::OpenAi,
-        name: "openai",
-        display_name: "OpenAI",
-        auth_modes: &[
-        AuthMode {
-            id: "api-key",
-            login_label: "OpenAI API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "OPENAI_API_KEY",
-            account: OPENAI_API_KEY_ACCOUNT,
-            entry_label: "OpenAI API key",
-            missing_message: "missing OpenAI API key; run /login openai in the TUI or set OPENAI_API_KEY as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAi),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "openai",
-        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
-    },
-    ProviderDescriptor {
-        id: ProviderId::OpenAiCodex,
-        runtime_id: RuntimeProviderId::OpenAi,
-        name: "openai-codex",
-        display_name: "OpenAI Codex",
-        auth_modes: &[
-        AuthMode {
-            id: "codex",
-            login_label: "Codex OAuth",
-            auth_kind: ProviderAuthKind::CodexOAuth {
-            env_var: "CODEX_ACCESS_TOKEN",
-            account: CODEX_TOKENS_ACCOUNT,
-            missing_message: "missing Codex OAuth credentials; run /login openai-codex in the TUI or set CODEX_ACCESS_TOKEN as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::StaticCatalog,
-        model_refresh: None,
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "openai",
-        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
-    },
-    ProviderDescriptor {
-        id: ProviderId::Anthropic,
-        runtime_id: RuntimeProviderId::Anthropic,
-        name: "anthropic",
-        display_name: "Anthropic",
-        auth_modes: &[
-        AuthMode {
-            id: "anthropic-api-key",
-            login_label: "Anthropic API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "ANTHROPIC_API_KEY",
-            account: ANTHROPIC_API_KEY_ACCOUNT,
-            entry_label: "Anthropic API key",
-            missing_message: "missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::Anthropic),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "anthropic",
-        catalog_reasoning: CatalogReasoningPolicy::Unknown,
-    },
-    ProviderDescriptor {
-        id: ProviderId::Google,
-        runtime_id: RuntimeProviderId::Google,
-        name: "google",
-        display_name: "Google Gemini",
-        auth_modes: &[
-        AuthMode {
-            id: "google-api-key",
-            login_label: "Google Gemini API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "GEMINI_API_KEY",
-            account: GOOGLE_API_KEY_ACCOUNT,
-            entry_label: "Google Gemini API key",
-            missing_message: "missing Google Gemini API key; run /login google in the TUI or set GEMINI_API_KEY as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::Google),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "google",
-        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
-    },
-    ProviderDescriptor {
-        id: ProviderId::GithubCopilot,
-        runtime_id: RuntimeProviderId::GithubCopilot,
-        name: "github-copilot",
-        display_name: "GitHub Copilot",
-        auth_modes: &[
-        AuthMode {
-            id: "github-copilot",
-            login_label: "GitHub Copilot device login",
-            auth_kind: ProviderAuthKind::GithubCopilotDevice {
-            env_var: "GITHUB_COPILOT_TOKEN",
-            account: GITHUB_COPILOT_TOKENS_ACCOUNT,
-            missing_message: "missing GitHub Copilot credentials; run /login github-copilot in the TUI or set GITHUB_COPILOT_TOKEN as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "github-copilot",
-        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
-    },
-    ProviderDescriptor {
-        id: ProviderId::Moonshot,
-        runtime_id: RuntimeProviderId::Moonshot,
-        name: "moonshot",
-        display_name: "Moonshot AI",
-        auth_modes: &[
-        AuthMode {
-            id: "moonshot-api-key",
-            login_label: "Moonshot API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "MOONSHOT_API_KEY",
-            account: MOONSHOT_API_KEY_ACCOUNT,
-            entry_label: "Moonshot API key",
-            missing_message: "missing Moonshot API key; run /login moonshot in the TUI or set MOONSHOT_API_KEY as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "moonshotai",
-        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
-    },
-    ProviderDescriptor {
-        id: ProviderId::Poolside,
-        runtime_id: RuntimeProviderId::Poolside,
-        name: "poolside",
-        display_name: "Poolside",
-        auth_modes: &[
-        AuthMode {
-            id: "poolside-api-key",
-            login_label: "Poolside API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "POOLSIDE_API_KEY",
-            account: POOLSIDE_API_KEY_ACCOUNT,
-            entry_label: "Poolside API key",
-            missing_message: "missing Poolside API key; run /login poolside in the TUI or set POOLSIDE_API_KEY as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::ProviderPrefixed,
-        metadata_upstream: "poolside",
-        catalog_reasoning: CatalogReasoningPolicy::OffOrMax,
-    },
-    ProviderDescriptor {
-        id: ProviderId::OpenRouter,
-        runtime_id: RuntimeProviderId::OpenRouter,
-        name: "openrouter",
-        display_name: "OpenRouter",
-        auth_modes: &[
-        AuthMode {
-            id: "openrouter-api-key",
-            login_label: "OpenRouter API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "OPENROUTER_API_KEY",
-            account: OPENROUTER_API_KEY_ACCOUNT,
-            entry_label: "OpenRouter API key",
-            missing_message: "missing OpenRouter API key; run /login openrouter in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
-        },
-        },
-        AuthMode {
-            id: "openrouter-oauth",
-            login_label: "OpenRouter OAuth",
-            auth_kind: ProviderAuthKind::BearerCredential {
-            env_var: "OPENROUTER_API_KEY",
-            account: OPENROUTER_OAUTH_KEY_ACCOUNT,
-            missing_message: "missing OpenRouter OAuth credentials; run /login openrouter-oauth in the TUI or set OPENROUTER_API_KEY as a CI/dev override",
-            acquisition: BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter),
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "openrouter",
-        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
-    },
-    ProviderDescriptor {
-        id: ProviderId::KimiCode,
-        runtime_id: RuntimeProviderId::KimiCode,
-        name: "kimi-code",
-        display_name: "Kimi Code",
-        auth_modes: &[
-        AuthMode {
-            id: "kimi-oauth",
-            login_label: "Kimi Code OAuth",
-            auth_kind: ProviderAuthKind::KimiOAuth {
-            env_var: "KIMI_ACCESS_TOKEN",
-            account: KIMI_TOKENS_ACCOUNT,
-            missing_message: "missing Kimi OAuth credentials; run /login kimi-code or set KIMI_ACCESS_TOKEN as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "moonshotai",
-        catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
-    },
-    ProviderDescriptor {
-        id: ProviderId::QwenTokenPlan,
-        runtime_id: RuntimeProviderId::QwenTokenPlan,
-        name: "qwen-token-plan",
-        display_name: "Qwen Token Plan",
-        auth_modes: &[
-        AuthMode {
-            id: "qwen-token-plan-api-key",
-            login_label: "Qwen Token Plan API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "QWEN_TOKEN_PLAN_API_KEY",
-            account: QWEN_TOKEN_PLAN_API_KEY_ACCOUNT,
-            entry_label: "Qwen Token Plan API key",
-            missing_message: "missing Qwen Token Plan API key; run /login qwen-token-plan in the TUI or set QWEN_TOKEN_PLAN_API_KEY as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "alibaba-token-plan",
-        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
-    },
-    ProviderDescriptor {
-        id: ProviderId::Xai,
-        runtime_id: RuntimeProviderId::Xai,
-        name: "xai",
-        display_name: "xAI",
-        auth_modes: &[
-        AuthMode {
-            id: "xai-api-key",
-            login_label: "xAI API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "XAI_API_KEY",
-            account: XAI_API_KEY_ACCOUNT,
-            entry_label: "xAI API key",
-            missing_message: "missing xAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override",
-        },
-        },
-        AuthMode {
-            id: "xai-oauth",
-            login_label: "xAI OAuth",
-            auth_kind: ProviderAuthKind::XaiOAuth {
-            env_var: "XAI_ACCESS_TOKEN",
-            account: XAI_TOKENS_ACCOUNT,
-            missing_message: "missing xAI OAuth credentials; run /login xai-oauth in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override",
-        },
-        }
-        ],
-        model_source: ProviderModelSource::StaticCatalog,
-        model_refresh: None,
-        model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: "xai",
-        catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
-    },
-];
+#[path = "provider_table.rs"]
+mod provider_table;
+
+pub use provider_table::PROVIDERS;
 
 pub fn providers() -> &'static [ProviderDescriptor] {
     PROVIDERS
@@ -801,7 +525,7 @@ pub fn resolve_profile(
     }
     let auth_profile = provider_descriptor_for_auth(auth)
         .ok_or_else(|| ProfileResolutionError::UnknownAuth(auth.into()))?;
-    if provider.runtime_id == auth_profile.runtime_id {
+    if provider.runtime.same_family(auth_profile.runtime) {
         let mode = auth_profile
             .auth_mode(auth)
             .expect("auth exists on auth_profile");

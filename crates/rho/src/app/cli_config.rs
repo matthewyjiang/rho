@@ -130,8 +130,10 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
             .as_deref()
             .expect("cli_auth_profile is only Some when --auth is set");
         let current_runtime =
-            provider::provider_descriptor(&config.provider).map(|descriptor| descriptor.runtime_id);
-        if cli.model.is_none() && current_runtime == Some(profile.runtime_id) {
+            provider::provider_descriptor(&config.provider).map(|descriptor| descriptor.runtime);
+        if cli.model.is_none()
+            && current_runtime.is_some_and(|runtime| runtime.same_family(profile.runtime))
+        {
             config.provider = profile.name.into();
             config.auth = auth.into();
         } else {

@@ -20,3 +20,19 @@ effective_context_window = 400000
 usable_context_window = 272000
 long_context_threshold = 272000
 cost_long_context = { input = 10.0, output = 45.0, cache_read = 1.0 }
+
+# models.dev currently catalogs Muse Spark under openrouter only. Keep Meta
+# metadata available until the meta provider entry catches up.
+[models."meta/muse-spark-1.1"]
+advertised_context_window = 1048576
+effective_context_window = 1048576
+max_output_tokens = 131072
+cost_default = { input = 1.25, output = 4.25, cache_read = 0.15 }
+supported_reasoning_levels = ["minimal", "low", "medium", "high", "xhigh"]
+
+[models."meta/muse-spark-1.2"]
+advertised_context_window = 1048576
+effective_context_window = 1048576
+max_output_tokens = 131072
+cost_default = { input = 1.25, output = 4.25, cache_read = 0.15 }
+supported_reasoning_levels = ["minimal", "low", "medium", "high", "xhigh"]

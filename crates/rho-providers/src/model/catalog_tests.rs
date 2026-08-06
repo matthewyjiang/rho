@@ -403,3 +403,120 @@ fn unknown_provider_is_rejected() {
         }
     );
 }
+
+// Covers: descriptor default wins over lexicographic first cached model when present
+// Owner: model catalog
+#[test]
+fn preferred_cached_default_prefers_descriptor_default_when_present() {
+    with_cached_provider_models(
+        "anthropic",
+        vec![
+            provider_model("anthropic", "claude-haiku-4-5"),
+            provider_model("anthropic", "claude-sonnet-4-5"),
+        ],
+        || {
+            assert_eq!(
+                default_model_for_provider("anthropic").as_deref(),
+                Some("claude-sonnet-4-5")
+            );
+        },
+    );
+
+    with_cached_provider_models(
+        "anthropic",
+        vec![provider_model("anthropic", "claude-haiku-4-5")],
+        || {
+            assert_eq!(
+                default_model_for_provider("anthropic").as_deref(),
+                Some("claude-haiku-4-5")
+            );
+        },
+    );
+
+    let cache_dir = unique_cache_dir("anthropic-default-empty");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        assert_eq!(
+            default_model_for_provider("anthropic").as_deref(),
+            Some("claude-sonnet-4-5")
+        );
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+}
+
+// Covers: Meta default is muse-spark-1.2 with empty cache and prefers it when cached
+// Owner: model catalog
+#[test]
+fn meta_default_is_muse_spark_1_2() {
+    let cache_dir = unique_cache_dir("meta-default-empty");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        assert_eq!(
+            default_model_for_provider("meta").as_deref(),
+            Some("muse-spark-1.2")
+        );
+        let selection = resolve_model_selection_for_provider(
+            "meta",
+            "muse-spark-1.2",
+            SelectionAuthContext::none(),
+        )
+        .unwrap();
+        assert_eq!(selection.model, "muse-spark-1.2");
+    });
+    let _ = std::fs::remove_dir_all(cache_dir);
+
+    with_cached_provider_models(
+        "meta",
+        vec![
+            provider_model("meta", "muse-spark-1.1"),
+            provider_model("meta", "muse-spark-1.2"),
+        ],
+        || {
+            assert_eq!(
+                default_model_for_provider("meta").as_deref(),
+                Some("muse-spark-1.2")
+            );
+            let available = available_models_for_auths(&["meta-api-key".into()]);
+            let meta_models = available
+                .iter()
+                .filter(|entry| entry.provider == "meta")
+                .map(|entry| entry.model.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(meta_models, vec!["muse-spark-1.1", "muse-spark-1.2"]);
+        },
+    );
+}
+
+// Covers: login groups derive single-provider rows and keep cross-provider merges
+// Owner: model catalog
+#[test]
+fn login_groups_include_meta_and_merge_openai_codex() {
+    let groups = login_groups();
+    let prompts = groups
+        .iter()
+        .map(|group| group.prompt.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        prompts.windows(2).all(|pair| pair[0] <= pair[1]),
+        "login groups must sort by display prompt: {prompts:?}"
+    );
+
+    let meta = groups
+        .iter()
+        .find(|group| group.id == "meta")
+        .expect("meta login group");
+    assert_eq!(meta.prompt, "Meta Model API");
+    assert_eq!(meta.methods.len(), 1);
+    assert_eq!(meta.methods[0].target.auth, "meta-api-key");
+
+    let openai = groups
+        .iter()
+        .find(|group| group.id == "openai")
+        .expect("openai login group");
+    let openai_auths = openai
+        .methods
+        .iter()
+        .map(|method| method.target.auth.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(openai_auths, vec!["api-key", "codex"]);
+    assert!(groups.iter().all(|group| group.id != "openai-codex"));
+    assert!(groups.iter().all(|group| group.id != "kimi-code"));
+}
