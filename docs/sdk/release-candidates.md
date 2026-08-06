@@ -1,5 +1,8 @@
 # Coordinated 1.0 release-candidate process
 
+> Historical process document for the original 1.0 cutover. It is not the day-to-day release process for current 1.x minors.
+
+
 ## Current status
 
 `rho-sdk 1.0.0` and `rho-coding-agent 1.0.0`/`1.0.1` are published (see the [1.0 release notes](/sdk/release-notes-1.0)). Publication did not follow the fully sequenced coordinated flow below: both packages shipped from the same release-please run rather than SDK-first-then-verify, and not every entry gate in this document was evidenced before publication. Most notably, the terminal-event delivery guarantee under "Public contract" was not closed; see [known limitations](/sdk/events-and-cancellation#known-limitations).

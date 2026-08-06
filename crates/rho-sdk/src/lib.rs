@@ -1,10 +1,10 @@
 //! Embeddable, headless agent runtime for Rho.
 //!
-//! `rho-sdk` is being extracted from the Rho coding agent. Its default feature
-//! set is intentionally empty: constructing the SDK does not grant filesystem,
-//! process, network, credential-store, or persistence access. Those capabilities
-//! will be exposed through explicit adapters and opt-in features as their stable
-//! contracts are added.
+//! `rho-sdk` is the stable embeddable runtime used by the Rho coding agent. Its
+//! default feature set is intentionally empty: constructing the SDK does not
+//! grant filesystem, process, network, credential-store, or persistence access.
+//! Those capabilities stay on explicit host adapters (and future opt-in features
+//! if any move into this crate).
 //!
 //! The application crate remains the owner of CLI parsing, terminal behavior,
 //! interactive rendering, keybindings, updates, and application configuration.
@@ -106,11 +106,12 @@
 //!
 //! - Cancel a run with [`Run::cancel`](crate::Run::cancel) or
 //!   [`Run::cancellation_handle`](crate::Run::cancellation_handle).
-//! - Retract staged steering with [`Run::retract_steering`] before it is
-//!   appended to conversation history.
+//! - Retract staged steering with [`Run::steer_retractable`] and
+//!   [`Run::retract_steering`] before it is appended to conversation history.
 //! - Answer questionnaires with [`Run::respond`](crate::Run::respond) after
 //!   [`RunEvent::ToolHostInputRequested`].
 //! - Gate sensitive work with [`WorkspacePolicy`] and [`ApprovalHandler`].
+//! - Observe or deny tool use with [`hooks`](crate::hooks).
 //! - Use [`ToolHost::start`] for provider-free tools that report progress or ask
 //!   for host input, or [`ToolHost::invoke`] for non-interactive calls.
 //!

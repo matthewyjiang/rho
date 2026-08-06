@@ -1,5 +1,8 @@
 # Upgrade guide for Rho 1.0
 
+> Historical. Describes the original pre-1.0 to 1.0.0 cutover. For current API behavior use the SDK guide and [changelog](/sdk/changelog).
+
+
 This guide covers two audiences:
 
 - Rust integrations that previously imported private `rho-coding-agent` modules

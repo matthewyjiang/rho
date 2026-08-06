@@ -2,7 +2,7 @@
 
 ## Runtime
 
-`Rho` is a cloneable handle to runtime configuration and shared lifecycle state. Build it explicitly with `Rho::builder()` and at least one `ModelProvider`. A runtime owns the provider, registered tools, prompt policy, event capacity, step limit, optional workspace and policies, optional compactor, and shutdown state.
+`Rho` is a cloneable handle to runtime configuration and shared lifecycle state. Build it explicitly with `Rho::builder()` and at least one `ModelProvider`. A runtime owns the provider, registered tools, prompt policy, event capacity, step limit, optional workspace and policies, optional compactor, optional usage recorder, optional hook wiring, and shutdown state.
 
 Construction is side-effect-free by default:
 
@@ -38,12 +38,25 @@ History cannot be mutated in place through the public session API. Initial histo
 `Session::start(UserInput)` creates a `Run`, a unique run ID, an ordered event receiver, a command channel, and a shared cancellation token. The run drives one provider/tool loop and is the host's handle for:
 
 - reading `RunEvent` values
-- obtaining the final typed `RunOutcome`
+- obtaining the final typed `RunOutcome` (authoritative even if the event stream ends early)
 - cancelling
-- steering with additional user input
+- steering with additional user input (`Run::steer`)
+- retractable steering (`Run::steer_retractable` / `Run::retract_steering`) before staged input reaches history
 - responding to typed host-input requests
 
 `Session::complete` is a convenience path over the same run loop. It drains events and returns the final outcome. Because it has no host interaction callback, it cancels and returns `InvalidHostResponse` if a tool requests host input. Use `Session::start` for questionnaires or other interactive host work.
+
+## Tool host
+
+`ToolHost` runs the same tool registry, workspace policy, approvals, and hooks **without** a model provider. Build it with `ToolHost::builder()` (or the shared builder pattern on `ToolHostBuilder`). Use `ToolHost::invoke` for a single non-interactive call, or `ToolHost::start` when the tool may emit progress or request host input. Dropping a `ToolHostRun` cancels that work. Clones of a tool host share one approval-memory session.
+
+## Hooks
+
+Lifecycle hooks are optional. A host supplies a `HookObserver` and/or `PreToolUseGate` through `RhoBuilder` (and the same hooks on `ToolHostBuilder`). The SDK emits bounded `HookEnvelope` values; it does not load `hooks.toml` or spawn processes. See [hooks](/sdk/hooks).
+
+## Usage recording
+
+Optional `ProviderRequestUsageRecorder` implementations receive physical provider-request facts for durable ledgers. Wire them with `RhoBuilder::usage_recorder` / `usage_recording` / `usage_purpose`. This is separate from model-facing `UsageUpdated` events on a run.
 
 ## Provider turn and step
 
@@ -60,6 +73,7 @@ The SDK supplies mechanics, not ambient authority. The embedding host owns:
 - deciding which tools to register
 - implementing tool behavior and calling `ToolContext::authorize` before sensitive actions
 - selecting workspace and approval policy
+- wiring hooks, usage recorders, and any durable ledger sinks
 - rendering semantic events
 - storing snapshots atomically and applying retention or encryption
 - responding to host input exactly once
@@ -75,4 +89,4 @@ A custom provider or tool is trusted host code. The SDK cannot prevent it from o
 
 The current core SDK supports `SystemPrompt::None` and `SystemPrompt::Custom`. Rho coding-prompt construction, `AGENTS.md` discovery, and skill discovery belong to explicit application or future adapter policy. A host that performs instruction discovery must scope it to the configured workspace and expose included sources in diagnostics rather than hiding global discovery.
 
-Continue with [providers](/sdk/providers), [tools](/sdk/tools), and the detailed [run contracts](/sdk/events-and-cancellation).
+Continue with [providers](/sdk/providers), [tools](/sdk/tools), [hooks](/sdk/hooks), and the detailed [run contracts](/sdk/events-and-cancellation).

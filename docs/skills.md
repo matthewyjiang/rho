@@ -78,4 +78,4 @@ Rho includes three built-in skills:
 | `rho-workflow-authoring` | Write and operate deterministic, resumable Starlark workflows |
 
 See [Tools and workspace](/tools-workspace) for details about the `skill` tool.
-See [Agents and delegation](/subagents) to learn how to define agents, including the [agent definition schema](/subagents#agent-definition-schema).
+See [Agents and delegation](/subagents) to learn how to define agents, including the [agent definition schema](/subagents/definition-schema).

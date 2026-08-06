@@ -1,6 +1,6 @@
 # SDK events, retries, cancellation, drop, and shutdown
 
-This page defines the implemented behavioral contract that hosts should rely on in the published `rho-sdk 1.0.0`. It also documents a [known limitation](#known-limitations) that shipped unresolved; a breaking fix for it will be called out in release notes and the [upgrade guide](/sdk/upgrade-to-1.0).
+This page defines the implemented behavioral contract hosts should rely on. It also documents a [known limitation](#known-limitations) around terminal-event delivery on non-cooperative exits. Always treat `Run::outcome` as authoritative.
 
 ## Event ordering and buffering
 
@@ -33,11 +33,13 @@ A terminal event describes the worker result, but `Run::outcome` remains the aut
 
 One coordinator consumes run commands for the whole tool batch. It queues concurrent host-input requests by ID, rejects any ID reused within the batch, and keeps the session in `WaitingForHostInput` while any request remains. Steering accepted during a batch crosses into history only after every result slot closes.
 
-The 1.0.0 implementation does not guarantee a terminal event for every worker exit; see [known limitations](#known-limitations). Run drop/abort, task panic, failed terminal delivery, and some cancellation or persistence-error races around nonterminal event emission can close the channel without `Completed`, `Cancelled`, or `Failed`. Hosts must treat end-of-stream as "inspect `Run::outcome`," not infer success.
+The implementation does not guarantee a terminal event for every worker exit; see [known limitations](#known-limitations). Run drop/abort, task panic, failed terminal delivery, and some cancellation or persistence-error races around nonterminal event emission can close the channel without `Completed`, `Cancelled`, or `Failed`. Hosts must treat end-of-stream as "inspect `Run::outcome`," not infer success.
 
 ## Host input and steering
 
 `Run::steer` sends an additional user input to the active run and waits until the worker accepts it. Accepted steering is incorporated at a model-step boundary. It does not mutate completed history independently.
+
+`Run::steer_retractable` is the same acceptance path but returns a `SteeringId`. While the input is still staged (provider streaming or tools running), the host may call `Run::retract_steering`. The runtime decides the race atomically and returns `SteeringRetraction::Retracted`, `AlreadyApplied`, or `NotFound`. Prefer retractable steering when the UI lets users pull back queued steer text.
 
 `ToolHostInputRequested` moves the session into `WaitingForHostInput` and includes the owning tool call ID. The legacy `HostInputRequested` variant remains available for source compatibility. `Run::respond` validates a response and delivers it to a matching pending request exactly once. When no requests remain, the session returns to running. A response can fail because the ID is unknown, the shape is invalid, the requester was dropped, or the run no longer accepts commands.
 
@@ -52,7 +54,7 @@ A model turn makes at most four logical provider requests in total. Malformed re
 
 Before retrying, the runtime emits `ProviderStreamReset` with a structured reason. When the provider supplies a wait hint, that reason is `RetryableFailureWithRetryAfter` (otherwise `RetryableFailure`). Prefer the `provider_error_kind` / `retry_after` helpers when matching so both arms stay covered. `NEXT_MAJOR(rho-sdk): collapse RetryableFailure and RetryableFailureWithRetryAfter into one shape with optional retry_after` (or move `retry_after` onto the event). For a malformed response, it also emits the legacy `ProviderActivity` kind `invalid_response_retry` immediately before that reset. Any text, reasoning, or tool-call deltas emitted since the preceding model-step boundary belong to the abandoned attempt. Hosts rendering live output must discard that attempt before rendering subsequent deltas. Usage reported by the abandoned attempt remains billable and is recorded as a separate physical request; hosts should retain it when presenting cumulative usage. The terminal `RunOutcome` contains usage from the successful response. The Rho TUI and headless reporter handle the reset. Rate-limit failures include a `/limits` pointer in the sanitized error message so hosts can direct users to usage windows.
 
-Retryable physical provider request failures emit typed `ProviderRequestRetry` and, for 1.0 hosts, still dual-emit the legacy `ProviderActivity` kind `provider_request_retry`. Provider-native web search emits typed `WebSearch { detail }` and dual-emits legacy `ProviderActivity` kind `web_search`. Other provider-native hosted tools (for example xAI `x_search`) are carried on the provider stream via `ModelEvent::hosted_tool_activity` and lowered to typed `RunEvent::HostedToolActivity { name, detail }` only — new activity kinds do not mint legacy `ProviderActivity` dual-emits. New hosts should match the typed run-event variants; the legacy activity kinds and `ProviderActivity` itself are deprecated and will be removed in the next major release.
+Retryable physical provider request failures emit typed `ProviderRequestRetry` and, for minor-compatible hosts, still dual-emit the legacy `ProviderActivity` kind `provider_request_retry`. Provider-native web search emits typed `WebSearch { detail }` and dual-emits legacy `ProviderActivity` kind `web_search`. Other provider-native hosted tools (for example xAI `x_search`) are carried on the provider stream via `ModelEvent::hosted_tool_activity` and lowered to typed `RunEvent::HostedToolActivity { name, detail }` only — new activity kinds do not mint legacy `ProviderActivity` dual-emits. New hosts should match the typed run-event variants; the legacy activity kinds and `ProviderActivity` itself are deprecated and will be removed in the next major release.
 
 Automatic retries repeat the model request with the same immutable history. They do not rerun tools completed by earlier model turns, but they can repeat provider-side work and incur usage for every attempt. Hosts should use recorded physical-request usage for billing and auditing rather than assuming one provider request per model turn.
 
@@ -120,7 +122,7 @@ Shutdown requests cancellation but does not asynchronously join every extension-
 
 ## Known limitations
 
-`rho-sdk 1.0.0` shipped without closing a gap the [release-candidate process](/sdk/release-candidates) called out as an entry gate: the runtime does not guarantee delivery of exactly one terminal event (`Completed`, `Cancelled`, or `Failed`) for every run.
+The runtime does not guarantee delivery of exactly one terminal event (`Completed`, `Cancelled`, or `Failed`) for every run. This remains part of the public contract until a future release documents a deliberate change.
 
 - Dropping an unfinished `Run` aborts its worker task without sending a terminal event onto the channel.
 - The worker task is not panic-guarded; a panic inside run execution surfaces to `Run::outcome` as `Error::Interrupted` from a `JoinError`, with no corresponding event.
@@ -128,4 +130,4 @@ Shutdown requests cancellation but does not asynchronously join every extension-
 
 No shipped test asserts "exactly one terminal event" across drop, abort, or panic paths; existing tests only cover the ordinary success and cancellation streams.
 
-Hosts must not rely on stream end-of-file to infer a run's result. Always call `Run::outcome` (or check `Session::history`/`SessionState` after a run ends) for the authoritative outcome, and do not treat a missing terminal event as evidence of success or failure. A fix for this gap is expected in a future `rho-sdk` release and will be called out in release notes as a behavioral change, not a silent patch.
+Hosts must not rely on stream end-of-file to infer a run's result. Always call `Run::outcome` (or check `Session::history`/`SessionState` after a run ends) for the authoritative outcome, and do not treat a missing terminal event as evidence of success or failure. Any future guarantee will be called out in the [changelog](/sdk/changelog) as a behavioral change, not a silent patch.

@@ -1,0 +1,91 @@
+# Configuration file example
+
+Parent: [Configuration](/configuration).
+
+```toml
+[model]
+provider = "openai"
+model = "gpt-5.6-sol"
+auth = "api-key" # or "none", "codex", "anthropic-api-key", "google-api-key", "github-copilot", "xai-api-key", "xai-oauth", "moonshot-api-key", "ollama-cloud-api-key", "ollama-cloud-device", "poolside-api-key", "openrouter-api-key", "openrouter-oauth", "kimi-oauth", "qwen-token-plan-api-key", or "meta-api-key"
+reasoning = "medium" # off, minimal, low, medium, high, xhigh, or max
+fast_mode = false # priority service for supported Codex models; uses credits at a higher rate
+favorite_models = []
+
+[model.aliases]
+# deep = "anthropic/claude-opus-4-8"
+# fast = "gpt-5.6-luna"
+
+[display]
+show_reasoning_output = true
+zen_mode = false
+max_tool_output_lines = 10
+
+[output]
+max_output_bytes = 64000
+
+[compaction]
+auto_compact = false
+compact_threshold_percent = 85
+compact_target_percent = 50
+
+[internal_agents.session-title]
+# provider = "openai"
+# model = "gpt-5.6-sol"
+# auth = "api-key"
+
+[internal_agents.goal-judge]
+# provider = "openai"
+# model = "gpt-5.6-sol"
+# auth = "api-key"
+
+[internal_agents.advisor]
+# provider = "anthropic"
+# model = "claude-fable-5"
+# auth = "anthropic-api-key"
+
+[web_search]
+hosted = true # provider-hosted search when the chat path supports it
+provider = "auto" # backup only: auto, openai, exa, brave, or disabled
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+
+[behavior]
+advisor_mode = false
+check_for_updates = true
+enable_subagents = true
+experimental_workspace_rewind = false
+permission_mode = "auto" # auto, plan, or supervised
+rtk = true
+inline_shell = "bash" # bash default on macOS/Linux; powershell on Windows
+# credential_store = "os" # or "file"; omit until first /login chooses
+
+[prompt_templates]
+review = "Review this code for correctness, security, and maintainability."
+"explain-tests" = "Explain how these tests cover the expected behavior."
+
+[keybindings]
+reset_conversation = "ctrl+r"
+open_editor = "ctrl+g"
+jump_to_bottom = "ctrl+end"
+toggle_tool_output = "ctrl+o"
+insert_newline = "ctrl+j"
+paste_image = "ctrl+v"
+edit_pending_input = "alt+up"
+manage_pending_input = "alt+q"
+```
+
+Settings are grouped by purpose so the file is easier to scan and edit by hand. Rho still reads the previous flat format and rewrites it into groups the next time it saves config.
+
+Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. Keybinding changes take effect when Rho starts.
+
+The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` sets the OpenAI-compatible endpoint used for Ollama chat, model refresh, and health checks. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the configured credential store rather than config.
+
+Ollama's provider-specific API base uses its own section and does not affect other providers:
+
+```toml
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+```
+
+See [Ollama](/providers/ollama) for local setup, model refresh, and remote endpoint limits.

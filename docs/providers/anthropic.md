@@ -2,7 +2,7 @@
 
 Anthropic uses API-key auth. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
 
-This page is the Rho **provider** path (`ANTHROPIC_API_KEY`). It is not the Claude Code subscription runtime. For `runtime: claude-cli` agents, install the [Claude Code binary](/installation#claude-code-binary-optional), use [`/login claude-code`](/authentication-and-models#claude-code-runtime-sign-in), and follow [when this is useful and how to use it](/subagents#claude-code-as-a-delegated-runtime).
+This page is the Rho **provider** path (`ANTHROPIC_API_KEY`). It is not the Claude Code subscription runtime. For `runtime: claude-cli` agents, install the [Claude Code binary](/installation#claude-code-binary-optional), use [`/login claude-code`](/authentication-and-models#claude-code-runtime-sign-in), and follow [when this is useful and how to use it](/subagents/claude-cli).
 
 ## At a glance
 

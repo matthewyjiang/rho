@@ -1,0 +1,15 @@
+# Web access and related tools
+
+Parent: [Tools and workspace](/tools-workspace).
+
+Web access tools keep normal prompts small when needed, but `fetch_content` returns a single target's readable body inline when it fits the tool output limit. Larger or multi-target results keep a `responseId` for `get_search_content`. Full bodies are stored as sidecar blobs under the active session folder (`.../<session>/web/` for new sessions, or a legacy `*.web/` companion beside flat transcripts), not in the session transcript and not as paths for `read_file`. `get_search_content` selectors must use the exact original query/prompt or URL from the prior tool result; free-text keyword queries are rejected with the available selectors listed. `web_search` stores snippets by default and stores fetched source pages only when `includeContent` succeeds. GitHub repository URLs prefer a local clone so the tool can return real tree/file contents through the web tools; oversized repositories fall back to the GitHub API unless `forceClone` is set. Do not open web-access cache directories with `read_file`. HTTP fetches refuse private, loopback, and link-local destinations by default. Set `RHO_SSRF_ALLOW_RANGES` to a comma-separated list of CIDRs (for example `198.18.0.0/15`) only when a TUN or fake-IP proxy requires it.
+
+The `advisor` tool appears only while [advisor mode](/configuration/advisor-mode) is on and an advisor model is configured. It takes no parameters: Rho serializes the session transcript, sends it to the advisor model in one request with no tools, and returns the guidance text. Turning the mode on or off adds or removes the tool before the next turn.
+
+When the active model provider is xAI, Rho attaches xAI's hosted `x_search` tool on every model turn as a provider amenity. That tool searches X (x.com) posts, users, and threads server-side. It is separate from `web_search`, which uses hosted provider web search when enabled and supported, otherwise the configured client backup backends. Hosted X Search is not part of the agent tool allowlist: restricted or empty tool sets still receive it while the session uses xAI. Switching an existing session to xAI adds it on the next turn, and switching away removes it. Hosted X Search activity appears in the run stream as typed `HostedToolActivity` events with `name: "x_search"`.
+
+The workflow runtime also registers `workflow_command` on its provider-free host tool registry. This internal tool carries one frozen process request through policy, hooks, and approval. It is host-only and never appears in a model tool list.
+
+The `rho` tool is read-only and returns compact live snapshots. Its detailed action reference is embedded in the `rho-diagnostics` skill and loaded only when needed; diagnostics exclude credentials, prompt contents, and conversation history. Restart-only settings report the values used by the running process, not newer values saved for the next session.
+
+These tools can read and modify files inside or outside the workspace, run shell commands that start in the working directory, and fetch external or local content when invoked.
