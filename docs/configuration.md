@@ -4,6 +4,15 @@ Rho stores persistent config at `~/.rho/config.toml` by default.
 
 Most people change settings from the interactive TUI with `/config`, or with `/model`, `/login`, and related commands. Prefer that path for day-to-day changes. Use this page when you want the file layout, CLI overrides, or the meaning of a specific key.
 
+```mermaid
+flowchart TD
+    file["~/.rho/config.toml"] --> load[Session load]
+    cli[CLI flags] --> load
+    load --> session[Active session]
+    tui["/config and shortcuts"] --> file
+    tui --> session
+```
+
 ## Common settings
 
 | Goal | Where |
@@ -53,6 +62,13 @@ rho --config ~/.rho/config.toml
 
 `permission_mode` must be `auto`, `plan`, or `supervised`. Missing values default to `auto`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, or asks before security-sensitive tool capabilities:
 
+```mermaid
+flowchart LR
+    auto[auto: allow] --> tools[Sensitive tools]
+    plan[plan: deny writes and process] --> tools
+    supervised[supervised: ask first] --> tools
+```
+
 - `auto` is the default and preserves unrestricted tool behavior.
 - `plan` allows investigation but denies file writes and process execution.
 - `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
@@ -78,7 +94,6 @@ Rho reads each model's available effort values from cached [models.dev](https://
 Advisor mode gives the agent an `advisor` tool backed by a second model that reviews the session transcript without tools of its own.
 
 Details: [Advisor mode](/configuration/advisor-mode).
-
 
 ## Prompt templates
 

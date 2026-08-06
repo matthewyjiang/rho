@@ -1,9 +1,18 @@
 # SDK tools, workspaces, and approvals
 
+Tools are host-supplied or built-in adapters that the runtime can call. Authority stays default-deny until the host registers tools and grants structured capabilities.
+
+```mermaid
+flowchart TD
+    model[Model tool call] --> prepare[prepare]
+    prepare --> auth[Authorize CapabilityRequest]
+    auth --> slot[Execution slot]
+    slot --> exec[Executor / call]
+    exec --> result[ToolOutput or ToolError]
+    result --> history[Model-order history slot]
+```
+
 ## Tool contract and trust origin
-
-`Tool` is an object-safe, `Send + Sync` extension point. Each implementation returns a stable `ToolSpec` and an explicit `Send` future. Duplicate names are rejected when the runtime is built.
-
 A tool receives a `ToolInvocation` and a `ToolContext` containing cancellation, bounded progress, optional workspace, policy, approval, and host-input access. It returns `ToolOutput` or `ToolError`. Failures normally become failed tool results sent back to the model, while hosts observe a typed `ToolFinished` result.
 
 `Tool::security` distinguishes two trust models:
@@ -17,9 +26,15 @@ The SDK does not validate JSON against a tool schema before invocation. Implemen
 
 ## Preparation and parallel execution
 
-`Tool::prepare` validates and resolves an invocation once, before scheduling. Preparations within one model batch run concurrently and their outputs return to the scheduler in model order. The default implementation wraps `Tool::call` with `ToolExecutionPolicy::Exclusive`, so existing and custom tools stay source-compatible and run alone. Tools must opt in before the runtime overlaps them.
+```mermaid
+flowchart LR
+    batch[Model batch] --> prep[Concurrent prepare]
+    prep --> order[Scheduler in model order]
+    order --> shared[Shared resources can overlap]
+    order --> exclusive[Exclusive forms a barrier]
+```
 
-A resource-aware implementation should keep `prepare` as its canonical path and delegate its compatibility `call` method to `tool::call_prepared`. This avoids maintaining separate parsing, authorization, and execution flows. The helper prepares the invocation, authorizes its declared capabilities, and runs its one-use executor.
+`Tool::prepare` validates and resolves an invocation once, before scheduling. Preparations within one model batch run concurrently and their outputs return to the scheduler in model order. The default implementation wraps `Tool::call` with `ToolExecutionPolicy::Exclusive`, so existing and custom tools stay source-compatible and run alone. Tools must opt in before the runtime overlaps them.
 
 A resource-aware tool returns `PreparedToolInvocation::resource_aware` with:
 
@@ -113,6 +128,19 @@ Instruction adapters use `CapabilityRequest::instruction_discovery` with a resol
 
 Authorization follows this sequence:
 
+```mermaid
+flowchart TD
+    req[Structured CapabilityRequest] --> policy[Policy allow / deny / require]
+    policy -->|allow| run[Execute]
+    policy -->|deny| denied[Policy denial]
+    policy -->|require| memory[Exact session memory]
+    memory -->|hit| run
+    memory -->|miss| host[Host ApprovalRequest]
+    host -->|AllowOnce or AllowForSession| run
+    host -->|deny| hostDenied[Host denial]
+    host -->|cancel| cancelled[Cancelled auth]
+```
+
 1. the tool submits a structured request
 2. policy allows, denies, or requires approval
 3. remembered approval is considered only after the current policy still requires approval
@@ -121,8 +149,6 @@ Authorization follows this sequence:
 6. `AllowOnce`, `AllowForSession`, or denial completes exactly once
 
 `AllowForSession` stores only an exact structured-request rule in that session. Changing a path, scope, command, executable, argument, cwd, environment mode, limit, URL, skill, source, or capability requires another approval. Rules are not persisted, copied to another session, or allowed to override a later policy denial.
-
-`approval_channel` provides a bounded host queue. `PendingApproval::respond` accepts one response; repeating it returns the unused decision. The receiver skips requests whose authorization future was cancelled before host delivery. Dropping the receiver or responder produces a host denial instead of hanging. Cancelling a run drops the approval wait.
 
 `ToolContext::authorize` returns `AuthorizationOutcome` or `AuthorizationError`, including typed policy, host, and cancellation denial sources. Built-ins convert denials to `ToolErrorKind::PolicyDenied` with a useful capability-specific message. The model receives that failed tool result and can continue, while the host receives typed `ToolCompletion::Failure`.
 

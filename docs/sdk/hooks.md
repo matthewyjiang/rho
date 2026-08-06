@@ -2,6 +2,15 @@
 
 Typed lifecycle hooks let a trusted host observe what a run does and, for one pre-action event, deny a tool capability. They are an enforcement and observation layer, not a workflow engine and not a permission grant.
 
+```mermaid
+flowchart TD
+    host[Host adapters] --> gate[PreToolUseGate]
+    host --> observer[HookObserver]
+    gate --> before[before_tool_use only]
+    observer --> other[session / after_tool / run / workflow events]
+    before --> decision[Continue or Deny]
+```
+
 The SDK owns the generic machinery in `rho_sdk::hooks`: event kinds, bounded `HookEnvelope` values, `HookDecision`, payload bounds, and the two host extension points. It owns no hook configuration file, process spawning, or trust policy. Those stay with the host (the Rho app uses `hooks.toml` and external programs; an embedder can implement gates and observers in-process).
 
 ## Extension points
@@ -20,6 +29,15 @@ Wire hooks on `RhoBuilder` or `ToolHostBuilder`:
 - `HookObserver` receives the other delivered kinds (`session_started`, `after_tool_use`, run and session completion/failure, and workflow-related kinds when the host emits them through the same machinery).
 
 ## Composition with host policy
+
+Hooks sit after host policy and can only keep or tighten the decision.
+
+```mermaid
+flowchart LR
+    policy[WorkspacePolicy] --> hook[PreToolUseGate]
+    hook --> approval[Approval if still required]
+    approval --> exec[Execute]
+```
 
 | Host policy | Hook result | Outcome |
 | --- | --- | --- |

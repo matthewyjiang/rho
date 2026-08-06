@@ -5,6 +5,13 @@ Skills give Rho reusable instructions for a task. Each skill lives in a
 the [`skill` tool](/tools-workspace). The model loads the full instructions only
 when it uses that skill, which leaves more context for your work.
 
+```mermaid
+flowchart LR
+    catalog[Name and description catalog] --> model[Model chooses skill]
+    model --> load[skill tool loads SKILL.md body]
+    load --> run[Follow instructions in session]
+```
+
 ## `SKILL.md` format
 
 Create a directory for the skill and add a `SKILL.md` file. Start the file with
@@ -32,7 +39,16 @@ The file has three parts:
 
 ## Where Rho looks for skills
 
-Rho checks these locations in order:
+Rho checks these locations in order. First match wins. Built-ins cannot be
+replaced by a user skill.
+
+```mermaid
+flowchart TD
+    builtins[Built-in skills] --> rhoHome["~/.rho/skills"]
+    rhoHome --> agentsHome["~/.agents/skills"]
+    agentsHome --> project["project .agents/skills nearest first"]
+    project --> pick[First matching name wins]
+```
 
 ```text
 built-in skills (shipped with Rho)

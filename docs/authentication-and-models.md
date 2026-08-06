@@ -4,6 +4,15 @@ Rho supports several providers with different auth modes. This page covers the c
 
 Provider, model, and auth mode are stored in [configuration](/configuration). Secrets are never stored in config.
 
+```mermaid
+flowchart TD
+    setup[First-run setup] --> login["/login or rho login"]
+    login --> store[OS or file credential store]
+    store --> model["/model provider/model"]
+    model --> session[Usable session]
+    env[Env overrides] --> session
+```
+
 ## Providers
 
 Rho's implemented providers are:
@@ -32,6 +41,12 @@ Each provider page documents whether authentication is required, how to select m
 ## First run
 
 The first launch on a fresh machine opens a full-screen setup instead of a session. There is no history to read and no model you chose yet, so the composer, hints, and statusline stay out of the way until you have both:
+
+```mermaid
+flowchart LR
+    signin[Sign in to a provider] --> choose[Choose a model]
+    choose --> ready[Normal session]
+```
 
 ```text
 rho  v1.26.0
@@ -62,6 +77,16 @@ Outside setup, the session shows whether the active provider resolved to usable 
 - **A prompt sent while signed out** opens the login picker instead of failing a turn. Your text stays in the composer; press enter once a provider is live to send it.
 
 ## Login and provider switching
+
+```mermaid
+flowchart TD
+    loginCmd["/login"] --> pick[Provider picker]
+    pick --> method[Auth method if needed]
+    method --> creds[Store credentials]
+    creds --> keep[Usually keep current model]
+    creds --> bootstrap[If unauthenticated: select default model]
+    logoutCmd["/logout"] --> remove[Delete stored credentials]
+```
 
 `/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
 
@@ -101,11 +126,18 @@ OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside
 
 ## Where credentials live
 
+```mermaid
+flowchart TD
+    unset[Backend unset] --> probe[First interactive login probes backends]
+    probe --> os[OS credential store preferred]
+    probe --> file["File store ~/.rho/credentials"]
+    env["RHO_CREDENTIAL_STORE"] --> force[Process override]
+    cfg[behavior.credential_store] --> force
+```
+
 Rho recommends the native OS credential store. When the credential backend is still unset, the first interactive login for a **normal Rho provider** probes available backends and opens a picker before any secret is saved. Bare `/login` opens the provider group picker first; the store chooser appears only after you pick a normal provider (or run `/login <provider>`). CLI `rho login` asks the same store question on a TTY. If the OS probe fails, you can choose local file storage instead.
 
 Local file storage keeps secrets in `~/.rho/credentials/secrets.json` (or under `RHO_HOME`). Rho applies owner-only directory and file permissions on Unix and a protected user-only ACL on Windows. It is not encrypted at rest. Rho never selects it without an explicit login picker answer, CLI command, config value, or environment setting.
-
-Check or change the backend at any time:
 
 ```bash
 rho credential-store status

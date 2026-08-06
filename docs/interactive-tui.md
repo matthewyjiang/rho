@@ -8,6 +8,17 @@ rho
 
 The TUI is the main way to use Rho. Ask it to inspect files, explain code, make changes, run commands, or iterate on a task with you. Rho uses the current directory as its [workspace](/tools-workspace). Tool access and command execution follow the workspace and security behavior described in [tools and workspace](/tools-workspace#security-and-workspace-boundaries).
 
+```mermaid
+flowchart TD
+    start[rho in project root] --> prompt[Type a prompt]
+    prompt --> run[Model and tool loop]
+    run --> steer[enter steers]
+    run --> abort[esc aborts]
+    run --> done[Idle again]
+    steer --> run
+    abort --> done
+    done --> prompt
+```
 
 ## Start a session
 
@@ -21,7 +32,6 @@ rho
 Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. For persisted history and resume behavior, see [sessions](/sessions).
 
 If you need auth or a model first, use `/login` and `/model`, or follow [getting started](/getting-started).
-
 
 ## Everyday controls
 
@@ -76,7 +86,6 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 
 `ctrl-g` opens the current composer text in a non-empty `$VISUAL`, falling back to `$EDITOR` only when `VISUAL` is unset or empty, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `VISUAL` or `EDITOR` to an executable path or a platform-native command line with arguments. Rho does not pick a default editor; if neither variable is set or non-empty, it warns with `EDITOR is not set`.
 
-
 ## Commands
 
 Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Most built-in slash commands run locally. Commands that start agent work say so below.
@@ -117,7 +126,6 @@ Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/conf
 
 Some commands replace the message box with a picker. Use `up` and `down` to select, type to filter by case-insensitive regex, press `tab` to autocomplete the filter from the highlighted item, press `enter` to confirm, and press `esc` to cancel. In conversation and internal-agent model pickers, press `ctrl-p` to pin or unpin the highlighted model; pinned models are saved in config and shown first in both picker types. `/config` starts with a short category browser. Its search matches the settings listed inside each category. Press `enter` to open a category and `esc` to return. Press `space` on an on/off setting to toggle it in place. Changes save at once and return to the same category so you can keep adjusting its settings; login workflows close the picker while credentials are entered or authorized.
 
-
 ## Login and logout
 
 `/login` opens a readable provider picker first. Providers with multiple methods open a second picker such as **API Key** or **OAuth**; providers with one method continue directly to their login flow. Passing an internal provider name (for example `/login openai`) targets that method directly. Each flow is documented on the [provider page](/authentication-and-models#providers). Credentials for normal providers are stored in the configured credential backend, not in config or transcripts. When the backend is still unset, Rho asks where to store secrets only after you select a normal provider.
@@ -127,7 +135,6 @@ Under **Anthropic**, the method picker includes **Claude Code (delegation only)*
 `/logout` opens a provider picker containing only providers with stored credentials that can be deleted, or targets one directly (for example `/logout openai`). Environment overrides are CI/development hatches and can keep a provider available after logout. `/logout claude-code` asks for explicit confirmation first because it signs out of Claude Code everywhere the `claude` binary is used, not only inside Rho. It does not delete a Rho-stored token.
 
 Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
-
 
 ## Choose a model
 
@@ -154,7 +161,6 @@ The `advisor` role has no conversation-model fallback, so its picker omits **Use
 
 For provider and auth details, see [authentication and models](/authentication-and-models).
 
-
 ## Approvals and status line
 
 In supervised mode, a tool that wants to write a file or execute a process opens a dedicated approval prompt in the composer. The prompt opens on the start of the request, names the capability class, and focuses **Deny** by default. Use the arrow keys to choose **Allow once**, **Allow for session (exact request)**, or **Deny**, then press Enter. **Allow for session** remembers only that exact structured capability request for the current session. Long operation details grow with the terminal height; use Page Up and Page Down to inspect every detail page without hiding the choices. Choosing **Deny** rejects that operation without ending the session. Press Escape to deny and cancel the current run. The active `plan` or `supervised` mode appears in the status line; the default `auto` mode stays hidden to avoid clutter.
@@ -162,7 +168,6 @@ In supervised mode, a tool that wants to write a file or execute a process opens
 While [advisor mode](/configuration/advisor-mode) is on, the status line names the reviewing model, for example `advisor: anthropic/claude-fable-5`. It reads `advisor: no model` when the mode is on but no advisor model is set, which can happen after a hand edit of config; nothing reviews the session in that state. Advisor mode stays out of the status line while it is off. Advice arrives as a normal `advisor` tool card, collapsed past the tool output limit and expandable with `ctrl+o`.
 
 While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
-
 
 ## Watch a subagent
 
@@ -173,7 +178,6 @@ rho attach abc123
 ```
 
 Attached mode uses a separate read-only TUI. It renders the delegated prompt, reasoning, assistant output, tool activity, usage, and final state, but it has no message box and cannot submit prompts or change the subagent environment. Use Up/Down, Page Up/Page Down, and Home/End to scroll. Press `q`, Escape, or Ctrl-C to detach without stopping the run. For Claude-cli runs, attach also surfaces `claude_session_id` when present so you can open the full Claude transcript with `claude --resume <session-id>`. See [subagents](/subagents/attachment-and-artifacts) for lifecycle and Herdr behavior.
-
 
 ## Attachments
 

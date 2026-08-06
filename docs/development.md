@@ -16,6 +16,13 @@ cargo run -- run "summarize this repository"
 
 Use the local binary to test the [interactive TUI](/interactive-tui), [automation mode](/automation-cli), [configuration](/configuration), and [tools](/tools-workspace) behavior while developing.
 
+```mermaid
+flowchart LR
+    edit[Edit] --> fast[validate.py fast]
+    fast --> pr[validate.py full before PR]
+    pr --> ci[CI gates]
+```
+
 ## Local validation
 
 Use the fast workflow while editing. It always checks formatting and architecture, then checks one package without compiling every target:
@@ -54,6 +61,14 @@ Pull requests that add tests should fill the test-gate section in the pull reque
 ## Interactive TUI PTY harness
 
 Rho includes a deterministic PTY harness in `crates/rho-tui-pty` for automated interactive TUI tests. Prefer it over manual Herdr smoke tests for regressions that can be expressed as scripted scenarios. PTY is the product gate for interactive behavior; unit tests under `crates/rho/src/tui` stay limited to pure logic.
+
+```mermaid
+flowchart TD
+    ctrl[PTY controller] --> screen[Screen model]
+    screen --> scenario[Named scenarios]
+    scenario --> pass[Assertions]
+    scenario --> art[Failure artifacts]
+```
 
 ### Layers
 

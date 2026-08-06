@@ -10,9 +10,16 @@ rho run "review this diff" --stdin < diff.txt
 
 Use the [interactive TUI](/interactive-tui) when you want an ongoing session. Use `rho run` when you want a single answer for a script, hook, alias, pipeline, or CI job.
 
-This page starts with `rho run` output and exit behavior, then covers login and updates. The full flag and subcommand tables are in [CLI reference](#cli-reference).
+```mermaid
+flowchart LR
+    prompt[Prompt args and optional stdin] --> run[rho run]
+    run --> text[text: final answer on stdout]
+    run --> jsonl[jsonl: event stream on stdout]
+    run --> file[optional --output-file status]
+    run --> code[Exit code]
+```
 
-## `rho run`
+This page starts with `rho run` output and exit behavior, then covers login and updates. The full flag and subcommand tables are in [CLI reference](#cli-reference).
 
 `rho run` accepts prompt text as arguments and can append stdin with `--stdin`:
 
@@ -48,13 +55,24 @@ Use `rho --no-tools run "..."` to remove tool access. That flag does not suppres
 
 ### Automation output
 
+Choose text when a script only needs the final answer. Choose JSONL when it needs progress or terminal state.
+
+```mermaid
+flowchart TD
+    start[rho run] --> mode{--output}
+    mode -->|text| final[One final answer on stdout]
+    mode -->|jsonl| stream[JSONL event stream]
+    stream --> terminal[run.completed / failed / stopped]
+    final --> exit[Process exit code]
+    terminal --> exit
+```
+
 The default `--output text` contract has not changed: `rho run` writes one final
 assistant answer and a trailing newline to stdout. Reasoning, provider activity,
 tool lifecycle events, diagnostics, and errors stay off stdout. Actionable errors
 go to stderr and keep their detail (for example a spanned TOML parse error).
 Authentication failures stay generic so credentials never appear on stderr or in
 JSONL. This keeps command substitution, pipes, and redirected output stable.
-
 Use `--output jsonl` when a script needs progress or terminal state:
 
 ```bash
@@ -134,6 +152,7 @@ result:
     name: rho-events
     path: rho-events.jsonl
 ```
+
 ## `rho login`
 
 Log in to a provider from the command line. Browser-based providers open a local browser flow; use `--device-auth` on remote or headless systems:

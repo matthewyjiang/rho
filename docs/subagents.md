@@ -20,6 +20,15 @@ This page covers how to define and run agents. Expansive reference lives on link
 
 Use `/agents` to inspect the loaded catalog. Press Enter on an internal agent to set its model override. Press Enter on an agent loaded from `~/.rho/agents` or a trusted project `.agents/agents` directory to edit its definition. Frontmatter fields use structured TUI controls, while the prompt body opens in `$VISUAL` or `$EDITOR`. Review the draft and choose **Save** to validate and write the source file. Agents loaded from `~/.agents/agents` and built-in agents remain read-only.
 
+```mermaid
+flowchart TD
+    root[Root session agent] --> fg[Foreground agent tool]
+    root --> bg[Background agent tool]
+    fg --> result[Final result in same turn]
+    bg --> id[Run id immediately]
+    id --> done[Completion at next turn boundary]
+```
+
 ## Definition files
 
 Agent definitions are Markdown with strict frontmatter. The Markdown body extends the base coding prompt by default:
@@ -34,6 +43,19 @@ reasoning: high
 tools: [read_file, list_dir, bash]
 ---
 Review the requested changes. Do not modify files.
+```
+
+### Discovery order
+
+Definitions are discovered deterministically. Later sources win on the same ID.
+Project definitions stay inactive until trusted.
+
+```mermaid
+flowchart TD
+    builtins[Built-in catalog] --> userAgents["~/.agents/agents"]
+    userAgents --> rhoAgents["~/.rho/agents"]
+    rhoAgents --> project["project .agents/agents if trusted"]
+    project --> catalog[Loaded catalog]
 ```
 
 Definitions are discovered deterministically from built-ins, `~/.agents/agents`, `~/.rho/agents`, and trusted project `.agents/agents` directories, with later sources taking precedence. Project definitions are ignored unless `RHO_TRUST_PROJECT_AGENTS=1`, so an untrusted checkout cannot affect prompts, models, or tools. Duplicate IDs within one precedence level are errors. The file name supplies `id` when the field is omitted.

@@ -1,0 +1,12 @@
+/* Mermaid diagrams rendered by vitepress-plugin-mermaid */
+.rho-mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1.25rem 0;
+  overflow-x: auto;
+}
+
+.rho-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
