@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.17.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.16.1...rho-providers-v0.17.0) (2026-08-06)
+
+
+### Features
+
+* add advisor mode with a selectable advisor model ([#752](https://github.com/matthewyjiang/rho/issues/752)) ([13c1ebb](https://github.com/matthewyjiang/rho/commit/13c1ebb89edfde2924ee760c7621b099fd510708))
+* **providers:** add Meta Model API and collapse provider registration ([#755](https://github.com/matthewyjiang/rho/issues/755)) ([b41ef92](https://github.com/matthewyjiang/rho/commit/b41ef92dcbeeba12351df4711f4817761fda0a79))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.16.0 to 1.17.0
+
 ## [0.16.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.16.0...rho-providers-v0.16.1) (2026-08-05)
 
 
