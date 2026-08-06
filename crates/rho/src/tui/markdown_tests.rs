@@ -267,3 +267,73 @@ fn stable_prefix_stops_at_earliest_open_marker() {
         "before [link](https://x) ".len()
     );
 }
+
+// Covers: closed $$ blocks must render through the markdown panel path
+// Owner: pure unit (markdown display math integration)
+#[test]
+fn renders_closed_display_math_blocks_in_markdown() {
+    let mut in_code_block = false;
+    let multi = markdown_lines(
+        "before\n$$\n\\frac{a}{b}\n$$\nafter",
+        40,
+        &mut in_code_block,
+    );
+    let multi_text = multi.iter().map(line_text).collect::<Vec<_>>();
+    assert!(
+        multi_text.iter().any(|line| line.contains("MATH")),
+        "{multi_text:?}"
+    );
+    assert!(
+        multi_text
+            .iter()
+            .any(|line| line.contains('a') && !line.contains("\\frac")),
+        "{multi_text:?}"
+    );
+    assert!(
+        multi_text.iter().any(|line| line == "after"),
+        "{multi_text:?}"
+    );
+    assert!(!in_code_block);
+
+    let mut in_code_block = false;
+    let single = markdown_lines("$$x^2 + y^2$$", 40, &mut in_code_block);
+    let single_text = single.iter().map(line_text).collect::<Vec<_>>();
+    assert!(
+        single_text.iter().any(|line| line.contains("MATH")),
+        "{single_text:?}"
+    );
+    assert!(
+        !single_text.iter().any(|line| line.contains("$$")),
+        "{single_text:?}"
+    );
+}
+
+// Covers: $$ inside fences and open $$ tails must not false-commit
+// Owner: pure unit (markdown display math streaming bounds)
+#[test]
+fn keeps_fenced_and_open_display_math_literal() {
+    let mut in_code_block = false;
+    let fenced = markdown_lines("```text\n$$x^2$$\n```", 40, &mut in_code_block);
+    let fenced_text = fenced.iter().map(line_text).collect::<Vec<_>>();
+    assert!(
+        fenced_text.iter().any(|line| line.contains("$$x^2$$")),
+        "{fenced_text:?}"
+    );
+    assert!(
+        !fenced_text.iter().any(|line| line.contains("MATH")),
+        "{fenced_text:?}"
+    );
+
+    let open = "intro\n$$\n\\frac{a}{b}";
+    assert_eq!(
+        incremental_markdown_tail_start(open),
+        "intro\n".len(),
+        "open multi-line math must stay in the mutable tail"
+    );
+    let closed_then_prose = "intro\n$$\n\\frac{a}{b}\n$$\nafter";
+    assert_eq!(
+        incremental_markdown_tail_start(closed_then_prose),
+        "intro\n$$\n\\frac{a}{b}\n$$\n".len(),
+        "prose after a closed math block becomes the trailing block"
+    );
+}

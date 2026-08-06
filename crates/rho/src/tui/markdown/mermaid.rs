@@ -86,7 +86,10 @@ pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedM
     }
 }
 
-pub(super) fn panel_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+pub(in crate::tui::markdown) fn panel_lines(
+    lines: Vec<Line<'static>>,
+    width: usize,
+) -> Vec<Line<'static>> {
     let canvas_width = lines
         .iter()
         .map(|line| {

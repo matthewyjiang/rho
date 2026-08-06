@@ -5,6 +5,7 @@ use ratatui::{
 
 mod code_fence;
 mod heading;
+mod math;
 mod mermaid;
 mod stream;
 mod table;
@@ -21,7 +22,7 @@ use super::markdown_image::standalone_markdown_image;
 
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
-pub(super) use stream::markdown_stream_bounds;
+pub(super) use stream::{incremental_markdown_tail_start, markdown_stream_bounds};
 
 #[cfg(test)]
 #[path = "markdown/table_tests.rs"]
@@ -82,49 +83,6 @@ pub(super) fn render_markdown(
     in_code_block: &mut bool,
 ) -> RenderedMarkdown {
     render_markdown_with_copy_button(text, width, in_code_block, CodeBlockCopyButton::Visible)
-}
-
-/// Returns the start of the trailing block that can still change as markdown is appended.
-///
-/// Markdown is line-oriented except for fenced code blocks and tables. Keeping
-/// the final block mutable lets the history cache promote completed blocks and
-/// re-render only this suffix as streaming text arrives.
-pub(super) fn incremental_markdown_tail_start(text: &str) -> usize {
-    let mut lines = Vec::new();
-    let mut offset = 0;
-    for source_line in text.split_inclusive('\n') {
-        let raw_line = source_line.strip_suffix('\n').unwrap_or(source_line);
-        let raw_line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        lines.push((offset, raw_line));
-        offset += source_line.len();
-    }
-    if lines.is_empty() {
-        return 0;
-    }
-
-    let raw_lines = lines.iter().map(|(_, line)| *line).collect::<Vec<_>>();
-    let mut line_index = 0;
-    let mut trailing_block_start = 0;
-    while line_index < raw_lines.len() {
-        trailing_block_start = lines[line_index].0;
-        if let Some(opening) = parse_opening_fence(raw_lines[line_index]) {
-            line_index += 1;
-            while line_index < raw_lines.len() {
-                let closes_block = is_closing_fence(raw_lines[line_index], opening);
-                line_index += 1;
-                if closes_block {
-                    break;
-                }
-            }
-            continue;
-        }
-        if let Some(consumed_lines) = table::markdown_table_line_count(&raw_lines[line_index..]) {
-            line_index += consumed_lines;
-            continue;
-        }
-        line_index += 1;
-    }
-    trailing_block_start
 }
 
 fn render_markdown_with_copy_button(
@@ -202,6 +160,50 @@ fn render_markdown_from_fence_state(
                     line_index = closing_index + 1;
                     continue;
                 }
+            }
+            if let Some((source, consumed_lines)) =
+                math::take_closed_display_math(&raw_lines[line_index..])
+            {
+                let inner_width = width.saturating_sub(4);
+                let top_line = lines.len();
+                match math::render_closed_display_math(source, inner_width) {
+                    math::ClosedDisplayMath::Art {
+                        lines: formula_lines,
+                        source,
+                    } => {
+                        lines.push(code_block_border(width, '╭', copy_button, Some("MATH")));
+                        lines.extend(math::panel_lines(formula_lines, width));
+                        lines.push(code_block_border(width, '╰', copy_button, None));
+                        push_copyable_code_block(
+                            &mut code_blocks,
+                            copy_button,
+                            top_line,
+                            width,
+                            source,
+                        );
+                    }
+                    math::ClosedDisplayMath::SourceFallback { title, source } => {
+                        let source_lines = source.lines().collect::<Vec<_>>();
+                        lines.push(code_block_border(width, '╭', copy_button, Some(title)));
+                        if source_lines.is_empty() {
+                            lines.extend(code_block_content_lines("", width));
+                        } else {
+                            for content_line in source_lines {
+                                lines.extend(code_block_content_lines(content_line, width));
+                            }
+                        }
+                        lines.push(code_block_border(width, '╰', copy_button, None));
+                        push_copyable_code_block(
+                            &mut code_blocks,
+                            copy_button,
+                            top_line,
+                            width,
+                            source,
+                        );
+                    }
+                }
+                line_index += consumed_lines;
+                continue;
             }
         }
         let opening_fence = (active_fence.is_none())
