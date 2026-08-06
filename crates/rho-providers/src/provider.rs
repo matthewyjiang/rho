@@ -61,14 +61,37 @@ pub enum ProviderRuntime {
 impl ProviderRuntime {
     /// Whether two descriptors share a runtime family for auth-profile resolution.
     ///
-    /// OpenAI API-key and Codex OAuth are different auth modes on the same backend
-    /// family; other runtimes compare by full value (including dialect and base URL).
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-providers): remove ProviderRuntime::same_family.
+    ///
+    /// Kept only for compatibility; runtime equality conflates wire dialect and
+    /// API base with auth family. New code should use
+    /// [`same_provider_family`] with [`ProviderId`] so families are
+    /// data-driven via `AUTH_FAMILY_GROUPS`.
+    #[deprecated(note = "use provider::same_provider_family with ProviderId instead")]
     pub fn same_family(self, other: Self) -> bool {
         match (self, other) {
             (Self::OpenAi { .. }, Self::OpenAi { .. }) => true,
             (left, right) => left == right,
         }
     }
+}
+
+/// Provider families that share one backend for auth-profile switching.
+///
+/// OpenAI API-key and Codex OAuth are two auth modes on the same backend;
+/// all other providers are isolated families. Add new groupings here rather
+/// than hiding them in runtime equality.
+const AUTH_FAMILY_GROUPS: &[&[ProviderId]] = &[&[ProviderId::OpenAi, ProviderId::OpenAiCodex]];
+
+pub fn same_provider_family(left: ProviderId, right: ProviderId) -> bool {
+    if left == right {
+        return true;
+    }
+    AUTH_FAMILY_GROUPS
+        .iter()
+        .any(|group| group.contains(&left) && group.contains(&right))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -525,7 +548,7 @@ pub fn resolve_profile(
     }
     let auth_profile = provider_descriptor_for_auth(auth)
         .ok_or_else(|| ProfileResolutionError::UnknownAuth(auth.into()))?;
-    if provider.runtime.same_family(auth_profile.runtime) {
+    if same_provider_family(provider.id, auth_profile.id) {
         let mode = auth_profile
             .auth_mode(auth)
             .expect("auth exists on auth_profile");

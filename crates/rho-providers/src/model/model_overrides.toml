@@ -23,6 +23,7 @@ cost_long_context = { input = 10.0, output = 45.0, cache_read = 1.0 }
 
 # models.dev currently catalogs Muse Spark under openrouter only. Keep Meta
 # metadata available until the meta provider entry catches up.
+# TODO: remove once models.dev lists meta/muse-spark (or migrate to registry default).
 [models."meta/muse-spark-1.1"]
 advertised_context_window = 1048576
 effective_context_window = 1048576

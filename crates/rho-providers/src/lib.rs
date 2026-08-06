@@ -39,7 +39,7 @@ pub mod auth;
 pub mod credentials;
 pub mod file_lock;
 pub mod model;
-pub mod openai_compatible_dialect;
+pub(crate) mod openai_compatible_dialect;
 pub mod paths;
 pub mod protocol;
 pub mod provider;

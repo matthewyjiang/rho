@@ -87,21 +87,16 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
 ///
 /// Single-provider groups are derived from [`provider::providers`]; only groupings that
 /// span providers (OpenAI+Codex, Moonshot+Kimi) need an explicit spec.
-type CrossProviderLoginGroup = (
-    &'static str,
-    &'static str,
-    &'static [(&'static str, &'static str)],
-);
-const CROSS_PROVIDER_LOGIN_GROUPS: &[CrossProviderLoginGroup] = &[
-    (
-        "openai",
-        "OpenAI",
-        &[("API Key", "api-key"), ("OAuth", "codex")],
-    ),
+///
+/// Auth prompts are derived from registry metadata so `ApiKey`/`OAuth` wording stays
+/// consistent with the provider descriptor. Each group lists auth profile ids; the
+/// prompt comes from the descriptor at build time.
+const CROSS_PROVIDER_LOGIN_GROUPS: &[(&str, &str, &[&str])] = &[
+    ("openai", "OpenAI", &["api-key", "codex"]),
     (
         "moonshot",
         "Moonshot AI",
-        &[("API Key", "moonshot-api-key"), ("OAuth", "kimi-oauth")],
+        &["moonshot-api-key", "kimi-oauth"],
     ),
 ];
 
@@ -109,18 +104,16 @@ pub fn login_groups() -> Vec<LoginGroup> {
     let mut claimed_auths = std::collections::BTreeSet::new();
     let mut groups = Vec::new();
 
-    for (id, prompt, methods) in CROSS_PROVIDER_LOGIN_GROUPS {
-        let methods = methods
-            .iter()
-            .map(|(method_prompt, auth)| {
-                claimed_auths.insert(*auth);
-                LoginMethod {
-                    prompt: (*method_prompt).into(),
-                    target: login_target_for_auth(auth)
-                        .expect("login group targets must reference registered auth profiles"),
-                }
-            })
-            .collect();
+    for (id, prompt, auths) in CROSS_PROVIDER_LOGIN_GROUPS {
+        let mut methods = Vec::new();
+        for auth in *auths {
+            claimed_auths.insert(*auth);
+            let target = login_target_for_auth(auth)
+                .expect("login group targets must reference registered auth profiles");
+            let prompt = login_method_prompt_for_auth(auth).unwrap_or(target.label.clone());
+            // Use registry login_label for display so auth kinds choose wording.
+            methods.push(LoginMethod { prompt, target });
+        }
         groups.push(LoginGroup {
             id: (*id).into(),
             prompt: (*prompt).into(),
@@ -172,6 +165,11 @@ fn login_method_prompt(auth_kind: ProviderAuthKind) -> &'static str {
         | ProviderAuthKind::BearerCredential { .. }
         | ProviderAuthKind::KimiOAuth { .. } => "OAuth",
     }
+}
+
+fn login_method_prompt_for_auth(auth: &str) -> Option<String> {
+    let (_, mode) = provider::resolve_auth_mode(auth)?;
+    Some(login_method_prompt(mode.auth_kind).to_string())
 }
 
 pub fn login_group(id: &str) -> Option<LoginGroup> {
@@ -233,11 +231,15 @@ fn preferred_cached_default(
     default_model: Option<&str>,
     cached: &[provider_models::ProviderModel],
 ) -> Option<String> {
-    default_model
-        .filter(|default| cached.iter().any(|entry| entry.model == *default))
-        .map(str::to_string)
-        .or_else(|| cached.first().map(|entry| entry.model.clone()))
-        .or_else(|| default_model.map(str::to_string))
+    if let Some(preferred) = default_model {
+        if cached.iter().any(|entry| entry.model == preferred) {
+            return Some(preferred.to_string());
+        }
+    }
+    if let Some(first) = cached.first() {
+        return Some(first.model.clone());
+    }
+    default_model.map(str::to_string)
 }
 
 fn static_catalog_default_model(provider: &str) -> Option<String> {

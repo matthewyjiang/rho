@@ -135,11 +135,11 @@ fn meta_is_openai_compatible_with_api_key_auth() {
 // Owner: provider registry
 #[test]
 fn openai_and_codex_share_runtime_family() {
-    use super::{OpenAiRuntimeAuth, ProviderId, ProviderRuntime};
+    use super::{same_provider_family, OpenAiRuntimeAuth, ProviderId, ProviderRuntime};
 
     let openai = super::provider_descriptor_by_id(ProviderId::OpenAi);
     let codex = super::provider_descriptor_by_id(ProviderId::OpenAiCodex);
-    assert!(openai.runtime.same_family(codex.runtime));
+    assert!(same_provider_family(openai.id, codex.id));
     assert_eq!(
         openai.runtime,
         ProviderRuntime::OpenAi {

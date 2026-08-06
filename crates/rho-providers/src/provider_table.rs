@@ -17,7 +17,8 @@ use super::{
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
-pub const PROVIDERS: &[ProviderDescriptor] = &[    ProviderDescriptor {
+pub const PROVIDERS: &[ProviderDescriptor] = &[
+    ProviderDescriptor {
         id: ProviderId::Ollama,
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
