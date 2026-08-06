@@ -200,6 +200,7 @@ pub(super) async fn evaluate(
             provider_name,
             model,
             auth,
+            reasoning: None,
             input: format!(
                 "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
             ),

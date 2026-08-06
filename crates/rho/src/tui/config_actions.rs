@@ -45,6 +45,13 @@ impl App {
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
             config_picker::ENABLE_SUBAGENTS_VALUE => self.toggle_enable_subagents(),
             config_picker::ADVISOR_MODE_VALUE => self.toggle_advisor_mode(agent).await,
+            config_picker::ADVISOR_MODEL_VALUE => {
+                self.open_advisor_model_prompt(
+                    super::agent_picker::InternalAgentModelPickerOrigin::AdvisorModelConfigRow,
+                );
+                Ok(())
+            }
+            config_picker::ADVISOR_REASONING_VALUE => self.cycle_advisor_reasoning(agent).await,
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
@@ -338,6 +345,54 @@ impl App {
         let status = self.status().to_string();
         self.refresh_main_config_picker_if_open(config_picker::ADVISOR_MODE_VALUE)?;
         self.set_status(status);
+        Ok(())
+    }
+
+    pub(super) async fn cycle_advisor_reasoning(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let Some(selection) = self
+            .info
+            .runtime
+            .internal_agents
+            .get(crate::agent::ADVISOR_AGENT_ID)
+            .cloned()
+        else {
+            self.set_status("select an advisor model first");
+            return Ok(());
+        };
+        let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
+            &selection.provider,
+            &selection.model,
+        );
+        if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+            return Ok(());
+        }
+        let current = crate::tools::advisor::advisor_effective_reasoning(&selection);
+        let reasoning = capabilities.next_level(current);
+        let mut updated = selection;
+        updated.reasoning = Some(reasoning);
+        self.info
+            .runtime
+            .internal_agents
+            .insert(crate::agent::ADVISOR_AGENT_ID.into(), updated.clone());
+        let save_result = self.info.services.config_repository.update(|config| {
+            config.set_internal_agent_model_config(crate::agent::ADVISOR_AGENT_ID, updated.clone());
+        });
+        if self.info.runtime.advisor_mode {
+            self.sync_advisor_runtime(agent).await;
+        }
+        self.refresh_main_config_picker_if_open(config_picker::ADVISOR_REASONING_VALUE)?;
+        match save_result {
+            Ok(()) => self.set_status(format!("advisor reasoning: {reasoning}")),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "advisor reasoning set to {reasoning} for this session, but saving config failed: {err}"
+                )));
+                self.set_status("config save failed");
+            }
+        }
         Ok(())
     }
 

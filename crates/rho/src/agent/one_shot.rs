@@ -17,6 +17,8 @@ pub(crate) struct OneShotAgentRequest<'a> {
     pub provider_name: &'a str,
     pub model: &'a str,
     pub auth: &'a str,
+    /// When set, overrides the definition's reasoning level.
+    pub reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
     pub input: String,
     pub cancellation: CancellationToken,
     pub session_id: &'a SessionId,
@@ -35,7 +37,7 @@ pub(crate) fn run_one_shot_agent(
     request: OneShotAgentRequest<'_>,
     usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<impl Future<Output = anyhow::Result<OneShotAgentResult>> + '_> {
-    let reasoning = validate_definition(request.definition)?;
+    let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
     let provider = build_provider(
         request.provider_name,
         request.model,
@@ -50,7 +52,7 @@ async fn run_one_shot_with_provider(
     request: OneShotAgentRequest<'_>,
     usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<OneShotAgentResult> {
-    let reasoning = validate_definition(request.definition)?;
+    let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
     let PromptPolicy::Replace(prompt) = &request.definition.prompt else {
         unreachable!("definition was validated")
     };
@@ -91,9 +93,22 @@ async fn run_one_shot_with_provider(
     })
 }
 
-fn validate_definition(
+fn resolve_reasoning(
     definition: &AgentDefinition,
+    override_level: Option<rho_providers::reasoning::ReasoningLevel>,
 ) -> anyhow::Result<rho_providers::reasoning::ReasoningLevel> {
+    validate_definition(definition)?;
+    override_level
+        .or_else(|| definition.reasoning())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "one-shot agent definition '{}' must set a reasoning level",
+                definition.id
+            )
+        })
+}
+
+fn validate_definition(definition: &AgentDefinition) -> anyhow::Result<()> {
     if !matches!(definition.prompt, PromptPolicy::Replace(_)) {
         bail!(
             "one-shot agent definition '{}' must replace the system prompt",
@@ -124,12 +139,7 @@ fn validate_definition(
             );
         }
     }
-    definition.reasoning().ok_or_else(|| {
-        anyhow::anyhow!(
-            "one-shot agent definition '{}' must set a reasoning level",
-            definition.id
-        )
-    })
+    Ok(())
 }
 
 #[cfg(test)]

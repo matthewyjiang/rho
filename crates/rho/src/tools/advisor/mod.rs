@@ -56,6 +56,20 @@ pub(crate) fn advisor_model(config: &Config) -> Option<&InternalAgentModelConfig
     config.internal_agent_model(ADVISOR_AGENT_ID)
 }
 
+/// Reasoning level the advisor run will use.
+///
+/// An explicit config value wins. Otherwise the reserved advisor definition
+/// default applies (medium).
+pub(crate) fn advisor_effective_reasoning(
+    model: &InternalAgentModelConfig,
+) -> rho_providers::reasoning::ReasoningLevel {
+    model.reasoning.unwrap_or_else(|| {
+        internal_definition(ADVISOR_AGENT_ID)
+            .reasoning()
+            .unwrap_or(rho_providers::reasoning::ReasoningLevel::Medium)
+    })
+}
+
 /// Whether the `advisor` tool can run under this configuration.
 ///
 /// Advisor mode on with no advisor model is a real state; the tool stays off
@@ -278,6 +292,7 @@ async fn consult_advisor(
             provider_name: &model.provider,
             model: &model.model,
             auth: &model.auth,
+            reasoning: Some(advisor_effective_reasoning(&model)),
             input: transcript,
             cancellation,
             session_id: &session_id,

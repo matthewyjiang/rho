@@ -79,6 +79,7 @@ pub(super) async fn generate_session_title(
             provider_name: &provider_name,
             model: &model,
             auth: &auth,
+            reasoning: None,
             input: format!(
                 "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
             ),

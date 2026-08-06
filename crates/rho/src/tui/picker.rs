@@ -126,6 +126,7 @@ impl PickerLayout {
 pub(super) enum PickerAction {
     SelectModel,
     SelectInternalAgentModel,
+    SelectInternalAgentReasoning,
     LoginGroup,
     LoginProvider,
     LogoutProvider,
@@ -151,6 +152,7 @@ impl PickerAction {
             PickerAction::Dismiss
             | PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
+            | PickerAction::SelectInternalAgentReasoning
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
@@ -184,7 +186,8 @@ impl PickerAction {
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
             | PickerAction::EditAgent
-            | PickerAction::Workflow => true,
+            | PickerAction::Workflow
+            | PickerAction::SelectInternalAgentReasoning => true,
             PickerAction::SelectModel | PickerAction::SelectInternalAgentModel => false,
         }
     }
@@ -414,6 +417,7 @@ impl UiPicker {
             PickerAction::ViewAgent => "close",
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
+            | PickerAction::SelectInternalAgentReasoning
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider

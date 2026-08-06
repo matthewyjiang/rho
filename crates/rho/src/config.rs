@@ -460,6 +460,7 @@ impl Config {
         }
     }
 
+    #[cfg(test)]
     pub fn set_internal_agent_model(
         &mut self,
         id: impl Into<String>,
@@ -467,15 +468,18 @@ impl Config {
         model: String,
         auth: String,
     ) {
-        self.internal_agents.insert(
-            id.into(),
-            InternalAgentModelConfig {
-                provider,
-                model,
-                auth,
-                model_alias: None,
-            },
+        self.set_internal_agent_model_config(
+            id,
+            InternalAgentModelConfig::new(provider, model, auth),
         );
+    }
+
+    pub fn set_internal_agent_model_config(
+        &mut self,
+        id: impl Into<String>,
+        selection: InternalAgentModelConfig,
+    ) {
+        self.internal_agents.insert(id.into(), selection);
     }
 
     pub fn clear_internal_agent_model(&mut self, id: &str) {

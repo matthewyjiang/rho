@@ -28,6 +28,8 @@ pub(super) const ZEN_MODE_VALUE: &str = "zen_mode";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
 pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
+pub(super) const ADVISOR_MODEL_VALUE: &str = "advisor_model";
+pub(super) const ADVISOR_REASONING_VALUE: &str = "advisor_reasoning";
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
@@ -77,6 +79,33 @@ fn advisor_mode_badge(config: &Config, info: &super::RuntimeModelView) -> String
         info.internal_agents.get(crate::agent::ADVISOR_AGENT_ID),
     )
     .badge()
+}
+
+fn advisor_model_badge(info: &super::RuntimeModelView) -> String {
+    match info.internal_agents.get(crate::agent::ADVISOR_AGENT_ID) {
+        Some(selection) => {
+            rho_providers::provider::model_reference(&selection.provider, &selection.model)
+        }
+        None => "not selected".into(),
+    }
+}
+
+fn advisor_reasoning_row(info: &super::RuntimeModelView) -> Option<(String, String, String)> {
+    let selection = info.internal_agents.get(crate::agent::ADVISOR_AGENT_ID)?;
+    let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
+        &selection.provider,
+        &selection.model,
+    );
+    if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+        return None;
+    }
+    let current = crate::tools::advisor::advisor_effective_reasoning(selection);
+    let next = capabilities.next_level(current);
+    Some((
+        "Advisor reasoning".into(),
+        format!("Controls advisor model reasoning. Enter cycles to {next}."),
+        current.to_string(),
+    ))
 }
 
 /// Badge for the conversation model, shown as `alias → provider/model` when
@@ -201,9 +230,8 @@ pub(super) fn category_picker(
             }
             ("Config / Models & reasoning", items)
         }
-        AGENT_CATEGORY_VALUE => (
-            "Config / Agent behavior",
-            vec![
+        AGENT_CATEGORY_VALUE => {
+            let mut items = vec![
                 item(
                     "Permission mode",
                     permission_mode_description(info.permission_mode),
@@ -222,8 +250,23 @@ pub(super) fn category_picker(
                     Some(advisor_mode_badge(config, info)),
                     ADVISOR_MODE_VALUE,
                 ),
-            ],
-        ),
+                item(
+                    "Advisor model",
+                    "Model used by the advisor tool. Enter opens a picker, then a reasoning level when the model supports one.",
+                    Some(advisor_model_badge(info)),
+                    ADVISOR_MODEL_VALUE,
+                ),
+            ];
+            if let Some((label, detail, badge_text)) = advisor_reasoning_row(info) {
+                items.push(item(
+                    &label,
+                    detail,
+                    Some(badge_text),
+                    ADVISOR_REASONING_VALUE,
+                ));
+            }
+            ("Config / Agent behavior", items)
+        }
         CONTEXT_CATEGORY_VALUE => (
             "Config / Context & limits",
             vec![
@@ -342,9 +385,11 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | REASONING_VALUE
         | SHOW_REASONING_OUTPUT_VALUE
         | ZEN_MODE_VALUE => Some(MODELS_CATEGORY_VALUE),
-        PERMISSION_MODE_VALUE | ENABLE_SUBAGENTS_VALUE | ADVISOR_MODE_VALUE => {
-            Some(AGENT_CATEGORY_VALUE)
-        }
+        PERMISSION_MODE_VALUE
+        | ENABLE_SUBAGENTS_VALUE
+        | ADVISOR_MODE_VALUE
+        | ADVISOR_MODEL_VALUE
+        | ADVISOR_REASONING_VALUE => Some(AGENT_CATEGORY_VALUE),
         AUTO_COMPACT_VALUE
         | COMPACT_THRESHOLD_PERCENT_VALUE
         | COMPACT_TARGET_PERCENT_VALUE

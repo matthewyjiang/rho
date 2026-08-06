@@ -2,7 +2,12 @@ use ratatui::DefaultTerminal;
 
 use rho_providers::{
     credentials::available_auth_modes,
-    model::provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
+    model::{
+        models_dev,
+        provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
+        ReasoningCapabilities, ReasoningRequestSource,
+    },
+    reasoning::ReasoningLevel,
 };
 
 use crate::agent::ADVISOR_AGENT_ID;
@@ -223,6 +228,7 @@ impl App {
                 | PickerAction::SelectRewindCheckpoint
                 | PickerAction::ConfirmRewindCheckpoint
                 | PickerAction::Workflow
+                | PickerAction::SelectInternalAgentReasoning
         ) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
@@ -277,30 +283,36 @@ impl App {
                         }
                     }
                 };
-                match target.origin {
-                    InternalAgentModelPickerOrigin::AgentsPicker => {
-                        // The advisor is configurable from /agents too, and its
-                        // live tool must follow the new model.
-                        if id == ADVISOR_AGENT_ID {
-                            self.sync_advisor_runtime(agent).await;
-                        }
-                        let status = self.status().to_string();
-                        self.execute_agents_command()?;
-                        self.set_status(status);
-                    }
-                    InternalAgentModelPickerOrigin::AdvisorCommand => {
-                        self.internal_agent_model_target = None;
-                        self.finish_advisor_model_selection(selected, agent).await?;
-                    }
-                    InternalAgentModelPickerOrigin::AdvisorConfigRow => {
-                        self.internal_agent_model_target = None;
-                        self.finish_advisor_model_selection(selected, agent).await?;
-                        let status = self.status().to_string();
-                        self.open_main_config_picker_selected(config_picker::ADVISOR_MODE_VALUE)?;
-                        self.set_status(status);
-                    }
+                if selected
+                    && id == ADVISOR_AGENT_ID
+                    && self.open_advisor_reasoning_picker(target.origin)
+                {
+                    return Ok(());
                 }
-                Ok(())
+                self.finish_internal_agent_model_flow(target, selected, agent)
+                    .await
+            }
+            PickerAction::SelectInternalAgentReasoning => {
+                let Some(target) = self.internal_agent_model_target.clone() else {
+                    self.set_status("internal agent reasoning selection expired");
+                    return Ok(());
+                };
+                let selected = match value.parse::<ReasoningLevel>() {
+                    Ok(reasoning) => {
+                        self.set_advisor_reasoning(reasoning)?;
+                        true
+                    }
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(format!(
+                            "invalid advisor reasoning '{value}': {err}"
+                        )));
+                        self.set_status("advisor reasoning selection failed");
+                        false
+                    }
+                };
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.finish_internal_agent_model_flow(target, selected, agent)
+                    .await
             }
             PickerAction::LoginGroup => {
                 // A single-method group short-circuits to that method's value,
@@ -501,6 +513,7 @@ impl App {
             | PickerAction::Config
             | PickerAction::EditAgent
             | PickerAction::Workflow
+            | PickerAction::SelectInternalAgentReasoning
             | PickerAction::Dismiss => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
@@ -551,7 +564,9 @@ impl App {
     ) -> Option<(UiPicker, &'static str)> {
         let selected_value = match action {
             PickerAction::SelectModel => config_picker::CONVERSATION_MODEL_VALUE,
-            PickerAction::SelectInternalAgentModel => return None,
+            PickerAction::SelectInternalAgentModel | PickerAction::SelectInternalAgentReasoning => {
+                return None
+            }
             PickerAction::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
             PickerAction::SwitchAuthMode => config_picker::SWITCH_AUTH_MODE_VALUE,
             PickerAction::RefreshModelList => config_picker::REFRESH_MODEL_LIST_VALUE,
@@ -681,48 +696,197 @@ impl App {
                 rho_providers::provider::model_reference(&selection.provider, &selection.model)
             })
             .unwrap_or_else(|| "conversation model".into());
+        let previous = self.info.runtime.internal_agents.get(id).cloned();
         match &selection {
             Some(selection) => {
-                self.info.runtime.internal_agents.insert(
-                    id.to_string(),
-                    crate::config::InternalAgentModelConfig::new(
-                        selection.provider.clone(),
-                        selection.model.clone(),
-                        selection.auth.clone(),
-                    ),
-                );
-            }
-            None => {
-                self.info.runtime.internal_agents.remove(id);
-            }
-        }
-        match self
-            .info
-            .services
-            .config_repository
-            .update(|config| match &selection {
-                Some(selection) => config.set_internal_agent_model(
-                    id,
+                let mut config = crate::config::InternalAgentModelConfig::new(
                     selection.provider.clone(),
                     selection.model.clone(),
                     selection.auth.clone(),
-                ),
-                None => config.clear_internal_agent_model(id),
-            }) {
-            Ok(()) => {
-                self.set_status(format!(
-                    "internal agent {id} now uses {label}; saved to config"
-                ));
+                );
+                if id == ADVISOR_AGENT_ID {
+                    config.reasoning =
+                        resolve_advisor_selection_reasoning(&config, previous.as_ref());
+                }
+                self.info
+                    .runtime
+                    .internal_agents
+                    .insert(id.to_string(), config.clone());
+                match self.info.services.config_repository.update(|saved| {
+                    saved.set_internal_agent_model_config(id, config);
+                }) {
+                    Ok(()) => {
+                        self.set_status(format!(
+                            "internal agent {id} now uses {label}; saved to config"
+                        ));
+                    }
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(format!(
+                            "internal agent {id} now uses {label} for this session, but saving config failed: {err}"
+                        )));
+                        self.set_status("config save failed");
+                    }
+                }
             }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "internal agent {id} now uses {label} for this session, but saving config failed: {err}"
-                )));
-                self.set_status("config save failed");
+            None => {
+                self.info.runtime.internal_agents.remove(id);
+                match self
+                    .info
+                    .services
+                    .config_repository
+                    .update(|config| config.clear_internal_agent_model(id))
+                {
+                    Ok(()) => {
+                        self.set_status(format!(
+                            "internal agent {id} now uses {label}; saved to config"
+                        ));
+                    }
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(format!(
+                            "internal agent {id} now uses {label} for this session, but saving config failed: {err}"
+                        )));
+                        self.set_status("config save failed");
+                    }
+                }
             }
         }
         if id == ADVISOR_AGENT_ID {
             self.statusline.update_model(&self.info.runtime);
+        }
+        Ok(())
+    }
+
+    fn set_advisor_reasoning(&mut self, reasoning: ReasoningLevel) -> anyhow::Result<()> {
+        let Some(mut selection) = self
+            .info
+            .runtime
+            .internal_agents
+            .get(ADVISOR_AGENT_ID)
+            .cloned()
+        else {
+            self.set_status("select an advisor model first");
+            return Ok(());
+        };
+        selection.reasoning = Some(reasoning);
+        self.info
+            .runtime
+            .internal_agents
+            .insert(ADVISOR_AGENT_ID.into(), selection.clone());
+        match self.info.services.config_repository.update(|config| {
+            config.set_internal_agent_model_config(ADVISOR_AGENT_ID, selection);
+        }) {
+            Ok(()) => self.set_status(format!("advisor reasoning: {reasoning}; saved to config")),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "advisor reasoning set to {reasoning} for this session, but saving config failed: {err}"
+                )));
+                self.set_status("config save failed");
+            }
+        }
+        Ok(())
+    }
+
+    /// Opens a reasoning picker after advisor model selection when the model
+    /// supports configurable levels. Returns true when the picker opened.
+    fn open_advisor_reasoning_picker(&mut self, origin: InternalAgentModelPickerOrigin) -> bool {
+        let Some(selection) = self
+            .info
+            .runtime
+            .internal_agents
+            .get(ADVISOR_AGENT_ID)
+            .cloned()
+        else {
+            return false;
+        };
+        let capabilities =
+            models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
+        if capabilities == ReasoningCapabilities::NotConfigurable {
+            return false;
+        }
+        let current = crate::tools::advisor::advisor_effective_reasoning(&selection);
+        let levels = capabilities.selectable_levels(ReasoningLevel::ALL.as_slice(), Some(current));
+        if levels.is_empty() {
+            return false;
+        }
+        self.internal_agent_model_target = Some(super::agent_picker::InternalAgentModelTarget {
+            id: ADVISOR_AGENT_ID.into(),
+            origin,
+        });
+        let picker = advisor_reasoning_picker(current, &levels);
+        match origin {
+            InternalAgentModelPickerOrigin::AdvisorConfigRow
+            | InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+                if let Ok(config) = self.info.services.config_repository.load() {
+                    let mut root = config_picker::config_picker(&self.info.runtime, &config);
+                    Self::restore_picker_position(
+                        &mut root,
+                        config_picker::AGENT_CATEGORY_VALUE,
+                        String::new(),
+                    );
+                    let selected = if origin == InternalAgentModelPickerOrigin::AdvisorConfigRow {
+                        config_picker::ADVISOR_MODE_VALUE
+                    } else {
+                        config_picker::ADVISOR_MODEL_VALUE
+                    };
+                    let mut category = config_picker::category_picker(
+                        config_picker::AGENT_CATEGORY_VALUE,
+                        &self.info.runtime,
+                        &config,
+                    )
+                    .expect("agent category picker")
+                    .with_parent(root);
+                    Self::restore_picker_position(&mut category, selected, String::new());
+                    self.input_ui
+                        .set_composer(ComposerMode::Picker(picker.with_parent(category)));
+                } else {
+                    self.input_ui.set_composer(ComposerMode::Picker(picker));
+                }
+            }
+            InternalAgentModelPickerOrigin::AgentsPicker
+            | InternalAgentModelPickerOrigin::AdvisorCommand => {
+                self.input_ui.set_composer(ComposerMode::Picker(picker));
+            }
+        }
+        self.set_status("select advisor reasoning");
+        true
+    }
+
+    async fn finish_internal_agent_model_flow(
+        &mut self,
+        target: super::agent_picker::InternalAgentModelTarget,
+        selected: bool,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let id = target.id.as_str();
+        match target.origin {
+            InternalAgentModelPickerOrigin::AgentsPicker => {
+                if id == ADVISOR_AGENT_ID {
+                    self.sync_advisor_runtime(agent).await;
+                }
+                let status = self.status().to_string();
+                self.execute_agents_command()?;
+                self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::AdvisorCommand => {
+                self.internal_agent_model_target = None;
+                self.finish_advisor_model_selection(selected, agent).await?;
+            }
+            InternalAgentModelPickerOrigin::AdvisorConfigRow => {
+                self.internal_agent_model_target = None;
+                self.finish_advisor_model_selection(selected, agent).await?;
+                let status = self.status().to_string();
+                self.open_main_config_picker_selected(config_picker::ADVISOR_MODE_VALUE)?;
+                self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+                self.internal_agent_model_target = None;
+                if selected && self.info.runtime.advisor_mode {
+                    self.sync_advisor_runtime(agent).await;
+                }
+                let status = self.status().to_string();
+                self.open_main_config_picker_selected(config_picker::ADVISOR_MODEL_VALUE)?;
+                self.set_status(status);
+            }
         }
         Ok(())
     }
@@ -747,6 +911,56 @@ impl App {
                     self.info.runtime.auth.clone(),
                 )
             })
+    }
+}
+
+fn advisor_reasoning_picker(current: ReasoningLevel, levels: &[ReasoningLevel]) -> UiPicker {
+    let items = levels
+        .iter()
+        .copied()
+        .map(|level| super::PickerItem {
+            section: None,
+            label: level.to_string(),
+            detail: Some("Reasoning level for the advisor model.".into()),
+            preview: None,
+            badge: (level == current).then_some(super::PickerBadge {
+                text: "selected".into(),
+                tone: super::PickerBadgeTone::Selected,
+            }),
+            value: level.to_string(),
+            selection_verb: None,
+        })
+        .collect();
+    UiPicker::new(
+        "Advisor reasoning",
+        items,
+        PickerAction::SelectInternalAgentReasoning,
+    )
+    .with_confirm_verb("set")
+}
+
+fn resolve_advisor_selection_reasoning(
+    selection: &crate::config::InternalAgentModelConfig,
+    previous: Option<&crate::config::InternalAgentModelConfig>,
+) -> Option<ReasoningLevel> {
+    let capabilities =
+        models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
+    if capabilities == ReasoningCapabilities::NotConfigurable {
+        return None;
+    }
+    let requested = previous
+        .filter(|prev| prev.provider == selection.provider && prev.model == selection.model)
+        .and_then(|prev| prev.reasoning)
+        .or_else(|| previous.and_then(|prev| prev.reasoning))
+        .unwrap_or_else(|| crate::tools::advisor::advisor_effective_reasoning(selection));
+    match capabilities.resolve(requested, ReasoningRequestSource::PersistedOrDefault) {
+        rho_providers::model::ReasoningResolution::Exact(level)
+        | rho_providers::model::ReasoningResolution::Unknown(level)
+        | rho_providers::model::ReasoningResolution::Normalized {
+            effective: level, ..
+        } => Some(level),
+        rho_providers::model::ReasoningResolution::NotConfigurable => None,
+        rho_providers::model::ReasoningResolution::UnsupportedExplicit(level) => Some(level),
     }
 }
 
