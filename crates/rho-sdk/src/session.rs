@@ -145,6 +145,12 @@ pub(crate) struct SessionCore {
     approvals: Arc<crate::workspace::SessionApprovals>,
     // Run ownership remains active until its guard finalizes, independently of presentation state.
     active_run: Mutex<Option<RunId>>,
+    /// Conversation of the turn in flight, published while tool calls run.
+    ///
+    /// Committed history changes only at turn boundaries, so without this a
+    /// tool cannot see the turn that invoked it. Shared behind an `Arc` so
+    /// every call in a batch reads one snapshot.
+    in_flight: RwLock<Option<Arc<Vec<Message>>>>,
     state: AtomicU8,
 }
 
@@ -171,6 +177,7 @@ impl SessionCore {
             runtime: RwLock::new(runtime),
             approvals,
             active_run: Mutex::new(None),
+            in_flight: RwLock::new(None),
             state: AtomicU8::new(SessionState::Idle.code()),
         })
     }
@@ -204,6 +211,37 @@ impl SessionCore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         (data.history.clone(), data.revision)
+    }
+
+    /// Publishes the run's working history for the duration of a tool batch.
+    ///
+    /// Publication copies the whole conversation, so it happens only when a
+    /// registered tool declared [`crate::tool::Tool::reads_live_history`].
+    pub(crate) fn publish_in_flight_history(&self, history: &[Message]) {
+        if !self
+            .runtime
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .publish_live_history
+        {
+            return;
+        }
+        *self
+            .in_flight
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(history.to_vec()));
+    }
+
+    pub(crate) fn live_history(&self) -> Vec<Message> {
+        let in_flight = self
+            .in_flight
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        match in_flight {
+            Some(history) => history.as_ref().clone(),
+            None => self.snapshot().0,
+        }
     }
 
     pub(crate) fn persistence_snapshot(&self) -> crate::SessionSnapshot {
@@ -328,6 +366,10 @@ impl SessionCore {
             return;
         }
         *active_run = None;
+        *self
+            .in_flight
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
         if !matches!(self.state(), SessionState::Completed | SessionState::Failed) {
             self.set_state(SessionState::Idle);
         }
@@ -389,6 +431,25 @@ impl Session {
 
     pub fn history(&self) -> Vec<Message> {
         self.core.snapshot().0
+    }
+
+    /// Conversation as the run currently sees it, including the turn in flight.
+    ///
+    /// [`Self::history`] commits only at turn boundaries, so a tool reading it
+    /// cannot see the turn that invoked it. This adds the working history the
+    /// run publishes for each tool batch: the user request, assistant replies,
+    /// tool calls, and the results already returned in this turn. Results from
+    /// calls running beside the reader are not in it yet.
+    ///
+    /// The published view lasts until the run ends. Between runs, and before
+    /// the first tool batch of a run, this equals [`Self::history`].
+    ///
+    /// Publication costs a history copy per tool batch, so the run publishes
+    /// only when a registered tool declares
+    /// [`crate::tool::Tool::reads_live_history`]. Without such a tool this
+    /// always equals [`Self::history`].
+    pub fn live_history(&self) -> Vec<Message> {
+        self.core.live_history()
     }
 
     pub fn snapshot(&self) -> crate::SessionSnapshot {

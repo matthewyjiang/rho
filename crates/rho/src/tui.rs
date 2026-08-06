@@ -14,6 +14,8 @@ use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
 mod activity;
+mod advisor_command;
+mod advisor_status;
 mod agent_editor;
 mod agent_picker;
 mod app_construct;
@@ -238,6 +240,8 @@ pub struct RuntimeModelView {
     pub permission_mode: PermissionMode,
     pub show_reasoning_output: bool,
     pub zen_mode: bool,
+    /// Offer the advisor tool, backed by the `advisor` internal agent's model.
+    pub advisor_mode: bool,
     pub auth: String,
     pub internal_agents:
         std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig>,
@@ -426,7 +430,7 @@ struct App {
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<InteractiveModelSelection>,
-    internal_agent_model_target: Option<String>,
+    internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
     agent_editor_session: Option<agent_editor::AgentEditSession>,
     pending_session_title: Option<PendingSessionTitle>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.

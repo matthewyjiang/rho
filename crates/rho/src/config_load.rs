@@ -217,6 +217,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.enable_subagents {
             cfg.enable_subagents = value;
         }
+        if let Some(value) = group.advisor_mode {
+            cfg.advisor_mode = value;
+        }
         if let Some(value) = group.experimental_workspace_rewind {
             cfg.experimental_workspace_rewind = value;
         }
@@ -386,6 +389,7 @@ impl PartialConfig {
             let group = self.behavior.take().unwrap_or(PartialBehaviorConfig {
                 check_for_updates: None,
                 enable_subagents: None,
+                advisor_mode: None,
                 experimental_workspace_rewind: None,
                 permission_mode: None,
                 credential_store: None,
@@ -395,6 +399,7 @@ impl PartialConfig {
             self.behavior = Some(PartialBehaviorConfig {
                 check_for_updates: group.check_for_updates.or(check_for_updates),
                 enable_subagents: group.enable_subagents.or(enable_subagents),
+                advisor_mode: group.advisor_mode,
                 experimental_workspace_rewind: group.experimental_workspace_rewind,
                 permission_mode: group.permission_mode.or(permission_mode),
                 credential_store: group.credential_store,
@@ -550,6 +555,7 @@ struct PartialWebSearchConfig {
 struct PartialBehaviorConfig {
     check_for_updates: Option<bool>,
     enable_subagents: Option<bool>,
+    advisor_mode: Option<bool>,
     experimental_workspace_rewind: Option<bool>,
     #[serde(default)]
     permission_mode: Option<PermissionMode>,

@@ -364,6 +364,7 @@ impl RhoBuilder {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
         })?;
+        let publish_live_history = self.tools.iter().any(|tool| tool.reads_live_history());
         let mut tools = ToolRegistry::new();
         for tool in self.tools {
             tools
@@ -430,6 +431,7 @@ impl RhoBuilder {
                 self.hook_delegation,
             )
             .with_host_labels(self.hook_host_labels),
+            publish_live_history,
             lifecycle: Arc::new(RuntimeLifecycle::default()),
         })
     }
@@ -457,6 +459,9 @@ pub struct Rho {
     pub(crate) usage_parent_session_id: Option<crate::SessionId>,
     pub(crate) approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
     pub(crate) hooks: crate::hooks::HookWiring,
+    /// True when a registered tool declared [`crate::tool::Tool::reads_live_history`],
+    /// so runs publish the turn in flight for [`crate::Session::live_history`].
+    pub(crate) publish_live_history: bool,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }
 

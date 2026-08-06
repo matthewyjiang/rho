@@ -379,7 +379,8 @@ impl App {
                 self.start_limits_command();
                 Ok(())
             }
-            CommandId::Hooks
+            CommandId::Advisor
+            | CommandId::Hooks
             | CommandId::New
             | CommandId::Fast
             | CommandId::Compact
@@ -576,6 +577,10 @@ impl App {
             }
             config_picker::ENABLE_SUBAGENTS_VALUE => {
                 self.toggle_enable_subagents()?;
+            }
+            config_picker::ADVISOR_MODE_VALUE => {
+                // The advisor changes the tool list, which the running turn owns.
+                self.set_status("advisor mode is unavailable while a model turn is running");
             }
             config_picker::AUTO_COMPACT_VALUE => {
                 self.toggle_auto_compact()?;

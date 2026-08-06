@@ -5,10 +5,12 @@ use rho_providers::{
     model::provider_models::{refresh_provider_models_with_store, ProviderModelEndpoint},
 };
 
+use crate::agent::ADVISOR_AGENT_ID;
+
 use super::{
-    catalog, config_picker, favorites, model_picker, provider, provider_picker, reasoning_metadata,
-    App, CommandInvocation, ComposerMode, Entry, InteractiveModelSelection, InteractiveRuntime,
-    ModelSelection, PickerAction, UiPicker,
+    agent_picker::InternalAgentModelPickerOrigin, catalog, config_picker, favorites, model_picker,
+    provider, provider_picker, reasoning_metadata, App, CommandInvocation, ComposerMode, Entry,
+    InteractiveModelSelection, InteractiveRuntime, ModelSelection, PickerAction, UiPicker,
 };
 
 fn refresh_auth_for_provider(
@@ -252,28 +254,52 @@ impl App {
                 }
             }
             PickerAction::SelectInternalAgentModel => {
-                let Some(id) = self.internal_agent_model_target.clone() else {
+                let Some(target) = self.internal_agent_model_target.clone() else {
                     self.set_status("internal agent model selection expired");
                     return Ok(());
                 };
-                if value == model_picker::USE_CONVERSATION_MODEL {
-                    self.select_internal_agent_model(&id, None)?;
+                let id = target.id.as_str();
+                let selected = if value == model_picker::USE_CONVERSATION_MODEL {
+                    self.select_internal_agent_model(id, None)?;
+                    true
                 } else {
                     self.refresh_available_auths();
-                    let current = self.internal_agent_model_selection(&id);
+                    let current = self.internal_agent_model_selection(id);
                     match self.resolve_model_selection(&value, &current.provider, &current.auth) {
                         Ok(selection) => {
-                            self.select_internal_agent_model(&id, Some(selection.selection))?
+                            self.select_internal_agent_model(id, Some(selection.selection))?;
+                            true
                         }
                         Err(err) => {
                             self.insert_entry(&Entry::Error(err.to_string()));
                             self.set_status("internal agent model switch failed");
+                            false
                         }
                     }
+                };
+                match target.origin {
+                    InternalAgentModelPickerOrigin::AgentsPicker => {
+                        // The advisor is configurable from /agents too, and its
+                        // live tool must follow the new model.
+                        if id == ADVISOR_AGENT_ID {
+                            self.sync_advisor_runtime(agent).await;
+                        }
+                        let status = self.status().to_string();
+                        self.execute_agents_command()?;
+                        self.set_status(status);
+                    }
+                    InternalAgentModelPickerOrigin::AdvisorCommand => {
+                        self.internal_agent_model_target = None;
+                        self.finish_advisor_model_selection(selected, agent).await?;
+                    }
+                    InternalAgentModelPickerOrigin::AdvisorConfigRow => {
+                        self.internal_agent_model_target = None;
+                        self.finish_advisor_model_selection(selected, agent).await?;
+                        let status = self.status().to_string();
+                        self.open_main_config_picker_selected(config_picker::ADVISOR_MODE_VALUE)?;
+                        self.set_status(status);
+                    }
                 }
-                let status = self.status().to_string();
-                self.execute_agents_command()?;
-                self.set_status(status);
                 Ok(())
             }
             PickerAction::LoginGroup => {
@@ -391,7 +417,9 @@ impl App {
         }
         if !self.pop_picker_level() {
             self.input_ui.set_composer(ComposerMode::Input);
-            self.set_status(if running { "running" } else { "ready" });
+            if !self.cancel_advisor_model_prompt() {
+                self.set_status(if running { "running" } else { "ready" });
+            }
             // Backing all the way out of a setup picker leaves setup too,
             // rather than stranding an empty full-screen shell.
             self.dismiss_setup_screen();
@@ -454,18 +482,10 @@ impl App {
                 model_picker::model_picker(&self.info.runtime, &self.available_auths)
             }
             PickerAction::SelectInternalAgentModel => {
-                let Some(id) = self.internal_agent_model_target.as_deref() else {
+                let Some(target) = self.internal_agent_model_target.clone() else {
                     return Ok(());
                 };
-                let selection = self.internal_agent_model_selection(id);
-                model_picker::internal_agent_model_picker(
-                    id,
-                    &selection.provider,
-                    &selection.model,
-                    !self.info.runtime.internal_agents.contains_key(id),
-                    &self.info.runtime.favorite_models,
-                    &self.available_auths,
-                )
+                self.internal_agent_model_picker(&target.id, target.origin)
             }
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
@@ -700,6 +720,9 @@ impl App {
                 )));
                 self.set_status("config save failed");
             }
+        }
+        if id == ADVISOR_AGENT_ID {
+            self.statusline.update_model(&self.info.runtime);
         }
         Ok(())
     }

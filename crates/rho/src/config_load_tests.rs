@@ -248,3 +248,28 @@ title_auth = "anthropic-api-key"
     assert_eq!(title.auth, "anthropic-api-key");
     assert_eq!(warnings, Vec::<ConfigWarning>::new());
 }
+
+// Covers: behavior.advisor_mode loads and defaults off
+// Owner: config load
+#[test]
+fn advisor_mode_loads_from_behavior_group() {
+    let (config, warnings) = parse_settings(
+        r#"
+[behavior]
+advisor_mode = true
+"#,
+    )
+    .unwrap();
+    assert!(config.advisor_mode);
+    assert_eq!(warnings, Vec::<ConfigWarning>::new());
+
+    let (defaulted, default_warnings) = parse_settings(
+        r#"
+[behavior]
+enable_subagents = true
+"#,
+    )
+    .unwrap();
+    assert!(!defaulted.advisor_mode);
+    assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
+}

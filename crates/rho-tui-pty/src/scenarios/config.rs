@@ -22,7 +22,6 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
         text: "Conversation model",
         timeout: SETTLE,
     },
-    Step::AssertText("Session title model"),
     Step::AssertText("Show reasoning output"),
     Step::Key(Key::Esc),
     Step::WaitText {
@@ -46,11 +45,9 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
         text: "All configured providers",
         timeout: SETTLE,
     },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "no refreshable providers are configured",
-        timeout: SETTLE,
-    },
+    // Running the refresh would ask real provider endpoints what they host, so
+    // the scenario stops at the choice and leaves the network out of it.
+    Step::Key(Key::Esc),
     Step::WaitText {
         text: "Refresh model lists",
         timeout: SETTLE,

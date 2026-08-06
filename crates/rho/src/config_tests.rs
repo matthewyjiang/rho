@@ -829,3 +829,37 @@ model = "title-model"
         "none"
     );
 }
+
+// Covers: advisor mode and its internal-agent model survive a save and reload
+// Owner: config persistence
+#[test]
+fn advisor_mode_and_model_round_trip_through_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+    let mut config = Config {
+        advisor_mode: true,
+        ..Default::default()
+    };
+    config.set_internal_agent_model(
+        crate::agent::ADVISOR_AGENT_ID,
+        "anthropic".into(),
+        "claude-opus-4-8".into(),
+        "anthropic-api-key".into(),
+    );
+
+    config.save_with_store(path.clone(), &store).unwrap();
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+
+    assert!(reloaded.advisor_mode);
+    assert_eq!(
+        reloaded
+            .internal_agent_model(crate::agent::ADVISOR_AGENT_ID)
+            .cloned(),
+        Some(crate::config::InternalAgentModelConfig::new(
+            "anthropic".into(),
+            "claude-opus-4-8".into(),
+            "anthropic-api-key".into(),
+        ))
+    );
+}

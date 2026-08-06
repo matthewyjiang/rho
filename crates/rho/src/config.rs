@@ -76,6 +76,9 @@ pub struct Config {
     pub web_search_provider: SearchProvider,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
+    /// Offer the `advisor` tool, which reviews the session with the model
+    /// configured for the `advisor` internal agent.
+    pub advisor_mode: bool,
     /// Enables native-tool workspace checkpoints and the experimental `/rewind` command.
     pub experimental_workspace_rewind: bool,
     pub permission_mode: PermissionMode,
@@ -129,6 +132,7 @@ impl Default for Config {
             web_search_provider: SearchProvider::Auto,
             check_for_updates: true,
             enable_subagents: true,
+            advisor_mode: false,
             experimental_workspace_rewind: false,
             permission_mode: PermissionMode::Auto,
             credential_store: None,
@@ -478,7 +482,10 @@ impl Config {
         self.internal_agents.remove(id);
     }
 
-    #[cfg(test)]
+    /// The model explicitly configured for an internal agent, with no
+    /// conversation-model fallback. Agents that need their own model
+    /// (see `internal_agent_requires_model`) read this instead of
+    /// `effective_internal_agent_model`.
     pub fn internal_agent_model(&self, id: &str) -> Option<&InternalAgentModelConfig> {
         self.internal_agents.get(id)
     }

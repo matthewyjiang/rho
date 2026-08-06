@@ -325,6 +325,7 @@ fn frozen_capabilities(
     }
     let mut capabilities = AgentCapabilities::new(tools);
     for forbidden in [
+        ToolCapability::Advisor,
         ToolCapability::Agent,
         ToolCapability::Agents,
         ToolCapability::Questionnaire,
@@ -371,9 +372,13 @@ fn bind_rho_capabilities(
         // paths strip it before bind.
         capabilities.remove(&ToolCapability::Agent);
         capabilities.remove(&ToolCapability::Agents);
+        // The advisor reviews the root session. A child run has its own
+        // session and nothing to review.
+        capabilities.remove(&ToolCapability::Advisor);
     }
     if invocation.role == AgentRole::Workflow {
         for capability in [
+            ToolCapability::Advisor,
             ToolCapability::Agent,
             ToolCapability::Agents,
             ToolCapability::Questionnaire,

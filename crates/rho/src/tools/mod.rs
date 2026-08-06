@@ -1,3 +1,4 @@
+pub mod advisor;
 pub mod agent;
 mod agent_output;
 mod coding;
@@ -18,6 +19,7 @@ pub(crate) mod workflow_tracker;
 /// Host-only entries are never sent to a model, but public contracts such as
 /// hook matchers still validate against this owning registry.
 pub(crate) const CANONICAL_TOOL_NAMES: &[&str] = &[
+    "advisor",
     "agent",
     "agents",
     "bash",
@@ -44,8 +46,8 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
     match name {
         "agent" | "agents" | "bash" | "edit" | "powershell" | "process" | "rho" | "workflow"
         | "workflow_command" | "write" => Some(true),
-        "fetch_content" | "get_search_content" | "glob" | "grep" | "list_dir" | "questionnaire"
-        | "read_file" | "skill" | "web_search" => Some(false),
+        "advisor" | "fetch_content" | "get_search_content" | "glob" | "grep" | "list_dir"
+        | "questionnaire" | "read_file" | "skill" | "web_search" => Some(false),
         _ => None,
     }
 }

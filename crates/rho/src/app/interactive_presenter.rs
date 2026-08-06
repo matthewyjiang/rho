@@ -30,6 +30,7 @@ struct ToolView {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ToolKind {
+    Advisor,
     Agent,
     Agents,
     Bash,
@@ -52,6 +53,7 @@ enum ToolKind {
 impl ToolKind {
     fn from_name(name: &str) -> Self {
         match name {
+            "advisor" => Self::Advisor,
             "agent" => Self::Agent,
             "agents" => Self::Agents,
             "bash" => Self::Bash,
@@ -87,7 +89,8 @@ impl ToolKind {
             return arguments_len.max(EDIT_STREAM_PREVIEW_STRIDE);
         }
         match self {
-            Self::Agent
+            Self::Advisor
+            | Self::Agent
             | Self::Agents
             | Self::Bash
             | Self::PowerShell

@@ -1,15 +1,42 @@
 use crate::{
     agent::{
-        AgentCatalog, AgentCatalogEntry, AgentOrigin, AgentRuntimeSpec, ModelPolicy,
-        ModelSelection, PromptPolicy, ToolPolicy,
+        internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
+        AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
     },
     config::InternalAgentModelConfig,
 };
 
 use super::{
-    picker_overlay::OverlayChrome, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
-    PickerLayout, RuntimeModelView, UiPicker,
+    model_picker::ConversationModelRow, picker_overlay::OverlayChrome, ComposerMode, PickerAction,
+    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView, UiPicker,
 };
+
+/// Where an internal-agent model picker was opened from, which decides what a
+/// selection means and where the user lands afterwards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InternalAgentModelPickerOrigin {
+    /// Opened from the agents picker; reopen it after a selection.
+    AgentsPicker,
+    /// Opened by `/advisor on`; a selection also turns advisor mode on.
+    AdvisorCommand,
+    /// Opened from the config picker's advisor row; a selection also turns
+    /// advisor mode on and returns to the config picker.
+    AdvisorConfigRow,
+}
+
+/// The internal agent an open model picker configures.
+#[derive(Clone, Debug)]
+pub(super) struct InternalAgentModelTarget {
+    pub(super) id: String,
+    pub(super) origin: InternalAgentModelPickerOrigin,
+}
+
+/// Picker inputs for one internal agent's current model.
+struct InternalAgentPickerModel {
+    provider: String,
+    model: String,
+    conversation_model: ConversationModelRow,
+}
 
 pub(super) struct AgentModelView<'a> {
     provider: &'a str,
@@ -103,18 +130,20 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         .map(crate::paths::display)
         .unwrap_or_else(|| "embedded in rho".to_string());
     let model = if entry.metadata.origin == AgentOrigin::Internal {
-        let (provider, model, source) = match models.internal_agents.get(definition.id.as_str()) {
-            Some(selection) => (
-                selection.provider.as_str(),
-                selection.model.as_str(),
-                "override",
+        match models.internal_agents.get(definition.id.as_str()) {
+            Some(selection) => format!(
+                "{}\nModel source: override",
+                rho_providers::provider::model_reference(&selection.provider, &selection.model)
             ),
-            None => (models.provider, models.model, "conversation fallback"),
-        };
-        format!(
-            "{}\nModel source: {source}",
-            rho_providers::provider::model_reference(provider, model)
-        )
+            None if internal_agent_requires_model(definition.id.as_str()) => {
+                "not selected\nModel source: none; this agent has no conversation fallback"
+                    .to_string()
+            }
+            None => format!(
+                "{}\nModel source: conversation fallback",
+                rho_providers::provider::model_reference(models.provider, models.model)
+            ),
+        }
     } else {
         match definition.model_policy().as_ref() {
             ModelPolicy::Inherit => "inherit".to_string(),
@@ -195,20 +224,81 @@ fn model_name(selection: &ModelSelection) -> String {
 }
 
 impl super::App {
-    pub(super) fn open_internal_agent_model_picker(&mut self, id: &str) {
+    /// Builds the model picker for an internal agent and records what a
+    /// selection means. Callers place the picker themselves, because the agents
+    /// and config pickers open it as a child while `/advisor` opens it alone.
+    pub(super) fn internal_agent_model_picker(
+        &mut self,
+        id: &str,
+        origin: InternalAgentModelPickerOrigin,
+    ) -> UiPicker {
         self.refresh_available_auths();
-        let uses_conversation_model = !self.info.runtime.internal_agents.contains_key(id);
-        let selection = self.internal_agent_model_selection(id);
+        let current = self.internal_agent_picker_model(id);
         let picker = super::model_picker::internal_agent_model_picker(
             id,
-            &selection.provider,
-            &selection.model,
-            uses_conversation_model,
+            &current.provider,
+            &current.model,
+            current.conversation_model,
             &self.info.runtime.favorite_models,
             &self.available_auths,
         );
-        self.internal_agent_model_target = Some(id.to_string());
-        self.open_child_picker(picker);
+        self.internal_agent_model_target = Some(InternalAgentModelTarget {
+            id: id.to_string(),
+            origin,
+        });
+        picker
+    }
+
+    /// Model shown as selected in an internal agent's picker, and whether the
+    /// conversation-model row belongs there.
+    fn internal_agent_picker_model(&self, id: &str) -> InternalAgentPickerModel {
+        let requires_model = internal_agent_requires_model(id);
+        match self.info.runtime.internal_agents.get(id) {
+            Some(selection) => InternalAgentPickerModel {
+                provider: selection.provider.clone(),
+                model: selection.model.clone(),
+                conversation_model: if requires_model {
+                    ConversationModelRow::Omitted
+                } else {
+                    ConversationModelRow::Offered { selected: false }
+                },
+            },
+            None if requires_model => InternalAgentPickerModel {
+                provider: String::new(),
+                model: String::new(),
+                conversation_model: ConversationModelRow::Omitted,
+            },
+            None => InternalAgentPickerModel {
+                provider: self.info.runtime.provider.clone(),
+                model: self.info.runtime.model.clone(),
+                conversation_model: ConversationModelRow::Offered { selected: true },
+            },
+        }
+    }
+
+    /// Opens the model picker for an internal agent, placed by origin: as a
+    /// child when a parent picker waits underneath, alone in the composer for
+    /// `/advisor on`. Reports whether it opened; with no cached models it
+    /// names the fix instead of showing an empty list.
+    pub(super) fn open_internal_agent_model_picker(
+        &mut self,
+        id: &str,
+        origin: InternalAgentModelPickerOrigin,
+    ) -> bool {
+        let picker = self.internal_agent_model_picker(id, origin);
+        if picker.items.is_empty() {
+            self.internal_agent_model_target = None;
+            self.set_status("no cached provider models. use Config > Refresh model lists.");
+            return false;
+        }
+        match origin {
+            InternalAgentModelPickerOrigin::AgentsPicker
+            | InternalAgentModelPickerOrigin::AdvisorConfigRow => self.open_child_picker(picker),
+            InternalAgentModelPickerOrigin::AdvisorCommand => {
+                self.input_ui.set_composer(ComposerMode::Picker(picker));
+            }
+        }
+        true
     }
 
     pub(super) fn open_selected_internal_agent_model_picker(&mut self, id: &str) -> bool {
@@ -216,7 +306,7 @@ impl super::App {
             .iter()
             .any(|definition| definition.id.as_str() == id);
         if internal {
-            self.open_internal_agent_model_picker(id);
+            self.open_internal_agent_model_picker(id, InternalAgentModelPickerOrigin::AgentsPicker);
         }
         internal
     }
@@ -234,8 +324,8 @@ impl super::App {
             }
         };
         let mut picker = agent_picker(catalog, AgentModelView::from(&self.info.runtime));
-        if let Some(id) = self.internal_agent_model_target.as_deref() {
-            Self::restore_picker_position(&mut picker, id, String::new());
+        if let Some(target) = self.internal_agent_model_target.as_ref() {
+            Self::restore_picker_position(&mut picker, &target.id, String::new());
         }
         self.input_ui
             .set_composer(super::ComposerMode::Picker(picker));

@@ -53,6 +53,7 @@ pub struct SanitizedConfig {
     pub web_search_provider: String,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
+    pub advisor_mode: bool,
     pub rtk: bool,
     pub source: String,
 }
@@ -69,6 +70,7 @@ impl From<&Config> for SanitizedConfig {
             web_search_provider: config.web_search_provider.as_str().into(),
             check_for_updates: config.check_for_updates,
             enable_subagents: config.enable_subagents,
+            advisor_mode: config.advisor_mode,
             rtk: config.rtk,
             source: "live values used by this process; restart-only settings may differ from saved config"
                 .into(),
@@ -144,6 +146,12 @@ impl RuntimeDiagnostics {
 
     pub fn update_check_for_updates(&self, check_for_updates: bool) {
         self.write().config.check_for_updates = check_for_updates;
+    }
+
+    /// Advisor mode applies to the next turn rather than the next process, so
+    /// the mirror follows every change instead of the startup value.
+    pub fn update_advisor_mode(&self, advisor_mode: bool) {
+        self.write().config.advisor_mode = advisor_mode;
     }
 
     pub fn update_prompt_sources(&self, sources: Vec<crate::prompt::PromptSource>) {

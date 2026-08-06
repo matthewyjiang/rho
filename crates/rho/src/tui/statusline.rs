@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use super::{
+    advisor_status::AdvisorStatus,
     render::{display_width, truncate_one_line},
     theme::Theme,
     usage_cost::{
@@ -42,6 +43,7 @@ pub(super) struct StatusLineState {
     reasoning: ReasoningLevel,
     reasoning_configurable: bool,
     permission_mode: PermissionMode,
+    advisor: AdvisorStatus,
     model_metadata: Option<ModelMetadata>,
     subagent_total_cost_usd_micros: u64,
     average_output_rate: Option<u64>,
@@ -85,6 +87,7 @@ impl Default for StatusLineState {
             reasoning: ReasoningLevel::default(),
             reasoning_configurable: true,
             permission_mode: PermissionMode::default(),
+            advisor: AdvisorStatus::Off,
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
             average_output_rate: None,
@@ -106,6 +109,7 @@ impl StatusLineState {
             reasoning: info.reasoning,
             reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
             permission_mode: info.permission_mode,
+            advisor: AdvisorStatus::from_runtime(info),
             model_metadata: None,
             subagent_total_cost_usd_micros: 0,
             average_output_rate: None,
@@ -133,12 +137,14 @@ impl StatusLine {
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
         let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
         let fast_mode_active = info.fast_mode_active();
+        let advisor = AdvisorStatus::from_runtime(info);
         if self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.fast_mode_active != fast_mode_active
             || self.state.reasoning != info.reasoning
             || self.state.reasoning_configurable != reasoning_configurable
             || self.state.permission_mode != info.permission_mode
+            || self.state.advisor != advisor
         {
             self.state.provider.clone_from(&info.provider);
             self.state.model.clone_from(&info.model);
@@ -146,6 +152,7 @@ impl StatusLine {
             self.state.reasoning = info.reasoning;
             self.state.reasoning_configurable = reasoning_configurable;
             self.state.permission_mode = info.permission_mode;
+            self.state.advisor = advisor;
             self.invalidate();
         }
     }
@@ -252,12 +259,15 @@ const RANK_CONTEXT: u8 = 5;
 const RANK_MODEL: u8 = 6;
 const RANK_LOGIN_HINT: u8 = 6;
 const RANK_PERMISSION: u8 = 7;
+/// Advisor mode is the widest optional field, so it yields early.
+const RANK_ADVISOR: u8 = 2;
 /// Signed-out copy outranks permission so the row still names the fix.
 const RANK_SIGNED_OUT: u8 = 8;
 
 /// Identity keys used by pack tests and paint order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FieldKey {
+    Advisor,
     Context,
     Cost,
     Rate,
@@ -484,6 +494,21 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             3,
             state.reasoning.to_string(),
             Theme::dim(),
+        ));
+    }
+
+    if let Some(text) = state.advisor.statusline_text() {
+        fields.push(field(
+            FieldKey::Advisor,
+            Side::Right,
+            RANK_ADVISOR,
+            4,
+            text,
+            if state.advisor.needs_model() {
+                Theme::warning()
+            } else {
+                Theme::dim()
+            },
         ));
     }
 

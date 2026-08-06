@@ -24,10 +24,11 @@ glob
 - Output: `grep` groups matches by file. Content mode prefixes each file with a chainable `[path#TAG]` header and `N | text` match previews. Copy TAG and line numbers into `edit`; do not copy preview bodies into PUT rows (previews may be truncated). Use `read_file` when you need exact line text. Set `output_mode` to `files_with_matches` or `count` when you only need paths or tallies; default is `content`.
 - Permissions: both request read access only, so they work in every permission mode, including `plan`.
 
-It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, web access tools with zero-config invocation, and one native shell tool for the current platform:
+It also exposes the `skill` tool, a read-only `rho` harness diagnostics tool, web access tools with zero-config invocation, an optional `advisor` tool, and one native shell tool for the current platform:
 
 ```text
 rho                 inspect runtime identity, context, prompt sources, tools, or sanitized config
+advisor             ask the configured advisor model to review this session; only when advisor mode is on
 web_search          when hosted = true and the chat path supports it, use provider-hosted search; otherwise use the configured backup backend and store snippets by default
 fetch_content       fetch pages, GitHub URLs, local files, PDFs, and video targets
 get_search_content  retrieve stored content from a prior web_search or fetch_content call
@@ -36,6 +37,8 @@ workflow            validate, freeze, run, inspect, cancel, or resume a durable 
 bash                macOS and Linux
 powershell          Windows
 ```
+
+The `advisor` tool appears only while [advisor mode](/configuration#advisor-mode) is on and an advisor model is configured. It takes no parameters: Rho serializes the session transcript, sends it to the advisor model in one request with no tools, and returns the guidance text. Turning the mode on or off adds or removes the tool before the next turn.
 
 When the active model provider is xAI, Rho attaches xAI's hosted `x_search` tool on every model turn as a provider amenity. That tool searches X (x.com) posts, users, and threads server-side. It is separate from `web_search`, which uses hosted provider web search when enabled and supported, otherwise the configured client backup backends. Hosted X Search is not part of the agent tool allowlist: restricted or empty tool sets still receive it while the session uses xAI. Switching an existing session to xAI adds it on the next turn, and switching away removes it. Hosted X Search activity appears in the run stream as typed `HostedToolActivity` events with `name: "x_search"`.
 

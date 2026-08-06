@@ -1325,3 +1325,155 @@ fn diagnostics_are_owned_snapshots_without_prompt_contents_or_global_defaults() 
     assert!(diagnostics.enabled_features().is_empty());
     assert!(!format!("{diagnostics:?}").contains("secret prompt contents"));
 }
+
+#[derive(Debug)]
+struct LiveHistoryTool {
+    session: Arc<Mutex<Option<crate::Session>>>,
+    observed: Arc<Mutex<Vec<Vec<Message>>>>,
+    declares: bool,
+}
+
+impl Tool for LiveHistoryTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "peek".into(),
+            description: "records the conversation it can see".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn reads_live_history(&self) -> bool {
+        self.declares
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let session = self
+                .session
+                .lock()
+                .expect("session slot")
+                .clone()
+                .expect("session is bound before the run starts");
+            self.observed
+                .lock()
+                .expect("observations")
+                .push(session.live_history());
+            Ok(ToolOutput::text("peeked"))
+        })
+    }
+}
+
+fn scripted_tool_call(id: &str) -> ScriptedTurn {
+    ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+        ToolCall {
+            id: id.into(),
+            name: "peek".into(),
+            arguments: json!({}),
+        },
+    )]))
+}
+
+fn assistant_tool_call(id: &str) -> Message {
+    Message::assistant(crate::model::AssistantMessage {
+        content: vec![ContentBlock::ToolCall(ToolCall {
+            id: id.into(),
+            name: "peek".into(),
+            arguments: json!({}),
+        })],
+        provenance: Some(identity()),
+        reasoning_summary: None,
+        provider_context: Vec::new(),
+    })
+}
+
+// Covers: a tool must see the turn that invoked it, which committed history
+// does not contain until the turn ends.
+// Owner: session/orchestration conversation state.
+#[tokio::test]
+async fn live_history_exposes_the_turn_in_flight_to_tools() {
+    let session_slot = Arc::new(Mutex::new(None));
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            identity(),
+            [
+                scripted_tool_call("call-1"),
+                scripted_tool_call("call-2"),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        ))
+        .tool(LiveHistoryTool {
+            session: Arc::clone(&session_slot),
+            observed: Arc::clone(&observed),
+            declares: true,
+        })
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    *session_slot.lock().unwrap() = Some(session.clone());
+
+    session.complete("hi").await.unwrap();
+
+    let observed = observed.lock().unwrap().clone();
+    assert_eq!(
+        observed,
+        vec![
+            vec![Message::user_text("hi"), assistant_tool_call("call-1")],
+            vec![
+                Message::user_text("hi"),
+                assistant_tool_call("call-1"),
+                Message::ToolResult(crate::model::ToolResult {
+                    id: "call-1".into(),
+                    ok: true,
+                    content: "peeked".into(),
+                }),
+                assistant_tool_call("call-2"),
+            ],
+        ]
+    );
+    // The published view is dropped with the run, so later reads see committed
+    // history rather than a retired turn.
+    assert_eq!(session.live_history(), session.history());
+}
+
+// Covers: publishing the turn in flight copies the conversation every tool
+// batch, so it must not happen unless a registered tool declares the need.
+// Owner: session/orchestration conversation state.
+#[tokio::test]
+async fn live_history_stays_committed_unless_a_tool_declares_the_need() {
+    let session_slot = Arc::new(Mutex::new(None));
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            identity(),
+            [
+                scripted_tool_call("call-1"),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        ))
+        .tool(LiveHistoryTool {
+            session: Arc::clone(&session_slot),
+            observed: Arc::clone(&observed),
+            declares: false,
+        })
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    *session_slot.lock().unwrap() = Some(session.clone());
+
+    session.complete("hi").await.unwrap();
+
+    let observed = observed.lock().unwrap().clone();
+    assert_eq!(observed.len(), 1);
+    // Nothing was published, so the tool saw committed history, which cannot
+    // contain the assistant turn that invoked it.
+    assert!(
+        !observed[0].contains(&assistant_tool_call("call-1")),
+        "{:?}",
+        observed[0]
+    );
+}

@@ -220,7 +220,13 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         text: "goal-judge",
         timeout: SETTLE,
     },
-    Step::AssertText("Internal agent that evaluates goal completion"),
+    // The list is alphabetical, so it opens on the first internal agent. This
+    // scenario inspects goal-judge, whose prompt is long enough to scroll.
+    Step::Key(Key::Down),
+    Step::WaitText {
+        text: "Internal agent that evaluates goal completion",
+        timeout: SETTLE,
+    },
     Step::AssertText("↑↓"),
     Step::AssertText("PgUp/PgDn"),
     Step::Custom(assert_wide_popup_divider_is_stable),
