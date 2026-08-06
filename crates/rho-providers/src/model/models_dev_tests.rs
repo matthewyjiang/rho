@@ -796,3 +796,49 @@ fn qwen_token_plan_qwen38_max_uses_exact_advertised_efforts() {
         ]))
     );
 }
+
+// Covers: UI prefers current-known capabilities and only then a stale-known cache row
+// Owner: models.dev capability lookup
+#[test]
+fn known_reasoning_capabilities_prefers_current_then_stale_known() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let stale_exact = ModelMetadata {
+            supported_reasoning_levels: Some(vec![ReasoningLevel::Low, ReasoningLevel::High]),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: false,
+            ..ModelMetadata::default()
+        };
+        write_cached_upstream_model_metadata("xai", "stale-exact", &stale_exact);
+
+        assert_eq!(
+            current_reasoning_capabilities("xai", "stale-exact"),
+            ReasoningCapabilities::Unknown
+        );
+        assert_eq!(
+            known_reasoning_capabilities("xai", "stale-exact"),
+            stale_exact.reasoning_capabilities()
+        );
+
+        let current_exact = ModelMetadata {
+            supported_reasoning_levels: Some(vec![
+                ReasoningLevel::Minimal,
+                ReasoningLevel::Medium,
+                ReasoningLevel::Xhigh,
+            ]),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+        write_cached_upstream_model_metadata("xai", "current-exact", &current_exact);
+        assert_eq!(
+            known_reasoning_capabilities("xai", "current-exact"),
+            current_exact.reasoning_capabilities()
+        );
+
+        assert_eq!(
+            known_reasoning_capabilities("xai", "missing-model"),
+            ReasoningCapabilities::Unknown
+        );
+    });
+}

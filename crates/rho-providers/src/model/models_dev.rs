@@ -1,7 +1,4 @@
-use std::{collections::HashSet, fs, path::PathBuf, sync::OnceLock, time::Duration};
-
-#[cfg(test)]
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet, fs, path::PathBuf, sync::OnceLock, time::Duration};
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -107,6 +104,19 @@ pub fn cached_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCa
     cached_model_metadata(provider, model)
         .map(|metadata| metadata.reasoning_capabilities())
         .unwrap_or_default()
+}
+
+/// Prefer current-known capabilities; fall back to a stale-but-known cache row.
+///
+/// UI surfaces use this so a previously fetched catalog entry still constrains
+/// pickers when the current row is missing or incomplete.
+pub fn known_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCapabilities {
+    let current = current_reasoning_capabilities(provider, model);
+    if current.is_known() {
+        current
+    } else {
+        cached_reasoning_capabilities(provider, model)
+    }
 }
 
 fn provider_fixed_reasoning_capabilities(provider: &str) -> Option<ReasoningCapabilities> {
@@ -372,7 +382,6 @@ fn models_dev_sqlite_path() -> PathBuf {
 }
 
 fn cache_dir() -> PathBuf {
-    #[cfg(test)]
     if let Some(path) = TEST_CACHE_DIR.with(|path| path.borrow().clone()) {
         return path;
     }
@@ -397,19 +406,32 @@ fn cache_dir() -> PathBuf {
     std::env::temp_dir().join("rho-cache")
 }
 
-#[cfg(test)]
 thread_local! {
     static TEST_CACHE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
-#[cfg(test)]
-fn with_models_dev_cache_dir<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
+#[doc(hidden)]
+pub fn with_models_dev_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
     TEST_CACHE_DIR.with(|cache_dir| {
         let previous = cache_dir.replace(Some(path));
         let result = f();
         cache_dir.replace(previous);
         result
     })
+}
+
+#[doc(hidden)]
+pub fn write_cached_model_metadata_for_tests(
+    provider: &str,
+    model: &str,
+    metadata: &ModelMetadata,
+) {
+    write_cached_upstream_model_metadata(provider, model, metadata);
+}
+
+#[cfg(test)]
+fn with_models_dev_cache_dir<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
+    with_models_dev_cache_dir_for_tests(path, f)
 }
 
 #[cfg(test)]

@@ -116,6 +116,39 @@ impl ReasoningCapabilities {
         !matches!(self, Self::Unknown)
     }
 
+    /// Levels the UI may offer when capabilities are known.
+    ///
+    /// Returns `None` only for [`Self::Unknown`], so the caller can supply a
+    /// fallback set. [`Self::NotConfigurable`] is known and yields an empty list.
+    pub fn advertised_levels(&self) -> Option<Vec<ReasoningLevel>> {
+        match self {
+            Self::Levels(levels) => Some(levels.levels().to_vec()),
+            Self::NotConfigurable => Some(Vec::new()),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Levels offered by a picker: advertised when known, otherwise `unknown_fallback`.
+    ///
+    /// When `current` is set and outside the offered set, it is kept visible so the
+    /// user can see and change an unsupported pin.
+    pub fn selectable_levels(
+        &self,
+        unknown_fallback: &[ReasoningLevel],
+        current: Option<ReasoningLevel>,
+    ) -> Vec<ReasoningLevel> {
+        let mut levels = self
+            .advertised_levels()
+            .unwrap_or_else(|| unknown_fallback.to_vec());
+        if let Some(current) = current {
+            if !levels.contains(&current) {
+                levels.push(current);
+                levels.sort_unstable();
+            }
+        }
+        levels
+    }
+
     /// Resolves a request without treating `Off` as implicitly supported.
     pub fn resolve(
         &self,
