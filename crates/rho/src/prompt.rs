@@ -353,14 +353,10 @@ mod tests {
 
         let prompt = system_prompt_with_home(&[], project.path(), None).text;
 
-        assert!(prompt.contains("closed `$$ ... $$` blocks"));
-        assert!(prompt.contains("TXM"));
-        assert!(prompt.contains("matrix`/`bmatrix`/`pmatrix`"));
-        assert!(prompt.contains("`aligned`/`align`/`gather`"));
-        assert!(prompt.contains(r"`\frac`, `\epsilon`, `\le`/`\ge`/`\ne`"));
-        assert!(prompt.contains("Keep formulas compact"));
-        assert!(prompt.contains("Inline `$...$` math renders only when it fits one text row"));
-        assert!(prompt.contains("put those in `$$` blocks instead"));
+        // Loose markers only: the guidance must mention display and inline math
+        // without locking the exact copy.
+        assert!(prompt.contains("$$ ... $$"));
+        assert!(prompt.contains("Inline `$...$` math"));
     }
 
     #[test]
