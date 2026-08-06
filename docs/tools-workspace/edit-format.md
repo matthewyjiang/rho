@@ -88,7 +88,7 @@ CUT N.=M
 | Op | Form | Effect |
 | --- | --- | --- |
 | Replace one line | `PUT N:` | Replace original line `N` with the `+` body |
-| Replace a range | `PUT N.=M:` | Replace inclusive lines `N`–`M` (also `N-M` / `N..M`) with only the new lines for that span |
+| Replace a range | `PUT N.=M:` | Replace inclusive lines `N`–`M` (also `N-M` / `N..M`) |
 | Insert before | `PUT <N:` | Insert body rows before line `N` |
 | Insert after | `PUT >N:` | Insert body rows after line `N` |
 | Append | `PUT >$:` | Insert body rows at end of file |
@@ -100,9 +100,7 @@ Locator rules:
 - A trailing dot such as `PUT 12.=:` is invalid and fails with an explicit error
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
 - `PUT` always needs at least one `+` body row; use `CUT` to delete
-- `PUT N` / `PUT N.=M` replaces **only** that span. The body is exactly the new
-  lines for those anchors - never restated neighbors. If a neighbor must change,
-  widen the range
+- Body matches the ranged span only: never restate neighbor lines; widen the range instead
 - Line numbers name the **original** snapshot. They do not shift mid-document
   after earlier ops in the same input
 
