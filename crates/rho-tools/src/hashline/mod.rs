@@ -44,7 +44,7 @@ PUT <N: / PUT >N: / PUT >$:
 +insert
 CUT N.=M
 
-Locators: `PUT 12:` (single line; never `PUT 12.:`), `PUT 12.=15:` (inclusive range; also `12-15` / `12..15`), inserts as above, `CUT` without a colon. Body rows under `:` headers must start with `+`. PUT needs ≥1 body row; use CUT to delete. Line numbers are original snapshot lines and do not shift mid-document. One section per path; do not stack two `edit` calls on the same path in one batch. Stale TAG, overlap, out-of-range, and mid-edit changes fail closed with a live snapshot to copy."#;
+Locators: `PUT 12:` (single line; never `PUT 12.:`), `PUT 12.=15:` (inclusive range; also `12-15` / `12..15`), inserts as above, `CUT` without a colon. Body rows under `:` headers must start with `+`. PUT needs ≥1 body row; use CUT to delete. PUT N or PUT N.=M replaces only that span. Body is exactly the new lines for the span - never restated neighbors. If a neighbor must change, widen the range. Line numbers are original snapshot lines and do not shift mid-document. One section per path; do not stack two `edit` calls on the same path in one batch. Stale TAG, overlap, out-of-range, and mid-edit changes fail closed with a live snapshot to copy."#;
 
 pub(crate) struct Edit;
 
