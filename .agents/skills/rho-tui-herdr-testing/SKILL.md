@@ -57,7 +57,7 @@ The fixture is available only in debug builds. Use these exact prompts:
 | Prompt | Deterministic behavior |
 | --- | --- |
 | `fixture stream` | Streams two reasoning chunks and two assistant output chunks with short delays. |
-| `fixture tool` | Streams and executes a `write_file` call, then reports exactly one tool result. |
+| `fixture tool` | Streams and executes a `write` call, then reports exactly one tool result. |
 | `fixture questionnaire` | Opens a red/blue questionnaire and reports exactly-once host input delivery. |
 | `fixture progress tool` | Runs `tui_fixture_progress`, emits two progress updates, and returns a fixed result. |
 | `fixture steering` | Keeps a turn open for two seconds so queued input or steering can be exercised. |

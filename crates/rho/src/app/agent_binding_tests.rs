@@ -26,13 +26,7 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
 }
 
 fn capabilities() -> AgentCapabilities {
-    capability_set(&[
-        "read_file",
-        "write_file",
-        "agent",
-        "agents",
-        "questionnaire",
-    ])
+    capability_set(&["read_file", "write", "agent", "agents", "questionnaire"])
 }
 
 #[test]
@@ -48,11 +42,7 @@ fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     .unwrap();
     assert_eq!(
         bound.rho_capabilities(),
-        Some(&capability_set(&[
-            "read_file",
-            "write_file",
-            "questionnaire"
-        ]))
+        Some(&capability_set(&["read_file", "write", "questionnaire"]))
     );
 }
 
@@ -62,14 +52,14 @@ fn delegated_role_removes_recursive_capabilities() {
         definition(ToolPolicy::All),
         AgentInvocation {
             role: AgentRole::Delegated,
-            available_tools: capability_set(&["read_file", "write_file", "agent", "agents"]),
+            available_tools: capability_set(&["read_file", "write", "agent", "agents"]),
         },
         &Config::default(),
     )
     .unwrap();
     assert_eq!(
         bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write_file"]))
+        Some(&capability_set(&["read_file", "write"]))
     );
 }
 
@@ -83,7 +73,7 @@ fn workflow_role_removes_orchestration_and_questionnaire_capabilities() {
             role: AgentRole::Workflow,
             available_tools: capability_set(&[
                 "read_file",
-                "write_file",
+                "write",
                 "agent",
                 "agents",
                 "questionnaire",
@@ -96,7 +86,7 @@ fn workflow_role_removes_orchestration_and_questionnaire_capabilities() {
     .unwrap();
     assert_eq!(
         bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write_file"]))
+        Some(&capability_set(&["read_file", "write"]))
     );
 }
 
@@ -116,7 +106,7 @@ fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
         model: Some("claude-sonnet-4-6".into()),
         reasoning: None,
         step_limit: 17,
-        capabilities: ["read_file", "write_file", "workflow"]
+        capabilities: ["read_file", "write", "workflow"]
             .into_iter()
             .map(str::to_owned)
             .collect(),
@@ -144,7 +134,7 @@ fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
     );
     assert_eq!(
         bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write_file"]))
+        Some(&capability_set(&["read_file", "write"]))
     );
 }
 
@@ -195,7 +185,7 @@ fn bind_drops_web_search_when_bound_path_cannot_search() {
 fn unavailable_explicit_tool_fails_before_execution() {
     let error = AgentBinder::bind(
         definition(ToolPolicy::Allow(
-            ["write_file".to_string()]
+            ["write".to_string()]
                 .into_iter()
                 .map(crate::agent::ToolCapability::parse)
                 .collect(),
@@ -207,7 +197,7 @@ fn unavailable_explicit_tool_fails_before_execution() {
         &Config::default(),
     )
     .unwrap_err();
-    assert!(error.to_string().contains("write_file"));
+    assert!(error.to_string().contains("write"));
 }
 
 fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {

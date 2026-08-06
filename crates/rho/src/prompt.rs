@@ -51,6 +51,20 @@ When structure is the point - architecture, control flow, state machines, reques
 Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram. Keep diagrams small with short labels. Skip diagrams for routine edits, simple answers, linear checklists, or anything that mostly restates bullets. The interactive transcript also renders CommonMark.
 "#,
     );
+    if tools.iter().any(|tool| tool.name == "grep") {
+        text.push_str(
+            r#"
+Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Content mode returns chainable `[path#TAG]` headers and match line numbers (`N | preview`) so you can target `edit` anchors. Match text is search preview only and may be truncated - copy TAG and line numbers, not preview bodies, into PUT rows; use `read_file` when you need exact line text. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
+"#,
+        );
+    }
+    if tools.iter().any(|tool| tool.name == "edit") {
+        text.push_str(
+            r#"
+Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms exactly from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines — re-read before further ops on that path. Prefer `write` only to create or fully rewrite a file.
+"#,
+        );
+    }
     if tools.iter().any(|tool| tool.name == "agent") {
         text.push_str(
             r#"
@@ -60,6 +74,7 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 "#,
         );
     }
+
     let mut sources = vec![PromptSource {
         kind: PromptSourceKind::Base,
         path: None,
@@ -316,6 +331,43 @@ mod tests {
         assert!(prompt.contains("Web access is available through tool schemas"));
         assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
         assert!(!prompt.contains("BRAVE_SEARCH_API_KEY"));
+    }
+
+    #[test]
+    fn includes_grep_preference_only_when_grep_tool_is_available() {
+        let project = TempDir::new().unwrap();
+        let grep_tool = ToolSpec {
+            name: "grep".into(),
+            description: "search".into(),
+            input_schema: serde_json::json!({}),
+        };
+
+        let enabled = system_prompt_with_home(&[grep_tool], project.path(), None).text;
+        let disabled = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(enabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
+        assert!(enabled.contains("chainable `[path#TAG]`"));
+        assert!(enabled.contains("not preview bodies"));
+        assert!(enabled.contains("`N | preview`"));
+        assert!(!disabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
+    }
+
+    #[test]
+    fn includes_edit_policy_only_when_edit_tool_is_available() {
+        let project = TempDir::new().unwrap();
+        let edit_tool = ToolSpec {
+            name: "edit".into(),
+            description: "edit".into(),
+            input_schema: serde_json::json!({}),
+        };
+
+        let enabled = system_prompt_with_home(&[edit_tool], project.path(), None).text;
+        let disabled = system_prompt_with_home(&[], project.path(), None).text;
+
+        assert!(enabled.contains("Use `edit` (not shell or Python rewrites)"));
+        assert!(enabled.contains("never `PUT 12.:`"));
+        assert!(enabled.contains("without chainable body lines"));
+        assert!(!disabled.contains("Use `edit` (not shell or Python rewrites)"));
     }
 
     #[test]

@@ -15,7 +15,6 @@ impl PowerShell {
     }
 }
 
-#[async_trait::async_trait]
 impl Tool for PowerShell {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -25,65 +24,69 @@ impl Tool for PowerShell {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        self.call_with_updates(args, ctx, id, &mut |_| {}).await
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move { self.call_with_updates(args, ctx, id, &mut |_| {}).await })
     }
 
-    async fn call_with_updates(
-        &self,
+    fn call_with_updates<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-        on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
-        self.call_with_updates_and_cancellation(
-            args,
-            ctx,
-            id,
-            RunCancellation::default(),
-            on_update,
-        )
-        .await
+        on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            self.call_with_updates_and_cancellation(
+                args,
+                ctx,
+                id,
+                RunCancellation::default(),
+                on_update,
+            )
+            .await
+        })
     }
 
-    async fn call_with_updates_and_cancellation(
-        &self,
+    fn call_with_updates_and_cancellation<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
         cancellation: RunCancellation,
-        on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
-        let mut args = ShellArgs::parse(args)?;
-        if self.rtk_enabled {
-            if let Some(command) = super::rtk::rewrite(&args.command).await {
-                args.command = command;
+        on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            let mut args = ShellArgs::parse(args)?;
+            if self.rtk_enabled {
+                if let Some(command) = super::rtk::rewrite(&args.command).await {
+                    args.command = command;
+                }
             }
-        }
-        let execution = ProcessExecution::new(
-            &ctx.cwd,
-            ProcessInvocation::shell_from_path(
-                "powershell.exe",
-                vec![
-                    "-NoProfile".into(),
-                    "-NonInteractive".into(),
-                    "-Command".into(),
-                ],
-                wrapped_command(&args.command),
-            ),
-            ProcessEnvironment::InheritAll,
-            ProcessOutputLimits::new(ctx.max_output_bytes, args.timeout()),
-        );
-        let result = execute_process(execution, id, cancellation, on_update).await?;
-        if self.rtk_enabled {
-            super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
-        }
-        Ok(result)
+            let execution = ProcessExecution::new(
+                &ctx.cwd,
+                ProcessInvocation::shell_from_path(
+                    "powershell.exe",
+                    vec![
+                        "-NoProfile".into(),
+                        "-NonInteractive".into(),
+                        "-Command".into(),
+                    ],
+                    wrapped_command(&args.command),
+                ),
+                ProcessEnvironment::InheritAll,
+                ProcessOutputLimits::new(ctx.max_output_bytes, args.timeout()),
+            );
+            let result = execute_process(execution, id, cancellation, on_update).await?;
+            if self.rtk_enabled {
+                super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
+            }
+            Ok(result)
+        })
     }
 }
 

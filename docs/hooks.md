@@ -36,7 +36,7 @@ env = ["MY_HOOK_TOKEN"]
 [[hook]]
 id = "fmt-rust"
 on = "after_tool_use"
-tools = ["edit_file", "apply_patch", "write_file"]
+tools = ["edit", "write"]
 command = [".rho/hooks/fmt-rust"]
 timeout = "5s"
 ```
@@ -104,9 +104,9 @@ requests no capability has nothing to gate.
 The `tools` matcher accepts only these names. They are part of the hook
 contract and do not change with which tools a given run enables:
 
-`agent`, `agents`, `apply_patch`, `bash`, `edit_file`, `fetch_content`,
+`agent`, `agents`, `bash`, `edit`, `fetch_content`,
 `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`, `process`,
-`questionnaire`, `read_file`, `rho`, `skill`, `web_search`, `write_file`.
+`questionnaire`, `read_file`, `rho`, `skill`, `web_search`, `write`.
 
 ## The event a hook receives
 

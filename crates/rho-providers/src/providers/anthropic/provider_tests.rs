@@ -184,7 +184,7 @@ fn request_body_removes_top_level_schema_composition_from_tools() {
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[ToolSpec {
-                    name: "apply_patch".into(),
+                    name: "edit".into(),
                     description: "edit files".into(),
                     input_schema: json!({
                         "type": "object",

@@ -48,7 +48,7 @@ timeout = "10s"
 [[hook]]
 id = "record-edit"
 on = "after_tool_use"
-tools = ["edit_file"]
+tools = ["edit"]
 command = ["/bin/sh", "./.rho/hooks/record-edit"]
 timeout = "10s"
 "#,
@@ -196,7 +196,7 @@ async fn an_untrusted_project_hook_does_not_run() {
 async fn a_post_hook_records_a_successful_edit() {
     let fixture = Fixture::new();
 
-    let (content, activity) = run_tool(&fixture, ProjectTrust::Trusted, "edit_file").await;
+    let (content, activity) = run_tool(&fixture, ProjectTrust::Trusted, "edit").await;
 
     assert_eq!(content, "ok");
     assert!(activity.contains("project:record-edit after_tool_use observed"));
@@ -205,7 +205,7 @@ async fn a_post_hook_records_a_successful_edit() {
         recorded.contains("\"event\":\"after_tool_use\""),
         "the hook received the event envelope: {recorded}"
     );
-    assert!(recorded.contains("\"name\":\"edit_file\""));
+    assert!(recorded.contains("\"name\":\"edit\""));
     assert!(recorded.contains("\"status\":\"succeeded\""));
 }
 

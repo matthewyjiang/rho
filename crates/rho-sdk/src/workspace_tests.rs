@@ -261,7 +261,7 @@ fn capabilities_are_independent_and_network_urls_are_strict() {
         CapabilityRequest::write_path(
             "/workspace/file",
             PathScope::PrimaryWorkspace,
-            source("write_file"),
+            source("write"),
         ),
         process_request("cargo test"),
         CapabilityRequest::instruction_discovery(
@@ -309,7 +309,7 @@ fn default_policy_denies_every_capability_class() {
         CapabilityRequest::write_path(
             "/workspace/file",
             PathScope::PrimaryWorkspace,
-            source("write_file"),
+            source("write"),
         ),
         process_request("cargo test"),
         CapabilityRequest::network(NetworkTarget::ToolManaged, source("web_search")),

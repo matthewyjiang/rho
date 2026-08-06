@@ -11,8 +11,8 @@ use rho_sdk::{
         OperationKind, ToolErrorKind, ToolExecutionPolicy, ToolInvocation, ToolPreparationContext,
         ToolResource, ToolResourceAccess,
     },
-    CancellationToken, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCallId,
-    ToolCompletion, UserInput, Workspace,
+    CancellationToken, CapabilityOperation, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions,
+    ToolCallId, ToolCompletion, UserInput, Workspace,
 };
 
 use super::*;
@@ -108,7 +108,7 @@ async fn preparation_reserves_missing_write_membership_and_rejects_parent_traver
     .await
     .unwrap();
     let ToolExecutionPolicy::ResourceAware { accesses } = policy else {
-        panic!("write_file must opt in to resource-aware execution");
+        panic!("write must opt in to resource-aware execution");
     };
     assert!(accesses.contains(&ToolResourceAccess::exclusive(
         ToolResource::workspace_path(workspace.root().join("out.txt"))
@@ -199,7 +199,11 @@ async fn allowed_policy_reads_and_reports_metadata() {
         match event {
             RunEvent::ToolFinished { result, .. } => match result {
                 ToolCompletion::Success(output) => {
-                    assert_eq!(output.content(), "hello\n");
+                    let text = "hello\nworld\n";
+                    let expected =
+                        crate::hashline::format_hashline_view("note.txt", text, Some(1), Some(1))
+                            .unwrap();
+                    assert_eq!(output.content(), expected);
                     assert_eq!(
                         output.presentation().operation_kind(),
                         Some(&OperationKind::Read)
@@ -232,7 +236,7 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
                     ToolCall {
                         id: "call-1".into(),
-                        name: "write_file".into(),
+                        name: "write".into(),
                         arguments: json!({"path": "nested/out.txt", "content": "created"}),
                     },
                 )])),
@@ -269,7 +273,8 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
                 ToolCompletion::Success(output) => {
                     write_metadata = Some(output.presentation().clone());
                     assert!(output.content().contains("created"));
-                    assert!(output.content().contains("+created"));
+                    assert!(output.content().contains("[nested/out.txt#"));
+                    assert!(!output.content().contains("+created"));
                 }
                 other => panic!("unexpected tool result: {other:?}"),
             },
@@ -303,7 +308,7 @@ async fn write_only_policy_cannot_diff_existing_file_contents() {
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
                     ToolCall {
                         id: "call-1".into(),
-                        name: "write_file".into(),
+                        name: "write".into(),
                         arguments: json!({"path": "secret.txt", "content": "new secret"}),
                     },
                 )])),
@@ -384,7 +389,7 @@ async fn hostile_paths_are_rejected_before_file_io() {
     symlink(outside.path(), root.path().join("escape")).unwrap();
     let tool = coding_tools(CodingToolOptions::default())
         .into_iter()
-        .find(|tool| tool.spec().name == "write_file")
+        .find(|tool| tool.spec().name == "write")
         .unwrap();
 
     for path in [
@@ -424,26 +429,27 @@ fn build_runtime_with_coding_tools(
     builder.build().unwrap()
 }
 
+// Covers: edit prepare must lock every existing section target for read+write
+// Owner: SDK contract
 #[tokio::test]
-async fn apply_patch_prepare_reserves_add_update_and_move_paths() {
+async fn edit_prepare_reserves_existing_targets() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("old.txt"), "old\n").unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
     let workspace = workspace(&dir);
-    let tool = coding_tool(CodingToolKind::ApplyPatch, CodingToolOptions::default());
+    let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
     let input = "\
-*** Begin Patch
-*** Add File: nested/new.txt
-+created
-*** Update File: old.txt
-*** Move to: moved.txt
-@@
--old
-+new
-*** End Patch";
+[a.txt#AAAA]
+PUT 1.=1:
++A
+[b.txt#BBBB]
+PUT 1.=1:
++B
+";
 
     let prepared = tool
         .prepare(
-            invocation(json!({"input": input})),
+            invocation(json!({ "input": input })),
             ToolPreparationContext::new(Some(workspace.clone()), CancellationToken::new()),
         )
         .await
@@ -451,161 +457,89 @@ async fn apply_patch_prepare_reserves_add_update_and_move_paths() {
 
     let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy().clone()
     else {
-        panic!("apply_patch must opt in to resource-aware execution");
+        panic!("edit must opt in to resource-aware execution");
     };
-
-    let expected_paths = [
-        workspace.root().join("nested/new.txt"),
-        workspace.root().join("old.txt"),
-        workspace.root().join("moved.txt"),
-    ];
-    for path in &expected_paths {
+    for path in [
+        workspace.root().join("a.txt"),
+        workspace.root().join("b.txt"),
+    ] {
         assert!(
             accesses.contains(&ToolResourceAccess::exclusive(
-                ToolResource::workspace_path(path)
+                ToolResource::workspace_path(path.clone())
             )),
             "missing exclusive access for {}",
             path.display()
         );
-    }
-    assert!(accesses.contains(&ToolResourceAccess::exclusive(
-        ToolResource::directory_membership(workspace.root().join("nested"))
-    )));
-
-    let capability_paths = prepared
-        .capabilities()
-        .iter()
-        .filter_map(|capability| match capability.operation() {
-            rho_sdk::CapabilityOperation::ReadPath { path, .. }
-            | rho_sdk::CapabilityOperation::WritePath { path, .. } => Some(path.clone()),
-            _ => None,
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    for path in &expected_paths {
-        assert!(
-            capability_paths.contains(path),
-            "missing capability for {}",
-            path.display()
-        );
+        let mut ops = prepared
+            .capabilities()
+            .iter()
+            .filter_map(|cap| match cap.operation() {
+                CapabilityOperation::ReadPath { path: p, .. } if p == &path => Some("read"),
+                CapabilityOperation::WritePath { path: p, .. } if p == &path => Some("write"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        ops.sort_unstable();
+        assert_eq!(ops, ["read", "write"], "path {}", path.display());
     }
 }
 
+// Covers: edit prepare must reject invalid documents before path I/O
+// Owner: SDK contract
 #[tokio::test]
-async fn apply_patch_prepare_rejects_invalid_patch_before_io() {
+async fn edit_prepare_rejects_invalid_document() {
     let dir = tempfile::tempdir().unwrap();
-    let tool = coding_tool(CodingToolKind::ApplyPatch, CodingToolOptions::default());
+    let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
     let error = match tool
         .prepare(
-            invocation(json!({"input": "not a patch"})),
+            invocation(json!({ "input": "not an edit document" })),
             ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
         )
         .await
     {
-        Ok(_) => panic!("invalid patch must fail prepare"),
+        Ok(_) => panic!("invalid edit document must fail prepare"),
         Err(error) => error,
     };
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
 }
 
-// Covers: edit_file prepare must lock an existing target for read+write
+// Covers: edit prepare must reject duplicate section targets before I/O
 // Owner: SDK contract
 #[tokio::test]
-async fn edit_file_prepare_reserves_existing_target() {
+async fn edit_prepare_rejects_duplicate_paths() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("sample.txt"), "old").unwrap();
-    let workspace = workspace(&dir);
-    let tool = coding_tool(CodingToolKind::EditFile, CodingToolOptions::default());
-
-    let prepared = tool
-        .prepare(
-            invocation(json!({
-                "path": "sample.txt",
-                "old_string": "old",
-                "new_string": "new"
-            })),
-            ToolPreparationContext::new(Some(workspace.clone()), CancellationToken::new()),
-        )
-        .await
-        .unwrap();
-
-    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy().clone()
-    else {
-        panic!("edit_file must opt in to resource-aware execution");
-    };
-    assert_eq!(
-        accesses,
-        vec![ToolResourceAccess::exclusive(ToolResource::workspace_path(
-            workspace.root().join("sample.txt")
-        ))]
-    );
-
-    let capability_paths = prepared
-        .capabilities()
-        .iter()
-        .filter_map(|capability| match capability.operation() {
-            rho_sdk::CapabilityOperation::ReadPath { path, .. }
-            | rho_sdk::CapabilityOperation::WritePath { path, .. } => Some(path.clone()),
-            _ => None,
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    assert!(capability_paths.contains(&workspace.root().join("sample.txt")));
-    assert_eq!(prepared.capabilities().len(), 2);
-}
-
-// Covers: edit_file prepare must reject a missing target before execution
-// Owner: SDK contract
-#[tokio::test]
-async fn edit_file_prepare_rejects_missing_target() {
-    let dir = tempfile::tempdir().unwrap();
-    let tool = coding_tool(CodingToolKind::EditFile, CodingToolOptions::default());
+    std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
+    let input = "\
+[a.txt#AAAA]
+PUT 1.=1:
++A
+[a.txt#BBBB]
+PUT 1.=1:
++B
+";
     let error = match tool
         .prepare(
-            invocation(json!({
-                "path": "missing.txt",
-                "old_string": "old",
-                "new_string": "new"
-            })),
+            invocation(json!({ "input": input })),
             ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
         )
         .await
     {
-        Ok(_) => panic!("missing edit target must fail prepare"),
-        Err(error) => error,
-    };
-    assert_eq!(error.kind(), ToolErrorKind::Execution);
-}
-
-// Covers: edit_file prepare must reject empty old_string before path I/O
-// Owner: SDK contract
-#[tokio::test]
-async fn edit_file_prepare_rejects_invalid_args() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("sample.txt"), "old").unwrap();
-    let tool = coding_tool(CodingToolKind::EditFile, CodingToolOptions::default());
-    let error = match tool
-        .prepare(
-            invocation(json!({
-                "path": "sample.txt",
-                "old_string": "",
-                "new_string": "new"
-            })),
-            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
-        )
-        .await
-    {
-        Ok(_) => panic!("empty old_string must fail prepare"),
+        Ok(_) => panic!("duplicate edit path must fail prepare"),
         Err(error) => error,
     };
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
-    assert!(error.to_string().contains("old_string must not be empty"));
 }
 
-// Covers: edit_file success path emits diff metadata and progress
+// Covers: edit success path emits diff metadata and progress
 // Owner: SDK contract
 #[tokio::test]
 async fn allowed_policy_edits_with_diff_metadata_and_progress() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("sample.txt"), "alpha beta gamma").unwrap();
+    let original = "alpha\nbeta\ngamma\n";
+    std::fs::write(dir.path().join("sample.txt"), original).unwrap();
+    let tag = crate::hashline::compute_file_hash(original);
+    let input = format!("[sample.txt#{tag}]\nPUT 2.=2:\n+delta\n");
     let runtime = build_runtime_with_coding_tools(
         ScriptedProvider::new(
             ModelIdentity::new("scripted", "test", "model"),
@@ -613,12 +547,8 @@ async fn allowed_policy_edits_with_diff_metadata_and_progress() {
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
                     ToolCall {
                         id: "call-1".into(),
-                        name: "edit_file".into(),
-                        arguments: json!({
-                            "path": "sample.txt",
-                            "old_string": "beta",
-                            "new_string": "delta"
-                        }),
+                        name: "edit".into(),
+                        arguments: json!({ "input": input }),
                     },
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
@@ -644,7 +574,7 @@ async fn allowed_policy_edits_with_diff_metadata_and_progress() {
         match event {
             RunEvent::ToolUpdated { progress, .. } => {
                 saw_progress = true;
-                assert!(progress.text().contains("editing"));
+                assert!(progress.text().contains("applying edit"));
                 assert_eq!(
                     progress.presentation().operation_kind(),
                     Some(&OperationKind::Write)
@@ -653,8 +583,8 @@ async fn allowed_policy_edits_with_diff_metadata_and_progress() {
             RunEvent::ToolFinished { result, .. } => match result {
                 ToolCompletion::Success(output) => {
                     edit_metadata = Some(output.presentation().clone());
-                    assert!(output.content().contains("edited sample.txt"));
-                    assert!(output.content().contains("+alpha delta gamma"));
+                    assert!(output.content().contains("sample.txt"));
+                    assert!(output.content().contains("2:delta"));
                 }
                 other => panic!("unexpected tool result: {other:?}"),
             },
@@ -670,12 +600,9 @@ async fn allowed_policy_edits_with_diff_metadata_and_progress() {
         metadata.affected_paths(),
         [std::path::PathBuf::from("sample.txt")]
     );
-    assert!(metadata
-        .unified_diff()
-        .unwrap()
-        .contains("+alpha delta gamma"));
+    assert!(metadata.unified_diff().unwrap().contains("+delta"));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("sample.txt")).unwrap(),
-        "alpha delta gamma"
+        "alpha\ndelta\ngamma\n"
     );
 }

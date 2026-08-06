@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-mod apply_patch;
+mod edit;
 
 use rho_sdk::{
     model::{
@@ -242,7 +242,7 @@ async fn fixture_stream(
                 .send(ModelEvent::ToolCallDelta {
                     index: 0,
                     id: Some(TOOL_CALL_ID.into()),
-                    name: Some("write_file".into()),
+                    name: Some("write".into()),
                     arguments: "{\"path\":\".rho-tui-fixture-output.txt\",".into(),
                 })
                 .await?;
@@ -255,12 +255,10 @@ async fn fixture_stream(
                     arguments: "\"content\":\"deterministic tool output\\n\"}".into(),
                 })
                 .await?;
-            completed_tool_call(TOOL_CALL_ID, "write_file", arguments)
+            completed_tool_call(TOOL_CALL_ID, "write", arguments)
         }
-        apply_patch::PROMPT if apply_patch::is_pending(&request) => {
-            apply_patch::stream(&request, &events).await
-        }
-        apply_patch::CANCEL_PROMPT => apply_patch::stream_until_cancelled(&request, &events).await,
+        edit::PROMPT if edit::is_pending(&request) => edit::stream(&request, &events).await,
+        edit::CANCEL_PROMPT => edit::stream_until_cancelled(&request, &events).await,
         "fixture questionnaire" if tool_result(&request, QUESTIONNAIRE_CALL_ID).is_none() => {
             completed_tool_call(
                 QUESTIONNAIRE_CALL_ID,
@@ -599,7 +597,7 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
             result.content.lines().next().unwrap_or_default()
         ));
     }
-    if let Some(text) = apply_patch::completion_text(request) {
+    if let Some(text) = edit::completion_text(request) {
         return completed(text);
     }
     if let (Some(slow), Some(fast)) = (

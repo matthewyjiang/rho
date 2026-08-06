@@ -11,7 +11,7 @@ use rho_tools::{
 
 use super::super::{ToolKind, ToolView};
 use super::{
-    apply_patch_paths, display_path, draft_card, first_url, metadata_paths, quoted, search_terms,
+    display_path, draft_card, edit_paths, first_url, metadata_paths, quoted, search_terms,
     start_card, string_arg, truncate,
 };
 
@@ -109,8 +109,8 @@ pub(super) fn file_diff_card(
 ) -> ToolCard {
     let status = ToolStatus::from_finished(ok);
     let paths = metadata_paths(view, cwd);
-    let arg_paths = if view.kind == ToolKind::ApplyPatch {
-        apply_patch_paths(&view.arguments, cwd)
+    let arg_paths = if view.kind == ToolKind::Edit {
+        edit_paths(&view.arguments, cwd)
     } else {
         let path = display_path(&view.arguments, cwd);
         if path.is_empty() {

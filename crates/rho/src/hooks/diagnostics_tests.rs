@@ -11,7 +11,7 @@ fn project_with_hook() -> TempDir {
     std::fs::write(project.path().join(".rho/hooks/fmt"), "#!/bin/sh\n").unwrap();
     std::fs::write(
         project.path().join(".rho/hooks.toml"),
-        "version = 1\n\n[[hook]]\nid = \"fmt\"\non = \"after_tool_use\"\ntools = [\"edit_file\"]\ncommand = [\"./.rho/hooks/fmt\"]\ntimeout = \"5s\"\n",
+        "version = 1\n\n[[hook]]\nid = \"fmt\"\non = \"after_tool_use\"\ntools = [\"edit\"]\ncommand = [\"./.rho/hooks/fmt\"]\ntimeout = \"5s\"\n",
     )
     .unwrap();
     project
@@ -40,7 +40,7 @@ fn the_contract_view_renders_argv_cwd_timeout_and_environment() {
     assert_eq!(views.len(), 1);
     assert_eq!(views[0].id, "project:fmt");
     assert_eq!(views[0].event, "after_tool_use");
-    assert_eq!(views[0].tools, "edit_file");
+    assert_eq!(views[0].tools, "edit");
     assert_eq!(views[0].timeout, "5s");
     assert_eq!(
         views[0].command,

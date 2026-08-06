@@ -147,15 +147,14 @@ fn validate_agent_access(
     const MUTATING: &[&str] = &[
         "agent",
         "agents",
-        "apply_patch",
         "bash",
-        "edit_file",
+        "edit",
         "powershell",
         "process",
         "rho",
         "shell",
         "workflow",
-        "write_file",
+        "write",
     ];
     if let Some(capability) = agent
         .capabilities

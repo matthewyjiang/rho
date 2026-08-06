@@ -18,7 +18,7 @@ fn parse(contents: &str) -> AgentDefinition {
 #[test]
 fn supported_definitions_round_trip() {
     let cases = [
-        "---\nid: demo\ndescription: demo\ntools: [read_file, write_file, shell]\n---\nDo the work.\n",
+        "---\nid: demo\ndescription: demo\ntools: [read_file, write, shell]\n---\nDo the work.\n",
         "---\ndescription: demo\n---\nbody\n",
         "---\ndescription: demo\nmodel-policy: select\nmodel: gpt-5.5\nprovider: openai\nreasoning: high\n---\nbody\n",
         "---\ndescription: demo\nmodel-policy: prefer\nmodel: claude-opus-5\n---\nbody\n",

@@ -228,7 +228,7 @@ fn the_spawn_contract_shows_everything_that_decides_what_runs() {
     write(&project.path().join(".rho/hooks/fmt"), "#!/bin/sh\n");
     write(
         &project.path().join(".rho/hooks.toml"),
-        "version = 1\n\n[[hook]]\nid = \"fmt\"\non = \"after_tool_use\"\ntools = [\"edit_file\"]\ncommand = [\"./.rho/hooks/fmt\", \"--all\"]\ntimeout = \"5s\"\nenv = [\"MY_TOKEN\"]\n",
+        "version = 1\n\n[[hook]]\nid = \"fmt\"\non = \"after_tool_use\"\ntools = [\"edit\"]\ncommand = [\"./.rho/hooks/fmt\", \"--all\"]\ntimeout = \"5s\"\nenv = [\"MY_TOKEN\"]\n",
     );
     let catalog = HookCatalog::discover(None, Some(project.path()), ProjectTrust::Trusted).unwrap();
 
@@ -237,7 +237,7 @@ fn the_spawn_contract_shows_everything_that_decides_what_runs() {
 
     assert_eq!(entry.id, "project:fmt");
     assert_eq!(entry.event, "after_tool_use");
-    assert_eq!(entry.tools, "edit_file");
+    assert_eq!(entry.tools, "edit");
     assert_eq!(
         entry.command,
         vec![

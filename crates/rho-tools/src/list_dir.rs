@@ -10,7 +10,6 @@ struct Args {
     path: String,
 }
 
-#[async_trait::async_trait]
 impl Tool for ListDir {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
@@ -20,19 +19,21 @@ impl Tool for ListDir {
         }
     }
 
-    async fn call(
-        &self,
+    fn call<'a>(
+        &'a self,
         args: serde_json::Value,
         ctx: ToolContext,
         id: String,
-    ) -> Result<ToolResult, ToolError> {
-        let args: Args = serde_json::from_value(args)?;
-        let path = resolve_path(&ctx.cwd, &args.path);
-        let content = list_directory(&path).await?;
-        Ok(ToolResult {
-            id,
-            ok: true,
-            content: truncate(content, ctx.max_output_bytes),
+    ) -> AppToolFuture<'a> {
+        Box::pin(async move {
+            let args: Args = serde_json::from_value(args)?;
+            let path = resolve_path(&ctx.cwd, &args.path);
+            let content = list_directory(&path).await?;
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content: truncate(content, ctx.max_output_bytes),
+            })
         })
     }
 }

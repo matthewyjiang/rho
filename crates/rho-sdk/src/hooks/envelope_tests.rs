@@ -103,7 +103,7 @@ fn before_tool_use_wire_shape_is_stable() {
 #[test]
 fn after_tool_use_wire_shape_is_stable() {
     let payload = HookPayload::AfterToolUse(AfterToolUsePayload {
-        tool: tool("edit_file", Some("call-2")),
+        tool: tool("edit", Some("call-2")),
         status: HookToolStatus::Succeeded,
         failure: None,
         duration_ms: Some(42),
@@ -112,7 +112,7 @@ fn after_tool_use_wire_shape_is_stable() {
     assert_eq!(
         wire_shape(&envelope(payload))["payload"],
         json!({
-            "tool": { "name": "edit_file", "call_id": "call-2" },
+            "tool": { "name": "edit", "call_id": "call-2" },
             "status": "succeeded",
             "failure": null,
             "duration_ms": 42,

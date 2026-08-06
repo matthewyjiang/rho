@@ -123,7 +123,7 @@ impl ModelProvider for AutomationFixtureProvider {
                 Mode::ReadPath => completed(last_tool_result(&request)?),
                 Mode::WritePath if turn == 0 => completed_tool_call(
                     "fixture-write-path",
-                    "write_file",
+                    "write",
                     serde_json::json!({
                         "path": required_env(PATH_ENV)?,
                         "content": "written outside the working directory",
