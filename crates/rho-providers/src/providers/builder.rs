@@ -297,11 +297,10 @@ fn compatible_auth_matches_kind(auth: &CompatibleAuth, kind: ProviderAuthKind) -
 }
 
 fn auth_matches_mode(auth: &Auth, mode: OpenAiRuntimeAuth) -> bool {
-    matches!(
-        (auth, mode),
-        (Auth::ApiKey(_), OpenAiRuntimeAuth::ApiKey)
-            | (Auth::Codex { .. }, OpenAiRuntimeAuth::Codex)
-    )
+    match mode {
+        OpenAiRuntimeAuth::ApiKey => matches!(auth, Auth::ApiKey(_)),
+        OpenAiRuntimeAuth::Codex => matches!(auth, Auth::Codex { .. }),
+    }
 }
 
 fn provider_http_client(timeout: Option<Duration>) -> Result<reqwest::Client, ModelError> {
