@@ -130,6 +130,9 @@ impl App {
             self.info.runtime.advisor_mode = enabled;
         }
         self.sync_advisor_runtime(agent).await;
+        // Mode and model both feed the statusline; refresh before the toast so
+        // the bottom row and the status message describe the same state.
+        self.statusline.update_model(&self.info.runtime);
         let status = self.advisor_mode_status();
         self.set_status(status);
         Ok(())

@@ -721,6 +721,9 @@ impl App {
                 self.set_status("config save failed");
             }
         }
+        if id == ADVISOR_AGENT_ID {
+            self.statusline.update_model(&self.info.runtime);
+        }
         Ok(())
     }
 

@@ -4,9 +4,11 @@
 //! `XAI_API_KEY` gives these scenarios a provider whose models come from the
 //! static catalog, which is enough for the advisor model picker to offer rows.
 
+use std::time::{Duration, Instant};
+
 use anyhow::{ensure, Result};
 
-use crate::{env::IsolatedHome, harness::PtyHarness, keys::Key, scenario::Step};
+use crate::{env::IsolatedHome, harness::PtyHarness, keys::Key, scenario::Step, WaitTimeout};
 
 use super::{SETTLE, STARTUP, STREAM};
 
@@ -70,31 +72,59 @@ fn status_row(harness: &PtyHarness) -> Result<String> {
         })
 }
 
+/// Polls the statusline until `check` passes or `timeout` elapses.
+///
+/// The toast can land a frame before the bottom statusline repaints after a
+/// mode change. One-shot reads flake on slower PTY hosts; wait for the row.
+fn wait_for_statusline(
+    harness: &mut PtyHarness,
+    timeout: WaitTimeout,
+    check: impl Fn(&str) -> bool,
+    failure: impl FnOnce(&str) -> String,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout.duration;
+    loop {
+        harness.poll(Duration::from_millis(25));
+        let last = status_row(harness).unwrap_or_default();
+        if check(&last) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(anyhow::anyhow!(
+                "{}\n{}",
+                failure(&last),
+                harness.screen().debug_dump()
+            ));
+        }
+    }
+}
+
 fn assert_statusline_has_no_advisor(harness: &mut PtyHarness) -> Result<()> {
-    let row = status_row(harness)?;
-    ensure!(
-        !row.contains("advisor"),
-        "advisor mode is off, so the statusline must not claim a reviewer:\n{row}"
-    );
-    Ok(())
+    wait_for_statusline(
+        harness,
+        SETTLE,
+        |row| !row.is_empty() && !row.contains("advisor"),
+        |row| format!("advisor mode is off, so the statusline must not claim a reviewer:\n{row}"),
+    )
 }
 
 fn assert_statusline_names_the_advisor_model(harness: &mut PtyHarness) -> Result<()> {
-    let row = status_row(harness)?;
-    ensure!(
-        row.contains(&format!("advisor: {ADVISOR_MODEL}")),
-        "statusline must name the model reviewing the session:\n{row}"
-    );
-    Ok(())
+    let expected = format!("advisor: {ADVISOR_MODEL}");
+    wait_for_statusline(
+        harness,
+        SETTLE,
+        move |row| row.contains(&expected),
+        |row| format!("statusline must name the model reviewing the session:\n{row}"),
+    )
 }
 
 fn assert_statusline_warns_about_the_missing_model(harness: &mut PtyHarness) -> Result<()> {
-    let row = status_row(harness)?;
-    ensure!(
-        row.contains("advisor: no model"),
-        "advisor mode with no model must read as unusable:\n{row}"
-    );
-    Ok(())
+    wait_for_statusline(
+        harness,
+        SETTLE,
+        |row| row.contains("advisor: no model"),
+        |row| format!("advisor mode with no model must read as unusable:\n{row}"),
+    )
 }
 
 /// The advisor takes no arguments, so its card is the verb alone.
@@ -157,6 +187,10 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "advisor mode is on: xai/grok-4.5 reviews the session",
         timeout: SETTLE,
     },
+    Step::WaitText {
+        text: "advisor: xai/grok-4.5",
+        timeout: SETTLE,
+    },
     Step::Custom(assert_statusline_names_the_advisor_model),
     Step::Phase("config_row_turns_it_off"),
     Step::SubmitText("/config"),
@@ -198,6 +232,10 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "advisor mode is on: xai/grok-4.5 reviews the session",
         timeout: SETTLE,
     },
+    Step::WaitText {
+        text: "advisor: xai/grok-4.5",
+        timeout: SETTLE,
+    },
     Step::Custom(assert_statusline_names_the_advisor_model),
     Step::ExitCommand,
 ];
@@ -209,6 +247,10 @@ pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::WaitText {
+        text: "advisor: no model",
         timeout: STARTUP,
     },
     Step::Custom(assert_statusline_warns_about_the_missing_model),
@@ -270,6 +312,10 @@ pub(super) const ADVISOR_REVIEW_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::WaitText {
+        text: "advisor: xai/grok-4.5",
         timeout: STARTUP,
     },
     Step::Custom(assert_statusline_names_the_advisor_model),
