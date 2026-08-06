@@ -6,11 +6,8 @@ use url::Url;
 use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
     credentials::CredentialStore,
-    model::{
-        registry::{provider_runtime, AuthMode, ProviderRuntime},
-        ModelError,
-    },
-    provider::{self, ProviderAuthKind},
+    model::{registry::provider_runtime, ModelError},
+    provider::{self, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
@@ -203,8 +200,8 @@ impl ProviderBuilder {
                 let endpoint = endpoint.or_else(|| {
                     Some(
                         match auth_mode {
-                            AuthMode::ApiKey => OPENAI_API_BASE,
-                            AuthMode::Codex => OPENAI_CODEX_API_BASE,
+                            OpenAiRuntimeAuth::ApiKey => OPENAI_API_BASE,
+                            OpenAiRuntimeAuth::Codex => OPENAI_CODEX_API_BASE,
                         }
                         .to_string(),
                     )
@@ -299,11 +296,11 @@ fn compatible_auth_matches_kind(auth: &CompatibleAuth, kind: ProviderAuthKind) -
     )
 }
 
-fn auth_matches_mode(auth: &Auth, mode: AuthMode) -> bool {
-    matches!(
-        (auth, mode),
-        (Auth::ApiKey(_), AuthMode::ApiKey) | (Auth::Codex { .. }, AuthMode::Codex)
-    )
+fn auth_matches_mode(auth: &Auth, mode: OpenAiRuntimeAuth) -> bool {
+    match mode {
+        OpenAiRuntimeAuth::ApiKey => matches!(auth, Auth::ApiKey(_)),
+        OpenAiRuntimeAuth::Codex => matches!(auth, Auth::Codex { .. }),
+    }
 }
 
 fn provider_http_client(timeout: Option<Duration>) -> Result<reqwest::Client, ModelError> {

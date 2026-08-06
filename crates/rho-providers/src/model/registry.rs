@@ -1,86 +1,25 @@
-use crate::{
-    model::ModelError,
-    provider::{self, ProviderAuthKind, RuntimeProviderId},
-    providers::openai_compatible::OpenAiCompatibleDialect,
+use crate::{model::ModelError, provider};
+
+#[allow(deprecated)]
+pub use crate::provider::{
+    ProviderRuntime, KIMI_CODE_API_BASE, META_API_BASE, MOONSHOT_API_BASE, OLLAMA_API_BASE,
+    OLLAMA_CLOUD_API_BASE, OPENROUTER_API_BASE, POOLSIDE_API_BASE, QWEN_TOKEN_PLAN_API_BASE,
 };
 
-pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
-pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
-/// Default OpenAI-compatible Token Plan base (Singapore / international).
-pub const QWEN_TOKEN_PLAN_API_BASE: &str =
-    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
+// NEXT_MAJOR(rho-providers): remove deprecated registry re-exports for API bases that are
+// canonical in provider:: and kept only for provider_config / test compatibility.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AuthMode {
-    ApiKey,
-    Codex,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProviderRuntime {
-    OpenAi {
-        auth_mode: AuthMode,
-    },
-    OpenAiCompatible {
-        dialect: OpenAiCompatibleDialect,
-        default_api_base: &'static str,
-    },
-    Anthropic,
-    Google,
-    GithubCopilot,
-    Xai,
-}
-
+/// Runtime construction data for a registered provider name.
+///
+/// Projection of [`provider::ProviderDescriptor::runtime`] so callers keep a
+/// stable registry entry point without parallel match arms.
 pub fn provider_runtime(provider: &str) -> Option<ProviderRuntime> {
-    let descriptor = provider::resolve_provider_reference(provider)
-        .ok()?
-        .provider;
-    Some(match descriptor.runtime_id {
-        RuntimeProviderId::Ollama => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
-            default_api_base: OLLAMA_API_BASE,
-        },
-        RuntimeProviderId::OllamaCloud => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
-            default_api_base: OLLAMA_CLOUD_API_BASE,
-        },
-        RuntimeProviderId::OpenAi => ProviderRuntime::OpenAi {
-            auth_mode: match descriptor.default_auth().auth_kind {
-                ProviderAuthKind::ApiKey { .. } => AuthMode::ApiKey,
-                ProviderAuthKind::CodexOAuth { .. } => AuthMode::Codex,
-                ProviderAuthKind::None
-                | ProviderAuthKind::GithubCopilotDevice { .. }
-                | ProviderAuthKind::XaiOAuth { .. }
-                | ProviderAuthKind::BearerCredential { .. }
-                | ProviderAuthKind::KimiOAuth { .. }
-                | ProviderAuthKind::OllamaDeviceKey { .. } => return None,
-            },
-        },
-        RuntimeProviderId::Anthropic => ProviderRuntime::Anthropic,
-        RuntimeProviderId::Google => ProviderRuntime::Google,
-        RuntimeProviderId::GithubCopilot => ProviderRuntime::GithubCopilot,
-        RuntimeProviderId::KimiCode => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::KimiCode,
-            default_api_base: "https://api.kimi.com/coding/v1",
-        },
-        RuntimeProviderId::Moonshot => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Moonshot,
-            default_api_base: "https://api.moonshot.ai/v1",
-        },
-        RuntimeProviderId::Poolside => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Poolside,
-            default_api_base: "https://inference.poolside.ai/v1",
-        },
-        RuntimeProviderId::OpenRouter => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::OpenRouter,
-            default_api_base: "https://openrouter.ai/api/v1",
-        },
-        RuntimeProviderId::QwenTokenPlan => ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::QwenTokenPlan,
-            default_api_base: QWEN_TOKEN_PLAN_API_BASE,
-        },
-        RuntimeProviderId::Xai => ProviderRuntime::Xai,
-    })
+    Some(
+        provider::resolve_provider_reference(provider)
+            .ok()?
+            .provider
+            .runtime,
+    )
 }
 
 pub fn missing_credential_error(message: &'static str) -> ModelError {

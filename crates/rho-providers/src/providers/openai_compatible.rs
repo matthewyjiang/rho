@@ -1,13 +1,10 @@
 use futures_util::StreamExt;
 use reqwest::StatusCode;
 
-#[path = "openai_compatible/dialect.rs"]
-mod dialect;
-
 #[path = "openai_compatible/reasoning.rs"]
 mod reasoning;
 
-pub(crate) use dialect::OpenAiCompatibleDialect;
+pub(crate) use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
 use crate::{
     auth::kimi_token::KimiAuthManager,
@@ -163,6 +160,7 @@ impl OpenAiCompatibleProvider {
             messages,
             tools: has_tools.then_some(tools),
             tool_choice: has_tools.then_some("auto"),
+            parallel_tool_calls: has_tools.then_some(true),
             stream,
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,

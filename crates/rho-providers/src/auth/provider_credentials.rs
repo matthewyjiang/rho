@@ -15,12 +15,11 @@ use crate::{
     },
     model::{
         registry::{
-            missing_credential_error, missing_credentials_error, provider_runtime, AuthMode,
-            ProviderRuntime,
+            missing_credential_error, missing_credentials_error, provider_runtime, ProviderRuntime,
         },
         ModelError,
     },
-    provider::{self, ProviderAuthKind},
+    provider::{self, OpenAiRuntimeAuth, ProviderAuthKind},
     providers::{
         builder::ProviderCredential,
         openai::auth::{Auth, CodexAuthSource},
@@ -65,8 +64,8 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
         match runtime {
             ProviderRuntime::OpenAi { auth_mode: mode } => {
                 let openai_auth = match mode {
-                    AuthMode::ApiKey => load_openai_api_key_auth(self.store.as_ref())?,
-                    AuthMode::Codex => load_codex_auth(self.store.as_ref())?,
+                    OpenAiRuntimeAuth::ApiKey => load_openai_api_key_auth(self.store.as_ref())?,
+                    OpenAiRuntimeAuth::Codex => load_codex_auth(self.store.as_ref())?,
                 };
                 Ok(ProviderCredential::OpenAi {
                     auth: openai_auth,

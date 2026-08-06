@@ -95,3 +95,15 @@ fn qwen_token_plan_resolves_default_endpoint_without_config() {
         rho_providers::model::registry::QWEN_TOKEN_PLAN_API_BASE
     );
 }
+
+// Covers: Meta Model API uses the built-in default API base with no config override
+// Owner: provider config
+#[test]
+fn meta_resolves_default_endpoint_without_config() {
+    let config = Config::default();
+
+    assert_eq!(
+        config.resolved_provider_endpoint("meta").unwrap().as_str(),
+        rho_providers::model::registry::META_API_BASE
+    );
+}

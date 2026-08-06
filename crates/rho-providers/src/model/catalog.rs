@@ -83,81 +83,106 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
     available_models_for_auths_from(model_catalog(), auths)
 }
 
+struct CrossProviderLoginGroup {
+    id: &'static str,
+    prompt: &'static str,
+    auths: &'static [&'static str],
+}
+
+/// Cross-provider login groups that attach foreign auth modes under one picker entry.
+///
+/// Single-provider groups are derived from [`provider::providers`]; only groupings that
+/// span providers (OpenAI+Codex, Moonshot+Kimi) need an explicit spec.
+///
+/// Auth prompts are derived from registry metadata so `ApiKey`/`OAuth` wording stays
+/// consistent with the provider descriptor. Each group lists auth profile ids; the
+/// prompt comes from the descriptor at build time.
+const CROSS_PROVIDER_LOGIN_GROUPS: &[CrossProviderLoginGroup] = &[
+    CrossProviderLoginGroup {
+        id: "openai",
+        prompt: "OpenAI",
+        auths: &["api-key", "codex"],
+    },
+    CrossProviderLoginGroup {
+        id: "moonshot",
+        prompt: "Moonshot AI",
+        auths: &["moonshot-api-key", "kimi-oauth"],
+    },
+];
+
 pub fn login_groups() -> Vec<LoginGroup> {
-    // Keep alphabetical by display `prompt` so login pickers stay sorted as groups are added.
-    // Method values are auth profile ids; the resolved LoginTarget carries the provider name.
-    [
-        (
-            "anthropic",
-            "Anthropic",
-            &[("API Key", "anthropic-api-key")][..],
-        ),
-        (
-            "github-copilot",
-            "GitHub Copilot",
-            &[("OAuth", "github-copilot")][..],
-        ),
-        (
-            "google",
-            "Google Gemini",
-            &[("API Key", "google-api-key")][..],
-        ),
-        (
-            "moonshot",
-            "Moonshot AI",
-            &[("API Key", "moonshot-api-key"), ("OAuth", "kimi-oauth")][..],
-        ),
-        (
-            "ollama-cloud",
-            "Ollama Cloud",
-            &[
-                ("API Key", "ollama-cloud-api-key"),
-                ("Device Key", "ollama-cloud-device"),
-            ][..],
-        ),
-        (
-            "openai",
-            "OpenAI",
-            &[("API Key", "api-key"), ("OAuth", "codex")][..],
-        ),
-        (
-            "openrouter",
-            "OpenRouter",
-            &[
-                ("API Key", "openrouter-api-key"),
-                ("OAuth", "openrouter-oauth"),
-            ][..],
-        ),
-        (
-            "poolside",
-            "Poolside",
-            &[("API Key", "poolside-api-key")][..],
-        ),
-        (
-            "qwen-token-plan",
-            "Qwen Token Plan",
-            &[("API Key", "qwen-token-plan-api-key")][..],
-        ),
-        (
-            "xai",
-            "xAI",
-            &[("API Key", "xai-api-key"), ("OAuth", "xai-oauth")][..],
-        ),
-    ]
-    .into_iter()
-    .map(|(id, prompt, methods)| LoginGroup {
-        id: id.into(),
-        prompt: prompt.into(),
-        methods: methods
+    let mut claimed_auths = std::collections::BTreeSet::<&'static str>::new();
+    let mut groups = Vec::new();
+
+    for group in CROSS_PROVIDER_LOGIN_GROUPS {
+        let methods = group
+            .auths
             .iter()
-            .map(|(prompt, auth)| LoginMethod {
-                prompt: (*prompt).into(),
-                target: login_target_for_auth(auth)
-                    .expect("login group targets must reference registered auth profiles"),
+            .map(|auth| {
+                claimed_auths.insert(*auth);
+                let (descriptor, mode) = provider::resolve_auth_mode(auth)
+                    .expect("login group targets must reference registered auth profiles");
+                LoginMethod {
+                    prompt: login_method_prompt(mode.auth_kind).to_string(),
+                    target: LoginTarget {
+                        provider: descriptor.name.into(),
+                        auth: mode.id.into(),
+                        label: mode.login_label.into(),
+                    },
+                }
             })
-            .collect(),
-    })
-    .collect()
+            .collect::<Vec<_>>();
+        groups.push(LoginGroup {
+            id: group.id.into(),
+            prompt: group.prompt.into(),
+            methods,
+        });
+    }
+
+    for descriptor in provider::providers() {
+        let modes = descriptor
+            .auth_modes()
+            .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
+            .filter(|mode| !claimed_auths.contains(mode.id))
+            .collect::<Vec<_>>();
+        if modes.is_empty() {
+            continue;
+        }
+        for mode in &modes {
+            claimed_auths.insert(mode.id);
+        }
+        groups.push(LoginGroup {
+            id: descriptor.name.into(),
+            prompt: descriptor.display_name.into(),
+            methods: modes
+                .into_iter()
+                .map(|mode| LoginMethod {
+                    prompt: login_method_prompt(mode.auth_kind).into(),
+                    target: LoginTarget {
+                        provider: descriptor.name.into(),
+                        auth: mode.id.into(),
+                        label: mode.login_label.into(),
+                    },
+                })
+                .collect(),
+        });
+    }
+
+    groups.sort_by(|left, right| left.prompt.cmp(&right.prompt));
+    groups
+}
+
+fn login_method_prompt(auth_kind: ProviderAuthKind) -> &'static str {
+    match auth_kind {
+        ProviderAuthKind::None => "None",
+        ProviderAuthKind::ApiKey { .. } => "API Key",
+        ProviderAuthKind::OllamaDeviceKey { .. } => "Device Key",
+        ProviderAuthKind::CodexOAuth { .. }
+        | ProviderAuthKind::GithubCopilotDevice { .. }
+        | ProviderAuthKind::XaiOAuth { .. }
+        | ProviderAuthKind::BearerCredential { .. }
+        | ProviderAuthKind::KimiOAuth { .. } => "OAuth",
+    }
 }
 
 pub fn login_group(id: &str) -> Option<LoginGroup> {
@@ -202,16 +227,32 @@ pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {
 }
 
 pub fn default_model_for_provider(provider: &str) -> Option<String> {
-    match provider::provider_descriptor(provider)?.model_source {
+    let descriptor = provider::provider_descriptor(provider)?;
+    match descriptor.model_source {
         ProviderModelSource::CachedProviderModels => {
-            provider_models::cached_provider_models(provider)
-                .into_iter()
-                .next()
-                .map(|entry| entry.model)
-                .or_else(|| builtin_default_model(provider))
+            let cached = provider_models::cached_provider_models(provider);
+            preferred_cached_default(descriptor.default_model, &cached)
         }
         ProviderModelSource::StaticCatalog => static_catalog_default_model(provider),
     }
+}
+
+/// Prefer the descriptor default when present in cache; else first cached; else bare default.
+///
+/// Cache order is lexicographic by model id, so "first cached" is not a product preference.
+fn preferred_cached_default(
+    default_model: Option<&str>,
+    cached: &[provider_models::ProviderModel],
+) -> Option<String> {
+    if let Some(preferred) = default_model {
+        if let Some(found) = cached.iter().find(|entry| entry.model == preferred) {
+            return Some(found.model.clone());
+        }
+    }
+    if let Some(first) = cached.first() {
+        return Some(first.model.clone());
+    }
+    default_model.map(str::to_string)
 }
 
 fn static_catalog_default_model(provider: &str) -> Option<String> {
@@ -221,12 +262,8 @@ fn static_catalog_default_model(provider: &str) -> Option<String> {
         .map(|entry| entry.model.clone())
 }
 
-fn builtin_default_model(provider: &str) -> Option<String> {
-    match provider {
-        "anthropic" => Some("claude-sonnet-4-5".into()),
-        "google" => Some("gemini-3.1-flash-lite".into()),
-        _ => None,
-    }
+fn descriptor_default_model(provider: &str) -> Option<&'static str> {
+    provider::provider_descriptor(provider).and_then(|descriptor| descriptor.default_model)
 }
 
 /// Auth context a caller resolves model selections against.
@@ -493,8 +530,7 @@ fn resolve_model_selection_for_provider_from(
         let selected_model = provider_models::cached_provider_model(provider, &model_id)
             .map(|entry| entry.model)
             .or_else(|| {
-                (builtin_default_model(provider).as_deref() == Some(model_id.as_str()))
-                    .then_some(model_id)
+                (descriptor_default_model(provider) == Some(model_id.as_str())).then_some(model_id)
             });
         let Some(selected_model) = selected_model else {
             return Err(unavailable_model_error(provider, model));

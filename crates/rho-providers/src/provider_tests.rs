@@ -47,10 +47,13 @@ fn poolside_model_id_codec_canonicalizes_and_expands_wire_ids() {
 
 #[test]
 fn openrouter_auth_modes_share_one_provider_and_legacy_aliases_normalize() {
-    use super::{ProviderId, RuntimeProviderId};
+    use super::ProviderId;
 
     let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);
-    assert_eq!(openrouter.runtime_id, RuntimeProviderId::OpenRouter);
+    assert!(matches!(
+        openrouter.runtime,
+        super::ProviderRuntime::OpenAiCompatible { .. }
+    ));
     assert!(openrouter.auth_mode("openrouter-api-key").is_some());
     assert!(openrouter.auth_mode("openrouter-oauth").is_some());
 
@@ -80,12 +83,12 @@ fn xai_legacy_provider_alias_selects_oauth_mode() {
 // Owner: provider registry
 #[test]
 fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
-    use super::{CatalogReasoningPolicy, ProviderId, RuntimeProviderId};
-    use crate::model::registry::{provider_runtime, ProviderRuntime, QWEN_TOKEN_PLAN_API_BASE};
+    use super::{CatalogReasoningPolicy, ProviderId, ProviderRuntime, QWEN_TOKEN_PLAN_API_BASE};
+    use crate::model::registry::provider_runtime;
+    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
     let descriptor = super::provider_descriptor_by_id(ProviderId::QwenTokenPlan);
     assert_eq!(descriptor.name, "qwen-token-plan");
-    assert_eq!(descriptor.runtime_id, RuntimeProviderId::QwenTokenPlan);
     assert_eq!(descriptor.metadata_upstream, "alibaba-token-plan");
     assert_eq!(
         descriptor.catalog_reasoning,
@@ -95,8 +98,58 @@ fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
     assert_eq!(
         provider_runtime("qwen-token-plan"),
         Some(ProviderRuntime::OpenAiCompatible {
-            dialect: crate::providers::openai_compatible::OpenAiCompatibleDialect::QwenTokenPlan,
+            dialect: OpenAiCompatibleDialect::QwenTokenPlan,
             default_api_base: QWEN_TOKEN_PLAN_API_BASE,
         })
+    );
+}
+
+// Covers: meta must resolve as OpenAI-compatible with api-key auth and default model
+// Owner: provider registry
+#[test]
+fn meta_is_openai_compatible_with_api_key_auth() {
+    use super::{CatalogReasoningPolicy, ProviderId, ProviderRuntime, META_API_BASE};
+    use crate::model::registry::provider_runtime;
+    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
+
+    let descriptor = super::provider_descriptor_by_id(ProviderId::Meta);
+    assert_eq!(descriptor.name, "meta");
+    assert_eq!(descriptor.display_name, "Meta Model API");
+    assert_eq!(descriptor.metadata_upstream, "meta");
+    assert_eq!(descriptor.default_model, Some("muse-spark-1.2"));
+    assert_eq!(
+        descriptor.catalog_reasoning,
+        CatalogReasoningPolicy::ExactAdvertised
+    );
+    assert!(descriptor.auth_mode("meta-api-key").is_some());
+    assert_eq!(
+        provider_runtime("meta"),
+        Some(ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Standard,
+            default_api_base: META_API_BASE,
+        })
+    );
+}
+
+// Covers: openai api-key and codex share a runtime family for auth resolution
+// Owner: provider registry
+#[test]
+fn openai_and_codex_share_runtime_family() {
+    use super::{same_provider_family, OpenAiRuntimeAuth, ProviderId, ProviderRuntime};
+
+    let openai = super::provider_descriptor_by_id(ProviderId::OpenAi);
+    let codex = super::provider_descriptor_by_id(ProviderId::OpenAiCodex);
+    assert!(same_provider_family(openai.id, codex.id));
+    assert_eq!(
+        openai.runtime,
+        ProviderRuntime::OpenAi {
+            auth_mode: OpenAiRuntimeAuth::ApiKey,
+        }
+    );
+    assert_eq!(
+        codex.runtime,
+        ProviderRuntime::OpenAi {
+            auth_mode: OpenAiRuntimeAuth::Codex,
+        }
     );
 }

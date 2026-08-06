@@ -38,8 +38,14 @@ fn moonshot_moves_parent_type_into_any_of_branches() {
 
     normalize_moonshot_schema(&mut schema);
 
-    assert_eq!(schema.get("type"), None);
-    assert_eq!(schema["anyOf"][0]["type"], "object");
-    assert_eq!(schema["anyOf"][1]["type"], "object");
-    assert_eq!(schema["properties"]["path"]["type"], "string");
+    assert_eq!(
+        schema,
+        json!({
+            "properties": {"path": {"type": "string"}},
+            "anyOf": [
+                {"type": "object", "required": ["path"]},
+                {"type": "object", "required": ["edits"]}
+            ]
+        })
+    );
 }
