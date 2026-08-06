@@ -141,3 +141,21 @@ The script uses only the Python standard library and reads policy from `scripts/
 Current legacy file budgets are: none.
 
 Do not raise a budget just to make a check pass. Prefer extracting a cohesive module and reducing the recorded ceiling. If a generated file must be added, list its exact repository-relative path with a non-empty reason so the exclusion remains reviewable. When changing the scanner or policy, update its self-tests and this documentation together.
+
+## Rust toolchain and MSRV
+
+The `rho-sdk` minimum supported Rust version (MSRV) is **1.86**. The
+`rho-coding-agent` application MSRV is **1.92** because its terminal,
+credential, and terminal-native Mermaid rendering dependencies require a newer
+compiler. Both values are declared as `package.rust-version` in Cargo metadata
+and tested in CI.
+
+When either MSRV changes, update the matching Cargo manifest, this section, and
+CI together. An MSRV increase must not ship as a patch release. On a stable
+major line, an SDK MSRV increase requires at least a minor version increase and
+must be called out in release notes. Emergency compiler requirements caused by
+a security or soundness fix may skip normal notice, but still require
+coordinated metadata and CI updates.
+
+Embedders only need the SDK crate's declared `package.rust-version`. See
+[SDK installation](/sdk/installation#minimum-supported-rust-version).

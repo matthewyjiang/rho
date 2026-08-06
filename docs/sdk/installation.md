@@ -57,13 +57,9 @@ This is the current validation matrix, not a claim that every provider, host too
 
 ## Minimum supported Rust version
 
-MSRV is a compatibility contract. Published values live in
-[compatibility](/sdk/compatibility#minimum-supported-rust-version) and must match
-each crate's `package.rust-version` field. CI fails if the policy and Cargo
-metadata disagree.
-
-An MSRV increase must be called out in release notes and follow the
-[deprecation and compatibility policy](/sdk/compatibility#minimum-supported-rust-version).
+Build with a toolchain at least as new as the `package.rust-version` on the
+published `rho-sdk` crate. Contributor MSRV policy for the monorepo is in
+[development](/development#rust-toolchain-and-msrv).
 
 ## Runtime and dependency expectations
 
