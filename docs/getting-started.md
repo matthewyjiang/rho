@@ -39,3 +39,5 @@ Rho stores persistent [configuration](/configuration) in `~/.rho/config.toml`. T
 For local project work, see [development](/development). If authentication, model selection, or environment setup fails, run `/doctor` in the TUI; use `/info` to inspect the active selection and `/limits` to inspect supported OAuth usage windows (including last-observed Claude Code limits after a `claude-cli` run).
 
 To delegate through Claude Code on a subscription, install the [Claude Code binary](/installation#claude-code-binary-optional), run `/login claude-code`, and define an agent with `runtime: claude-cli`. See [when this is useful and how to use it](/subagents/claude-cli).
+
+Built-in host and shell integrations need no plugin store: see [integrations](/integrations). [Herdr](/integrations/herdr) turns on under a Herdr pane, and [RTK](/integrations/rtk) rewrites agent shell commands when the binary is on `PATH`.

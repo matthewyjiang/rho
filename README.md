@@ -18,8 +18,8 @@ Rho is a lightweight agent harness inspired by Pi, built in Rust.
 
 Rho is small on purpose. The pieces power users usually wire up later are already in the binary.
 
-- **Built-in [RTK](https://github.com/rtk-ai/rtk)**: when the `rtk` binary is on your PATH, Rho rewrites shell commands for you. No `rtk init`, no host hooks.
-- **Built-in [Herdr](https://github.com/herdrdev/herdr)**: under Herdr, Rho reports agent state, supports pane attach, and handles host image paste. No extra integration.
+- **Built-in [RTK](https://github.com/rtk-ai/rtk)**: when the `rtk` binary is on your PATH, Rho rewrites shell commands for you. No `rtk init`, no host hooks. Docs: [RTK](https://matthewyjiang.github.io/rho/integrations/rtk).
+- **Built-in [Herdr](https://github.com/herdrdev/herdr)**: under Herdr, Rho reports agent state, supports pane attach, and handles host image paste. No extra integration. Docs: [Herdr](https://matthewyjiang.github.io/rho/integrations/herdr).
 - **Coding tools included**: read, edit, search, shell, web, skills, and workflows ship with Rho. Install, sign in, work.
 
 ## Install
