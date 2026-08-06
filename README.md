@@ -14,6 +14,14 @@ Rho is a lightweight agent harness inspired by Pi, built in Rust.
 - **Bring your own provider**: OpenAI, Kimi, xAI, Anthropic, Gemini, Copilot, Ollama, Ollama Cloud, OpenRouter, and more. Use API keys or subscription plans.
 - **Embeddable SDK**: Build headless Rust agents with explicit providers, tools, sessions, and cancellation.
 
+## Works without a plugin store
+
+Rho is small on purpose. The pieces power users usually wire up later are already in the binary.
+
+- **Built-in RTK**: when the `rtk` binary is on your PATH, Rho rewrites shell commands for you. No `rtk init`, no host hooks.
+- **Built-in Herdr**: under Herdr, Rho reports agent state, supports pane attach, and handles host image paste. No extra integration.
+- **Coding tools included**: read, edit, search, shell, web, skills, and workflows ship with Rho. Install, sign in, work.
+
 ## Install
 
 Install on macOS and Linux:
