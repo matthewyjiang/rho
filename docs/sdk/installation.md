@@ -57,12 +57,13 @@ This is the current validation matrix, not a claim that every provider, host too
 
 ## Minimum supported Rust version
 
-Do not copy MSRV numbers into application docs from memory. Each crate declares MSRV with Cargo's `package.rust-version` field:
+MSRV is a compatibility contract. Published values live in
+[compatibility](/sdk/compatibility#minimum-supported-rust-version) and must match
+each crate's `package.rust-version` field. CI fails if the policy and Cargo
+metadata disagree.
 
-- SDK: `crates/rho-sdk/Cargo.toml`
-- application: `crates/rho/Cargo.toml`
-
-CI builds each crate with its declared compiler version in addition to testing on current stable Rust. An MSRV increase must be called out in release notes and follow the [deprecation and compatibility policy](/sdk/compatibility#minimum-supported-rust-version).
+An MSRV increase must be called out in release notes and follow the
+[deprecation and compatibility policy](/sdk/compatibility#minimum-supported-rust-version).
 
 ## Runtime and dependency expectations
 

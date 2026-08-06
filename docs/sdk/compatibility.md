@@ -193,9 +193,18 @@ After the 1.0 cutover:
 
 ## Minimum supported Rust version
 
-MSRV is declared only in Cargo metadata (`package.rust-version`) for each crate and enforced in CI. Do not treat prose copies of compiler versions as authoritative.
+The `rho-sdk` minimum supported Rust version (MSRV) is **1.86**. The
+`rho-coding-agent` application MSRV is **1.92** because its terminal,
+credential, and terminal-native Mermaid rendering dependencies require a newer
+compiler. Both values are declared as `package.rust-version` in Cargo metadata
+and tested in CI. When either MSRV changes, update the Cargo manifests, this
+page, and CI together.
 
-An MSRV increase must not ship as a patch release. It must update Cargo metadata, this page's policy text if needed, and CI together, and release notes must call it out. On a stable major line, an SDK MSRV increase requires at least a minor version increase. Emergency compiler requirements caused by a security or soundness fix may skip normal notice, but still require coordinated metadata and CI updates.
+An MSRV increase must not ship as a patch release. It must update Cargo
+metadata, this page, and CI together, and release notes must call it out. On a
+stable major line, an SDK MSRV increase requires at least a minor version
+increase. Emergency compiler requirements caused by a security or soundness fix
+may skip normal notice, but still require coordinated metadata and CI updates.
 
 
 ## Semantic-version and downstream checks
