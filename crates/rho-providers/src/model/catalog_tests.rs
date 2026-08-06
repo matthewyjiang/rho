@@ -74,6 +74,13 @@ fn with_cached_provider_models<T>(
     result
 }
 
+fn with_empty_provider_models_cache<T>(name: &str, f: impl FnOnce() -> T) -> T {
+    let cache_dir = unique_cache_dir(name);
+    let result = with_provider_models_cache_dir_for_tests(cache_dir.clone(), f);
+    let _ = std::fs::remove_dir_all(cache_dir);
+    result
+}
+
 fn provider_model(provider: &str, model: &str) -> ProviderModel {
     ProviderModel {
         provider: provider.into(),
@@ -278,8 +285,7 @@ fn current_auth_wins_when_it_is_available_for_provider_selection() {
 
 #[test]
 fn github_copilot_requires_cached_models() {
-    let cache_dir = unique_cache_dir("github-copilot-empty");
-    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+    with_empty_provider_models_cache("github-copilot-empty", || {
         assert_eq!(default_model_for_provider("github-copilot"), None);
         let err = resolve_model_selection_for_auths(
             "github-copilot/gpt-4.1",
@@ -297,7 +303,6 @@ fn github_copilot_requires_cached_models() {
             }
         );
     });
-    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
@@ -433,22 +438,19 @@ fn preferred_cached_default_prefers_descriptor_default_when_present() {
         },
     );
 
-    let cache_dir = unique_cache_dir("anthropic-default-empty");
-    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+    with_empty_provider_models_cache("anthropic-default-empty", || {
         assert_eq!(
             default_model_for_provider("anthropic").as_deref(),
             Some("claude-sonnet-4-5")
         );
     });
-    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 // Covers: Meta default is muse-spark-1.2 with empty cache and prefers it when cached
 // Owner: model catalog
 #[test]
 fn meta_default_is_muse_spark_1_2() {
-    let cache_dir = unique_cache_dir("meta-default-empty");
-    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+    with_empty_provider_models_cache("meta-default-empty", || {
         assert_eq!(
             default_model_for_provider("meta").as_deref(),
             Some("muse-spark-1.2")
@@ -461,7 +463,6 @@ fn meta_default_is_muse_spark_1_2() {
         .unwrap();
         assert_eq!(selection.model, "muse-spark-1.2");
     });
-    let _ = std::fs::remove_dir_all(cache_dir);
 
     with_cached_provider_models(
         "meta",

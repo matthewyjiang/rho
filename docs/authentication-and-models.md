@@ -135,7 +135,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, and Kimi Code can refresh their provider model lists through **Refresh model lists** in `/config`. Local Ollama reads its installed models without authentication. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released or newly installed model.
+OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, and Meta Model API can refresh their provider model lists through **Refresh model lists** in `/config`. Local Ollama reads its installed models without authentication. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released or newly installed model.
 
 ## Model metadata
 

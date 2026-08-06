@@ -8,7 +8,7 @@ use crate::{
     },
     credentials::{load_kimi_tokens, save_kimi_tokens, CredentialStore, KimiTokens},
     model::{ModelError, ReasoningCapabilities},
-    provider::{self, AuthMode, ProviderAuthKind, ProviderModelRefreshKind},
+    provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
     provider_backend::http_error,
 };
 
@@ -50,7 +50,7 @@ pub async fn probe_provider_models(
 
 pub(super) async fn fetch(
     descriptor: &provider::ProviderDescriptor,
-    auth: AuthMode,
+    auth: provider::AuthMode,
     api_base: &Url,
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {

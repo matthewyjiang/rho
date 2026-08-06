@@ -2,9 +2,8 @@ use crate::{model::ModelError, provider};
 
 #[allow(deprecated)]
 pub use crate::provider::{
-    OpenAiRuntimeAuth as AuthMode, ProviderRuntime, KIMI_CODE_API_BASE, META_API_BASE,
-    MOONSHOT_API_BASE, OLLAMA_API_BASE, OLLAMA_CLOUD_API_BASE, OPENROUTER_API_BASE,
-    POOLSIDE_API_BASE, QWEN_TOKEN_PLAN_API_BASE,
+    ProviderRuntime, KIMI_CODE_API_BASE, META_API_BASE, MOONSHOT_API_BASE, OLLAMA_API_BASE,
+    OLLAMA_CLOUD_API_BASE, OPENROUTER_API_BASE, POOLSIDE_API_BASE, QWEN_TOKEN_PLAN_API_BASE,
 };
 
 // NEXT_MAJOR(rho-providers): remove deprecated registry re-exports for API bases that are
