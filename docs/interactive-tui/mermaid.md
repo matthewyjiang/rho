@@ -1,15 +1,119 @@
 # Mermaid diagrams
 
-Parent: [Interactive TUI](/interactive-tui). Related: [Transcript display](/interactive-tui/transcript).
+Parent: [Interactive TUI](/interactive-tui).
+Related: [Transcript display](/interactive-tui/transcript).
 
-Closed fenced code blocks whose first info token is `mermaid` render as terminal-native Unicode diagrams. The match is case-insensitive and extra info tokens are allowed. During streaming, an open fence remains a normal source code block and changes to diagram art only when its closing fence arrives. The diagram is laid out again when the terminal width changes.
+Closed fenced code blocks whose first info token is `mermaid` render as
+terminal-native Unicode diagrams in the transcript. The same source also
+renders on the published docs site with Mermaid.js, so one diagram works in
+both places.
 
-The published docs site also renders fenced `mermaid` blocks with Mermaid.js, so the same diagram source works in both the TUI and the guide pages.
+```mermaid
+flowchart TD
+    fence[Closed mermaid fence] --> closed{Fence closed?}
+    closed -->|no| code[Ordinary code block while streaming]
+    closed -->|yes| parse[Parse with mermaid-rs-renderer]
+    parse --> kind{Supported kind and safe?}
+    kind -->|yes and fits pane| art[Unicode diagram art]
+    kind -->|too wide| narrow[Source plus PANE TOO NARROW]
+    kind -->|no| raw[Source plus NOT RENDERED]
+    art --> resize[Relayout on width change]
+    narrow --> resize
+    raw --> resize
+```
 
-Rho uses `mermaid-rs-renderer` 0.3.1 as its Mermaid parser and semantic model. The terminal painter provides quality-first support for core subsets of flowcharts and graphs, state diagrams, sequence diagrams, class diagrams, and entity-relationship diagrams. Other diagram families and constructs the painter cannot represent losslessly remain raw code blocks, as do unsupported syntax and malformed input. This is not full Mermaid.js syntax or visual parity.
+## When a fence becomes a diagram
 
-Flowcharts and state diagrams keep the direction you asked for. When their normal layout is wider than the pane, Rho wraps node labels more tightly and lays the diagram out again, down to a readable limit. Compaction never shortens or truncates label text.
+| Rule | Detail |
+| --- | --- |
+| Fence info | First token is `mermaid` (case-insensitive). Extra tokens after it are allowed |
+| Streaming | An open fence stays a normal source block until the closing fence arrives |
+| Resize | Art is laid out again when the terminal or pane width changes |
+| Copy | Panel `COPY` always copies the original Mermaid source, for art and fallbacks |
 
-Diagrams Rho cannot draw stay readable as source, and the panel border says why. A diagram that needs a wider pane reads `MERMAID · PANE TOO NARROW`, so you can widen the pane or the terminal to see the art. Everything else Rho declines to draw, such as unsupported, malformed, unsafe, or oversized input, reads `MERMAID · NOT RENDERED`. Very narrow panels drop the label so the `COPY` action keeps its place. Resizing moves a diagram between art and source in both directions.
+Example:
 
-Rendering does not execute links or scripts, requires no external executable or network access, and does not trust Mermaid-provided terminal styles. The panel's `COPY` action copies the original Mermaid source rather than the rendered box art, for both diagrams and source fallbacks.
+````markdown
+```mermaid
+flowchart LR
+    read[read_file] --> edit[edit]
+```
+````
+
+## What the terminal painter supports
+
+Rho parses with `mermaid-rs-renderer` **0.3.1**. The terminal painter aims for
+lossless, readable art on a core subset:
+
+| Family | Terminal art |
+| --- | --- |
+| Flowcharts / graphs | Yes (core subset) |
+| State diagrams | Yes (core subset) |
+| Sequence diagrams | Yes (core subset) |
+| Class diagrams | Yes (core subset) |
+| Entity-relationship diagrams | Yes (core subset) |
+| Pie, gantt, gitGraph, C4, mindmap, journey, timeline, and other kinds | Source fallback |
+
+This is not full Mermaid.js syntax or visual parity. Constructs the painter
+cannot represent losslessly stay as source, as do unsupported syntax and
+malformed input.
+
+### Flow and state layout
+
+Flowcharts and state diagrams keep the direction you asked for (`TD`, `LR`, and
+so on). When the normal layout is wider than the pane, Rho wraps node labels
+more tightly and lays the diagram out again, down to a readable limit.
+Compaction never shortens or truncates label text. If even the tightest wrap
+cannot fit, the panel falls back to source with a narrow-pane title.
+
+## Fallback titles
+
+Diagrams Rho cannot draw stay readable as source. The panel border says why:
+
+| Border title | Meaning |
+| --- | --- |
+| `MERMAID · PANE TOO NARROW` | Needs a wider pane or terminal; resize may produce art |
+| `MERMAID · NOT RENDERED` | Unsupported kind, malformed input, unsafe content, oversized input, or other decline |
+
+Very narrow panels drop the title text so the `COPY` action keeps its place.
+Resizing can move a diagram between art and source in both directions.
+
+## Safety and limits
+
+Rendering:
+
+- does not execute links or scripts
+- needs no external executable or network access
+- does not trust Mermaid-provided terminal styles
+- strips or rejects unsafe content (for example script-like labels, `javascript:`
+  URLs, and ANSI escapes in labels)
+
+Hard caps protect the feed (approximate ceilings):
+
+| Cap | Value |
+| --- | --- |
+| Source bytes | 64 KiB |
+| Source lines | 2,048 |
+| Primary entities | 128 |
+| Relationships | 512 |
+| Rendered lines | 4,096 |
+| Rendered cells | 2,000,000 |
+
+Over a cap, the panel keeps the source and shows `MERMAID · NOT RENDERED`.
+
+## Writing diagrams for the TUI
+
+Prefer small graphs with short labels. Stick to flowchart, state, sequence,
+class, or ER shapes when the diagram should paint in the terminal. Larger or
+exotic Mermaid families still ship as readable source for copy-out and for the
+docs site.
+
+The agent system prompt uses the same guidance for structure-heavy answers:
+closed `mermaid` fences, small diagrams, short labels.
+
+## Related
+
+- [Transcript display](/interactive-tui/transcript) - scroll, copy, and Markdown
+- [Interactive TUI](/interactive-tui)
+- Docs authoring in this repo also uses fenced `mermaid` blocks (VitePress +
+  Mermaid.js on the site)
