@@ -41,7 +41,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux@sha256:345a872f6c95e082d4b8c050af637eebb57402c6e2177b411c3acf7df84eb33b
+    permissions:
+      actions: write
+      contents: read
     outputs:
       artifact-name: ${{ steps.artifact.outputs.name }}
     steps:
@@ -55,8 +58,8 @@ jobs:
           APP_TAG: ${{ inputs.app-tag }}
         run: |
           set -euo pipefail
-          if [[ ! "$APP_TAG" =~ ^rho-coding-agent-v[0-9] ]]; then
-            echo "app-tag must look like rho-coding-agent-v*, got: $APP_TAG" >&2
+          if [[ ! "$APP_TAG" =~ ^rho-coding-agent-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "app-tag must be rho-coding-agent-vMAJOR.MINOR.PATCH with optional prerelease, got: $APP_TAG" >&2
             exit 1
           fi
           # Artifact names may contain dots and hyphens; keep the tag verbatim.
@@ -66,6 +69,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.app-tag }}
+          persist-credentials: false
 
       - name: Build package
         env:
@@ -93,7 +97,10 @@ jobs:
     needs: build
     if: ${{ inputs.publish }}
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux@sha256:345a872f6c95e082d4b8c050af637eebb57402c6e2177b411c3acf7df84eb33b
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Require extras push token
         env:
@@ -114,6 +121,7 @@ jobs:
         with:
           # Use the workflow revision, not the package tag, so recovery keeps the
           # latest publish helper even when packaging an older tag.
+          persist-credentials: false
           sparse-checkout: |
             scripts/publish_arch_to_extras.sh
           sparse-checkout-cone-mode: false

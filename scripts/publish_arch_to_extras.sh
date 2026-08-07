@@ -85,9 +85,9 @@ cd "$extras_dir"
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git add x86_64/
-commit_message="Update packages"
+commit_message="chore(arch): update packages"
 if [[ -n "$source_repo" ]]; then
-  commit_message="Update packages from $source_repo"
+  commit_message="chore(arch): update packages from $source_repo"
 fi
 if git diff --cached --quiet; then
   echo "No Arch package repo changes to commit"

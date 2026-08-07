@@ -538,7 +538,7 @@ jobs:
     needs: [release, publish-crates, build-arch-package]
     if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' && needs.build-arch-package.result == 'success' }}
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux@sha256:345a872f6c95e082d4b8c050af637eebb57402c6e2177b411c3acf7df84eb33b
     permissions:
       actions: read
       contents: read
@@ -550,6 +550,7 @@ jobs:
       - name: Checkout publish helper
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           sparse-checkout: |
             scripts/publish_arch_to_extras.sh
           sparse-checkout-cone-mode: false
