@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 
-use rho_sdk::hooks::HookDecision;
+use rho_sdk::{floor_char_boundary, hooks::HookDecision};
 
 use super::config::HOOKS_SCHEMA_VERSION;
 
@@ -81,11 +81,7 @@ fn truncate_on_char_boundary(mut value: String, limit: usize) -> String {
     if value.len() <= limit {
         return value;
     }
-    let mut boundary = limit;
-    while boundary > 0 && !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    value.truncate(boundary);
+    value.truncate(floor_char_boundary(&value, limit));
     value
 }
 

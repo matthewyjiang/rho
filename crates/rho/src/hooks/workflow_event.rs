@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rho_sdk::hooks::HookPayloadBounds;
+use rho_sdk::{floor_char_boundary, hooks::HookPayloadBounds};
 use serde::Serialize;
 
 use crate::hooks::config::WorkflowHookEventKind;
@@ -240,10 +240,7 @@ fn bounded_app_string(
     if value.len() <= bounds.max_field_bytes() {
         return value.to_owned();
     }
-    let mut boundary = bounds.max_field_bytes();
-    while boundary > 0 && !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
+    let boundary = floor_char_boundary(value, bounds.max_field_bytes());
     truncation.record(field);
     value[..boundary].to_owned()
 }

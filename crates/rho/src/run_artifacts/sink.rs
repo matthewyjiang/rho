@@ -17,6 +17,8 @@ use std::{
 
 use tokio::sync::watch;
 
+use rho_sdk::{ceil_char_boundary, floor_char_boundary, ELLIPSIS};
+
 use crate::subagent::{self, RunState, RunStatus};
 
 use super::journal::{AttachmentEvent, AttachmentWriter};
@@ -220,9 +222,7 @@ impl RunArtifactSink {
         buffer.push_str(text);
         if buffer.len() > MAX_STATUS_TEXT_BYTES {
             let cut = buffer.len() - MAX_STATUS_TEXT_BYTES;
-            let boundary = (cut..buffer.len())
-                .find(|index| buffer.is_char_boundary(*index))
-                .unwrap_or(buffer.len());
+            let boundary = ceil_char_boundary(buffer, cut);
             buffer.drain(..boundary);
         }
     }
@@ -482,12 +482,9 @@ fn bound_text(text: String) -> String {
     if text.len() <= MAX_STATUS_TEXT_BYTES {
         return text;
     }
-    let mut cut = MAX_STATUS_TEXT_BYTES;
-    while cut > 0 && !text.is_char_boundary(cut) {
-        cut -= 1;
-    }
+    let cut = floor_char_boundary(&text, MAX_STATUS_TEXT_BYTES);
     let mut out = text;
     out.truncate(cut);
-    out.push('…');
+    out.push_str(ELLIPSIS);
     out
 }

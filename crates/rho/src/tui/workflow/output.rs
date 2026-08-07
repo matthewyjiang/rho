@@ -175,10 +175,7 @@ fn decode_artifact_bytes(bytes: &[u8]) -> (String, Vec<String>) {
         notices.push("output is not valid UTF-8; showing lossy text".into());
     }
     let text = if decoded.len() > MAX_DISPLAY_BYTES {
-        let mut end = MAX_DISPLAY_BYTES;
-        while end > 0 && !decoded.is_char_boundary(end) {
-            end -= 1;
-        }
+        let end = rho_sdk::floor_char_boundary(&decoded, MAX_DISPLAY_BYTES);
         notices.push(format!(
             "display capped at {MAX_DISPLAY_BYTES} bytes for the TUI"
         ));

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::floor_char_boundary;
+
 /// Longest string any single payload field may carry before truncation.
 pub const DEFAULT_MAX_FIELD_BYTES: usize = 8 * 1024;
 /// Largest serialized envelope the runtime will hand to a handler.
@@ -82,11 +84,7 @@ pub(super) fn truncate_field(value: &mut String, bounds: HookPayloadBounds) -> b
     if value.len() <= limit {
         return false;
     }
-    let mut boundary = limit;
-    while boundary > 0 && !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    value.truncate(boundary);
+    value.truncate(floor_char_boundary(value, limit));
     true
 }
 

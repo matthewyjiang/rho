@@ -121,11 +121,7 @@ fn utf8_prefix(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.to_owned();
     }
-    let mut end = max_bytes.min(text.len());
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_owned()
+    text[..rho_sdk::floor_char_boundary(text, max_bytes)].to_owned()
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::tool::ToolError;
+use crate::{floor_char_boundary, DIAGNOSTIC_TRUNCATION_MARKER};
 
 /// Stable top-level SDK error classification.
 #[derive(Debug)]
@@ -113,7 +114,6 @@ pub struct ProviderDiagnostic(String);
 
 impl ProviderDiagnostic {
     const MAX_BYTES: usize = 16 * 1024;
-    const TRUNCATION_MARKER: &'static str = "\n[diagnostic truncated]";
 
     pub fn new(diagnostic: impl Into<String>) -> Self {
         let diagnostic = diagnostic.into();
@@ -121,15 +121,10 @@ impl ProviderDiagnostic {
             return Self(diagnostic);
         }
 
-        let content_bytes = Self::MAX_BYTES - Self::TRUNCATION_MARKER.len();
-        let boundary = diagnostic
-            .char_indices()
-            .map(|(index, _)| index)
-            .take_while(|index| *index <= content_bytes)
-            .last()
-            .unwrap_or(0);
+        let content_bytes = Self::MAX_BYTES - DIAGNOSTIC_TRUNCATION_MARKER.len();
+        let boundary = floor_char_boundary(&diagnostic, content_bytes);
         let mut bounded = diagnostic[..boundary].to_owned();
-        bounded.push_str(Self::TRUNCATION_MARKER);
+        bounded.push_str(DIAGNOSTIC_TRUNCATION_MARKER);
         Self(bounded)
     }
 
