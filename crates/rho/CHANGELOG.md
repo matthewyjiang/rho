@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.32.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.32.1...rho-coding-agent-v1.32.2) (2026-08-07)
+
+
+### Bug Fixes
+
+* **tui:** report generation token throughput ([#803](https://github.com/matthewyjiang/rho/issues/803)) ([4772f68](https://github.com/matthewyjiang/rho/commit/4772f68ccad3fc1edf65aa666d9a49f74bfab960))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.17.1 to 1.17.2
+    * rho-providers bumped from 0.18.0 to 0.18.1
+
 ## [1.32.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.32.0...rho-coding-agent-v1.32.1) (2026-08-07)
 
 

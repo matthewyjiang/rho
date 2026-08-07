@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.17.1...rho-sdk-v1.17.2) (2026-08-07)
+
+
+### Bug Fixes
+
+* **tui:** report generation token throughput ([#803](https://github.com/matthewyjiang/rho/issues/803)) ([4772f68](https://github.com/matthewyjiang/rho/commit/4772f68ccad3fc1edf65aa666d9a49f74bfab960))
+
 ## [1.17.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.17.0...rho-sdk-v1.17.1) (2026-08-07)
 
 
