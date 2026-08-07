@@ -4,6 +4,11 @@
 //! Built-in providers implement [`rho_sdk::provider::ModelProvider`] directly.
 //! Callback-based stream transports remain an internal detail and are bridged
 //! here into the SDK's bounded async event sender.
+//!
+//! Diagnostic truncation uses
+//! [`rho_sdk::DIAGNOSTIC_TRUNCATION_MARKER`]. Packaging this crate therefore
+//! requires a published `rho-sdk` that exports that marker; bump both crates
+//! together when the shared diagnostic surface changes.
 
 use std::{
     collections::VecDeque,
