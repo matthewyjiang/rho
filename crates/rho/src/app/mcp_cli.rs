@@ -169,7 +169,9 @@ mod tests {
                 collision_skipped_count: 0,
             }],
         };
-        let error = print_show(&report, "missing", false).unwrap_err().to_string();
+        let error = print_show(&report, "missing", false)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("missing"));
         assert!(error.contains("filesystem"));
     }

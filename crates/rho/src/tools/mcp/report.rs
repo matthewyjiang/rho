@@ -53,13 +53,8 @@ impl McpServerStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum McpTransportSummary {
-    Stdio {
-        command: String,
-        args: Vec<String>,
-    },
-    StreamableHttp {
-        url: String,
-    },
+    Stdio { command: String, args: Vec<String> },
+    StreamableHttp { url: String },
 }
 
 impl McpTransportSummary {
@@ -109,6 +104,39 @@ pub(crate) struct McpStatusPresentation {
     pub(crate) detail: String,
 }
 
+/// Counts and mode facts shared by doctor and picker copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct McpSessionSummary {
+    unconfigured: bool,
+    mode: McpLoadMode,
+    connected: usize,
+    enabled: usize,
+    tools: usize,
+    problems: usize,
+}
+
+impl McpSessionSummary {
+    fn healthy(self) -> bool {
+        if self.unconfigured {
+            return true;
+        }
+        match self.mode {
+            McpLoadMode::Native => self.problems == 0,
+            McpLoadMode::UnsupportedAgent => self.enabled == 0 && self.problems == 0,
+            McpLoadMode::ToolsDisabled => true,
+        }
+    }
+}
+
+/// How to project configured servers when seeding inventory from config alone.
+#[derive(Clone, Copy, Debug)]
+enum ConfigInventorySeed {
+    /// Invalid entries plus every configured server as not-loaded/disabled.
+    Unloaded,
+    /// Invalid entries plus disabled servers only (enabled filled after connect).
+    ConnectBase,
+}
+
 /// Per-server inventory row.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct McpServerReport {
@@ -125,7 +153,11 @@ pub(crate) struct McpServerReport {
 }
 
 impl McpServerReport {
-    fn base(identity: impl Into<String>, enabled: bool, transport: Option<McpTransportSummary>) -> Self {
+    fn base(
+        identity: impl Into<String>,
+        enabled: bool,
+        transport: Option<McpTransportSummary>,
+    ) -> Self {
         Self {
             identity: identity.into(),
             enabled,
@@ -139,7 +171,11 @@ impl McpServerReport {
     }
 
     pub(crate) fn disabled(identity: impl Into<String>, server: &McpServerConfig) -> Self {
-        let mut report = Self::base(identity, false, Some(McpTransportSummary::from_server(server)));
+        let mut report = Self::base(
+            identity,
+            false,
+            Some(McpTransportSummary::from_server(server)),
+        );
         report.status = McpServerStatus::Disabled;
         report
     }
@@ -240,7 +276,9 @@ impl McpServerReport {
             McpServerStatus::NotLoaded => {
                 lines.push("configured but not loaded in this session".into());
             }
-            McpServerStatus::InvalidConfig | McpServerStatus::Failed | McpServerStatus::TimedOut => {}
+            McpServerStatus::InvalidConfig
+            | McpServerStatus::Failed
+            | McpServerStatus::TimedOut => {}
         }
         if self.filtered_out_count > 0 {
             lines.push(format!(
@@ -268,18 +306,17 @@ pub(crate) struct McpSessionReport {
 impl McpSessionReport {
     /// Build inventory from config without connecting (unsupported agent or no-tools).
     pub(crate) fn from_config_unloaded(config: &McpConfig, mode: McpLoadMode) -> Self {
-        let mut servers = Vec::with_capacity(config.servers.len() + config.invalid_servers.len());
-        for invalid in &config.invalid_servers {
-            servers.push(McpServerReport::invalid(
-                invalid.identity.clone(),
-                invalid.error.clone(),
-            ));
-        }
-        for (identity, server) in &config.servers {
-            servers.push(McpServerReport::not_loaded(identity.clone(), server));
-        }
-        servers.sort_by(|left, right| left.identity.cmp(&right.identity));
+        let mut servers = seed_servers_from_config(config, ConfigInventorySeed::Unloaded);
+        sort_servers(&mut servers);
         Self { mode, servers }
+    }
+
+    /// Invalid + disabled rows only; caller appends live connect outcomes.
+    pub(crate) fn connect_base(config: &McpConfig) -> Self {
+        Self {
+            mode: McpLoadMode::Native,
+            servers: seed_servers_from_config(config, ConfigInventorySeed::ConnectBase),
+        }
     }
 
     pub(crate) fn is_unconfigured(&self) -> bool {
@@ -321,106 +358,158 @@ impl McpSessionReport {
         self.servers.iter().map(McpServerReport::tool_count).sum()
     }
 
-    /// `/doctor` MCP row copy.
-    pub(crate) fn doctor_presentation(&self) -> McpStatusPresentation {
-        if self.is_unconfigured() {
-            return McpStatusPresentation {
-                healthy: true,
-                status: "not configured".into(),
-                detail: "No MCP servers under [mcp.servers].".into(),
-            };
-        }
-        match self.mode {
-            McpLoadMode::Native => {
-                let problems = self.problem_count();
-                let connected = self.connected_count();
-                let tools = self.exported_tool_count();
-                if problems == 0 {
-                    McpStatusPresentation {
-                        healthy: true,
-                        status: if connected > 0 {
-                            "connected".into()
-                        } else {
-                            "idle".into()
-                        },
-                        detail: format!(
-                            "{connected} connected server{}, {tools} exported tool{}.",
-                            plural_suffix(connected),
-                            plural_suffix(tools),
-                        ),
-                    }
-                } else {
-                    McpStatusPresentation {
-                        healthy: false,
-                        status: "degraded".into(),
-                        detail: format!(
-                            "{problems} server problem{}, {connected} connected, {tools} tools. Run /mcp for details.",
-                            plural_suffix(problems),
-                        ),
-                    }
-                }
-            }
-            McpLoadMode::UnsupportedAgent => McpStatusPresentation {
-                healthy: self.enabled_count() == 0 && self.problem_count() == 0,
-                status: "unsupported agent".into(),
-                detail: "Native MCP loads only for Rho agents. The active agent does not host MCP tools."
-                    .into(),
-            },
-            McpLoadMode::ToolsDisabled => McpStatusPresentation {
-                healthy: true,
-                status: "tools disabled".into(),
-                detail: "This session started with tools disabled, so MCP was not connected."
-                    .into(),
-            },
+    fn summary(&self) -> McpSessionSummary {
+        McpSessionSummary {
+            unconfigured: self.is_unconfigured(),
+            mode: self.mode,
+            connected: self.connected_count(),
+            enabled: self.enabled_count(),
+            tools: self.exported_tool_count(),
+            problems: self.problem_count(),
         }
     }
 
+    /// `/doctor` MCP row copy.
+    pub(crate) fn doctor_presentation(&self) -> McpStatusPresentation {
+        format_presentation(self.summary(), PresentationSurface::Doctor)
+    }
+
     /// `/mcp` session status row copy.
-    pub(crate) fn picker_session_presentation(
-        &self,
-        config_path: &Path,
-    ) -> McpStatusPresentation {
-        let config = crate::paths::display(config_path);
-        if self.is_unconfigured() {
-            return McpStatusPresentation {
-                healthy: true,
-                status: "not configured".into(),
-                detail: format!(
-                    "No MCP servers in {config}. Add entries under [mcp.servers]."
-                ),
-            };
-        }
-        match self.mode {
-            McpLoadMode::Native => {
-                let problems = self.problem_count();
-                let tools = self.exported_tool_count();
-                McpStatusPresentation {
-                    healthy: problems == 0,
-                    status: format!("{} connected", self.connected_count()),
+    pub(crate) fn picker_session_presentation(&self, config_path: &Path) -> McpStatusPresentation {
+        format_presentation(
+            self.summary(),
+            PresentationSurface::Picker {
+                config_path: crate::paths::display(config_path),
+            },
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+enum PresentationSurface {
+    Doctor,
+    Picker { config_path: String },
+}
+
+fn format_presentation(
+    summary: McpSessionSummary,
+    surface: PresentationSurface,
+) -> McpStatusPresentation {
+    let healthy = summary.healthy();
+    if summary.unconfigured {
+        let detail = match &surface {
+            PresentationSurface::Doctor => "No MCP servers under [mcp.servers].".into(),
+            PresentationSurface::Picker { config_path } => {
+                format!("No MCP servers in {config_path}. Add entries under [mcp.servers].")
+            }
+        };
+        return McpStatusPresentation {
+            healthy,
+            status: "not configured".into(),
+            detail,
+        };
+    }
+
+    match summary.mode {
+        McpLoadMode::Native => {
+            let McpSessionSummary {
+                connected,
+                enabled,
+                tools,
+                problems,
+                ..
+            } = summary;
+            match surface {
+                PresentationSurface::Doctor if problems == 0 => McpStatusPresentation {
+                    healthy,
+                    status: if connected > 0 {
+                        "connected".into()
+                    } else {
+                        "idle".into()
+                    },
                     detail: format!(
-                        "{} enabled, {tools} exported tool{}, {problems} problem{}. Config: {config}.",
-                        self.enabled_count(),
+                        "{connected} connected server{}, {tools} exported tool{}.",
+                        plural_suffix(connected),
+                        plural_suffix(tools),
+                    ),
+                },
+                PresentationSurface::Doctor => McpStatusPresentation {
+                    healthy,
+                    status: "degraded".into(),
+                    detail: format!(
+                        "{problems} server problem{}, {connected} connected, {tools} tools. Run /mcp for details.",
+                        plural_suffix(problems),
+                    ),
+                },
+                PresentationSurface::Picker { config_path } => McpStatusPresentation {
+                    healthy,
+                    status: format!("{connected} connected"),
+                    detail: format!(
+                        "{enabled} enabled, {tools} exported tool{}, {problems} problem{}. Config: {config_path}.",
                         plural_suffix(tools),
                         plural_suffix(problems),
                     ),
-                }
+                },
             }
-            McpLoadMode::UnsupportedAgent => McpStatusPresentation {
-                healthy: self.enabled_count() == 0 && self.problem_count() == 0,
+        }
+        McpLoadMode::UnsupportedAgent => {
+            let detail = match surface {
+                PresentationSurface::Doctor => {
+                    "Native MCP loads only for Rho agents. The active agent does not host MCP tools."
+                        .into()
+                }
+                PresentationSurface::Picker { config_path } => format!(
+                    "Native MCP loads only for Rho agents. The active agent does not host MCP tools. Config: {config_path}."
+                ),
+            };
+            McpStatusPresentation {
+                healthy,
                 status: "unsupported agent".into(),
-                detail: format!(
-                    "Native MCP loads only for Rho agents. The active agent does not host MCP tools. Config: {config}."
+                detail,
+            }
+        }
+        McpLoadMode::ToolsDisabled => {
+            let detail = match surface {
+                PresentationSurface::Doctor => {
+                    "This session started with tools disabled, so MCP was not connected.".into()
+                }
+                PresentationSurface::Picker { config_path } => format!(
+                    "This session started with tools disabled, so MCP was not connected. Config: {config_path}."
                 ),
-            },
-            McpLoadMode::ToolsDisabled => McpStatusPresentation {
-                healthy: true,
+            };
+            McpStatusPresentation {
+                healthy,
                 status: "tools disabled".into(),
-                detail: format!(
-                    "This session started with tools disabled, so MCP was not connected. Config: {config}."
-                ),
-            },
+                detail,
+            }
         }
     }
+}
+
+fn seed_servers_from_config(config: &McpConfig, seed: ConfigInventorySeed) -> Vec<McpServerReport> {
+    let mut servers = Vec::with_capacity(config.servers.len() + config.invalid_servers.len());
+    for invalid in &config.invalid_servers {
+        servers.push(McpServerReport::invalid(
+            invalid.identity.clone(),
+            invalid.error.clone(),
+        ));
+    }
+    for (identity, server) in &config.servers {
+        match seed {
+            ConfigInventorySeed::Unloaded => {
+                servers.push(McpServerReport::not_loaded(identity.clone(), server));
+            }
+            ConfigInventorySeed::ConnectBase if !server.enabled => {
+                servers.push(McpServerReport::disabled(identity.clone(), server));
+            }
+            ConfigInventorySeed::ConnectBase => {}
+        }
+    }
+    servers
+}
+
+pub(super) fn sort_servers(servers: &mut [McpServerReport]) {
+    servers.sort_by(|left, right| left.identity.cmp(&right.identity));
 }
 
 fn plural_suffix(count: usize) -> &'static str {
@@ -428,5 +517,31 @@ fn plural_suffix(count: usize) -> &'static str {
         ""
     } else {
         "s"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_healthy_matches_native_problems() {
+        let report = McpSessionReport {
+            mode: McpLoadMode::Native,
+            servers: vec![McpServerReport::failed(
+                "broken",
+                McpTransportSummary::Stdio {
+                    command: "false".into(),
+                    args: Vec::new(),
+                },
+                "nope",
+            )],
+        };
+        let doctor = report.doctor_presentation();
+        assert!(!doctor.healthy);
+        assert_eq!(doctor.status, "degraded");
+        let picker = report.picker_session_presentation(Path::new("/tmp/config.toml"));
+        assert!(!picker.healthy);
+        assert!(picker.detail.contains("/tmp/config.toml"));
     }
 }

@@ -368,8 +368,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
 
         match injected {
             Ok(()) => {
-                let mut app = App::new(info, herdr_graphics);
-                app.mcp_report = agent.mcp_report().clone();
+                let mut app = App::new(info, herdr_graphics, agent.mcp_report().clone());
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_host_input = Some(manager.bind_host_input());
@@ -445,7 +444,7 @@ struct App {
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.
     screen_selection: Option<TextSelection>,
-    /// MCP inventory captured at session start for `/mcp` and `/doctor`.
+    /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
 }
 

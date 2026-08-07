@@ -263,10 +263,7 @@ async fn streamable_http_discovery() {
     let outcome = McpBundle::connect(&config).await;
     let bundle = outcome.bundle.unwrap();
     assert_eq!(bundle.tools()[0].spec().name, "mcp__remote__remote_echo");
-    assert_eq!(
-        outcome.report.servers[0].status,
-        McpServerStatus::Connected
-    );
+    assert_eq!(outcome.report.servers[0].status, McpServerStatus::Connected);
     bundle.shutdown().await;
     server.await.unwrap();
 }
@@ -387,4 +384,24 @@ open(sys.argv[1], "w").close()
 
     bundle.shutdown().await;
     assert!(closed.exists());
+}
+
+// Covers: session plan maps runtime/tool flags onto connect vs inventory modes.
+// Owner: MCP session load boundary.
+#[test]
+fn session_plan_selects_inventory_modes() {
+    use super::{McpLoadMode, McpSessionPlan};
+
+    assert_eq!(
+        McpSessionPlan::for_session(true, true),
+        McpSessionPlan::Connect
+    );
+    assert_eq!(
+        McpSessionPlan::for_session(false, true),
+        McpSessionPlan::Inventory(McpLoadMode::UnsupportedAgent)
+    );
+    assert_eq!(
+        McpSessionPlan::for_session(true, false),
+        McpSessionPlan::Inventory(McpLoadMode::ToolsDisabled)
+    );
 }
