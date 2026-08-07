@@ -86,23 +86,67 @@ if [[ ! -x "$bin_path" && ! -f "$bin_path" ]]; then
   exit 1
 fi
 
-args=(
+demo_args=(
   run -j "$jobs" -p rho-tui-pty --bin rho-pty-demo --locked --
   --bin "$bin_path"
 )
 
-if [[ "$mode" == "check" ]]; then
-  args+=(--check)
-  echo "==> Check docs TUI proof plate against live PTY capture"
-else
+if [[ "$mode" == "write" ]]; then
   echo "==> Write docs TUI proof plate from live PTY capture"
+  write_args=("${demo_args[@]}")
+  for asset in "${dark_assets[@]}"; do
+    write_args+=(--output "$asset")
+  done
+  for asset in "${light_assets[@]}"; do
+    write_args+=(--light-output "$asset")
+  done
+  cargo "${write_args[@]}"
+  exit 0
 fi
 
+echo "==> Check docs TUI proof plate against live PTY capture"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/rho-ui-demo.XXXXXX")"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+live_dark="$tmp/rho-ui-demo.svg"
+live_light="$tmp/rho-ui-demo-light.svg"
+live_screen="$tmp/screen.txt"
+
+check_args=(
+  "${demo_args[@]}"
+  --output "$live_dark"
+  --light-output "$live_light"
+  --screen-text "$live_screen"
+)
+cargo "${check_args[@]}"
+
+failed=0
+compare_asset() {
+  local expected="$1"
+  local actual="$2"
+  if cmp -s "$expected" "$actual"; then
+    echo "OK $expected"
+    return 0
+  fi
+  failed=1
+  echo "SVG drift at $expected" >&2
+  echo "regenerate with:" >&2
+  echo "  bash scripts/check_docs_ui_demo.sh --write" >&2
+  echo "--- diff: $expected vs live capture ---" >&2
+  diff -u "$expected" "$actual" >&2 || true
+}
+
 for asset in "${dark_assets[@]}"; do
-  args+=(--output "$asset")
+  compare_asset "$asset" "$live_dark"
 done
 for asset in "${light_assets[@]}"; do
-  args+=(--light-output "$asset")
+  compare_asset "$asset" "$live_light"
 done
 
-cargo "${args[@]}"
+if [[ "$failed" -ne 0 ]]; then
+  echo "--- live screen text ---" >&2
+  cat "$live_screen" >&2 || true
+  echo "error: one or more SVG outputs drifted from the live PTY capture" >&2
+  exit 1
+fi
