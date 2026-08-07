@@ -44,7 +44,7 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace --locked
       - name: Check docs TUI proof plate
-        run: bash scripts/check_docs_ui_demo.sh --check --bin target/debug/rho
+        run: bash scripts/check_docs_ui_demo.sh --check
       - name: Run documentation tests
         run: cargo test --workspace --doc --all-features --locked
       - name: Check rho-tools document features independently
