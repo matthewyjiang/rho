@@ -63,6 +63,7 @@ fn rho_field_picker_lists_runtime_specific_fields() {
         *model = ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "gpt-5.5".into(),
+            auth: None,
         });
     }
     let explicit_picker = agent_field_picker(&explicit);
@@ -194,6 +195,7 @@ fn reasoning_picker_follows_pinned_catalog_capabilities() {
             *model = ModelPolicy::Select(ModelSelection {
                 provider: Some("meta".into()),
                 model: "muse-spark-1.2".into(),
+                auth: None,
             });
             *reasoning = Some(ReasoningLevel::Max);
         }
@@ -248,4 +250,49 @@ fn authorize_editable_path_accepts_rho_home_agent() {
     std::fs::write(&path, "---\ndescription: demo\n---\n").unwrap();
     let root = authorize_editable_path(AgentOrigin::Project, &path, dir.path()).unwrap();
     assert_eq!(root, agents);
+}
+
+// Covers: auth picker only offers available credentials for the pinned provider
+// Owner: pure unit (agent editor auth choice assembly)
+#[test]
+fn auth_choice_lists_only_available_modes_for_provider() {
+    let mut draft = rho_draft();
+    if let AgentRuntimeSpec::Rho { model, .. } = &mut draft.runtime {
+        *model = ModelPolicy::Select(ModelSelection {
+            provider: Some("xai".into()),
+            model: "grok-4.5".into(),
+            auth: None,
+        });
+    }
+    let available = vec!["xai-oauth".into(), "anthropic-api-key".into()];
+    let picker = auth_choice_picker(&draft, &available);
+    let values: Vec<&str> = picker
+        .items
+        .iter()
+        .map(|item| item.value.as_str())
+        .collect();
+    assert!(values.contains(&"agent_choice:auth:"));
+    assert!(values.contains(&"agent_choice:auth:xai-oauth"));
+    assert!(!values.iter().any(|value| value.contains("anthropic")));
+}
+
+// Covers: auth field appears when model is pinned
+// Owner: pure unit (agent editor field list)
+#[test]
+fn rho_field_picker_includes_auth_when_model_is_pinned() {
+    let mut draft = rho_draft();
+    if let AgentRuntimeSpec::Rho { model, .. } = &mut draft.runtime {
+        *model = ModelPolicy::Select(ModelSelection {
+            provider: Some("xai".into()),
+            model: "grok-4.5".into(),
+            auth: Some("xai-oauth".into()),
+        });
+    }
+    let picker = agent_field_picker(&draft);
+    let values: Vec<&str> = picker
+        .items
+        .iter()
+        .map(|item| item.value.as_str())
+        .collect();
+    assert!(values.contains(&AGENT_FIELD_AUTH));
 }

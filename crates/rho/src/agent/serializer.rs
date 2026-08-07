@@ -8,7 +8,7 @@
 //!
 //! Field order is fixed so diffs stay small when one field changes:
 //! `id`, `description`, `prompt`, `runtime`, `model-policy`, `model`,
-//! `provider`, `reasoning`, `inherit_claude_config`, `tools`.
+//! `provider`, `auth`, `reasoning`, `inherit_claude_config`, `tools`.
 
 use std::fmt::Write;
 
@@ -76,6 +76,9 @@ fn write_model(out: &mut String, runtime: &AgentRuntimeSpec) {
                 let _ = writeln!(out, "model: {}", scalar(&selection.model));
                 if let Some(provider) = selection.provider.as_deref() {
                     let _ = writeln!(out, "provider: {}", scalar(provider));
+                }
+                if let Some(auth) = selection.auth.as_deref() {
+                    let _ = writeln!(out, "auth: {}", scalar(auth));
                 }
             }
         },

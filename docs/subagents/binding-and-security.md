@@ -16,5 +16,5 @@ flowchart TD
     child --> noRecurse[No nested agent or agents tools]
 ```
 
-- `runtime: rho`: resolve model aliases and reasoning against the host config, render prompt policy, and intersect requested Rho tools with host-supplied capabilities. Host policy remains the upper authority boundary.
+- `runtime: rho`: resolve model aliases and reasoning against the host config, apply optional provider/auth pins (keeping a compatible host auth when `auth` is unset), render prompt policy, and intersect requested Rho tools with host-supplied capabilities. Host policy remains the upper authority boundary.
 - `runtime: claude-cli`: copy `model` byte-for-byte (or omit it when inherited), keep the Claude tool list, map optional `reasoning:` to Claude `--effort` (`low`/`medium`/`high`/`xhigh`/`max`), and record `inherit_claude_config`. No Rho model-alias resolution and no mutation of the parent provider/model config. Rho-style `@alias` model values and `reasoning: off` / `reasoning: minimal` are rejected. `runtime: claude-cli` is delegated-only: interactive and automation roots cannot bind it.

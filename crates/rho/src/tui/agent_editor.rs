@@ -32,6 +32,7 @@ pub(super) const AGENT_FIELD_RUNTIME: &str = "agent_field:runtime";
 pub(super) const AGENT_FIELD_MODEL_POLICY: &str = "agent_field:model_policy";
 pub(super) const AGENT_FIELD_MODEL: &str = AgentField::Model.value();
 pub(super) const AGENT_FIELD_PROVIDER: &str = AgentField::Provider.value();
+pub(super) const AGENT_FIELD_AUTH: &str = "agent_field:auth";
 pub(super) const AGENT_FIELD_REASONING: &str = "agent_field:reasoning";
 pub(super) const AGENT_FIELD_TOOLS: &str = AgentField::Tools.value();
 pub(super) const AGENT_FIELD_INHERIT_CLAUDE_CONFIG: &str = "agent_field:inherit_claude_config";
@@ -52,6 +53,7 @@ pub(super) enum AgentChoiceField {
     PromptPolicy,
     Runtime,
     ModelPolicy,
+    Auth,
     Reasoning,
     InheritClaudeConfig,
 }
@@ -62,6 +64,7 @@ impl AgentChoiceField {
             Self::PromptPolicy => AGENT_FIELD_PROMPT_POLICY,
             Self::Runtime => AGENT_FIELD_RUNTIME,
             Self::ModelPolicy => AGENT_FIELD_MODEL_POLICY,
+            Self::Auth => AGENT_FIELD_AUTH,
             Self::Reasoning => AGENT_FIELD_REASONING,
             Self::InheritClaudeConfig => AGENT_FIELD_INHERIT_CLAUDE_CONFIG,
         }
@@ -72,6 +75,7 @@ impl AgentChoiceField {
             Self::PromptPolicy => "agent_choice:prompt_policy:",
             Self::Runtime => "agent_choice:runtime:",
             Self::ModelPolicy => "agent_choice:model_policy:",
+            Self::Auth => "agent_choice:auth:",
             Self::Reasoning => "agent_choice:reasoning:",
             Self::InheritClaudeConfig => "agent_choice:inherit_claude_config:",
         }
@@ -303,6 +307,12 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
                     Some(provider),
                     AGENT_FIELD_PROVIDER,
                 ));
+                items.push(field_item(
+                    "Auth",
+                    "Auth profile for the pinned provider. Host keeps a compatible login when unset.",
+                    Some(draft.auth_badge()),
+                    AGENT_FIELD_AUTH,
+                ));
             }
             items.push(field_item(
                 "Reasoning",
@@ -388,6 +398,10 @@ fn prompt_body_preview(draft: &AgentDefinition) -> String {
 }
 
 fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPicker {
+    debug_assert!(
+        !matches!(field, AgentChoiceField::Auth),
+        "use auth_choice_picker for auth"
+    );
     let prefix = field.choice_prefix();
     let (title, items) = match field {
         AgentChoiceField::PromptPolicy => {
@@ -442,6 +456,7 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
             };
             ("model policy", choice_items(options, &current, prefix))
         }
+        AgentChoiceField::Auth => unreachable!("use auth_choice_picker"),
         AgentChoiceField::Reasoning => {
             let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
             let current = draft.reasoning();
@@ -497,6 +512,57 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
     UiPicker::new(title, items, PickerAction::EditAgent).with_confirm_verb("set")
 }
 
+fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> UiPicker {
+    let prefix = AgentChoiceField::Auth.choice_prefix();
+    let current = draft.auth_text();
+    let provider = draft.provider_text();
+    let mut items = vec![PickerItem {
+        section: None,
+        label: "host".into(),
+        detail: Some(
+            "Do not pin auth. Keep the conversation login when it fits the provider.".into(),
+        ),
+        preview: None,
+        badge: current.is_empty().then(|| badge("selected")),
+        // Empty id means unset pin (display label remains "host").
+        value: prefix.to_string(),
+        selection_verb: None,
+    }];
+    let mut modes: Vec<(String, String)> = available_auths
+        .iter()
+        .filter_map(|auth| {
+            let (_descriptor, mode) = rho_providers::provider::resolve_auth_mode(auth)?;
+            if !provider.is_empty()
+                && !rho_providers::provider::provider_accepts_auth(&provider, mode.id)
+            {
+                return None;
+            }
+            Some((mode.id.to_string(), mode.login_label.to_string()))
+        })
+        .collect();
+    // Keep a configured but unavailable auth visible so it can be cleared.
+    if !current.is_empty() && !modes.iter().any(|(id, _)| id == &current) {
+        let label = rho_providers::provider::resolve_auth_mode(&current)
+            .map(|(_, mode)| mode.login_label.to_string())
+            .unwrap_or_else(|| current.clone());
+        modes.push((current.clone(), format!("{label} (not available)")));
+    }
+    modes.sort_by(|left, right| left.1.cmp(&right.1));
+    items.extend(modes.into_iter().map(|(id, label)| {
+        let selected = id == current;
+        PickerItem {
+            section: None,
+            label,
+            detail: Some(format!("Pin auth profile {id}.")),
+            preview: None,
+            badge: selected.then(|| badge("selected")),
+            value: format!("{prefix}{id}"),
+            selection_verb: None,
+        }
+    }));
+    UiPicker::new("auth", items, PickerAction::EditAgent).with_confirm_verb("set")
+}
+
 fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> Vec<PickerItem> {
     options
         .iter()
@@ -547,11 +613,8 @@ const CLAUDE_EFFORT_LEVELS: &[ReasoningLevel] = &[
 
 fn draft_model_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilities {
     let model_policy = draft.model_policy();
-    let selection = match model_policy.as_ref() {
-        ModelPolicy::Prefer(selection)
-        | ModelPolicy::Require(selection)
-        | ModelPolicy::Select(selection) => selection,
-        ModelPolicy::Inherit => return ReasoningCapabilities::Unknown,
+    let Some(selection) = model_policy.selection() else {
+        return ReasoningCapabilities::Unknown;
     };
     if selection.model.is_empty() {
         return ReasoningCapabilities::Unknown;

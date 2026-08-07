@@ -532,12 +532,33 @@ pub fn resolve_provider_reference(
 
 /// Resolves a provider/auth pair to one registered provider identity and auth mode.
 ///
-/// - Legacy provider aliases select their matching auth mode, regardless of the
-///   supplied auth value.
-/// - Auth modes registered on the named provider keep that provider name.
-/// - When the requested auth belongs to a different runtime, falls back to the
-///   named provider's default auth mode.
+/// Soft resolution: when the requested auth belongs to a different provider
+/// family, falls back to the named provider's default auth mode. Prefer
+/// [`resolve_profile_exact`] when a caller must reject incompatible pairs
+/// (agent pins, catalog validation).
 pub fn resolve_profile(
+    provider_name: &str,
+    auth: &str,
+) -> Result<ResolvedProviderProfile, ProfileResolutionError> {
+    match resolve_profile_exact(provider_name, auth) {
+        Err(ProfileResolutionError::AuthNotValidForProvider { provider, .. }) => {
+            let provider = provider_descriptor(&provider)
+                .ok_or(ProfileResolutionError::UnknownProvider(provider))?;
+            Ok(ResolvedProviderProfile {
+                provider,
+                auth: provider.default_auth(),
+            })
+        }
+        other => other,
+    }
+}
+
+/// Resolves a provider/auth pair only when the auth mode belongs to that provider.
+///
+/// Unlike [`resolve_profile`], incompatible pairs error instead of falling back
+/// to the provider default. Legacy provider aliases still resolve to their
+/// fixed auth mode (the alias is the identity).
+pub fn resolve_profile_exact(
     provider_name: &str,
     auth: &str,
 ) -> Result<ResolvedProviderProfile, ProfileResolutionError> {
@@ -563,11 +584,18 @@ pub fn resolve_profile(
             auth: mode,
         })
     } else {
-        Ok(ResolvedProviderProfile {
-            provider,
-            auth: provider.default_auth(),
+        Err(ProfileResolutionError::AuthNotValidForProvider {
+            provider: provider_name.into(),
+            auth: auth.into(),
         })
     }
+}
+
+/// Returns whether `auth` is a registered mode for `provider_name`.
+///
+/// Uses exact membership ([`resolve_profile_exact`]), not soft default fallback.
+pub fn provider_accepts_auth(provider_name: &str, auth: &str) -> bool {
+    resolve_profile_exact(provider_name, auth).is_ok()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -576,6 +604,8 @@ pub enum ProfileResolutionError {
     UnknownProvider(String),
     #[error("unknown auth profile '{0}'")]
     UnknownAuth(String),
+    #[error("auth '{auth}' is not valid for provider '{provider}'")]
+    AuthNotValidForProvider { provider: String, auth: String },
 }
 
 pub fn provider_descriptor_by_id(id: ProviderId) -> &'static ProviderDescriptor {

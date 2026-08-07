@@ -90,6 +90,7 @@ fn rejects_definitions_that_select_a_model() {
         *model = ModelPolicy::Select(crate::agent::ModelSelection {
             provider: None,
             model: "other-model".into(),
+            auth: None,
         });
     }
     assert!(validate_definition(&definition)

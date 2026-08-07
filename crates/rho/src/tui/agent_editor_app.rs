@@ -157,6 +157,9 @@ impl App {
             AGENT_FIELD_PROVIDER => {
                 self.open_agent_text_input(AgentField::Provider, draft.provider_text());
             }
+            AGENT_FIELD_AUTH => {
+                self.open_agent_choice(AgentChoiceField::Auth, &draft);
+            }
             AGENT_FIELD_REASONING => {
                 self.open_agent_choice(AgentChoiceField::Reasoning, &draft);
             }
@@ -181,12 +184,18 @@ impl App {
         if let Some(session) = &mut self.agent_editor_session {
             session.set_phase(AgentEditPhase::Choosing(field));
         }
-        let picker = agent_choice_picker(field, draft);
+        let picker = if matches!(field, AgentChoiceField::Auth) {
+            self.refresh_available_auths();
+            auth_choice_picker(draft, &self.available_auths)
+        } else {
+            agent_choice_picker(field, draft)
+        };
         self.open_child_picker(picker);
         self.set_status(match field {
             AgentChoiceField::PromptPolicy => "prompt policy",
             AgentChoiceField::Runtime => "runtime",
             AgentChoiceField::ModelPolicy => "model policy",
+            AgentChoiceField::Auth => "auth",
             AgentChoiceField::Reasoning => "reasoning",
             AgentChoiceField::InheritClaudeConfig => "inherit Claude config",
         });
@@ -209,6 +218,13 @@ impl App {
                     session.with_draft_mut(|draft| match other {
                         AgentChoiceField::PromptPolicy => draft.set_prompt_policy_kind(rest),
                         AgentChoiceField::ModelPolicy => draft.set_model_policy_kind(rest),
+                        AgentChoiceField::Auth => {
+                            if rest.is_empty() {
+                                draft.set_auth_selection(None)
+                            } else {
+                                draft.set_auth_selection(Some(rest.to_string()))
+                            }
+                        }
                         AgentChoiceField::Reasoning => draft.set_reasoning_kind(rest),
                         AgentChoiceField::InheritClaudeConfig => {
                             draft.set_inherit_claude_config(rest)
@@ -245,11 +261,16 @@ impl App {
         let current_auth = self.info.runtime.auth.clone();
         match self.resolve_model_selection(value, current_provider, &current_auth) {
             Ok(resolved) => {
-                let selection = &resolved.selection;
-                draft.set_model_selection(
-                    Some(selection.provider.clone()),
-                    Some(selection.model.clone()),
-                );
+                let catalog = &resolved.selection;
+                let mut selection = current;
+                selection.provider = Some(catalog.provider.clone());
+                selection.model = catalog.model.clone();
+                // Model picker resolves runtime auth; only keep an existing agent
+                // pin when it still belongs on the chosen provider.
+                selection.auth = selection.auth.filter(|auth| {
+                    rho_providers::provider::provider_accepts_auth(&catalog.provider, auth)
+                });
+                draft.set_model_selection(Some(selection));
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));

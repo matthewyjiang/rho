@@ -167,6 +167,7 @@ fn bind_drops_web_search_when_bound_path_cannot_search() {
         definition_with_model(ModelPolicy::Select(ModelSelection {
             provider: Some("anthropic".into()),
             model: "claude-opus-4-8".into(),
+            auth: None,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -239,6 +240,7 @@ fn agent_model_aliases_resolve_qualified_and_bare_targets() {
             definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
                 provider: None,
                 model: alias.into(),
+                auth: None,
             })),
             AgentInvocation {
                 role: AgentRole::Delegated,
@@ -264,6 +266,7 @@ fn agent_model_alias_conflicting_with_pinned_provider_errors() {
         definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
             provider: Some("openai".into()),
             model: "@deep".into(),
+            auth: None,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -287,6 +290,7 @@ fn undefined_agent_model_alias_names_agent_and_reference() {
         definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
             provider: None,
             model: "@missing".into(),
+            auth: None,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -337,6 +341,7 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
         claude_definition(ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "opus".into(),
+            auth: None,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -405,6 +410,7 @@ fn claude_runtime_rejects_alias_models_at_bind() {
         claude_definition(ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "@deep".into(),
+            auth: None,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -459,4 +465,89 @@ fn claude_runtime_maps_supported_reasoning_and_rejects_unmapped() {
         error.to_string().contains("not a Claude Code effort level"),
         "{error:#}"
     );
+}
+
+// Covers: pinning provider xai must not force API-key auth over host OAuth
+// Owner: agent binding
+#[test]
+fn provider_without_auth_keeps_compatible_host_auth() {
+    let host = Config {
+        provider: "xai".into(),
+        model: "grok-4.5".into(),
+        auth: "xai-oauth".into(),
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Prefer(ModelSelection {
+            provider: Some("xai".into()),
+            model: "grok-4.5".into(),
+            auth: None,
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+    )
+    .unwrap();
+    let config = bound.rho_config().unwrap();
+    assert_eq!(config.provider, "xai");
+    assert_eq!(config.auth, "xai-oauth");
+    assert_eq!(config.model, "grok-4.5");
+}
+
+// Covers: explicit auth pin overrides host auth for the bound run
+// Owner: agent binding
+#[test]
+fn explicit_auth_pin_overrides_host_auth() {
+    let host = Config {
+        provider: "xai".into(),
+        model: "grok-4.5".into(),
+        auth: "xai-oauth".into(),
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Select(ModelSelection {
+            provider: Some("xai".into()),
+            model: "grok-4.5".into(),
+            auth: Some("xai-api-key".into()),
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+    )
+    .unwrap();
+    let config = bound.rho_config().unwrap();
+    assert_eq!(config.provider, "xai");
+    assert_eq!(config.auth, "xai-api-key");
+}
+
+// Covers: switching provider without auth falls back to that provider default
+// Owner: agent binding
+#[test]
+fn provider_switch_without_auth_uses_provider_default() {
+    let host = Config {
+        provider: "openai".into(),
+        model: "gpt-5.5".into(),
+        auth: "api-key".into(),
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind(
+        definition_with_model(ModelPolicy::Select(ModelSelection {
+            provider: Some("xai".into()),
+            model: "grok-4.5".into(),
+            auth: None,
+        })),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+    )
+    .unwrap();
+    let config = bound.rho_config().unwrap();
+    assert_eq!(config.provider, "xai");
+    assert_eq!(config.auth, "xai-api-key");
 }

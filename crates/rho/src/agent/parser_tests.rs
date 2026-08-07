@@ -171,7 +171,7 @@ fn rho_model_policy_inherit_with_model_still_rejected() {
     assert_eq!(error.field.as_deref(), Some("model-policy"));
     assert!(error
         .to_string()
-        .contains("inherit cannot specify model or provider"));
+        .contains("inherit cannot specify model, provider, or auth"));
 }
 
 #[test]
@@ -207,6 +207,7 @@ fn allows_model_and_rejects_provider_on_claude_runtime() {
         ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "claude-opus-4-6".into(),
+            auth: None,
         })
     );
     match &definition.runtime {
@@ -333,4 +334,88 @@ fn accepts_claude_effort_reasoning_levels() {
             _ => panic!("expected claude runtime"),
         }
     }
+}
+
+// Covers: auth frontmatter is parsed and validated against provider
+// Owner: agent parser
+#[test]
+fn parses_auth_profile_with_provider() {
+    let definition = parse(
+        "---\ndescription: demo\nmodel-policy: prefer\nmodel: grok-4.5\nprovider: xai\nauth: xai-oauth\n---\nbody\n",
+    )
+    .unwrap();
+    match definition.model_policy().as_ref() {
+        ModelPolicy::Prefer(selection) => {
+            assert_eq!(selection.provider.as_deref(), Some("xai"));
+            assert_eq!(selection.model, "grok-4.5");
+            assert_eq!(selection.auth.as_deref(), Some("xai-oauth"));
+        }
+        other => panic!("unexpected policy: {other:?}"),
+    }
+}
+
+// Covers: unknown or mismatched auth fails before execution
+// Owner: agent parser
+#[test]
+fn rejects_unknown_and_mismatched_auth() {
+    let unknown = parse(
+        "---\ndescription: demo\nmodel: grok-4.5\nprovider: xai\nauth: not-a-real-auth\n---\n",
+    )
+    .unwrap_err();
+    assert_eq!(unknown.field.as_deref(), Some("auth"));
+    assert!(unknown.message.contains("unknown auth profile"));
+
+    let mismatched = parse(
+        "---\ndescription: demo\nmodel: grok-4.5\nprovider: xai\nauth: anthropic-api-key\n---\n",
+    )
+    .unwrap_err();
+    assert_eq!(mismatched.field.as_deref(), Some("auth"));
+    assert!(
+        mismatched.message.contains("not valid for provider")
+            || mismatched.message.contains("belongs to"),
+        "{}",
+        mismatched.message
+    );
+
+    let on_claude = parse(
+        "---\ndescription: demo\nruntime: claude-cli\nmodel: opus\nauth: xai-oauth\ntools: [Read]\n---\n",
+    )
+    .unwrap_err();
+    assert_eq!(on_claude.field.as_deref(), Some("auth"));
+
+    let with_inherit =
+        parse("---\ndescription: demo\nmodel-policy: inherit\nauth: xai-oauth\n---\n").unwrap_err();
+    assert_eq!(with_inherit.field.as_deref(), Some("model-policy"));
+}
+
+// Covers: unset auth keeps legacy fingerprints; pinned auth changes them
+// Owner: agent definition fingerprint
+#[test]
+fn fingerprint_changes_only_when_auth_is_pinned() {
+    let without =
+        parse("---\ndescription: demo\nmodel: grok-4.5\nprovider: xai\n---\nbody\n").unwrap();
+    let with_auth = parse(
+        "---\ndescription: demo\nmodel: grok-4.5\nprovider: xai\nauth: xai-oauth\n---\nbody\n",
+    )
+    .unwrap();
+    let same_without = parse(
+        "---\ndescription: demo\nmodel-policy: select\nmodel: grok-4.5\nprovider: xai\n---\nbody\n",
+    )
+    .unwrap();
+    assert_eq!(without.fingerprint(), same_without.fingerprint());
+    assert_ne!(without.fingerprint(), with_auth.fingerprint());
+}
+
+// Covers: auth frontmatter round-trips through serialize/parse
+// Owner: agent serializer
+#[test]
+fn auth_selection_round_trips_through_serialize() {
+    let original = parse(
+        "---\ndescription: demo\nmodel-policy: prefer\nmodel: grok-4.5\nprovider: xai\nauth: xai-oauth\n---\nbody\n",
+    )
+    .unwrap();
+    let serialized = crate::agent::serialize_definition(&original);
+    assert!(serialized.contains("auth: xai-oauth\n"));
+    let again = parse(&serialized).unwrap();
+    assert_eq!(again, original);
 }

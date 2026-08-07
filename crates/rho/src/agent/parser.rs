@@ -22,6 +22,7 @@ struct RawDefinition {
     prompt: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    auth: Option<String>,
     model_policy: Option<String>,
     reasoning: Option<String>,
     runtime: Option<String>,
@@ -87,7 +88,14 @@ pub(crate) fn parse_definition(
         })?,
     };
 
-    let model = parse_model_policy(path, runtime, raw.model, raw.provider, raw.model_policy)?;
+    let model = parse_model_policy(
+        path,
+        runtime,
+        raw.model,
+        raw.provider,
+        raw.auth,
+        raw.model_policy,
+    )?;
     let reasoning = raw
         .reasoning
         .map(|value| {
@@ -131,6 +139,7 @@ fn parse_model_policy(
     runtime: AgentRuntime,
     model: Option<String>,
     provider: Option<String>,
+    auth: Option<String>,
     policy: Option<String>,
 ) -> Result<ModelPolicy, AgentCatalogError> {
     if runtime == AgentRuntime::ClaudeCli {
@@ -138,6 +147,13 @@ fn parse_model_policy(
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "provider",
+                "is not valid with runtime: claude-cli; set model only (passed through as --model)",
+            ));
+        }
+        if auth.is_some() {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "auth",
                 "is not valid with runtime: claude-cli; set model only (passed through as --model)",
             ));
         }
@@ -180,6 +196,7 @@ set a Claude model name or alias (for example opus), not '{model}'"
                 Ok(ModelPolicy::Select(ModelSelection {
                     provider: None,
                     model,
+                    auth: None,
                 }))
             }
         };
@@ -189,11 +206,11 @@ set a Claude model name or alias (for example opus), not '{model}'"
         .as_deref()
         .unwrap_or(if model.is_some() { "select" } else { "inherit" });
     if policy == "inherit" {
-        if model.is_some() || provider.is_some() {
+        if model.is_some() || provider.is_some() || auth.is_some() {
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "model-policy",
-                "inherit cannot specify model or provider",
+                "inherit cannot specify model, provider, or auth",
             ));
         }
         return Ok(ModelPolicy::Inherit);
@@ -225,7 +242,41 @@ set a Claude model name or alias (for example opus), not '{model}'"
             "must be non-empty and contain no whitespace",
         ));
     }
-    let selection = ModelSelection { provider, model };
+    if auth
+        .as_ref()
+        .is_some_and(|value| value.is_empty() || value.chars().any(char::is_whitespace))
+    {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "auth",
+            "must be non-empty and contain no whitespace",
+        ));
+    }
+    if let Some(auth_value) = auth.as_deref() {
+        if rho_providers::provider::resolve_auth_mode(auth_value).is_none() {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "auth",
+                format!("unknown auth profile '{auth_value}'"),
+            ));
+        }
+        if let Some(provider_value) = provider.as_deref() {
+            rho_providers::provider::resolve_profile_exact(provider_value, auth_value).map_err(
+                |error| {
+                    AgentCatalogError::at_field(
+                        path.to_path_buf(),
+                        "auth",
+                        format!("is not valid for provider '{provider_value}': {error}"),
+                    )
+                },
+            )?;
+        }
+    }
+    let selection = ModelSelection {
+        provider,
+        model,
+        auth,
+    };
     Ok(match policy {
         "prefer" => ModelPolicy::Prefer(selection),
         "require" => ModelPolicy::Require(selection),
@@ -538,6 +589,7 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
                 | "prompt"
                 | "model"
                 | "provider"
+                | "auth"
                 | "model-policy"
                 | "reasoning"
                 | "runtime"
@@ -577,6 +629,7 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
             "prompt" => raw.prompt = Some(value),
             "model" => raw.model = Some(value),
             "provider" => raw.provider = Some(value),
+            "auth" => raw.auth = Some(value),
             "model-policy" => raw.model_policy = Some(value),
             "reasoning" => raw.reasoning = Some(value),
             "runtime" => raw.runtime = Some(value),
