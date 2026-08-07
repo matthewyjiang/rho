@@ -47,7 +47,11 @@ pub(in crate::tui) fn markdown_stream_bounds(
         }
         return MarkdownStreamBounds {
             drain,
-            preview_end: previewable_prefix_end(current_line_start, current_line, true),
+            preview_end: previewable_prefix_end(
+                current_line_start,
+                current_line,
+                display_width(current_line),
+            ),
         };
     }
 
@@ -55,7 +59,14 @@ pub(in crate::tui) fn markdown_stream_bounds(
     // already-drawn prose is not pulled back when the span finally closes shorter.
     let stable_line_len = inline_markdown_stable_prefix_len(current_line);
     let stable_line = &current_line[..stable_line_len];
-    let preview_end = previewable_prefix_end(current_line_start, stable_line, false);
+    // Rendered once and shared: inline rendering now includes txm math spans,
+    // so a second pass per call is no longer cheap.
+    let rendered_line = markdown_inline_text(stable_line);
+    let preview_end = previewable_prefix_end(
+        current_line_start,
+        stable_line,
+        display_width(&rendered_line),
+    );
 
     if !matches!(
         heading_stream_state(current_line),
@@ -72,7 +83,6 @@ pub(in crate::tui) fn markdown_stream_bounds(
         };
     }
 
-    let rendered_line = markdown_inline_text(stable_line);
     let complete = complete_word_wrap_prefix(&rendered_line, width);
     if complete.byte_index == 0 {
         return MarkdownStreamBounds { drain, preview_end };
@@ -137,16 +147,11 @@ fn stable_wrap_drain_prefix(
 fn previewable_prefix_end(
     current_line_start: usize,
     stable_line: &str,
-    line_in_code_block: bool,
+    rendered_width: usize,
 ) -> Option<usize> {
     if stable_line.is_empty() {
         return None;
     }
-    let rendered_width = if line_in_code_block {
-        display_width(stable_line)
-    } else {
-        display_width(&markdown_inline_text(stable_line))
-    };
     (rendered_width > 0).then_some(current_line_start + stable_line.len())
 }
 
@@ -226,4 +231,59 @@ fn starts_with_code_fence_fragment(line: &str) -> bool {
     let trimmed = line.trim_start();
     !trimmed.is_empty()
         && (trimmed.starts_with("```") || (trimmed.len() < 3 && "```".starts_with(trimmed)))
+}
+
+/// Returns the start of the trailing block that can still change as markdown is appended.
+///
+/// Markdown is line-oriented except for fenced code blocks, display math, and tables. Keeping
+/// the final block mutable lets the history cache promote completed blocks and
+/// re-render only this suffix as streaming text arrives.
+pub(in crate::tui) fn incremental_markdown_tail_start(text: &str) -> usize {
+    let mut line_offsets = Vec::new();
+    let mut raw_lines = Vec::new();
+    let mut offset = 0;
+    for source_line in text.split_inclusive('\n') {
+        let raw_line = source_line.strip_suffix('\n').unwrap_or(source_line);
+        let raw_line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        line_offsets.push(offset);
+        raw_lines.push(raw_line);
+        offset += source_line.len();
+    }
+    if raw_lines.is_empty() {
+        return 0;
+    }
+
+    let mut line_index = 0;
+    let mut trailing_block_start = 0;
+    while line_index < raw_lines.len() {
+        trailing_block_start = line_offsets[line_index];
+        if let Some(opening) = parse_opening_fence(raw_lines[line_index]) {
+            line_index += 1;
+            while line_index < raw_lines.len() {
+                let closes_block = is_closing_fence(raw_lines[line_index], opening);
+                line_index += 1;
+                if closes_block {
+                    break;
+                }
+            }
+            continue;
+        }
+        match math::display_math_span(&raw_lines[line_index..]) {
+            Some(math::DisplayMathSpan::Complete { line_count }) => {
+                line_index += line_count;
+                continue;
+            }
+            Some(math::DisplayMathSpan::Incomplete) => {
+                line_index = raw_lines.len();
+                continue;
+            }
+            None => {}
+        }
+        if let Some(consumed_lines) = table::markdown_table_line_count(&raw_lines[line_index..]) {
+            line_index += consumed_lines;
+            continue;
+        }
+        line_index += 1;
+    }
+    trailing_block_start
 }

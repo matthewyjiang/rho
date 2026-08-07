@@ -7,7 +7,8 @@ Workflow source parsing and prototype evaluation use starlark 0.14.2:
 
 Copyright 2018 The Starlark in Rust Authors.
 Copyright (c) Meta Platforms, Inc. and affiliates.
-Licensed under the Apache License, Version 2.0.
+Licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
 
 
 mermaid-rs-renderer
@@ -19,8 +20,7 @@ mermaid-rs-renderer 0.3.1:
   https://github.com/1jehuang/mermaid-rs-renderer/tree/v0.3.1
 
 Copyright (c) 2026 mermaid-rs-renderer contributors
-Licensed under the MIT License. A copy of the license is provided in
-LICENSE-MIT-MERMAID-RS-RENDERER.
+Licensed under the MIT License.
 
 
 Grok Build terminal Mermaid renderer
@@ -32,10 +32,30 @@ layout, routing, wrapping, and painter implementation from Grok Build:
   https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
 
 Copyright 2023-2026 SpaceXAI
-Licensed under the Apache License, Version 2.0. A copy of the license is
-provided in LICENSE-APACHE-GROK-BUILD.
+Licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
 
 Rho's modifications replace the original Mermaid parser with adapters from
 mermaid-rs-renderer public parsed IR, separate validation and resource limits,
 and integrate the painter with Rho's panel, styling, caching, and fallback
 behavior.
+
+
+txm
+===
+
+Terminal LaTeX math layout and the Ratatui math widget are vendored from txm
+(commit 26e6d3cfef4d5d040711f4c49d9147aabd350d4d):
+
+  https://github.com/thatmagicalcat/txm
+
+Copyright (c) 2026 thatmagicalcat
+Licensed under the MIT License or Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+
+Rho paints the txm Ratatui widget into an off-screen buffer, then embeds the
+resulting Unicode art in Markdown history panels. The library sources live in
+crates/rho/src/tui/markdown/txm.rs and crates/rho/src/tui/markdown/txm/,
+because crates.io txm 0.1.5's ratatui feature does not build and cargo cannot
+publish a crate with a git dependency. The vendored copy should be replaced by
+the crates.io dependency once a fixed txm release ships.

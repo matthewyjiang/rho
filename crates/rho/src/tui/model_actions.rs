@@ -766,7 +766,6 @@ impl App {
     }
 }
 
-
 #[cfg(test)]
 #[path = "model_actions_tests.rs"]
 mod tests;

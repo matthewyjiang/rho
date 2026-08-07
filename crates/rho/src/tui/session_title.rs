@@ -4,8 +4,8 @@ use futures_util::task::noop_waker_ref;
 use rho_sdk::{CancellationToken, ProviderRequestUsageRecording, SessionId};
 
 use crate::agent::{
-    effective_internal_agent_reasoning, internal_definition, run_one_shot_agent, OneShotAgentRequest,
-    SESSION_TITLE_AGENT_ID,
+    effective_internal_agent_reasoning, internal_definition, run_one_shot_agent,
+    OneShotAgentRequest, SESSION_TITLE_AGENT_ID,
 };
 
 use super::{App, Entry, InteractiveRuntime, Session, SessionTitleResult};

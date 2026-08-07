@@ -147,11 +147,8 @@ fn selecting_an_internal_agent_model_keeps_reasoning_unset_by_default() {
 #[test]
 fn selecting_an_internal_agent_model_carries_explicit_reasoning() {
     let mut app = test_app();
-    let mut previous = InternalAgentModelConfig::new(
-        "anthropic".into(),
-        "claude-old".into(),
-        "api-key".into(),
-    );
+    let mut previous =
+        InternalAgentModelConfig::new("anthropic".into(), "claude-old".into(), "api-key".into());
     previous.reasoning = Some(ReasoningLevel::High);
     app.info
         .runtime

@@ -5,9 +5,13 @@ use ratatui::{
 
 mod code_fence;
 mod heading;
+mod inline;
+mod math;
 mod mermaid;
+mod panel;
 mod stream;
 mod table;
+mod txm;
 
 #[cfg(test)]
 pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
@@ -18,10 +22,12 @@ pub(in crate::tui) use code_fence::{
 use code_fence::{mermaid_opening_fence, CodeFence};
 
 use super::markdown_image::standalone_markdown_image;
+use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
+use panel::ClosedPanel;
 
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
-pub(super) use stream::markdown_stream_bounds;
+pub(super) use stream::{incremental_markdown_tail_start, markdown_stream_bounds};
 
 #[cfg(test)]
 #[path = "markdown/table_tests.rs"]
@@ -84,49 +90,6 @@ pub(super) fn render_markdown(
     render_markdown_with_copy_button(text, width, in_code_block, CodeBlockCopyButton::Visible)
 }
 
-/// Returns the start of the trailing block that can still change as markdown is appended.
-///
-/// Markdown is line-oriented except for fenced code blocks and tables. Keeping
-/// the final block mutable lets the history cache promote completed blocks and
-/// re-render only this suffix as streaming text arrives.
-pub(super) fn incremental_markdown_tail_start(text: &str) -> usize {
-    let mut lines = Vec::new();
-    let mut offset = 0;
-    for source_line in text.split_inclusive('\n') {
-        let raw_line = source_line.strip_suffix('\n').unwrap_or(source_line);
-        let raw_line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        lines.push((offset, raw_line));
-        offset += source_line.len();
-    }
-    if lines.is_empty() {
-        return 0;
-    }
-
-    let raw_lines = lines.iter().map(|(_, line)| *line).collect::<Vec<_>>();
-    let mut line_index = 0;
-    let mut trailing_block_start = 0;
-    while line_index < raw_lines.len() {
-        trailing_block_start = lines[line_index].0;
-        if let Some(opening) = parse_opening_fence(raw_lines[line_index]) {
-            line_index += 1;
-            while line_index < raw_lines.len() {
-                let closes_block = is_closing_fence(raw_lines[line_index], opening);
-                line_index += 1;
-                if closes_block {
-                    break;
-                }
-            }
-            continue;
-        }
-        if let Some(consumed_lines) = table::markdown_table_line_count(&raw_lines[line_index..]) {
-            line_index += consumed_lines;
-            continue;
-        }
-        line_index += 1;
-    }
-    trailing_block_start
-}
-
 fn render_markdown_with_copy_button(
     text: &str,
     width: usize,
@@ -164,44 +127,20 @@ fn render_markdown_from_fence_state(
                     .position(|line| is_closing_fence(line, opening.fence))
                 {
                     let closing_index = line_index + 1 + closing_offset;
-                    let source_lines = &raw_lines[line_index + 1..closing_index];
-                    let source = source_lines.join("\n");
-                    let inner_width = width.saturating_sub(4);
-                    let top_line = lines.len();
-                    match mermaid::render_closed_fence(source, inner_width) {
-                        mermaid::ClosedMermaidFence::Art {
-                            lines: diagram_lines,
-                            source,
-                        } => {
-                            lines.push(code_block_border(width, '╭', copy_button, Some("MERMAID")));
-                            lines.extend(mermaid::panel_lines(diagram_lines, width));
-                            lines.push(code_block_border(width, '╰', copy_button, None));
-                            push_copyable_code_block(
-                                &mut code_blocks,
-                                copy_button,
-                                top_line,
-                                width,
-                                source,
-                            );
-                        }
-                        mermaid::ClosedMermaidFence::SourceFallback { title, source } => {
-                            lines.push(code_block_border(width, '╭', copy_button, Some(title)));
-                            for content_line in source_lines {
-                                lines.extend(code_block_content_lines(content_line, width));
-                            }
-                            lines.push(code_block_border(width, '╰', copy_button, None));
-                            push_copyable_code_block(
-                                &mut code_blocks,
-                                copy_button,
-                                top_line,
-                                width,
-                                source,
-                            );
-                        }
-                    }
+                    let source = raw_lines[line_index + 1..closing_index].join("\n");
+                    let panel = mermaid::render_closed_fence(source, width.saturating_sub(4));
+                    push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
                     line_index = closing_index + 1;
                     continue;
                 }
+            }
+            if let Some((source, consumed_lines)) =
+                math::take_closed_display_math(&raw_lines[line_index..])
+            {
+                let panel = math::render_closed_display_math(source, width.saturating_sub(4));
+                push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
+                line_index += consumed_lines;
+                continue;
             }
         }
         let opening_fence = (active_fence.is_none())
@@ -331,6 +270,38 @@ fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
 }
 
+/// Emit a closed art panel (mermaid, display math) with borders and copy state.
+fn push_closed_panel(
+    lines: &mut Vec<Line<'static>>,
+    code_blocks: &mut Vec<MarkdownCodeBlock>,
+    copy_button: CodeBlockCopyButton,
+    width: usize,
+    panel: ClosedPanel,
+) {
+    let top_line = lines.len();
+    let (title, body, source) = match panel {
+        ClosedPanel::Art {
+            title,
+            lines: art,
+            source,
+        } => (title, panel::panel_lines(art, width), source),
+        ClosedPanel::SourceFallback { title, source } => {
+            let mut body = Vec::new();
+            for content_line in source.lines() {
+                body.extend(code_block_content_lines(content_line, width));
+            }
+            if body.is_empty() {
+                body.extend(code_block_content_lines("", width));
+            }
+            (title, body, source)
+        }
+    };
+    lines.push(code_block_border(width, '╭', copy_button, Some(title)));
+    lines.extend(body);
+    lines.push(code_block_border(width, '╰', copy_button, None));
+    push_copyable_code_block(code_blocks, copy_button, top_line, width, source);
+}
+
 fn push_copyable_code_block(
     code_blocks: &mut Vec<MarkdownCodeBlock>,
     copy_button: CodeBlockCopyButton,
@@ -449,475 +420,6 @@ fn markdown_heading_lines(heading: heading::AtxHeading<'_>, width: usize) -> Vec
         .map(|segment| StyledSegment::new(segment.text, heading_style.patch(segment.style)))
         .collect::<Vec<_>>();
     wrap_styled_segments(&segments, width)
-}
-
-fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
-    let mut segments = Vec::new();
-    let mut rest = line;
-    while !rest.is_empty() {
-        match next_markdown_span(rest) {
-            Some(MarkdownSpan::Styled {
-                start,
-                marker_len,
-                end,
-                style,
-            }) => {
-                if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
-                }
-                let content_start = start + marker_len;
-                let marked_end = end + marker_len;
-                segments.push(StyledSegment::new(
-                    rest[content_start..end].to_string(),
-                    style,
-                ));
-                rest = &rest[marked_end..];
-            }
-            Some(MarkdownSpan::Image { start, end, alt }) => {
-                if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
-                }
-                // Inline images cannot reserve rows inside wrapped prose, so
-                // they fall back to their alt text.
-                if !alt.is_empty() {
-                    segments.push(StyledSegment::new(alt, Theme::text()));
-                }
-                rest = &rest[end..];
-            }
-            Some(MarkdownSpan::Link {
-                start,
-                end,
-                label,
-                target,
-            }) => {
-                if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
-                }
-                segments.push(StyledSegment::new(label, Theme::text()));
-                segments.push(StyledSegment::new(": ".to_string(), Theme::text()));
-                segments.push(StyledSegment::new(target, Theme::markdown_link()));
-                rest = &rest[end..];
-            }
-            Some(MarkdownSpan::RawUrl { start, end }) => {
-                if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
-                }
-                segments.push(StyledSegment::new(
-                    rest[start..end].to_string(),
-                    Theme::markdown_link(),
-                ));
-                rest = &rest[end..];
-            }
-            None => {
-                segments.push(StyledSegment::new(rest.to_string(), Theme::text()));
-                break;
-            }
-        }
-    }
-    segments
-}
-
-#[derive(Debug)]
-enum MarkdownSpan {
-    Styled {
-        start: usize,
-        marker_len: usize,
-        end: usize,
-        style: Style,
-    },
-    Image {
-        start: usize,
-        end: usize,
-        alt: String,
-    },
-    Link {
-        start: usize,
-        end: usize,
-        label: String,
-        target: String,
-    },
-    RawUrl {
-        start: usize,
-        end: usize,
-    },
-}
-
-fn next_markdown_span(line: &str) -> Option<MarkdownSpan> {
-    let candidates = [
-        next_markdown_image_span(line),
-        next_markdown_link(line),
-        next_raw_url(line),
-        next_delimited(line, "`", Theme::markdown_inline_code()),
-        next_delimited(line, "**", Theme::markdown_bold()),
-        next_delimited(line, "*", Theme::markdown_italic()),
-        next_delimited(line, "_", Theme::markdown_italic()),
-    ];
-    candidates
-        .into_iter()
-        .flatten()
-        .min_by_key(|span| match span {
-            MarkdownSpan::Styled {
-                start, marker_len, ..
-            } => (*start, std::cmp::Reverse(*marker_len)),
-            MarkdownSpan::Image { start, .. } => (*start, std::cmp::Reverse(1)),
-            MarkdownSpan::Link { start, .. } => (*start, std::cmp::Reverse(1)),
-            MarkdownSpan::RawUrl { start, .. } => (*start, std::cmp::Reverse(1)),
-        })
-}
-
-fn next_markdown_image_span(line: &str) -> Option<MarkdownSpan> {
-    let (image, range) = super::markdown_image::next_markdown_image(line)?;
-    Some(MarkdownSpan::Image {
-        start: range.start,
-        end: range.end,
-        alt: image.alt,
-    })
-}
-
-fn next_markdown_link(line: &str) -> Option<MarkdownSpan> {
-    let start = line.find('[')?;
-    let after_label = start + 1;
-    let close_label = line[after_label..].find(']')? + after_label;
-    let target_start = close_label + 2;
-    if !line[close_label + 1..].starts_with('(') || target_start >= line.len() {
-        return None;
-    }
-    let target_end = line[target_start..].find(')')? + target_start;
-    let label = &line[after_label..close_label];
-    let target = &line[target_start..target_end];
-    (!label.is_empty() && !target.is_empty()).then(|| MarkdownSpan::Link {
-        start,
-        end: target_end + 1,
-        label: label.to_string(),
-        target: target.to_string(),
-    })
-}
-
-fn next_raw_url(line: &str) -> Option<MarkdownSpan> {
-    let start = match (line.find("https://"), line.find("http://")) {
-        (Some(https), Some(http)) => https.min(http),
-        (Some(https), None) => https,
-        (None, Some(http)) => http,
-        (None, None) => return None,
-    };
-    let mut end = line[start..]
-        .find(|ch: char| ch.is_whitespace())
-        .map_or(line.len(), |offset| start + offset);
-    while end > start
-        && matches!(
-            line[..end].chars().last(),
-            Some('.' | ',' | ';' | ':' | '!' | '?' | ')' | ']')
-        )
-    {
-        end -= line[..end]
-            .chars()
-            .last()
-            .expect("end is after start")
-            .len_utf8();
-    }
-    (end > start).then_some(MarkdownSpan::RawUrl { start, end })
-}
-
-/// Byte length of the leading inline-markdown prefix that is safe to draw.
-///
-/// Open emphasis, links, code spans, and raw URLs hold only from their earliest
-/// opener onward. Text before that opener stays visible so the live line does
-/// not blank while markers complete.
-fn inline_markdown_stable_prefix_len(line: &str) -> usize {
-    first_unresolved_inline_markdown_start(line).unwrap_or(line.len())
-}
-
-/// Completed spans of one delimiter kind, plus the first still-open opener.
-///
-/// Ranges and `open_at` coexist so callers can ignore finished spans while still
-/// taking the minimum unresolved cut across marker kinds.
-#[derive(Debug, Default)]
-struct InlineDelimScan {
-    ranges: Vec<std::ops::Range<usize>>,
-    open_at: Option<usize>,
-}
-
-fn first_unresolved_inline_markdown_start(line: &str) -> Option<usize> {
-    let mut earliest: Option<usize> = None;
-    let mut consider = |open_at: Option<usize>| {
-        if let Some(pos) = open_at {
-            earliest = Some(earliest.map_or(pos, |existing| existing.min(pos)));
-        }
-    };
-
-    let code = complete_delimiter_ranges(line, "`", &[]);
-    consider(code.open_at);
-
-    let links = complete_link_ranges(line, &code.ranges);
-    consider(links.open_at);
-
-    let mut ignored_ranges = [code.ranges, links.ranges].concat();
-    consider(first_unclosed_raw_url_start(line, &ignored_ranges));
-
-    // Bold must win over italic for completed spans. Feed closed `**` ranges into
-    // the ignored set before scanning `*`/`_`, or a closed bold run with trailing
-    // text is treated as an open italic delimiter and the live preview vanishes.
-    let bold = complete_delimiter_ranges(line, "**", &ignored_ranges);
-    consider(bold.open_at);
-    ignored_ranges.extend(bold.ranges);
-
-    consider(complete_delimiter_ranges(line, "*", &ignored_ranges).open_at);
-    consider(complete_delimiter_ranges(line, "_", &ignored_ranges).open_at);
-    earliest
-}
-
-fn complete_link_ranges(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -> InlineDelimScan {
-    let mut ranges = Vec::new();
-    let mut search_from = 0;
-    while let Some(start) = find_char_outside_ranges(line, '[', search_from, ignored_ranges) {
-        let Some(close_label) =
-            find_char_outside_ranges(line, ']', start + '['.len_utf8(), ignored_ranges)
-        else {
-            return InlineDelimScan {
-                ranges,
-                open_at: Some(start),
-            };
-        };
-        let after_label = close_label + ']'.len_utf8();
-        // A trailing `]` may still grow into `](url)`. Hold from `[` until more
-        // input arrives; a following non-'(' character means plain brackets.
-        if after_label >= line.len() {
-            return InlineDelimScan {
-                ranges,
-                open_at: Some(start),
-            };
-        }
-        if !line[after_label..].starts_with('(') {
-            search_from = after_label;
-            continue;
-        }
-        let target_start = close_label + "](".len();
-        if target_start >= line.len() {
-            return InlineDelimScan {
-                ranges,
-                open_at: Some(start),
-            };
-        }
-        let Some(target_end) = line[target_start..]
-            .find(')')
-            .map(|index| index + target_start)
-        else {
-            return InlineDelimScan {
-                ranges,
-                open_at: Some(start),
-            };
-        };
-        if close_label == start + '['.len_utf8() || target_end == target_start {
-            return InlineDelimScan {
-                ranges,
-                open_at: Some(start),
-            };
-        }
-        ranges.push(start..target_end + ')'.len_utf8());
-        search_from = target_end + ')'.len_utf8();
-    }
-    InlineDelimScan {
-        ranges,
-        open_at: None,
-    }
-}
-
-fn complete_delimiter_ranges(
-    line: &str,
-    marker: &str,
-    ignored_ranges: &[std::ops::Range<usize>],
-) -> InlineDelimScan {
-    let mut ranges = Vec::new();
-    let mut search_from = 0;
-    while let Some(start) = find_marker_outside_ranges(line, marker, search_from, ignored_ranges) {
-        if marker == "*" && line[start..].starts_with("**") {
-            // Skip the whole bold marker. Advancing by one left the second `*`
-            // eligible and false-triggered unresolved italic after closed bold.
-            search_from = start + "**".len();
-            continue;
-        }
-        if !is_valid_stream_opener(line, marker, start) {
-            search_from = start + marker.len();
-            continue;
-        }
-
-        let content_start = start + marker.len();
-        let mut end_search_from = content_start;
-        let mut matched_end = None;
-        while let Some(end) =
-            find_marker_outside_ranges(line, marker, end_search_from, ignored_ranges)
-        {
-            if marker == "*" && line[end..].starts_with("**") {
-                end_search_from = end + "**".len();
-                continue;
-            }
-            if !is_valid_stream_closer(line, marker, end) {
-                end_search_from = end + marker.len();
-                continue;
-            }
-            if end > content_start {
-                matched_end = Some(end);
-            }
-            break;
-        }
-        let Some(end) = matched_end else {
-            return InlineDelimScan {
-                ranges,
-                open_at: Some(start),
-            };
-        };
-        ranges.push(start..end + marker.len());
-        search_from = end + marker.len();
-    }
-    InlineDelimScan {
-        ranges,
-        open_at: None,
-    }
-}
-
-fn is_valid_stream_opener(line: &str, marker: &str, marker_start: usize) -> bool {
-    let before = line[..marker_start].chars().next_back();
-    let after = line[marker_start + marker.len()..].chars().next();
-    // Opening emphasis cannot run into whitespace. A marker at EOL is still a
-    // potential opener so the missing closer keeps the line unresolved.
-    if after.is_some_and(char::is_whitespace) {
-        return false;
-    }
-    marker != "_"
-        || !matches!((before, after), (Some(before), Some(after)) if is_word_char(before) && is_word_char(after))
-}
-
-fn is_valid_stream_closer(line: &str, marker: &str, marker_start: usize) -> bool {
-    let before = line[..marker_start].chars().next_back();
-    let after = line[marker_start + marker.len()..].chars().next();
-    // Closing emphasis cannot follow whitespace, but may be followed by spaces
-    // or more prose (`**bold** tail`). The old shared rule rejected that case
-    // and hid the live markdown preview after every closed span.
-    if before.is_none_or(char::is_whitespace) {
-        return false;
-    }
-    marker != "_"
-        || !matches!((before, after), (Some(before), Some(after)) if is_word_char(before) && is_word_char(after))
-}
-
-fn first_unclosed_raw_url_start(
-    line: &str,
-    ignored_ranges: &[std::ops::Range<usize>],
-) -> Option<usize> {
-    let mut search_from = 0;
-    while let Some(start) = next_raw_url_start(line, search_from) {
-        if !is_inside_ranges(start, ignored_ranges)
-            && !line[start..].chars().any(char::is_whitespace)
-        {
-            return Some(start);
-        }
-        search_from = start + "http://".len();
-    }
-    None
-}
-
-fn next_raw_url_start(line: &str, search_from: usize) -> Option<usize> {
-    ["https://", "http://"]
-        .into_iter()
-        .filter_map(|scheme| {
-            line[search_from..]
-                .find(scheme)
-                .map(|index| search_from + index)
-        })
-        .min()
-}
-
-fn find_char_outside_ranges(
-    line: &str,
-    needle: char,
-    search_from: usize,
-    ignored_ranges: &[std::ops::Range<usize>],
-) -> Option<usize> {
-    line[search_from..]
-        .char_indices()
-        .map(|(index, ch)| (search_from + index, ch))
-        .find(|(index, ch)| *ch == needle && !is_inside_ranges(*index, ignored_ranges))
-        .map(|(index, _)| index)
-}
-
-fn find_marker_outside_ranges(
-    line: &str,
-    marker: &str,
-    search_from: usize,
-    ignored_ranges: &[std::ops::Range<usize>],
-) -> Option<usize> {
-    let mut current = search_from;
-    while let Some(relative_index) = line[current..].find(marker) {
-        let index = current + relative_index;
-        if !is_inside_ranges(index, ignored_ranges) {
-            return Some(index);
-        }
-        current = index + marker.len();
-    }
-    None
-}
-
-fn is_inside_ranges(index: usize, ranges: &[std::ops::Range<usize>]) -> bool {
-    ranges
-        .iter()
-        .any(|range| range.start <= index && index < range.end)
-}
-
-fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan> {
-    let mut search_from = 0;
-    while let Some(relative_start) = line[search_from..].find(marker) {
-        let start = search_from + relative_start;
-        if marker == "*" && line[start..].starts_with("**") {
-            search_from = start + "**".len();
-            continue;
-        }
-        if marker == "_" && !is_valid_underscore_delimiter(line, start) {
-            search_from = start + marker.len();
-            continue;
-        }
-
-        let content_start = start + marker.len();
-        let mut end_search_from = content_start;
-        while let Some(relative_end) = line[end_search_from..].find(marker) {
-            let end = end_search_from + relative_end;
-            if marker == "*" && line[end..].starts_with("**") {
-                end_search_from = end + "**".len();
-                continue;
-            }
-            if marker == "_" && !is_valid_underscore_delimiter(line, end) {
-                end_search_from = end + marker.len();
-                continue;
-            }
-            if end > content_start {
-                return Some(MarkdownSpan::Styled {
-                    start,
-                    marker_len: marker.len(),
-                    end,
-                    style,
-                });
-            }
-            break;
-        }
-        search_from = content_start;
-    }
-    None
-}
-
-fn is_valid_underscore_delimiter(line: &str, marker_start: usize) -> bool {
-    let before = line[..marker_start].chars().next_back();
-    let after = line[marker_start + 1..].chars().next();
-    !matches!((before, after), (Some(before), Some(after)) if is_word_char(before) && is_word_char(after))
-}
-
-fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
-}
-
-fn markdown_inline_text(line: &str) -> String {
-    markdown_inline_segments(line)
-        .iter()
-        .map(|segment| segment.text.as_str())
-        .collect()
 }
 
 fn wrap_markdown_line_ranges(line: &str, width: usize) -> Vec<std::ops::Range<usize>> {
