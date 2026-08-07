@@ -76,7 +76,7 @@ Rho exports discovered tools as:
 mcp__<server_identity>__<tool_name>
 ```
 
-Characters outside ASCII letters, digits, and `_` become `_`. If two remote names collapse to the same exported name, Rho keeps the first name in server discovery order and logs an actionable collision warning. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
+Components containing only ASCII letters, digits, and `_` remain unchanged. Rho encodes every other component, and components beginning with the reserved `_rho_` prefix, as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
 
 MCP tool calls use Rho's native tool registry, capability approval, cancellation, and shutdown path. Results preserve the MCP result, including structured content and non-text content, as JSON in the native tool result. MCP error results and transport failures become tool failures without stopping sibling servers.
 
@@ -100,5 +100,5 @@ Native Rho agents receive these tools. Claude CLI agents do not: Rho does not pa
 model above, so transports, startup budgets, tool namespacing, permissions,
 failure isolation, and shutdown behave identically. Plugin servers appear in
 inventories as `<plugin-name>/<server-name>` and expand the `${PLUGIN_ROOT}`
-and `${PLUGIN_DATA}` placeholders. A plugin with no valid MCP servers adds no
-MCP startup work, and the zero-server fast path above still applies.
+and `${PLUGIN_DATA}` placeholders. Discovery does not create `${PLUGIN_DATA}`.
+Rho creates it immediately before it starts each enabled stdio server. If directory preparation fails, Rho disables only that server. A plugin with no valid MCP servers adds no MCP startup work, and the zero-server fast path above still applies.

@@ -61,12 +61,25 @@ pub(crate) struct InvalidMcpServer {
     pub(crate) error: String,
 }
 
+/// Filesystem constraints attached to a package-provided MCP server.
+#[derive(Clone, Debug)]
+pub(crate) struct McpFilesystemPolicy {
+    /// Canonical directory that owns `directory_relative_to_root`.
+    pub(crate) directory_root: PathBuf,
+    /// Directory to create before launch, relative to `directory_root`.
+    pub(crate) directory_relative_to_root: PathBuf,
+    /// Filesystem roots that absolute commands and working directories may use.
+    pub(crate) allowed_roots: Vec<PathBuf>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct McpServerConfig {
     pub(crate) enabled: bool,
     pub(crate) tools: McpToolFilter,
     #[serde(flatten)]
     pub(crate) transport: McpTransport,
+    #[serde(skip)]
+    pub(crate) filesystem: Option<McpFilesystemPolicy>,
 }
 
 impl<'de> Deserialize<'de> for McpServerConfig {
@@ -147,6 +160,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             enabled: raw.enabled,
             tools: raw.tools,
             transport,
+            filesystem: None,
         })
     }
 }

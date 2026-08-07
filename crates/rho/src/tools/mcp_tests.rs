@@ -4,9 +4,9 @@ use pretty_assertions::assert_eq;
 
 use super::{
     call_remote_tool,
-    config::{McpConfig, McpServerConfig, McpToolFilter, McpTransport},
-    namespaced_tool_name, validate_remote_url, McpBundle, McpServerStatus,
-    MCP_RUNTIME_CONSTRUCTIONS,
+    config::{McpConfig, McpFilesystemPolicy, McpServerConfig, McpToolFilter, McpTransport},
+    namespaced_tool_name, prepare_server_filesystem, validate_remote_url, McpBundle,
+    McpServerStatus, MCP_RUNTIME_CONSTRUCTIONS,
 };
 use crate::tools::sdk_registry::ToolBundle;
 use rho_sdk::{tool::ToolErrorKind, CancellationToken};
@@ -49,6 +49,7 @@ async fn disabled_servers_are_reported_without_runtime() {
                     env: BTreeMap::new(),
                     env_from_env: BTreeMap::new(),
                 },
+                filesystem: None,
             },
         )]),
         invalid_servers: Vec::new(),
@@ -123,6 +124,73 @@ fn malformed_servers_are_isolated() {
     assert!(reloaded.invalid_servers.is_empty());
 }
 
+// Covers: package filesystem authority cannot leak into, or be forged through,
+// the user-owned MCP configuration format.
+// Owner: MCP configuration boundary.
+#[test]
+fn package_filesystem_policy_is_internal_only() {
+    let server = McpServerConfig {
+        enabled: true,
+        tools: McpToolFilter::default(),
+        transport: McpTransport::Stdio {
+            command: "server".into(),
+            args: Vec::new(),
+            cwd: None,
+            env: BTreeMap::new(),
+            env_from_env: BTreeMap::new(),
+        },
+        filesystem: Some(McpFilesystemPolicy {
+            directory_root: "/private/plugins".into(),
+            directory_relative_to_root: "data/demo".into(),
+            allowed_roots: vec!["/private/plugins/demo".into()],
+        }),
+    };
+
+    let serialized = toml::to_string(&server).unwrap();
+    assert!(!serialized.contains("filesystem"));
+    let reloaded: McpServerConfig = toml::from_str(&serialized).unwrap();
+    assert!(reloaded.filesystem.is_none());
+
+    let forged = format!("filesystem = 'package authority'\n{serialized}");
+    assert!(toml::from_str::<McpServerConfig>(&forged).is_err());
+}
+
+// Covers: an escaping symlink already present at activation is rejected before
+// the package data directory is created.
+// Owner: MCP filesystem policy.
+#[cfg(unix)]
+#[test]
+fn package_filesystem_rejects_observed_symlink_escape() {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = directory.path().join("plugins");
+    let plugin = storage.join("demo");
+    std::fs::create_dir_all(&plugin).unwrap();
+    let storage = std::fs::canonicalize(storage).unwrap();
+    let data = storage.join("data/demo");
+    let server = McpServerConfig {
+        enabled: true,
+        tools: McpToolFilter::default(),
+        transport: McpTransport::Stdio {
+            command: "server".into(),
+            args: Vec::new(),
+            cwd: Some(plugin.clone()),
+            env: BTreeMap::new(),
+            env_from_env: BTreeMap::new(),
+        },
+        filesystem: Some(McpFilesystemPolicy {
+            directory_root: storage.clone(),
+            directory_relative_to_root: "data/demo".into(),
+            allowed_roots: vec![plugin, data.clone()],
+        }),
+    };
+
+    let outside = directory.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, storage.join("data")).unwrap();
+    let error = prepare_server_filesystem(&server).unwrap_err();
+    assert!(error.to_string().contains("escapes its storage root"));
+}
+
 // Covers: remote credentials must not be sent over cleartext non-loopback URLs,
 // and exported names and filters must remain deterministic.
 // Owner: MCP pure security policy.
@@ -142,7 +210,11 @@ fn remote_and_tool_policy_is_deterministic() {
 
     assert_eq!(
         namespaced_tool_name("git-hub", "issues/list"),
-        "mcp__git_hub__issues_list"
+        "mcp___rho_6769742d687562___rho_6973737565732f6c697374"
+    );
+    assert_ne!(
+        namespaced_tool_name("devtools/validator", "lint"),
+        namespaced_tool_name("devtools_validator", "lint")
     );
     let filter = McpToolFilter {
         allow: vec!["read".into(), "write".into()],
@@ -257,6 +329,7 @@ async fn streamable_http_discovery() {
                     headers: BTreeMap::new(),
                     headers_from_env: BTreeMap::new(),
                 },
+                filesystem: None,
             },
         )]),
         invalid_servers: Vec::new(),
@@ -280,9 +353,11 @@ async fn stdio_lifecycle_and_failure_isolation() {
     let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
     let script = directory.path().join("server.py");
     let closed = directory.path().join("closed");
+    let data = directory.path().join("data/demo");
     fs::write(
         &script,
-        r#"import json, sys
+        r#"import json, os, sys
+assert os.environ["PLUGIN_DATA"] == sys.argv[2] and os.path.isdir(os.environ["PLUGIN_DATA"])
 for line in sys.stdin:
     message = json.loads(line)
     if "id" not in message:
@@ -315,11 +390,20 @@ open(sys.argv[1], "w").close()
         tools: McpToolFilter::default(),
         transport: McpTransport::Stdio {
             command: "python3".into(),
-            args: vec![script.display().to_string(), closed.display().to_string()],
+            args: vec![
+                script.display().to_string(),
+                closed.display().to_string(),
+                data.display().to_string(),
+            ],
             cwd: None,
-            env: BTreeMap::new(),
+            env: BTreeMap::from([("PLUGIN_DATA".into(), data.display().to_string())]),
             env_from_env: BTreeMap::new(),
         },
+        filesystem: Some(McpFilesystemPolicy {
+            directory_root: directory.path().to_path_buf(),
+            directory_relative_to_root: "data/demo".into(),
+            allowed_roots: vec![directory.path().to_path_buf(), data.clone()],
+        }),
     };
     let failed = McpServerConfig {
         enabled: true,
@@ -331,12 +415,19 @@ open(sys.argv[1], "w").close()
             env: BTreeMap::new(),
             env_from_env: BTreeMap::new(),
         },
+        filesystem: None,
     };
     let config = McpConfig {
-        servers: BTreeMap::from([("failed".into(), failed), ("test".into(), healthy)]),
+        servers: BTreeMap::from([
+            ("devtools/validator".into(), healthy.clone()),
+            ("devtools_validator".into(), healthy),
+            ("failed".into(), failed),
+        ]),
         invalid_servers: Vec::new(),
     };
+    assert!(!data.exists());
     let outcome = McpBundle::connect(&config).await;
+    assert!(data.is_dir());
     let bundle = outcome.bundle.unwrap();
     assert_eq!(
         bundle
@@ -344,7 +435,10 @@ open(sys.argv[1], "w").close()
             .iter()
             .map(|tool| tool.spec().name)
             .collect::<Vec<_>>(),
-        vec!["mcp__test__echo_value"]
+        vec![
+            "mcp___rho_646576746f6f6c732f76616c696461746f72___rho_6563686f2f76616c7565",
+            "mcp__devtools_validator___rho_6563686f2f76616c7565",
+        ]
     );
     let statuses = outcome
         .report
@@ -355,11 +449,11 @@ open(sys.argv[1], "w").close()
     assert_eq!(
         statuses,
         vec![
+            ("devtools/validator", McpServerStatus::Connected),
+            ("devtools_validator", McpServerStatus::Connected),
             ("failed", McpServerStatus::Failed),
-            ("test", McpServerStatus::Connected),
         ]
     );
-
     let peer = bundle.sessions.lock().await[0].peer().clone();
     let cancellation = CancellationToken::new();
     let content = call_remote_tool(

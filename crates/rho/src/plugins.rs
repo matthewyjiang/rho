@@ -29,6 +29,10 @@ mod mcp_adapter;
 #[path = "plugins_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "plugins/contain_tests.rs"]
+mod contain_tests;
+
 use std::path::{Path, PathBuf};
 
 use crate::skills::{Skill, SkillSource};
@@ -103,19 +107,32 @@ impl PluginDiscovery {
                 .extend(plugin.invalid_mcp_servers.iter().cloned());
         }
     }
+
+    pub(crate) fn skills_by_precedence(&self) -> Vec<Skill> {
+        self.plugins
+            .iter()
+            .flat_map(|plugin| plugin.skills.iter().cloned())
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Components {
+    All,
+    SkillsOnly,
 }
 
 /// Plugin-owned skills in precedence order for ordinary skill discovery.
 pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
-    discover(cwd, home)
-        .plugins
-        .into_iter()
-        .flat_map(|plugin| plugin.skills)
-        .collect()
+    discover_components(cwd, home, Components::SkillsOnly).skills_by_precedence()
 }
 
 /// Discover and load plugin packages from the explicit roots.
 pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
+    discover_components(cwd, home, Components::All)
+}
+
+fn discover_components(cwd: &Path, home: Option<&Path>, components: Components) -> PluginDiscovery {
     let mut discovery = PluginDiscovery {
         plugins: Vec::new(),
         report: PluginLoadReport::default(),
@@ -126,7 +143,13 @@ pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
             continue;
         };
         for candidate in candidates {
-            load_candidate(&mut discovery, &root.path, &candidate, root.scope);
+            load_candidate(
+                &mut discovery,
+                &root.path,
+                &candidate,
+                root.scope,
+                components,
+            );
         }
     }
 
@@ -174,6 +197,7 @@ fn load_candidate(
     plugins_root: &Path,
     candidate: &Path,
     scope: PluginScope,
+    components: Components,
 ) {
     let directory_name = candidate
         .file_name()
@@ -236,9 +260,10 @@ fn load_candidate(
 
     let skills = discover_plugin_skills(&manifest.name, &root, &mut problems);
 
-    let data_dir = plugins_root.join("data").join(&manifest.name);
-    let (mcp_servers, invalid_mcp_servers) =
-        load_mcp_component(&manifest, &root, &data_dir, &mut problems);
+    let (mcp_servers, invalid_mcp_servers) = match components {
+        Components::All => load_mcp_component(&manifest, &root, plugins_root, &mut problems),
+        Components::SkillsOnly => (Vec::new(), Vec::new()),
+    };
 
     if skills.is_empty() && mcp_servers.is_empty() && invalid_mcp_servers.is_empty() {
         problems.push("plugin has no usable components".to_string());
@@ -339,7 +364,7 @@ fn discover_plugin_skills(
 fn load_mcp_component(
     manifest: &manifest::PluginManifest,
     root: &Path,
-    data_dir: &Path,
+    plugins_root: &Path,
     problems: &mut Vec<String>,
 ) -> (Vec<(String, McpServerConfig)>, Vec<InvalidMcpServer>) {
     let mcp_path = root.join("mcp.json");
@@ -365,12 +390,28 @@ fn load_mcp_component(
         }
     };
 
+    let storage_root = match contain::canonical_root(plugins_root) {
+        Ok(root) => root,
+        Err(error) => {
+            problems.push(format!("MCP component invalid: {error}"));
+            return (Vec::new(), Vec::new());
+        }
+    };
+    let data_tail = format!("data/{}", manifest.name);
+    let data_dir = match contain::resolve_in_root(&storage_root, &data_tail) {
+        Ok(path) => path,
+        Err(error) => {
+            problems.push(format!("MCP component invalid: {error}"));
+            return (Vec::new(), Vec::new());
+        }
+    };
     let outcome = mcp_adapter::load_plugin_mcp(
         &text,
         &manifest.name,
         &manifest.spec_version,
         root,
-        data_dir,
+        &storage_root,
+        &data_dir,
     );
     if let Some(reason) = outcome.disabled_reason {
         problems.push(format!("MCP disabled for plugin: {reason}"));

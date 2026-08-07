@@ -13,7 +13,9 @@ use http::{HeaderName, HeaderValue};
 use serde_json::Value;
 
 use super::contain;
-use crate::tools::mcp::config::{InvalidMcpServer, McpServerConfig, McpToolFilter, McpTransport};
+use crate::tools::mcp::config::{
+    InvalidMcpServer, McpFilesystemPolicy, McpServerConfig, McpToolFilter, McpTransport,
+};
 
 pub(crate) const MCP_SCHEMA_1_0_0: &str = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 
@@ -42,6 +44,7 @@ pub(crate) fn load_plugin_mcp(
     plugin_name: &str,
     manifest_spec_version: &str,
     root: &Path,
+    storage_root: &Path,
     data_dir: &Path,
 ) -> PluginMcpOutcome {
     let mut outcome = PluginMcpOutcome::default();
@@ -101,7 +104,7 @@ pub(crate) fn load_plugin_mcp(
             });
             continue;
         }
-        match translate_server(name, server, root, data_dir) {
+        match translate_server(name, server, root, storage_root, data_dir) {
             Ok(config) => outcome.servers.push((name.clone(), config)),
             Err(ServerRejection::Invalid(error)) => outcome.invalid.push(InvalidMcpServer {
                 identity: format!("{plugin_name}/{name}"),
@@ -113,30 +116,6 @@ pub(crate) fn load_plugin_mcp(
         }
     }
 
-    // The spec requires the PLUGIN_DATA directory to exist before any plugin
-    // subprocess starts; create it only when a stdio server will use it.
-    let has_stdio = outcome
-        .servers
-        .iter()
-        .any(|(_, config)| matches!(config.transport, McpTransport::Stdio { .. }));
-    if has_stdio {
-        if let Err(error) = std::fs::create_dir_all(data_dir) {
-            let reason = format!("cannot create PLUGIN_DATA directory: {error}");
-            let mut remaining = Vec::new();
-            for (name, config) in outcome.servers.drain(..) {
-                if matches!(config.transport, McpTransport::Stdio { .. }) {
-                    outcome.invalid.push(InvalidMcpServer {
-                        identity: format!("{plugin_name}/{name}"),
-                        error: reason.clone(),
-                    });
-                } else {
-                    remaining.push((name, config));
-                }
-            }
-            outcome.servers = remaining;
-        }
-    }
-
     outcome
 }
 
@@ -144,6 +123,7 @@ fn translate_server(
     name: &str,
     value: &Value,
     root: &Path,
+    storage_root: &Path,
     data_dir: &Path,
 ) -> Result<McpServerConfig, ServerRejection> {
     let invalid = |error: String| Err(ServerRejection::Invalid(error));
@@ -151,9 +131,13 @@ fn translate_server(
         return invalid(format!("server `{name}` must be a JSON object"));
     };
 
-    let transport = match object.get("type").and_then(Value::as_str) {
-        Some("stdio") => translate_stdio(name, object, root, data_dir)?,
-        Some("streamable-http") => translate_remote(name, object, "streamable-http")?,
+    let (transport, filesystem) = match object.get("type").and_then(Value::as_str) {
+        Some("stdio") => {
+            let (transport, filesystem) =
+                translate_stdio(name, object, root, storage_root, data_dir)?;
+            (transport, Some(filesystem))
+        }
+        Some("streamable-http") => (translate_remote(name, object, "streamable-http")?, None),
         Some("sse") => return Err(ServerRejection::UnsupportedTransport("sse")),
         Some(other) => return invalid(format!("server `{name}` has unknown transport `{other}`")),
         None => return invalid(format!("server `{name}` is missing required `type`")),
@@ -163,6 +147,7 @@ fn translate_server(
         enabled: true,
         tools: McpToolFilter::default(),
         transport,
+        filesystem,
     })
 }
 
@@ -170,8 +155,9 @@ fn translate_stdio(
     name: &str,
     object: &serde_json::Map<String, Value>,
     root: &Path,
+    storage_root: &Path,
     data_dir: &Path,
-) -> Result<McpTransport, ServerRejection> {
+) -> Result<(McpTransport, McpFilesystemPolicy), ServerRejection> {
     let invalid = |error: String| Err(ServerRejection::Invalid(error));
     for key in object.keys() {
         if !matches!(key.as_str(), "type" | "command" | "args" | "env" | "cwd") {
@@ -250,22 +236,34 @@ fn translate_stdio(
 
     let cwd = match object.get("cwd").and_then(Value::as_str) {
         None => root.to_path_buf(),
-        Some(cwd) => resolve_cwd(name, cwd, root, data_dir)?,
+        Some(cwd) => resolve_cwd(name, cwd, root, storage_root, data_dir)?,
     };
 
-    Ok(McpTransport::Stdio {
+    let transport = McpTransport::Stdio {
         command,
         args,
         cwd: Some(cwd),
         env,
         env_from_env: BTreeMap::new(),
-    })
+    };
+    let data_relative_to_storage = data_dir.strip_prefix(storage_root).map_err(|_| {
+        ServerRejection::Invalid(format!(
+            "server `{name}` PLUGIN_DATA is outside the plugin storage root"
+        ))
+    })?;
+    let filesystem = McpFilesystemPolicy {
+        directory_root: storage_root.to_path_buf(),
+        directory_relative_to_root: data_relative_to_storage.to_path_buf(),
+        allowed_roots: vec![root.to_path_buf(), data_dir.to_path_buf()],
+    };
+    Ok((transport, filesystem))
 }
 
 fn resolve_cwd(
     name: &str,
     cwd: &str,
     root: &Path,
+    storage_root: &Path,
     data_dir: &Path,
 ) -> Result<std::path::PathBuf, ServerRejection> {
     let invalid = |error: String| Err(ServerRejection::Invalid(error));
@@ -286,7 +284,16 @@ fn resolve_cwd(
         return Ok(data_dir.to_path_buf());
     }
     if let Some(tail) = cwd.strip_prefix(&format!("{PLUGIN_DATA_PLACEHOLDER}/")) {
-        return resolve(data_dir, tail);
+        let data_relative = data_dir.strip_prefix(storage_root).map_err(|_| {
+            ServerRejection::Invalid(format!(
+                "server `{name}` PLUGIN_DATA is outside the plugin storage root"
+            ))
+        })?;
+        let relative = data_relative.join(tail);
+        let relative = relative.to_str().ok_or_else(|| {
+            ServerRejection::Invalid(format!("server `{name}` cwd is not valid UTF-8"))
+        })?;
+        return resolve(storage_root, relative);
     }
     invalid(format!(
         "server `{name}` cwd must be plugin-relative, ${{PLUGIN_ROOT}}-rooted, or ${{PLUGIN_DATA}}-rooted"

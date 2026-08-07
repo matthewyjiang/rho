@@ -76,6 +76,15 @@ pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
 }
 
 pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
+    let plugin_skills = crate::plugins::skills_by_precedence(cwd, home);
+    discover_with_plugin_skills(cwd, home, plugin_skills)
+}
+
+pub(crate) fn discover_with_plugin_skills(
+    cwd: &Path,
+    home: Option<&Path>,
+    plugin_skills: Vec<Skill>,
+) -> Vec<Skill> {
     let mut roots = Vec::new();
     if let Some(home) = home {
         roots.push(home.join(".rho").join("skills"));
@@ -103,7 +112,7 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
                 }
             }),
     );
-    candidates.extend(crate::plugins::skills_by_precedence(cwd, home));
+    candidates.extend(plugin_skills);
 
     let mut skills: Vec<Skill> = Vec::with_capacity(candidates.len());
     for candidate in candidates {

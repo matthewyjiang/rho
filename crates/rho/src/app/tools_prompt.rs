@@ -90,6 +90,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     // MCP servers through the generic native MCP configuration.
     let plugin_discovery =
         crate::plugins::discover(options.cwd, crate::paths::home_dir().as_deref());
+    let plugin_skills = plugin_discovery.skills_by_precedence();
     crate::plugins::log(&plugin_discovery.report);
     let mut mcp_config = options.config.mcp.clone();
     plugin_discovery.merge_mcp_into(&mut mcp_config);
@@ -146,7 +147,8 @@ pub(crate) async fn assemble_tools_and_prompt(
         let (mut text, mut advisor_text) = match options.agent.prompt() {
             PromptPolicy::Replace(text) => (text.clone(), text.clone()),
             PromptPolicy::Extend(extra) => {
-                let mut built = prompt::system_prompt(&specs, options.cwd);
+                let mut built =
+                    prompt::system_prompt_with_plugin_skills(&specs, options.cwd, plugin_skills);
                 options.diagnostics.update_prompt_sources(built.sources);
                 if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut built.text);
@@ -154,11 +156,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                 let mut advisor_text = built.text.clone();
                 prompt::append_advisor_instruction(&mut advisor_text);
                 if !extra.is_empty() {
-                    let instructions = format!("
-
-# Agent instructions
-
-{extra}");
+                    let instructions = format!("\n\n# Agent instructions\n\n{extra}");
                     built.text.push_str(&instructions);
                     advisor_text.push_str(&instructions);
                 }

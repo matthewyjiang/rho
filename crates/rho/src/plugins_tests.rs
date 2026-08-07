@@ -506,6 +506,7 @@ fn translates_stdio_server_with_placeholders() {
     let plugin = loaded_plugin(&discovery, "devtools");
     let (name, config) = &plugin.mcp_servers[0];
     assert_eq!(name, "validator");
+    assert!(config.filesystem.is_some());
     match &config.transport {
         McpTransport::Stdio {
             command,
@@ -531,8 +532,9 @@ fn translates_stdio_server_with_placeholders() {
             assert_eq!(cwd, &Some(PathBuf::from(&root)));
             assert_eq!(env.get("CONFIG").unwrap(), &format!("{root}/config.json"));
             assert!(env_from_env.is_empty());
-            // PLUGIN_DATA exists before any subprocess would start.
-            assert!(Path::new(&data).is_dir());
+            // Discovery stays side-effect free; the runtime creates
+            // PLUGIN_DATA immediately before starting the subprocess.
+            assert!(!Path::new(&data).exists());
         }
         other => panic!("expected stdio transport, got {other:?}"),
     }

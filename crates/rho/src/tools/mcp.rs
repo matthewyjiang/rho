@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     net::IpAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
@@ -16,7 +16,7 @@ use rho_sdk::{
         ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, NetworkTarget, ProcessEnvironment,
-    ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ProcessExecution, ProcessInvocation, ProcessOutputLimits, Workspace,
 };
 use rmcp::{
     model::{CallToolRequestParams, ClientInfo},
@@ -315,6 +315,7 @@ async fn connect_server(
     identity: &str,
     server: &McpServerConfig,
 ) -> anyhow::Result<(McpSession, Vec<rmcp::model::Tool>)> {
+    prepare_server_filesystem(server)?;
     let mut session = match &server.transport {
         McpTransport::Stdio {
             command,
@@ -424,6 +425,77 @@ fn stdio_process_environment(
     ProcessEnvironment::InheritListed { variable_names }
 }
 
+fn prepare_server_filesystem(server: &McpServerConfig) -> anyhow::Result<()> {
+    let Some(policy) = &server.filesystem else {
+        return Ok(());
+    };
+    let storage = Workspace::new(&policy.directory_root).with_context(|| {
+        format!(
+            "cannot resolve package storage root `{}`",
+            policy.directory_root.display()
+        )
+    })?;
+    let requested_directory = storage.root().join(&policy.directory_relative_to_root);
+    let directory = storage
+        .resolve_for_write(&requested_directory)
+        .with_context(|| {
+            format!(
+                "package data directory `{}` escapes its storage root",
+                requested_directory.display()
+            )
+        })?;
+    std::fs::create_dir_all(directory.path()).with_context(|| {
+        format!(
+            "cannot create package data directory `{}`",
+            directory.path().display()
+        )
+    })?;
+    storage
+        .resolve_for_read(directory.path())
+        .with_context(|| {
+            format!(
+                "cannot revalidate package data directory `{}` after creation",
+                directory.path().display()
+            )
+        })?;
+
+    let (primary_root, granted_roots) = policy
+        .allowed_roots
+        .split_first()
+        .context("package MCP filesystem policy has no allowed roots")?;
+    let mut allowed = Workspace::new(primary_root).with_context(|| {
+        format!(
+            "cannot resolve allowed MCP root `{}`",
+            primary_root.display()
+        )
+    })?;
+    for root in granted_roots {
+        allowed = allowed
+            .with_granted_root(root)
+            .with_context(|| format!("cannot resolve allowed MCP root `{}`", root.display()))?;
+    }
+    if let McpTransport::Stdio { command, cwd, .. } = &server.transport {
+        let command_path = Path::new(command);
+        if command_path.is_absolute() {
+            allowed.resolve_for_read(command_path).with_context(|| {
+                format!(
+                    "MCP command `{}` escapes its permitted roots",
+                    command_path.display()
+                )
+            })?;
+        }
+        if let Some(cwd) = cwd {
+            allowed.resolve_for_read(cwd).with_context(|| {
+                format!(
+                    "MCP working directory `{}` escapes its permitted roots",
+                    cwd.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_identity(identity: &str) -> anyhow::Result<()> {
     if identity.is_empty()
         || !identity
@@ -448,19 +520,24 @@ pub(crate) fn validate_remote_url(value: &str) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
 fn namespaced_tool_name(server: &str, tool: &str) -> String {
     fn component(value: &str) -> String {
-        value
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || character == '_' {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect()
+        const ESCAPE_PREFIX: &str = "_rho_";
+        let already_safe = value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        if already_safe && !value.starts_with(ESCAPE_PREFIX) {
+            return value.to_string();
+        }
+
+        let mut encoded = String::with_capacity(ESCAPE_PREFIX.len() + value.len() * 2);
+        encoded.push_str(ESCAPE_PREFIX);
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        for byte in value.bytes() {
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        encoded
     }
     format!("mcp__{}__{}", component(server), component(tool))
 }
