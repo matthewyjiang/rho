@@ -30,6 +30,7 @@ reqwest = { version = "0.12", features = ["json", "native-tls", "stream"] }
 native-tls = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml_ng = "0.10"
 clap = { version = "4", features = ["derive"] }
 humantime = "2"
 anyhow = "1"
@@ -70,6 +71,14 @@ pulldown-cmark = { version = "0.13.4", default-features = false, features = ["ht
 katex-rs = "0.2.4"
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+rmcp = { version = "3.1.1", default-features = false, features = [
+    "client",
+    "reqwest-native-tls",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+    "which-command",
+] }
+http = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

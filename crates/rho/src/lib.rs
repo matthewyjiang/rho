@@ -1,6 +1,7 @@
 mod agent;
 mod app;
 mod changelog;
+mod child_env;
 mod claude_runtime;
 mod cli;
 mod clipboard;
@@ -18,6 +19,7 @@ mod keybindings;
 mod model_aliases;
 mod paths;
 mod permission;
+mod plugins;
 mod prompt;
 mod prompt_templates;
 mod questionnaire;

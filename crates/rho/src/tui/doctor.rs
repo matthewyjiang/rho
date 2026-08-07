@@ -26,6 +26,8 @@ pub(super) struct DoctorContext<'a> {
     pub(super) provider_health: &'a [(String, ProviderModelHealth)],
     /// Claude Code binary and auth probe. Not a Rho credential.
     pub(super) claude: &'a ClaudeProbeSnapshot,
+    pub(super) mcp_report: &'a crate::tools::mcp::McpSessionReport,
+    pub(super) plugins_report: &'a crate::plugins::PluginLoadReport,
 }
 
 #[derive(Clone, Copy)]
@@ -220,6 +222,8 @@ fn misc_checks(context: &DoctorContext<'_>) -> Vec<DoctorCheck> {
         context.herdr_enabled,
         context.herdr_socket_reachable,
     ));
+    checks.push(mcp_check(context.mcp_report));
+    checks.push(plugins_check(context.plugins_report));
     checks
 }
 
@@ -377,6 +381,107 @@ fn herdr_check(enabled: bool, socket_reachable: Option<bool>) -> DoctorCheck {
         status: status.into(),
         healthy,
         detail: detail.into(),
+    }
+}
+
+fn mcp_check(report: &crate::tools::mcp::McpSessionReport) -> DoctorCheck {
+    use crate::tools::mcp::McpLoadMode;
+
+    let summary = report.summary();
+    let (status, healthy, detail) =
+        if !summary.configured {
+            (
+                "not configured".into(),
+                true,
+                "No MCP servers under [mcp.servers].".into(),
+            )
+        } else {
+            match summary.mode {
+            McpLoadMode::Native if summary.problems == 0 => (
+                if summary.connected > 0 { "connected" } else { "idle" }.into(),
+                true,
+                format!(
+                    "{} connected server{}, {} exported tool{}.",
+                    summary.connected,
+                    super::plural_suffix(summary.connected),
+                    summary.exported_tools,
+                    super::plural_suffix(summary.exported_tools),
+                ),
+            ),
+            McpLoadMode::Native => (
+                "degraded".into(),
+                false,
+                format!(
+                    "{} server problem{}, {} connected, {} tool{}. Run /mcp for details.",
+                    summary.problems,
+                    super::plural_suffix(summary.problems),
+                    summary.connected,
+                    summary.exported_tools,
+                    super::plural_suffix(summary.exported_tools),
+                ),
+            ),
+            McpLoadMode::UnsupportedAgent => (
+                "unsupported agent".into(),
+                summary.enabled == 0 && summary.problems == 0,
+                "Native MCP loads only for Rho agents. The active agent does not host MCP tools."
+                    .into(),
+            ),
+            McpLoadMode::ToolsDisabled => (
+                "tools disabled".into(),
+                true,
+                "This session started with tools disabled, so MCP was not connected.".into(),
+            ),
+        }
+        };
+    DoctorCheck {
+        section: DoctorSection::Misc,
+        label: "MCP".into(),
+        status,
+        healthy,
+        detail,
+    }
+}
+
+fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
+    let summary = report.summary();
+    let healthy = summary.rejected == 0 && summary.problems == 0;
+    let status = if !summary.discovered {
+        "none discovered".into()
+    } else if healthy && summary.disabled == 0 {
+        format!("{} loaded", summary.loaded)
+    } else if healthy {
+        format!("{} loaded, {} disabled", summary.loaded, summary.disabled)
+    } else {
+        format!(
+            "{} loaded, {} disabled, {} rejected, {} problem{}",
+            summary.loaded,
+            summary.disabled,
+            summary.rejected,
+            summary.problems,
+            super::plural_suffix(summary.problems)
+        )
+    };
+    let detail = if summary.discovered {
+        format!(
+            "{} skill{}, {} MCP server{}; supported: {}",
+            summary.skills,
+            super::plural_suffix(summary.skills),
+            summary.mcp_servers,
+            super::plural_suffix(summary.mcp_servers),
+            crate::plugins::SUPPORTED_COMPONENTS
+        )
+    } else {
+        format!(
+            "no Agent Plugins found in the explicit roots; supported: {}",
+            crate::plugins::SUPPORTED_COMPONENTS
+        )
+    };
+    DoctorCheck {
+        section: DoctorSection::Misc,
+        label: "Agent Plugins".into(),
+        status,
+        healthy,
+        detail,
     }
 }
 

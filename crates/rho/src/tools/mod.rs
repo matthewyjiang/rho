@@ -2,6 +2,7 @@ pub mod advisor;
 pub mod agent;
 mod agent_output;
 mod coding;
+pub(crate) mod mcp;
 pub(crate) mod process;
 pub mod rho;
 mod sdk_features;

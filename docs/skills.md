@@ -37,6 +37,19 @@ The file has three parts:
 - Body: Write the instructions after the front matter. Rho loads this text as
   written when the model uses the skill.
 
+Front matter is real YAML, parsed by a maintained YAML library. Optional
+[Agent Skills](https://agentskills.io/specification) fields are supported and
+validated:
+
+- `license`: a license name or a reference to a bundled license file.
+- `compatibility`: up to 500 characters describing environment requirements.
+- `metadata`: a map of string keys to string values for extra properties.
+- `allowed-tools`: experimental, a space-separated list of pre-approved tools.
+
+Rho also reads `disable-model-invocation` (a boolean). It is a client
+extension outside the Agent Skills field set. When true, the skill stays out
+of the prompt metadata and only loads through direct user invocation.
+
 ## Where Rho looks for skills
 
 Rho checks these locations in order. First match wins. Built-ins cannot be
@@ -47,7 +60,8 @@ flowchart TD
     builtins[Built-in skills] --> rhoHome["~/.rho/skills"]
     rhoHome --> agentsHome["~/.agents/skills"]
     agentsHome --> project["project .agents/skills nearest first"]
-    project --> pick[First matching name wins]
+    project --> plugins["Agent Plugins skills: project plugins, then ~/.agents/plugins"]
+    plugins --> pick[First matching name wins]
 ```
 
 ```text
@@ -55,16 +69,20 @@ built-in skills (shipped with Rho)
 ~/.rho/skills/<name>/SKILL.md
 ~/.agents/skills/<name>/SKILL.md
 <project>/.agents/skills/<name>/SKILL.md   (nearest directory first, up to the repository root)
+<project>/.agents/plugins/<plugin>/skills/<name>/SKILL.md   (nearest directory first)
+~/.agents/plugins/<plugin>/skills/<name>/SKILL.md
 ```
 
-If Rho finds the same skill name more than once, it uses the first copy. You
-can't replace a built-in skill with a user skill. Skills in your home directory
-take priority over project skills. Within a project, Rho starts at the working
-directory and searches up to the repository root.
+If Rho finds the same skill name more than once, it uses the first copy and
+logs the selected and ignored sources. You can't replace a built-in skill
+with a user skill. Skills in your home directory take priority over project
+skills. Loose skills take priority over plugin skills. Within a project, Rho
+starts at the working directory and searches up to the repository root.
+Plugin packages are described in [Agent Plugins](/integrations/plugins).
 
 ## Add a skill
 
-You don't need an install command. Choose where the skill should live:
+Loose skills do not need an install command. Choose where the skill should live:
 
 - `~/.rho/skills` makes it available only to Rho.
 - `~/.agents/skills` shares it with Rho and other agents that use this layout.
@@ -81,6 +99,11 @@ touch ~/.agents/skills/inspect-logs/SKILL.md
 Open the new file and follow the format above. To add a third-party skill, copy
 its directory into one of these locations.
 Read its instructions before you use it.
+
+Plugin-owned skills arrive through [Agent Plugin packages](/integrations/plugins)
+(`rho plugins install` / `link`). Those skills keep the package as their owner
+and sit below every loose skill location in precedence. Loose skills and
+plugin-owned skills stay distinct in inventory output.
 
 ## Built-in skills
 

@@ -23,6 +23,7 @@ pub enum CommandId {
     Doctor,
     Limits,
     Export,
+    Mcp,
     Title,
     Fast,
     Workflow,
@@ -226,6 +227,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: &[],
     },
     CommandSpec {
+        id: CommandId::Mcp,
+        name: "mcp",
+        usage: "/mcp",
+        description: "show configured MCP servers and session load status",
+        argument_choices: &[],
+    },
+    CommandSpec {
         id: CommandId::Model,
         name: "model",
         usage: "/model [model]",
@@ -424,7 +432,7 @@ mod tests {
 
     #[test]
     fn matches_commands_by_case_insensitive_prefix() {
-        let matches = matching_commands(command_prefix("/M").unwrap());
+        let matches = matching_commands(command_prefix("/Mo").unwrap());
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].name, "model");

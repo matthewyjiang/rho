@@ -8,12 +8,9 @@ use rho_sdk::{
 };
 
 use {
-    crate::compaction::CompactionConfig,
-    crate::config::Config,
-    crate::diagnostics::RuntimeDiagnostics,
-    crate::permission::PermissionMode,
-    crate::session::Session as StoredSession,
-    crate::tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
+    crate::compaction::CompactionConfig, crate::config::Config,
+    crate::diagnostics::RuntimeDiagnostics, crate::permission::PermissionMode,
+    crate::session::Session as StoredSession, crate::tools::sdk_registry::AppToolSet,
 };
 
 #[path = "interactive_runtime_advisor.rs"]
@@ -31,10 +28,8 @@ use super::{
     interactive_session_controller::{InteractiveSessionController, ReplacementSessionSource},
     policy::AppPolicy,
     provider_controller::ProviderController,
-    runtime_builder::{
-        build_compaction, build_runtime, configured_context_window, RuntimeBuildOptions,
-    },
-    tools_prompt::{assemble_tools_and_prompt, SystemPromptVariants, ToolsAndPromptOptions},
+    runtime_builder::{build_compaction, build_runtime, RuntimeBuildOptions},
+    tools_prompt::SystemPromptVariants,
 };
 
 pub(crate) use super::interactive_run_controller::{
@@ -44,8 +39,7 @@ use super::interactive_state::{
     active_run_disposition, ActiveRunCommand, ActiveRunDisposition, InteractiveState,
 };
 use startup::{
-    approval_channel_for, prompt_cache_key, resolve_provider, resolve_session_options,
-    resume_omissions_report,
+    approval_channel_for, bind_subagent_parent, prompt_cache_key, resume_omissions_report,
 };
 
 pub(crate) struct InteractiveRuntimeOptions<'a> {
@@ -73,6 +67,8 @@ pub(crate) struct InteractiveRuntime {
     sessions: InteractiveSessionController,
     provider: ProviderController,
     tools: AppToolSet,
+    mcp_report: crate::tools::mcp::McpSessionReport,
+    plugins_report: crate::plugins::PluginLoadReport,
     workspace: Workspace,
     system_prompt: SystemPromptVariants,
     compaction: CompactionConfig,
@@ -93,22 +89,6 @@ pub(crate) struct InteractiveRuntime {
     completed_runs: u64,
 }
 
-fn bind_subagent_parent(
-    tools: &AppToolSet,
-    session_id: &SessionId,
-    storage: Option<&StoredSession>,
-) {
-    if let Some(manager) = tools.subagents() {
-        manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
-            session_id.to_string(),
-            storage.and_then(StoredSession::subagents_dir),
-        ));
-    }
-    tools
-        .workflow_tracker()
-        .bind_parent_session(session_id.to_string());
-}
-
 enum TurnPrelude {
     None,
     ToolCall(ToolCall),
@@ -122,100 +102,7 @@ enum ReplacementLifecycle {
 
 impl InteractiveRuntime {
     pub(crate) async fn new(options: InteractiveRuntimeOptions<'_>) -> anyhow::Result<Self> {
-        let InteractiveRuntimeOptions {
-            config,
-            config_path,
-            cwd,
-            no_system_prompt,
-            no_tools,
-            no_subagents,
-            questionnaire_enabled,
-            history,
-            session_id,
-            storage,
-            diagnostics,
-            agent,
-            unavailable_error,
-        } = options;
-        let agent_id = agent.id().to_string();
-        let agent_fingerprint = agent.fingerprint().to_string();
-        let sdk_options = super::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
-        let provider = resolve_provider(unavailable_error, &sdk_options)?;
-        let (tools, system_prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
-            config,
-            config_path,
-            cwd: &cwd,
-            no_system_prompt,
-            no_tools,
-            no_subagents,
-            questionnaire_enabled,
-            background_subagents: BackgroundSubagents::Enabled,
-            diagnostics: &diagnostics,
-            agent: &agent,
-        })?;
-        let workspace = sdk_options.workspace.build_workspace()?;
-        let context_window = configured_context_window(config);
-        let compaction = sdk_options.runtime.compaction.clone();
-        let permission_mode = config.permission_mode;
-        let (approval_handler, approval_receiver) = approval_channel_for(permission_mode);
-        diagnostics.update_compaction_config(&compaction);
-        let usage_recording = crate::usage::default_recording().await;
-        let hooks = crate::hooks::start_for_cwd(&cwd);
-        if let Some(hooks) = hooks.as_ref() {
-            diagnostics.attach_hooks(hooks);
-        }
-        let runtime = build_runtime(RuntimeBuildOptions {
-            provider: Arc::clone(&provider),
-            tools: tools.tools(),
-            workspace: workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(permission_mode),
-            approval_session: approval_handler
-                .clone()
-                .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: system_prompt.for_advisor_mode(tools.advisor_registered()),
-            reasoning: sdk_options.runtime.reasoning,
-            service_tier: sdk_options.runtime.service_tier,
-            compaction: compaction.clone(),
-            context_window,
-            usage_purpose: "agent",
-            usage_parent_session_id: None,
-            usage_recording: usage_recording.clone(),
-            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            hooks: hooks.as_ref(),
-        })?;
-        let session_options =
-            resolve_session_options(&provider, history, session_id.as_deref(), storage.as_ref())?;
-        let session = runtime.session(session_options).await?;
-        bind_subagent_parent(&tools, session.id(), storage.as_ref());
-        Ok(Self {
-            runtime,
-            hooks,
-            runs: InteractiveRunController::default(),
-            sessions: InteractiveSessionController::new(
-                session,
-                storage,
-                tools.web_access().clone(),
-                tools.advisor().cloned(),
-            ),
-            provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
-            tools,
-            workspace,
-            system_prompt,
-            compaction,
-            context_window,
-            usage_recording,
-            permission_mode,
-            experimental_workspace_rewind: config.experimental_workspace_rewind,
-            approval_handler,
-            approval_receiver,
-            agent,
-            agent_id,
-            agent_fingerprint,
-            pending_persistence_error: None,
-            pending_persistence_checkpoint: None,
-            live_context_warm: false,
-            completed_runs: 0,
-        })
+        startup::initialize(options).await
     }
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
@@ -841,6 +728,14 @@ impl InteractiveRuntime {
 
     pub(crate) fn has_tool(&self, name: &str) -> bool {
         self.tools.contains(name)
+    }
+
+    pub(crate) fn mcp_report(&self) -> &crate::tools::mcp::McpSessionReport {
+        &self.mcp_report
+    }
+
+    pub(crate) fn plugins_report(&self) -> &crate::plugins::PluginLoadReport {
+        &self.plugins_report
     }
 
     /// Returns the tool ceiling for workflow agents started by this session.

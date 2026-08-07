@@ -78,6 +78,12 @@ PTY-as-product-gate defaults.
 
 Pull requests that add tests should fill the test-gate section in the pull request template.
 
+## Test prerequisites
+
+Some integration tests spawn local fixtures and need host tools on `PATH`:
+
+- `stdio_lifecycle_and_failure_isolation` in `crates/rho/src/tools/mcp_tests.rs` is Unix-gated and requires `python3` to run its stdio MCP server fixture.
+
 ## Interactive TUI PTY harness
 
 Rho includes a deterministic PTY harness in `crates/rho-tui-pty` for automated interactive TUI tests. Prefer it over manual Herdr smoke tests for regressions that can be expressed as scripted scenarios. PTY is the product gate for interactive behavior; unit tests under `crates/rho/src/tui` stay limited to pure logic.

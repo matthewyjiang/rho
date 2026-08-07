@@ -372,6 +372,7 @@ impl App {
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
             CommandId::Export => self.execute_export_command(&invocation),
+            CommandId::Mcp => self.execute_mcp_command(),
             CommandId::Title => self.execute_title_command(&invocation),
             CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),

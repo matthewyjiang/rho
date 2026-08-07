@@ -22,6 +22,8 @@ impl App {
     pub(super) fn new(
         info: TuiBootstrap,
         herdr_graphics: crate::herdr::HerdrGraphicsCapability,
+        mcp_report: crate::tools::mcp::McpSessionReport,
+        plugins_report: crate::plugins::PluginLoadReport,
     ) -> Self {
         #[cfg(debug_assertions)]
         if smoke_injection::matrix_enabled() {
@@ -29,15 +31,25 @@ impl App {
                 info,
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
                 herdr_graphics,
+                mcp_report,
+                plugins_report,
             );
         }
-        Self::new_with_credentials(info, Arc::new(AppCredentialStore), herdr_graphics)
+        Self::new_with_credentials(
+            info,
+            Arc::new(AppCredentialStore),
+            herdr_graphics,
+            mcp_report,
+            plugins_report,
+        )
     }
 
     pub(super) fn new_with_credentials(
         info: TuiBootstrap,
         credential_store: Arc<dyn CredentialStore>,
         herdr_graphics: crate::herdr::HerdrGraphicsCapability,
+        mcp_report: crate::tools::mcp::McpSessionReport,
+        plugins_report: crate::plugins::PluginLoadReport,
     ) -> Self {
         let available_auths = available_auth_modes(credential_store.as_ref());
         let using_unavailable_provider = info.services.auth_unavailable.is_some();
@@ -94,6 +106,8 @@ impl App {
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
             screen_selection: None,
+            mcp_report,
+            plugins_report,
         };
         if let Some(status) = initial_status {
             app.set_status(status);

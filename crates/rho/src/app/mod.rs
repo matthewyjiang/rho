@@ -13,6 +13,8 @@ pub(crate) mod interactive_runtime;
 mod interactive_session_controller;
 mod interactive_state;
 mod login;
+mod mcp_cli;
+mod plugins_cli;
 mod policy;
 mod provider_controller;
 mod runtime_builder;

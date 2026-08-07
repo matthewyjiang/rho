@@ -1,19 +1,66 @@
+//! Agent Skills discovery and SKILL.md parsing.
+//!
+//! Frontmatter follows the Agent Skills specification (name, description,
+//! license, compatibility, metadata, allowed-tools) and is parsed with a real
+//! YAML parser. `disable-model-invocation` is a Rho extension outside the
+//! Agent Skills field set; it stays opt-in per skill and is enforced only by
+//! prompt metadata injection.
+//!
+//! Precedence, highest first; the first source for a name wins and conflicts
+//! are reported instead of hidden:
+//!
+//! 1. built-in skills
+//! 2. loose user skills: `~/.rho/skills`, then `~/.agents/skills`
+//! 3. loose project skills: nearest `.agents/skills` ancestor first
+//! 4. project Agent Plugins skills: nearest `.agents/plugins` ancestor first
+//! 5. user Agent Plugins skills: `~/.agents/plugins`
+
 use std::{
-    collections::HashSet,
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkillSource {
     BuiltIn,
-    File(PathBuf),
+    Filesystem {
+        skill_file: PathBuf,
+        owner: Option<String>,
+    },
+}
+
+impl SkillSource {
+    fn file(skill_file: PathBuf) -> Self {
+        Self::Filesystem {
+            skill_file,
+            owner: None,
+        }
+    }
+
+    pub(crate) fn plugin(skill_file: PathBuf, plugin: String) -> Self {
+        Self::Filesystem {
+            skill_file,
+            owner: Some(plugin),
+        }
+    }
 }
 
 impl std::fmt::Display for SkillSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BuiltIn => formatter.write_str("built in to rho"),
-            Self::File(path) => formatter.write_str(&crate::paths::display(path)),
+            Self::Filesystem {
+                skill_file,
+                owner: None,
+            } => formatter.write_str(&crate::paths::display(skill_file)),
+            Self::Filesystem {
+                skill_file,
+                owner: Some(owner),
+            } => write!(
+                formatter,
+                "plugin {owner} ({})",
+                crate::paths::display(skill_file.parent().unwrap_or(skill_file))
+            ),
         }
     }
 }
@@ -46,6 +93,15 @@ pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
 }
 
 pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
+    let plugin_skills = crate::plugins::skills_by_precedence(cwd, home);
+    discover_with_plugin_skills(cwd, home, plugin_skills)
+}
+
+pub(crate) fn discover_with_plugin_skills(
+    cwd: &Path,
+    home: Option<&Path>,
+    plugin_skills: Vec<Skill>,
+) -> Vec<Skill> {
     let mut roots = Vec::new();
     if let Some(home) = home {
         roots.push(home.join(".rho").join("skills"));
@@ -58,18 +114,36 @@ pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
             .map(|path| path.join(".agents").join("skills")),
     );
 
-    let mut seen = HashSet::new();
-    let mut discovered = builtin_skills();
-    discovered.extend(
+    // Candidates arrive in precedence order: built-ins, loose user, loose
+    // project, then plugin skills (project plugins before user plugins).
+    let mut candidates = builtin_skills();
+    candidates.extend(
         roots
             .into_iter()
             .flat_map(|root| skill_paths(&root))
-            .filter_map(|path| read_skill(&path).ok()),
+            .filter_map(|path| match read_skill(&path) {
+                Ok(skill) => Some(skill),
+                Err(error) => {
+                    tracing::warn!(skill = %path.display(), error = %error, "skipping invalid skill");
+                    None
+                }
+            }),
     );
-    let mut skills = discovered
-        .into_iter()
-        .filter(|skill| seen.insert(skill.name.clone()))
-        .collect::<Vec<_>>();
+    candidates.extend(plugin_skills);
+
+    let mut skills: Vec<Skill> = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if let Some(winner) = skills.iter().find(|skill| skill.name == candidate.name) {
+            tracing::warn!(
+                skill = %candidate.name,
+                selected = %winner.source,
+                ignored = %candidate.source,
+                "duplicate skill name; keeping the higher-precedence source"
+            );
+            continue;
+        }
+        skills.push(candidate);
+    }
     // Sort after precedence/dedup so every presentation surface shares one order.
     skills.sort_by(|left, right| {
         left.name
@@ -101,7 +175,7 @@ fn skill_paths(root: &Path) -> Vec<PathBuf> {
 
 fn read_skill(path: &Path) -> anyhow::Result<Skill> {
     let contents = std::fs::read_to_string(path)?;
-    parse_skill(&contents, SkillSource::File(path.to_path_buf()), Some(path))
+    parse_skill(&contents, SkillSource::file(path.to_path_buf()), Some(path))
 }
 
 fn builtin_skills() -> Vec<Skill> {
@@ -115,130 +189,134 @@ fn read_builtin_skill(contents: &str) -> anyhow::Result<Skill> {
     parse_skill(contents, SkillSource::BuiltIn, None)
 }
 
-fn parse_skill(
+/// Parse and validate one SKILL.md document.
+///
+/// `skill_path` enables the Agent Skills rule that `name` must match the
+/// containing directory; built-in skills have no directory and skip it.
+pub(crate) fn parse_skill(
     contents: &str,
     source: SkillSource,
-    file_path: Option<&Path>,
+    skill_path: Option<&Path>,
 ) -> anyhow::Result<Skill> {
-    let frontmatter = parse_frontmatter(contents)?;
-    let name = frontmatter
-        .iter()
-        .find(|(key, _)| key == "name")
-        .map(|(_, value)| value.to_string())
-        .ok_or_else(|| anyhow::anyhow!("missing required name"))?;
-    let description = frontmatter
-        .iter()
-        .find(|(key, _)| key == "description")
-        .map(|(_, value)| value.to_string())
-        .ok_or_else(|| anyhow::anyhow!("missing required description"))?;
-
-    let disable_model_invocation = frontmatter
-        .iter()
-        .find(|(key, _)| key == "disable-model-invocation")
-        .map(|(_, value)| match value.to_ascii_lowercase().as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => anyhow::bail!("disable-model-invocation must be true or false"),
-        })
-        .transpose()?
-        .unwrap_or(false);
-
-    validate_name(&name)?;
-    validate_description(&description)?;
-    if let Some(path) = file_path {
+    let block = frontmatter_block(contents)?;
+    let frontmatter: SkillFrontmatter = serde_yaml_ng::from_str(&block)
+        .map_err(|error| anyhow::anyhow!("invalid SKILL.md frontmatter: {error}"))?;
+    validate_frontmatter(&frontmatter)?;
+    if let Some(path) = skill_path {
         let directory_name = path
             .parent()
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow::anyhow!("missing skill directory name"))?;
-        if name != directory_name {
+        if frontmatter.name != directory_name {
             anyhow::bail!("skill name must match directory name");
         }
     }
 
     Ok(Skill {
-        name,
-        description,
-        disable_model_invocation,
+        name: frontmatter.name,
+        description: frontmatter.description,
+        disable_model_invocation: frontmatter
+            .disable_model_invocation
+            .map(|flag| flag.0)
+            .unwrap_or(false),
         source,
         contents: contents.into(),
     })
 }
 
-fn parse_frontmatter(contents: &str) -> anyhow::Result<Vec<(String, String)>> {
-    let lines: Vec<_> = contents.lines().collect();
-    if lines.first().copied() != Some("---") {
+/// The YAML block between the opening and closing `---` frontmatter fences.
+fn frontmatter_block(contents: &str) -> anyhow::Result<String> {
+    let mut lines = contents.lines();
+    if lines.next() != Some("---") {
         anyhow::bail!("SKILL.md must start with YAML frontmatter");
     }
-
-    let mut fields = Vec::new();
-    let mut index = 1;
-    while index < lines.len() {
-        let line = lines[index];
+    let mut block = Vec::new();
+    for line in lines {
         if line == "---" {
-            return Ok(fields);
+            return Ok(block.join("\n"));
         }
-        index += 1;
-        if line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty() {
-            continue;
-        }
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = value.trim();
-        if !matches!(
-            key,
-            "name" | "description" | "license" | "compatibility" | "disable-model-invocation"
-        ) {
-            continue;
-        }
-
-        let value = if let Some(block_style) = yaml_block_style(value) {
-            let mut block_lines = Vec::new();
-            while index < lines.len() {
-                let block_line = lines[index];
-                if block_line == "---" {
-                    break;
-                }
-                if !block_line.starts_with(' ') && !block_line.starts_with('\t') {
-                    break;
-                }
-                block_lines.push(block_line.trim());
-                index += 1;
-            }
-            if block_style == '>' {
-                block_lines.join(" ").trim().to_string()
-            } else {
-                block_lines.join("\n").trim().to_string()
-            }
-        } else {
-            unquote_yaml_scalar(value)
-        };
-        fields.push((key.to_string(), value));
+        block.push(line.to_string());
     }
-
     anyhow::bail!("unterminated YAML frontmatter")
 }
 
-fn yaml_block_style(value: &str) -> Option<char> {
-    match value {
-        "|" | "|-" | "|+" => Some('|'),
-        ">" | ">-" | ">+" => Some('>'),
-        _ => None,
+/// Typed Agent Skills frontmatter plus Rho's `disable-model-invocation`
+/// extension. Unknown fields are ignored, matching prior behavior and the
+/// ecosystem convention that clients may add their own frontmatter fields.
+#[derive(serde::Deserialize)]
+struct SkillFrontmatter {
+    name: String,
+    description: String,
+    #[expect(dead_code, reason = "type-validated only")]
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    compatibility: Option<String>,
+    #[expect(dead_code, reason = "type-validated only")]
+    #[serde(default)]
+    metadata: Option<BTreeMap<String, String>>,
+    #[expect(dead_code, reason = "type-validated only")]
+    #[serde(rename = "allowed-tools", default)]
+    allowed_tools: Option<String>,
+    #[serde(rename = "disable-model-invocation", default)]
+    disable_model_invocation: Option<TolerantBool>,
+}
+
+/// Accepts YAML booleans plus the legacy string forms `"true"`/`"false"`
+/// (case-insensitive) that the earlier hand-written parser tolerated.
+#[derive(Clone, Copy)]
+struct TolerantBool(bool);
+
+impl<'de> serde::Deserialize<'de> for TolerantBool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = TolerantBool;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a boolean or the string \"true\"/\"false\"")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<TolerantBool, E> {
+                Ok(TolerantBool(value))
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<TolerantBool, E> {
+                match value.to_ascii_lowercase().as_str() {
+                    "true" => Ok(TolerantBool(true)),
+                    "false" => Ok(TolerantBool(false)),
+                    _ => Err(serde::de::Error::custom(
+                        "disable-model-invocation must be true or false",
+                    )),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 
-fn unquote_yaml_scalar(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.len() >= 2
-        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
-            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
-    {
-        trimmed[1..trimmed.len() - 1].to_string()
-    } else {
-        trimmed.to_string()
+/// Agent Skills field constraints, separate from YAML syntax parsing.
+fn validate_frontmatter(frontmatter: &SkillFrontmatter) -> anyhow::Result<()> {
+    validate_name(&frontmatter.name)?;
+    let description_chars = frontmatter.description.chars().count();
+    if description_chars == 0 || description_chars > 1024 {
+        anyhow::bail!("skill description must be 1-1024 characters");
     }
+    if let Some(compatibility) = &frontmatter.compatibility {
+        let compatibility_chars = compatibility.chars().count();
+        if compatibility_chars == 0 || compatibility_chars > 500 {
+            anyhow::bail!("skill compatibility must be 1-500 characters");
+        }
+    }
+    // `license`, `metadata` (string keys and values), and `allowed-tools`
+    // (space-separated tool list) are constrained by their deserialized types.
+    Ok(())
 }
 
 fn validate_name(name: &str) -> anyhow::Result<()> {
@@ -254,13 +332,6 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
         .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
     {
         anyhow::bail!("skill name must be lowercase alphanumeric with hyphen separators");
-    }
-    Ok(())
-}
-
-fn validate_description(description: &str) -> anyhow::Result<()> {
-    if description.is_empty() || description.len() > 1024 {
-        anyhow::bail!("skill description must be 1-1024 characters");
     }
     Ok(())
 }
@@ -421,85 +492,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_frontmatter() {
-        let root = TempDir::new().unwrap();
-        let skill_dir = root.path().join(".rho/skills/bad-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "# bad").unwrap();
+    fn rejects_invalid_discovered_skills() {
+        let cases = [
+            ("bad-skill", "# bad", "bad-skill"),
+            (
+                "dir-name",
+                "---\nname: other-name\ndescription: desc\n---\n",
+                "other-name",
+            ),
+            (
+                "bad--skill",
+                "---\nname: bad--skill\ndescription: desc\n---\n",
+                "bad--skill",
+            ),
+            (
+                "bad-skill",
+                "---\nname: bad-skill\ndescription: \n---\n",
+                "bad-skill",
+            ),
+        ];
 
-        let skills = discover_with_home(root.path(), Some(root.path()));
+        for (directory, contents, rejected) in cases {
+            let root = TempDir::new().unwrap();
+            let skill_dir = root.path().join(".rho/skills").join(directory);
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(skill_dir.join("SKILL.md"), contents).unwrap();
 
-        assert_only_builtins_excluding(&skills, "bad-skill");
-    }
-
-    #[test]
-    fn rejects_name_that_does_not_match_directory() {
-        let root = TempDir::new().unwrap();
-        write_skill(root.path(), ".rho/skills/dir-name", "other-name", "desc");
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        assert_only_builtins_excluding(&skills, "other-name");
-    }
-
-    #[test]
-    fn rejects_invalid_name_format() {
-        let root = TempDir::new().unwrap();
-        write_skill(root.path(), ".rho/skills/bad--skill", "bad--skill", "desc");
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        assert_only_builtins_excluding(&skills, "bad--skill");
-    }
-
-    #[test]
-    fn rejects_empty_description() {
-        let root = TempDir::new().unwrap();
-        write_skill(root.path(), ".rho/skills/bad-skill", "bad-skill", "");
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        assert_only_builtins_excluding(&skills, "bad-skill");
-    }
-
-    #[test]
-    fn parses_block_scalar_description() {
-        let root = TempDir::new().unwrap();
-        let skill_dir = root.path().join(".rho/skills/block-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: block-skill\ndescription: >\n  first line\n  second line\n---\n# block\n",
-        )
-        .unwrap();
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        let skill = skills
-            .iter()
-            .find(|skill| skill.name == "block-skill")
-            .unwrap();
-        assert_eq!(skill.description, "first line second line");
-    }
-
-    #[test]
-    fn parses_block_scalar_chomping_description() {
-        let root = TempDir::new().unwrap();
-        let skill_dir = root.path().join(".rho/skills/chomp-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: chomp-skill\ndescription: |-\n  first line\n  second line\n---\n# block\n",
-        )
-        .unwrap();
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        let skill = skills
-            .iter()
-            .find(|skill| skill.name == "chomp-skill")
-            .unwrap();
-        assert_eq!(skill.description, "first line\nsecond line");
+            let skills = discover_with_home(root.path(), Some(root.path()));
+            assert_only_builtins_excluding(&skills, rejected);
+        }
     }
 
     #[test]
@@ -527,6 +548,172 @@ mod tests {
             .collect();
         assert_eq!(duplicates.len(), 1);
         assert_eq!(duplicates[0].description, "first desc");
+    }
+
+    /// Table-driven frontmatter coverage for the YAML parser and the Agent
+    /// Skills validation pass.
+    #[test]
+    fn parses_frontmatter_variants() {
+        #[derive(Debug)]
+        struct Case {
+            name: &'static str,
+            frontmatter: &'static str,
+            expected: Result<Expected, &'static str>,
+        }
+
+        #[derive(Debug)]
+        struct Expected {
+            name: &'static str,
+            description: &'static str,
+            disable_model_invocation: bool,
+        }
+
+        let cases = [
+            Case {
+                name: "double quoted with escapes",
+                frontmatter: r#"name: quote-skill
+description: "a \"quoted\" description"
+"#,
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "a \"quoted\" description",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "single quoted",
+                frontmatter: "name: 'quote-skill'\ndescription: 'plain'\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "plain",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "trailing comments",
+                frontmatter: "name: quote-skill # the name\ndescription: desc # the desc\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "desc",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "folded multiline description",
+                frontmatter: "name: quote-skill\ndescription: >-\n  first\n  second\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "first second",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "literal multiline description",
+                frontmatter: "name: quote-skill\ndescription: |-\n  first\n  second\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "first\nsecond",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "nested metadata and optional fields",
+                frontmatter: "name: quote-skill\ndescription: desc\nlicense: MIT\ncompatibility: needs git\nmetadata:\n  author: example-org\n  version: \"1.0\"\nallowed-tools: Bash(git:*) Read\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "desc",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "disable-model-invocation string legacy form",
+                frontmatter: "name: quote-skill\ndescription: desc\ndisable-model-invocation: \"True\"\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "desc",
+                    disable_model_invocation: true,
+                }),
+            },
+            Case {
+                name: "unknown fields ignored",
+                frontmatter: "name: quote-skill\ndescription: desc\nsome-client-field: 1\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "desc",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "missing description",
+                frontmatter: "name: quote-skill\n",
+                expected: Err("description"),
+            },
+            Case {
+                name: "metadata value must not be a mapping",
+                frontmatter: "name: quote-skill\ndescription: desc\nmetadata:\n  nested:\n    deep: x\n",
+                // serde_yaml_ng reports a type mismatch for nested mappings under string values.
+                expected: Err("invalid type"),
+            },
+            Case {
+                name: "numeric metadata scalar coerces to its string form",
+                frontmatter: "name: quote-skill\ndescription: desc\nmetadata:\n  version: 1.0\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "desc",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "invalid disable-model-invocation type",
+                frontmatter: "name: quote-skill\ndescription: desc\ndisable-model-invocation: 3\n",
+                expected: Err("invalid type"),
+            },
+            Case {
+                name: "invalid compatibility type",
+                frontmatter: "name: quote-skill\ndescription: desc\ncompatibility: [git]\n",
+                expected: Err("invalid type"),
+            },
+        ];
+        for case in cases {
+            let contents = format!("---\n{}---\n# body\n", case.frontmatter);
+            let result = parse_skill(&contents, SkillSource::BuiltIn, None);
+            match &case.expected {
+                Ok(expected) => {
+                    let skill = result.unwrap_or_else(|error| {
+                        panic!("{}: expected success, got {error}", case.name)
+                    });
+                    assert_eq!(skill.name, expected.name, "{}", case.name);
+                    assert_eq!(skill.description, expected.description, "{}", case.name);
+
+                    assert_eq!(
+                        skill.disable_model_invocation, expected.disable_model_invocation,
+                        "{}",
+                        case.name
+                    );
+                }
+                Err(fragment) => {
+                    let error = result
+                        .err()
+                        .unwrap_or_else(|| panic!("{}: expected failure", case.name));
+                    assert!(
+                        error.to_string().contains(fragment),
+                        "{}: error `{error}` should mention `{fragment}`",
+                        case.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_overlong_compatibility() {
+        let compatibility = "aaaaaaaaaa ".repeat(60);
+        assert!(compatibility.chars().count() > 500);
+        let contents = format!(
+            "---\nname: quote-skill\ndescription: desc\ncompatibility: {compatibility}\n---\n"
+        );
+        let error = parse_skill(&contents, SkillSource::BuiltIn, None).unwrap_err();
+        assert!(error.to_string().contains("compatibility"));
     }
 
     /// Asserts the discovered skills are exactly the built-ins, minus the one

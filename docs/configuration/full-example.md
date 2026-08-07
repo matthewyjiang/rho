@@ -48,6 +48,10 @@ compact_target_percent = 50
 hosted = true # provider-hosted search when the chat path supports it
 provider = "auto" # backup only: auto, openai, exa, brave, or disabled
 
+# MCP stays inert while this table has no enabled server entries.
+# See /integrations/mcp for stdio and Streamable HTTP examples.
+[mcp.servers]
+
 [providers.ollama]
 base_url = "http://127.0.0.1:11434/v1"
 

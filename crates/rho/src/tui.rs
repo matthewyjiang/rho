@@ -49,6 +49,15 @@ mod goal;
 mod line_editor;
 mod subagent_questionnaires;
 mod text_input;
+
+fn plural_suffix(count: usize) -> &'static str {
+    if count == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
 pub(crate) use first_run::SetupEntry;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod changelog_command;
@@ -73,6 +82,8 @@ mod login;
 mod login_secret_input;
 mod markdown;
 mod markdown_image;
+mod mcp_actions;
+mod mcp_picker;
 mod message_history;
 mod message_render;
 mod model_actions;
@@ -366,7 +377,12 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
 
         match injected {
             Ok(()) => {
-                let mut app = App::new(info, herdr_graphics);
+                let mut app = App::new(
+                    info,
+                    herdr_graphics,
+                    agent.mcp_report().clone(),
+                    agent.plugins_report().clone(),
+                );
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_host_input = Some(manager.bind_host_input());
@@ -442,6 +458,10 @@ struct App {
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.
     screen_selection: Option<TextSelection>,
+    /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
+    mcp_report: crate::tools::mcp::McpSessionReport,
+    /// Agent Plugins load report captured at session start for `/doctor`.
+    plugins_report: crate::plugins::PluginLoadReport,
 }
 
 struct PendingSubagentQuestionnaire {

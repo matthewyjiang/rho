@@ -28,6 +28,16 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) diagnostics: &'a RuntimeDiagnostics,
     pub(crate) agent: &'a BoundAgent,
 }
+pub(crate) struct StartupInventory {
+    pub(crate) mcp: crate::tools::mcp::McpSessionReport,
+    pub(crate) plugins: crate::plugins::PluginLoadReport,
+}
+
+pub(crate) struct ToolsAndPrompt {
+    pub(crate) tools: AppToolSet,
+    pub(crate) system_prompt: SystemPromptVariants,
+    pub(crate) inventory: StartupInventory,
+}
 
 /// The system prompt with and without the advisor steering text.
 ///
@@ -63,9 +73,10 @@ impl SystemPromptVariants {
 /// automation startup. Claude-cli agents bind no Rho host tools; root runs still
 /// use the Rho loop and parent config, with Claude execution via AgentExecutor
 /// for delegated runs.
-pub(crate) fn assemble_tools_and_prompt(
+pub(crate) async fn assemble_tools_and_prompt(
     options: ToolsAndPromptOptions<'_>,
-) -> anyhow::Result<(AppToolSet, SystemPromptVariants)> {
+) -> anyhow::Result<ToolsAndPrompt> {
+    let native_runtime = options.agent.rho_capabilities().is_some();
     let mut capabilities = options
         .agent
         .rho_capabilities()
@@ -85,8 +96,35 @@ pub(crate) fn assemble_tools_and_prompt(
     let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
     let delegation_enabled =
         launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
+    // Agent Plugins contribute skills through ordinary skill discovery and
+    // MCP servers through the generic native MCP configuration.
+    let plugin_discovery =
+        crate::plugins::discover(options.cwd, crate::paths::home_dir().as_deref());
+    crate::plugins::log(&plugin_discovery.report);
+    let crate::plugins::PluginDiscovery {
+        skills: plugin_skills,
+        mcp: plugin_mcp,
+        report: plugins_report,
+    } = plugin_discovery;
+    let mut mcp_config = options.config.mcp.clone();
+    mcp_config.merge(plugin_mcp);
+    let mcp_plan = if !native_runtime {
+        crate::tools::mcp::McpSessionPlan::Inventory(
+            crate::tools::mcp::McpLoadMode::UnsupportedAgent,
+        )
+    } else if options.no_tools {
+        crate::tools::mcp::McpSessionPlan::Inventory(crate::tools::mcp::McpLoadMode::ToolsDisabled)
+    } else {
+        crate::tools::mcp::McpSessionPlan::Connect
+    };
+    let mcp = crate::tools::mcp::McpConnectOutcome::run(
+        mcp_plan,
+        &mcp_config,
+        options.config.max_output_bytes,
+    )
+    .await;
     let tools = if options.no_tools {
-        AppToolSet::disabled()
+        AppToolSet::disabled().with_mcp(mcp)
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities);
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
@@ -108,12 +146,13 @@ pub(crate) fn assemble_tools_and_prompt(
         {
             tool_options = tool_options.workflow(super::workflow_cli::workflow_tool_service(
                 options.cwd.to_path_buf(),
-                Some(options.config_path),
+                Some(options.config_path.clone()),
                 workflow_tracker,
             ));
         }
-        AppToolSet::new(options.config, options.diagnostics.clone(), tool_options)
+        AppToolSet::new(options.config, options.diagnostics.clone(), tool_options).with_mcp(mcp)
     };
+    let mcp_report = tools.mcp_report().clone();
     let specs = tools.specs();
     let system_prompt = if options.no_system_prompt {
         options.diagnostics.update_prompt_sources(Vec::new());
@@ -122,7 +161,8 @@ pub(crate) fn assemble_tools_and_prompt(
         let (mut text, mut advisor_text) = match options.agent.prompt() {
             PromptPolicy::Replace(text) => (text.clone(), text.clone()),
             PromptPolicy::Extend(extra) => {
-                let mut built = prompt::system_prompt(&specs, options.cwd);
+                let mut built =
+                    prompt::system_prompt_with_plugin_skills(&specs, options.cwd, plugin_skills);
                 options.diagnostics.update_prompt_sources(built.sources);
                 if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut built.text);
@@ -156,7 +196,14 @@ pub(crate) fn assemble_tools_and_prompt(
         });
     }
     options.diagnostics.update_tools(&specs);
-    Ok((tools, system_prompt))
+    Ok(ToolsAndPrompt {
+        tools,
+        system_prompt,
+        inventory: StartupInventory {
+            mcp: mcp_report,
+            plugins: plugins_report,
+        },
+    })
 }
 
 #[cfg(test)]

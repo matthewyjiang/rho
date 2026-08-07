@@ -15,6 +15,7 @@ mod goal;
 mod hooks;
 mod login;
 mod markdown_stream;
+mod mcp;
 mod mermaid;
 mod paste;
 mod pickers;
@@ -52,6 +53,7 @@ use goal::{
 use hooks::HOOKS_CONTRACT_SCENARIO;
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use markdown_stream::{MARKDOWN_HEADINGS_SCENARIO, STREAMING_MARKDOWN_STABILITY_SCENARIO};
+use mcp::MCP_INVENTORY_SCENARIO;
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
@@ -698,6 +700,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     WORKSPACE_REWIND_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
+    MCP_INVENTORY_SCENARIO,
     Scenario::new(
         "resume_picker_delete",
         "Delete a saved session from the resume picker with confirm/cancel",

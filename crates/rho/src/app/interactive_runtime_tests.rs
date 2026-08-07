@@ -204,6 +204,8 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         ),
         provider: ProviderController::new(shared_provider, rho_sdk::ReasoningLevel::Off),
         tools,
+        mcp_report: Default::default(),
+        plugins_report: Default::default(),
         workspace,
         system_prompt: super::SystemPromptVariants::uniform(SystemPrompt::None),
         compaction: CompactionConfig::default(),
