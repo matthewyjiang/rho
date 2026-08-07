@@ -179,7 +179,7 @@ cargo run -p rho-tui-pty --bin rho-pty-demo -- \
   --output docs/public/assets/rho-ui-demo.svg
 ```
 
-Use `--check` against an existing path to detect drift without writing. The generator needs a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
+Use `--check` against existing paths to detect drift without writing. CI job `docs TUI proof plate` runs that check on every pull request and push to `main`. The generator needs a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
 
 ### Environment isolation
 

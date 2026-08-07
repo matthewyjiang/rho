@@ -140,6 +140,27 @@ jobs:
       - name: Compile and test the workspace
         run: cargo test --workspace --all-targets --locked
 
+  docs-ui-demo:
+    name: docs TUI proof plate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo registry
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: docs-ui-demo
+      - name: Build debug rho for matrix mode
+        run: cargo build -j 12 -p rho-coding-agent --locked
+      - name: Check docs TUI SVG against a live PTY capture
+        run: |
+          cargo run -j 12 -p rho-tui-pty --bin rho-pty-demo --locked -- \
+            --bin target/debug/rho \
+            --check \
+            --output docs/assets/rho-ui-demo.svg \
+            --output docs/public/assets/rho-ui-demo.svg
+
   package:
     name: release package checks
     runs-on: ubuntu-latest

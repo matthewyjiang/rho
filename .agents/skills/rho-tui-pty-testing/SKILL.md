@@ -73,7 +73,7 @@ cargo run -p rho-tui-pty --bin rho-pty-demo -- \
   --output docs/public/assets/rho-ui-demo.svg
 ```
 
-Needs a debug build (`RHO_TUI_TEST_MODE=matrix`). Use `--check` to compare without writing.
+Needs a debug build (`RHO_TUI_TEST_MODE=matrix`). Use `--check` to compare without writing. CI job `docs TUI proof plate` runs the dual-path check on pull requests and `main`.
 
 ## Fixture matrix prompts
 
